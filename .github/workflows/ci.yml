@@ -22,6 +22,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install Linux Tk runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes python3-tk
       - name: Install
         run: python -m pip install -e ".[dev]"
       - name: Ruff formatting
@@ -58,6 +61,37 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+
+  desktop-package:
+    name: Desktop artifact - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Linux Tk runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes python3-tk
+      - name: Install desktop packager
+        run: python -m pip install -e ".[packaging]"
+      - name: Build native desktop artifact
+        run: python scripts/build_desktop.py
+      - name: Smoke-test bundled resources
+        run: python scripts/smoke_desktop_artifact.py
+      - name: Smoke-test first run and packaged MCP
+        run: python scripts/smoke_packaged_first_run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: all-the-context-${{ matrix.os }}
+          path: dist/desktop/**
+          if-no-files-found: error
 
   relay-container:
     name: Relay container

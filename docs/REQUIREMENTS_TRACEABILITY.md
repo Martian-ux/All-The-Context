@@ -17,7 +17,8 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Minimal administration UI | `apps/dashboard/` | component tests, production build, live browser smoke | Implemented |
 | Correction/deletion propagation | Core/Relay services | integration/demo | Implemented |
 | Portable export/restore | `export.py` | encrypted round-trip/security/demo | Implemented |
-| Windows/macOS/Linux CI | `.github/workflows/ci.yml` | workflow syntax and local equivalents | Authored; remote run pending |
+| Windows/macOS/Linux CI | `.github/workflows/ci.yml` | source tests plus native package/resource/first-run/MCP smoke jobs | Authored; remote run pending |
 | Provider integrations | `integrations/` | config/documentation checks | Examples only; provider handshakes pending |
-| Native packaging path | `docs/operations/PLATFORMS.md` | Python wheel/sdist build | Path documented; native packages deferred |
+| One-click desktop setup | `desktop.py`, `wizard.py`, `desktop_setup.py`, `client_config.py` | unit tests, visual frozen wizard inspection, packaged first-run/MCP smoke | Implemented and exercised on Windows |
+| Native packaging path | `scripts/build_desktop.py`, `docs/operations/PLATFORMS.md` | frozen Windows build and diagnostics | Windows engineering artifact exercised; signing and other OS observations pending |
 | Repeatable source startup | `scripts/bootstrap.py`, CLI initialization | bootstrap unit tests and process start/stop/restart integration | Implemented |

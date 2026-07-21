@@ -33,6 +33,9 @@ dev = [
   "pytest-cov>=6.2,<7",
   "ruff>=0.12,<1",
 ]
+packaging = [
+  "pyinstaller>=6.21,<7",
+]
 
 [project.scripts]
 atc = "allthecontext.cli:main"
@@ -40,6 +43,7 @@ atc-core = "allthecontext.core.app:main"
 atc-relay = "allthecontext.relay.app:main"
 atc-mcp = "allthecontext.mcp_adapter:main"
 atc-mcp-http = "allthecontext.mcp_adapter:http_main"
+atc-desktop = "allthecontext.desktop:main"
 
 [tool.setuptools]
 package-dir = {"" = "packages/allthecontext/src"}

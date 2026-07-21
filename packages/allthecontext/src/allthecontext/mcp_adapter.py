@@ -5,11 +5,16 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import sys
 from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
+from io import TextIOWrapper
 from typing import Any
 
+import anyio
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.stdio import stdio_server
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
@@ -227,9 +232,33 @@ class BearerGate:
         await self.app(scope, receive, send)
 
 
+async def _run_stdio(server: FastMCP) -> None:
+    """Run STDIO without allowing temporary UTF-8 wrappers to close process handles."""
+    if sys.stdin is None or sys.stdout is None:
+        raise RuntimeError("STDIO MCP requires process standard input and output streams")
+    stdin_wrapper = TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
+    stdout_wrapper = TextIOWrapper(sys.stdout.buffer, encoding="utf-8", write_through=True)
+    try:
+        stdin = anyio.wrap_file(stdin_wrapper)
+        stdout = anyio.wrap_file(stdout_wrapper)
+        async with stdio_server(stdin=stdin, stdout=stdout) as (read_stream, write_stream):
+            await server._mcp_server.run(
+                read_stream,
+                write_stream,
+                server._mcp_server.create_initialization_options(),
+            )
+    finally:
+        with suppress(OSError, ValueError):
+            stdout_wrapper.flush()
+        with suppress(OSError, ValueError):
+            stdin_wrapper.detach()
+        with suppress(OSError, ValueError):
+            stdout_wrapper.detach()
+
+
 def main() -> None:
     """Run the lightweight local STDIO forwarding adapter."""
-    build_mcp().run(transport="stdio")
+    anyio.run(_run_stdio, build_mcp())
 
 
 def http_main() -> None:

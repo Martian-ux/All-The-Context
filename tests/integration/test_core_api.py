@@ -59,6 +59,16 @@ def test_setup_auth_and_client_revocation(tmp_path: Path) -> None:
         assert client.post("/v1/setup", json={"name": "Other", "scopes": []}).status_code == 409
 
 
+def test_authenticated_shutdown_requests_graceful_server_exit(tmp_path: Path) -> None:
+    requested: list[bool] = []
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config, shutdown_callback=lambda: requested.append(True))) as client:
+        response = client.post("/v1/admin/shutdown")
+    assert response.status_code == 200
+    assert response.json() == {"shutting_down": True}
+    assert requested == [True]
+
+
 def test_archive_upload_creates_reviewable_candidates(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     with TestClient(create_app(config)) as client:

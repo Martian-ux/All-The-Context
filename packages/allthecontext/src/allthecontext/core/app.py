@@ -1,5 +1,6 @@
 """FastAPI transport for the local authoritative Core."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -30,7 +31,12 @@ from ..storage import ConflictError, InvalidStateError, NotFoundError, StorageEr
 from .service import CoreService
 
 
-def create_app(config: CoreConfig | None = None, *, service: CoreService | None = None) -> FastAPI:
+def create_app(
+    config: CoreConfig | None = None,
+    *,
+    service: CoreService | None = None,
+    shutdown_callback: Callable[[], None] | None = None,
+) -> FastAPI:
     active_config = config or CoreConfig.default()
     core = service or CoreService(active_config)
     app = FastAPI(
@@ -295,6 +301,14 @@ def create_app(config: CoreConfig | None = None, *, service: CoreService | None 
         require(principal, "admin")
         return {"items": core.store.list_audit(limit=limit)}
 
+    @app.post("/v1/admin/shutdown")
+    def shutdown(principal: Principal) -> dict[str, bool]:
+        require(principal, "admin")
+        if shutdown_callback is None:
+            raise HTTPException(status_code=503, detail="Shutdown is not available in this host")
+        shutdown_callback()
+        return {"shutting_down": True}
+
     dashboard_root = Path(__file__).parent.parent / "web"
     if dashboard_root.joinpath("index.html").is_file():
         app.mount("/", StaticFiles(directory=dashboard_root, html=True), name="dashboard")
@@ -304,8 +318,19 @@ def create_app(config: CoreConfig | None = None, *, service: CoreService | None 
 
 def main() -> None:
     config = CoreConfig.default()
+    servers: list[uvicorn.Server] = []
+
+    def request_shutdown() -> None:
+        if servers:
+            servers[0].should_exit = True
+
     with CoreInstanceLock(config):
-        uvicorn.run(create_app(config), host=config.host, port=config.port, log_config=None)
+        app = create_app(config, shutdown_callback=request_shutdown)
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=config.host, port=config.port, log_config=None)
+        )
+        servers.append(server)
+        server.run()
 
 
 if __name__ == "__main__":

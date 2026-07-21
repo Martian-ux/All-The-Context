@@ -92,6 +92,18 @@ export function hasAdminToken(): boolean {
   return Boolean(window.localStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_ATC_ADMIN_TOKEN);
 }
 
+export function consumeSetupToken(): boolean {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const token = fragment.get("atc_token");
+  if (!token) return false;
+  setAdminToken(token);
+  fragment.delete("atc_token");
+  const remaining = fragment.toString();
+  const cleanUrl = `${window.location.pathname}${window.location.search}${remaining ? `#${remaining}` : ""}`;
+  window.history.replaceState(window.history.state, document.title, cleanUrl);
+  return true;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = window.localStorage.getItem(TOKEN_KEY) || (import.meta.env.VITE_ATC_ADMIN_TOKEN as string | undefined);
   const headers = new Headers(init.headers);

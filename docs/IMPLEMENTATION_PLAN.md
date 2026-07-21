@@ -14,3 +14,6 @@
    synchronization, export/restore, and client revocation in tests and demo.
 7. Verify Python 3.12 lint, types, unit/integration/security tests, package build,
    links, and migration behavior; record all unexercised platform claims.
+8. Replace the contributor-oriented startup path with a native first-run wizard,
+   reversible Codex configuration, per-user startup, frozen platform artifacts,
+   and packaged first-run/MCP/shutdown smoke coverage.

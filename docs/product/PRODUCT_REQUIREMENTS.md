@@ -9,10 +9,11 @@ model provider.
 
 ## Primary journeys
 
-- Initialize one protected local vault and receive a one-time administrator
-  credential.
-- Connect an MCP client once, bootstrap only the history it can genuinely see,
-  and let it propose later durable changes.
+- Double-click one desktop artifact, initialize one protected local vault, and
+  let setup secure the administrator credential without exposing it to the
+  user.
+- Connect a supported MCP client automatically during first run, bootstrap only
+  the history it can genuinely see, and let it propose later durable changes.
 - Import archives locally, review candidates in manageable batches, and inspect
   the evidence for every approved record.
 - Search approved context with deterministic permissions and validity rules.

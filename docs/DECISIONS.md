@@ -50,3 +50,12 @@ version with the invoking runtime and imports compiled dependencies before
 reuse. A missing, cross-version, or internally inconsistent `.venv` is cleared
 and rebuilt; a healthy environment is updated in place. This prevents compiled
 extensions from an earlier Python installation surviving a later `venv` run.
+
+## ADR-009: Desktop-first one-time setup
+
+The supported user path is a native first-run wizard, not a sequence of Python
+or shell commands. A frozen Windows executable self-installs per-user, embeds a
+separate console-subsystem MCP helper, initializes the vault, verifies credential
+persistence, updates supported client configuration reversibly, enables
+per-user startup when selected, and opens the dashboard. Source bootstrap and
+CLI commands remain contributor and automation interfaces.

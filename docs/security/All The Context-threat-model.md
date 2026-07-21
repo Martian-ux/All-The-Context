@@ -28,6 +28,9 @@ deployment responsibilities.
   (`packages/allthecontext/src/allthecontext/importers.py`, `export.py`).
 - MCP/API clients: bearer-authenticated retrieval and proposals
   (`packages/allthecontext/src/allthecontext/mcp_adapter.py`).
+- Desktop setup: per-user installation, credential persistence, reversible
+  client configuration, and loopback dashboard handoff (`desktop.py`,
+  `desktop_setup.py`, `client_config.py`).
 - Relay: restricted replica and proposal queue
   (`packages/allthecontext/src/allthecontext/relay`).
 
@@ -41,6 +44,10 @@ deployment responsibilities.
   ordered HMAC-authenticated events, hash/schema/authorization checks.
 - Browser -> loopback Core: local operational API, admin bearer credential,
   origin/host controls and loopback default.
+- Desktop wizard -> OS store/client config/browser: credential writes are read
+  back before trust; existing TOML is validated and backed up; the dashboard
+  token travels in a URL fragment, is stored locally, and is immediately removed
+  from browser history before API calls.
 
 #### Diagram
 
@@ -91,6 +98,7 @@ does not possess them.
 | Import parser | local file/upload | file -> Core | untrusted, bounded, inert | `importers.py` |
 | Replication apply | Core push | Core -> Relay | HMAC, sequence, hash | `replication.py` |
 | Export restore | local file | backup -> Core | AEAD and integrity checks | `export.py` |
+| Desktop setup | user launch | installer -> OS/config/browser | per-user paths, verified credential write, parsed/atomic config replacement | `desktop_setup.py`, `client_config.py` |
 
 ## Top abuse paths
 
@@ -108,6 +116,8 @@ does not possess them.
    after the user believes it was withdrawn.
 7. Logs or an unencrypted backup capture content/token -> local or hosting
    operator obtains concentrated personal data.
+8. Setup trusts a broken credential backend or corrupts an existing client
+   configuration -> MCP silently loses access or another client stops working.
 
 ## Threat model table
 
@@ -121,6 +131,7 @@ does not possess them.
 | TM-006 | Bug/operator failure | Delete/permission update | Relay remains stale | Deleted context persists | Privacy state | Transactional event/outbox and checkpoint (`storage.py`) | Offline Relay delays delivery | Prominent lag status, reconciliation | Alert oldest undelivered event | medium | high | high |
 | TM-007 | Local/hosting attacker | Read files/logs | Exfiltrate backup or content | Concentrated disclosure | Vault/export | Redacted logs, encrypted export (`export.py`) | Database-at-rest depends on OS | Document disk encryption; future vault key | Secret-pattern log tests | low | high | medium |
 | TM-008 | Supply-chain attacker | Compromised dependency/build | Execute in trusted process | Full vault compromise | All assets | Pinned ranges and CI (`pyproject.toml`) | No signed releases yet | lockfile, Dependabot, SBOM, signed artifacts | Dependency audit in release gate | low | high | medium |
+| TM-009 | Local failure/malware | Setup access to user config | Drop credential or alter client config | Silent MCP failure or client disruption | Tokens, availability | Credential read-back, TOML parse, managed markers, backup, atomic replace (`desktop_setup.py`, `client_config.py`) | Fallback file is not OS-protected | Signed installer, recovery UI, eliminate fallback for production | Setup warning and packaged smoke | low | high | medium |
 
 ## Criticality calibration
 
@@ -144,6 +155,7 @@ does not possess them.
 | `packages/allthecontext/src/allthecontext/export.py` | Concentrated portable backup | TM-007 |
 | `packages/allthecontext/src/allthecontext/core/app.py` | Local HTTP/admin entry point | TM-002, TM-005 |
 | `packages/allthecontext/src/allthecontext/relay/app.py` | Internet-facing surface | TM-002, TM-003, TM-005 |
+| `packages/allthecontext/src/allthecontext/client_config.py` | Reversible client configuration and credential handoff | TM-002, TM-009 |
 
 ## Quality check
 

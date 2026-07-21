@@ -30,20 +30,23 @@ from the model-facing MCP surface.
 
 ## One-time local configuration
 
-`atc init` creates a client credential and immediately emits ready-to-paste
-configuration. It omits the token from the block when it was stored in the OS
-credential manager. The block can be regenerated with
-`atc config-mcp --client-id <id>`; pass `--token` only when no OS credential is
-available. A typical Codex STDIO entry is:
+The desktop wizard creates a client credential, verifies credential
+persistence, and writes the Codex STDIO entry automatically with a timestamped
+backup. The user does not copy a token or configuration block. A typical
+generated entry is:
 
 ```toml
 [mcp_servers.all_the_context]
-command = "atc-mcp"
+command = "C:\\Users\\user\\AppData\\Local\\Programs\\All The Context\\AllTheContextMCP.exe"
+args = []
 env = { ATC_TARGET_URL = "http://127.0.0.1:7337", ATC_CLIENT_ID = "...", ATC_CLIENT_TOKEN = "..." }
 required = true
+startup_timeout_sec = 20
 ```
 
-Codex reads durable MCP entries from `config.toml`; current Codex surfaces share
-that configuration. Clients with direct Streamable HTTP support can instead use
-a bearer-protected adapter endpoint. Provider capability claims remain in the
-dated integration matrix.
+The token is absent when the OS credential manager persisted it. `atc init` and
+`atc config-mcp` remain contributor/headless alternatives. Codex reads durable
+MCP entries from `config.toml`; current Codex surfaces share that configuration.
+Clients with direct Streamable HTTP support can instead use a bearer-protected
+adapter endpoint. Provider capability claims remain in the dated integration
+matrix.
