@@ -18,13 +18,22 @@ offline-Relay demonstration. No vector database is required.
 
 ## Development quickstart
 
-The commands below work in PowerShell, zsh, Bash, and other ordinary shells:
+PowerShell on Windows:
 
 ```text
 python -m venv .venv
-python -m pip install -e ".[dev]"
-atc init
-atc serve-core
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\atc.exe init
+.\.venv\Scripts\atc.exe serve-core
+```
+
+macOS or Linux:
+
+```text
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e ".[dev]"
+./.venv/bin/atc init
+./.venv/bin/atc serve-core
 ```
 
 Open `http://127.0.0.1:7337`. The initialization command prints a one-time
@@ -33,9 +42,8 @@ verify the database, Core, and MCP adapter.
 
 Run the reproducible demonstration with:
 
-```text
-python scripts/demo.py
-```
+Use `.\.venv\Scripts\python.exe scripts/demo.py` in PowerShell or
+`./.venv/bin/python scripts/demo.py` on macOS and Linux.
 
 See [Architecture](docs/architecture/ARCHITECTURE.md),
 [platform support](docs/operations/PLATFORMS.md), and

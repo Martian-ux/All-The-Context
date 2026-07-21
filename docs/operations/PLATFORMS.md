@@ -6,15 +6,24 @@ macOS, and Linux without Docker. Application data is resolved with
 
 ## Current development installation
 
-The following commands are intentionally valid in PowerShell, macOS shells,
-and Linux shells when run one line at a time from the repository root:
+PowerShell on Windows, without relying on script activation policy:
 
 ```text
 python -m venv .venv
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-python -m allthecontext.cli init
-python -m allthecontext.core.app
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m allthecontext.cli init
+.\.venv\Scripts\python.exe -m allthecontext.core.app
+```
+
+macOS and Linux shells:
+
+```text
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -e ".[dev]"
+./.venv/bin/python -m allthecontext.cli init
+./.venv/bin/python -m allthecontext.core.app
 ```
 
 Run the adapter with `atc-mcp`. Core binds only to `127.0.0.1` by default.

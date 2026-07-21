@@ -6,19 +6,23 @@ export services. All data is fictional. The script prints only boolean and
 count evidence; it does not print credentials or raw context.
 
 After installing the project, run this command from the repository root in
-PowerShell, macOS Terminal, or a Linux shell:
+PowerShell:
 
 ```text
-python scripts/demo.py
+.\.venv\Scripts\python.exe scripts/demo.py
+```
+
+On macOS or Linux:
+
+```text
+./.venv/bin/python scripts/demo.py
 ```
 
 By default, the demo uses an automatically removed temporary directory. To
 retain the SQLite databases and encrypted export for inspection, pass a fresh
 directory using syntax supported by every platform:
 
-```text
-python scripts/demo.py --workspace demo-output
-```
+Append `--workspace demo-output` to the appropriate command above.
 
 The script refuses to reuse its named Core, Relay, restore, or export targets;
 it does not delete or overwrite an earlier run.
@@ -61,6 +65,6 @@ idempotent replay, out-of-order rejection, revocation, and deletion visibility.
 
 Run the focused proof suite with:
 
-```text
-python -m pytest tests/e2e tests/security
-```
+Use `.\.venv\Scripts\python.exe -m pytest tests/e2e tests/security` in
+PowerShell or `./.venv/bin/python -m pytest tests/e2e tests/security` on macOS
+and Linux.
