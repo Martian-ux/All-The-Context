@@ -1,4 +1,7 @@
-.venv/
+.venv*/
+.readme-smoke-*
+.tmp-readme/
+tmp/
 __pycache__/
 *.py[cod]
 *.egg-info/

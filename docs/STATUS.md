@@ -5,8 +5,9 @@
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
   Streamable HTTP; generic import; review dashboard; encrypted export/restore;
-  one-time client configuration; demonstration and automated tests
-- Local evidence (Windows 11, Python 3.12): 44 Python tests passed, including a
+  one-time client configuration; self-repairing source bootstrap;
+  demonstration and automated tests
+- Local evidence (Windows 11, Python 3.12): 49 Python tests passed, including a
   real MCP STDIO initialize/list/call handshake; Ruff, mypy, documentation
   checks, dashboard type checks, dashboard tests, dashboard production build,
   package build, and Docker Compose configuration validation passed

@@ -20,3 +20,4 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` | workflow syntax and local equivalents | Authored; remote run pending |
 | Provider integrations | `integrations/` | config/documentation checks | Examples only; provider handshakes pending |
 | Native packaging path | `docs/operations/PLATFORMS.md` | Python wheel/sdist build | Path documented; native packages deferred |
+| Repeatable source startup | `scripts/bootstrap.py`, CLI initialization | bootstrap unit tests and process start/stop/restart integration | Implemented |

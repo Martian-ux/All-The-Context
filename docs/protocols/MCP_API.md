@@ -30,8 +30,11 @@ from the model-facing MCP surface.
 
 ## One-time local configuration
 
-`atc init` creates a client credential and `atc config mcp --client <id>` emits
-ready-to-paste configuration. A typical Codex STDIO entry is:
+`atc init` creates a client credential and immediately emits ready-to-paste
+configuration. It omits the token from the block when it was stored in the OS
+credential manager. The block can be regenerated with
+`atc config-mcp --client-id <id>`; pass `--token` only when no OS credential is
+available. A typical Codex STDIO entry is:
 
 ```toml
 [mcp_servers.all_the_context]

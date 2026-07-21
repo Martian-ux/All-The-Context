@@ -12,3 +12,4 @@
 | Hosted Relay cannot reach online Core for deep retrieval yet | Return a clean reduced result for `core_available`; add an authenticated outbound Core channel later |
 | Local SQLite content is plaintext to the OS account | Document the boundary; rely on OS disk/account protection until an application-encrypted vault is designed |
 | Cross-platform claims exceed local hardware | Keep CI for all three operating systems and withhold observed-support claims until those jobs run |
+| A reused venv retains compiled modules from another Python version | Bootstrap compares runtime versions and probes compiled imports before reuse; rebuild stale environments |

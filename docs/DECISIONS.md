@@ -41,3 +41,12 @@ Portable `.atc` exports use a passphrase-derived key and AES-256-GCM with
 authenticated manifests and content hashes. The first live SQLite vault relies
 on OS account and disk protection; application-level at-rest encryption needs
 a separate key-recovery and migration design and is not implied here.
+
+## ADR-008: Probe before reusing a source virtual environment
+
+The repository bootstrap uses only platform-neutral Python and never requires
+shell activation. It compares the environment's recorded Python major/minor
+version with the invoking runtime and imports compiled dependencies before
+reuse. A missing, cross-version, or internally inconsistent `.venv` is cleared
+and rebuilt; a healthy environment is updated in place. This prevents compiled
+extensions from an earlier Python installation surviving a later `venv` run.

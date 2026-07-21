@@ -2,17 +2,24 @@
 
 ## Start and verify
 
-Run each command as a separate line. These forms work in PowerShell, macOS
-shells, and Linux shells:
+Run each command as a separate line after completing the README bootstrap.
+PowerShell:
 
 ```text
-python -m allthecontext.cli init
-python -m allthecontext.core.app
-python -m allthecontext.cli status
+.\.venv\Scripts\atc.exe init
+.\.venv\Scripts\atc.exe serve-core
+```
+
+macOS and Linux:
+
+```text
+./.venv/bin/atc init
+./.venv/bin/atc serve-core
 ```
 
 Open `http://127.0.0.1:7337` for the administration dashboard. Do not expose
-this listener to a LAN or the internet.
+this listener to a LAN or the internet. Run `atc status` or `atc doctor` from a
+second terminal using the same platform-specific executable path.
 
 ## Cross-platform smoke sequence
 
@@ -37,6 +44,9 @@ lock before process exit. A restart never copies or replaces a live database.
 
 ## Troubleshooting
 
+- If startup raises `No module named '_cffi_backend'`, the virtual environment
+  contains compiled dependencies for a different Python version. Run the
+  platform bootstrap command from the README; it will rebuild the environment.
 - If startup reports an existing owner, confirm the prior process has exited;
   do not delete a lock file while that process is alive.
 - If Relay is behind, leave Core running and inspect the dashboard Relay page.

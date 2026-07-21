@@ -9,19 +9,20 @@ macOS, and Linux without Docker. Application data is resolved with
 PowerShell on Windows, without relying on script activation policy:
 
 ```text
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+py -3.12 scripts/bootstrap.py
 .\.venv\Scripts\python.exe -m allthecontext.cli init
 .\.venv\Scripts\python.exe -m allthecontext.core.app
 ```
 
+`python scripts/bootstrap.py` is equivalent when `python` is version 3.12 or
+newer. The bootstrap validates the existing environment's interpreter and
+compiled modules before reusing it; a stale cross-version environment is
+cleared and rebuilt.
+
 macOS and Linux shells:
 
 ```text
-python3 -m venv .venv
-./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -e ".[dev]"
+python3 scripts/bootstrap.py
 ./.venv/bin/python -m allthecontext.cli init
 ./.venv/bin/python -m allthecontext.core.app
 ```

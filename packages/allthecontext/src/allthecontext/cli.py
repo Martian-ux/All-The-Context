@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,40 @@ def _passphrase(args: argparse.Namespace) -> str:
     return getpass.getpass("Export passphrase: ")
 
 
+def _render_mcp_config(
+    config: CoreConfig,
+    client_id: str,
+    *,
+    token: str | None = None,
+    target: str | None = None,
+) -> str:
+    executable = str(Path(sys.executable).resolve())
+    values: dict[str, str] = {
+        "ATC_TARGET_URL": target or f"http://{config.host}:{config.port}",
+        "ATC_CLIENT_ID": client_id,
+    }
+    if token:
+        values["ATC_CLIENT_TOKEN"] = token
+    env = ", ".join(f"{key} = {json.dumps(value)}" for key, value in values.items())
+    return "\n".join(
+        [
+            "[mcp_servers.all_the_context]",
+            f"command = {json.dumps(executable)}",
+            'args = ["-m", "allthecontext.mcp_adapter"]',
+            f"env = {{ {env} }}",
+            "required = true",
+        ]
+    )
+
+
+def _render_cli_command(command: str) -> str:
+    executable_name = "atc.exe" if os.name == "nt" else "atc"
+    executable = Path(sys.executable).resolve().with_name(executable_name)
+    if os.name == "nt":
+        return f'& "{executable}" {command}'
+    return f"{shlex.quote(str(executable))} {command}"
+
+
 def _cmd_init(args: argparse.Namespace) -> None:
     config = _config(args)
     config.prepare()
@@ -81,6 +116,11 @@ def _cmd_init(args: argparse.Namespace) -> None:
                 stored_in_keyring = True
             except RuntimeError:
                 pass
+        mcp_config = _render_mcp_config(
+            config,
+            principal.id,
+            token=None if stored_in_keyring else token,
+        )
         result = {
             "initialized": True,
             "vault_id": vault_id,
@@ -90,7 +130,11 @@ def _cmd_init(args: argparse.Namespace) -> None:
             "client_token": token,
             "stored_in_os_keyring": stored_in_keyring,
             "credential_notice": "Shown once; MCP can load it from the OS keyring when stored.",
-            "next": "Run 'atc serve-core', then generate MCP config with 'atc config-mcp'.",
+            "mcp_config": mcp_config,
+            "next": (
+                "Paste the MCP block into your client once, then run: "
+                f"{_render_cli_command('serve-core')}"
+            ),
         }
     else:
         result = {
@@ -100,24 +144,16 @@ def _cmd_init(args: argparse.Namespace) -> None:
             "message": "Existing vault retained; no new credential was created.",
         }
     _dump(result)
+    if result.get("initialized") and not args.json_only:
+        print("\n# Paste this block into your MCP client configuration")
+        print(result["mcp_config"])
+        print("\n# Then start the local Core")
+        print(_render_cli_command("serve-core"))
 
 
 def _cmd_config_mcp(args: argparse.Namespace) -> None:
     config = _config(args)
-    target = args.target or f"http://{config.host}:{config.port}"
-    executable = str(Path(sys.executable).resolve())
-    values: dict[str, str] = {
-        "ATC_TARGET_URL": target,
-        "ATC_CLIENT_ID": args.client_id,
-    }
-    if args.token:
-        values["ATC_CLIENT_TOKEN"] = args.token
-    env = ", ".join(f"{key} = {json.dumps(value)}" for key, value in values.items())
-    print("[mcp_servers.all_the_context]")
-    print(f"command = {json.dumps(executable)}")
-    print('args = ["-m", "allthecontext.mcp_adapter"]')
-    print(f"env = {{ {env} }}")
-    print("required = true")
+    print(_render_mcp_config(config, args.client_id, token=args.token, target=args.target))
 
 
 def _cmd_import(args: argparse.Namespace) -> None:
@@ -303,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--timezone", default="UTC")
     init.add_argument("--client-name", default="Local administrator")
     init.add_argument("--no-keyring", action="store_true")
+    init.add_argument("--json-only", action="store_true", help="omit the copyable MCP block")
     init.set_defaults(handler=_cmd_init)
 
     serve = commands.add_parser("serve-core", help="Run the loopback Core service")

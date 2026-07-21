@@ -14,7 +14,11 @@ def broken_links(root: Path) -> list[str]:
     failures: list[str] = []
     for document in sorted(root.rglob("*.md"), key=lambda path: str(path).casefold()):
         relative_parts = document.relative_to(root).parts
-        if any(part in {".git", ".venv", "node_modules"} for part in relative_parts):
+        if any(
+            part in {".git", "build", "dist", "node_modules", "tmp"}
+            or part.startswith((".tmp", ".venv"))
+            for part in relative_parts
+        ):
             continue
         text = document.read_text(encoding="utf-8")
         for match in LINK.finditer(text):

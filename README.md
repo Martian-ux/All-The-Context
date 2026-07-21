@@ -18,32 +18,52 @@ offline-Relay demonstration. No vector database is required.
 
 ## Development quickstart
 
-PowerShell on Windows:
+The bootstrap script creates or repairs `.venv`, installs the application, and
+checks compiled dependencies before reporting success. It safely replaces a
+stale environment left behind when the selected Python version changes.
+
+PowerShell on Windows (Python launcher recommended):
 
 ```text
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+py -3.12 scripts/bootstrap.py
 .\.venv\Scripts\atc.exe init
 .\.venv\Scripts\atc.exe serve-core
 ```
 
+If `py` is unavailable but `python --version` reports 3.12 or newer, use
+`python scripts/bootstrap.py` for the first line.
+
 macOS or Linux:
 
 ```text
-python3 -m venv .venv
-./.venv/bin/python -m pip install -e ".[dev]"
+python3 scripts/bootstrap.py
 ./.venv/bin/atc init
 ./.venv/bin/atc serve-core
 ```
 
 Open `http://127.0.0.1:7337`. The initialization command prints a one-time
-client credential and ready-to-paste MCP configuration. Run `atc doctor` to
-verify the database, Core, and MCP adapter.
+client credential and a ready-to-paste MCP configuration block. Keep the Core
+terminal running. Use `.\.venv\Scripts\atc.exe doctor` in PowerShell or
+`./.venv/bin/atc doctor` on macOS and Linux to verify the database.
+
+To install the test and lint tools too, add `--dev` to the bootstrap command.
+To deliberately rebuild the environment, add `--reset`. Do not run bootstrap
+with the `.venv` interpreter itself.
 
 Run the reproducible demonstration with:
 
 Use `.\.venv\Scripts\python.exe scripts/demo.py` in PowerShell or
 `./.venv/bin/python scripts/demo.py` on macOS and Linux.
+
+## Startup troubleshooting
+
+- `No module named '_cffi_backend'` means a virtual environment contains
+  compiled packages from a different Python version. Rerun the bootstrap
+  command; it detects and rebuilds that environment.
+- If port 7337 is already in use, stop the earlier Core or start with
+  `atc serve-core --port 7338`, then use that URL in the MCP configuration.
+- If Core reports an existing owner, another Core process is using the same
+  vault. Stop that process instead of deleting the lock file.
 
 See [Architecture](docs/architecture/ARCHITECTURE.md),
 [platform support](docs/operations/PLATFORMS.md), and
