@@ -1,0 +1,8 @@
+# Example only. Verified against the repository's STDIO adapter contract;
+# a live Codex handshake is not part of automated CI.
+[mcp_servers.all_the_context]
+command = "atc-mcp"
+args = []
+env = { ATC_TARGET_URL = "http://127.0.0.1:7337", ATC_CLIENT_ID = "replace-with-client-id", ATC_CLIENT_TOKEN = "replace-with-one-time-token" }
+startup_timeout_sec = 15
+tool_timeout_sec = 60

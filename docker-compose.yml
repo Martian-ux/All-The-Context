@@ -1,0 +1,23 @@
+name: all-the-context
+
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: apps/relay/Dockerfile
+    environment:
+      ATC_RELAY_HOST: 0.0.0.0
+      ATC_RELAY_PORT: 8743
+      ATC_RELAY_DATABASE: /var/lib/allthecontext/relay.sqlite3
+      ATC_RELAY_REPLICATION_SECRET: ${ATC_RELAY_REPLICATION_SECRET:?ATC_RELAY_REPLICATION_SECRET must be set}
+      ATC_RELAY_BEARER_TOKEN: ${ATC_RELAY_BEARER_TOKEN:?ATC_RELAY_BEARER_TOKEN must be set}
+      ATC_RELAY_CLIENTS_JSON: ${ATC_RELAY_CLIENTS_JSON:-{}}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ATC_RELAY_PORT:-8743}:8743"
+    volumes:
+      - relay-data:/var/lib/allthecontext
+
+volumes:
+  relay-data:

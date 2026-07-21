@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "all-the-context": {
+      "command": "atc-mcp",
+      "args": [],
+      "env": {
+        "ATC_TARGET_URL": "http://127.0.0.1:7337",
+        "ATC_CLIENT_ID": "replace-with-client-id",
+        "ATC_CLIENT_TOKEN": "replace-with-one-time-token"
+      }
+    }
+  }
+}
