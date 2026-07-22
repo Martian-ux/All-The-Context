@@ -240,4 +240,35 @@ on every connection, temp storage stays in memory, WAL is checkpointed, disk is
 preflighted, and one bounded job runs VACUUM. A crash, lock, or insufficient
 disk cannot roll back logical absence; it leaves a retryable pending job. This
 boundary makes no claim about snapshots, device remanence, external backups,
-user copies, or Relay/Edge parity before the follow-up integration lands.
+user copies, or Relay/Edge purge parity before the follow-up integration lands.
+
+## ADR-023: Online Core retrieval uses a bounded outbound-only broker
+
+Edge may queue an authenticated read request only after OAuth identifies a
+logical client. The request payload is sealed to Core's X25519 public key before
+SQLite or its WAL sees it. Core polls Edge over the existing bearer-authenticated
+HTTPS channel, ignores Edge-asserted scopes, resolves the identity from a
+user-approved Core-local remote-client mapping, and re-authorizes canonical
+records against that mapping and per-record allow/deny policy. It returns only
+`core_available` records. Edge never exposes loopback Core.
+Random IDs, expiries, one-use claim hashes, leases, cancellation, response
+limits, and durable cleanup make retries and restarts safe. Results remain only
+in bounded memory in the waiting Edge process; an Edge restart safely becomes
+unavailable rather than persisting private content. `local_only` is
+categorically excluded. The durable
+`always_available` projection remains independently usable while Core is off.
+
+The Render handoff carries only a 24-hour claim reference and Core public keys.
+The deployed Edge stays inert until Core signs an origin-bound challenge. Edge
+generates durable credentials locally and encrypts them to Core; acknowledgement
+revokes the claim. Render still requires a provider-owned Blueprint approval
+and environment-file upload, while AI providers require connector creation and
+OAuth consent. ATC does not claim to automate or have observed those external
+handshakes.
+
+The provider terminates OAuth at Edge, so a fully compromised live Edge can
+assert another already Core-approved logical client and observe response bytes
+while forwarding them. Core-local approval prevents unknown, revoked, or
+Edge-invented administrative authority; it is not end-to-end client attestation.
+Use separate Edge deployments for mutually distrusting client domains until a
+provider transport can carry a client-held proof through to Core.

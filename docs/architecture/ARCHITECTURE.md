@@ -26,9 +26,16 @@ flowchart LR
   Import["Archive or document"] --> Core
   Core --> CoreDB["Complete SQLite vault"]
   Core --> Relay["Hosted Relay"]
+  Relay -. "sealed request; outbound poll" .-> Core
   Relay --> RelayDB["Restricted replica"]
   Cloud["Cloud or mobile client"] --> Relay
 ```
+
+The dotted path is application-level online-Core forwarding. Edge persists only
+an encrypted, expiring request envelope. Core initiates every network request,
+decrypts and authorizes against its local approved-client mapping, and returns
+only `core_available` results. The waiting Edge process holds that response in
+bounded memory; it never persists it. `local_only` is excluded at Core.
 
 ## Retrieval
 

@@ -65,7 +65,7 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Connect your AI apps" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Edge for web and mobile" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Use your context everywhere" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up Edge" })).toBeEnabled();
   });
 
@@ -266,7 +266,7 @@ describe("dashboard", () => {
       last_sequence: 4,
       providers: [
         { id: "claude", name: "Claude", web_supported: true, mobile_supported: true, setup_url: "https://claude.ai/settings/connectors", detail: "Add on web once, then use it on iOS or Android.", setup_steps: ["Open Customize → Connectors.", "Select + → Add custom connector."] },
-        { id: "chatgpt", name: "ChatGPT", web_supported: true, mobile_supported: true, setup_url: "https://chatgpt.com/plugins", detail: "Link on web once, then use it in ChatGPT mobile.", setup_steps: ["Open Settings → Security and login → Developer mode.", "Open Settings → Plugins and select +."] },
+        { id: "chatgpt", name: "ChatGPT", web_supported: true, mobile_supported: false, setup_url: "https://chatgpt.com/", detail: "Developer-mode MCP apps are currently web-only.", setup_steps: ["An eligible workspace admin enables developer mode under Apps.", "Create the app from workspace Apps settings."] },
       ],
       synchronization: { state: "ready", last_sequence: 4 },
     });
@@ -278,7 +278,8 @@ describe("dashboard", () => {
       if (url.endsWith("/admin/edge") && method === "GET") return json(currentEdge);
       if (url.endsWith("/admin/edge/prepare")) { currentEdge = prepared; return json(prepared); }
       if (url.endsWith("/admin/edge/connect")) { currentEdge = connected; return json(connected); }
-      if (url.endsWith("/admin/edge/clients") && method === "GET") return json({ items: authorized ? [{ id: "edge:claude", name: "Claude", scopes: ["context:read"], authorized_at: "2026-07-21T00:00:00Z", active_until: 1, token_families: 1 }] : [] });
+      if (url.endsWith("/admin/edge/clients") && method === "GET") return json({ items: authorized ? [{ id: "edge:claude", name: "Claude", scopes: ["context:read"], authorized_at: "2026-07-21T00:00:00Z", active_until: 1, token_families: 1, core_approved: false, core_context_scopes: [] }] : [] });
+      if (url.includes("/admin/edge/clients/") && url.endsWith("/approve") && method === "POST") return json({ id: "edge:claude", core_approved: true, scopes: ["context:read", "context:status"] });
       if (url.includes("/admin/edge/clients/") && method === "DELETE") { authorized = false; return json({ id: "edge:claude", revoked: true }); }
       if (url.endsWith("/admin/edge/owner-link")) return json({ url: "https://personal-edge.example/owner/connect?ticket=one-time" });
       return json({ items: [] });
@@ -291,7 +292,8 @@ describe("dashboard", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /connect apps/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Set up Edge" }));
-    expect(await screen.findByDisplayValue("private-enrollment-bundle")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Download setup file" })).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("private-enrollment-bundle")).not.toBeInTheDocument();
     expect(screen.getByText("Cancel Edge setup")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel local Edge setup" })).toBeDisabled();
     expect(screen.getByText(/Deployment link unavailable/i)).toBeInTheDocument();
@@ -299,17 +301,20 @@ describe("dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify and pair" }));
 
     expect(await screen.findByText("https://personal-edge.example/mcp")).toBeInTheDocument();
-    expect(screen.getAllByText("Web + mobile")).toHaveLength(2);
+    expect(screen.getAllByText("Web + mobile")).toHaveLength(1);
+    expect(screen.getByText("Web only")).toBeInTheDocument();
     const authorizedRow = (await screen.findByText("Authorized remote apps")).parentElement?.parentElement;
     expect(await screen.findByText(/context:read/i)).toBeInTheDocument();
     const claudeRows = screen.getAllByText("Claude").map((item) => item.closest(".provider-row")).filter(Boolean);
     const remoteAuthorization = claudeRows.find((row) => within(row as HTMLElement).queryByRole("button", { name: "Disconnect" }));
     expect(remoteAuthorization).toBeDefined();
+    fireEvent.click(within(remoteAuthorization as HTMLElement).getByRole("button", { name: "Allow online Core" }));
+    await waitFor(() => expect(screen.getByText("Core approved")).toBeInTheDocument());
     fireEvent.click(within(remoteAuthorization as HTMLElement).getByRole("button", { name: "Disconnect" }));
     await waitFor(() => expect(screen.getByText(/Claude was disconnected/i)).toBeInTheDocument());
     expect(authorizedRow).toBeTruthy();
-    expect(screen.getByText(/Settings → Security and login → Developer mode/i)).toBeInTheDocument();
-    expect(screen.getByText(/Customize → Connectors/i)).toBeInTheDocument();
+    expect(screen.getByText(/workspace admin enables developer mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/Add custom connector/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /open secure approval/i }));
     expect(await screen.findByRole("link", { name: /open secure Edge sign-in/i })).toHaveAttribute("href", "https://personal-edge.example/owner/connect?ticket=one-time");
     expect(replace).toHaveBeenCalledWith("https://personal-edge.example/owner/connect?ticket=one-time");

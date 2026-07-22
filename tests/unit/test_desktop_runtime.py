@@ -31,7 +31,7 @@ def test_bundled_dashboard_contains_current_edge_setup() -> None:
         path.read_text(encoding="utf-8") for path in sorted((web_root / "assets").glob("*.js"))
     )
 
-    assert "Edge for web and mobile" in javascript
+    assert "Use your context everywhere" in javascript
     assert "/admin/edge/prepare" in javascript
     assert "Cancel Edge setup" in javascript
     assert "Web + mobile" in javascript

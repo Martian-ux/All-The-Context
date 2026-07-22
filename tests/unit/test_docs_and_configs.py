@@ -74,3 +74,14 @@ def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
     assert "USER 10001:10001" in dockerfile
     assert "127.0.0.1:${ATC_RELAY_PORT:-8743}:8743" in compose
     assert "ATC_RELAY_REPLICATION_SECRET" in compose
+
+
+def test_render_blueprint_accepts_only_the_one_time_claim_handoff() -> None:
+    blueprint = (REPOSITORY_ROOT / "render.yaml").read_text(encoding="utf-8")
+
+    assert "autoDeploy: false" in blueprint
+    assert "key: ATC_EDGE_BUNDLE" in blueprint
+    assert "sync: false" in blueprint
+    assert "ATC_RELAY_REPLICATION_SECRET" not in blueprint
+    assert "ATC_RELAY_BEARER_TOKEN" not in blueprint
+    assert "ATC_RELAY_CLIENTS_JSON" not in blueprint

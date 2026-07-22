@@ -92,7 +92,7 @@ def _database_to_zip(
             manifest = {
                 "format": "all-the-context",
                 "format_version": 1,
-                "schema_version": 3,
+                "schema_version": 4,
                 "include_sources": include_sources,
                 "include_audit": include_audit,
                 "tables": counts,

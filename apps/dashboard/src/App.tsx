@@ -565,7 +565,7 @@ function EdgeSetupPanel() {
       const result = await api.prepareEdge();
       setPrepared(result);
       setEdge(result);
-      setNotice("Your private Edge setup code is ready.");
+      setNotice("Your expiring, public-key-bound Edge claim is ready.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -581,6 +581,37 @@ function EdgeSetupPanel() {
     } catch {
       setError("Copy was blocked by the browser. Select the value and copy it manually.");
     }
+  }
+
+  async function downloadDeploymentFile() {
+    setWorking("deployment-file");
+    setError(null);
+    try {
+      const blob = await api.downloadEdgeDeploymentEnv();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "setup.env";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice("One-time Edge claim downloaded. Upload it to Render, then delete the file.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  function downloadRecoveryCode() {
+    if (!prepared) return;
+    const blob = new Blob([`${prepared.recovery_code}\n`], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "all-the-context-edge-recovery.txt";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Recovery code downloaded. Store it somewhere private, separate from the hosting account.");
   }
 
   async function pair(event: React.FormEvent<HTMLFormElement>) {
@@ -665,6 +696,21 @@ function EdgeSetupPanel() {
     }
   }
 
+  async function approveEdgeClient(client: EdgeAuthorizedClient) {
+    if (!window.confirm(`Allow ${client.name} to request core-available context while Core is online? Local-only context remains blocked.`)) return;
+    setWorking(`approve:${client.id}`);
+    setError(null);
+    try {
+      await api.approveEdgeClient(client);
+      setEdgeClients((items) => items.map((item) => item.id === client.id ? { ...item, core_approved: true } : item));
+      setNotice(`${client.name} can now request approved core-available context while Core is online.`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setWorking(null);
+    }
+  }
+
   async function decommissionEdge() {
     if (!window.confirm("Remove active hosted Edge records and disconnect every remote AI app? This does not delete hosting-provider disks or backups. Your local Core is not deleted.")) return;
     setWorking("decommission");
@@ -714,8 +760,8 @@ function EdgeSetupPanel() {
         <span className="integration-icon integration-icon--cloud"><Cloud size={21} /></span>
         <div>
           <span className="eyebrow">Away from this computer</span>
-          <h2>Edge for web and mobile</h2>
-          <p>Only approved always-available context is readable here. Remote proposals wait as encrypted transport envelopes for up to 30 days; Core stays authoritative.</p>
+          <h2>Use your context everywhere</h2>
+          <p>Always-available context works while Core is off. When Core is online, authorized core-available retrieval travels through an outbound-only channel; local-only context never leaves this computer.</p>
         </div>
         <span className={`integration-state ${edge?.state === "ready" ? "integration-state--connected" : edge?.state === "degraded" ? "integration-state--waiting" : ""}`}>
           <span />{edge?.state === "ready" ? "Current" : edge?.state === "degraded" ? "Needs repair" : connected ? "Paired" : edge?.state === "prepared" ? "Setup started" : "Not set up"}
@@ -741,18 +787,18 @@ function EdgeSetupPanel() {
         <div className="edge-steps" aria-label="Edge setup steps">
           <div className="edge-step">
             <span className="edge-step-number">1</span>
-            <div><strong>Deploy your personal Edge</strong><p>Open the hosting setup and sign in. {prepared.deployment.cost_note} This is the only outside account step.</p></div>
-            {deployUrl ? <a className="secondary-button" href={deployUrl} target="_blank" rel="noreferrer">Open Render <ExternalLink size={14} /></a> : <span className="support-label">Deployment link unavailable in this development build</span>}
+            <div><strong>Download the one-time Edge claim</strong><p>This file contains only an expiring claim reference and Core public keys—never Core, admin, client, or durable replication credentials. Upload it to Render, then delete the file.</p></div>
+            <button className="secondary-button" disabled={working !== null} onClick={() => void downloadDeploymentFile()}>{working === "deployment-file" ? "Downloading..." : "Download setup file"}</button>
           </div>
           <div className="edge-step">
             <span className="edge-step-number">2</span>
-            <div className="edge-step-main"><strong>Paste the private setup code</strong><p>Use it as <code>{prepared.deployment.enrollment_environment_variable}</code> when Render asks. Never put it in source control.</p><textarea className="edge-secret" readOnly value={prepared.enrollment_bundle} aria-label="Private Edge setup code" /></div>
-            <button className="secondary-button" onClick={() => void copy(prepared.enrollment_bundle, "Setup code")}><Copy size={14} /> Copy code</button>
+            <div><strong>Deploy your personal Edge</strong><p>Open Render, approve the Blueprint, and use Add from .env to upload the downloaded file when setting environment variables. Render requires these account clicks. {prepared.deployment.cost_note}</p></div>
+            {deployUrl ? <a className="secondary-button" href={deployUrl} target="_blank" rel="noreferrer">Open Render <ExternalLink size={14} /></a> : <span className="support-label">Deployment link unavailable in this development build</span>}
           </div>
           <div className="edge-step edge-step--recovery">
             <span className="edge-step-number">3</span>
             <div className="edge-step-main"><strong>Save the recovery code</strong><p>This approves a new AI app if Core is temporarily unavailable.</p><code className="recovery-code">{prepared.recovery_code}</code></div>
-            <button className="secondary-button" onClick={() => void copy(prepared.recovery_code, "Recovery code")}><Copy size={14} /> Copy</button>
+            <button className="secondary-button" onClick={downloadRecoveryCode}>Download recovery code</button>
           </div>
           <form className="edge-pair" onSubmit={(event) => void pair(event)}>
             <label><span>Edge address</span><input type="url" required value={edgeUrl} onChange={(event) => setEdgeUrl(event.target.value)} placeholder="https://your-edge.example" autoComplete="url" /></label>
@@ -765,7 +811,7 @@ function EdgeSetupPanel() {
       {connected && edge ? (
         <div className="edge-connected">
           <div className="edge-endpoint"><div><span>Remote MCP address</span><code>{edge.mcp_url}</code></div><button className="secondary-button" onClick={() => void copy(edge.mcp_url ?? "", "MCP address")}><Copy size={14} /> 2. Copy address</button></div>
-          <div className="edge-connect-guide"><span className="eyebrow">One-time AI app setup</span><strong>Connect from this computer, then use supported mobile apps.</strong><ol><li>Open the secure Edge approval window below.</li><li>Copy the Remote MCP address above.</li><li>Open your provider, follow its exact path, paste the address, and approve OAuth.</li></ol></div>
+          <div className="edge-connect-guide"><span className="eyebrow">One-time AI app setup</span><strong>ATC opens approval; your AI provider requires the final account clicks.</strong><ol><li>Open the secure Edge approval window below.</li><li>Enter the Remote MCP address in the provider's web or desktop settings.</li><li>Approve OAuth. Only providers marked Web + mobile can use that connection on mobile.</li></ol></div>
           <div className="edge-actions">
             <button className="secondary-button" disabled={working !== null || !canManage} onClick={() => void sync()}><RefreshCw size={14} />{working === "sync" ? "Syncing..." : "Sync now"}</button>
             <button className="primary-button" disabled={working !== null || !canManage} onClick={() => void createOwnerLink()}>{working === "owner" ? "Creating link..." : "1. Open secure approval"}</button>
@@ -779,10 +825,11 @@ function EdgeSetupPanel() {
             </div>)}
           </div>
           <div className="edge-authorizations">
-            <div><strong>Authorized remote apps</strong><p>Disconnecting an app invalidates its Edge access and refresh tokens.</p></div>
+            <div><strong>Authorized remote apps</strong><p>After provider OAuth, approve Core access here. Core ignores identities and scopes asserted by Edge unless they match this local approval. Disconnecting revokes both.</p></div>
             {edgeClients.length ? edgeClients.map((client) => <div className="provider-row" key={client.id}>
               <div><strong>{client.name}</strong><p>{client.scopes.join(" · ")} · authorized {formatDate(client.authorized_at)}</p></div>
-              <span className="support-label support-label--yes">Connected</span>
+              <span className={`support-label ${client.core_approved ? "support-label--yes" : ""}`}>{client.core_approved ? "Core approved" : "Edge only"}</span>
+              {!client.core_approved ? <button className="secondary-button" disabled={working !== null} onClick={() => void approveEdgeClient(client)}>{working === `approve:${client.id}` ? "Approving..." : "Allow online Core"}</button> : null}
               <button className="secondary-button" disabled={working !== null} onClick={() => void revokeEdgeClient(client)}>{working === `revoke:${client.id}` ? "Disconnecting..." : "Disconnect"}</button>
             </div>) : <p className="quiet-copy">No remote AI app has been authorized yet.</p>}
           </div>

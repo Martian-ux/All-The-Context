@@ -6,7 +6,7 @@ services:
     dockerContext: .
     dockerfilePath: ./apps/relay/Dockerfile
     healthCheckPath: /healthz
-    autoDeployTrigger: off
+    autoDeploy: false
     numInstances: 1
     envVars:
       - key: ATC_EDGE_BUNDLE
@@ -15,8 +15,6 @@ services:
         value: 0.0.0.0
       - key: ATC_RELAY_DATABASE
         value: /var/lib/allthecontext/edge.sqlite3
-      - key: ATC_EDGE_PUBLIC_URL
-        sync: false
     disk:
       name: all-the-context-edge-data
       mountPath: /var/lib/allthecontext

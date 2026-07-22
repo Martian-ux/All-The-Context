@@ -2,8 +2,8 @@
 
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
-  implemented. Signed desktop updates and seamless Edge/mobile access are
-  under active implementation.
+  implemented. The secure Edge/mobile forwarding foundation is integrated;
+  signed desktop updates and Edge purge parity are under active integration.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -16,7 +16,8 @@
   managed MCP self-healing after Core stops; per-user startup; Windows Start
   Menu/Desktop launchers and uninstall registration; owner-gated hosted Edge
   enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
-  remote-app revocation, and terminal decommissioning; self-repairing source
+  outbound-only encrypted Core retrieval forwarding, remote-app approval and
+  revocation, and terminal decommissioning; self-repairing source
   bootstrap; accessible responsive navigation; one-click complete encrypted
   dashboard backup with bounded temporary resources; demonstration and
   automated tests; Retrieval V2 Phase 1 with an
@@ -24,7 +25,7 @@
   ranking invariant, bounded lexical channels/RRF, improved context compiler,
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
   and cross-platform release workflows with strict offline-signed OTA metadata.
-- Current local integrated evidence on Windows 11 and Python 3.12: 167 Python
+- Current local integrated evidence on Windows 11 and Python 3.12: 181 Python
   tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
@@ -48,6 +49,12 @@
   physical-content, and replication-contract coverage. Ruff formatting/lint,
   strict mypy, and docs checks pass on the combined branch. This slice did not
   rerun the dashboard because dashboard sources were untouched.
+- The integrated Edge/mobile slice additionally exercised sealed forwarding-request
+  persistence, memory-only responses with DB/WAL/SHM byte scans, unknown or
+  revoked identity and Edge-asserted admin-scope rejection, claim
+  rotation/replay/restart, outbound-only
+  polling, and local offline/online mobile demonstrations. Real hosting and
+  provider handshakes remain external gaps.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
@@ -69,10 +76,11 @@
   content-free `record_purged` event, and crash-resumable secure-delete/WAL/
   VACUUM compaction. Ordinary delete remains history-preserving.
 - The bounded review/purge admin API and CLI are implemented. Dashboard group
-  review is deferred to avoid collision with the active Edge wizard. Relay/Edge
-  event application, Edge physical compaction, and mobile/Core forwarding
-  parity are deliberately deferred to the next integration slice; no Core
-  completion claim implies those copies have been compacted.
+  review is deferred to avoid collision with the Edge wizard. Relay/Edge purge
+  event application and Edge physical compaction are deliberately deferred to
+  the next integration slice; no Core completion claim implies those copies
+  have been compacted. Online `core_available` forwarding is implemented and
+  does not change purge semantics.
 
 ## Retrieval V2 status
 
@@ -129,12 +137,20 @@
   with SDK/TestClient integrations. No public repository/image or
   `ATC_EDGE_DEPLOY_URL` is configured, so the dashboard truthfully reports that
   deployment is unavailable in this development build. Publishing those assets
-  is required before hosted Edge setup can be one-click. A connector linked
-  through the providers' current web/Desktop flows can then be used from their
-  mobile apps, subject to plan and workspace-admin policy; real ChatGPT and
-  Claude hosted/mobile handshakes remain unobserved.
+  is required before hosted Edge setup can be one-click. Claude custom
+  connectors linked through its current web/Desktop flow can then be used from
+  Claude mobile, subject to plan and workspace-admin policy. ChatGPT
+  developer-mode MCP apps are currently web-only; real ChatGPT and Claude
+  hosted handshakes remain unobserved.
 - Edge provides the offline `always_available` projection and proposal queue.
-  It does not yet forward `core_available` retrieval to an online Core.
+  It also forwards authorized `core_available` retrieval through Core-initiated
+  outbound polling, without exposing loopback Core. Real hosted/NAT observation
+  remains pending; local integration tests exercise the same HTTP contracts.
+  Forwarded queries are sealed to Core before Edge persistence, responses are
+  memory-only, and Core requires a locally approved remote-client identity.
+- New Edge deployments use an expiring public-key claim package. The Edge is
+  inert before claim, generates durable replication credentials itself, returns
+  them encrypted to Core, and revokes claim capability after acknowledgement.
 - The local SQLite vault is not application-encrypted at rest; operators rely
   on operating-system account and disk protection. Portable exports are
   passphrase-encrypted.

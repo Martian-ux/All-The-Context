@@ -223,6 +223,7 @@ export const api = {
   integrations: () => request<IntegrationsStatus>("/admin/integrations"),
   edgeStatus: () => request<EdgeStatus>("/admin/edge"),
   prepareEdge: () => request<EdgePrepareResult>("/admin/edge/prepare", { method: "POST" }),
+  downloadEdgeDeploymentEnv: () => requestDownload("/admin/edge/deployment-env", {}),
   connectEdge: (edgeUrl: string) =>
     request<EdgeActionResult>("/admin/edge/connect", {
       method: "POST",
@@ -232,6 +233,11 @@ export const api = {
   secureEdgeStorage: () => request<EdgeStatus>("/admin/edge/secure-storage", { method: "POST" }),
   edgeOwnerLink: () => request<{ url: string }>("/admin/edge/owner-link", { method: "POST" }),
   edgeClients: () => request<Page<EdgeAuthorizedClient>>("/admin/edge/clients"),
+  approveEdgeClient: (client: EdgeAuthorizedClient) =>
+    request<{ id: string; core_approved: boolean; scopes: string[] }>(
+      `/admin/edge/clients/${encodeURIComponent(client.id)}/approve`,
+      { method: "POST", body: JSON.stringify({ name: client.name, context_scopes: [] }) },
+    ),
   revokeEdgeClient: (id: string) =>
     request<{ id: string; revoked: boolean }>(`/admin/edge/clients/${encodeURIComponent(id)}`, {
       method: "DELETE",

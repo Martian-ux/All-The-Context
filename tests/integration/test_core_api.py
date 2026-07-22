@@ -247,17 +247,39 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert session_match is not None
         browser_token = session_match.group(1)
         browser_auth = {"Authorization": f"{BROWSER_AUTH_SCHEME} {browser_token}"}
+        dashboard_headers = {**browser_auth, DASHBOARD_REQUEST_HEADER: "1"}
         assert client.get("/v1/context/status", headers=browser_auth).status_code == 200
         edge_setup = client.get("/v1/admin/edge", headers=browser_auth)
         assert edge_setup.status_code == 200
         providers = {item["id"]: item for item in edge_setup.json()["providers"]}
-        assert providers["chatgpt"]["mobile_supported"] is True
-        assert providers["chatgpt"]["setup_url"] == "https://chatgpt.com/plugins"
-        assert providers["chatgpt"]["setup_steps"][0] == (
-            "On ChatGPT web, open Settings → Security and login and enable Developer mode."
+        assert providers["chatgpt"]["mobile_supported"] is False
+        assert "web-only" in providers["chatgpt"]["detail"]
+        prepared_claim = client.post("/v1/admin/edge/prepare", headers=dashboard_headers)
+        assert prepared_claim.status_code == 200
+        deployment_file = client.post("/v1/admin/edge/deployment-env", headers=dashboard_headers)
+        assert deployment_file.status_code == 200
+        assert deployment_file.headers["cache-control"] == "no-store"
+        assert 'filename="setup.env"' in deployment_file.headers["content-disposition"]
+        assert "atc-edge-claim-v1." in deployment_file.text
+        material = client.app.state.edge_connections.material()
+        assert material is not None
+        assert material.bundle.replication_secret not in deployment_file.text
+        assert material.bundle.replication_token not in deployment_file.text
+        assert token not in deployment_file.text
+        client.app.state.edge_connections.replace_bundle(
+            material,
+            material.bundle,
+            preserve_claim=False,
         )
+        prepared_again = client.post("/v1/admin/edge/prepare", headers=dashboard_headers)
+        assert prepared_again.status_code == 409
+        assert material.bundle.replication_secret not in prepared_again.text
+        assert material.bundle.replication_token not in prepared_again.text
+        assert token not in prepared_again.text
+        assert providers["chatgpt"]["setup_url"] == "https://chatgpt.com/"
+        assert "eligible workspace admin" in providers["chatgpt"]["setup_steps"][0]
         assert providers["claude"]["mobile_supported"] is True
-        assert "Customize → Connectors" in providers["claude"]["setup_steps"][0]
+        assert "Settings → Connectors" in providers["claude"]["setup_steps"][0]
         assert client.get("/v1/context/status").status_code == 401
         assert client.get(connect_path, follow_redirects=False).status_code == 410
         integrations = client.get("/v1/admin/integrations", headers=browser_auth)
@@ -267,8 +289,6 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
             client.post("/v1/admin/integrations/chatgpt_codex", headers=browser_auth).status_code
             == 403
         )
-        dashboard_headers = {**browser_auth, DASHBOARD_REQUEST_HEADER: "1"}
-
         unprotected_export = client.post(
             "/v1/admin/export",
             headers=browser_auth,
@@ -305,7 +325,7 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert codex_status["state"] == "degraded"
         assert "different Core" in codex_status["reason"]
         assert degraded["remote"]["configured"] is False
-        assert degraded["remote"]["state"] == "not_configured"
+        assert degraded["remote"]["state"] == "prepared"
         assert (
             client.post(
                 "/v1/admin/integrations/chatgpt_codex", headers=dashboard_headers

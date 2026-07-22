@@ -342,8 +342,9 @@ class SetupWizard:
         self._check(
             "Continue with web & mobile setup",
             "Opens guided Edge setup next. Always-on hosting uses an external paid account "
-            "(~$7.25/month). Claude and ChatGPT support mobile after one-time web setup; "
-            "workspace policy may gate custom/developer connectors.",
+            "(~$7.25/month). Claude custom connectors can extend to mobile after web/Desktop "
+            "setup; ChatGPT developer-mode MCP is currently web-only. Workspace policy may "
+            "gate either connector.",
             self.continue_to_remote_setup,
         )
         self._check(

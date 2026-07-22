@@ -100,12 +100,32 @@ def test_pairing_proof_is_bound_to_origin_vault_and_challenge() -> None:
     )
 
 
+def test_abandoned_expired_claim_is_rotated_idempotently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    connections = EdgeConnectionStore(CoreConfig.in_directory(tmp_path))
+    first = connections.prepare("vault-abandoned")
+    assert first.claim_bundle is not None
+    future = first.claim_bundle.expires_at + 1
+    monkeypatch.setattr("allthecontext.edge_connection.time.time", lambda: future)
+    monkeypatch.setattr("allthecontext.edge_claim.time.time", lambda: future)
+
+    rotated = connections.prepare("vault-abandoned")
+    assert rotated.claim_bundle is not None
+    assert rotated.claim_bundle.claim_id != first.claim_bundle.claim_id
+    assert rotated.bundle == first.bundle
+    assert rotated.recovery_code == first.recovery_code
+    assert connections.prepare("vault-abandoned").claim_bundle == rotated.claim_bundle
+
+
 def test_connect_rejects_an_already_decommissioned_edge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     connections = EdgeConnectionStore(CoreConfig.in_directory(tmp_path))
     material = connections.prepare("vault-terminal")
+    material = connections.replace_bundle(material, material.bundle, preserve_claim=False)
     origin = "https://edge.example.test"
 
     class Response:

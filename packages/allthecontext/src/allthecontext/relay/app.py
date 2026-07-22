@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from allthecontext.edge_claim import EdgeClaimBundle, EdgeClaimError, EdgeClaimStore
 from allthecontext.edge_setup import (
     EdgeEnrollmentBundle,
     EdgeSetupError,
@@ -28,6 +29,7 @@ from allthecontext.edge_setup import (
     hash_recovery_code,
     normalize_edge_url,
 )
+from allthecontext.relay.forwarding import EdgeForwardingBroker, ForwardingError
 from allthecontext.relay.mcp import build_edge_mcp
 from allthecontext.relay.oauth import EdgeOAuthProvider, EdgeOAuthStore
 from allthecontext.relay.service import (
@@ -61,6 +63,7 @@ class RelayApplicationConfig:
     vault_id: str | None = None
     owner_secret_hash: str | None = None
     extra_redirect_origins: tuple[str, ...] = ()
+    claim_bundle: EdgeClaimBundle | None = None
 
 
 class ProposalRequest(BaseModel):
@@ -91,6 +94,13 @@ class ContextErrorRequest(BaseModel):
     record_id: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=64_000)
     evidence: str | None = Field(default=None, max_length=16_000)
+
+
+class ForwardResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim_token: str = Field(min_length=20, max_length=200)
+    response: dict[str, Any]
 
 
 class _TokenAuthenticator:
@@ -131,6 +141,9 @@ class _TokenAuthenticator:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credential"
             )
+
+    def rotate_replication(self, token: str) -> None:
+        self._replication_digest = self._digest(token)
 
     def require_client(self, authorization: str | None) -> ClientIdentity:
         supplied = self._digest(self._bearer(authorization))
@@ -249,10 +262,13 @@ def create_app(
     owner_secret_hash: str | None = None,
     vault_id: str | None = None,
     close_service_on_shutdown: bool = True,
+    forwarding_broker: EdgeForwardingBroker | None = None,
+    claim_store: EdgeClaimStore | None = None,
 ) -> FastAPI:
     """Build an app around an injected service (useful for tests and hosting)."""
 
     authenticator = _TokenAuthenticator(replication_bearer_token, client_tokens)
+    pairing_secret = [bytes(edge_pairing_secret or b"")]
     edge_enabled = edge_provider is not None
     if edge_enabled and (
         owner_secret_hash is None or vault_id is None or edge_pairing_secret is None
@@ -267,8 +283,13 @@ def create_app(
             raise ValueError("owner_secret_hash must be hexadecimal") from exc
 
     if edge_provider is not None and vault_id is not None and edge_pairing_secret is not None:
+        binding_key = (
+            claim_store.bundle.signing_public_key.encode()
+            if claim_store is not None
+            else edge_pairing_secret
+        )
         binding_fingerprint = hmac.new(
-            edge_pairing_secret,
+            binding_key,
             (f"all-the-context/edge-identity/v1\0{vault_id}\0{edge_provider.public_url}").encode(),
             hashlib.sha256,
         ).hexdigest()
@@ -278,7 +299,7 @@ def create_app(
         )
 
     edge_mcp = (
-        build_edge_mcp(service, edge_provider, vault_id=vault_id)
+        build_edge_mcp(service, edge_provider, vault_id=vault_id, forwarding=forwarding_broker)
         if edge_provider is not None and vault_id is not None
         else None
     )
@@ -305,6 +326,21 @@ def create_app(
     async def edge_public_guards(request: Request, call_next: Any) -> Any:
         provider = edge_provider
         path = request.url.path
+        if (
+            claim_store is not None
+            and not claim_store.acknowledged()
+            and path
+            not in {
+                "/healthz",
+                "/v1/edge/claim/challenge",
+                "/v1/edge/claim",
+                "/v1/edge/claim/ack",
+            }
+        ):
+            return JSONResponse(
+                status_code=423,
+                content={"detail": "This Edge is awaiting its authorized Core claim"},
+            )
         if (
             provider is not None
             and provider.store.is_decommissioned()
@@ -374,19 +410,21 @@ def create_app(
             "status": (
                 "decommissioned"
                 if edge_provider is not None and edge_provider.store.is_decommissioned()
+                else "awaiting_claim"
+                if claim_store is not None and claim_store.credentials() is None
                 else "ok"
             ),
             "component": "edge" if edge_enabled else "relay",
             "authority": "core",
         }
-        if challenge is not None:
+        if challenge is not None and (claim_store is None or claim_store.credentials() is not None):
             if edge_provider is None or vault_id is None:
                 raise HTTPException(status_code=404, detail="Edge pairing is not enabled")
             if requested_vault_id != vault_id:
                 raise HTTPException(status_code=404, detail="Edge vault not found")
             try:
                 result["proof"] = edge_instance_proof(
-                    edge_pairing_secret or b"",
+                    pairing_secret[0],
                     public_url=edge_provider.public_url,
                     vault_id=vault_id,
                     challenge=challenge,
@@ -394,6 +432,67 @@ def create_app(
             except EdgeSetupError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
         return result
+
+    @app.post("/v1/edge/claim/challenge")
+    def edge_claim_challenge() -> dict[str, Any]:
+        if claim_store is None:
+            raise HTTPException(status_code=404, detail="Edge claim is not enabled")
+        try:
+            return {"claim_id": claim_store.bundle.claim_id, "challenge": claim_store.challenge()}
+        except EdgeClaimError as exc:
+            raise HTTPException(status_code=410, detail="Edge claim is unavailable") from exc
+
+    @app.post("/v1/edge/claim")
+    def complete_edge_claim(request: Annotated[dict[str, Any], Body()]) -> dict[str, str]:
+        if claim_store is None:
+            raise HTTPException(status_code=404, detail="Edge claim is not enabled")
+        challenge = request.get("challenge")
+        signature = request.get("signature")
+        if not isinstance(challenge, str) or not isinstance(signature, str):
+            raise HTTPException(status_code=422, detail="claim proof is invalid")
+        try:
+            envelope = claim_store.complete(challenge, signature)
+            credentials = claim_store.credentials()
+            assert credentials is not None
+            new_secret, new_token = credentials
+            service.rotate_replication_secret(new_secret.encode())
+            authenticator.rotate_replication(new_token)
+            pairing_secret[0] = new_secret.encode()
+            return envelope
+        except EdgeClaimError as exc:
+            raise HTTPException(status_code=403, detail="claim proof was rejected") from exc
+
+    @app.post("/v1/edge/claim/ack")
+    def acknowledge_edge_claim(
+        _authorized: None = Depends(replication_token_authorized),
+    ) -> dict[str, bool]:
+        if claim_store is None:
+            raise HTTPException(status_code=404, detail="Edge claim is not enabled")
+        claim_store.acknowledge()
+        return {"claimed": True}
+
+    @app.get("/v1/forward/requests")
+    def claim_forward_requests(
+        limit: Annotated[int, Query(ge=1, le=8)] = 8,
+        _authorized: None = Depends(replication_authorized),
+    ) -> dict[str, Any]:
+        if forwarding_broker is None:
+            raise HTTPException(status_code=404, detail="Core forwarding is not enabled")
+        return {"items": forwarding_broker.claim(limit=limit)}
+
+    @app.post("/v1/forward/requests/{request_id}/response")
+    def answer_forward_request(
+        request_id: str,
+        request: ForwardResponseRequest,
+        _authorized: None = Depends(replication_authorized),
+    ) -> dict[str, bool]:
+        if forwarding_broker is None:
+            raise HTTPException(status_code=404, detail="Core forwarding is not enabled")
+        try:
+            forwarding_broker.answer(request_id, request.claim_token, request.response)
+        except ForwardingError as exc:
+            raise HTTPException(status_code=409, detail="request is no longer active") from exc
+        return {"accepted": True}
 
     owner_cookie = "atc_edge_owner"
 
@@ -533,6 +632,12 @@ def create_app(
             "last_applied_sequence": service.store.checkpoint(active_vault),
             "oauth_enabled": True,
             "proposal_queue": "encrypted_and_bounded",
+            "core_forwarding": {
+                "core_online": forwarding_broker.core_online() if forwarding_broker else False,
+                **(
+                    forwarding_broker.status() if forwarding_broker else {"queued": 0, "claimed": 0}
+                ),
+            },
         }
 
     @app.get("/v1/edge/clients")
@@ -554,6 +659,8 @@ def create_app(
         revoked = provider.store.revoke_logical_client(logical_client_id)
         if not revoked:
             raise HTTPException(status_code=404, detail="Authorized Edge client not found")
+        if forwarding_broker is not None:
+            forwarding_broker.cancel_client(logical_client_id)
         return {"id": logical_client_id, "revoked": True}
 
     @app.post("/v1/edge/decommission")
@@ -563,6 +670,8 @@ def create_app(
         provider, _active_vault, _owner_hash = require_edge()
         if not provider.store.is_decommissioned():
             provider.store.decommission()
+        if forwarding_broker is not None:
+            forwarding_broker.purge()
         # Always retry the purge. If a prior request was interrupted after the
         # terminal flag was committed, this request finishes erasing artifacts.
         records_remaining = service.purge_all()
@@ -691,9 +800,10 @@ def create_app(
                 "<p>Add the MCP URL below in the provider's connector settings. OAuth will "
                 "return here once so you can approve the connection.</p>"
                 f"<code>{html.escape(provider.resource)}</code>"
-                "<p>Once linked on the web, Claude custom connectors and ChatGPT "
-                "developer-mode apps are also available in their iOS and Android apps. "
-                "Workspace policy may gate setup.</p>"
+                "<p>Claude custom connectors linked on web or Desktop can also be used "
+                "on iOS and Android. ChatGPT developer-mode MCP apps are currently "
+                "web-only and limited to eligible workspaces. Workspace policy may gate "
+                "either setup.</p>"
                 "<form method='post' action='/owner/registration-window'>"
                 "<button type='submit'>Allow a new AI app for 10 minutes</button></form>"
                 + apps
@@ -1038,17 +1148,28 @@ def config_from_environment() -> RelayApplicationConfig:
     )
     bundle_value = os.environ.get("ATC_EDGE_BUNDLE", "").strip()
     bundle: EdgeEnrollmentBundle | None = None
+    claim_bundle: EdgeClaimBundle | None = None
     if bundle_value:
         try:
-            bundle = EdgeEnrollmentBundle.decode(bundle_value)
-        except EdgeSetupError as exc:
+            if bundle_value.startswith("atc-edge-claim-v1."):
+                claim_bundle = EdgeClaimBundle.decode(bundle_value)
+            else:
+                bundle = EdgeEnrollmentBundle.decode(bundle_value)
+        except (EdgeSetupError, EdgeClaimError) as exc:
             raise RuntimeError(f"ATC_EDGE_BUNDLE is invalid: {exc}") from exc
 
-    if bundle is not None:
+    vault_id: str | None
+    owner_secret_hash: str | None
+    if claim_bundle is not None:
+        secret = hashlib.sha256(claim_bundle.signing_public_key.encode()).digest()
+        replication_token = hashlib.sha256(claim_bundle.claim_id.encode()).hexdigest()
+        vault_id = claim_bundle.vault_id
+        owner_secret_hash = claim_bundle.owner_secret_hash
+    elif bundle is not None:
         secret = bundle.replication_secret.encode("utf-8")
         replication_token = bundle.replication_token
-        vault_id: str | None = bundle.vault_id
-        owner_secret_hash: str | None = bundle.owner_secret_hash
+        vault_id = bundle.vault_id
+        owner_secret_hash = bundle.owner_secret_hash
     else:
         secret = os.environ.get("ATC_RELAY_REPLICATION_SECRET", "").encode("utf-8")
         replication_token = os.environ.get("ATC_RELAY_BEARER_TOKEN", "")
@@ -1120,13 +1241,26 @@ def config_from_environment() -> RelayApplicationConfig:
         vault_id=vault_id,
         owner_secret_hash=owner_secret_hash,
         extra_redirect_origins=extra_redirects,
+        claim_bundle=claim_bundle,
     )
 
 
 def build_environment_app() -> FastAPI:
     config = config_from_environment()
     relay_store = SQLiteRelayStore(config.database_path)
-    service = RelayService(relay_store, config.replication_secret)
+    claim_store = (
+        EdgeClaimStore(config.database_path, config.claim_bundle, config.public_url)
+        if config.claim_bundle is not None and config.public_url is not None
+        else None
+    )
+    credentials = claim_store.credentials() if claim_store is not None else None
+    runtime_secret = credentials[0].encode() if credentials else config.replication_secret
+    runtime_token = credentials[1] if credentials else config.replication_bearer_token
+    service = RelayService(relay_store, runtime_secret)
+    forwarding = EdgeForwardingBroker(
+        config.database_path,
+        config.claim_bundle.encryption_public_key if config.claim_bundle is not None else None,
+    )
     edge_provider: EdgeOAuthProvider | None = None
     if config.public_url is not None:
         oauth_store = EdgeOAuthStore(config.database_path)
@@ -1137,12 +1271,14 @@ def build_environment_app() -> FastAPI:
         )
     return create_app(
         service,
-        replication_bearer_token=config.replication_bearer_token,
+        replication_bearer_token=runtime_token,
         client_tokens=config.client_tokens,
         edge_provider=edge_provider,
-        edge_pairing_secret=config.replication_secret if edge_provider is not None else None,
+        edge_pairing_secret=runtime_secret if edge_provider is not None else None,
         owner_secret_hash=config.owner_secret_hash,
         vault_id=config.vault_id,
+        forwarding_broker=forwarding if edge_provider is not None else None,
+        claim_store=claim_store,
     )
 
 
