@@ -20,3 +20,11 @@ Candidates default to review. A future policy hook may auto-approve exact,
 explicit, low-sensitivity statements from a client granted `auto_approve`;
 model inferences remain review-only. Sensitive candidates require explicit
 availability confirmation before replication.
+
+Candidates may propose an `entity_key`/`attribute_key` pair with their existing
+source reference and evidence. The pair is optional but atomic: supplying only
+one is invalid. Core normalizes it for deterministic comparison, exposes it in
+candidate review, and creates no canonical slot until an administrator approves
+the candidate. Approval and correction may edit the pair. Duplicate/conflict
+groups are review signals only; approval never silently merges, supersedes, or
+chooses a record.

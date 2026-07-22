@@ -17,6 +17,7 @@ class CoreService:
         self.config.prepare()
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
+        self.store.rebuild_integrity_groups()
         self.ingestion = IngestionService(self.store)
         self.retrieval = RetrievalEngine(self.store)
         self.imports = ArchiveImportService(self.store, max_bytes=config.max_import_bytes)

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
 import sqlite3
 import threading
+import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,6 +49,9 @@ class InvalidStateError(StorageError):
     pass
 
 
+PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
+
+
 def durable_sqlite_footprint(database_path: Path) -> int:
     """Return bytes needed for durable SQLite state (main database plus WAL)."""
     resolved = database_path.resolve()
@@ -69,6 +75,25 @@ def _hash_text(value: str) -> str:
 
 def _loads(value: str | None, default: Any) -> Any:
     return default if value is None else json.loads(value)
+
+
+def _normalized_slot_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    if not normalized:
+        raise InvalidStateError("memory slot keys must not normalize to an empty value")
+    return normalized
+
+
+def _value_fingerprint(row: sqlite3.Row) -> str:
+    structured = _loads(cast(str | None, row["structured_value_json"]), None)
+    if structured is not None:
+        material = "structured:" + _json(structured)
+    else:
+        content = unicodedata.normalize("NFKC", str(row["content"])).casefold()
+        material = "content:" + " ".join(re.findall(r"\w+", content))
+    return _hash_text(material)
 
 
 class _ClosingConnection(sqlite3.Connection):
@@ -106,6 +131,8 @@ class CoreStore:
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA secure_delete = ON")
+        connection.execute("PRAGMA temp_store = MEMORY")
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
@@ -598,11 +625,11 @@ class CoreStore:
         connection.execute(
             "INSERT INTO context_candidates"
             "(id,vault_id,session_id,source_id,source_reference,submitted_by_client_id,kind,content,"
-            "structured_value_json,scopes_json,tags_json,source_service,source_type,evidence,"
+            "structured_value_json,entity_key,attribute_key,scopes_json,tags_json,source_service,source_type,evidence,"
             "confidence,sensitivity,availability,allowed_clients_json,denied_clients_json,"
             "valid_from,expires_at,supersedes,explicit_user_statement,idempotency_key,approval_status,"
             "content_hash,schema_version,created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 candidate_id,
                 self.vault_id(),
@@ -615,6 +642,8 @@ class CoreStore:
                 _json(candidate.structured_value)
                 if candidate.structured_value is not None
                 else None,
+                _normalized_slot_key(candidate.entity_key),
+                _normalized_slot_key(candidate.attribute_key),
                 _json(candidate.scopes),
                 _json(candidate.tags),
                 candidate.source_service,
@@ -727,6 +756,8 @@ class CoreStore:
             kind=str(row["kind"]),
             content=str(row["content"]),
             structured_value=_loads(row["structured_value_json"], None),
+            entity_key=cast(str | None, row["entity_key"]),
+            attribute_key=cast(str | None, row["attribute_key"]),
             scopes=_loads(row["scopes_json"], []),
             tags=_loads(row["tags_json"], []),
             source_id=cast(str | None, row["source_id"]),
@@ -807,6 +838,12 @@ class CoreStore:
                 row["kind"],
                 content,
                 row["structured_value_json"],
+                _normalized_slot_key(request.entity_key)
+                if request.entity_key is not None
+                else row["entity_key"],
+                _normalized_slot_key(request.attribute_key)
+                if request.attribute_key is not None
+                else row["attribute_key"],
                 row["scopes_json"],
                 row["tags_json"],
                 row["source_service"],
@@ -831,10 +868,10 @@ class CoreStore:
             connection.execute(
                 "INSERT INTO context_records"
                 "(id,vault_id,candidate_id,source_id,source_reference,kind,content,structured_value_json,"
-                "scopes_json,tags_json,source_service,source_type,evidence,confidence,sensitivity,"
+                "entity_key,attribute_key,scopes_json,tags_json,source_service,source_type,evidence,confidence,sensitivity,"
                 "availability,allowed_clients_json,denied_clients_json,valid_from,expires_at,"
                 "supersedes,explicit_user_statement,approval_status,version,content_hash,"
-                "schema_version,created_at,updated_at) VALUES(" + ",".join("?" * 28) + ")",
+                "schema_version,created_at,updated_at) VALUES(" + ",".join("?" * 30) + ")",
                 record_values,
             )
             connection.execute(
@@ -857,6 +894,7 @@ class CoreStore:
                     self._emit_event(connection, old, "record_withdrawn", {"record_id": supersedes})
             if availability == Availability.ALWAYS:
                 self._emit_event(connection, record, "record_upserted", self._relay_payload(record))
+            self._recompute_integrity(connection)
             self._audit(connection, actor, "candidate_approved", [record_id])
             return self._record_out(record)
 
@@ -877,6 +915,7 @@ class CoreStore:
                 "review_reason=? WHERE id=?",
                 (ApprovalStatus.REJECTED.value, now, actor, reason, candidate_id),
             )
+            self._recompute_integrity(connection)
             self._audit(connection, actor, "candidate_rejected", [])
             updated = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -900,6 +939,8 @@ class CoreStore:
             kind=str(row["kind"]),
             content=str(row["content"]),
             structured_value=_loads(row["structured_value_json"], None),
+            entity_key=cast(str | None, row["entity_key"]),
+            attribute_key=cast(str | None, row["attribute_key"]),
             scopes=_loads(row["scopes_json"], []),
             tags=_loads(row["tags_json"], []),
             source_id=cast(str | None, row["source_id"]),
@@ -931,8 +972,12 @@ class CoreStore:
         reason: str,
         structured_value: Mapping[str, Any] | None = None,
         supersedes: str | None = None,
+        entity_key: str | None = None,
+        attribute_key: str | None = None,
         actor: str = "local-user",
     ) -> ContextRecordOut:
+        if (entity_key is None) != (attribute_key is None):
+            raise InvalidStateError("entity_key and attribute_key must be supplied together")
         with self.transaction() as connection:
             previous = connection.execute(
                 "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)
@@ -943,13 +988,19 @@ class CoreStore:
             now = utc_now()
             connection.execute(
                 "UPDATE context_records SET content=?,structured_value_json=?,supersedes=?,"
-                "content_hash=?,version=?,updated_at=? WHERE id=?",
+                "entity_key=?,attribute_key=?,content_hash=?,version=?,updated_at=? WHERE id=?",
                 (
                     content,
                     _json(dict(structured_value))
                     if structured_value is not None
                     else previous["structured_value_json"],
                     supersedes if supersedes is not None else previous["supersedes"],
+                    _normalized_slot_key(entity_key)
+                    if entity_key is not None
+                    else previous["entity_key"],
+                    _normalized_slot_key(attribute_key)
+                    if attribute_key is not None
+                    else previous["attribute_key"],
                     _hash_text(content),
                     version,
                     now,
@@ -966,6 +1017,7 @@ class CoreStore:
                 self._emit_event(
                     connection, updated, "record_upserted", self._relay_payload(updated)
                 )
+            self._recompute_integrity(connection)
             self._audit(connection, actor, "record_corrected", [record_id])
             return self._record_out(updated)
 
@@ -1048,6 +1100,7 @@ class CoreStore:
                 "record_deleted",
                 {"record_id": record_id, "version": version, "deleted_at": now},
             )
+            self._recompute_integrity(connection)
             self._audit(connection, actor, "record_deleted", [record_id])
             return {
                 "record_id": record_id,
@@ -1056,6 +1109,316 @@ class CoreStore:
                 "content_hash": tombstone_hash,
                 "deleted_at": now,
             }
+
+    def purge_confirmation_phrase(self, target_type: str, target_id: str) -> str:
+        return PURGE_CONFIRMATION_TEMPLATE.format(
+            target_type=target_type.upper(), target_id=target_id
+        )
+
+    def purge(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        confirmation: str,
+        actor: str = "local-administrator",
+        compact: bool = True,
+    ) -> dict[str, Any]:
+        """Irreversibly remove a record or source and retain opaque replay barriers only."""
+
+        if target_type not in {"record", "source"}:
+            raise InvalidStateError("purge target_type must be record or source")
+        if confirmation != self.purge_confirmation_phrase(target_type, target_id):
+            raise InvalidStateError("exact purge confirmation phrase did not match")
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            existing_job = connection.execute(
+                "SELECT * FROM purge_jobs WHERE vault_id=? AND target_type=? AND target_id=?",
+                (vault_id, target_type, target_id),
+            ).fetchone()
+            if existing_job is None:
+                job_id = new_id()
+                now = utc_now()
+                if target_type == "record":
+                    self._purge_record_tx(
+                        connection, target_id, purge_scope="record", purged_at=now
+                    )
+                else:
+                    self._purge_source_tx(connection, target_id, purged_at=now)
+                connection.execute(
+                    "INSERT INTO purge_jobs"
+                    "(id,vault_id,target_type,target_id,phase,created_at,updated_at) "
+                    "VALUES(?,?,?,?,'compaction_pending',?,?)",
+                    (job_id, vault_id, target_type, target_id, now, now),
+                )
+                self._audit(
+                    connection,
+                    actor,
+                    f"{target_type}_purged",
+                    [target_id],
+                    metadata={"irreversible": True, "purge_job_id": job_id},
+                )
+            else:
+                job_id = str(existing_job["id"])
+        if compact:
+            self.resume_purge_jobs(job_id=job_id, limit=1)
+        return self.get_purge_job(job_id)
+
+    def _purge_record_tx(
+        self,
+        connection: sqlite3.Connection,
+        record_id: str,
+        *,
+        purge_scope: str,
+        purged_at: str,
+    ) -> None:
+        existing = connection.execute(
+            "SELECT * FROM purge_tombstones WHERE stable_id=?", (record_id,)
+        ).fetchone()
+        if existing is not None:
+            return
+        record = connection.execute(
+            "SELECT * FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()
+        if record is None:
+            raise NotFoundError("purge target not found")
+        vault_id = str(record["vault_id"])
+        source_id = cast(str | None, record["source_id"])
+        candidate_id = cast(str | None, record["candidate_id"])
+        slot = (cast(str | None, record["entity_key"]), cast(str | None, record["attribute_key"]))
+        purge_payload = {
+            "record_id": record_id,
+            "purged_at": purged_at,
+            "purge_scope": purge_scope,
+            "irreversible": True,
+        }
+        # Historical outbox payloads can contain the full record. Preserve their
+        # ordered sequence positions while replacing them with opaque withdrawals.
+        opaque = _json({"record_id": record_id})
+        connection.execute(
+            "UPDATE replication_events SET event_type='record_withdrawn',payload_json=?,"
+            "payload_hash=?,mac=NULL WHERE record_id=?",
+            (opaque, _hash_text(opaque), record_id),
+        )
+        self._emit_event(connection, record, "record_purged", purge_payload)
+        event = connection.execute(
+            "SELECT id,sequence FROM replication_events WHERE record_id=? "
+            "ORDER BY sequence DESC LIMIT 1",
+            (record_id,),
+        ).fetchone()
+        assert event is not None
+        connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
+        connection.execute("DELETE FROM context_record_versions WHERE record_id=?", (record_id,))
+        connection.execute("DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,))
+        connection.execute(
+            "UPDATE context_records SET supersedes=NULL WHERE supersedes=?", (record_id,)
+        )
+        if candidate_id is not None:
+            self._detach_candidate_from_batches(connection, candidate_id)
+            connection.execute(
+                "DELETE FROM edge_proposal_receipts WHERE candidate_id=?", (candidate_id,)
+            )
+        connection.execute("DELETE FROM context_records WHERE id=?", (record_id,))
+        if candidate_id is not None:
+            connection.execute("DELETE FROM context_candidates WHERE id=?", (candidate_id,))
+        self._remove_related_audits(connection, record_id)
+        connection.execute(
+            "INSERT INTO purge_tombstones"
+            "(stable_id,vault_id,target_type,purged_at,replication_sequence,replication_event_id) "
+            "VALUES(?,?,?,?,?,?)",
+            (record_id, vault_id, "record", purged_at, event["sequence"], event["id"]),
+        )
+        if slot[0] is not None and slot[1] is not None:
+            connection.execute(
+                "DELETE FROM integrity_groups WHERE vault_id=? "
+                "AND entity_key=? AND attribute_key=?",
+                (vault_id, slot[0], slot[1]),
+            )
+        if source_id is not None and purge_scope == "record":
+            dependent = connection.execute(
+                "SELECT 1 FROM context_records WHERE source_id=? UNION ALL "
+                "SELECT 1 FROM context_candidates WHERE source_id=? LIMIT 1",
+                (source_id, source_id),
+            ).fetchone()
+            if dependent is None:
+                source = connection.execute(
+                    "SELECT vault_id FROM source_records WHERE id=?", (source_id,)
+                ).fetchone()
+                self._delete_source_material_tx(connection, source_id)
+                if source is not None:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO purge_tombstones"
+                        "(stable_id,vault_id,target_type,purged_at) VALUES(?,?,?,?)",
+                        (source_id, source["vault_id"], "source", purged_at),
+                    )
+        self._recompute_integrity(connection)
+
+    def _purge_source_tx(
+        self, connection: sqlite3.Connection, source_id: str, *, purged_at: str
+    ) -> None:
+        if (
+            connection.execute(
+                "SELECT 1 FROM purge_tombstones WHERE stable_id=?", (source_id,)
+            ).fetchone()
+            is not None
+        ):
+            return
+        source = connection.execute(
+            "SELECT * FROM source_records WHERE id=?", (source_id,)
+        ).fetchone()
+        if source is None:
+            raise NotFoundError("purge target not found")
+        record_ids = [
+            str(row["id"])
+            for row in connection.execute(
+                "SELECT id FROM context_records WHERE source_id=? ORDER BY id", (source_id,)
+            ).fetchall()
+        ]
+        for record_id in record_ids:
+            self._purge_record_tx(connection, record_id, purge_scope="source", purged_at=purged_at)
+        candidate_ids = [
+            str(row["id"])
+            for row in connection.execute(
+                "SELECT id FROM context_candidates WHERE source_id=?", (source_id,)
+            ).fetchall()
+        ]
+        for candidate_id in candidate_ids:
+            self._detach_candidate_from_batches(connection, candidate_id)
+            connection.execute(
+                "DELETE FROM edge_proposal_receipts WHERE candidate_id=?", (candidate_id,)
+            )
+        connection.execute("DELETE FROM context_candidates WHERE source_id=?", (source_id,))
+        self._delete_source_material_tx(connection, source_id)
+        self._remove_related_audits(connection, source_id)
+        connection.execute(
+            "INSERT INTO purge_tombstones"
+            "(stable_id,vault_id,target_type,purged_at) VALUES(?,?,?,?)",
+            (source_id, source["vault_id"], "source", purged_at),
+        )
+
+    def _delete_source_material_tx(self, connection: sqlite3.Connection, source_id: str) -> None:
+        source = connection.execute(
+            "SELECT content_hash FROM source_records WHERE id=?", (source_id,)
+        ).fetchone()
+        if source is None:
+            return
+        content_hash = str(source["content_hash"])
+        connection.execute("DELETE FROM source_records WHERE id=?", (source_id,))
+        if (
+            connection.execute(
+                "SELECT 1 FROM source_records WHERE content_hash=?", (content_hash,)
+            ).fetchone()
+            is None
+        ):
+            connection.execute("DELETE FROM source_blobs WHERE content_hash=?", (content_hash,))
+
+    def _detach_candidate_from_batches(
+        self, connection: sqlite3.Connection, candidate_id: str
+    ) -> None:
+        for batch in connection.execute(
+            "SELECT id,candidate_ids_json FROM ingestion_batches"
+        ).fetchall():
+            ids = [item for item in _loads(batch["candidate_ids_json"], []) if item != candidate_id]
+            if len(ids) != len(_loads(batch["candidate_ids_json"], [])):
+                connection.execute(
+                    "UPDATE ingestion_batches SET candidate_ids_json=?,request_hash=? WHERE id=?",
+                    (_json(ids), new_id(), batch["id"]),
+                )
+
+    def _remove_related_audits(self, connection: sqlite3.Connection, stable_id: str) -> None:
+        for row in connection.execute(
+            "SELECT id,record_ids_json,denied_record_ids_json FROM audit_events"
+        ).fetchall():
+            if stable_id in _loads(row["record_ids_json"], []) or stable_id in _loads(
+                row["denied_record_ids_json"], []
+            ):
+                connection.execute("DELETE FROM audit_events WHERE id=?", (row["id"],))
+
+    def get_purge_job(self, job_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM purge_jobs WHERE id=?", (job_id,)).fetchone()
+        if row is None:
+            raise NotFoundError("purge job not found")
+        return {
+            "id": str(row["id"]),
+            "target_type": str(row["target_type"]),
+            "target_id": str(row["target_id"]),
+            "phase": str(row["phase"]),
+            "last_error_code": cast(str | None, row["last_error_code"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "completed_at": cast(str | None, row["completed_at"]),
+        }
+
+    def list_purge_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM purge_jobs ORDER BY updated_at DESC LIMIT ?",
+                    (min(max(limit, 1), 500),),
+                ).fetchall()
+            ]
+        return [self.get_purge_job(job_id) for job_id in ids]
+
+    def resume_purge_jobs(self, *, job_id: str | None = None, limit: int = 10) -> int:
+        conditions = ["phase='compaction_pending'"]
+        parameters: list[Any] = []
+        if job_id is not None:
+            conditions.append("id=?")
+            parameters.append(job_id)
+        with self.connect() as connection:
+            ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    f"SELECT id FROM purge_jobs WHERE {' AND '.join(conditions)} "
+                    "ORDER BY created_at LIMIT ?",
+                    [*parameters, min(max(limit, 1), 100)],
+                ).fetchall()
+            ]
+        completed = 0
+        for pending_id in ids:
+            try:
+                database_size = self.database_path.stat().st_size
+                if (
+                    shutil.disk_usage(self.database_path.parent).free
+                    < database_size * 2 + 16_777_216
+                ):
+                    self._mark_purge_compaction_error(pending_id, "insufficient_disk")
+                    continue
+                with self._write_lock, self.connect() as connection:
+                    connection.execute("PRAGMA busy_timeout = 250")
+                    checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                    if checkpoint is not None and int(checkpoint[0]) != 0:
+                        raise sqlite3.OperationalError("database is locked")
+                    connection.execute("VACUUM")
+                    connection.execute(
+                        "UPDATE purge_jobs SET phase='completed',last_error_code=NULL,"
+                        "updated_at=?,completed_at=? WHERE id=? AND phase='compaction_pending'",
+                        (utc_now(), utc_now(), pending_id),
+                    )
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                completed += 1
+            except sqlite3.OperationalError as exc:
+                code = "database_locked" if "locked" in str(exc).casefold() else "compaction_failed"
+                self._mark_purge_compaction_error(pending_id, code)
+        return completed
+
+    def _mark_purge_compaction_error(self, job_id: str, code: str) -> None:
+        try:
+            with self._write_lock, self.connect() as connection:
+                connection.execute("PRAGMA busy_timeout = 250")
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "UPDATE purge_jobs SET last_error_code=?,updated_at=? "
+                    "WHERE id=? AND phase='compaction_pending'",
+                    (code, utc_now(), job_id),
+                )
+                connection.commit()
+        except sqlite3.OperationalError:
+            # An external writer may prevent even recording the bounded error.
+            # The durable pending phase remains the fail-closed recovery signal.
+            return
 
     def record_history(self, record_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -1097,6 +1460,130 @@ class CoreStore:
                 " ".join(_loads(row["scopes_json"], [])),
             ),
         )
+
+    def _recompute_integrity(self, connection: sqlite3.Connection) -> None:
+        """Rebuild deterministic open groups inside the caller's write transaction."""
+
+        now = utc_now()
+        connection.execute("UPDATE integrity_groups SET status='resolved',updated_at=?", (now,))
+        rows = connection.execute(
+            "SELECT r.* FROM context_records r WHERE r.approval_status='approved' "
+            "AND r.deleted_at IS NULL AND r.entity_key IS NOT NULL AND r.attribute_key IS NOT NULL "
+            "AND (r.expires_at IS NULL OR r.expires_at>?) "
+            "AND NOT EXISTS (SELECT 1 FROM context_records newer WHERE newer.supersedes=r.id "
+            "AND newer.approval_status='approved' AND newer.deleted_at IS NULL "
+            "AND (newer.expires_at IS NULL OR newer.expires_at>?)) "
+            "ORDER BY r.entity_key,r.attribute_key,r.id",
+            (now, now),
+        ).fetchall()
+        slots: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            key = (str(row["vault_id"]), str(row["entity_key"]), str(row["attribute_key"]))
+            slots.setdefault(key, []).append(row)
+        for (vault_id, entity_key, attribute_key), members in slots.items():
+            if len(members) < 2:
+                continue
+            by_value: dict[str, list[sqlite3.Row]] = {}
+            for member in members:
+                by_value.setdefault(_value_fingerprint(member), []).append(member)
+            if len(by_value) > 1:
+                self._open_integrity_group(
+                    connection,
+                    vault_id,
+                    entity_key,
+                    attribute_key,
+                    "conflict",
+                    None,
+                    members,
+                    now,
+                )
+            for fingerprint, duplicate_members in sorted(by_value.items()):
+                if len(duplicate_members) > 1:
+                    self._open_integrity_group(
+                        connection,
+                        vault_id,
+                        entity_key,
+                        attribute_key,
+                        "duplicate",
+                        fingerprint,
+                        duplicate_members,
+                        now,
+                    )
+
+    def _open_integrity_group(
+        self,
+        connection: sqlite3.Connection,
+        vault_id: str,
+        entity_key: str,
+        attribute_key: str,
+        group_type: str,
+        fingerprint: str | None,
+        members: Sequence[sqlite3.Row],
+        now: str,
+    ) -> None:
+        identity = _json([vault_id, entity_key, attribute_key, group_type, fingerprint])
+        group_id = "integrity_" + _hash_text(identity)
+        connection.execute(
+            "INSERT INTO integrity_groups"
+            "(id,vault_id,entity_key,attribute_key,group_type,value_fingerprint,"
+            "status,created_at,updated_at) VALUES(?,?,?,?,?,?,'open',?,?) "
+            "ON CONFLICT(id) DO UPDATE SET status='open',updated_at=excluded.updated_at",
+            (group_id, vault_id, entity_key, attribute_key, group_type, fingerprint, now, now),
+        )
+        connection.execute("DELETE FROM integrity_group_members WHERE group_id=?", (group_id,))
+        connection.executemany(
+            "INSERT INTO integrity_group_members(group_id,record_id) VALUES(?,?)",
+            [(group_id, str(member["id"])) for member in members],
+        )
+
+    def list_integrity_groups(
+        self, *, status: str = "open", limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        if status not in {"open", "resolved", "all"}:
+            raise InvalidStateError("integrity group status is invalid")
+        self.rebuild_integrity_groups()
+        conditions = ["g.vault_id=?"]
+        parameters: list[Any] = [self.vault_id()]
+        if status != "all":
+            conditions.append("g.status=?")
+            parameters.append(status)
+        where = " AND ".join(conditions)
+        bounded_limit = min(max(limit, 1), 500)
+        with self.connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM integrity_groups g WHERE {where}", parameters
+                ).fetchone()[0]
+            )
+            groups = connection.execute(
+                f"SELECT g.* FROM integrity_groups g WHERE {where} "
+                "ORDER BY g.updated_at DESC,g.id LIMIT ? OFFSET ?",
+                [*parameters, bounded_limit, max(offset, 0)],
+            ).fetchall()
+            items = []
+            for group in groups:
+                member_rows = connection.execute(
+                    "SELECT record_id FROM integrity_group_members "
+                    "WHERE group_id=? ORDER BY record_id",
+                    (group["id"],),
+                ).fetchall()
+                items.append(
+                    {
+                        "id": str(group["id"]),
+                        "entity_key": str(group["entity_key"]),
+                        "attribute_key": str(group["attribute_key"]),
+                        "group_type": str(group["group_type"]),
+                        "status": str(group["status"]),
+                        "record_ids": [str(member["record_id"]) for member in member_rows],
+                        "created_at": str(group["created_at"]),
+                        "updated_at": str(group["updated_at"]),
+                    }
+                )
+        return {"items": items, "total": total}
+
+    def rebuild_integrity_groups(self) -> None:
+        with self.transaction() as connection:
+            self._recompute_integrity(connection)
 
     def _relay_payload(self, row: sqlite3.Row) -> dict[str, Any]:
         record = self._record_out(row)
@@ -1236,6 +1723,23 @@ class CoreStore:
                 "pending_replication_events": int(
                     connection.execute(
                         "SELECT COUNT(*) FROM replication_events WHERE delivered_at IS NULL"
+                    ).fetchone()[0]
+                ),
+                "open_duplicate_groups": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM integrity_groups "
+                        "WHERE status='open' AND group_type='duplicate'"
+                    ).fetchone()[0]
+                ),
+                "open_conflict_groups": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM integrity_groups "
+                        "WHERE status='open' AND group_type='conflict'"
+                    ).fetchone()[0]
+                ),
+                "pending_purge_jobs": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM purge_jobs WHERE phase='compaction_pending'"
                     ).fetchone()[0]
                 ),
             }

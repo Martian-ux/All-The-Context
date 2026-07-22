@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import tempfile
 import zipfile
@@ -29,6 +30,8 @@ EXCLUDED_TABLES = {
     "context_fts_idx",
     "context_fts_docsize",
     "context_fts_config",
+    "integrity_groups",
+    "integrity_group_members",
 }
 
 
@@ -89,7 +92,7 @@ def _database_to_zip(
             manifest = {
                 "format": "all-the-context",
                 "format_version": 1,
-                "schema_version": 1,
+                "schema_version": 3,
                 "include_sources": include_sources,
                 "include_audit": include_audit,
                 "tables": counts,
@@ -218,6 +221,36 @@ def restore_export(
             connection = sqlite3.connect(database_path)
             try:
                 existing = set(_table_names(connection))
+                blocked_records: set[str] = set()
+                blocked_sources: set[str] = set()
+                if "purge_tombstones" in existing:
+                    for stable_id, target_type in connection.execute(
+                        "SELECT stable_id,target_type FROM purge_tombstones"
+                    ):
+                        (blocked_records if target_type == "record" else blocked_sources).add(
+                            str(stable_id)
+                        )
+                if "purge_tombstones" in manifest.get("tables", {}):
+                    with archive.open("tables/purge_tombstones.jsonl") as stream:
+                        for row in _iter_jsonl(stream):
+                            target = (
+                                blocked_records
+                                if row.get("target_type") == "record"
+                                else blocked_sources
+                            )
+                            target.add(str(row["stable_id"]))
+                blocked_candidates: set[str] = set()
+                if blocked_records and "context_records" in manifest.get("tables", {}):
+                    with archive.open("tables/context_records.jsonl") as stream:
+                        for row in _iter_jsonl(stream):
+                            if str(row.get("id")) in blocked_records and row.get("candidate_id"):
+                                blocked_candidates.add(str(row["candidate_id"]))
+                blocked_source_hashes: set[str] = set()
+                if blocked_sources and "source_records" in manifest.get("tables", {}):
+                    with archive.open("tables/source_records.jsonl") as stream:
+                        for row in _iter_jsonl(stream):
+                            if str(row.get("id")) in blocked_sources:
+                                blocked_source_hashes.add(str(row.get("content_hash")))
                 with connection:
                     for table in manifest.get("tables", {}):
                         if table not in existing:
@@ -225,6 +258,47 @@ def restore_export(
                         name = f"tables/{table}.jsonl"
                         with archive.open(name) as stream:
                             for row in _iter_jsonl(stream):
+                                if table == "context_records" and (
+                                    str(row.get("id")) in blocked_records
+                                    or str(row.get("source_id")) in blocked_sources
+                                ):
+                                    continue
+                                if table == "context_candidates" and (
+                                    str(row.get("id")) in blocked_candidates
+                                    or str(row.get("source_id")) in blocked_sources
+                                ):
+                                    continue
+                                if (
+                                    table == "context_record_versions"
+                                    and str(row.get("record_id")) in blocked_records
+                                ):
+                                    continue
+                                if (
+                                    table == "deletion_tombstones"
+                                    and str(row.get("record_id")) in blocked_records
+                                ):
+                                    continue
+                                if (
+                                    table == "replication_events"
+                                    and str(row.get("record_id")) in blocked_records
+                                ):
+                                    continue
+                                if (
+                                    table == "source_records"
+                                    and str(row.get("id")) in blocked_sources
+                                ):
+                                    continue
+                                if (
+                                    table == "source_blobs"
+                                    and str(row.get("content_hash")) in blocked_source_hashes
+                                ):
+                                    continue
+                                if table == "ingestion_batches" and blocked_candidates.intersection(
+                                    json.loads(str(row.get("candidate_ids_json", "[]")))
+                                ):
+                                    # The batch hash covers the purged proposal payload.
+                                    row["candidate_ids_json"] = "[]"
+                                    row["request_hash"] = secrets.token_hex(16)
                                 columns = list(row)
                                 quoted = ",".join(f'"{column}"' for column in columns)
                                 placeholders = ",".join("?" for _ in columns)

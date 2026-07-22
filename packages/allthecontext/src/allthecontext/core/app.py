@@ -71,6 +71,7 @@ from ..models import (
     ContextErrorRequest,
     CorrectionRequest,
     FinishIngestionRequest,
+    PurgeRequest,
     RejectRequest,
     SearchRequest,
     SubmitBatchRequest,
@@ -121,6 +122,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
         edge_sync.start()
         try:
             yield
@@ -404,6 +406,8 @@ def create_app(
             content=request.content,
             structured_value=request.structured_value,
             supersedes=request.supersedes,
+            entity_key=request.entity_key,
+            attribute_key=request.attribute_key,
             reason=request.reason,
             actor=principal.id,
         )
@@ -439,6 +443,39 @@ def create_app(
     def record_history(record_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
         return {"items": core.store.record_history(record_id)}
+
+    @app.get("/v1/admin/integrity-groups")
+    def list_integrity_groups(
+        principal: Principal,
+        status: str = "open",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.store.list_integrity_groups(status=status, limit=limit, offset=offset)
+
+    @app.post("/v1/admin/purge")
+    def purge(request: PurgeRequest, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        result = core.store.purge(
+            request.target_type,
+            request.target_id,
+            confirmation=request.confirmation,
+            actor=principal.id,
+            compact=request.compact,
+        )
+        edge_sync.trigger()
+        return result
+
+    @app.get("/v1/admin/purge-jobs")
+    def list_purge_jobs(principal: Principal, limit: int = 100) -> dict[str, Any]:
+        require(principal, "admin")
+        return {"items": core.store.list_purge_jobs(limit=limit)}
+
+    @app.post("/v1/admin/purge-jobs/resume")
+    def resume_purge_jobs(principal: Principal, limit: int = 10) -> dict[str, Any]:
+        require(principal, "admin")
+        return {"completed": core.store.resume_purge_jobs(limit=limit)}
 
     @app.post("/v1/admin/clients")
     def create_client(request: ClientCreate, principal: Principal) -> dict[str, Any]:

@@ -13,6 +13,7 @@ MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
+MAX_SLOT_KEY_CHARS = 256
 
 RecordListItem = Annotated[
     str,
@@ -85,6 +86,8 @@ class CandidateInput(StrictModel):
     kind: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=MAX_CONTEXT_CHARS)
     structured_value: dict[str, Any] | None = None
+    entity_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
+    attribute_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
     scopes: list[RecordListItem] = Field(default_factory=list, max_length=64)
     tags: list[RecordListItem] = Field(default_factory=list, max_length=128)
     source_id: str | None = Field(default=None, max_length=200)
@@ -130,6 +133,8 @@ class CandidateInput(StrictModel):
             and self.expires_at <= self.valid_from
         ):
             raise ValueError("expires_at must be later than valid_from")
+        if (self.entity_key is None) != (self.attribute_key is None):
+            raise ValueError("entity_key and attribute_key must be supplied together")
         return self
 
 
@@ -163,12 +168,20 @@ class FinishIngestionRequest(StrictModel):
 
 class ApprovalRequest(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=MAX_CONTEXT_CHARS)
+    entity_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
+    attribute_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
     availability: Availability | None = None
     sensitivity: Sensitivity | None = None
     allowed_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     denied_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     reason: str | None = Field(default=None, max_length=2_000)
     explicit_sensitive_replication: bool = False
+
+    @model_validator(mode="after")
+    def validate_slot(self) -> Self:
+        if (self.entity_key is None) != (self.attribute_key is None):
+            raise ValueError("entity_key and attribute_key must be supplied together")
+        return self
 
 
 class RejectRequest(StrictModel):
@@ -180,16 +193,31 @@ class CorrectionRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=2_000)
     structured_value: dict[str, Any] | None = None
     supersedes: str | None = Field(default=None, max_length=200)
+    entity_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
+    attribute_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
 
     @field_validator("structured_value")
     @classmethod
     def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _bounded_structured_value(value)
 
+    @model_validator(mode="after")
+    def validate_slot(self) -> Self:
+        if (self.entity_key is None) != (self.attribute_key is None):
+            raise ValueError("entity_key and attribute_key must be supplied together")
+        return self
+
 
 class AvailabilityRequest(StrictModel):
     availability: Availability
     explicit_sensitive_replication: bool = False
+
+
+class PurgeRequest(StrictModel):
+    target_type: Literal["record", "source"] = "record"
+    target_id: str = Field(min_length=1, max_length=200)
+    confirmation: str = Field(min_length=1, max_length=512)
+    compact: bool = True
 
 
 class SearchRequest(StrictModel):

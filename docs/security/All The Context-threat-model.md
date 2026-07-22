@@ -146,6 +146,9 @@ does not possess them.
     decommission -> supposedly removed Edge data or authority is resurrected.
 14. Core crashes after one-time MCP setup -> clients silently stop using context
     or the user must manually recover the service.
+15. A user requests irreversible removal but history, WAL, source evidence,
+    audit/outbox payloads, or an old import restores the value -> low-entropy
+    private context remains guessable or reappears.
 
 ## Threat model table
 
@@ -167,6 +170,7 @@ does not possess them.
 | TM-014 | Crash, offline host, or corrupted local state | Partial setup or uninstall | Skip remote erasure but report successful uninstall | Persistent remote data/access | Edge context, credentials | Uninstall inspects state and credential independently, cryptographically verifies the origin, requires terminal zero-record response, revokes readable local AI identities, strictly removes authority-bearing credentials when SQLite is corrupt, and blocks on orphan/offline Edge state (`desktop.py`, `edge_connection.py`) | Manual hosting deletion may still be required | Guided recovery and provider deletion checklist | Uninstall error with no application-file deletion | low | high | medium |
 | TM-015 | Concurrent request/process | Request began before Edge decommission or Core forget | Commit after terminal purge or recreate local connection state | Deleted context/access returns | Edge context, lifecycle state | Terminal recheck in the same `BEGIN IMMEDIATE` transaction, database write triggers, cross-process Edge file lock, interrupted-purge restart (`relay/service.py`, `relay/oauth.py`, `0006_terminal_write_guards.sql`, `edge_connection.py`) | Host-level database replacement remains operator authority | Keep terminal state in durable backups and never reuse disks across vaults | 410 responses, trigger violations, lifecycle error logs | low | high | high |
 | TM-016 | Core crash or hostile loopback listener | Managed STDIO client invokes a tool | Keep Core offline or trick adapter into starting/sending to another service | Context unavailable or credential disclosure | Availability, client tokens | Managed-only auto-start, exact 127.0.0.1 origin, installation-bound proof, unknown-listener refusal, exact Core command, bounded readiness wait (`mcp_adapter.py`, `desktop_setup.py`) | Hostile same-account process can read installation material and is out of scope | Signed packages and OS account protection | Proof failures and Core restart log | low | high | medium |
+| TM-017 | Storage bug, crash, or stale backup | Administrator requests purge | Retain content in history/index/WAL/audit/outbox or resurrect a stable ID | Irreversible-removal expectation fails | Core content, sources, exports | Exact admin phrase; one-transaction logical scrub; opaque hash-free tombstone/event; foreign keys; `secure_delete`; WAL checkpoint; resumable VACUUM; restore barrier (`storage.py`, `export.py`) | Snapshots, SSD remanence, external backups, user copies, and pre-integration Edge storage are outside Core erasure | Edge parity slice, backup expiry guidance, encrypted-disk policy | Pending purge jobs, compaction error codes, replication lag | low | high | high |
 
 ## Criticality calibration
 

@@ -37,6 +37,24 @@ supersession filters before scoring. V1 then combines structured filters with
 SQLite FTS5 and recency ordering. Embeddings are an optional future index and
 can never override policy filters.
 
+## Memory integrity and irreversible purge
+
+Core may attach normalized `entity_key` and `attribute_key` metadata to an
+untrusted candidate. Inferred keys remain proposal metadata until an
+administrator approves the candidate; they never create or rewrite canonical
+memory by themselves. For current approved records in the same slot, Core
+transactionally derives separate duplicate and conflict review groups. A group
+is advisory: Core never elects a winner. Correction, supersession, rejection,
+expiry refresh, deletion, and purge recompute the derived view.
+
+Ordinary deletion remains a reversible, history-preserving tombstone. An
+administrator-only purge is a different state machine: an exact target-bound
+phrase authorizes a single logical transaction, which scrubs attributable Core
+content and commits opaque replay tombstones plus an ordered purge event. A
+resumable compaction phase then checkpoints WAL and runs secure-delete VACUUM.
+Core remains authoritative for purge. Edge/Relay application and compaction are
+the explicitly separate integration slice.
+
 ## Cross-platform rules
 
 Shared runtime code uses `pathlib`, `platformdirs`, TCP loopback, `filelock`,

@@ -8,6 +8,9 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 |---|---|---|---|
 | Cross-platform Core | `config.py`, `lifecycle.py`, Core CLI | platform abstraction/smoke tests; CI authored | Implemented locally; OS matrix pending |
 | Source/candidate/record lifecycle | `storage.py`, `core/service.py` | unit/integration/demo | Implemented |
+| Provenance slot metadata and review authority | Core migration 003, `models.py`, `storage.py` | legacy upgrade, candidate-before-approval, API round-trip | Implemented; inferred slots never become canonical without approval |
+| Deterministic duplicate/conflict review | `storage.py`, admin API/CLI | normalization, mixed duplicate/conflict, correction, supersession, deletion | Backend/CLI implemented; dashboard review deferred |
+| Irreversible Core purge | `storage.py`, Core admin API/CLI | delete-vs-purge, exact phrase/admin scope, idempotency, source sharing, physical-content scan, restart resume | Core implemented locally; external-storage erasure is out of scope |
 | Ingestion sessions and idempotency | `ingestion.py` | ingestion/unit/demo | Implemented |
 | Generic import | `importers.py` | importer/security/demo | Implemented |
 | Structured and FTS retrieval | `retrieval.py` | unit/integration/security | Implemented |
@@ -18,10 +21,12 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Administrator ranking diagnostics | `atc search --explain`, `RetrievalEngine.diagnose_search` | admin gate and authorized returned-ID-only explanation test | Implemented locally; intentionally absent from MCP |
 | Separate Relay | `relay/` | API/restart/offline/demo | Implemented with SQLite |
 | Signed event replication | `replication.py` | replay/tamper/gap/integration | Implemented |
+| Opaque irreversible purge replication contract | `replication.py`, `storage.py` | signed exact-shape event, no-content scan, ordering/replay barrier | Core producer contract implemented; Relay/Edge apply deferred |
 | Required MCP tools | `mcp_adapter.py` | schema contract, real STDIO handshake, crash/shutdown/verified auto-restart | Implemented |
 | Minimal administration UI | `apps/dashboard/` | component tests, production build, live browser smoke; responsive off-canvas inert/ARIA/focus/Escape regression | Implemented |
 | Correction/deletion propagation | Core/Relay services | integration/demo | Implemented |
 | Portable export/restore | `export.py`, Core dashboard export route, dashboard Backup page | encrypted round-trip; protected POST/passphrase redaction/temp cleanup/resource-bound backend tests; UI download test | Export implemented in CLI and dashboard; deliberate CLI restore implemented; dashboard restore explicitly deferred |
+| Pre-purge import resurrection barrier | `export.py`, `purge_tombstones` | restore older encrypted export after record/source purge | Implemented when destination or incoming export carries the opaque tombstone |
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` | source tests plus native package/resource/first-run/MCP smoke jobs | Authored; remote run pending |
 | Desktop client connections | `client_config.py`, dashboard **Connect apps** | reversible Codex and Claude Desktop config tests; UI interaction tests; generic packaged MCP handshake | Implemented locally; provider UI handshake pending |
 | Cloud/mobile client connection | `edge_setup.py`, `edge_connection.py`, `relay/oauth.py`, `relay/mcp.py`, dashboard Edge setup | OAuth/PKCE/refresh/revocation tests; owner recovery; prepare/pair/sync/provider UI test; Core-offline Edge retrieval | Provider-neutral path implemented; current Claude and ChatGPT web-to-mobile setup documented; real provider-hosted handshake and public deploy link pending |
