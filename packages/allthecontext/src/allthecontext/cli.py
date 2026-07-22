@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import CoreConfig
 from allthecontext.credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
 from allthecontext.desktop_runtime import RuntimeCommand
@@ -77,6 +78,7 @@ def _render_mcp_config(
     executable = str(Path(sys.executable).resolve())
     values: dict[str, str] = {
         "ATC_TARGET_URL": target or f"http://{config.host}:{config.port}",
+        "ATC_CORE_DATA_DIR": str(config.data_dir),
         "ATC_CLIENT_ID": client_id,
     }
     if token:
@@ -181,7 +183,9 @@ def _cmd_open_dashboard(args: argparse.Namespace) -> None:
     access = recover_administrator_access(config)
     if access is None:
         raise RuntimeError("No recoverable local administrator was found. Run 'atc init' first.")
-    launch_core(RuntimeCommand.current(), config)
+    runtime = RuntimeCommand.current()
+    repair_managed_runtime_bindings(runtime, config)
+    launch_core(runtime, config)
     url = authenticated_dashboard_url(config, access.token)
     if args.print_only:
         print(url)

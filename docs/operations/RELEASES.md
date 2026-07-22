@@ -40,8 +40,10 @@ does not sign an OTA manifest and does not publish the draft.
 
 Before using a candidate, an operator must confirm all source, dashboard,
 package, native diagnostic, and packaged-smoke jobs passed for the exact commit.
-Windows Authenticode signing and macOS signing/notarization are separate gates;
-the current engineering artifacts must not be described as publisher-signed.
+Native publisher signing is not a community release gate. Current artifacts
+must be labeled **unsigned community builds** and must never be described as
+Authenticode-signed, Apple-notarized, or publisher-identified. Donated or
+sponsored native signing can be added later as defense in depth.
 
 ## Offline signing and promotion
 
@@ -57,8 +59,8 @@ release tests reject drift between operator verification and client trust.
 For each platform and architecture:
 
 1. Download the draft asset and its checksum over authenticated HTTPS. Verify
-   the workflow provenance, checksum, expected commit, native signing status,
-   and packaged-smoke result.
+   the workflow provenance, checksum, expected commit, explicit unsigned-build
+   label, and packaged-smoke result.
 2. On the offline signing system, use a private-key path outside the checkout:
 
    ```text
@@ -77,9 +79,9 @@ For each platform and architecture:
    after that approval. Then update each channel pointer atomically to the exact
    signed bytes and verify it again from the public endpoint.
 5. Record tag, commit, release URL, asset digests, manifest digests, key ID,
-   workflow URLs, native publisher/notarization results, and approver in the
-   release log. Never replace an asset underneath an already signed URL; issue a
-   new version instead.
+   workflow URLs, unsigned community-build status, and approver in the release
+   log. Never replace an asset underneath an already signed URL; issue a new
+   version instead.
 
 ## Client updater operation
 
@@ -126,12 +128,12 @@ The packaged Windows smoke injects both a crash after replacement and a failed
 post-migration health check and verifies resume and rollback.
 
 macOS and Linux remain manual-required. The Windows evidence is an unsigned
-same-version engineering transaction, not a production promotion. Do not
-publish or describe Windows OTA as production-ready until the offline key
-ceremony, immutable channel publication, Authenticode/publisher checks, and a
-real signed N-1 update drill pass. Do not enable automatic macOS or Linux
-cutover until equivalent native signing, journaling, health, interruption, and
-rollback work is implemented and observed on those systems.
+same-version engineering transaction, not a public promotion. Community
+Windows OTA requires the offline Ed25519 key ceremony, immutable channel
+publication, explicit unsigned-publisher disclosure, and a real signed N-1
+update drill. Paid Authenticode and Apple notarization are out of scope. Do not
+enable automatic macOS or Linux cutover until equivalent journaling, health,
+interruption, and rollback work is implemented and observed on those systems.
 
 Unknown operating systems, unknown CPU identifiers, and 32-bit application
 runtimes fail closed. Repeated checks and channel changes remove a bounded
@@ -143,9 +145,10 @@ state and bounded stale response copies.
 The updater verifies in this order: schema and exact fields; selected
 channel/platform/architecture; active
 and channel-authorized key ID; Ed25519 signature; version policy; HTTPS
-immutable URL; declared size; downloaded SHA-256; then native publisher
-signature where the platform supports one. It must stage rather than execute
-partially verified bytes.
+immutable URL; declared size; and downloaded SHA-256. An available native
+publisher signature may be reported and checked as extra evidence, but is not
+required for unsigned community releases. The updater must stage rather than
+execute partially verified bytes.
 
 Downgrades are rejected even when correctly signed. Equal versions are a no-op.
 Stable installations consume only stable manifests. Beta installations consume
@@ -153,8 +156,7 @@ only beta manifests unless the user completes an explicit channel migration;
 switching from beta to a numerically lower stable build is a downgrade and
 requires a separate, interactive recovery procedure. `minimum_supported_version`
 means older clients require a manual supported upgrade path. `mandatory` may
-change deferral UI but never bypasses cryptographic, digest, platform, or native
-signature checks.
+change deferral UI but never bypasses cryptographic, digest, or platform checks.
 
 ## Rotation, revocation, and recovery
 
@@ -171,9 +173,10 @@ and `active` or `revoked` status. Normal rotation is an overlap:
 If a private key may be compromised, stop promotions, mark its public entry
 revoked in a security release signed by a different already-trusted key, remove
 all mutable channel pointers signed by the compromised key, and publish an
-incident notice. Users with no remaining trusted key need a native-signed
-manual recovery installer; a compromised manifest key must not authorize its
-own replacement.
+incident notice. Users with no remaining trusted key need a manual recovery
+package distributed through a separately authenticated project security notice
+and verified against the reviewed source, release digest, and provenance; a
+compromised manifest key must not authorize its own replacement.
 
 ## Edge image and hosted deployment
 

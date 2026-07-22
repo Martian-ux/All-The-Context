@@ -489,25 +489,27 @@ function ConnectionsView() {
     <div className="content-column connections-column">
       <section className="connection-overview">
         <span className="connection-overview-icon"><Plug size={21} /></span>
-        <div><strong>Core is ready for your AI apps.</strong><p>Connect local desktop apps here. No terminal, JSON editing, or credential copying.</p></div>
+        <div><strong>Core is ready for your AI apps.</strong><p>Connect apps detected on this computer. No terminal, JSON editing, or credential copying.</p></div>
       </section>
       {notice ? <Notice kind="success"><Check size={16} /> {notice}</Notice> : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
 
       <section className="section-block connections-section">
-        <div className="section-heading"><div><h2>On this computer</h2><p>These apps connect directly to your private Core.</p></div></div>
+        <div className="section-heading"><div><h2>On this computer</h2><p>Installed apps connect directly to your private Core.</p></div><button className="quiet-button" disabled={loading || working !== null} onClick={() => void load()}>Check again</button></div>
         {loading ? <LoadingRows /> : <div className="integration-list">
           {integrations?.apps.map((integration) => {
             const Icon = integration.id === "chatgpt_codex" ? MonitorSmartphone : Laptop;
+            const unavailable = integration.state === "not_installed";
+            const stateLabel = integration.state === "connected" ? "Connected" : integration.state === "degraded" ? "Needs repair" : unavailable ? "Not installed" : "Not connected";
             return <div className="integration-row" key={integration.id}>
               <span className="integration-icon"><Icon size={21} /></span>
               <div className="integration-copy"><strong>{integration.name}</strong><p>{integration.reason ?? integration.detail}</p></div>
-              <span className={`integration-state ${integration.state === "connected" ? "integration-state--connected" : integration.state === "degraded" ? "integration-state--waiting" : ""}`}><span />{integration.state === "connected" ? "Connected" : integration.state === "degraded" ? "Needs repair" : "Not connected"}</span>
+              <span className={`integration-state ${integration.state === "connected" ? "integration-state--connected" : integration.state === "degraded" ? "integration-state--waiting" : ""}`}><span />{stateLabel}</span>
               <div className="integration-actions">
                 {integration.state === "connected" ? <button className="secondary-button" disabled={working !== null} onClick={() => void disconnect(integration)}>{working === `${integration.id}:disconnect` ? "Disconnecting…" : "Disconnect"}</button> : null}
-                <button className={integration.state === "connected" ? "secondary-button" : "primary-button"} disabled={working !== null} onClick={() => void connect(integration)}>
+                {unavailable ? <a className="secondary-button" href={integration.install_url} target="_blank" rel="noreferrer">Get app</a> : <button className={integration.state === "connected" ? "secondary-button" : "primary-button"} disabled={working !== null} onClick={() => void connect(integration)}>
                   {working === `${integration.id}:connect` ? "Connecting…" : integration.state === "degraded" || integration.state === "connected" ? "Repair" : "Connect"}
-                </button>
+                </button>}
               </div>
             </div>;
           })}

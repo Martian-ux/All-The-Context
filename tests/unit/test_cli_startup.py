@@ -34,7 +34,9 @@ def test_init_prints_copyable_mcp_config(tmp_path: Path, capsys: object) -> None
 
     assert "# Paste this block into your MCP client configuration" in output
     assert "[mcp_servers.all_the_context]" in output
-    assert "ATC_CLIENT_TOKEN" in output
+    assert "ATC_CLIENT_ID" in output
+    assert "ATC_CORE_DATA_DIR" in output
+    assert "ATC_TARGET_URL" in output
     assert "open-dashboard" in output
     assert "atc" in output
 

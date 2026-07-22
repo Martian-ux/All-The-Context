@@ -397,7 +397,8 @@ class PlatformInstaller:
             )
         if self.system == "Darwin":
             return (
-                "The verified macOS update requires a signed and notarized manual app replacement"
+                "The verified macOS update requires a manual app replacement; this community "
+                "build is not notarized"
             )
         if self.system == "Linux":
             return (

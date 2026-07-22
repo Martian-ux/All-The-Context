@@ -30,23 +30,26 @@ from the model-facing MCP surface.
 
 ## One-time local configuration
 
-The desktop wizard creates a distinct least-privilege identity for each
-supported AI client, verifies credential persistence, and writes the Codex and
-Claude Desktop STDIO entries automatically with timestamped
-backups. The user does not copy a token or configuration block. A typical
-generated Codex entry is:
+The desktop wizard detects installed AI clients, creates a distinct
+least-privilege identity for each selected client, verifies credential
+persistence, and writes Codex and Claude Desktop STDIO entries automatically
+with timestamped backups. It does not create a phantom configuration for an
+absent application. The user does not copy a token or configuration block. A
+typical generated Codex entry is:
 
 ```toml
 [mcp_servers.all_the_context]
 command = "C:\\Users\\user\\AppData\\Local\\Programs\\All The Context\\AllTheContextMCP.exe"
 args = []
-env = { ATC_TARGET_URL = "http://127.0.0.1:7337", ATC_CLIENT_ID = "...", ATC_CLIENT_TOKEN = "..." }
+env = { ATC_TARGET_URL = "http://127.0.0.1:7337", ATC_CORE_DATA_DIR = "C:\\Users\\user\\AppData\\Local\\AllTheContext", ATC_CLIENT_ID = "...", ATC_CLIENT_TOKEN = "..." }
 required = true
 startup_timeout_sec = 20
 ```
 
-The token is absent when the OS credential manager persisted it. Claude's JSON
-entry carries the equivalent command, arguments, and environment. `atc init`
+The token is absent when the OS credential manager persisted it. The exact
+Core data directory is always present so non-default and isolated vaults
+self-start against their own identity. Claude's JSON entry carries the
+equivalent command, arguments, and environment. `atc init`
 and `atc config-mcp` remain contributor/headless alternatives. This local
 `config.toml` path configures Codex, not ChatGPT. Cloud clients use the hosted
 HTTPS Edge endpoint with OAuth rather than the loopback STDIO adapter. Edge

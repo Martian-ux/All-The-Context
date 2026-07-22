@@ -9,6 +9,7 @@ from allthecontext.client_config import (
     MANAGED_BEGIN,
     apply_managed_client_cleanup,
     claude_is_configured,
+    claude_is_detected,
     codex_is_configured,
     configure_claude,
     configure_codex,
@@ -17,7 +18,9 @@ from allthecontext.client_config import (
     plan_managed_client_cleanup,
     read_claude_config,
     read_codex_config,
+    repair_managed_runtime_bindings,
 )
+from allthecontext.config import CoreConfig
 from allthecontext.desktop_runtime import RuntimeCommand
 
 
@@ -30,7 +33,14 @@ def test_configure_codex_preserves_config_and_is_idempotent(tmp_path: Path) -> N
     helper = tmp_path / "AllTheContextMCP.exe"
     runtime = RuntimeCommand(tmp_path / "AllTheContext.exe", mcp_executable=helper)
 
-    first = configure_codex(runtime, "client-1", token=None, path=config)
+    vault = tmp_path / "vault"
+    first = configure_codex(
+        runtime,
+        "client-1",
+        token=None,
+        path=config,
+        core_data_dir=vault,
+    )
 
     parsed = tomllib.loads(config.read_text(encoding="utf-8"))
     assert parsed["model_reasoning_effort"] == "high"
@@ -40,6 +50,7 @@ def test_configure_codex_preserves_config_and_is_idempotent(tmp_path: Path) -> N
     assert managed["args"] == []
     assert managed["env"]["ATC_CLIENT_ID"] == "client-1"
     assert managed["env"]["ATC_AUTO_START_CORE"] == "1"
+    assert managed["env"]["ATC_CORE_DATA_DIR"] == str(vault.resolve())
     assert json.loads(managed["env"]["ATC_CORE_COMMAND"]) == [
         str(runtime.executable),
         "--core",
@@ -48,7 +59,13 @@ def test_configure_codex_preserves_config_and_is_idempotent(tmp_path: Path) -> N
     assert first.changed is True
     assert first.backup_path is not None and first.backup_path.is_file()
 
-    second = configure_codex(runtime, "client-1", token=None, path=config)
+    second = configure_codex(
+        runtime,
+        "client-1",
+        token=None,
+        path=config,
+        core_data_dir=vault,
+    )
     assert second.changed is False
     assert second.backup_path is None
     assert config.read_text(encoding="utf-8").count(MANAGED_BEGIN) == 1
@@ -168,7 +185,14 @@ def test_configure_claude_preserves_other_servers_and_is_idempotent(tmp_path: Pa
     helper = tmp_path / "AllTheContextMCP.exe"
     runtime = RuntimeCommand(tmp_path / "AllTheContext.exe", mcp_executable=helper)
 
-    first = configure_claude(runtime, "client-3", token="secret", path=config)
+    vault = tmp_path / "vault"
+    first = configure_claude(
+        runtime,
+        "client-3",
+        token="secret",
+        path=config,
+        core_data_dir=vault,
+    )
 
     parsed = json.loads(config.read_text(encoding="utf-8"))
     assert parsed["theme"] == "system"
@@ -179,6 +203,7 @@ def test_configure_claude_preserves_other_servers_and_is_idempotent(tmp_path: Pa
     assert managed["env"]["ATC_CLIENT_ID"] == "client-3"
     assert managed["env"]["ATC_CLIENT_TOKEN"] == "secret"
     assert managed["env"]["ATC_AUTO_START_CORE"] == "1"
+    assert managed["env"]["ATC_CORE_DATA_DIR"] == str(vault.resolve())
     assert json.loads(managed["env"]["ATC_CORE_COMMAND"]) == [
         str(runtime.executable),
         "--core",
@@ -186,9 +211,55 @@ def test_configure_claude_preserves_other_servers_and_is_idempotent(tmp_path: Pa
     assert first.backup_path is not None and first.backup_path.is_file()
     assert claude_is_configured(config) is True
 
-    second = configure_claude(runtime, "client-3", token="secret", path=config)
+    second = configure_claude(
+        runtime,
+        "client-3",
+        token="secret",
+        path=config,
+        core_data_dir=vault,
+    )
     assert second.changed is False
     assert second.backup_path is None
+
+
+def test_claude_detection_does_not_treat_a_config_folder_as_an_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "Claude" / "claude_desktop_config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(config))
+    monkeypatch.delenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", raising=False)
+    monkeypatch.setattr("allthecontext.client_config.platform.system", lambda: "Linux")
+
+    assert claude_is_detected() is False
+
+    executable = tmp_path / "ClaudeDesktop.bin"
+    executable.write_bytes(b"test application marker")
+    monkeypatch.setenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", str(executable))
+    assert claude_is_detected() is True
+
+
+def test_lightweight_launch_repair_binds_existing_entries_to_the_active_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex_home = tmp_path / "codex"
+    claude_path = tmp_path / "claude" / "claude_desktop_config.json"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(claude_path))
+    runtime = RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop"))
+    wrong_vault = tmp_path / "wrong-vault"
+    active = CoreConfig.in_directory(tmp_path / "active-vault")
+    configure_codex(runtime, "codex-client", token=None, core_data_dir=wrong_vault)
+    configure_claude(runtime, "claude-client", token=None, core_data_dir=wrong_vault)
+
+    repaired = repair_managed_runtime_bindings(runtime, active)
+
+    assert len(repaired) == 2
+    codex = read_codex_config()
+    claude = read_claude_config()
+    assert codex is not None and codex.env["ATC_CORE_DATA_DIR"] == str(active.data_dir)
+    assert claude is not None and claude.env["ATC_CORE_DATA_DIR"] == str(active.data_dir)
 
 
 def test_configure_claude_never_overwrites_invalid_json(tmp_path: Path) -> None:

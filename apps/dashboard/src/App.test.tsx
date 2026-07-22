@@ -273,8 +273,8 @@ describe("dashboard", () => {
       if (url.endsWith("/admin/integrations") && !init?.method) {
         return json({
           apps: [
-            { id: "chatgpt_codex", name: "Codex", configured: true, state: "connected", mode: "local", detail: "Private local connection for the Codex app, CLI, and editor extension." },
-            { id: "claude", name: "Claude Desktop", configured: claudeConnected, state: claudeConnected ? "connected" : "disconnected", mode: "local", detail: "Private local connection." },
+            { id: "chatgpt_codex", name: "Codex", detected: true, install_url: "https://openai.com/codex/", configured: true, state: "connected", mode: "local", detail: "Private local connection for the Codex app, CLI, and editor extension." },
+            { id: "claude", name: "Claude Desktop", detected: true, install_url: "https://claude.ai/download", configured: claudeConnected, state: claudeConnected ? "connected" : "disconnected", mode: "local", detail: "Private local connection." },
           ],
           remote: { configured: false, state: "not_configured", detail: "Set up Edge once." },
         });
@@ -295,6 +295,38 @@ describe("dashboard", () => {
 
     expect(await screen.findByText(/Claude Desktop is connected/i)).toBeInTheDocument();
     expect(screen.queryByText(/administrator token/i)).not.toBeInTheDocument();
+  });
+
+  it("does not offer to configure Claude Desktop when it is not installed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) {
+        return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+      }
+      if (url.endsWith("/admin/edge")) return json(edgeStatus());
+      if (url.endsWith("/admin/integrations")) {
+        return json({
+          apps: [
+            { id: "chatgpt_codex", name: "Codex", detected: true, install_url: "https://openai.com/codex/", configured: true, state: "connected", mode: "local", detail: "Private local connection." },
+            { id: "claude", name: "Claude Desktop", detected: false, install_url: "https://claude.ai/download", configured: false, state: "not_installed", mode: "local", detail: "Private local connection." },
+          ],
+          remote: { configured: false, state: "not_configured", detail: "Set up Edge once." },
+        });
+      }
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /connect apps/i }));
+    const claude = await screen.findByText("Claude Desktop");
+    const row = claude.closest(".integration-row") as HTMLElement;
+
+    expect(within(row).getByText("Not installed")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "Get app" })).toHaveAttribute(
+      "href",
+      "https://claude.ai/download",
+    );
   });
 
   it("requires explicit consent before sending sensitive context to Edge", async () => {

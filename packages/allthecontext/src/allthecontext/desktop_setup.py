@@ -460,6 +460,7 @@ def migrate_existing_integrations(
                 access.client_id,
                 token=embedded_token,
                 target_url=target_url,
+                core_data_dir=config.data_dir,
             )
         except (OSError, ValueError):
             # If an old config exposed the desktop administrator, rotating it
@@ -577,6 +578,7 @@ def perform_setup(
                     else codex_access.token
                 ),
                 target_url=f"http://{active_config.host}:{active_config.port}",
+                core_data_dir=active_config.data_dir,
             )
             retire_other_named_clients(
                 store,
@@ -606,6 +608,7 @@ def perform_setup(
                     else claude_access.token
                 ),
                 target_url=f"http://{active_config.host}:{active_config.port}",
+                core_data_dir=active_config.data_dir,
             )
             retire_other_named_clients(
                 store,

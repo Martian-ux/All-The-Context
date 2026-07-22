@@ -67,8 +67,10 @@ export interface ClientRegistration {
 export interface DesktopIntegration {
   id: "chatgpt_codex" | "claude";
   name: string;
+  detected: boolean;
+  install_url: string;
   configured: boolean;
-  state: "connected" | "degraded" | "disconnected";
+  state: "connected" | "degraded" | "disconnected" | "not_installed";
   reason?: string | null;
   mode: "local";
   detail: string;

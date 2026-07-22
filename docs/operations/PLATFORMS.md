@@ -59,12 +59,13 @@ config backups that could contain a development-fallback token. If retained
 SQLite cannot be read, uninstall says that its internal rows were not revoked
 and warns against restoring that data until it is repaired or deleted.
 
-The current artifacts are unsigned engineering builds. Candidate CI wraps each
-native output in an immutable versioned ZIP with a SHA-256 sidecar, SPDX
-metadata, and provenance. Those controls do not substitute for Windows
-Authenticode signing, notarized macOS distribution, or native Linux package
-metadata. See the [release runbook](RELEASES.md) for offline manifest signing,
-stable/beta promotion, key rotation, and downgrade rules.
+The current artifacts are unsigned community engineering builds. Candidate CI
+wraps each native output in an immutable versioned ZIP with a SHA-256 sidecar,
+SPDX metadata, and provenance. Paid Authenticode and Apple notarization are not
+release requirements; users must be told that their operating system may show
+an unknown-publisher warning. See the [release runbook](RELEASES.md) for the
+required offline Ed25519 manifest signing, stable/beta promotion, key rotation,
+and downgrade rules.
 
 The native updater verifies and stages a versioned ZIP on every platform. The
 packaged Windows application also includes a separate recovery executable, so
@@ -113,13 +114,13 @@ a functional keyring; it is not equivalent to an OS-protected credential.
 
 ## Packaging roadmap
 
-- **Windows:** complete the offline release-key ceremony, sign the existing
-  self-installing artifact and helper, verify the immutable candidate and
-  publisher chain, run a real signed N-1 transaction, and then evaluate a
-  Windows service only if per-user startup proves insufficient. The per-user
-  installer, transactional updater, and uninstaller paths are implemented.
-- **macOS:** sign and notarize the application bundle and its per-user
-  LaunchAgent.
+- **Windows:** complete the offline release-key ceremony, verify the immutable
+  unsigned candidate and provenance, run a real Ed25519-signed N-1 transaction,
+  and then evaluate a Windows service only if per-user startup proves
+  insufficient. The per-user installer, transactional updater, and uninstaller
+  paths are implemented.
+- **macOS:** package the application bundle and its per-user LaunchAgent, keep
+  installation manual, and document the normal unsigned-app approval flow.
 - **Linux:** wrap the executable in native packages and add a user-service
   integration behind the existing abstraction.
 

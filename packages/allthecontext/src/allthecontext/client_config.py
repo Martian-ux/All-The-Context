@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE, OS_CREDENTIAL_STORAGE
 from .desktop_runtime import RuntimeCommand
 
@@ -63,8 +64,15 @@ def codex_config_path() -> Path:
 
 
 def codex_is_detected() -> bool:
+    configured = os.environ.get("ATC_CODEX_EXECUTABLE")
+    if configured:
+        try:
+            if Path(configured).expanduser().resolve().is_file():
+                return True
+        except (OSError, RuntimeError, ValueError):
+            pass
     home = codex_home()
-    return home.is_dir() or (Path.home() / ".codex").is_dir()
+    return shutil.which("codex") is not None or home.is_dir() or (Path.home() / ".codex").is_dir()
 
 
 def claude_config_path() -> Path:
@@ -89,8 +97,69 @@ def claude_config_path() -> Path:
 
 
 def claude_is_detected() -> bool:
-    path = claude_config_path()
-    return path.is_file() or path.parent.is_dir()
+    """Detect the desktop application, not a stale or pre-created config folder."""
+
+    configured = os.environ.get("ATC_CLAUDE_DESKTOP_EXECUTABLE")
+    if configured:
+        try:
+            if Path(configured).expanduser().resolve().is_file():
+                return True
+        except (OSError, RuntimeError, ValueError):
+            pass
+
+    system = platform.system()
+    if system == "Windows":
+        candidates: list[Path] = []
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            local_root = Path(local_app_data).expanduser().resolve()
+            versioned_roots = (
+                local_root / "AnthropicClaude",
+                local_root / "Claude",
+            )
+            candidates.extend(
+                (
+                    local_root / "AnthropicClaude" / "Claude.exe",
+                    local_root / "Programs" / "Claude" / "Claude.exe",
+                    local_root / "Claude" / "Claude.exe",
+                )
+            )
+            for versioned_root in versioned_roots:
+                candidates.extend(versioned_root.glob("app-*/Claude.exe"))
+        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+            root = os.environ.get(variable)
+            if root:
+                candidates.append(Path(root).expanduser().resolve() / "Claude" / "Claude.exe")
+        if any(candidate.is_file() for candidate in candidates):
+            return True
+        try:
+            import winreg
+        except ImportError:  # pragma: no cover - defensive on nonstandard runtimes
+            return False
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for view in (0, winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                try:
+                    with winreg.OpenKey(
+                        hive,
+                        r"Software\Microsoft\Windows\CurrentVersion\App Paths\Claude.exe",
+                        0,
+                        winreg.KEY_READ | view,
+                    ) as key:
+                        executable, _kind = winreg.QueryValueEx(key, "")
+                except OSError:
+                    continue
+                if isinstance(executable, str) and Path(executable).expanduser().is_file():
+                    return True
+        return False
+    if system == "Darwin":
+        return any(
+            path.is_dir()
+            for path in (
+                Path("/Applications/Claude.app"),
+                Path.home() / "Applications" / "Claude.app",
+            )
+        )
+    return False
 
 
 def _managed_config(path: Path, server: Any) -> ManagedClientConfig | None:
@@ -148,12 +217,50 @@ def claude_is_configured(path: Path | None = None) -> bool:
         return False
 
 
+def repair_managed_runtime_bindings(
+    runtime: RuntimeCommand,
+    config: CoreConfig,
+) -> tuple[ClientConfigResult, ...]:
+    """Refresh existing managed entries without creating apps or rotating credentials."""
+
+    target_url = f"http://{config.host}:{config.port}"
+    repaired: list[ClientConfigResult] = []
+    integrations = (
+        (read_codex_config, configure_codex),
+        (read_claude_config, configure_claude),
+    )
+    for read_config, configure in integrations:
+        try:
+            current = read_config()
+            if current is None:
+                continue
+            client_id = current.env.get("ATC_CLIENT_ID")
+            if not client_id:
+                continue
+            repaired.append(
+                configure(
+                    runtime,
+                    client_id,
+                    token=current.env.get("ATC_CLIENT_TOKEN"),
+                    path=current.path,
+                    target_url=target_url,
+                    core_data_dir=config.data_dir,
+                )
+            )
+        except (OSError, ValueError):
+            # A user-owned invalid or unwritable config is left untouched. The
+            # authenticated Connections page reports the precise degraded state.
+            continue
+    return tuple(repaired)
+
+
 def render_codex_mcp_block(
     runtime: RuntimeCommand,
     client_id: str,
     *,
     token: str | None,
     target_url: str = "http://127.0.0.1:7337",
+    core_data_dir: Path | None = None,
 ) -> str:
     mcp_command = runtime.mcp()
     arguments = list(mcp_command[1:])
@@ -162,6 +269,7 @@ def render_codex_mcp_block(
         "ATC_CLIENT_ID": client_id,
         "ATC_AUTO_START_CORE": "1",
         "ATC_CORE_COMMAND": json.dumps(runtime.core(), ensure_ascii=False),
+        "ATC_CORE_DATA_DIR": str((core_data_dir or CoreConfig.default().data_dir).resolve()),
     }
     if token:
         environment["ATC_CLIENT_TOKEN"] = token
@@ -262,13 +370,20 @@ def configure_codex(
     token: str | None,
     path: Path | None = None,
     target_url: str = "http://127.0.0.1:7337",
+    core_data_dir: Path | None = None,
 ) -> ClientConfigResult:
     config_path = (path or codex_config_path()).expanduser().resolve()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     existing = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
     if existing:
         tomllib.loads(existing)
-    block = render_codex_mcp_block(runtime, client_id, token=token, target_url=target_url)
+    block = render_codex_mcp_block(
+        runtime,
+        client_id,
+        token=token,
+        target_url=target_url,
+        core_data_dir=core_data_dir,
+    )
     updated = _replace_managed_section(existing, block)
     tomllib.loads(updated)
     if updated == existing:
@@ -314,6 +429,7 @@ def configure_claude(
     token: str | None,
     path: Path | None = None,
     target_url: str = "http://127.0.0.1:7337",
+    core_data_dir: Path | None = None,
 ) -> ClientConfigResult:
     """Add the local STDIO adapter while preserving every other Claude setting."""
     config_path = (path or claude_config_path()).expanduser().resolve()
@@ -329,6 +445,7 @@ def configure_claude(
         "ATC_CLIENT_ID": client_id,
         "ATC_AUTO_START_CORE": "1",
         "ATC_CORE_COMMAND": json.dumps(runtime.core(), ensure_ascii=False),
+        "ATC_CORE_DATA_DIR": str((core_data_dir or CoreConfig.default().data_dir).resolve()),
     }
     if token:
         environment["ATC_CLIENT_TOKEN"] = token

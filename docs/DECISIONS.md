@@ -355,6 +355,37 @@ codes are bounded and path-validated. The latest terminal journal is retained
 until a later operation supersedes it.
 
 This decision establishes an exercised engineering recovery boundary, not a
-public release claim. Production Windows OTA still requires an offline release
-key ceremony, immutable channel publication, Authenticode/publisher gates, and
-a real signed N-1 release drill. macOS and Linux remain manual-required.
+public release claim. Community Windows OTA still requires an offline release
+key ceremony, immutable channel publication, and a real Ed25519-signed N-1
+release drill. macOS and Linux remain manual-required.
+
+## ADR-027: Managed local integrations are installation-aware and vault-bound
+
+The Connections API reports whether each supported desktop application is
+actually detected. A missing application is shown as **Not installed**, links
+to the official download page, and cannot receive a generated configuration or
+credential. A configuration directory by itself is not installation evidence.
+
+Every managed STDIO MCP entry includes the absolute `ATC_CORE_DATA_DIR` for the
+authoritative vault alongside its loopback URL and client identity. Launch
+migration adds this value to older managed entries. Connection status compares
+it with the active Core using platform path semantics and offers Repair on a
+mismatch. This lets isolated/non-default instances self-start their own Core
+without confusing a live Core on the same port for another vault.
+
+## ADR-028: Community releases do not depend on paid publisher signing
+
+All The Context is distributed as an open-source, zero-cost community project.
+Paid Authenticode certificates, Apple Developer membership/notarization, and
+commercial signing services are not release requirements. Native publisher
+signing may be added later if it is donated or sponsored, but its absence does
+not block a community release.
+
+Unsigned artifacts must be labeled honestly. Release integrity instead relies
+on the public GitHub repository and immutable GitHub Release assets, SHA-256
+sidecars, SBOM/provenance, reproducible source inspection, and an offline
+Ed25519 key whose reviewed public half ships with the application. The updater
+continues to fail closed on a missing/invalid manifest signature, wrong target,
+size mismatch, or digest mismatch. Windows and macOS first-install publisher
+warnings are an accepted usability tradeoff and must be disclosed rather than
+bypassed or described as signed.

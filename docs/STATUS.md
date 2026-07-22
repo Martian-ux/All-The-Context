@@ -9,9 +9,10 @@
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
   Streamable HTTP; generic import; review dashboard; encrypted export/restore;
-  native first-run wizard with automatic timezone detection; automatic,
-  reversible Codex and Claude Desktop configuration; separate least-privilege
-  AI-client identities; validated connection status and disconnect/revocation;
+  native first-run wizard with automatic timezone detection; installation-aware,
+  reversible Codex and Claude Desktop configuration bound to the exact Core
+  vault; separate least-privilege AI-client identities; validated connection
+  status and disconnect/revocation;
   automatic upgrade repair; verified-Core challenge and one-use opaque browser
   handoff without credential copy/paste or durable browser credentials;
   managed MCP self-healing after Core stops; per-user startup; Windows Start
@@ -31,7 +32,7 @@
   Windows recovery helper, and binary/database rollback; and signed ordered
   Edge purge application with opaque
   replay barriers and resumable physical SQLite compaction.
-- Current combined evidence on Windows 11 and Python 3.12: 251 Python and 18
+- Current combined evidence on Windows 11 and Python 3.12: 253 Python and 19
   dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -143,12 +144,13 @@
 - Temporal precision remains `0.5`; diversity and near-duplicate thresholds
   need evaluation on a larger sanitized judgment set before further tuning.
 
-- The GitHub Actions matrix has not run because this local repository has no
-  configured remote; macOS and Linux behavior is therefore designed and
-  covered by tests, not claimed as observed on those operating systems.
-- The Windows engineering artifact is unsigned. Windows publisher signing,
-  macOS signing/notarization, and native Linux package metadata remain release
-  work.
+- The public GitHub repository is `Martian-ux/All-The-Context`. Hosted Actions
+  evidence is recorded separately from local evidence; macOS and Linux behavior
+  is not claimed as observed until their jobs complete successfully.
+- Community artifacts intentionally remain unsigned at the native publisher
+  layer. Paid Authenticode and Apple notarization are out of scope; first-install
+  warnings must remain explicit. Ed25519 manifest signing, immutable release
+  assets, hashes, SBOM/provenance, and a real N-1 update drill remain required.
 - No production release key has been created or configured. `release/keys.json`
   intentionally trusts no keys until an offline key ceremony and public-key
   review occur. Candidate workflows create drafts only; production promotion
@@ -156,7 +158,7 @@
 - The packaged Windows engineering build exposes automatic install through its
   independent recovery helper and passed a same-version frozen transaction
   drill with injected crash and failed-health rollback. No production key,
-  channel endpoint, Authenticode signature, or real signed N-1 release has been
+  channel endpoint or real Ed25519-signed N-1 release has been
   exercised, so this is not a public-production OTA claim. macOS and Linux
   continue to verify and stage downloads but stop in a precise
   manual-install-required state until their native cutovers are implemented and
@@ -169,14 +171,16 @@
   and Linux secret-service acceptance remain unexercised; persistence
   verification and the explicit local app-data fallback were also exercised in
   the packaged smoke.
-- The Codex and Claude Desktop configuration writers were exercised locally,
-  but those provider applications were not launched for an end-to-end
-  handshake. Grok support also remains unimplemented.
+- The Codex and Claude Desktop configuration writers, exact-vault binding, and
+  missing-app refusal were exercised locally. A fresh Codex MCP adapter reached
+  the active non-default Testing vault and completed initialize/list/status;
+  Claude Desktop was not installed or launched for an end-to-end handshake.
+  Grok support also remains unimplemented.
 - The provider-neutral hosted Edge OAuth/MCP path is implemented and exercised
-  with SDK/TestClient integrations. No public repository/image or
+  with SDK/TestClient integrations. No public Edge image or
   `ATC_EDGE_DEPLOY_URL` is configured, so the dashboard truthfully reports that
-  deployment is unavailable in this development build. Publishing those assets
-  is required before hosted Edge setup can be one-click. Claude custom
+  deployment is unavailable in this development build. Publishing those Edge
+  assets is required before hosted Edge setup can be one-click. Claude custom
   connectors linked through its current web/Desktop flow can then be used from
   Claude mobile, subject to plan and workspace-admin policy. ChatGPT
   developer-mode MCP apps are currently web-only; real ChatGPT and Claude

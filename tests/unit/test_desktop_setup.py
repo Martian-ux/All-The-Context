@@ -324,6 +324,7 @@ def test_existing_legacy_admin_config_is_repaired_and_rotated(tmp_path: Path, mo
         desktop_access.token,
         replacement.token,
     }
+    assert managed["env"]["ATC_CORE_DATA_DIR"] == str(config.data_dir)
     mcp_principal = store.authenticate(managed["env"]["ATC_CLIENT_TOKEN"])
     assert mcp_principal is not None
     assert mcp_principal.scopes == frozenset(AI_CLIENT_SCOPES)

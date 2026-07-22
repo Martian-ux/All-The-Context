@@ -43,6 +43,8 @@ from ..browser_session import (
     BrowserSessionTickets,
 )
 from ..client_config import (
+    claude_is_detected,
+    codex_is_detected,
     configure_claude,
     configure_codex,
     disconnect_claude,
@@ -986,16 +988,22 @@ def create_app(
             if integration_id == "chatgpt_codex":
                 name = CODEX_CLIENT_NAME
                 read_config = read_codex_config
+                detected = codex_is_detected()
+                install_url = "https://openai.com/codex/"
                 detail = "One local MCP connection for the Codex app, CLI, and editor extension."
             else:
                 name = CLAUDE_CLIENT_NAME
                 read_config = read_claude_config
+                detected = claude_is_detected()
+                install_url = "https://claude.ai/download"
                 detail = "Direct private connection to Core through the local MCP adapter."
             base = {
                 "id": integration_id,
                 "name": name,
+                "detected": detected,
+                "install_url": install_url,
                 "configured": False,
-                "state": "disconnected",
+                "state": "disconnected" if detected else "not_installed",
                 "reason": None,
                 "mode": "local",
                 "detail": detail,
@@ -1010,6 +1018,14 @@ def create_app(
                 }
             if configured is None:
                 return base
+            if not detected:
+                return {
+                    **base,
+                    "reason": (
+                        "An All The Context configuration exists, but the app is not installed "
+                        "on this computer."
+                    ),
+                }
 
             runtime = RuntimeCommand.current()
             expected_command = runtime.mcp()
@@ -1026,6 +1042,19 @@ def create_app(
                     **base,
                     "state": "degraded",
                     "reason": "The connection points at a different Core. Choose Repair.",
+                }
+            configured_data_dir = configured.env.get("ATC_CORE_DATA_DIR", "")
+            try:
+                same_data_dir = (
+                    Path(configured_data_dir).expanduser().samefile(active_config.data_dir)
+                )
+            except (OSError, RuntimeError, ValueError):
+                same_data_dir = False
+            if not configured_data_dir or not same_data_dir:
+                return {
+                    **base,
+                    "state": "degraded",
+                    "reason": "The connection is not bound to this Core vault. Choose Repair.",
                 }
             client_id = configured.env.get("ATC_CLIENT_ID", "")
             matching_client = next(
@@ -1081,6 +1110,15 @@ def create_app(
         require(principal, "admin")
         if integration_id not in {"chatgpt_codex", "claude"}:
             raise HTTPException(status_code=404, detail="Unknown desktop integration")
+        detected = (
+            codex_is_detected() if integration_id == "chatgpt_codex" else claude_is_detected()
+        )
+        if not detected:
+            name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
+            raise HTTPException(
+                status_code=409,
+                detail=f"{name} is not installed on this computer.",
+            )
         client_access = ensure_client_access(
             core.store,
             active_config,
@@ -1101,6 +1139,7 @@ def create_app(
                     client_access.client_id,
                     token=embedded_token,
                     target_url=target_url,
+                    core_data_dir=active_config.data_dir,
                 )
             else:
                 result = configure_claude(
@@ -1108,6 +1147,7 @@ def create_app(
                     client_access.client_id,
                     token=embedded_token,
                     target_url=target_url,
+                    core_data_dir=active_config.data_dir,
                 )
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

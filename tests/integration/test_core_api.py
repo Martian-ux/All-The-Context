@@ -290,6 +290,12 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
     monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(claude_config))
     monkeypatch.setenv("ATC_EDGE_MCP_URL", "https://relay.example.test/mcp")
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    codex_executable = tmp_path / "Codex.exe"
+    claude_executable = tmp_path / "Claude.exe"
+    codex_executable.write_bytes(b"test application marker")
+    claude_executable.write_bytes(b"test application marker")
+    monkeypatch.setenv("ATC_CODEX_EXECUTABLE", str(codex_executable))
+    monkeypatch.setenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", str(claude_executable))
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
     with TestClient(create_app(config)) as client:
         assert client.get("/v1/context/status").status_code == 401
@@ -384,6 +390,7 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         codex_env = codex["mcp_servers"]["all_the_context"]["env"]
         assert codex_env.get("ATC_CLIENT_TOKEN") != token
         assert codex_env["ATC_CLIENT_ID"] == codex_connection.json()["client_id"]
+        assert codex_env["ATC_CORE_DATA_DIR"] == str(config.data_dir)
         configure_codex(
             RuntimeCommand.current(),
             codex_env["ATC_CLIENT_ID"],
@@ -410,6 +417,7 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         claude_env = claude["mcpServers"]["all-the-context"]["env"]
         assert claude_env.get("ATC_CLIENT_TOKEN") != token
         assert claude_env["ATC_CLIENT_ID"] == claude_connection.json()["client_id"]
+        assert claude_env["ATC_CORE_DATA_DIR"] == str(config.data_dir)
         assert claude_env["ATC_CLIENT_ID"] != codex_env["ATC_CLIENT_ID"]
         registered = {
             item["id"]: item
@@ -438,6 +446,15 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert next(item for item in integration_items if item["id"] == "claude")["state"] == (
             "disconnected"
         )
+        monkeypatch.setattr("allthecontext.core.app.claude_is_detected", lambda: False)
+        unavailable = client.get("/v1/admin/integrations", headers=browser_auth).json()["apps"]
+        claude_status = next(item for item in unavailable if item["id"] == "claude")
+        assert claude_status["detected"] is False
+        assert claude_status["state"] == "not_installed"
+        assert claude_status["install_url"] == "https://claude.ai/download"
+        refused = client.post("/v1/admin/integrations/claude", headers=dashboard_headers)
+        assert refused.status_code == 409
+        assert "not installed" in refused.json()["detail"]
         assert client.post("/v1/setup", json={"name": "Other", "scopes": []}).status_code == 409
 
 

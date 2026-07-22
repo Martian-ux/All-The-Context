@@ -9,6 +9,7 @@ from collections.abc import Callable
 from tkinter import messagebox
 from typing import Any
 
+from .client_config import claude_is_detected, codex_is_detected
 from .config import CoreConfig
 from .desktop_runtime import RuntimeCommand
 from .desktop_setup import (
@@ -51,8 +52,10 @@ class SetupWizard:
         self.working = False
         self.current_step = 0
         self.vault_name = tk.StringVar(value="My Context")
-        self.configure_codex = tk.BooleanVar(value=True)
-        self.configure_claude = tk.BooleanVar(value=True)
+        self.codex_detected = codex_is_detected()
+        self.claude_detected = claude_is_detected()
+        self.configure_codex = tk.BooleanVar(value=self.codex_detected)
+        self.configure_claude = tk.BooleanVar(value=self.claude_detected)
         self.continue_to_remote_setup = tk.BooleanVar(value=True)
         self.start_at_login = tk.BooleanVar(value=True)
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
@@ -331,13 +334,23 @@ class SetupWizard:
         self._field("Vault name", self.vault_name)
         self._check(
             "Connect Codex",
-            "Creates a private local MCP connection; no command or token copying.",
+            (
+                "Creates a private local MCP connection; no command or token copying."
+                if self.codex_detected
+                else "Codex was not found. Install it, then connect from the dashboard."
+            ),
             self.configure_codex,
+            enabled=self.codex_detected,
         )
         self._check(
             "Connect Claude Desktop",
-            "Adds the same private local Core while preserving every existing Claude setting.",
+            (
+                "Adds the same private local Core while preserving every existing Claude setting."
+                if self.claude_detected
+                else "Claude Desktop was not found. Install it, then connect from the dashboard."
+            ),
             self.configure_claude,
+            enabled=self.claude_detected,
         )
         self._check(
             "Continue with web & mobile setup",

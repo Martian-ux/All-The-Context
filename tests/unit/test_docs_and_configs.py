@@ -64,6 +64,8 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "subject-digest" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
+    assert "unsigned community builds" in releases
+    assert "not a community release gate" in releases
     assert keys == {"schema_version": 1, "keys": []}
 
 

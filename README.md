@@ -19,8 +19,9 @@ first-run wizard:
 1. installs the application for the current user without administrator access;
 2. creates the private vault in the correct per-user application-data folder;
 3. stores credentials in Windows Credential Manager when available;
-4. creates separate least-privilege connections for Codex and Claude Desktop,
-   preserving existing configuration with timestamped backups;
+4. detects installed AI desktop apps and creates separate least-privilege
+   connections only for the apps the user selects, preserving existing
+   configuration with timestamped backups;
 5. establishes the dashboard automatically with a one-use local link and an
    opaque, tab-scoped session—no administrator token is placed in a cookie,
    URL, or browser storage;
@@ -32,8 +33,12 @@ first-run wizard:
 
 After restarting a connected desktop client once, context retrieval and
 proposals happen through MCP without repeated setup. The dashboard's **Connect
-apps** page can connect or repair Codex and Claude Desktop with
-one button. Launching All The Context again starts Core if needed and opens an
+apps** page distinguishes installed apps from merely supported apps, offers the
+official download page when an app is absent, and can connect or repair detected
+Codex and Claude Desktop installations with one button. Every managed MCP entry
+is bound to the exact vault it belongs to, so an isolated or non-default Core
+can restart without being mistaken for another installation. Launching All The
+Context again starts Core if needed and opens an
 authenticated dashboard automatically. Core remains bound to `127.0.0.1` by
 default. Running a newer installer upgrades the per-user app and opens the
 existing vault directly; it does not send an established user through setup
@@ -52,20 +57,24 @@ web-only; workspace policy may gate setup. These labels were checked on
 [Claude connector guide](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers)
 and [ChatGPT developer-mode guide](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta).
 
-The repository does not yet have a public release URL, so its engineering build
-truthfully shows that the one-click Render deployment link is unavailable.
-Release builds can inject `ATC_EDGE_DEPLOY_URL` after this repository or an
-equivalent image is published. Based on Render's published
+The public source repository is
+[Martian-ux/All-The-Context](https://github.com/Martian-ux/All-The-Context).
+The engineering build still shows the one-click Render deployment link as
+unavailable until a reviewed Edge image and `ATC_EDGE_DEPLOY_URL` are published.
+Based on Render's published
 [Starter pricing](https://render.com/articles/render-vs-railway) and
 [persistent-disk pricing](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses),
 Starter plus a 1 GB disk is estimated at $7.25/month before bandwidth; an
 external hosting account and payment cannot be hidden by the local installer.
 
 The locally exercised Windows engineering build is
-`dist\desktop\AllTheContextSetup.exe`. Release signing is not configured yet,
-so this local artifact is not presented as a production-signed download.
-macOS application and Linux executable builds are authored in CI but still need
-their first observed runs and release signing/package work.
+`dist\desktop\AllTheContextSetup.exe`. This project will not require paid
+Windows publisher certificates or Apple notarization for community releases.
+Downloads are explicitly labeled unsigned and use GitHub Releases, SHA-256,
+SBOM/provenance, and the application's offline Ed25519 release manifest for
+integrity. Windows and macOS may therefore show their normal unknown-publisher
+warning on first install. macOS and Linux artifacts still need their first
+observed native runs and packaging work.
 
 ## Current release target
 
