@@ -21,7 +21,7 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Administrator ranking diagnostics | `atc search --explain`, `RetrievalEngine.diagnose_search` | admin gate and authorized returned-ID-only explanation test | Implemented locally; intentionally absent from MCP |
 | Separate Relay | `relay/` | API/restart/offline/demo | Implemented with SQLite |
 | Signed event replication | `replication.py` | replay/tamper/gap/integration | Implemented |
-| Opaque irreversible purge replication contract | `replication.py`, `storage.py` | signed exact-shape event, no-content scan, ordering/replay barrier | Core producer contract implemented; Relay/Edge apply deferred |
+| Opaque irreversible purge replication contract | `replication.py`, `storage.py`, `relay/service.py`, Relay migration `0009` | signed exact-shape event; ordering/idempotency; lock/restart resume; resurrection rejection; Core-to-Edge propagation; DB/WAL/SHM raw-content and digest scans | Core production and Relay/Edge transactional apply plus retryable live-storage compaction implemented locally; provider snapshots/backups remain out of scope |
 | Required MCP tools | `mcp_adapter.py` | schema contract, real STDIO handshake, crash/shutdown/verified auto-restart | Implemented |
 | Minimal administration UI | `apps/dashboard/` | component tests, production build, live browser smoke; responsive off-canvas inert/ARIA/focus/Escape regression | Implemented |
 | Correction/deletion propagation | Core/Relay services | integration/demo | Implemented |

@@ -832,6 +832,26 @@ class EdgeSyncManager:
                     forwarded = self._service_forwarding(sync)
                     remote = sync.edge_status(material.bundle.vault_id)
                 sequence = int(remote.get("last_applied_sequence", state.last_sequence))
+                purge_compaction = remote.get("purge_compaction")
+                if isinstance(purge_compaction, dict) and purge_compaction.get("pending") is True:
+                    message = (
+                        "Edge applied an irreversible purge but physical compaction is pending"
+                    )
+                    self.connection.update_sync(
+                        success=False,
+                        last_sequence=sequence,
+                        proposals_imported=imported,
+                        error=message,
+                    )
+                    return {
+                        "state": "degraded",
+                        "error": message,
+                        "pushed": pushed,
+                        "proposals_imported": imported,
+                        "forwarded_requests": forwarded,
+                        "last_sequence": sequence,
+                        "purge_compaction": purge_compaction,
+                    }
                 updated = self.connection.update_sync(
                     success=True,
                     last_sequence=sequence,
@@ -843,6 +863,7 @@ class EdgeSyncManager:
                     "proposals_imported": imported,
                     "forwarded_requests": forwarded,
                     "last_sequence": sequence,
+                    "purge_compaction": purge_compaction,
                     "last_success_at": updated.last_success_at if updated else None,
                 }
             except Exception as exc:

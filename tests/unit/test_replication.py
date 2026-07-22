@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -226,6 +227,130 @@ def test_supersession_withdrawal_and_deletion_propagate(relay: RelayService) -> 
     with pytest.raises(InvalidEventPayloadError):
         relay.apply(event(5, EventType.RECORD_UPSERTED, "old", record_payload("old", version=3)))
     assert relay.store.checkpoint("vault-1") == 4
+
+
+def test_irreversible_purge_scrubs_edge_state_and_blocks_resurrection(tmp_path: Path) -> None:
+    database_path = tmp_path / "purge.sqlite3"
+    store = SQLiteRelayStore(database_path)
+    relay = RelayService(store, SECRET)
+    marker = "EDGE_PURGE_PRIVATE_MARKER_98f3d4"
+    digest = hashlib.sha256(marker.encode()).hexdigest()
+    try:
+        relay.apply(
+            event(
+                1,
+                EventType.RECORD_UPSERTED,
+                "record-purge",
+                record_payload("record-purge", content=marker),
+            )
+        )
+        relay.apply(
+            event(
+                2,
+                EventType.RECORD_DELETED,
+                "record-purge",
+                {"version": 2, "content_hash": digest},
+            )
+        )
+        purged = event(
+            3,
+            EventType.RECORD_PURGED,
+            "record-purge",
+            {
+                "record_id": "record-purge",
+                "purged_at": "2026-07-22T12:00:00+00:00",
+                "purge_scope": "record",
+                "irreversible": True,
+            },
+        )
+        relay.apply(purged)
+
+        assert store.checkpoint("vault-1") == 3
+        assert store.purge_compaction_status()["pending"] is True
+        assert relay.apply(purged).replayed
+        with sqlite3.connect(database_path) as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM relay_context_records").fetchone()[0] == 0
+            )
+            assert connection.execute("SELECT COUNT(*) FROM relay_context_fts").fetchone()[0] == 0
+            assert (
+                connection.execute("SELECT COUNT(*) FROM relay_deletion_tombstones").fetchone()[0]
+                == 0
+            )
+            applied = connection.execute(
+                "SELECT sequence,event_type FROM applied_replication_events"
+            ).fetchall()
+            assert applied == [(3, "record_purged")]
+            tombstone = connection.execute(
+                "SELECT record_id,purge_scope,event_sequence FROM relay_purge_tombstones"
+            ).fetchone()
+            assert tombstone == ("record-purge", "record", 3)
+
+        compacted = store.resume_purge_compaction()
+        assert compacted["pending"] is False
+        assert compacted["last_error_code"] is None
+        for path in (
+            database_path,
+            database_path.with_name(f"{database_path.name}-wal"),
+            database_path.with_name(f"{database_path.name}-shm"),
+        ):
+            if path.is_file():
+                raw = path.read_bytes()
+                assert marker.encode() not in raw
+                assert digest.encode() not in raw
+
+        with pytest.raises(InvalidEventPayloadError, match="purged stable record"):
+            relay.apply(
+                event(
+                    4,
+                    EventType.RECORD_UPSERTED,
+                    "record-purge",
+                    record_payload("record-purge", content="attempted resurrection"),
+                )
+            )
+        assert store.checkpoint("vault-1") == 3
+    finally:
+        relay.close()
+
+
+def test_edge_purge_compaction_is_retryable_after_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_path = tmp_path / "purge-retry.sqlite3"
+    store = SQLiteRelayStore(database_path)
+    relay = RelayService(store, SECRET)
+    relay.apply(event(1, EventType.RECORD_UPSERTED, "record-1", record_payload("record-1")))
+    relay.apply(
+        event(
+            2,
+            EventType.RECORD_PURGED,
+            "record-1",
+            {
+                "record_id": "record-1",
+                "purged_at": "2026-07-22T12:00:00+00:00",
+                "purge_scope": "source",
+                "irreversible": True,
+            },
+        )
+    )
+
+    def interrupted_compaction() -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "_compact_after_purge", interrupted_compaction)
+    interrupted = store.resume_purge_compaction()
+    assert interrupted["pending"] is True
+    assert interrupted["last_error_code"] == "database_busy"
+    relay.close()
+
+    restarted = SQLiteRelayStore(database_path)
+    try:
+        resumed = restarted.resume_purge_compaction()
+        assert resumed["pending"] is False
+        assert resumed["last_error_code"] is None
+        assert restarted.checkpoint("vault-1") == 2
+    finally:
+        restarted.close()
 
 
 def test_proposals_are_idempotent_and_never_enter_context(relay: RelayService) -> None:

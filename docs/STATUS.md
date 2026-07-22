@@ -3,8 +3,9 @@
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
   implemented. The secure Edge/mobile forwarding foundation is integrated;
-  signed desktop update verification and manual package handoff are integrated.
-  Edge purge parity and a transactional Windows update helper are next.
+  signed desktop update verification and manual package handoff are integrated;
+  and irreversible Edge purge parity is integrated. A transactional Windows
+  update helper is next.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -28,8 +29,9 @@
   cross-platform release workflows with strict offline-signed OTA metadata;
   and a fail-closed native updater with stable/beta preferences, bounded signed
   checks, verified staging, recovery abstractions, dashboard controls, and
-  interruption recovery.
-- Current combined evidence on Windows 11 and Python 3.12: 224 Python and 18
+  interruption recovery; and signed ordered Edge purge application with opaque
+  replay barriers and resumable physical SQLite compaction.
+- Current combined evidence on Windows 11 and Python 3.12: 227 Python and 18
   dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -49,8 +51,10 @@
   infrastructure validation.
 - Integrated memory-integrity/purge evidence includes legacy migration, export
   resurrection, locked-file, insufficient-disk, restart, API authority,
-  physical-content, and replication-contract coverage. Ruff formatting/lint,
-  strict mypy, docs checks, and the rebuilt combined dashboard pass.
+  physical-content, replication-contract, Edge propagation, Edge lock/restart,
+  resurrection rejection, and Edge DB/WAL/SHM byte-scan coverage. Ruff
+  formatting/lint, strict mypy, docs checks, and the rebuilt combined dashboard
+  pass.
 - The integrated Edge/mobile slice additionally exercised sealed forwarding-request
   persistence, memory-only responses with DB/WAL/SHM byte scans, unknown or
   revoked identity and Edge-asserted admin-scope rejection, claim
@@ -93,11 +97,13 @@
   content-free `record_purged` event, and crash-resumable secure-delete/WAL/
   VACUUM compaction. Ordinary delete remains history-preserving.
 - The bounded review/purge admin API and CLI are implemented. Dashboard group
-  review is deferred to avoid collision with the Edge wizard. Relay/Edge purge
-  event application and Edge physical compaction are deliberately deferred to
-  the next integration slice; no Core completion claim implies those copies
-  have been compacted. Online `core_available` forwarding is implemented and
-  does not change purge semantics.
+  review is deferred to avoid collision with the Edge wizard. Relay migration
+  0009 applies the opaque purge event transactionally, removes live/index/
+  deletion/history-fingerprint state, and retains only an opaque replay barrier.
+  It then records a pending compaction that is retried at startup and status
+  checks. Core advances the replication checkpoint but reports Edge sync as
+  degraded until that physical phase succeeds. Online `core_available`
+  forwarding is implemented and does not change purge semantics.
 
 ## Retrieval V2 status
 
@@ -122,10 +128,11 @@
   vocabulary expansion remain deferred. Phase 1 uses a small inspectable alias
   table and has no embeddings or graph database. The benchmark is synthetic and
   timing evidence is local, not a production workload or cross-platform claim.
-- Core purge cannot erase filesystem snapshots, SSD remanence, external
-  backups, user-copied exports, or remote copies. macOS/Linux locked-file,
-  disk-pressure, checkpoint, and VACUUM behavior is covered by portable design
-  and tests but has not yet been observed on those operating systems.
+- Core and Edge live-database compaction cannot erase filesystem/provider
+  snapshots, SSD remanence, external backups, user-copied exports, or other
+  copies. macOS/Linux locked-file, disk-pressure, checkpoint, and VACUUM
+  behavior is covered by portable design and tests but has not yet been observed
+  on those operating systems.
 - Temporal precision remains `0.5`; diversity and near-duplicate thresholds
   need evaluation on a larger sanitized judgment set before further tuning.
 

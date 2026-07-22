@@ -240,7 +240,7 @@ on every connection, temp storage stays in memory, WAL is checkpointed, disk is
 preflighted, and one bounded job runs VACUUM. A crash, lock, or insufficient
 disk cannot roll back logical absence; it leaves a retryable pending job. This
 boundary makes no claim about snapshots, device remanence, external backups,
-user copies, or Relay/Edge purge parity before the follow-up integration lands.
+or user copies.
 
 ## ADR-023: Online Core retrieval uses a bounded outbound-only broker
 
@@ -303,3 +303,24 @@ before channel selection. Manual-required packages are available only through
 an authenticated, no-store Core response that re-verifies the signed manifest,
 target, exact length, and SHA-256 while copying to a one-response temporary
 file; private staging paths remain undisclosed.
+
+## ADR-025: Edge applies irreversible purge before retryable physical compaction
+
+Relay migration 0009 adds an opaque purge tombstone and singleton compaction
+state. A valid next-sequence `record_purged` event transactionally removes the
+live record, FTS row, ordinary deletion tombstone, supersession references, and
+historical content-derived event fingerprints for that stable ID. The same
+transaction advances the stream checkpoint, stores the exact purge event for
+idempotent replay, creates the hash-free resurrection barrier, and marks
+physical compaction pending. Later upsert, withdrawal, or deletion events for
+the purged stable ID fail closed.
+
+Logical absence is authoritative even when SQLite is locked or VACUUM is
+interrupted. Edge retries WAL truncation and secure-delete VACUUM at process
+startup and whenever Core requests status. The status contract exposes only a
+pending flag, timestamps, and fixed error codes; Core records the advanced
+sequence but reports synchronization as degraded until compaction succeeds.
+Tests close and reopen the store after an injected lock, reject resurrection,
+and scan the live database, WAL, and shared-memory files for both raw content
+and its SHA-256. This protects the live Edge storage set, not provider snapshots,
+external backups, media remanence, or user-created copies.

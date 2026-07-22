@@ -59,8 +59,13 @@ administrator-only purge is a different state machine: an exact target-bound
 phrase authorizes a single logical transaction, which scrubs attributable Core
 content and commits opaque replay tombstones plus an ordered purge event. A
 resumable compaction phase then checkpoints WAL and runs secure-delete VACUUM.
-Core remains authoritative for purge. Edge/Relay application and compaction are
-the explicitly separate integration slice.
+Core remains authoritative for purge. Edge/Relay transactionally removes its
+restricted projection, content-derived replication history, and ordinary
+deletion state while advancing the ordered checkpoint and retaining an opaque
+resurrection barrier. Physical Edge compaction is independently retryable; Core
+reports sync as degraded until the live database and WAL have been compacted.
+Neither service claims erasure from snapshots, external backups, storage-media
+remanence, or user copies.
 
 ## Cross-platform rules
 

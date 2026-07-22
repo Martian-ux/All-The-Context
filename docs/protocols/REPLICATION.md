@@ -26,11 +26,21 @@ outbox payload for that record to an opaque withdrawal while preserving its
 sequence position, then appends the purge event transactionally.
 
 The purge contract is one-way authority: Edge proposals cannot use this event
-shape and no Edge action can downgrade it into an upsert. Relay/Edge application
-and physical compaction are deliberately deferred to the immediately following
-integration slice; until that lands, operators must treat Core completion as
-local Core completion rather than a claim that an offline or existing Edge has
-compacted its copy.
+shape and no Edge action can downgrade it into an upsert. Relay applies a valid
+next-sequence purge in one transaction: it removes the live projection, FTS,
+ordinary deletion tombstone, supersession references, and historical
+content-derived event fingerprints for the record; persists an opaque hash-free
+purge tombstone; retains the exact current purge event for idempotent replay;
+advances the checkpoint; and marks physical compaction pending. Any later
+transition for that stable ID is rejected.
+
+Checkpoint advancement means logical absence is durable even if SQLite is busy.
+Relay retries WAL truncation and secure-delete VACUUM at startup and when Core
+requests Edge status. Status exposes the pending state and a fixed error code,
+never raw SQLite text. Core reports synchronization as degraded while that
+physical phase remains pending, then ready after a later successful retry.
+Compaction covers the live Relay database/WAL set; provider snapshots, backups,
+media remanence, and user copies remain outside the protocol.
 
 V1 uses push synchronization initiated by Core. The future Core-online bridge
 will also be outbound from Core; no home-network inbound port is required.

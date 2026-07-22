@@ -307,6 +307,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        service.resume_purge_compaction()
         try:
             if edge_mcp is not None:
                 async with edge_mcp.session_manager.run():
@@ -625,11 +626,13 @@ def create_app(
         provider, active_vault, _owner_hash = require_edge()
         if requested_vault_id != active_vault:
             raise HTTPException(status_code=404, detail="Edge vault not found")
+        purge_compaction = service.resume_purge_compaction()
         return {
             "status": "ready",
             "authority": "core",
             "mcp_url": provider.resource,
             "last_applied_sequence": service.store.checkpoint(active_vault),
+            "purge_compaction": purge_compaction,
             "oauth_enabled": True,
             "proposal_queue": "encrypted_and_bounded",
             "core_forwarding": {

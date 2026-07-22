@@ -10,7 +10,7 @@ import re
 import secrets
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import islice
@@ -106,6 +106,10 @@ class RelayStore(Protocol):
     ) -> Sequence[Mapping[str, Any]]: ...
 
     def checkpoint(self, vault_id: str) -> int: ...
+
+    def resume_purge_compaction(self) -> Mapping[str, Any]: ...
+
+    def purge_compaction_status(self) -> Mapping[str, Any]: ...
 
     def configure_proposal_protection(self, replication_secret: bytes) -> None: ...
 
@@ -440,9 +444,13 @@ class SQLiteRelayStore:
             if event.event_type is EventType.RECORD_UPSERTED:
                 self._apply_upsert(connection, event)
             elif event.event_type is EventType.RECORD_WITHDRAWN:
+                self._reject_transition_after_purge(connection, event)
                 self._remove_record(connection, event.vault_id, event.record_id)
             elif event.event_type is EventType.RECORD_DELETED:
+                self._reject_transition_after_purge(connection, event)
                 self._apply_deletion(connection, event)
+            elif event.event_type is EventType.RECORD_PURGED:
+                self._apply_purge(connection, event)
             else:  # pragma: no cover - EventType parsing closes this branch
                 raise InvalidEventPayloadError(f"unsupported event type {event.event_type}")
 
@@ -472,6 +480,7 @@ class SQLiteRelayStore:
         return ApplyResult(event.vault_id, event.sequence, event.event_id, replayed=False)
 
     def _apply_upsert(self, connection: sqlite3.Connection, event: ReplicationEvent) -> None:
+        self._reject_transition_after_purge(connection, event)
         record = _normalize_upsert(event)
         tombstone = connection.execute(
             "SELECT 1 FROM relay_deletion_tombstones WHERE vault_id = ? AND record_id = ?",
@@ -587,6 +596,74 @@ class SQLiteRelayStore:
             ),
         )
 
+    @staticmethod
+    def _reject_transition_after_purge(
+        connection: sqlite3.Connection, event: ReplicationEvent
+    ) -> None:
+        tombstone = connection.execute(
+            "SELECT 1 FROM relay_purge_tombstones WHERE vault_id=? AND record_id=?",
+            (event.vault_id, event.record_id),
+        ).fetchone()
+        if tombstone is not None:
+            raise InvalidEventPayloadError("a purged stable record ID cannot transition")
+
+    def _apply_purge(self, connection: sqlite3.Connection, event: ReplicationEvent) -> None:
+        payload = _as_json_object(event.payload)
+        purged_at = _parse_time(payload.get("purged_at"), "purged_at")
+        if purged_at is None:  # ReplicationEvent already requires this field.
+            raise InvalidEventPayloadError("purged_at is required")
+        purge_scope = _required_string(payload.get("purge_scope"), "purge_scope")
+        if purge_scope not in {"record", "source"} or payload.get("irreversible") is not True:
+            raise InvalidEventPayloadError("invalid irreversible purge payload")
+
+        previous = connection.execute(
+            "SELECT supersedes FROM relay_context_records WHERE vault_id=? AND record_id=?",
+            (event.vault_id, event.record_id),
+        ).fetchone()
+        self._remove_record(connection, event.vault_id, event.record_id)
+        if previous is not None and previous[0] is not None:
+            connection.execute(
+                "UPDATE relay_context_records SET superseded_by=NULL "
+                "WHERE vault_id=? AND record_id=? AND superseded_by=?",
+                (event.vault_id, str(previous[0]), event.record_id),
+            )
+        connection.execute(
+            "UPDATE relay_context_records SET supersedes=NULL WHERE vault_id=? AND supersedes=?",
+            (event.vault_id, event.record_id),
+        )
+        connection.execute(
+            "DELETE FROM relay_deletion_tombstones WHERE vault_id=? AND record_id=?",
+            (event.vault_id, event.record_id),
+        )
+        # Historical event fingerprints and payload hashes can remain useful
+        # guess or correlation oracles after the content itself is gone. The
+        # stream checkpoint preserves ordering without retaining those rows.
+        connection.execute(
+            "DELETE FROM applied_replication_events WHERE vault_id=? AND record_id=?",
+            (event.vault_id, event.record_id),
+        )
+        connection.execute(
+            "INSERT INTO relay_purge_tombstones"
+            "(vault_id,record_id,purge_scope,purged_at,event_sequence,event_id) "
+            "VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(vault_id,record_id) DO UPDATE SET "
+            "purge_scope=excluded.purge_scope,purged_at=excluded.purged_at,"
+            "event_sequence=excluded.event_sequence,event_id=excluded.event_id",
+            (
+                event.vault_id,
+                event.record_id,
+                purge_scope,
+                purged_at,
+                event.sequence,
+                event.event_id,
+            ),
+        )
+        connection.execute(
+            "UPDATE relay_purge_compaction_state SET pending=1,requested_at=?,"
+            "last_error_code=NULL WHERE singleton=1",
+            (purged_at,),
+        )
+
     def get_record_row(self, vault_id: str, record_id: str) -> Mapping[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
@@ -650,6 +727,66 @@ class SQLiteRelayStore:
                 (vault_id,),
             ).fetchone()
         return int(row[0]) if row is not None else 0
+
+    def purge_compaction_status(self) -> dict[str, Any]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT pending,requested_at,completed_at,last_error_code "
+                "FROM relay_purge_compaction_state WHERE singleton=1"
+            ).fetchone()
+        if row is None:
+            return {
+                "pending": False,
+                "requested_at": None,
+                "completed_at": None,
+                "last_error_code": None,
+            }
+        return {
+            "pending": bool(row[0]),
+            "requested_at": row[1],
+            "completed_at": row[2],
+            "last_error_code": row[3],
+        }
+
+    def _compact_after_purge(self) -> None:
+        checkpoint = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is not None and int(checkpoint[0]) != 0:
+            raise sqlite3.OperationalError("database is busy")
+        self._connection.execute("VACUUM")
+        checkpoint = self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is not None and int(checkpoint[0]) != 0:
+            raise sqlite3.OperationalError("database is busy")
+
+    def resume_purge_compaction(self) -> dict[str, Any]:
+        """Compact all logically purged rows once, safely retrying after crashes."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT pending FROM relay_purge_compaction_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or not bool(row[0]):
+                return self.purge_compaction_status()
+            try:
+                self._compact_after_purge()
+                self._connection.execute(
+                    "UPDATE relay_purge_compaction_state SET pending=0,completed_at=?,"
+                    "last_error_code=NULL WHERE singleton=1",
+                    (_utc_now(),),
+                )
+            except sqlite3.Error as exc:
+                detail = str(exc).casefold()
+                error_code = (
+                    "database_busy"
+                    if "busy" in detail or "locked" in detail
+                    else "compaction_failed"
+                )
+                with suppress(sqlite3.Error):
+                    self._connection.execute(
+                        "UPDATE relay_purge_compaction_state SET last_error_code=? "
+                        "WHERE singleton=1",
+                        (error_code,),
+                    )
+            return self.purge_compaction_status()
 
     def configure_proposal_protection(self, replication_secret: bytes) -> None:
         """Encrypt legacy queued proposals and scrub completed proposal payloads."""
@@ -866,6 +1003,7 @@ class SQLiteRelayStore:
             connection.execute(
                 "DELETE FROM relay_deletion_tombstones WHERE vault_id=?", (vault_id,)
             )
+            connection.execute("DELETE FROM relay_purge_tombstones WHERE vault_id=?", (vault_id,))
             connection.execute(
                 "DELETE FROM applied_replication_events WHERE vault_id=?", (vault_id,)
             )
@@ -879,6 +1017,8 @@ class SQLiteRelayStore:
             "relay_context_fts",
             "relay_context_records",
             "relay_deletion_tombstones",
+            "relay_purge_tombstones",
+            "relay_purge_compaction_state",
             "applied_replication_events",
             "pending_memory_proposals",
             "replication_checkpoints",
@@ -1009,6 +1149,9 @@ class RelayService:
         verify_event(parsed, self._replication_secret)
         return self.store.apply_event(parsed)
 
+    def resume_purge_compaction(self) -> Mapping[str, Any]:
+        return self.store.resume_purge_compaction()
+
     @staticmethod
     def _authorize(identity: ClientIdentity, permission: str) -> None:
         if permission not in identity.permissions:
@@ -1137,6 +1280,7 @@ class RelayService:
             "available_records": self.count(identity),
             "authority": "core",
             "relay_writable": False,
+            "purge_compaction": dict(self.store.purge_compaction_status()),
         }
 
     def propose(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -143,6 +144,87 @@ def test_fresh_and_rolled_back_edge_recover_from_core_event_log(
         manager.decommission(client=rolled_client)
         assert connections.state() is None
         assert rolled_back.owner_get(material.bundle.vault_id, corrected.id) is None
+
+
+def test_core_purge_propagates_to_edge_and_physically_compacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    core = CoreService(CoreConfig.in_directory(tmp_path / "core"))
+    marker = "EDGE_REPLICATION_PURGE_MARKER_47c9a2"
+    candidate = core.store.add_candidate(
+        CandidateInput(
+            kind="private_preference",
+            content=marker,
+            scopes=["general"],
+            availability=Availability.ALWAYS,
+        )
+    )
+    record = core.store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    connections = EdgeConnectionStore(core.config)
+    connections.prepare(core.store.vault_id())
+    manager = EdgeSyncManager(connections, core.store)
+    database = tmp_path / "edge-purge.sqlite3"
+
+    with _edge_host(database, connections) as (edge, client, _):
+        connections.connect(PUBLIC_URL, client=client)
+        material = connections.material()
+        assert material is not None
+        assert manager.sync_now(http_client=client)["state"] == "ready"
+        assert edge.owner_get(material.bundle.vault_id, record.id) is not None
+
+        core.store.purge(
+            "record",
+            record.id,
+            confirmation=core.store.purge_confirmation_phrase("record", record.id),
+            compact=False,
+        )
+        original_compaction = edge.store._compact_after_purge
+
+        def busy_compaction() -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(edge.store, "_compact_after_purge", busy_compaction)
+        synchronized = manager.sync_now(http_client=client)
+        assert synchronized["state"] == "degraded"
+        assert synchronized["last_sequence"] == 2
+        assert synchronized["purge_compaction"]["pending"] is True
+        assert edge.owner_get(material.bundle.vault_id, record.id) is None
+
+        monkeypatch.setattr(edge.store, "_compact_after_purge", original_compaction)
+        synchronized = manager.sync_now(http_client=client)
+        assert synchronized["state"] == "ready"
+        assert synchronized["last_sequence"] == 2
+        assert edge.owner_get(material.bundle.vault_id, record.id) is None
+        compaction = edge.store.purge_compaction_status()
+        assert compaction["pending"] is False
+        assert compaction["last_error_code"] is None
+
+        for path in (
+            database,
+            database.with_name(f"{database.name}-wal"),
+            database.with_name(f"{database.name}-shm"),
+        ):
+            if path.is_file():
+                assert marker.encode() not in path.read_bytes()
+
+    # Restarting the durable Edge store retains the opaque barrier and cannot
+    # resurrect the record from Core's rewritten historical replication position.
+    restarted = RelayService(
+        SQLiteRelayStore(database), material.bundle.replication_secret.encode()
+    )
+    try:
+        assert restarted.store.checkpoint(core.store.vault_id()) == 2
+        assert restarted.owner_get(core.store.vault_id(), record.id) is None
+        with sqlite3.connect(database) as connection:
+            tombstone = connection.execute(
+                "SELECT purge_scope,event_sequence FROM relay_purge_tombstones "
+                "WHERE vault_id=? AND record_id=?",
+                (core.store.vault_id(), record.id),
+            ).fetchone()
+        assert tombstone == ("record", 2)
+    finally:
+        restarted.close()
 
 
 def test_sync_state_update_cannot_resurrect_connection_after_reset(

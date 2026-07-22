@@ -111,6 +111,24 @@ reconstruct the approved projection from its event history. Never restore an
 Edge database over Core, reuse one Edge disk for another vault, or replicate a
 whole SQLite file.
 
+## Irreversible purge recovery
+
+A Core `record_purged` event removes the Edge projection and advances its signed
+ordered checkpoint transactionally. Edge retains only an opaque stable-ID replay
+barrier and the current purge event required for exact idempotent replay; it
+deletes ordinary deletion state and earlier content-derived event fingerprints.
+It then checkpoints/truncates WAL and runs secure-delete VACUUM. If the database
+is locked or that physical phase is interrupted, logical retrieval remains
+absent and `/v1/edge/status` reports `purge_compaction.pending: true` with a
+fixed `database_busy` or `compaction_failed` code. Startup and subsequent status
+requests retry the work. Core records the new sequence but shows synchronization
+as degraded until Edge reports compaction complete.
+
+Do not rebuild or overwrite the Edge database to clear this state. Release the
+database lock and let startup or the next Core sync retry it. A completed live
+database/WAL compaction does not erase provider snapshots or backups; delete
+those through the hosting provider under its retention policy when required.
+
 ## Outbound Core forwarding
 
 Core polls the stable Edge HTTPS origin; Edge never connects to `127.0.0.1` and
