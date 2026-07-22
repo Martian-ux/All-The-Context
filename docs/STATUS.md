@@ -15,8 +15,13 @@
   enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
   remote-app revocation, and terminal decommissioning; self-repairing source
   bootstrap; accessible responsive navigation; one-click complete encrypted
-  dashboard backup with bounded temporary resources; demonstration and automated tests.
-- Local release-candidate evidence (Windows 11, Python 3.14): 136 Python tests and 15 dashboard
+  dashboard backup with bounded temporary resources; demonstration and
+  automated tests; Retrieval V2 Phase 0 with an
+  offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
+  ranking invariant, bounded opt-in 50k profile, and executable V2 gates.
+- Pre-integration slice evidence on Windows 11: the release-candidate UI/backup
+  branch passed 136 Python tests and 15 dashboard tests; the Retrieval V2 Phase
+  0 branch passed 138 Python tests and 10 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -34,7 +39,23 @@
   resource diagnostics, and packaged first-run/MCP smoke.
 - Blockers: none for evaluating the vertical slice locally.
 
+## Retrieval V2 status
+
+- Phase 0 is implemented. The synthetic frozen V1 baseline measures retrieval
+  quality, policy/temporal behavior, context compilation, latency, index size,
+  indexing throughput, and mutation/reindex cost.
+- A ranker seam now makes policy-before-ranking executable without changing V1
+  BM25/recency ranking. A failing spy test proves denied, allowlisted-away,
+  deleted, expired, and superseded records cannot enter relevance scoring.
+- Production Retrieval V2 ranking is intentionally not implemented. V2 has not
+  been evaluated against, and is not claimed to meet, the acceptance gates.
+
 ## Explicitly unexercised or deferred
+
+- Retrieval V2 ranking, semantic retrieval, typo/paraphrase recovery, and
+  near-duplicate suppression remain deferred beyond the frozen Phase 0
+  baseline. The benchmark is synthetic and its timing evidence is local, not a
+  production workload or cross-platform performance claim.
 
 - The GitHub Actions matrix has not run because this local repository has no
   configured remote; macOS and Linux behavior is therefore designed and

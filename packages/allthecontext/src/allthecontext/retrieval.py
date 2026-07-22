@@ -6,7 +6,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol
 
 from .ids import new_id, utc_now
 from .models import (
@@ -31,11 +31,55 @@ def _json_set(value: str) -> set[str]:
     return {str(item) for item in parsed} if isinstance(parsed, list) else set()
 
 
+class CandidateRanker(Protocol):
+    """Rank candidates that have already passed every hard policy predicate."""
+
+    def rank(
+        self,
+        connection: sqlite3.Connection,
+        candidates: Sequence[sqlite3.Row],
+        query: str,
+    ) -> list[sqlite3.Row]: ...
+
+
+class V1CandidateRanker:
+    """Preserve V1 BM25/recency ordering behind the policy boundary."""
+
+    def rank(
+        self,
+        connection: sqlite3.Connection,
+        candidates: Sequence[sqlite3.Row],
+        query: str,
+    ) -> list[sqlite3.Row]:
+        if not candidates:
+            return []
+        if not query:
+            return sorted(candidates, key=lambda row: str(row["updated_at"]), reverse=True)
+        connection.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS permitted_retrieval_candidates "
+            "(record_id TEXT PRIMARY KEY)"
+        )
+        connection.execute("DELETE FROM permitted_retrieval_candidates")
+        connection.executemany(
+            "INSERT INTO permitted_retrieval_candidates(record_id) VALUES (?)",
+            ((str(row["id"]),) for row in candidates),
+        )
+        return connection.execute(
+            "SELECT r.* FROM context_records r "
+            "JOIN permitted_retrieval_candidates p ON p.record_id=r.id "
+            "JOIN context_fts ON context_fts.record_id=r.id "
+            "WHERE context_fts MATCH ? "
+            "ORDER BY bm25(context_fts), r.updated_at DESC",
+            (query,),
+        ).fetchall()
+
+
 class RetrievalEngine:
     """Replaceable retrieval interface; policy filtering always precedes ranking."""
 
-    def __init__(self, store: CoreStore) -> None:
+    def __init__(self, store: CoreStore, ranker: CandidateRanker | None = None) -> None:
         self.store = store
+        self.ranker = ranker or V1CandidateRanker()
 
     def search(
         self, request: SearchRequest, principal: ClientPrincipal | None = None
@@ -52,13 +96,11 @@ class RetrievalEngine:
         now = utc_now()
         parameters: list[Any] = [self.store.vault_id(), now, now]
         join = ""
-        order = "r.updated_at DESC"
         query = _fts_query(request.query)
         if query:
             join = " JOIN context_fts ON context_fts.record_id=r.id "
             conditions.append("context_fts MATCH ?")
             parameters.append(query)
-            order = "bm25(context_fts), r.updated_at DESC"
         if request.kinds:
             placeholders = ",".join("?" for _ in request.kinds)
             conditions.append(f"r.kind IN ({placeholders})")
@@ -72,28 +114,27 @@ class RetrievalEngine:
             + join
             + " WHERE "
             + " AND ".join(conditions)
-            + " ORDER BY "
-            + order
         )
         with self.store.connect() as connection:
             rows = connection.execute(sql, parameters).fetchall()
-        requested_scopes = set(request.scopes)
-        authorized: list[sqlite3.Row] = []
-        denied: list[str] = []
-        for row in rows:
-            record_scopes = _json_set(str(row["scopes_json"]))
-            if requested_scopes and not (record_scopes & requested_scopes):
-                continue
-            if record_is_allowed(
-                principal,
-                record_scopes,
-                _json_set(str(row["allowed_clients_json"])),
-                _json_set(str(row["denied_clients_json"])),
-            ):
-                authorized.append(row)
-            else:
-                denied.append(str(row["id"]))
-        page = authorized[request.offset : request.offset + request.limit]
+            requested_scopes = set(request.scopes)
+            authorized: list[sqlite3.Row] = []
+            denied: list[str] = []
+            for row in rows:
+                record_scopes = _json_set(str(row["scopes_json"]))
+                if requested_scopes and not (record_scopes & requested_scopes):
+                    continue
+                if record_is_allowed(
+                    principal,
+                    record_scopes,
+                    _json_set(str(row["allowed_clients_json"])),
+                    _json_set(str(row["denied_clients_json"])),
+                ):
+                    authorized.append(row)
+                else:
+                    denied.append(str(row["id"]))
+            ranked = self.ranker.rank(connection, authorized, query)
+        page = ranked[request.offset : request.offset + request.limit]
         items = [self.store._record_out(row) for row in page]
         trace_id = new_id()
         self.store.audit_access(
@@ -108,7 +149,7 @@ class RetrievalEngine:
                 "result_count": len(items),
             },
         )
-        return SearchResponse(items=items, total=len(authorized), trace_id=trace_id)
+        return SearchResponse(items=items, total=len(ranked), trace_id=trace_id)
 
     def get(
         self, record_id: str, principal: ClientPrincipal | None = None

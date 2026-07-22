@@ -11,6 +11,8 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Ingestion sessions and idempotency | `ingestion.py` | ingestion/unit/demo | Implemented |
 | Generic import | `importers.py` | importer/security/demo | Implemented |
 | Structured and FTS retrieval | `retrieval.py` | unit/integration/security | Implemented |
+| Retrieval V2 reproducible baseline | `bench/retrieval_benchmark.py`, synthetic fixtures, frozen V1 JSON | benchmark metric/scale/gate tests; normal 1k/10k run | Phase 0 implemented locally; V2 ranking deferred |
+| Policy before relevance ranking | `retrieval.py` `CandidateRanker` boundary | failing ranker-spy test covers denied, allowlisted-away, deleted, expired, and superseded records | Implemented |
 | Separate Relay | `relay/` | API/restart/offline/demo | Implemented with SQLite |
 | Signed event replication | `replication.py` | replay/tamper/gap/integration | Implemented |
 | Required MCP tools | `mcp_adapter.py` | schema contract, real STDIO handshake, crash/shutdown/verified auto-restart | Implemented |

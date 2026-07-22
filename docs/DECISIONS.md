@@ -160,3 +160,17 @@ Dashboard restore is deferred. A safe native restore requires stopping Core,
 validating into an isolated destination, transactional migration and rollback,
 post-restore checks, and an explicit vault switch. Adding an upload button
 without that lifecycle would create a destructive recovery path.
+
+## ADR-018: Freeze Retrieval V1 before changing ranking
+
+Retrieval V2 begins with a versioned, offline synthetic corpus and a checked-in
+machine-readable V1 baseline at deterministic 1k and 10k scales. A bounded 50k
+profile is explicit opt-in. This keeps ordinary CI finite and makes quality,
+policy, temporal, context-compilation, latency, storage, and mutation tradeoffs
+visible before production ranking changes.
+
+Hard policy remains outside and before the replaceable `CandidateRanker` seam.
+The V1 implementation preserves FTS5 BM25/recency ordering, while an invariant
+test injects a failing spy to prove policy-rejected records never reach
+relevance scoring. V2 must pass the executable comparison gates; the existence
+of Phase 0 is not evidence that a future ranker passes them.

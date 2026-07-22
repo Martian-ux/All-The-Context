@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "principal": {
+    "id": "benchmark-reader",
+    "name": "Synthetic benchmark reader",
+    "scopes": ["context:read"]
+  },
+  "records": [
+    {
+      "id": "exact-cobalt",
+      "kind": "project_decision",
+      "content": "Atlas launch color is cobalt blue.",
+      "scopes": ["project:atlas"],
+      "tags": ["launch", "color"]
+    },
+    {
+      "id": "multi-cache",
+      "kind": "project_decision",
+      "content": "Orion cache invalidation uses tenant version keys.",
+      "scopes": ["project:orion"],
+      "tags": ["cache", "architecture"]
+    },
+    {
+      "id": "synonym-approval",
+      "kind": "workflow",
+      "content": "Purchase approvals require manager authorization.",
+      "scopes": ["workflows"],
+      "tags": ["purchasing"]
+    },
+    {
+      "id": "typo-roadmap",
+      "kind": "schedule",
+      "content": "Quarterly roadmap planning occurs Friday.",
+      "scopes": ["planning"],
+      "tags": ["roadmap"]
+    },
+    {
+      "id": "relation-helios",
+      "kind": "project_relation",
+      "content": "Project Helios is owned by Dana and depends on the Aurora API.",
+      "scopes": ["project:helios"],
+      "tags": ["Aurora", "Dana"]
+    },
+    {
+      "id": "retention-old",
+      "kind": "policy",
+      "content": "Sentinel archive retention is 30 days.",
+      "scopes": ["policy"],
+      "tags": ["retention"]
+    },
+    {
+      "id": "retention-current",
+      "kind": "policy",
+      "content": "Sentinel archive retention is 90 days.",
+      "scopes": ["policy"],
+      "tags": ["retention"],
+      "supersedes": "retention-old"
+    },
+    {
+      "id": "expired-sentinel",
+      "kind": "policy",
+      "content": "Sentinel legacy Nimbus endpoint remains enabled.",
+      "scopes": ["policy"],
+      "expires_at": "2001-01-01T00:00:00+00:00"
+    },
+    {
+      "id": "deleted-sentinel",
+      "kind": "fact",
+      "content": "Sentinel deleted synthetic record.",
+      "scopes": ["general"],
+      "deleted_at": "2020-01-01T00:00:00+00:00"
+    },
+    {
+      "id": "denied-sentinel",
+      "kind": "fact",
+      "content": "Sentinel denied synthetic record.",
+      "scopes": ["general"],
+      "denied_clients": ["benchmark-reader"]
+    },
+    {
+      "id": "other-allowlist-sentinel",
+      "kind": "fact",
+      "content": "Sentinel allowlisted for a different client.",
+      "scopes": ["general"],
+      "allowed_clients": ["other-reader"]
+    },
+    {
+      "id": "allowed-sentinel",
+      "kind": "fact",
+      "content": "Sentinel visible to the benchmark reader.",
+      "scopes": ["general"],
+      "allowed_clients": ["benchmark-reader"]
+    },
+    {
+      "id": "duplicate-primary",
+      "kind": "interaction_preference",
+      "content": "Use ISO 8601 timestamps in exports.",
+      "scopes": ["general"],
+      "tags": ["formatting"]
+    },
+    {
+      "id": "duplicate-secondary",
+      "kind": "interaction_preference",
+      "content": "Exports use ISO-8601 timestamp formatting.",
+      "scopes": ["general"],
+      "tags": ["formatting"]
+    },
+    {
+      "id": "mandatory-concise",
+      "kind": "interaction_preference",
+      "content": "Prefer concise answers with concrete evidence.",
+      "scopes": ["general"],
+      "tags": ["interaction"]
+    }
+  ],
+  "queries": [
+    {"id": "exact", "category": "exact", "query": "cobalt", "gold": {"exact-cobalt": 3}},
+    {"id": "multi_term_partial", "category": "multi_term_partial", "query": "Orion cache tenant keys missingword", "gold": {"multi-cache": 3}},
+    {"id": "multi_term_empty", "category": "multi_term", "query": "segmented eviction strategy", "gold": {"multi-cache": 3}},
+    {"id": "paraphrase", "category": "paraphrase", "query": "buy signoff", "gold": {"synonym-approval": 3}},
+    {"id": "typo", "category": "typo", "query": "quaterly raodmap", "gold": {"typo-roadmap": 3}},
+    {"id": "relation", "category": "relation", "query": "Helios Aurora", "gold": {"relation-helios": 3}},
+    {"id": "temporal", "category": "temporal", "query": "Sentinel retention", "gold": {"retention-current": 3}},
+    {
+      "id": "permissions",
+      "category": "permissions",
+      "query": "Sentinel",
+      "gold": {"allowed-sentinel": 3, "retention-current": 2},
+      "forbidden": ["retention-old", "expired-sentinel", "deleted-sentinel", "denied-sentinel", "other-allowlist-sentinel"]
+    },
+    {"id": "near_duplicate", "category": "near_duplicate", "query": "ISO exports timestamps", "gold": {"duplicate-primary": 3, "duplicate-secondary": 1}},
+    {"id": "empty", "category": "empty", "query": "xylophonic nonexistent token", "gold": {}}
+  ],
+  "bootstrap": {
+    "query": "Atlas launch",
+    "scopes": ["project:atlas"],
+    "gold": ["mandatory-concise", "duplicate-primary", "duplicate-secondary", "exact-cobalt"],
+    "duplicate_groups": [["duplicate-primary", "duplicate-secondary"]]
+  }
+}

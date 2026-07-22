@@ -1,0 +1,305 @@
+{
+  "engine": "retrieval_v1_sqlite_fts5",
+  "environment": {
+    "platform": "Windows",
+    "python": "3.12.10",
+    "sqlite": "3.49.1"
+  },
+  "fixture_sha256": "a3805231d2bb33cc5fe15fb59c3d15d71588b561b5fb6f49d97e9ed1666353a4",
+  "profiles": {
+    "1000": {
+      "metrics": {
+        "cold_latency": {
+          "p50_ms": 11.69915,
+          "p95_ms": 12.551095
+        },
+        "context_coverage": 1.0,
+        "context_redundancy": 0.25,
+        "empty_result_rate": 0.4,
+        "exact_recall_at_5": 1.0,
+        "index_size_bytes": 1032192,
+        "initial_indexing_records_per_second": 26086.775,
+        "initial_indexing_seconds": 0.038334,
+        "judged_query_count": 9,
+        "mrr": 0.666667,
+        "multi_term_empty_rate": 0.5,
+        "mutation_indexing": {
+          "p50_ms": 9.9783,
+          "p95_ms": 10.45968
+        },
+        "ndcg_at_5": 0.666667,
+        "recall_at_1": 0.555556,
+        "recall_at_3": 0.666667,
+        "recall_at_5": 0.666667,
+        "temporal_precision_at_5": 0.5,
+        "unauthorized_result_count": 0,
+        "warm_latency": {
+          "p50_ms": 11.54825,
+          "p95_ms": 12.412615
+        }
+      },
+      "queries": [
+        {
+          "category": "exact",
+          "forbidden": [],
+          "gold": {
+            "exact-cobalt": 3
+          },
+          "id": "exact",
+          "ids": [
+            "exact-cobalt"
+          ]
+        },
+        {
+          "category": "multi_term_partial",
+          "forbidden": [],
+          "gold": {
+            "multi-cache": 3
+          },
+          "id": "multi_term_partial",
+          "ids": [
+            "multi-cache"
+          ]
+        },
+        {
+          "category": "multi_term",
+          "forbidden": [],
+          "gold": {
+            "multi-cache": 3
+          },
+          "id": "multi_term_empty",
+          "ids": []
+        },
+        {
+          "category": "paraphrase",
+          "forbidden": [],
+          "gold": {
+            "synonym-approval": 3
+          },
+          "id": "paraphrase",
+          "ids": []
+        },
+        {
+          "category": "typo",
+          "forbidden": [],
+          "gold": {
+            "typo-roadmap": 3
+          },
+          "id": "typo",
+          "ids": []
+        },
+        {
+          "category": "relation",
+          "forbidden": [],
+          "gold": {
+            "relation-helios": 3
+          },
+          "id": "relation",
+          "ids": [
+            "relation-helios"
+          ]
+        },
+        {
+          "category": "temporal",
+          "forbidden": [],
+          "gold": {
+            "retention-current": 3
+          },
+          "id": "temporal",
+          "ids": [
+            "retention-current",
+            "allowed-sentinel"
+          ]
+        },
+        {
+          "category": "permissions",
+          "forbidden": [
+            "retention-old",
+            "expired-sentinel",
+            "deleted-sentinel",
+            "denied-sentinel",
+            "other-allowlist-sentinel"
+          ],
+          "gold": {
+            "allowed-sentinel": 3,
+            "retention-current": 2
+          },
+          "id": "permissions",
+          "ids": [
+            "allowed-sentinel",
+            "retention-current"
+          ]
+        },
+        {
+          "category": "near_duplicate",
+          "forbidden": [],
+          "gold": {
+            "duplicate-primary": 3,
+            "duplicate-secondary": 1
+          },
+          "id": "near_duplicate",
+          "ids": [
+            "duplicate-primary",
+            "duplicate-secondary"
+          ]
+        },
+        {
+          "category": "empty",
+          "forbidden": [],
+          "gold": {},
+          "id": "empty",
+          "ids": []
+        }
+      ],
+      "record_count": 1000
+    },
+    "10000": {
+      "metrics": {
+        "cold_latency": {
+          "p50_ms": 16.22595,
+          "p95_ms": 24.055835
+        },
+        "context_coverage": 1.0,
+        "context_redundancy": 0.25,
+        "empty_result_rate": 0.4,
+        "exact_recall_at_5": 1.0,
+        "index_size_bytes": 7921664,
+        "initial_indexing_records_per_second": 33279.354,
+        "initial_indexing_seconds": 0.300487,
+        "judged_query_count": 9,
+        "mrr": 0.666667,
+        "multi_term_empty_rate": 0.5,
+        "mutation_indexing": {
+          "p50_ms": 12.6068,
+          "p95_ms": 13.15485
+        },
+        "ndcg_at_5": 0.666667,
+        "recall_at_1": 0.555556,
+        "recall_at_3": 0.666667,
+        "recall_at_5": 0.666667,
+        "temporal_precision_at_5": 0.5,
+        "unauthorized_result_count": 0,
+        "warm_latency": {
+          "p50_ms": 15.6924,
+          "p95_ms": 25.03731
+        }
+      },
+      "queries": [
+        {
+          "category": "exact",
+          "forbidden": [],
+          "gold": {
+            "exact-cobalt": 3
+          },
+          "id": "exact",
+          "ids": [
+            "exact-cobalt"
+          ]
+        },
+        {
+          "category": "multi_term_partial",
+          "forbidden": [],
+          "gold": {
+            "multi-cache": 3
+          },
+          "id": "multi_term_partial",
+          "ids": [
+            "multi-cache"
+          ]
+        },
+        {
+          "category": "multi_term",
+          "forbidden": [],
+          "gold": {
+            "multi-cache": 3
+          },
+          "id": "multi_term_empty",
+          "ids": []
+        },
+        {
+          "category": "paraphrase",
+          "forbidden": [],
+          "gold": {
+            "synonym-approval": 3
+          },
+          "id": "paraphrase",
+          "ids": []
+        },
+        {
+          "category": "typo",
+          "forbidden": [],
+          "gold": {
+            "typo-roadmap": 3
+          },
+          "id": "typo",
+          "ids": []
+        },
+        {
+          "category": "relation",
+          "forbidden": [],
+          "gold": {
+            "relation-helios": 3
+          },
+          "id": "relation",
+          "ids": [
+            "relation-helios"
+          ]
+        },
+        {
+          "category": "temporal",
+          "forbidden": [],
+          "gold": {
+            "retention-current": 3
+          },
+          "id": "temporal",
+          "ids": [
+            "retention-current",
+            "allowed-sentinel"
+          ]
+        },
+        {
+          "category": "permissions",
+          "forbidden": [
+            "retention-old",
+            "expired-sentinel",
+            "deleted-sentinel",
+            "denied-sentinel",
+            "other-allowlist-sentinel"
+          ],
+          "gold": {
+            "allowed-sentinel": 3,
+            "retention-current": 2
+          },
+          "id": "permissions",
+          "ids": [
+            "allowed-sentinel",
+            "retention-current"
+          ]
+        },
+        {
+          "category": "near_duplicate",
+          "forbidden": [],
+          "gold": {
+            "duplicate-primary": 3,
+            "duplicate-secondary": 1
+          },
+          "id": "near_duplicate",
+          "ids": [
+            "duplicate-primary",
+            "duplicate-secondary"
+          ]
+        },
+        {
+          "category": "empty",
+          "forbidden": [],
+          "gold": {},
+          "id": "empty",
+          "ids": []
+        }
+      ],
+      "record_count": 10000
+    }
+  },
+  "runtime_seconds": 2.446603,
+  "schema_version": 1
+}
