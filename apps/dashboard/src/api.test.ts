@@ -1,37 +1,69 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { consumeSetupToken, hasAdminToken } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
 
-describe("desktop setup handoff", () => {
-  beforeEach(() => {
-    const values = new Map<string, string>();
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => values.set(key, value),
-        removeItem: (key: string) => values.delete(key),
-        clear: () => values.clear(),
-      },
-    });
-    window.history.replaceState({}, "", "/");
+describe("desktop browser session", () => {
+  afterEach(() => { window.sessionStorage.clear(); vi.unstubAllGlobals(); });
+
+  it("uses the tab-scoped opaque session established by Core", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(
+      String(input).includes("/admin/edge")
+        ? { configured: false, state: "not_configured", last_sequence: 0, pending_events: 0 }
+        : {
+            core_online: true,
+            schema_version: 1,
+            counts: {
+              sources: 0,
+              pending_candidates: 0,
+              approved_records: 0,
+              pending_replication_events: 0,
+            },
+          },
+    ), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.status();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const call of fetch.mock.calls) {
+      const headers = call[1]?.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Browser browser-session");
+      expect(headers.get("X-ATC-Dashboard")).toBe("1");
+    }
   });
 
-  it("captures the setup credential and immediately removes it from the address", () => {
-    window.history.replaceState({}, "", "/#atc_token=secret-value&view=review");
+  it("connects a supported local integration through Core", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      id: "claude",
+      configured: true,
+      changed: true,
+      config_path: "test",
+      restart_required: true,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
 
-    expect(consumeSetupToken()).toBe(true);
-    expect(hasAdminToken()).toBe(true);
-    expect(window.location.hash).toBe("#view=review");
-    expect(window.location.href).not.toContain("secret-value");
+    await api.connectIntegration("claude");
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/integrations/claude");
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    const headers = fetch.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("X-ATC-Dashboard")).toBe("1");
   });
 
-  it("does nothing when setup did not provide a credential", () => {
-    window.history.replaceState({}, "", "/#view=review");
+  it("disconnects an integration and clears an expired browser session", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "expired-session");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ detail: "expired" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetch);
 
-    expect(consumeSetupToken()).toBe(false);
-    expect(hasAdminToken()).toBe(false);
-    expect(window.location.hash).toBe("#view=review");
+    await expect(api.disconnectIntegration("claude")).rejects.toThrow("expired");
+
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "DELETE" });
+    expect(window.sessionStorage.getItem("atc.browserSession")).toBeNull();
   });
 });

@@ -5,7 +5,7 @@
 | MCP Python v2 is imminent | Pin stable v1 below 2; isolate adapter; add contract test |
 | Relay SQLite differs from hosted PostgreSQL | Keep SQL/storage boundary explicit; do not claim PostgreSQL exercised |
 | OS credential backends differ | Use `keyring` abstraction and test file fallback; platform stores need real-OS validation |
-| Engineering desktop artifacts are unsigned | Keep claims explicit; add Windows signing, macOS notarization, publisher identity, and a standard uninstaller before public release |
+| Engineering desktop artifacts are unsigned | Keep claims explicit; add Windows signing, macOS notarization, and publisher identity before public release; retain packaged uninstaller smoke coverage |
 | Large/malicious imports | Enforce byte/record/archive limits and keep source text inert |
 | Deletion/permission replication lag | Durable outbox, checkpoints, status visibility, reconciliation tests |
 | Full provider capability changes over time | Official-source capability matrix with verification date and unverified labels |
@@ -15,3 +15,6 @@
 | A reused venv retains compiled modules from another Python version | Bootstrap compares runtime versions and probes compiled imports before reuse; rebuild stale environments |
 | OS keyring silently discards a credential | Read back and compare every setup write; fall back with an explicit warning rather than declaring setup complete |
 | Frozen STDIO wrappers close real process handles | Own and detach UTF-8 wrappers explicitly; reject any packaged MCP stderr traceback in the first-run smoke |
+| Browser setup links expose an administrator credential, another loopback service impersonates Core, or another origin submits an authenticated mutation | Verify a per-installation challenge proof before sending the administrator credential; exchange a random one-use 60-second ticket for an opaque tab session backed only by Core memory; require a custom dashboard header on mutations |
+| A running AI client locks the packaged MCP executable during upgrade | Install a content-addressed replacement and repair existing managed client configurations to select it on the next launch |
+| A frozen Windows Core stops listening but a stale connection/task delays process teardown | Allow a five-second graceful drain, then let Uvicorn cancel remaining tasks; packaged smoke requires process exit and unlocked cleanup |

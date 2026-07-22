@@ -6,23 +6,30 @@ import queue
 import threading
 import tkinter as tk
 from collections.abc import Callable
-from datetime import datetime
 from tkinter import messagebox
 from typing import Any
 
-from .client_config import codex_is_detected
+from .config import CoreConfig
 from .desktop_runtime import RuntimeCommand
-from .desktop_setup import SetupOptions, SetupResult, open_dashboard, perform_setup
+from .desktop_setup import (
+    SetupOptions,
+    SetupResult,
+    authenticated_dashboard_url,
+    launch_core,
+    open_dashboard,
+    perform_setup,
+    recover_desktop_access,
+)
 
-INK = "#17201d"
-INK_SOFT = "#26332e"
-PAPER = "#f4f0e7"
-PAPER_LIGHT = "#fbf9f4"
-MUTED = "#6e756f"
-LINE = "#d9d3c7"
-AMBER = "#c7762b"
-AMBER_HOVER = "#ad6121"
-SUCCESS = "#39795d"
+INK = "#171a23"
+INK_SOFT = "#242936"
+PAPER = "#f5f7fa"
+PAPER_LIGHT = "#ffffff"
+MUTED = "#667085"
+LINE = "#d8dee8"
+AMBER = "#506bd8"
+AMBER_HOVER = "#3e56bd"
+SUCCESS = "#2f7d61"
 WHITE = "#ffffff"
 
 SetupRunner = Callable[..., SetupResult]
@@ -43,11 +50,10 @@ class SetupWizard:
         self.result: SetupResult | None = None
         self.working = False
         self.current_step = 0
-        self.codex_detected = codex_is_detected()
         self.vault_name = tk.StringVar(value="My Context")
-        timezone = datetime.now().astimezone().tzname() or "Local time"
-        self.timezone = tk.StringVar(value=timezone)
-        self.configure_codex = tk.BooleanVar(value=self.codex_detected)
+        self.configure_codex = tk.BooleanVar(value=True)
+        self.configure_claude = tk.BooleanVar(value=True)
+        self.continue_to_remote_setup = tk.BooleanVar(value=True)
         self.start_at_login = tk.BooleanVar(value=True)
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
 
@@ -93,7 +99,7 @@ class SetupWizard:
             self.sidebar,
             text="Private context, owned by you.",
             bg=INK,
-            fg="#aab4af",
+            fg="#aeb7c6",
             anchor="w",
             font=("Segoe UI", 9),
         ).pack(fill="x", padx=31, pady=(3, 38))
@@ -108,7 +114,7 @@ class SetupWizard:
                 text=str(index + 1),
                 width=2,
                 bg=INK,
-                fg="#6f7d77",
+                fg="#717b8f",
                 font=("Segoe UI", 9, "bold"),
             )
             number.pack(side="left")
@@ -116,7 +122,7 @@ class SetupWizard:
                 row,
                 text=text,
                 bg=INK,
-                fg="#6f7d77",
+                fg="#717b8f",
                 anchor="w",
                 font=("Segoe UI", 10),
             )
@@ -127,7 +133,7 @@ class SetupWizard:
             self.sidebar,
             text="Core stays on 127.0.0.1\nRaw sources never leave this device.",
             bg=INK,
-            fg="#84928c",
+            fg="#7f899c",
             justify="left",
             font=("Segoe UI", 8),
         ).pack(side="bottom", anchor="w", padx=31, pady=30)
@@ -148,11 +154,11 @@ class SetupWizard:
         self.current_step = step
         for index, label in enumerate(self.step_labels):
             if index < step:
-                label.configure(fg="#9ba9a3", text=f"✓  {self.step_names[index]}")
+                label.configure(fg="#aeb7c6", text=f"✓  {self.step_names[index]}")
             elif index == step:
                 label.configure(fg=WHITE, text=self.step_names[index])
             else:
-                label.configure(fg="#6f7d77", text=self.step_names[index])
+                label.configure(fg="#717b8f", text=self.step_names[index])
         self.root.update_idletasks()
         width = max(self.progress_canvas.winfo_width(), 1)
         target = width * (step + 1) / 4
@@ -309,6 +315,8 @@ class SetupWizard:
             bg=PAPER,
             fg=MUTED,
             anchor="w",
+            justify="left",
+            wraplength=410,
             font=("Segoe UI", 8),
         ).pack(fill="x", pady=(2, 0))
 
@@ -318,30 +326,31 @@ class SetupWizard:
         self._eyebrow("Your setup")
         self._heading(
             "A few local choices.",
-            "These settings stay on this device. You can change access and availability later.",
+            "Core stays private on this device. You can change any connection later.",
         )
         self._field("Vault name", self.vault_name)
-        self._field("Display timezone", self.timezone)
+        self._check(
+            "Connect Codex",
+            "Creates a private local MCP connection; no command or token copying.",
+            self.configure_codex,
+        )
+        self._check(
+            "Connect Claude Desktop",
+            "Adds the same private local Core while preserving every existing Claude setting.",
+            self.configure_claude,
+        )
+        self._check(
+            "Continue with web & mobile setup",
+            "Opens guided Edge setup next. Always-on hosting uses an external paid account "
+            "(~$7.25/month). Claude and ChatGPT support mobile after one-time web setup; "
+            "workspace policy may gate custom/developer connectors.",
+            self.continue_to_remote_setup,
+        )
         self._check(
             "Start Core when I sign in",
             "Runs in your user account; no administrator access or Docker.",
             self.start_at_login,
         )
-        self._check(
-            "Connect Codex automatically",
-            "Updates your personal config.toml and keeps a timestamped backup.",
-            self.configure_codex,
-            enabled=self.codex_detected,
-        )
-        if not self.codex_detected:
-            tk.Label(
-                self.content,
-                text="Codex was not detected. The app will still install and run normally.",
-                bg=PAPER,
-                fg=MUTED,
-                anchor="w",
-                font=("Segoe UI", 8),
-            ).pack(fill="x", padx=31)
         self._footer("Install All The Context", self.start_install)
 
     def start_install(self) -> None:
@@ -384,8 +393,8 @@ class SetupWizard:
         self.working = True
         options = SetupOptions(
             vault_name=self.vault_name.get().strip(),
-            timezone=self.timezone.get().strip() or "UTC",
             configure_codex=self.configure_codex.get(),
+            configure_claude=self.configure_claude.get(),
             start_at_login=self.start_at_login.get(),
         )
         thread = threading.Thread(target=self._setup_worker, args=(options,), daemon=True)
@@ -455,14 +464,18 @@ class SetupWizard:
                 f"Stored in {self.result.credential_storage}" if self.result else "Ready",
             ),
             (
-                "Codex",
-                "Connected—restart Codex once"
-                if self.result and self.result.codex
-                else "Not changed",
+                "AI apps",
+                "Codex and Claude are ready"
+                if self.result and self.result.codex and self.result.claude
+                else "Manage connections in the dashboard",
             ),
             (
                 "Startup",
                 "Enabled for this user" if self.result and self.result.startup else "Manual",
+            ),
+            (
+                "Web & mobile",
+                "Guided setup is next" if self.continue_to_remote_setup.get() else "Optional",
             ),
         ]
         for label, value in details:
@@ -485,7 +498,12 @@ class SetupWizard:
                 wraplength=500,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(18, 0))
-        self._footer("Open All The Context  →", self.finish)
+        finish_label = (
+            "Set up web & mobile  →"
+            if self.continue_to_remote_setup.get()
+            else "Open All The Context  →"
+        )
+        self._footer(finish_label, self.finish)
 
     def show_error(self, error: Exception) -> None:
         self._clear()
@@ -498,7 +516,7 @@ class SetupWizard:
         tk.Label(
             self.content,
             text=str(error),
-            bg="#eee6d8",
+            bg="#e9edf5",
             fg=INK,
             justify="left",
             anchor="nw",
@@ -510,8 +528,41 @@ class SetupWizard:
         self._footer("Try again", self.show_preferences)
 
     def finish(self) -> None:
-        if self.result is not None:
-            open_dashboard(self.result.dashboard_url)
+        config = CoreConfig.default()
+        access = recover_desktop_access(config)
+        if access is None:
+            messagebox.showerror(
+                "Could not open All The Context",
+                "The private desktop credential could not be recovered. Try setup again.",
+                parent=self.root,
+            )
+            return
+        try:
+            launch_core(self.runtime, config)
+            url = authenticated_dashboard_url(
+                config,
+                access.token,
+                landing_page="connections" if self.continue_to_remote_setup.get() else None,
+            )
+            opened = open_dashboard(url)
+        except Exception as exc:
+            messagebox.showerror(
+                "Could not open All The Context",
+                str(exc),
+                parent=self.root,
+            )
+            return
+        if not opened:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.root.update()
+            messagebox.showinfo(
+                "Private link copied",
+                "The browser did not open, so a fresh private sign-in link was copied. "
+                "Paste it into your browser, or click Open All The Context to retry.",
+                parent=self.root,
+            )
+            return
         self.root.destroy()
 
     def _close(self) -> None:

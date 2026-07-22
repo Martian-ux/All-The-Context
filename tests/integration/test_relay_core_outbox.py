@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+from allthecontext.models import ApprovalRequest, Availability, CandidateInput
 from allthecontext.relay.app import create_app
 from allthecontext.relay.service import ClientIdentity, RelayService, SQLiteRelayStore
 from allthecontext.replication import (
+    MAX_EDGE_REPLICATION_REQUEST_BYTES,
     HttpRelayTransport,
     ReplicationDispatcher,
+    ReplicationEvent,
     calculate_payload_hash,
     canonical_json,
+    sign_event,
 )
 from allthecontext.storage import CoreStore
 from fastapi.testclient import TestClient
@@ -36,7 +41,7 @@ def test_core_outbox_dispatches_and_marks_only_after_relay_acceptance(tmp_path: 
         "version": 1,
         "supersedes": None,
         "approval_status": "approved",
-        "content_hash": calculate_payload_hash(content),
+        "content_hash": hashlib.sha256(content.encode()).hexdigest(),
         "updated_at": "2026-07-21T00:00:00+00:00",
     }
     payload_json = canonical_json(payload)
@@ -80,3 +85,58 @@ def test_core_outbox_dispatches_and_marks_only_after_relay_acceptance(tmp_path: 
         assert relay.get(identity, "record-1") is not None
         assert dispatcher.dispatch_pending().delivered == 0
     relay.close()
+
+
+def test_largest_legal_record_fits_bounded_edge_replication_request(tmp_path: Path) -> None:
+    core = CoreStore(tmp_path / "large-core.sqlite3")
+    vault_id = core.initialize_vault()
+    item = "😀" * 200
+    candidate = core.add_candidate(
+        CandidateInput(
+            kind="project_decision",
+            content="😀" * 64_000,
+            structured_value={"data": "😀" * 16_380},
+            scopes=[item] * 64,
+            tags=[item] * 128,
+            source_reference="😀" * 2_000,
+            source_service="s" * 128,
+            source_type="t" * 128,
+            allowed_clients=[item] * 256,
+            denied_clients=[item] * 256,
+            valid_from="2026-07-21T00:00:00+00:00",
+            expires_at="2027-07-21T00:00:00+00:00",
+            idempotency_key="retry-key-that-must-not-replicate",
+        )
+    )
+    record = core.approve_candidate(
+        candidate.id,
+        ApprovalRequest(availability=Availability.ALWAYS),
+    )
+    pending = core.pending_replication_events()
+    assert len(pending) == 1
+    event = pending[0]
+    wire_bytes = canonical_json(
+        sign_event(ReplicationEvent.from_mapping(event), SECRET).wire_mapping()
+    ).encode("utf-8")
+    assert len(wire_bytes) < MAX_EDGE_REPLICATION_REQUEST_BYTES
+    assert "retry-key-that-must-not-replicate" not in str(event["payload_json"])
+
+    relay = RelayService(SQLiteRelayStore(tmp_path / "large-edge.sqlite3"), SECRET)
+    app = create_app(
+        relay,
+        replication_bearer_token="replication-token",
+        client_tokens={},
+        close_service_on_shutdown=False,
+    )
+    try:
+        with TestClient(app) as http_client:
+            transport = HttpRelayTransport(
+                "http://127.0.0.1",
+                "replication-token",
+                client=http_client,
+            )
+            dispatcher = ReplicationDispatcher(core, transport, SECRET)
+            assert dispatcher.dispatch_pending().delivered == 1
+            assert relay.owner_get(vault_id, record.id) is not None
+    finally:
+        relay.close()

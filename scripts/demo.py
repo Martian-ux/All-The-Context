@@ -296,7 +296,12 @@ def run_demo(workspace: Path) -> dict[str, Any]:
         _require(relay.queued_proposals(vault_id) == [], "imported proposal was not acknowledged")
         pending, _ = restarted_core.store.list_candidates()
         _require(
-            any(candidate.source_service == "relay" for candidate in pending),
+            any(
+                candidate.source_service == "demo-cloud-client"
+                and candidate.source_type == "queued_proposal"
+                and candidate.source_reference.startswith("edge-proposal:")
+                for candidate in pending
+            ),
             "Relay proposal did not become a reviewable Core candidate",
         )
         evidence.append(

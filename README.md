@@ -2,7 +2,7 @@
 
 All The Context is a user-owned memory layer for AI tools. Your local **Core**
 keeps the complete source material, provenance, review state, history,
-permissions, and search index. An optional hosted **Relay** keeps only records
+permissions, and search index. An optional hosted **Edge** keeps only records
 you approved as `always_available`, so permitted clients still have useful
 context when your computer is offline.
 
@@ -18,15 +18,47 @@ first-run wizard:
 
 1. installs the application for the current user without administrator access;
 2. creates the private vault in the correct per-user application-data folder;
-3. stores the client credential in Windows Credential Manager when available;
-4. safely adds the STDIO MCP server to the user's Codex configuration, retaining
-   a timestamped backup;
-5. enables per-user Core startup if selected; and
-6. starts Core and opens the authenticated local dashboard.
+3. stores credentials in Windows Credential Manager when available;
+4. creates separate least-privilege connections for Codex and Claude Desktop,
+   preserving existing configuration with timestamped backups;
+5. establishes the dashboard automatically with a one-use local link and an
+   opaque, tab-scoped session—no administrator token is placed in a cookie,
+   URL, or browser storage;
+6. enables per-user Core startup if selected;
+7. starts Core and opens the authenticated local dashboard; and
+8. by default, continues directly to guided Edge setup for supported web and
+   mobile access. The wizard discloses the external hosting cost and provider
+   limitations before this optional step.
 
-After restarting Codex once, context retrieval and proposals happen through MCP
-without repeated setup. Launching All The Context again starts Core if needed
-and opens the dashboard. Core remains bound to `127.0.0.1` by default.
+After restarting a connected desktop client once, context retrieval and
+proposals happen through MCP without repeated setup. The dashboard's **Connect
+apps** page can connect or repair Codex and Claude Desktop with
+one button. Launching All The Context again starts Core if needed and opens an
+authenticated dashboard automatically. Core remains bound to `127.0.0.1` by
+default. Running a newer installer upgrades the per-user app and opens the
+existing vault directly; it does not send an established user through setup
+again.
+
+ChatGPT or Claude on the web and mobile cannot reach a private `127.0.0.1`
+service. The dashboard can now prepare, cryptographically pair, synchronize,
+manage, and decommission a personal hosted Edge from the same **Connect apps**
+page. The user deploys the included Edge blueprint under their own hosting
+account, pastes the resulting HTTPS address once, and then adds the displayed
+MCP address in an eligible AI provider. Claude custom connectors and ChatGPT
+developer-mode apps linked on the web can then be used from their mobile apps;
+workspace policy may gate setup. These capability labels were checked on
+2026-07-21 against the official
+[Claude connector guide](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)
+and [ChatGPT app guide](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt).
+
+The repository does not yet have a public release URL, so its engineering build
+truthfully shows that the one-click Render deployment link is unavailable.
+Release builds can inject `ATC_EDGE_DEPLOY_URL` after this repository or an
+equivalent image is published. Based on Render's published
+[Starter pricing](https://render.com/articles/render-vs-railway) and
+[persistent-disk pricing](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses),
+Starter plus a 1 GB disk is estimated at $7.25/month before bandwidth; an
+external hosting account and payment cannot be hidden by the local installer.
 
 The locally exercised Windows engineering build is
 `dist\desktop\AllTheContextSetup.exe`. Release signing is not configured yet,
@@ -37,10 +69,10 @@ their first observed runs and release signing/package work.
 ## Current release target
 
 This repository implements the first end-to-end release-candidate slice: native
-Python Core, separate Relay, typed ingestion and retrieval APIs, approval and
+Python Core, separate Edge, typed ingestion and retrieval APIs, approval and
 record history, signed event replication, a STDIO/HTTP MCP bridge, a native
 first-run wizard, a bundled local dashboard, generic archive import, encrypted
-portable export, and a scripted offline-Relay demonstration. No vector database
+portable export, and a scripted offline-Edge demonstration. No vector database
 is required.
 
 ## Source development
@@ -54,7 +86,7 @@ PowerShell on Windows (Python launcher recommended):
 ```text
 py -3.12 scripts/bootstrap.py
 .\.venv\Scripts\atc.exe init
-.\.venv\Scripts\atc.exe serve-core
+.\.venv\Scripts\atc.exe open-dashboard
 ```
 
 If `py` is unavailable but `python --version` reports 3.12 or newer, use
@@ -65,11 +97,13 @@ macOS or Linux:
 ```text
 python3 scripts/bootstrap.py
 ./.venv/bin/atc init
-./.venv/bin/atc serve-core
+./.venv/bin/atc open-dashboard
 ```
 
-Open `http://127.0.0.1:7337`. This terminal-oriented path exists for contributors
-and automation; it is not the intended end-user installation. Use
+`open-dashboard` starts Core and opens a one-use authenticated link. Do not open
+the bare loopback URL: it intentionally has no ambient administrator access.
+This terminal-oriented path exists for contributors and automation; it is not
+the intended end-user installation. Use
 `.\.venv\Scripts\atc.exe doctor` in PowerShell or `./.venv/bin/atc doctor` on
 macOS and Linux to verify the database.
 
@@ -103,12 +137,12 @@ python scripts/smoke_packaged_first_run.py
 
 See [Architecture](docs/architecture/ARCHITECTURE.md),
 [platform support](docs/operations/PLATFORMS.md), and
-[security](SECURITY.md) before exposing a Relay. The exact locally exercised
+[security](SECURITY.md) before exposing an Edge. The exact locally exercised
 boundary and deferred production work are recorded in
 [project status](docs/STATUS.md).
 
 ## Privacy boundary
 
-Core binds to `127.0.0.1` by default. Relay search necessarily decrypts the
+Core binds to `127.0.0.1` by default. Edge search necessarily decrypts the
 small approved replica it stores, so this project does not claim zero-knowledge
 hosting. Context returned to a cloud AI client is visible to that provider.

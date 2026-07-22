@@ -6,14 +6,20 @@ import type {
   ContextRecord,
   ContextRecordVersion,
   CoreStatus,
+  EdgeActionResult,
+  EdgeAuthorizedClient,
+  EdgePrepareResult,
+  EdgeStatus,
   ImportResult,
+  IntegrationsStatus,
+  IntegrationConnectResult,
   Page,
   ReplicationStatus,
   SourceRecord,
 } from "./types";
 
 const API_ROOT = (import.meta.env.VITE_ATC_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/v1";
-const TOKEN_KEY = "atc.adminToken";
+const BROWSER_SESSION_KEY = "atc.browserSession";
 
 interface CandidateWire extends Omit<ContextCandidate, "scope" | "source_record_id" | "source_excerpt" | "status"> {
   scopes: string[];
@@ -42,6 +48,7 @@ interface ClientWire {
   revoked: boolean;
   created_at: string;
   last_used_at?: string | null;
+  protected?: boolean;
 }
 
 interface AuditWire {
@@ -72,6 +79,17 @@ function recordFromWire(item: RecordWire): ContextRecord {
   };
 }
 
+function replicationFromEdge(edge: EdgeStatus): ReplicationStatus {
+  return {
+    state: edge.state === "ready" ? "ready" : edge.state === "degraded" ? "degraded" : "offline",
+    relay_url: edge.edge_url,
+    last_sequence: edge.last_sequence,
+    pending_events: edge.pending_events,
+    last_success_at: edge.last_success_at,
+    last_error: edge.last_error,
+  };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -83,31 +101,11 @@ export class ApiError extends Error {
   }
 }
 
-export function setAdminToken(token: string): void {
-  if (token.trim()) window.localStorage.setItem(TOKEN_KEY, token.trim());
-  else window.localStorage.removeItem(TOKEN_KEY);
-}
-
-export function hasAdminToken(): boolean {
-  return Boolean(window.localStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_ATC_ADMIN_TOKEN);
-}
-
-export function consumeSetupToken(): boolean {
-  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const token = fragment.get("atc_token");
-  if (!token) return false;
-  setAdminToken(token);
-  fragment.delete("atc_token");
-  const remaining = fragment.toString();
-  const cleanUrl = `${window.location.pathname}${window.location.search}${remaining ? `#${remaining}` : ""}`;
-  window.history.replaceState(window.history.state, document.title, cleanUrl);
-  return true;
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = window.localStorage.getItem(TOKEN_KEY) || (import.meta.env.VITE_ATC_ADMIN_TOKEN as string | undefined);
   const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const browserSession = window.sessionStorage.getItem(BROWSER_SESSION_KEY);
+  if (browserSession) headers.set("Authorization", `Browser ${browserSession}`);
+  headers.set("X-ATC-Dashboard", "1");
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   headers.set("Accept", "application/json");
 
@@ -118,6 +116,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError("Core is not reachable on this device.", 0);
   }
   if (response.status === 204) return undefined as T;
+  if (response.status === 401) window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
   const body = await response.json().catch(() => undefined) as unknown;
   if (!response.ok) {
     let detail = body && typeof body === "object" && "detail" in body ? body.detail : undefined;
@@ -138,18 +137,17 @@ function queryString(values: Record<string, string | number | undefined>): strin
 
 export const api = {
   status: async (): Promise<CoreStatus> => {
-    const result = await request<{ core_online: boolean; schema_version: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status");
+    const [result, edge] = await Promise.all([
+      request<{ core_online: boolean; schema_version: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status"),
+      request<EdgeStatus>("/admin/edge"),
+    ]);
     return {
       state: result.core_online ? "ready" : "offline",
       version: String(result.schema_version),
       pending_candidates: result.counts.pending_candidates,
       approved_records: result.counts.approved_records,
       sources: result.counts.sources,
-      replication: {
-        state: result.core_online ? "ready" : "offline",
-        last_sequence: 0,
-        pending_events: result.counts.pending_replication_events,
-      },
+      replication: replicationFromEdge(edge),
     };
   },
   sources: async (): Promise<Page<SourceRecord>> => {
@@ -167,10 +165,10 @@ export const api = {
     const result = await request<Page<CandidateWire>>(`/admin/candidates${queryString({ status })}`);
     return { ...result, items: result.items.map(candidateFromWire) };
   },
-  approveCandidate: async (id: string, availability: Availability, sensitivity: string): Promise<ContextRecord> =>
+  approveCandidate: async (id: string, availability: Availability, explicitSensitiveReplication = false): Promise<ContextRecord> =>
     recordFromWire(await request<RecordWire>(`/admin/candidates/${encodeURIComponent(id)}/approve`, {
       method: "POST",
-      body: JSON.stringify({ availability, explicit_sensitive_replication: availability === "always_available" && sensitivity !== "normal" }),
+      body: JSON.stringify({ availability, explicit_sensitive_replication: explicitSensitiveReplication }),
     })),
   rejectCandidate: (id: string, reason: string) =>
     request<void>(`/admin/candidates/${encodeURIComponent(id)}/reject`, {
@@ -189,17 +187,50 @@ export const api = {
     const result = await request<{ items: Array<{ version_id: string; record_id: string; version: number; snapshot: RecordWire; reason: string; created_at: string }> }>(`/admin/records/${encodeURIComponent(id)}/history`);
     return { items: result.items.map((item) => ({ ...recordFromWire(item.snapshot), id: item.record_id, version: item.version, change_reason: item.reason, updated_at: item.created_at })) };
   },
-  updateAvailability: async (id: string, availability: Availability, sensitivity: string): Promise<ContextRecord> =>
+  updateAvailability: async (id: string, availability: Availability, explicitSensitiveReplication = false): Promise<ContextRecord> =>
     recordFromWire(await request<RecordWire>(`/admin/records/${encodeURIComponent(id)}/availability`, {
       method: "POST",
-      body: JSON.stringify({ availability, explicit_sensitive_replication: availability === "always_available" && sensitivity !== "normal" }),
+      body: JSON.stringify({ availability, explicit_sensitive_replication: explicitSensitiveReplication }),
     })),
   clients: async (): Promise<Page<ClientRegistration>> => {
     const result = await request<Page<ClientWire>>("/admin/clients");
     return { ...result, items: result.items.map((item) => ({ ...item, transport: "MCP", enabled: !item.revoked, last_seen_at: item.last_used_at })) };
   },
+  integrations: () => request<IntegrationsStatus>("/admin/integrations"),
+  edgeStatus: () => request<EdgeStatus>("/admin/edge"),
+  prepareEdge: () => request<EdgePrepareResult>("/admin/edge/prepare", { method: "POST" }),
+  connectEdge: (edgeUrl: string) =>
+    request<EdgeActionResult>("/admin/edge/connect", {
+      method: "POST",
+      body: JSON.stringify({ edge_url: edgeUrl }),
+    }),
+  syncEdge: () => request<EdgeActionResult>("/admin/edge/sync", { method: "POST" }),
+  secureEdgeStorage: () => request<EdgeStatus>("/admin/edge/secure-storage", { method: "POST" }),
+  edgeOwnerLink: () => request<{ url: string }>("/admin/edge/owner-link", { method: "POST" }),
+  edgeClients: () => request<Page<EdgeAuthorizedClient>>("/admin/edge/clients"),
+  revokeEdgeClient: (id: string) =>
+    request<{ id: string; revoked: boolean }>(`/admin/edge/clients/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  decommissionEdge: () =>
+    request<{ status: string; active_records_remaining: number; remote_access_revoked: boolean }>("/admin/edge/decommission", {
+      method: "POST",
+    }),
+  forgetEdge: () =>
+    request<EdgeStatus>("/admin/edge/forget", {
+      method: "POST",
+      body: JSON.stringify({ confirmation: "DELETE HOSTED EDGE" }),
+    }),
+  connectIntegration: (id: "chatgpt_codex" | "claude") =>
+    request<IntegrationConnectResult>(`/admin/integrations/${encodeURIComponent(id)}`, {
+      method: "POST",
+    }),
+  disconnectIntegration: (id: "chatgpt_codex" | "claude") =>
+    request<IntegrationConnectResult>(`/admin/integrations/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   revokeClient: (id: string) => request<{ revoked: boolean }>(`/admin/clients/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
-  replication: async () => (await api.status()).replication,
+  replication: async () => replicationFromEdge(await api.edgeStatus()),
   audit: async (): Promise<Page<AuditEvent>> => {
     const result = await request<Page<AuditWire>>("/admin/audit");
     return { ...result, items: result.items.map((item) => ({ id: item.id, action: item.action, actor: item.client_id ?? "system", target_type: item.record_ids.length ? "context_record" : "system", target_id: item.record_ids[0], outcome: item.denied_record_ids.length ? "denied" : "allowed", created_at: item.created_at })) };

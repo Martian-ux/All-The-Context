@@ -13,12 +13,15 @@ claim. "Implemented" means the behavior passed locally on Windows 11/Python
 | Structured and FTS retrieval | `retrieval.py` | unit/integration/security | Implemented |
 | Separate Relay | `relay/` | API/restart/offline/demo | Implemented with SQLite |
 | Signed event replication | `replication.py` | replay/tamper/gap/integration | Implemented |
-| Required MCP tools | `mcp_adapter.py` | schema contract plus real STDIO handshake | Implemented |
+| Required MCP tools | `mcp_adapter.py` | schema contract, real STDIO handshake, crash/shutdown/verified auto-restart | Implemented |
 | Minimal administration UI | `apps/dashboard/` | component tests, production build, live browser smoke | Implemented |
 | Correction/deletion propagation | Core/Relay services | integration/demo | Implemented |
 | Portable export/restore | `export.py` | encrypted round-trip/security/demo | Implemented |
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` | source tests plus native package/resource/first-run/MCP smoke jobs | Authored; remote run pending |
-| Provider integrations | `integrations/` | config/documentation checks | Examples only; provider handshakes pending |
-| One-click desktop setup | `desktop.py`, `wizard.py`, `desktop_setup.py`, `client_config.py` | unit tests, visual frozen wizard inspection, packaged first-run/MCP smoke | Implemented and exercised on Windows |
+| Desktop client connections | `client_config.py`, dashboard **Connect apps** | reversible Codex and Claude Desktop config tests; UI interaction tests; generic packaged MCP handshake | Implemented locally; provider UI handshake pending |
+| Cloud/mobile client connection | `edge_setup.py`, `edge_connection.py`, `relay/oauth.py`, `relay/mcp.py`, dashboard Edge setup | OAuth/PKCE/refresh/revocation tests; owner recovery; prepare/pair/sync/provider UI test; Core-offline Edge retrieval | Provider-neutral path implemented; current Claude and ChatGPT web-to-mobile setup documented; real provider-hosted handshake and public deploy link pending |
+| Internet-facing Edge hardening | `relay/app.py`, `relay/oauth.py`, `relay/service.py`, migrations `0003`-`0006` | global/chunked request bounds, registration limits, token replay/revocation, authority rebinding refusal, transactional/triggered terminal guards, interrupted-purge restart | Implemented locally; reverse-proxy controls remain deployment responsibility |
+| Edge uninstall/recovery safety | `edge_connection.py`, `desktop.py`, `client_config.py` | verified terminal decommission, corrupt/missing Core DB, offline/prepared/orphan Edge, strict credential provenance, managed-backup scrub, concurrent reset/sync tests | Implemented locally; uninstall preserves recovery material rather than claiming unverified remote decommissioning |
+| One-click desktop setup | `desktop.py`, `wizard.py`, `desktop_setup.py`, `browser_session.py`, `application_install.py` | unit tests, opaque browser handoff integration test, launcher/known-folder tests, visual frozen wizard inspection, packaged first-run/MCP smoke | Implemented and exercised on Windows |
 | Native packaging path | `scripts/build_desktop.py`, `docs/operations/PLATFORMS.md` | frozen Windows build and diagnostics | Windows engineering artifact exercised; signing and other OS observations pending |
 | Repeatable source startup | `scripts/bootstrap.py`, CLI initialization | bootstrap unit tests and process start/stop/restart integration | Implemented |

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Protocol
 
 import keyring
+from filelock import FileLock
 from keyring.errors import KeyringError
+
+OS_CREDENTIAL_STORAGE = "operating-system credential store"
+FALLBACK_CREDENTIAL_STORAGE = "local app-data fallback"
 
 
 class CredentialStore(Protocol):
@@ -53,6 +58,9 @@ class DevelopmentFileCredentialStore:
     def __init__(self, path: Path) -> None:
         self.path = path.resolve()
 
+    def _lock(self) -> FileLock:
+        return FileLock(str(self.path.with_suffix(self.path.suffix + ".lock")), timeout=5)
+
     def _read(self) -> dict[str, str]:
         if not self.path.exists():
             return {}
@@ -65,19 +73,25 @@ class DevelopmentFileCredentialStore:
 
     def _write(self, values: dict[str, str]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(json.dumps(values, sort_keys=True), encoding="utf-8")
-        temporary.replace(self.path)
+        temporary = self.path.with_name(f"{self.path.name}.{secrets.token_hex(6)}.tmp")
+        try:
+            temporary.write_text(json.dumps(values, sort_keys=True), encoding="utf-8")
+            temporary.replace(self.path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def get(self, name: str) -> str | None:
-        return self._read().get(name)
+        with self._lock():
+            return self._read().get(name)
 
     def set(self, name: str, value: str) -> None:
-        values = self._read()
-        values[name] = value
-        self._write(values)
+        with self._lock():
+            values = self._read()
+            values[name] = value
+            self._write(values)
 
     def delete(self, name: str) -> None:
-        values = self._read()
-        values.pop(name, None)
-        self._write(values)
+        with self._lock():
+            values = self._read()
+            values.pop(name, None)
+            self._write(values)

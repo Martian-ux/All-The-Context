@@ -2,13 +2,54 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
+MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
+MAX_RECORD_LIST_ITEM_CHARS = 200
+
+RecordListItem = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_RECORD_LIST_ITEM_CHARS),
+]
+
+
+def _bounded_structured_value(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("structured_value must contain only finite JSON values") from exc
+    if len(encoded) > MAX_STRUCTURED_VALUE_BYTES:
+        raise ValueError(
+            f"structured_value must be {MAX_STRUCTURED_VALUE_BYTES} UTF-8 bytes or smaller"
+        )
+    return value
+
+
+def _normalized_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("timestamp must be ISO 8601") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a UTC offset")
+    return parsed.astimezone(UTC).isoformat()
 
 
 class StrictModel(BaseModel):
@@ -44,9 +85,9 @@ class CandidateInput(StrictModel):
     kind: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=MAX_CONTEXT_CHARS)
     structured_value: dict[str, Any] | None = None
-    scopes: list[str] = Field(default_factory=list, max_length=64)
-    tags: list[str] = Field(default_factory=list, max_length=128)
-    source_id: str | None = None
+    scopes: list[RecordListItem] = Field(default_factory=list, max_length=64)
+    tags: list[RecordListItem] = Field(default_factory=list, max_length=128)
+    source_id: str | None = Field(default=None, max_length=200)
     source_reference: str | None = Field(default=None, max_length=2_000)
     source_service: str | None = Field(default=None, max_length=128)
     source_type: str | None = Field(default=None, max_length=128)
@@ -54,22 +95,42 @@ class CandidateInput(StrictModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     sensitivity: Sensitivity = Sensitivity.NORMAL
     availability: Availability = Availability.CORE
-    allowed_clients: list[str] = Field(default_factory=list, max_length=256)
-    denied_clients: list[str] = Field(default_factory=list, max_length=256)
-    valid_from: str | None = None
-    expires_at: str | None = None
-    supersedes: str | None = None
+    allowed_clients: list[RecordListItem] = Field(default_factory=list, max_length=256)
+    denied_clients: list[RecordListItem] = Field(default_factory=list, max_length=256)
+    valid_from: str | None = Field(default=None, max_length=100)
+    expires_at: str | None = Field(default=None, max_length=100)
+    supersedes: str | None = Field(default=None, max_length=200)
     explicit_user_statement: bool = False
     idempotency_key: str | None = Field(default=None, max_length=256)
     schema_version: int = Field(default=1, ge=1)
 
-    @field_validator("kind", "scopes", "tags")
+    @field_validator("kind", "scopes", "tags", "allowed_clients", "denied_clients")
     @classmethod
     def reject_control_characters(cls, value: Any) -> Any:
         values = value if isinstance(value, list) else [value]
         if any(any(ord(char) < 32 for char in item) for item in values):
             raise ValueError("control characters are not allowed")
         return value
+
+    @field_validator("structured_value")
+    @classmethod
+    def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _bounded_structured_value(value)
+
+    @field_validator("valid_from", "expires_at")
+    @classmethod
+    def normalize_timestamp(cls, value: str | None) -> str | None:
+        return _normalized_timestamp(value)
+
+    @model_validator(mode="after")
+    def validate_time_window(self) -> Self:
+        if (
+            self.valid_from is not None
+            and self.expires_at is not None
+            and self.expires_at <= self.valid_from
+        ):
+            raise ValueError("expires_at must be later than valid_from")
+        return self
 
 
 class BeginIngestionRequest(StrictModel):
@@ -104,8 +165,8 @@ class ApprovalRequest(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=MAX_CONTEXT_CHARS)
     availability: Availability | None = None
     sensitivity: Sensitivity | None = None
-    allowed_clients: list[str] | None = None
-    denied_clients: list[str] | None = None
+    allowed_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
+    denied_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     reason: str | None = Field(default=None, max_length=2_000)
     explicit_sensitive_replication: bool = False
 
@@ -118,7 +179,12 @@ class CorrectionRequest(StrictModel):
     content: str = Field(min_length=1, max_length=MAX_CONTEXT_CHARS)
     reason: str = Field(min_length=1, max_length=2_000)
     structured_value: dict[str, Any] | None = None
-    supersedes: str | None = None
+    supersedes: str | None = Field(default=None, max_length=200)
+
+    @field_validator("structured_value")
+    @classmethod
+    def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _bounded_structured_value(value)
 
 
 class AvailabilityRequest(StrictModel):

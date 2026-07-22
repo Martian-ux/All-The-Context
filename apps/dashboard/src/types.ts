@@ -1,6 +1,7 @@
 export type Availability = "always_available" | "core_available" | "local_only";
 export type CandidateStatus = "pending" | "approved" | "rejected" | "superseded";
 export type HealthState = "ready" | "degraded" | "offline";
+export type EdgeConnectionState = "not_configured" | "prepared" | "paired" | "ready" | "degraded";
 
 export interface ContextCandidate {
   id: string;
@@ -60,6 +61,100 @@ export interface ClientRegistration {
   last_seen_at?: string | null;
   created_at: string;
   enabled: boolean;
+  protected?: boolean;
+}
+
+export interface DesktopIntegration {
+  id: "chatgpt_codex" | "claude";
+  name: string;
+  configured: boolean;
+  state: "connected" | "degraded" | "disconnected";
+  reason?: string | null;
+  mode: "local";
+  detail: string;
+}
+
+export interface IntegrationsStatus {
+  apps: DesktopIntegration[];
+  remote: {
+    configured: boolean;
+    state: EdgeConnectionState;
+    edge_mcp_url?: string | null;
+    detail: string;
+  };
+}
+
+export interface EdgeProviderStatus {
+  id: "claude" | "chatgpt";
+  name: string;
+  web_supported: boolean;
+  mobile_supported: boolean;
+  setup_url: string;
+  detail: string;
+  setup_steps: string[];
+}
+
+export interface EdgeAuthorizedClient {
+  id: string;
+  name: string;
+  scopes: string[];
+  authorized_at?: string | null;
+  active_until: number;
+  token_families: number;
+}
+
+export interface EdgeStatus {
+  configured: boolean;
+  remote_present: boolean;
+  credential_available: boolean;
+  state: EdgeConnectionState;
+  vault_id: string;
+  edge_url?: string | null;
+  mcp_url?: string | null;
+  prepared_at?: string | null;
+  connected_at?: string | null;
+  credential_storage?: string | null;
+  last_sequence: number;
+  pending_events: number;
+  last_success_at?: string | null;
+  last_error?: string | null;
+  proposals_imported: number;
+  deployment: {
+    provider: "render_blueprint";
+    deploy_url?: string | null;
+    enrollment_environment_variable: "ATC_EDGE_BUNDLE";
+    requires_host_account: boolean;
+    estimated_monthly_cost_usd: number;
+    cost_note: string;
+  };
+  providers: EdgeProviderStatus[];
+}
+
+export interface EdgePrepareResult extends EdgeStatus {
+  enrollment_bundle: string;
+  recovery_code: string;
+  secret_notice: string;
+}
+
+export interface EdgeActionResult extends EdgeStatus {
+  synchronization: {
+    state: "ready" | "degraded" | "busy" | "not_connected";
+    pushed?: { delivered: number; replayed: number; remaining: number };
+    proposals_imported?: number;
+    last_sequence?: number;
+    last_success_at?: string | null;
+    error?: string;
+  };
+}
+
+export interface IntegrationConnectResult {
+  id: DesktopIntegration["id"];
+  client_id?: string;
+  configured: boolean;
+  changed: boolean;
+  config_path: string;
+  backup_path?: string | null;
+  restart_required: boolean;
 }
 
 export interface ReplicationStatus {

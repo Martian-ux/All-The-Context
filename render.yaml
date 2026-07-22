@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: all-the-context-edge
+    runtime: docker
+    plan: starter
+    dockerContext: .
+    dockerfilePath: ./apps/relay/Dockerfile
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    numInstances: 1
+    envVars:
+      - key: ATC_EDGE_BUNDLE
+        sync: false
+      - key: ATC_RELAY_HOST
+        value: 0.0.0.0
+      - key: ATC_RELAY_DATABASE
+        value: /var/lib/allthecontext/edge.sqlite3
+    disk:
+      name: all-the-context-edge-data
+      mountPath: /var/lib/allthecontext
+      sizeGB: 1

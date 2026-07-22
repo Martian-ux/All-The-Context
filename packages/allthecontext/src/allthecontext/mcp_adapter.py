@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import os
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
+from dataclasses import replace
 from io import TextIOWrapper
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import anyio
 import uvicorn
@@ -20,8 +24,65 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from allthecontext.config import CoreConfig
 from allthecontext.credentials import KeyringCredentialStore
+from allthecontext.desktop_runtime import RuntimeCommand
+from allthecontext.desktop_setup import CoreProbe, launch_core, probe_core
 from allthecontext.http_client import ContextApiError, ContextHttpClient
+from allthecontext.replication import canonical_json
+
+
+def _configured_core_runtime() -> RuntimeCommand:
+    serialized = os.environ.get("ATC_CORE_COMMAND")
+    if not serialized:
+        return RuntimeCommand.current()
+    try:
+        command = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("ATC_CORE_COMMAND must be a JSON command array") from exc
+    if (
+        not isinstance(command, list)
+        or len(command) < 2
+        or any(not isinstance(item, str) or not item for item in command)
+        or command[-1] != "--core"
+    ):
+        raise RuntimeError("ATC_CORE_COMMAND must end with the --core application mode")
+    return RuntimeCommand(Path(command[0]), tuple(command[1:-1]))
+
+
+def _ensure_local_core(target: str) -> None:
+    """Restart the user's verified local Core for managed MCP connections."""
+
+    if os.environ.get("ATC_AUTO_START_CORE") != "1":
+        return
+    parsed = urlsplit(target)
+    try:
+        target_port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("Managed local Core URL contains an invalid port") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or parsed.username is not None
+        or parsed.password is not None
+        or target_port is None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError(
+            "Automatic Core restart is restricted to a plain 127.0.0.1 HTTP endpoint"
+        )
+
+    config = replace(CoreConfig.default(), host="127.0.0.1", port=target_port)
+    state = probe_core(config)
+    if state is CoreProbe.VERIFIED:
+        return
+    if state is CoreProbe.UNVERIFIED:
+        raise RuntimeError(
+            f"Port {target_port} is occupied by a service that is not this All The Context Core"
+        )
+    launch_core(_configured_core_runtime(), config, wait_seconds=10.0)
 
 
 def _client() -> ContextHttpClient:
@@ -35,6 +96,7 @@ def _client() -> ContextHttpClient:
             "ATC_CLIENT_ID is required and its token must be in the OS credential store "
             "or ATC_CLIENT_TOKEN"
         )
+    _ensure_local_core(target)
     return ContextHttpClient(target, client_id, token)
 
 
@@ -48,13 +110,25 @@ def _safe(call: Callable[[], Any]) -> dict[str, Any]:
         return exc.as_dict()
 
 
+def _automatic_proposal_key(payload: dict[str, Any]) -> str:
+    """Make retries stable while treating metadata corrections as new proposals."""
+
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
 def build_mcp() -> FastMCP:
     """Build the transport-independent tool registry."""
 
     server = FastMCP(
         "All The Context",
         instructions=(
-            "Retrieve approved user context and propose durable changes. "
+            "Use this context service automatically; do not ask the user to manage it. At the "
+            "start of every substantive task where preferences, projects, people, constraints, "
+            "or prior decisions could matter, call bootstrap_context before answering or acting, "
+            "then use search_context or get_context_item when more detail is needed. When the user "
+            "states or corrects durable personal context or makes a lasting decision, call "
+            "propose_memory before the task ends. Proposals require policy review and are never "
+            "canonical merely because they were submitted. "
             "Never represent inaccessible sources as covered and never submit secrets, "
             "hidden reasoning, provider instructions, or guesses as established facts."
         ),
@@ -69,7 +143,7 @@ def build_mcp() -> FastMCP:
         character_budget: int = 8000,
         current_project: str | None = None,
     ) -> dict[str, Any]:
-        """Compile approved context for a task within permissions and a character budget."""
+        """Call at the start of relevant tasks to compile approved context within a budget."""
         return _safe(
             lambda: _client().bootstrap_context(
                 {
@@ -168,22 +242,18 @@ def build_mcp() -> FastMCP:
         evidence: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Propose durable user context for policy review; never writes canonical memory."""
-        return _safe(
-            lambda: _client().propose_memory(
-                {
-                    "kind": kind,
-                    "content": content,
-                    "scopes": [scope],
-                    "confidence": confidence,
-                    "sensitivity": sensitivity,
-                    "source_reference": source_reference,
-                    "evidence": evidence,
-                    "idempotency_key": idempotency_key
-                    or hashlib.sha256(f"{kind}\0{scope}\0{content}".encode()).hexdigest(),
-                }
-            )
-        )
+        """Call when durable context changes; submits for review, never canonical memory."""
+        payload: dict[str, Any] = {
+            "kind": kind,
+            "content": content,
+            "scopes": [scope],
+            "confidence": confidence,
+            "sensitivity": sensitivity,
+            "source_reference": source_reference,
+            "evidence": evidence,
+        }
+        payload["idempotency_key"] = idempotency_key or _automatic_proposal_key(payload)
+        return _safe(lambda: _client().propose_memory(payload))
 
     @server.tool()
     def report_context_error(

@@ -23,7 +23,7 @@ from .storage import CoreStore
 def _fts_query(value: str) -> str:
     """Produce a literal-token FTS query, not raw FTS syntax."""
     tokens = re.findall(r"[\w@.-]+", value, flags=re.UNICODE)[:32]
-    return " AND ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+    return " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
 
 
 def _json_set(value: str) -> set[str]:
@@ -143,8 +143,17 @@ class RetrievalEngine:
         query_parts = [request.query]
         if request.current_project:
             query_parts.append(request.current_project)
-        # An empty query loads deterministic profile material by recency.
-        search = self.search(
+        # Interaction preferences apply across tasks and must not disappear
+        # merely because their wording does not overlap the current prompt.
+        mandatory_search = self.search(
+            SearchRequest(
+                query="",
+                kinds=["interaction_preference"],
+                limit=100,
+            ),
+            principal,
+        )
+        relevant_search = self.search(
             SearchRequest(
                 query=" ".join(part for part in query_parts if part),
                 scopes=request.requested_scopes,
@@ -152,8 +161,9 @@ class RetrievalEngine:
             ),
             principal,
         )
-        mandatory = [item for item in search.items if item.kind == "interaction_preference"]
-        remainder = [item for item in search.items if item.kind != "interaction_preference"]
+        mandatory = mandatory_search.items
+        mandatory_ids = {item.id for item in mandatory}
+        remainder = [item for item in relevant_search.items if item.id not in mandatory_ids]
         selected: list[ContextRecordOut] = []
         used = 0
         for item in [*mandatory, *remainder]:

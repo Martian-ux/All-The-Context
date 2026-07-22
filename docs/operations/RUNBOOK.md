@@ -7,19 +7,20 @@ PowerShell:
 
 ```text
 .\.venv\Scripts\atc.exe init
-.\.venv\Scripts\atc.exe serve-core
+.\.venv\Scripts\atc.exe open-dashboard
 ```
 
 macOS and Linux:
 
 ```text
 ./.venv/bin/atc init
-./.venv/bin/atc serve-core
+./.venv/bin/atc open-dashboard
 ```
 
-Open `http://127.0.0.1:7337` for the administration dashboard. Do not expose
-this listener to a LAN or the internet. Run `atc status` or `atc doctor` from a
-second terminal using the same platform-specific executable path.
+The command opens an authenticated one-use dashboard link. A bare
+`http://127.0.0.1:7337` tab is deliberately unauthenticated. Do not expose this
+listener to a LAN or the internet. Run `atc status` or `atc doctor` from a second
+terminal using the same platform-specific executable path.
 
 ## Cross-platform smoke sequence
 
@@ -49,7 +50,7 @@ lock before process exit. A restart never copies or replaces a live database.
   platform bootstrap command from the README; it will rebuild the environment.
 - If startup reports an existing owner, confirm the prior process has exited;
   do not delete a lock file while that process is alive.
-- If Relay is behind, leave Core running and inspect the dashboard Relay page.
+- If Edge is behind, leave Core running and inspect the dashboard Edge page.
   Ordered events are safe to retry.
 - If an import is interrupted, resume its ingestion session or re-import the
   same content. Content hashes and idempotency keys prevent duplication.

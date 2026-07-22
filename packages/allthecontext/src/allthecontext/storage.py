@@ -26,6 +26,7 @@ from .models import (
     Sensitivity,
     SourceOut,
 )
+from .replication import MAX_REPLICATION_PAYLOAD_BYTES
 from .security import ClientPrincipal, generate_token, hash_token, verify_token
 
 
@@ -519,6 +520,45 @@ class CoreStore:
                 actor=client.id,
             )
         return self.get_candidate(candidate_id)
+
+    def add_edge_candidate(
+        self,
+        proposal_id: str,
+        candidate: CandidateInput,
+    ) -> tuple[CandidateOut, bool]:
+        """Import one Edge proposal exactly once, including across failed remote ACKs."""
+
+        if not proposal_id or len(proposal_id) > 256:
+            raise InvalidStateError("Edge proposal ID is invalid")
+        proposal_hash = _hash_text(_json(candidate.model_dump(mode="json")))
+        vault_id = self.vault_id()
+        replayed = False
+        with self.transaction() as connection:
+            receipt = connection.execute(
+                "SELECT proposal_hash,candidate_id FROM edge_proposal_receipts "
+                "WHERE vault_id=? AND proposal_id=?",
+                (vault_id, proposal_id),
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt["proposal_hash"]) != proposal_hash:
+                    raise ConflictError("Edge proposal changed after it was imported")
+                candidate_id = str(receipt["candidate_id"])
+                replayed = True
+            else:
+                candidate_id = self._insert_candidate(connection, candidate, None, None)
+                connection.execute(
+                    "INSERT INTO edge_proposal_receipts"
+                    "(vault_id,proposal_id,proposal_hash,candidate_id,created_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (vault_id, proposal_id, proposal_hash, candidate_id, utc_now()),
+                )
+            row = connection.execute(
+                "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
+            ).fetchone()
+            if row is None:  # pragma: no cover - protected by the receipt foreign key
+                raise InvalidStateError("Edge proposal receipt refers to a missing candidate")
+            result = self._candidate_out(row)
+        return result, replayed
 
     def _insert_candidate(
         self,
@@ -1047,10 +1087,16 @@ class CoreStore:
 
     def _relay_payload(self, row: sqlite3.Row) -> dict[str, Any]:
         record = self._record_out(row)
-        # Evidence and local source identifiers are intentionally not replicated.
-        payload = record.model_dump(mode="json", exclude={"evidence", "source_id"})
+        # Evidence, local source identifiers, and ingestion retry keys are not
+        # necessary to serve the approved projection.
+        payload = record.model_dump(
+            mode="json",
+            exclude={"evidence", "source_id", "idempotency_key"},
+        )
         if record.availability != Availability.ALWAYS:
             raise InvalidStateError("only always_available records may be replicated")
+        if len(_json(payload).encode("utf-8")) > MAX_REPLICATION_PAYLOAD_BYTES:
+            raise InvalidStateError("record is too large for the bounded Edge replication protocol")
         return payload
 
     def _emit_event(

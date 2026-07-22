@@ -10,10 +10,10 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+from pydantic import ValidationError
 
 from allthecontext.models import CandidateInput, CandidateOut, Sensitivity
 from allthecontext.replication import ReplicationEvent, sign_event
-from allthecontext.security import ClientPrincipal
 
 
 class ResponseLike(Protocol):
@@ -33,13 +33,11 @@ class HttpClientLike(Protocol):
 
 
 class CandidateSink(Protocol):
-    def add_candidate(
+    def add_edge_candidate(
         self,
+        proposal_id: str,
         candidate: CandidateInput,
-        *,
-        session_id: str | None = None,
-        client: ClientPrincipal | None = None,
-    ) -> CandidateOut: ...
+    ) -> tuple[CandidateOut, bool]: ...
 
 
 def _require_secure_relay(url: str) -> None:
@@ -93,13 +91,48 @@ class CoreRelaySync:
         connection.execute("PRAGMA busy_timeout = 10000")
         return connection
 
-    def push(self, *, limit: int = 500) -> dict[str, int]:
+    def push(
+        self,
+        *,
+        limit: int = 500,
+        vault_id: str | None = None,
+        after_sequence: int | None = None,
+    ) -> dict[str, int]:
+        replay_from_checkpoint = vault_id is not None or after_sequence is not None
+        if replay_from_checkpoint and (vault_id is None or after_sequence is None):
+            raise ValueError("vault_id and after_sequence must be provided together")
+        bounded_limit = max(1, min(limit, 5000))
         with self._connection() as connection:
-            rows = connection.execute(
-                "SELECT * FROM replication_events WHERE delivered_at IS NULL "
-                "ORDER BY vault_id, sequence LIMIT ?",
-                (max(1, min(limit, 5000)),),
-            ).fetchall()
+            if replay_from_checkpoint:
+                assert vault_id is not None and after_sequence is not None
+                maximum = int(
+                    connection.execute(
+                        "SELECT COALESCE(MAX(sequence),0) FROM replication_events WHERE vault_id=?",
+                        (vault_id,),
+                    ).fetchone()[0]
+                )
+                if after_sequence > maximum:
+                    raise RuntimeError("Edge checkpoint is ahead of the authoritative Core log")
+                rows = connection.execute(
+                    "SELECT * FROM replication_events WHERE vault_id=? AND sequence>? "
+                    "ORDER BY sequence LIMIT ?",
+                    (vault_id, after_sequence, bounded_limit),
+                ).fetchall()
+                total = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM replication_events WHERE vault_id=? AND sequence>?",
+                        (vault_id, after_sequence),
+                    ).fetchone()[0]
+                )
+                if rows and int(rows[0]["sequence"]) != after_sequence + 1:
+                    raise RuntimeError("Core replication log cannot satisfy the Edge checkpoint")
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM replication_events WHERE delivered_at IS NULL "
+                    "ORDER BY vault_id, sequence LIMIT ?",
+                    (bounded_limit,),
+                ).fetchall()
+                total = len(rows)
         delivered = 0
         replayed = 0
         for row in rows:
@@ -116,13 +149,25 @@ class CoreRelaySync:
             with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    "UPDATE replication_events SET delivered_at="
-                    "strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND delivered_at IS NULL",
+                    "UPDATE replication_events SET delivered_at=COALESCE(delivered_at,"
+                    "strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?",
                     (event.event_id,),
                 )
                 connection.commit()
             delivered += 1
-        return {"delivered": delivered, "replayed": replayed, "remaining": len(rows) - delivered}
+        return {"delivered": delivered, "replayed": replayed, "remaining": total - delivered}
+
+    def edge_status(self, vault_id: str) -> dict[str, Any]:
+        response = self.client.get(
+            f"{self.relay_url}/v1/edge/status",
+            headers=self.headers,
+            params={"vault_id": vault_id},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, Mapping):
+            raise RuntimeError("Edge returned an invalid status response")
+        return dict(body)
 
     def pull_proposals(self, vault_id: str, sink: CandidateSink, *, limit: int = 100) -> int:
         response = self.client.get(
@@ -137,29 +182,49 @@ class CoreRelaySync:
         for proposal in items:
             if not isinstance(proposal, Mapping):
                 continue
-            raw_payload = proposal.get(
-                "proposal", proposal.get("payload", proposal.get("payload_json", {}))
-            )
-            if isinstance(raw_payload, str):
-                raw_payload = json.loads(raw_payload)
-            if not isinstance(raw_payload, Mapping):
-                continue
-            scope_value = raw_payload.get("scope", [])
-            scopes = [scope_value] if isinstance(scope_value, str) else list(scope_value)
-            provenance = raw_payload.get("provenance")
-            evidence = json.dumps(provenance, sort_keys=True) if provenance else None
-            candidate = CandidateInput(
-                kind=str(raw_payload.get("kind", "memory")),
-                content=str(raw_payload["content"]),
-                scopes=[str(value) for value in scopes],
-                source_service="relay",
-                source_type="queued_proposal",
-                evidence=evidence,
-                confidence=float(raw_payload.get("confidence") or 1.0),
-                sensitivity=Sensitivity(str(raw_payload.get("sensitivity", "normal"))),
-            )
-            sink.add_candidate(candidate)
             proposal_id = str(proposal.get("proposal_id", proposal.get("id", "")))
+            try:
+                raw_payload = proposal.get(
+                    "proposal", proposal.get("payload", proposal.get("payload_json", {}))
+                )
+                if isinstance(raw_payload, str):
+                    raw_payload = json.loads(raw_payload)
+                if not isinstance(raw_payload, Mapping):
+                    raise ValueError("proposal payload is not an object")
+                scope_value = raw_payload.get("scope", [])
+                scopes = [scope_value] if isinstance(scope_value, str) else list(scope_value)
+                provenance = {
+                    "edge_proposal_id": proposal_id,
+                    "edge_client_id": proposal.get("client_id"),
+                    "reported_provenance": raw_payload.get("provenance"),
+                }
+                evidence = json.dumps(provenance, sort_keys=True)
+                confidence_value = raw_payload.get("confidence")
+                confidence = 1.0 if confidence_value is None else float(confidence_value)
+                candidate = CandidateInput(
+                    kind=str(raw_payload.get("kind", "memory")),
+                    content=str(raw_payload["content"]),
+                    scopes=[str(value) for value in scopes],
+                    source_reference=f"edge-proposal:{proposal_id}",
+                    source_service=str(
+                        raw_payload.get("source_service") or proposal.get("client_id") or "edge"
+                    ),
+                    source_type="queued_proposal",
+                    evidence=evidence,
+                    confidence=confidence,
+                    sensitivity=Sensitivity(str(raw_payload.get("sensitivity", "normal"))),
+                    idempotency_key=f"edge-proposal:{proposal_id}",
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError):
+                rejected = self.client.patch(
+                    f"{self.relay_url}/v1/replication/proposals/{proposal_id}",
+                    headers=self.headers,
+                    params={"vault_id": vault_id},
+                    json={"status": "rejected"},
+                )
+                rejected.raise_for_status()
+                continue
+            sink.add_edge_candidate(proposal_id, candidate)
             acknowledge = self.client.patch(
                 f"{self.relay_url}/v1/replication/proposals/{proposal_id}",
                 headers=self.headers,

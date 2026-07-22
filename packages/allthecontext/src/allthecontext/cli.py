@@ -12,7 +12,18 @@ from pathlib import Path
 from typing import Any
 
 from allthecontext.config import CoreConfig
-from allthecontext.credentials import KeyringCredentialStore
+from allthecontext.credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
+from allthecontext.desktop_runtime import RuntimeCommand
+from allthecontext.desktop_setup import (
+    AI_CLIENT_SCOPES,
+    DESKTOP_CLIENT_NAME,
+    authenticated_dashboard_url,
+    ensure_client_access,
+    launch_core,
+    local_timezone,
+    open_dashboard,
+    recover_administrator_access,
+)
 from allthecontext.export import create_export, restore_export
 from allthecontext.importers import ArchiveImportService
 from allthecontext.models import (
@@ -94,7 +105,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
     config = _config(args)
     config.prepare()
     store = CoreStore(config.database_path)
-    vault_id = store.initialize_vault(args.name, args.timezone)
+    vault_id = store.initialize_vault(args.name, args.timezone or local_timezone())
     if store.client_count() == 0:
         principal, token = store.create_client(
             ClientCreate(
@@ -116,10 +127,24 @@ def _cmd_init(args: argparse.Namespace) -> None:
                 stored_in_keyring = True
             except RuntimeError:
                 pass
+        if not stored_in_keyring:
+            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").set(
+                f"client:{principal.id}", token
+            )
+        mcp_access = ensure_client_access(
+            store,
+            config,
+            name="All The Context CLI MCP",
+            scopes=AI_CLIENT_SCOPES,
+        )
         mcp_config = _render_mcp_config(
             config,
-            principal.id,
-            token=None if stored_in_keyring else token,
+            mcp_access.client_id,
+            token=(
+                None
+                if mcp_access.credential_storage == "operating-system credential store"
+                else mcp_access.token
+            ),
         )
         result = {
             "initialized": True,
@@ -132,8 +157,8 @@ def _cmd_init(args: argparse.Namespace) -> None:
             "credential_notice": "Shown once; MCP can load it from the OS keyring when stored.",
             "mcp_config": mcp_config,
             "next": (
-                "Paste the MCP block into your client once, then run: "
-                f"{_render_cli_command('serve-core')}"
+                "Run the local Core and open its authenticated dashboard with: "
+                f"{_render_cli_command('open-dashboard')}"
             ),
         }
     else:
@@ -148,7 +173,21 @@ def _cmd_init(args: argparse.Namespace) -> None:
         print("\n# Paste this block into your MCP client configuration")
         print(result["mcp_config"])
         print("\n# Then start the local Core")
-        print(_render_cli_command("serve-core"))
+        print(_render_cli_command("open-dashboard"))
+
+
+def _cmd_open_dashboard(args: argparse.Namespace) -> None:
+    config = _config(args)
+    access = recover_administrator_access(config)
+    if access is None:
+        raise RuntimeError("No recoverable local administrator was found. Run 'atc init' first.")
+    launch_core(RuntimeCommand.current(), config)
+    url = authenticated_dashboard_url(config, access.token)
+    if args.print_only:
+        print(url)
+        return
+    if not open_dashboard(url):
+        raise RuntimeError(f"The browser could not be opened automatically. Open this link: {url}")
 
 
 def _cmd_config_mcp(args: argparse.Namespace) -> None:
@@ -336,11 +375,19 @@ def build_parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init", help="Initialize the local vault and first client")
     _common_data(init)
     init.add_argument("--name", default="My Context")
-    init.add_argument("--timezone", default="UTC")
-    init.add_argument("--client-name", default="Local administrator")
+    init.add_argument("--timezone")
+    init.add_argument("--client-name", default=DESKTOP_CLIENT_NAME)
     init.add_argument("--no-keyring", action="store_true")
     init.add_argument("--json-only", action="store_true", help="omit the copyable MCP block")
     init.set_defaults(handler=_cmd_init)
+
+    dashboard = commands.add_parser(
+        "open-dashboard",
+        help="Start Core and open an authenticated local dashboard",
+    )
+    _common_data(dashboard)
+    dashboard.add_argument("--print-only", action="store_true")
+    dashboard.set_defaults(handler=_cmd_open_dashboard)
 
     serve = commands.add_parser("serve-core", help="Run the loopback Core service")
     _common_data(serve)

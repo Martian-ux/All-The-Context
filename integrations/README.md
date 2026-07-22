@@ -6,15 +6,23 @@ HTTP. Configure it once per client with a scoped client ID and token.
 
 | Client | Example | Status in this repository |
 |---|---|---|
-| Codex | [`codex/config.toml.example`](codex/config.toml.example) | Configuration shape documented; end-to-end client handshake not exercised in CI |
-| Claude Desktop | [`claude/claude_desktop_config.json.example`](claude/claude_desktop_config.json.example) | Configuration shape documented; end-to-end client handshake not exercised in CI |
+| Codex app / CLI / editor extension | [`codex/config.toml.example`](codex/config.toml.example) | Desktop wizard and dashboard write/repair Codex config automatically; generic packaged MCP handshake exercised |
+| Claude Desktop | [`claude/claude_desktop_config.json.example`](claude/claude_desktop_config.json.example) | Desktop wizard and dashboard write/repair the config automatically; generic packaged MCP handshake exercised |
 | Grok | [`grok/README.md`](grok/README.md) | Native custom MCP capability is not verified; use only if the selected Grok client supports custom STDIO MCP servers |
 
 These examples do not imply a provider partnership or guarantee that every
 edition of a client supports custom MCP servers. The generic adapter and its
 contract are the supported integration surface for v1.
 
-## One-time setup
+## Normal one-time setup
+
+Install All The Context, leave the two desktop-app connection choices enabled,
+and restart each installed AI app once. The dashboard's **Connect apps** page
+shows status and can repair either configuration. Each app receives a distinct,
+revocable client identity. No token, command, or JSON/TOML editing is part of
+the normal user path.
+
+## Contributor/manual setup
 
 1. Start Core with `python -m allthecontext.core.app`.
 2. Create a scoped client with `python -m allthecontext.cli client-add NAME`.

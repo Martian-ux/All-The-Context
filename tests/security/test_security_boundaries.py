@@ -197,11 +197,19 @@ def test_revoked_core_bearer_token_is_rejected(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
     with TestClient(create_core_app(config)) as client:
         setup = client.post("/v1/setup", json={"name": "Fictional owner", "scopes": []})
-        token = str(setup.json()["token"])
-        client_id = str(setup.json()["client"]["id"])
-        headers = {"Authorization": f"Bearer {token}"}
-        assert client.get("/v1/context/status", headers=headers).status_code == 200
-        assert (
-            client.post(f"/v1/admin/clients/{client_id}/revoke", headers=headers).status_code == 200
+        owner_headers = {"Authorization": f"Bearer {setup.json()['token']}"}
+        created = client.post(
+            "/v1/admin/clients",
+            headers=owner_headers,
+            json={"name": "Revocable reader", "scopes": ["context:read"]},
         )
-        assert client.get("/v1/context/status", headers=headers).status_code == 401
+        assert created.status_code == 200
+        token = str(created.json()["token"])
+        client_id = str(created.json()["client"]["id"])
+        reader_headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/v1/context/status", headers=reader_headers).status_code == 200
+        assert (
+            client.post(f"/v1/admin/clients/{client_id}/revoke", headers=owner_headers).status_code
+            == 200
+        )
+        assert client.get("/v1/context/status", headers=reader_headers).status_code == 401

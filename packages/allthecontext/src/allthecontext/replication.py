@@ -21,6 +21,8 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 SCHEMA_VERSION = 1
+MAX_REPLICATION_PAYLOAD_BYTES = 1_500_000
+MAX_EDGE_REPLICATION_REQUEST_BYTES = 2 * 1024 * 1024
 
 
 class ReplicationError(ValueError):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -55,7 +56,7 @@ def record_payload(
         "version": version,
         "supersedes": supersedes,
         "approval_status": "approved",
-        "content_hash": calculate_payload_hash(content),
+        "content_hash": hashlib.sha256(content.encode()).hexdigest(),
         "updated_at": "2026-07-21T00:00:00+00:00",
     }
 

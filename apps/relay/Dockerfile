@@ -4,8 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ATC_RELAY_HOST=0.0.0.0 \
-    ATC_RELAY_PORT=8743 \
-    ATC_RELAY_DATABASE=/var/lib/allthecontext/relay.sqlite3
+    ATC_RELAY_DATABASE=/var/lib/allthecontext/edge.sqlite3
 
 WORKDIR /opt/allthecontext
 COPY pyproject.toml README.md LICENSE ./
@@ -20,6 +19,6 @@ USER 10001:10001
 EXPOSE 8743
 VOLUME ["/var/lib/allthecontext"]
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8743/healthz', timeout=2).read()"]
+  CMD ["python", "-c", "import os,urllib.request; p=os.getenv('ATC_RELAY_PORT') or os.getenv('PORT','8743'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()"]
 
 ENTRYPOINT ["atc-relay"]

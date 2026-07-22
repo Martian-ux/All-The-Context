@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import json
+import re
+import tomllib
+from dataclasses import replace
 from pathlib import Path
 
+from allthecontext.browser_session import (
+    BROWSER_AUTH_SCHEME,
+    BROWSER_STORAGE_KEY,
+    DASHBOARD_REQUEST_HEADER,
+    LEGACY_BROWSER_COOKIE,
+)
+from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
+from allthecontext.desktop_runtime import RuntimeCommand
 from fastapi.testclient import TestClient
 
 
@@ -47,16 +59,204 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         assert client.get("/v1/context/status").json()["counts"]["approved_records"] == 1
 
 
-def test_setup_auth_and_client_revocation(tmp_path: Path) -> None:
+def test_edge_local_forget_requires_explicit_host_deletion_phrase(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    app = create_app(config)
+    with TestClient(app) as client:
+        prepared = client.post("/v1/admin/edge/prepare")
+        assert prepared.status_code == 200
+        assert (
+            client.post("/v1/admin/edge/forget", json={"confirmation": "delete"}).status_code == 422
+        )
+        forgotten = client.post(
+            "/v1/admin/edge/forget",
+            json={"confirmation": "DELETE HOSTED EDGE"},
+        )
+        assert forgotten.status_code == 200
+        assert forgotten.json()["state"] == "not_configured"
+        assert app.state.edge_connections.state() is None
+        assert app.state.edge_connections.material() is None
+
+
+def test_edge_local_forget_refuses_a_healthy_paired_service(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    app = create_app(config)
+    with TestClient(app) as client:
+        assert client.post("/v1/admin/edge/prepare").status_code == 200
+        state = app.state.edge_connections.state()
+        assert state is not None
+        app.state.edge_connections.save_state(
+            replace(
+                state,
+                edge_url="https://personal-edge.example",
+                connected_at="2026-07-21T00:00:00+00:00",
+                last_success_at="2026-07-21T00:01:00+00:00",
+            )
+        )
+
+        refused = client.post(
+            "/v1/admin/edge/forget",
+            json={"confirmation": "DELETE HOSTED EDGE"},
+        )
+
+        assert refused.status_code == 409
+        assert "Remove active data and disconnect" in refused.json()["detail"]
+        assert app.state.edge_connections.state() is not None
+        assert app.state.edge_connections.material() is not None
+
+
+def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    claude_config = tmp_path / "claude" / "claude_desktop_config.json"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(claude_config))
+    monkeypatch.setenv("ATC_EDGE_MCP_URL", "https://relay.example.test/mcp")
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
     with TestClient(create_app(config)) as client:
         assert client.get("/v1/context/status").status_code == 401
         setup = client.post("/v1/setup", json={"name": "Dashboard", "scopes": []})
         assert setup.status_code == 200
         token = setup.json()["token"]
+        owner_client_id = setup.json()["client"]["id"]
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/v1/context/status", headers=headers).status_code == 200
+        handoff = client.post("/v1/admin/browser-session", headers=headers)
+        assert handoff.status_code == 200
+        connect_path = handoff.json()["connect_path"]
+        assert token not in connect_path
+        connected = client.get(f"{connect_path}&page=connections", follow_redirects=False)
+        assert connected.status_code == 200
+        assert connected.headers["cache-control"] == "no-store"
+        assert token not in connected.text
+        assert LEGACY_BROWSER_COOKIE in connected.headers["set-cookie"]
+        assert token not in connected.headers["set-cookie"]
+        assert "Max-Age=0" in connected.headers["set-cookie"]
+        assert 'window.location.replace("/?page=connections")' in connected.text
+        session_match = re.search(
+            rf'sessionStorage\.setItem\("{re.escape(BROWSER_STORAGE_KEY)}","([^"]+)"\)',
+            connected.text,
+        )
+        assert session_match is not None
+        browser_token = session_match.group(1)
+        browser_auth = {"Authorization": f"{BROWSER_AUTH_SCHEME} {browser_token}"}
+        assert client.get("/v1/context/status", headers=browser_auth).status_code == 200
+        edge_setup = client.get("/v1/admin/edge", headers=browser_auth)
+        assert edge_setup.status_code == 200
+        providers = {item["id"]: item for item in edge_setup.json()["providers"]}
+        assert providers["chatgpt"]["mobile_supported"] is True
+        assert providers["chatgpt"]["setup_url"] == "https://chatgpt.com/plugins"
+        assert providers["chatgpt"]["setup_steps"][0] == (
+            "On ChatGPT web, open Settings → Security and login and enable Developer mode."
+        )
+        assert providers["claude"]["mobile_supported"] is True
+        assert "Customize → Connectors" in providers["claude"]["setup_steps"][0]
+        assert client.get("/v1/context/status").status_code == 401
+        assert client.get(connect_path, follow_redirects=False).status_code == 410
+        integrations = client.get("/v1/admin/integrations", headers=browser_auth)
+        assert integrations.status_code == 200
+        assert not any(item["configured"] for item in integrations.json()["apps"])
+        assert (
+            client.post("/v1/admin/integrations/chatgpt_codex", headers=browser_auth).status_code
+            == 403
+        )
+        dashboard_headers = {**browser_auth, DASHBOARD_REQUEST_HEADER: "1"}
+
+        codex_connection = client.post(
+            "/v1/admin/integrations/chatgpt_codex", headers=dashboard_headers
+        )
+        assert codex_connection.status_code == 200
+        codex = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+        codex_env = codex["mcp_servers"]["all_the_context"]["env"]
+        assert codex_env.get("ATC_CLIENT_TOKEN") != token
+        assert codex_env["ATC_CLIENT_ID"] == codex_connection.json()["client_id"]
+        configure_codex(
+            RuntimeCommand.current(),
+            codex_env["ATC_CLIENT_ID"],
+            token=codex_env.get("ATC_CLIENT_TOKEN"),
+            path=codex_home / "config.toml",
+            target_url="http://127.0.0.1:9999",
+        )
+        degraded = client.get("/v1/admin/integrations", headers=browser_auth).json()
+        codex_status = next(item for item in degraded["apps"] if item["id"] == "chatgpt_codex")
+        assert codex_status["state"] == "degraded"
+        assert "different Core" in codex_status["reason"]
+        assert degraded["remote"]["configured"] is False
+        assert degraded["remote"]["state"] == "not_configured"
+        assert (
+            client.post(
+                "/v1/admin/integrations/chatgpt_codex", headers=dashboard_headers
+            ).status_code
+            == 200
+        )
+
+        claude_connection = client.post("/v1/admin/integrations/claude", headers=dashboard_headers)
+        assert claude_connection.status_code == 200
+        claude = json.loads(claude_config.read_text(encoding="utf-8"))
+        claude_env = claude["mcpServers"]["all-the-context"]["env"]
+        assert claude_env.get("ATC_CLIENT_TOKEN") != token
+        assert claude_env["ATC_CLIENT_ID"] == claude_connection.json()["client_id"]
+        assert claude_env["ATC_CLIENT_ID"] != codex_env["ATC_CLIENT_ID"]
+        registered = {
+            item["id"]: item
+            for item in client.get("/v1/admin/clients", headers=browser_auth).json()["items"]
+        }
+        assert registered[owner_client_id]["protected"] is True
+        protected_revoke = client.post(
+            f"/v1/admin/clients/{owner_client_id}/revoke", headers=dashboard_headers
+        )
+        assert protected_revoke.status_code == 409
+        assert "admin" not in registered[codex_connection.json()["client_id"]]["scopes"]
+        assert "admin" not in registered[claude_connection.json()["client_id"]]["scopes"]
+        assert all(
+            item["configured"]
+            for item in client.get("/v1/admin/integrations", headers=browser_auth).json()["apps"]
+        )
+        disconnected = client.delete("/v1/admin/integrations/claude", headers=dashboard_headers)
+        assert disconnected.status_code == 200
+        assert (
+            "all-the-context"
+            not in json.loads(claude_config.read_text(encoding="utf-8"))["mcpServers"]
+        )
+        integration_items = client.get("/v1/admin/integrations", headers=browser_auth).json()[
+            "apps"
+        ]
+        assert next(item for item in integration_items if item["id"] == "claude")["state"] == (
+            "disconnected"
+        )
         assert client.post("/v1/setup", json={"name": "Other", "scopes": []}).status_code == 409
+
+
+def test_browser_session_cannot_authenticate_to_another_core(tmp_path: Path) -> None:
+    first_config = CoreConfig.in_directory(tmp_path / "first", require_auth=True)
+    second_config = CoreConfig.in_directory(tmp_path / "second", require_auth=True)
+    with (
+        TestClient(create_app(first_config)) as first,
+        TestClient(create_app(second_config)) as second,
+    ):
+        first_setup = first.post("/v1/setup", json={"name": "First", "scopes": []})
+        second.post("/v1/setup", json={"name": "Second", "scopes": []})
+        handoff = first.post(
+            "/v1/admin/browser-session",
+            headers={"Authorization": f"Bearer {first_setup.json()['token']}"},
+        )
+        html = first.get(handoff.json()["connect_path"]).text
+        session_match = re.search(
+            rf'sessionStorage\.setItem\("{re.escape(BROWSER_STORAGE_KEY)}","([^"]+)"\)',
+            html,
+        )
+        assert session_match is not None
+
+        response = second.get(
+            "/v1/context/status",
+            headers={"Authorization": f"{BROWSER_AUTH_SCHEME} {session_match.group(1)}"},
+        )
+
+        assert response.status_code == 401
 
 
 def test_authenticated_shutdown_requests_graceful_server_exit(tmp_path: Path) -> None:

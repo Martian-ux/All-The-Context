@@ -30,10 +30,11 @@ from the model-facing MCP surface.
 
 ## One-time local configuration
 
-The desktop wizard creates a client credential, verifies credential
-persistence, and writes the Codex STDIO entry automatically with a timestamped
-backup. The user does not copy a token or configuration block. A typical
-generated entry is:
+The desktop wizard creates a distinct least-privilege identity for each
+supported AI client, verifies credential persistence, and writes the Codex and
+Claude Desktop STDIO entries automatically with timestamped
+backups. The user does not copy a token or configuration block. A typical
+generated Codex entry is:
 
 ```toml
 [mcp_servers.all_the_context]
@@ -44,9 +45,18 @@ required = true
 startup_timeout_sec = 20
 ```
 
-The token is absent when the OS credential manager persisted it. `atc init` and
-`atc config-mcp` remain contributor/headless alternatives. Codex reads durable
-MCP entries from `config.toml`; current Codex surfaces share that configuration.
-Clients with direct Streamable HTTP support can instead use a bearer-protected
-adapter endpoint. Provider capability claims remain in the dated integration
-matrix.
+The token is absent when the OS credential manager persisted it. Claude's JSON
+entry carries the equivalent command, arguments, and environment. `atc init`
+and `atc config-mcp` remain contributor/headless alternatives. This local
+`config.toml` path configures Codex, not ChatGPT. Cloud clients use the hosted
+HTTPS Edge endpoint with OAuth rather than the loopback STDIO adapter. Edge
+implements dynamic registration, PKCE, audience binding, consent, rotating
+refresh tokens, revocation, and an encrypted bounded proposal transport queue.
+The existing static-bearer HTTP transport remains an operator/development
+surface, not the provider-facing connection.
+
+Both local and Edge MCP instructions require automatic `bootstrap_context` for
+relevant tasks and automatic `propose_memory` when durable user context changes.
+Generated proposal idempotency keys hash the entire canonical proposal payload,
+so exact retries replay cleanly while corrected confidence, evidence, or
+sensitivity creates a distinct candidate.

@@ -8,6 +8,7 @@ from allthecontext.models import (
     ApprovalRequest,
     Availability,
     BeginIngestionRequest,
+    BootstrapRequest,
     CandidateInput,
     ClientCreate,
     CoverageReport,
@@ -94,6 +95,42 @@ def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> Non
         "record_upserted",
         "record_deleted",
     ]
+
+
+def test_bootstrap_always_includes_authorized_interaction_preferences(
+    core: CoreService,
+) -> None:
+    preference = core.ingestion.propose(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Prefer concise answers with concrete evidence",
+            scopes=["general"],
+        )
+    )
+    preference_record = core.store.approve_candidate(preference.id)
+    decision = core.ingestion.propose(
+        CandidateInput(
+            kind="project_decision",
+            content="Atlas planning uses a two-week milestone cadence",
+            scopes=["project:atlas"],
+        )
+    )
+    decision_record = core.store.approve_candidate(decision.id)
+
+    result = core.retrieval.bootstrap(
+        BootstrapRequest(
+            task_description="write the Atlas project plan",
+            requested_scopes=["project:atlas"],
+        )
+    )
+    assert [item.id for item in result.items][:2] == [
+        preference_record.id,
+        decision_record.id,
+    ]
+    assert (
+        core.retrieval.search(SearchRequest(query="cadence unrelated-token")).items[0].id
+        == decision_record.id
+    )
 
 
 def test_sensitive_replication_requires_explicit_confirmation(core: CoreService) -> None:

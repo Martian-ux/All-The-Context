@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import plistlib
+import secrets
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,10 +51,13 @@ def install_user_startup(runtime: RuntimeCommand) -> StartupResult:
             "RunAtLoad": True,
             "KeepAlive": False,
         }
-        temporary = path.with_suffix(".plist.atc-new")
-        with temporary.open("wb") as stream:
-            plistlib.dump(payload, stream)
-        temporary.replace(path)
+        temporary = path.with_name(f"{path.name}.{secrets.token_hex(6)}.atc-new")
+        try:
+            with temporary.open("wb") as stream:
+                plistlib.dump(payload, stream)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return StartupResult(system, "LaunchAgent", str(path))
 
     config_root = Path(os.environ.get("XDG_CONFIG_HOME", user_config_path("AllTheContext").parent))
@@ -70,9 +74,12 @@ def install_user_startup(runtime: RuntimeCommand) -> StartupResult:
             "",
         ]
     )
-    temporary = path.with_suffix(".desktop.atc-new")
-    temporary.write_text(content, encoding="utf-8", newline="\n")
-    temporary.replace(path)
+    temporary = path.with_name(f"{path.name}.{secrets.token_hex(6)}.atc-new")
+    try:
+        temporary.write_text(content, encoding="utf-8", newline="\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return StartupResult(system, "XDG autostart", str(path))
 
 

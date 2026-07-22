@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import re
+import secrets
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol
 from uuid import uuid4
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from allthecontext.replication import (
     EventType,
@@ -26,6 +33,10 @@ from allthecontext.replication import (
 
 class RelayError(RuntimeError):
     """Base class for Relay application errors."""
+
+
+class EdgeDecommissionedError(RelayError):
+    """A write reached the durable store after Edge became terminal."""
 
 
 class EventSequenceError(RelayError):
@@ -86,10 +97,17 @@ class RelayStore(Protocol):
     def get_record_row(self, vault_id: str, record_id: str) -> Mapping[str, Any] | None: ...
 
     def search_record_rows(
-        self, vault_id: str, query: str, candidate_limit: int
+        self,
+        vault_id: str,
+        query: str,
+        candidate_limit: int | None,
+        kinds: Sequence[str] | None = None,
+        candidate_offset: int = 0,
     ) -> Sequence[Mapping[str, Any]]: ...
 
     def checkpoint(self, vault_id: str) -> int: ...
+
+    def configure_proposal_protection(self, replication_secret: bytes) -> None: ...
 
     def queue_proposal(
         self,
@@ -105,11 +123,74 @@ class RelayStore(Protocol):
 
     def update_proposal_status(self, vault_id: str, proposal_id: str, status: str) -> bool: ...
 
+    def purge_vault(self, vault_id: str) -> None: ...
+
+    def purge_all(self) -> int: ...
+
     def close(self) -> None: ...
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+_PROPOSAL_KEY_DOMAIN = b"all-the-context/edge/proposal-envelope/v1"
+_MAX_QUEUED_PROPOSALS = 1_000
+_MAX_QUEUED_PROPOSAL_BYTES = 16 * 1024 * 1024
+_PROPOSAL_RETENTION_DAYS = 30
+
+
+def _proposal_key(replication_secret: bytes) -> bytes:
+    return hmac.new(replication_secret, _PROPOSAL_KEY_DOMAIN, hashlib.sha256).digest()
+
+
+def _proposal_aad(
+    *, vault_id: str, client_id: str, idempotency_key: str, proposal_hash: str
+) -> bytes:
+    return canonical_json(
+        {
+            "client_id": client_id,
+            "idempotency_key": idempotency_key,
+            "proposal_hash": proposal_hash,
+            "vault_id": vault_id,
+        }
+    ).encode("utf-8")
+
+
+def _seal_proposal(payload: Mapping[str, Any], *, key: bytes, aad: bytes) -> str:
+    nonce = secrets.token_bytes(12)
+    ciphertext = AESGCM(key).encrypt(nonce, canonical_json(payload).encode("utf-8"), aad)
+    return canonical_json(
+        {
+            "algorithm": "A256GCM",
+            "ciphertext": base64.urlsafe_b64encode(ciphertext).decode("ascii"),
+            "nonce": base64.urlsafe_b64encode(nonce).decode("ascii"),
+            "version": 1,
+        }
+    )
+
+
+def _open_proposal(envelope_json: str, *, key: bytes, aad: bytes) -> dict[str, Any]:
+    try:
+        envelope = json.loads(envelope_json)
+        if not isinstance(envelope, dict) or set(envelope) != {
+            "algorithm",
+            "ciphertext",
+            "nonce",
+            "version",
+        }:
+            raise ValueError("unexpected envelope fields")
+        if envelope["algorithm"] != "A256GCM" or envelope["version"] != 1:
+            raise ValueError("unsupported envelope")
+        nonce = base64.b64decode(str(envelope["nonce"]), altchars=b"-_", validate=True)
+        ciphertext = base64.b64decode(str(envelope["ciphertext"]), altchars=b"-_", validate=True)
+        plaintext = AESGCM(key).decrypt(nonce, ciphertext, aad)
+        proposal = json.loads(plaintext)
+    except (InvalidTag, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise RelayError("stored Edge proposal envelope is invalid") from exc
+    if not isinstance(proposal, dict):
+        raise RelayError("stored Edge proposal envelope is invalid")
+    return proposal
 
 
 def _as_json_object(value: Mapping[str, Any]) -> dict[str, JsonValue]:
@@ -194,9 +275,10 @@ def _normalize_upsert(event: ReplicationEvent) -> dict[str, Any]:
         if not 0 <= confidence <= 1:
             raise InvalidEventPayloadError("confidence must be a number between 0 and 1")
     content = _required_string(record.get("content"), "content")
+    calculated_content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     claimed_content_hash = record.get("content_hash")
     if claimed_content_hash is None:
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        content_hash = calculated_content_hash
     else:
         content_hash = _required_string(claimed_content_hash, "content_hash").lower()
         if len(content_hash) != 64:
@@ -205,6 +287,8 @@ def _normalize_upsert(event: ReplicationEvent) -> dict[str, Any]:
             bytes.fromhex(content_hash)
         except ValueError as exc:
             raise InvalidEventPayloadError("content_hash must be hexadecimal") from exc
+        if content_hash != calculated_content_hash:
+            raise InvalidEventPayloadError("content_hash does not match content")
     valid_from = _parse_time(record.get("valid_from"), "valid_from")
     valid_until = _parse_time(record.get("valid_until", record.get("expires_at")), "valid_until")
     if valid_from is not None and valid_until is not None and valid_until <= valid_from:
@@ -220,6 +304,11 @@ def _normalize_upsert(event: ReplicationEvent) -> dict[str, Any]:
     supersedes = _optional_string(record.get("supersedes"), "supersedes")
     if supersedes == event.record_id:
         raise InvalidEventPayloadError("a record cannot supersede itself")
+    sensitivity = _required_string(record.get("sensitivity"), "sensitivity")
+    if sensitivity == "private":
+        sensitivity = "sensitive"
+    if sensitivity not in {"normal", "sensitive", "highly_sensitive"}:
+        raise InvalidEventPayloadError("invalid sensitivity")
     return {
         "record_id": event.record_id,
         "kind": _required_string(record.get("kind"), "kind"),
@@ -228,7 +317,7 @@ def _normalize_upsert(event: ReplicationEvent) -> dict[str, Any]:
         "provenance": provenance,
         "source_service": _optional_string(record.get("source_service"), "source_service"),
         "confidence": confidence,
-        "sensitivity": _required_string(record.get("sensitivity"), "sensitivity"),
+        "sensitivity": sensitivity,
         "availability": availability,
         "allowed_clients": _string_list(record.get("allowed_clients"), "allowed_clients"),
         "denied_clients": _string_list(record.get("denied_clients"), "denied_clients"),
@@ -259,7 +348,9 @@ class SQLiteRelayStore:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.execute("PRAGMA busy_timeout = 30000")
+        self._connection.execute("PRAGMA secure_delete = ON")
         self._connection.execute("PRAGMA journal_mode = WAL")
+        self._proposal_encryption_key: bytes | None = None
         self._migrate()
 
     def _migrate(self) -> None:
@@ -297,10 +388,19 @@ class SQLiteRelayStore:
             else:
                 self._connection.commit()
 
+    @staticmethod
+    def _require_active_edge(connection: sqlite3.Connection) -> None:
+        row = connection.execute(
+            "SELECT decommissioned_at FROM edge_instance_state WHERE singleton=1"
+        ).fetchone()
+        if row is not None and row[0] is not None:
+            raise EdgeDecommissionedError("Edge is decommissioned")
+
     def apply_event(self, event: ReplicationEvent) -> ApplyResult:
         fingerprint = event.fingerprint()
         applied_at = _utc_now()
         with self._transaction() as connection:
+            self._require_active_edge(connection)
             checkpoint_row = connection.execute(
                 "SELECT last_sequence FROM replication_checkpoints WHERE vault_id = ?",
                 (event.vault_id,),
@@ -497,14 +597,29 @@ class SQLiteRelayStore:
         return dict(row) if row is not None else None
 
     def search_record_rows(
-        self, vault_id: str, query: str, candidate_limit: int
+        self,
+        vault_id: str,
+        query: str,
+        candidate_limit: int | None,
+        kinds: Sequence[str] | None = None,
+        candidate_offset: int = 0,
     ) -> Sequence[Mapping[str, Any]]:
+        kind_filter = tuple(dict.fromkeys(kinds or ()))
+        kind_sql = ""
+        kind_parameters: list[Any] = []
+        if kind_filter:
+            kind_sql = f" AND records.kind IN ({','.join('?' for _ in kind_filter)})"
+            kind_parameters.extend(kind_filter)
+        limit_sql = " LIMIT ? OFFSET ?" if candidate_limit is not None else ""
+        limit_parameters = (
+            [candidate_limit, max(0, candidate_offset)] if candidate_limit is not None else []
+        )
         with self._lock:
             if query.strip():
                 terms = re.findall(r"\w+", query, flags=re.UNICODE)
                 if not terms:
                     return []
-                match_query = " AND ".join(
+                match_query = " OR ".join(
                     f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms
                 )
                 rows = self._connection.execute(
@@ -514,16 +629,17 @@ class SQLiteRelayStore:
                     "ON records.vault_id = relay_context_fts.vault_id "
                     "AND records.record_id = relay_context_fts.record_id "
                     "WHERE relay_context_fts MATCH ? AND records.vault_id = ? "
-                    "AND records.superseded_by IS NULL "
-                    "ORDER BY search_rank, records.event_sequence DESC LIMIT ?",
-                    (match_query, vault_id, candidate_limit),
+                    "AND records.superseded_by IS NULL " + kind_sql + " "
+                    "ORDER BY search_rank, records.event_sequence DESC" + limit_sql,
+                    (match_query, vault_id, *kind_parameters, *limit_parameters),
                 ).fetchall()
             else:
+                plain_kind_sql = kind_sql.replace("records.kind", "kind")
                 rows = self._connection.execute(
                     "SELECT *, 0.0 AS search_rank FROM relay_context_records "
-                    "WHERE vault_id = ? AND superseded_by IS NULL "
-                    "ORDER BY event_sequence DESC LIMIT ?",
-                    (vault_id, candidate_limit),
+                    "WHERE vault_id = ? AND superseded_by IS NULL " + plain_kind_sql + " "
+                    "ORDER BY event_sequence DESC" + limit_sql,
+                    (vault_id, *kind_parameters, *limit_parameters),
                 ).fetchall()
         return [dict(row) for row in rows]
 
@@ -535,6 +651,70 @@ class SQLiteRelayStore:
             ).fetchone()
         return int(row[0]) if row is not None else 0
 
+    def configure_proposal_protection(self, replication_secret: bytes) -> None:
+        """Encrypt legacy queued proposals and scrub completed proposal payloads."""
+
+        if len(replication_secret) < 32:
+            raise ValueError("replication_secret must contain at least 32 bytes")
+        key = _proposal_key(replication_secret)
+        with self._transaction() as connection:
+            terminal = connection.execute(
+                "SELECT decommissioned_at FROM edge_instance_state WHERE singleton=1"
+            ).fetchone()
+            if terminal is not None and terminal[0] is not None:
+                self._proposal_encryption_key = key
+                return
+            self._purge_expired_proposals(connection)
+            rows = connection.execute("SELECT * FROM pending_memory_proposals").fetchall()
+            for row in rows:
+                if str(row["status"]) != "queued":
+                    self._redact_proposal_row(connection, str(row["proposal_id"]))
+                    continue
+                payload_json = str(row["payload_json"])
+                try:
+                    stored = json.loads(payload_json)
+                except json.JSONDecodeError as exc:
+                    raise RelayError("stored Edge proposal payload is invalid") from exc
+                if isinstance(stored, dict) and stored.get("algorithm") == "A256GCM":
+                    continue
+                if not isinstance(stored, dict):
+                    raise RelayError("stored Edge proposal payload is invalid")
+                aad = _proposal_aad(
+                    vault_id=str(row["vault_id"]),
+                    client_id=str(row["client_id"]),
+                    idempotency_key=str(row["idempotency_key"]),
+                    proposal_hash=str(row["proposal_hash"]),
+                )
+                connection.execute(
+                    "UPDATE pending_memory_proposals SET kind='__sealed__', content='', "
+                    "scope_json='[]', confidence=NULL, sensitivity='sealed', "
+                    "requested_availability='sealed', source_service=NULL, payload_json=? "
+                    "WHERE proposal_id=?",
+                    (
+                        _seal_proposal(stored, key=key, aad=aad),
+                        str(row["proposal_id"]),
+                    ),
+                )
+        self._proposal_encryption_key = key
+
+    @staticmethod
+    def _purge_expired_proposals(connection: sqlite3.Connection) -> None:
+        cutoff = (datetime.now(UTC) - timedelta(days=_PROPOSAL_RETENTION_DAYS)).isoformat()
+        connection.execute(
+            "DELETE FROM pending_memory_proposals WHERE status='queued' AND created_at<?",
+            (cutoff,),
+        )
+
+    @staticmethod
+    def _redact_proposal_row(connection: sqlite3.Connection, proposal_id: str) -> None:
+        connection.execute(
+            "UPDATE pending_memory_proposals SET kind='__redacted__', content='', "
+            "scope_json='[]', confidence=NULL, sensitivity='redacted', "
+            "requested_availability='redacted', source_service=NULL, payload_json='{}' "
+            "WHERE proposal_id=?",
+            (proposal_id,),
+        )
+
     def queue_proposal(
         self,
         *,
@@ -542,10 +722,15 @@ class SQLiteRelayStore:
         idempotency_key: str,
         proposal: Mapping[str, JsonValue],
     ) -> tuple[Mapping[str, Any], bool]:
+        key = self._proposal_encryption_key
+        if key is None:
+            raise RuntimeError("Edge proposal protection is not configured")
         normalized = _normalize_proposal(proposal)
         proposal_hash = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
         now = _utc_now()
         with self._transaction() as connection:
+            self._require_active_edge(connection)
+            self._purge_expired_proposals(connection)
             previous = connection.execute(
                 "SELECT * FROM pending_memory_proposals "
                 "WHERE vault_id = ? AND client_id = ? AND idempotency_key = ?",
@@ -556,8 +741,28 @@ class SQLiteRelayStore:
                     raise ProposalConflictError(
                         "idempotency key was already used for a different proposal"
                     )
-                return _proposal_row(previous), True
+                return self._proposal_row(previous), True
+            queue_usage = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload_json)), 0) "
+                "FROM pending_memory_proposals WHERE vault_id=? AND status='queued'",
+                (identity.vault_id,),
+            ).fetchone()
+            if queue_usage is None:  # pragma: no cover - aggregate always returns one row
+                raise RelayError("proposal queue accounting failed")
             proposal_id = str(uuid4())
+            aad = _proposal_aad(
+                vault_id=identity.vault_id,
+                client_id=identity.client_id,
+                idempotency_key=idempotency_key,
+                proposal_hash=proposal_hash,
+            )
+            envelope = _seal_proposal(normalized, key=key, aad=aad)
+            if int(queue_usage[0]) >= _MAX_QUEUED_PROPOSALS or (
+                int(queue_usage[1]) + len(envelope.encode("utf-8")) > _MAX_QUEUED_PROPOSAL_BYTES
+            ):
+                raise RelayError(
+                    "the encrypted Edge proposal queue is full; start Core to import it"
+                )
             connection.execute(
                 "INSERT INTO pending_memory_proposals "
                 "(proposal_id, vault_id, client_id, idempotency_key, proposal_hash, kind, content, "
@@ -571,16 +776,16 @@ class SQLiteRelayStore:
                     identity.client_id,
                     idempotency_key,
                     proposal_hash,
-                    normalized["kind"],
-                    normalized["content"],
-                    canonical_json(normalized["scope"]),
-                    normalized["confidence"],
-                    normalized["sensitivity"],
-                    normalized["requested_availability"],
-                    normalized["source_service"],
+                    "__sealed__",
+                    "",
+                    "[]",
+                    None,
+                    "sealed",
+                    "sealed",
+                    None,
                     now,
                     now,
-                    canonical_json(normalized),
+                    envelope,
                 ),
             )
             row = connection.execute(
@@ -588,25 +793,54 @@ class SQLiteRelayStore:
             ).fetchone()
             if row is None:  # pragma: no cover - same-transaction insert invariant
                 raise RelayError("proposal insert failed")
-            return _proposal_row(row), False
+            return self._proposal_row(row), False
 
     def list_proposals(
         self, vault_id: str, *, status: str = "queued", limit: int = 100
     ) -> Sequence[Mapping[str, Any]]:
         if status not in {"queued", "imported", "rejected"}:
             raise ValueError("invalid proposal status")
-        with self._lock:
-            rows = self._connection.execute(
+        with self._transaction() as connection:
+            self._purge_expired_proposals(connection)
+            rows = connection.execute(
                 "SELECT * FROM pending_memory_proposals "
                 "WHERE vault_id = ? AND status = ? ORDER BY created_at, proposal_id LIMIT ?",
                 (vault_id, status, limit),
             ).fetchall()
-        return [_proposal_row(row) for row in rows]
+        return [self._proposal_row(row) for row in rows]
+
+    def _proposal_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        proposal: dict[str, Any] | None = None
+        if str(row["status"]) == "queued":
+            key = self._proposal_encryption_key
+            if key is None:
+                raise RuntimeError("Edge proposal protection is not configured")
+            proposal = _open_proposal(
+                str(row["payload_json"]),
+                key=key,
+                aad=_proposal_aad(
+                    vault_id=str(row["vault_id"]),
+                    client_id=str(row["client_id"]),
+                    idempotency_key=str(row["idempotency_key"]),
+                    proposal_hash=str(row["proposal_hash"]),
+                ),
+            )
+        return {
+            "proposal_id": str(row["proposal_id"]),
+            "vault_id": str(row["vault_id"]),
+            "client_id": str(row["client_id"]),
+            "idempotency_key": str(row["idempotency_key"]),
+            "status": str(row["status"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "proposal": proposal,
+        }
 
     def update_proposal_status(self, vault_id: str, proposal_id: str, status: str) -> bool:
         if status not in {"imported", "rejected"}:
             raise ValueError("proposal status must be imported or rejected")
         with self._transaction() as connection:
+            self._require_active_edge(connection)
             existing = connection.execute(
                 "SELECT status FROM pending_memory_proposals "
                 "WHERE vault_id = ? AND proposal_id = ?",
@@ -619,7 +853,52 @@ class SQLiteRelayStore:
                 "WHERE vault_id = ? AND proposal_id = ? AND status = 'queued'",
                 (status, _utc_now(), vault_id, proposal_id),
             )
+            if cursor.rowcount == 1:
+                self._redact_proposal_row(connection, proposal_id)
             return cursor.rowcount == 1
+
+    def purge_vault(self, vault_id: str) -> None:
+        """Remove every replicated or queued artifact for one decommissioned vault."""
+
+        with self._transaction() as connection:
+            connection.execute("DELETE FROM relay_context_fts WHERE vault_id=?", (vault_id,))
+            connection.execute("DELETE FROM relay_context_records WHERE vault_id=?", (vault_id,))
+            connection.execute(
+                "DELETE FROM relay_deletion_tombstones WHERE vault_id=?", (vault_id,)
+            )
+            connection.execute(
+                "DELETE FROM applied_replication_events WHERE vault_id=?", (vault_id,)
+            )
+            connection.execute("DELETE FROM pending_memory_proposals WHERE vault_id=?", (vault_id,))
+            connection.execute("DELETE FROM replication_checkpoints WHERE vault_id=?", (vault_id,))
+
+    def purge_all(self) -> int:
+        """Remove active Edge artifacts and compact the live SQLite/WAL files."""
+
+        tables = (
+            "relay_context_fts",
+            "relay_context_records",
+            "relay_deletion_tombstones",
+            "applied_replication_events",
+            "pending_memory_proposals",
+            "replication_checkpoints",
+        )
+        with self._transaction() as connection:
+            for table in tables:
+                connection.execute(f"DELETE FROM {table}")
+            remaining = sum(
+                int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                for table in tables
+            )
+        if remaining == 0:
+            # secure_delete overwrites freed cells. Checkpointing, VACUUM, and
+            # a final truncate minimize remnants in the live DB/WAL; provider
+            # snapshots remain governed by the hosting provider's retention.
+            with self._lock:
+                self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._connection.execute("VACUUM")
+                self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return remaining
 
     def close(self) -> None:
         with self._lock:
@@ -642,28 +921,20 @@ def _normalize_proposal(proposal: Mapping[str, JsonValue]) -> dict[str, Any]:
     )
     if availability not in {"always_available", "core_available", "local_only"}:
         raise InvalidEventPayloadError("invalid requested availability")
+    sensitivity = _required_string(value.get("sensitivity", "sensitive"), "sensitivity")
+    if sensitivity == "private":
+        sensitivity = "sensitive"
+    if sensitivity not in {"normal", "sensitive", "highly_sensitive"}:
+        raise InvalidEventPayloadError("invalid sensitivity")
     return {
         "kind": _required_string(value.get("kind"), "kind"),
         "content": _required_string(value.get("content"), "content"),
         "scope": _string_list(value.get("scope", value.get("scopes")), "scope"),
         "confidence": confidence,
-        "sensitivity": _required_string(value.get("sensitivity", "private"), "sensitivity"),
+        "sensitivity": sensitivity,
         "requested_availability": availability,
         "source_service": _optional_string(value.get("source_service"), "source_service"),
         "provenance": value.get("provenance"),
-    }
-
-
-def _proposal_row(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "proposal_id": str(row["proposal_id"]),
-        "vault_id": str(row["vault_id"]),
-        "client_id": str(row["client_id"]),
-        "idempotency_key": str(row["idempotency_key"]),
-        "status": str(row["status"]),
-        "created_at": str(row["created_at"]),
-        "updated_at": str(row["updated_at"]),
-        "proposal": json.loads(str(row["payload_json"])),
     }
 
 
@@ -723,6 +994,7 @@ class RelayService:
             raise ValueError("replication_secret must contain at least 32 bytes")
         self.store = store
         self._replication_secret = bytes(replication_secret)
+        self.store.configure_proposal_protection(self._replication_secret)
 
     def apply(self, event: ReplicationEvent | Mapping[str, Any]) -> ApplyResult:
         parsed = (
@@ -745,6 +1017,8 @@ class RelayService:
         requested = frozenset(requested_scopes)
         if not requested:
             return None
+        if len(requested) > 64 or any(len(scope) > 200 for scope in requested):
+            raise ValueError("requested scopes must contain at most 64 bounded values")
         if "*" not in identity.context_scopes and not requested.issubset(identity.context_scopes):
             raise AuthorizationError("requested context scope exceeds client grant")
         return requested
@@ -755,18 +1029,71 @@ class RelayService:
         *,
         query: str = "",
         scopes: Sequence[str] | None = None,
+        kinds: Sequence[str] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         self._authorize(identity, "context:read")
-        if not 1 <= limit <= 100:
-            raise ValueError("limit must be between 1 and 100")
+        if len(query) > 4_000:
+            raise ValueError("query must contain at most 4000 characters")
+        if not 1 <= limit <= 101:
+            raise ValueError("limit must be between 1 and 101")
+        if not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        if kinds is not None and (
+            len(kinds) > 64 or any(not kind or len(kind) > 128 for kind in kinds)
+        ):
+            raise ValueError("kinds must contain at most 64 bounded values")
         requested = self._requested_scopes(identity, scopes)
-        rows = self.store.search_record_rows(identity.vault_id, query, min(500, limit * 20))
+        visible = self._iter_visible_records(
+            identity,
+            query=query,
+            kinds=kinds,
+            requested_scopes=requested,
+        )
+        return list(islice(visible, offset, offset + limit))
+
+    def _iter_visible_records(
+        self,
+        identity: ClientIdentity,
+        *,
+        query: str,
+        kinds: Sequence[str] | None,
+        requested_scopes: frozenset[str] | None,
+    ) -> Iterator[dict[str, Any]]:
+        """Filter deterministic SQLite pages without loading the whole Edge vault."""
+
+        raw_offset = 0
+        page_size = 256
         now = datetime.now(UTC)
-        visible = [
-            _record_from_row(row) for row in rows if _record_visible(row, identity, requested, now)
-        ]
-        return visible[:limit]
+        while True:
+            rows = self.store.search_record_rows(
+                identity.vault_id,
+                query,
+                page_size,
+                kinds=kinds,
+                candidate_offset=raw_offset,
+            )
+            if not rows:
+                return
+            for row in rows:
+                if _record_visible(row, identity, requested_scopes, now):
+                    yield _record_from_row(row)
+            raw_offset += len(rows)
+            if len(rows) < page_size:
+                return
+
+    def count(self, identity: ClientIdentity) -> int:
+        self._authorize(identity, "context:read")
+        return sum(
+            1
+            for _record in self._iter_visible_records(
+                identity,
+                query="",
+                kinds=None,
+                requested_scopes=None,
+            )
+        )
 
     def get(self, identity: ClientIdentity, record_id: str) -> dict[str, Any] | None:
         self._authorize(identity, "context:read")
@@ -776,12 +1103,32 @@ class RelayService:
             return None
         return _record_from_row(row)
 
+    def owner_get(self, vault_id: str, record_id: str) -> dict[str, Any] | None:
+        """Return a record to the separately authenticated single owner.
+
+        Provider client allow/deny lists do not restrict the person who owns the
+        Edge. The HTTP caller must establish an Edge owner session before using
+        this method.
+        """
+
+        row = self.store.get_record_row(vault_id, record_id)
+        if row is None:
+            return None
+        now = datetime.now(UTC)
+        valid_from_raw = row["valid_from"]
+        valid_until_raw = row["valid_until"]
+        if valid_from_raw is not None and datetime.fromisoformat(str(valid_from_raw)) > now:
+            return None
+        if valid_until_raw is not None and datetime.fromisoformat(str(valid_until_raw)) <= now:
+            return None
+        return _record_from_row(row)
+
     def status(self, identity: ClientIdentity) -> dict[str, Any]:
         self._authorize(identity, "context:read")
         return {
             "vault_id": identity.vault_id,
             "last_applied_sequence": self.store.checkpoint(identity.vault_id),
-            "available_records": len(self.search(identity, limit=100)),
+            "available_records": self.count(identity),
             "authority": "core",
             "relay_writable": False,
         }
@@ -796,8 +1143,8 @@ class RelayService:
         self._authorize(identity, "proposal:write")
         if not idempotency_key or len(idempotency_key) > 200:
             raise ValueError("idempotency_key must contain 1 to 200 characters")
-        if len(canonical_json(proposal).encode("utf-8")) > 1_000_000:
-            raise ValueError("proposal exceeds the 1 MB limit")
+        if len(canonical_json(proposal).encode("utf-8")) > 64 * 1024:
+            raise ValueError("proposal exceeds the 64 KB encrypted queue limit")
         return self.store.queue_proposal(
             identity=identity,
             idempotency_key=idempotency_key,
@@ -811,6 +1158,12 @@ class RelayService:
 
     def acknowledge_proposal(self, vault_id: str, proposal_id: str, status: str) -> bool:
         return self.store.update_proposal_status(vault_id, proposal_id, status)
+
+    def purge_vault(self, vault_id: str) -> None:
+        self.store.purge_vault(vault_id)
+
+    def purge_all(self) -> int:
+        return self.store.purge_all()
 
     def close(self) -> None:
         self.store.close()

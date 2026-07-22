@@ -26,8 +26,14 @@ def _packaged_mcp_helper(executable: Path) -> Path | None:
         return None
 
     sibling = executable.with_name(mcp_helper_name())
-    if sibling.is_file():
-        return sibling
+    versioned_pattern = f"{sibling.stem}-*{sibling.suffix}"
+    sibling_candidates = [
+        candidate
+        for candidate in (sibling, *executable.parent.glob(versioned_pattern))
+        if candidate.is_file()
+    ]
+    if sibling_candidates:
+        return max(sibling_candidates, key=lambda candidate: candidate.stat().st_mtime_ns)
 
     bundle_root_value = getattr(sys, "_MEIPASS", None)
     if bundle_root_value:
