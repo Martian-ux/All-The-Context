@@ -26,6 +26,7 @@ from typing import Any, cast
 from filelock import FileLock, Timeout
 from platformdirs import user_data_path
 
+from .platform_compat import windows_dll, windows_registry
 from .release_manifest import ManifestError, ReleaseVersion
 
 JOURNAL_SCHEMA_VERSION = 1
@@ -364,7 +365,7 @@ def _runonce_key() -> str:
 def register_recovery(helper: Path, journal: Path, operation_id: str) -> None:
     if platform.system() != "Windows":
         raise HelperError("windows_required")
-    import winreg
+    winreg = windows_registry()
 
     command = subprocess.list2cmdline((str(helper), "--journal", str(journal)))
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _runonce_key()) as key:
@@ -380,7 +381,7 @@ def register_recovery(helper: Path, journal: Path, operation_id: str) -> None:
 def unregister_recovery(operation_id: str) -> None:
     if platform.system() != "Windows":
         return
-    import winreg
+    winreg = windows_registry()
 
     try:
         with winreg.OpenKey(
@@ -434,10 +435,9 @@ def _process_exists(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
-        import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = windows_dll("kernel32")
         kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
         kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)

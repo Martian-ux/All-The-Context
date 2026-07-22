@@ -53,6 +53,7 @@ from .desktop_setup import (
 from .edge_connection import EdgeConnectionStore, decommission_edge_connection
 from .instance_identity import IDENTITY_FILENAME
 from .models import ClientCreate
+from .platform_compat import windows_creation_flags
 from .storage import CoreStore, StorageError
 from .user_startup import remove_user_startup
 
@@ -300,7 +301,7 @@ def prepare_installed_runtime(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=windows_creation_flags("CREATE_NEW_PROCESS_GROUP"),
         )
         return installed, True
     return installed, False
@@ -543,7 +544,7 @@ def _schedule_windows_install_removal(install_dir: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=windows_creation_flags("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"),
         # The real Start Menu uninstall shortcut starts inside install_dir.
         # A process cannot remove its own current directory on Windows, so the
         # detached cleanup helper must explicitly run from the stable parent.

@@ -41,6 +41,7 @@ from .credentials import (
 from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
+from .platform_compat import windows_creation_flags
 from .storage import CoreStore
 from .user_startup import StartupResult, install_user_startup
 
@@ -179,7 +180,7 @@ def launch_core(
     creation_flags = 0
     start_new_session = os.name != "nt"
     if os.name == "nt":
-        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        creation_flags = windows_creation_flags("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")
 
     with log_path.open("ab") as log:
         subprocess.Popen(

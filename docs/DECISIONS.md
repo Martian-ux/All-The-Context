@@ -389,3 +389,19 @@ continues to fail closed on a missing/invalid manifest signature, wrong target,
 size mismatch, or digest mismatch. Windows and macOS first-install publisher
 warnings are an accepted usability tradeoff and must be disclosed rather than
 bypassed or described as signed.
+
+## ADR-029: Platform-only APIs are late-bound behind typed compatibility helpers
+
+Runtime guards remain the authority for entering Windows-specific registry,
+DLL, and process-creation paths. Those APIs are loaded only after the guard
+through `platform_compat.py`; shared modules do not directly expose
+platform-conditional standard-library attributes to the type checker. This
+keeps normal execution native while allowing the complete shared package to be
+checked against Windows, macOS, and Linux types instead of suppressing
+`attr-defined` errors globally.
+
+Dashboard download tests use transport-neutral response bodies rather than
+constructing a Node `Response` from a jsdom-specific `Blob`. The production API
+continues to return a browser `Blob`; only the test fixture crosses the
+Node/jsdom boundary. CI retains both supported Node versions so compatibility
+failures remain observable.

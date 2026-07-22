@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__
+from .platform_compat import windows_creation_flags, windows_registry
 
 WINDOWS_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\AllTheContext"
 WINDOWS_APP_ID = "AllTheContext"
@@ -30,7 +31,7 @@ class ApplicationRegistration:
 def _windows_known_folder(name: str, *, fallback: Path | None = None) -> Path | None:
     """Resolve a per-user Shell folder, including OneDrive/enterprise redirection."""
 
-    import winreg
+    winreg = windows_registry()
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WINDOWS_USER_SHELL_FOLDERS) as key:
@@ -120,7 +121,7 @@ def _create_windows_shortcut(
         text=True,
         timeout=20,
         env=environment,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=windows_creation_flags("CREATE_NO_WINDOW"),
     )
     if completed.returncode != 0 or not shortcut.is_file():
         detail = completed.stderr.strip()[:300]
@@ -155,7 +156,7 @@ def install_application_entrypoints(executable: Path) -> ApplicationRegistration
         description="Uninstall All The Context (your context data is kept)",
     )
 
-    import winreg
+    winreg = windows_registry()
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _windows_uninstall_key()) as key:
         string_values = {
@@ -186,7 +187,7 @@ def remove_application_entrypoints() -> None:
     if desktop is not None:
         (desktop / "All The Context.lnk").unlink(missing_ok=True)
 
-    import winreg
+    winreg = windows_registry()
 
     with suppress(FileNotFoundError):
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, _windows_uninstall_key())

@@ -27,6 +27,8 @@
   ranking invariant, bounded lexical channels/RRF, improved context compiler,
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
   cross-platform release workflows with strict offline-signed OTA metadata;
+  late-bound typed Windows APIs that keep shared modules checkable against all
+  three target platforms;
   and a fail-closed native updater with stable/beta preferences, bounded signed
   checks, verified staging, dashboard controls, an independent journaled
   Windows recovery helper, and binary/database rollback; and signed ordered
@@ -36,7 +38,8 @@
   dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
-  call plus Core crash/restart recovery. Ruff formatting/lint, strict mypy,
+  call plus Core crash/restart recovery. Ruff formatting/lint, strict mypy
+  under `win32`, `darwin`, and `linux` targets,
   dashboard type checks/tests/build, npm audit, wheel/sdist build, Docker
   Compose parsing, a configured Linux Edge Docker container, and the eight-step
   offline Edge demonstration pass. A real Windows Credential Manager write,

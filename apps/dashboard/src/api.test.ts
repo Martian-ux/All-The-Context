@@ -80,7 +80,7 @@ describe("desktop browser session", () => {
 
   it("sends export passphrases only in the protected request body", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new Blob(["encrypted"]), { status: 200 }));
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("encrypted", { status: 200 }));
     vi.stubGlobal("fetch", fetch);
 
     await api.exportBackup("a private passphrase");
@@ -97,7 +97,7 @@ describe("desktop browser session", () => {
   it("downloads the verified update package with tab-scoped authentication", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
     const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(new Blob(["verified package"]), {
+      new Response("verified package", {
         status: 200,
         headers: { "Cache-Control": "no-store" },
       }));

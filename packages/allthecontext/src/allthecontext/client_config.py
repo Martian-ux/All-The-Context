@@ -18,6 +18,7 @@ from typing import Any
 from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE, OS_CREDENTIAL_STORAGE
 from .desktop_runtime import RuntimeCommand
+from .platform_compat import windows_registry
 
 MANAGED_BEGIN = "# BEGIN All The Context managed MCP"
 MANAGED_END = "# END All The Context managed MCP"
@@ -133,7 +134,7 @@ def claude_is_detected() -> bool:
         if any(candidate.is_file() for candidate in candidates):
             return True
         try:
-            import winreg
+            winreg = windows_registry()
         except ImportError:  # pragma: no cover - defensive on nonstandard runtimes
             return False
         for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):

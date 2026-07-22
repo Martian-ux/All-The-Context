@@ -13,6 +13,7 @@ from pathlib import Path
 from platformdirs import user_config_path
 
 from .desktop_runtime import RuntimeCommand
+from .platform_compat import windows_registry
 
 STARTUP_NAME = "All The Context Core"
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -36,7 +37,7 @@ def install_user_startup(runtime: RuntimeCommand) -> StartupResult:
     command = runtime.core()
     system = platform.system()
     if system == "Windows":
-        import winreg
+        winreg = windows_registry()
 
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINDOWS_RUN_KEY) as key:
             winreg.SetValueEx(key, STARTUP_NAME, 0, winreg.REG_SZ, subprocess.list2cmdline(command))
@@ -86,7 +87,7 @@ def install_user_startup(runtime: RuntimeCommand) -> StartupResult:
 def remove_user_startup() -> None:
     system = platform.system()
     if system == "Windows":
-        import winreg
+        winreg = windows_registry()
 
         try:
             with winreg.OpenKey(

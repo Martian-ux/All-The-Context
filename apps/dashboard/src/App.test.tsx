@@ -115,7 +115,7 @@ describe("dashboard", () => {
       const url = String(request);
       if (url.includes("/context/status")) return json(status());
       if (url.endsWith("/admin/edge")) return json(edgeStatus());
-      if (url.endsWith("/admin/export")) return new Response(new Blob(["encrypted"]), { status: 200 });
+      if (url.endsWith("/admin/export")) return new Response("encrypted", { status: 200 });
       return json({ items: [] });
     });
     vi.stubGlobal("fetch", fetch);
@@ -241,7 +241,7 @@ describe("dashboard", () => {
       if (url.endsWith("/admin/edge")) return json(edgeStatus());
       if (url.endsWith("/admin/updates/check")) return json({ ...update, phase: "available", offered_version: "0.2.0" });
       if (url.endsWith("/admin/updates/download")) return json({ ...update, phase: "manual_required", offered_version: "0.2.0", verified_artifact_available: true });
-      if (url.endsWith("/admin/updates/artifact")) return new Response(new Blob(["verified package"]), { status: 200 });
+      if (url.endsWith("/admin/updates/artifact")) return new Response("verified package", { status: 200 });
       if (url.endsWith("/admin/updates") && !init?.method) return json(update);
       return json({ items: [] });
     });
