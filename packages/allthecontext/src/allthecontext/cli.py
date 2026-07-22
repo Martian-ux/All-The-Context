@@ -210,6 +210,8 @@ def _cmd_candidates(args: argparse.Namespace) -> None:
 def _cmd_approve(args: argparse.Namespace) -> None:
     request = ApprovalRequest(
         content=args.content,
+        entity_key=args.entity_key,
+        attribute_key=args.attribute_key,
         availability=Availability(args.availability) if args.availability else None,
         explicit_sensitive_replication=args.confirm_sensitive_replication,
         reason=args.reason,
@@ -248,12 +250,35 @@ def _cmd_correct(args: argparse.Namespace) -> None:
             args.record_id,
             content=args.content,
             reason=args.reason,
+            entity_key=args.entity_key,
+            attribute_key=args.attribute_key,
         )
     )
 
 
 def _cmd_delete(args: argparse.Namespace) -> None:
     _dump(_store(args).delete_record(args.record_id, reason=args.reason))
+
+
+def _cmd_integrity_groups(args: argparse.Namespace) -> None:
+    _dump(
+        _store(args).list_integrity_groups(status=args.status, limit=args.limit, offset=args.offset)
+    )
+
+
+def _cmd_purge(args: argparse.Namespace) -> None:
+    _dump(
+        _store(args).purge(
+            args.target_type,
+            args.target_id,
+            confirmation=args.confirmation,
+            compact=not args.no_compact,
+        )
+    )
+
+
+def _cmd_purge_resume(args: argparse.Namespace) -> None:
+    _dump({"completed": _store(args).resume_purge_jobs(limit=args.limit)})
 
 
 def _cmd_clients(args: argparse.Namespace) -> None:
@@ -431,6 +456,8 @@ def build_parser() -> argparse.ArgumentParser:
     _common_data(approve)
     approve.add_argument("candidate_id")
     approve.add_argument("--content")
+    approve.add_argument("--entity-key")
+    approve.add_argument("--attribute-key")
     approve.add_argument("--availability", choices=[item.value for item in Availability])
     approve.add_argument("--reason")
     approve.add_argument("--confirm-sensitive-replication", action="store_true")
@@ -467,6 +494,8 @@ def build_parser() -> argparse.ArgumentParser:
     correct.add_argument("record_id")
     correct.add_argument("content")
     correct.add_argument("--reason", required=True)
+    correct.add_argument("--entity-key")
+    correct.add_argument("--attribute-key")
     correct.set_defaults(handler=_cmd_correct)
 
     delete = commands.add_parser("delete", help="Delete a record and create a tombstone")
@@ -474,6 +503,34 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("record_id")
     delete.add_argument("--reason", required=True)
     delete.set_defaults(handler=_cmd_delete)
+
+    integrity = commands.add_parser(
+        "integrity-groups", help="List duplicate and conflict review groups"
+    )
+    _common_data(integrity)
+    integrity.add_argument("--status", choices=["open", "resolved", "all"], default="open")
+    integrity.add_argument("--limit", type=int, default=100)
+    integrity.add_argument("--offset", type=int, default=0)
+    integrity.set_defaults(handler=_cmd_integrity_groups)
+
+    purge = commands.add_parser("purge", help="Irreversibly purge one Core record or source")
+    _common_data(purge)
+    purge.add_argument("target_type", choices=["record", "source"])
+    purge.add_argument("target_id")
+    purge.add_argument(
+        "--confirmation",
+        required=True,
+        help='Exact phrase: "PURGE RECORD <id>" or "PURGE SOURCE <id>"',
+    )
+    purge.add_argument("--no-compact", action="store_true")
+    purge.set_defaults(handler=_cmd_purge)
+
+    purge_resume = commands.add_parser(
+        "purge-resume", help="Resume pending secure-delete compaction jobs"
+    )
+    _common_data(purge_resume)
+    purge_resume.add_argument("--limit", type=int, default=10)
+    purge_resume.set_defaults(handler=_cmd_purge_resume)
 
     clients = commands.add_parser("clients", help="List clients")
     _common_data(clients)

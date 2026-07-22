@@ -216,3 +216,28 @@ compilation reserves preference budget, suppresses normalized exact and
 conservative near duplicates, diversifies kinds/projects/sources, and orders
 support after primary answers. This intentionally trades frozen-gold coverage
 of duplicate records for lower compiled-context redundancy.
+
+## ADR-022: Memory slots are advisory; purge is an irreversible Core state machine
+
+Entity and attribute keys are optional candidate metadata, normalized only for
+deterministic grouping. They do not create canonical facts. Explicit approval
+copies or edits the pair, after which Core derives duplicate groups for matching
+normalized values and conflict groups for materially different values in the
+same current slot. Both can coexist. Groups are review aids, never automatic
+merge or winner authority.
+
+Deletion and purge are distinct. Delete preserves the canonical row, versions,
+source provenance, and deletion tombstone for reversible history. Purge requires
+administrator scope plus the exact `PURGE RECORD <id>` or `PURGE SOURCE <id>`
+phrase. Its logical transaction removes attributable content, candidates,
+history, indexes, provenance, batch payload fingerprints, and content-bearing
+audit/outbox state. It retains only opaque stable-ID tombstones, job state, audit
+coordinates, and an exact-shape ordered purge event. Content hashes are not
+retained as purge proof because low-entropy secrets may be guessable.
+
+Physical SQLite cleanup is a resumable second phase: secure deletion is enabled
+on every connection, temp storage stays in memory, WAL is checkpointed, disk is
+preflighted, and one bounded job runs VACUUM. A crash, lock, or insufficient
+disk cannot roll back logical absence; it leaves a retryable pending job. This
+boundary makes no claim about snapshots, device remanence, external backups,
+user copies, or Relay/Edge parity before the follow-up integration lands.

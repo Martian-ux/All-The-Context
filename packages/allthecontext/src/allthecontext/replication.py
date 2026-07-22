@@ -45,6 +45,7 @@ class EventType(StrEnum):
     RECORD_UPSERTED = "record_upserted"
     RECORD_WITHDRAWN = "record_withdrawn"
     RECORD_DELETED = "record_deleted"
+    RECORD_PURGED = "record_purged"
 
 
 JsonScalar = str | int | float | bool | None
@@ -143,6 +144,17 @@ class ReplicationEvent:
         if not isinstance(validated, dict):  # pragma: no cover - guaranteed by dict above
             raise ReplicationError("payload must be an object")
         object.__setattr__(self, "payload", MappingProxyType(validated))
+        if self.event_type == EventType.RECORD_PURGED:
+            expected = {"record_id", "purged_at", "purge_scope", "irreversible"}
+            if set(validated) != expected:
+                raise ReplicationError("record_purged payload has unexpected fields")
+            if validated.get("record_id") != self.record_id:
+                raise ReplicationError("record_purged record_id does not match envelope")
+            if validated.get("purge_scope") not in {"record", "source"}:
+                raise ReplicationError("record_purged purge_scope is invalid")
+            if validated.get("irreversible") is not True:
+                raise ReplicationError("record_purged must be irreversible")
+            _require_text(validated.get("purged_at"), "purged_at")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Self:

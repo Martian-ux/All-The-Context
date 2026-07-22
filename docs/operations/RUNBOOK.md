@@ -55,3 +55,32 @@ lock before process exit. A restart never copies or replaces a live database.
 - If an import is interrupted, resume its ingestion session or re-import the
   same content. Content hashes and idempotency keys prevent duplication.
 - Before repair or migration, create a verified export and stop Core cleanly.
+
+## Integrity review and secure purge
+
+Use `atc integrity-groups --status open` for the bounded backend review view.
+The dashboard review UI is deliberately deferred because the Edge wizard is
+being changed concurrently. The follow-up UI must list group type, normalized
+slot, and member record IDs, and link to existing correction/supersession/delete
+actions without adding automatic resolution.
+
+Ordinary `atc delete RECORD --reason ...` preserves history and is reversible.
+For irreversible Core purge, first stop other Core processes and close long
+read transactions, then run exactly one of:
+
+```text
+atc purge record RECORD_ID --confirmation "PURGE RECORD RECORD_ID"
+atc purge source SOURCE_ID --confirmation "PURGE SOURCE SOURCE_ID"
+```
+
+Logical purge commits before compaction. It uses foreign keys, SQLite
+`secure_delete`, in-memory SQLite temp storage, a truncated WAL checkpoint, a
+free-space preflight, and `VACUUM`. If the database is locked, the process is
+interrupted, or disk is insufficient, content stays logically absent and the
+job remains `compaction_pending`; inspect the admin purge-jobs API and run
+`atc purge-resume`. Startup attempts one bounded pending job. Never replace the
+database with a pre-purge copy during recovery.
+
+Purge is not a promise of erasure from SSD remanence, filesystem snapshots,
+external backups, already-downloaded exports, remote copies not yet integrated,
+or files the user copied elsewhere. Rotate or delete those systems separately.

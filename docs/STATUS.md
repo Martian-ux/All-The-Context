@@ -23,8 +23,8 @@
   ranking invariant, bounded lexical channels/RRF, improved context compiler,
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
   and cross-platform release workflows with strict offline-signed OTA metadata.
-- Local integrated evidence on Windows 11 and Python 3.12: 155 Python tests and
-  15 dashboard
+- Prior local integrated evidence on Windows 11 and Python 3.12: 155 Python
+  tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -42,6 +42,12 @@
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
   Desktop was not running for a fresh local Edge image build in this release
   infrastructure validation.
+- Current memory-integrity/purge worktree evidence on Windows and Python 3.14:
+  167 Python tests pass, including legacy migration, export resurrection,
+  locked-file, insufficient-disk, restart, API authority, physical-content, and
+  replication-contract coverage. Ruff, strict mypy, docs checks, and wheel
+  resource diagnostics also pass. Python 3.12 remains the project target; this
+  slice did not rerun the dashboard because dashboard sources were untouched.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
@@ -50,6 +56,23 @@
   a strict signed OTA manifest contract, offline signing/verification tooling,
   and stable/beta operator policy are present. No desktop updater is included.
 - Blockers: none for evaluating the vertical slice locally.
+
+## Core memory-integrity and purge status
+
+- Core migration 003, public models, API, CLI, import/export, and storage now
+  carry optional normalized entity/attribute slot metadata. Model-inferred
+  slots remain candidates until explicit approval. Current approved slot
+  occupants produce deterministic, separate duplicate and conflict groups;
+  no winner is selected automatically.
+- Administrator-only record/source purge uses an exact target-bound phrase,
+  one transactional logical scrub, opaque hash-free replay barriers, an ordered
+  content-free `record_purged` event, and crash-resumable secure-delete/WAL/
+  VACUUM compaction. Ordinary delete remains history-preserving.
+- The bounded review/purge admin API and CLI are implemented. Dashboard group
+  review is deferred to avoid collision with the active Edge wizard. Relay/Edge
+  event application, Edge physical compaction, and mobile/Core forwarding
+  parity are deliberately deferred to the next integration slice; no Core
+  completion claim implies those copies have been compacted.
 
 ## Retrieval V2 status
 
@@ -74,6 +97,10 @@
   vocabulary expansion remain deferred. Phase 1 uses a small inspectable alias
   table and has no embeddings or graph database. The benchmark is synthetic and
   timing evidence is local, not a production workload or cross-platform claim.
+- Core purge cannot erase filesystem snapshots, SSD remanence, external
+  backups, user-copied exports, or remote copies. macOS/Linux locked-file,
+  disk-pressure, checkpoint, and VACUUM behavior is covered by portable design
+  and tests but has not yet been observed on those operating systems.
 - Temporal precision remains `0.5`; diversity and near-duplicate thresholds
   need evaluation on a larger sanitized judgment set before further tuning.
 

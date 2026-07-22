@@ -31,6 +31,13 @@ retrieval and replication smoke tests before switching the active vault.
 Exports contain more sensitive data than Relay. Store them in an encrypted
 location and test restore procedures regularly.
 
+Opaque purge tombstones are included even when sources/audit are omitted. A
+merge restore consults them before importing content and refuses to recreate a
+tombstoned record or source stable ID from an older export. Do not discard the
+current tombstone-bearing vault and then expect a pre-purge export to remember a
+purge it predates. Existing backups remain external copies outside Core's purge
+boundary and must be expired or destroyed under the operator's backup policy.
+
 One-click restore is intentionally not part of this release candidate. Safe
 restore needs a separate stopped-Core workflow with destination selection,
 preflight validation, rollback, post-restore verification, and an explicit
