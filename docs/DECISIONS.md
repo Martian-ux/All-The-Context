@@ -194,3 +194,25 @@ explicit full commit SHA. Every deployment record uses the returned OCI digest;
 `latest` is not a deployment input. OCI metadata, BuildKit provenance/SBOM, and
 GitHub provenance accompany the image. Making the package public and creating
 paid hosting remain explicit operator actions.
+
+## ADR-021: Retrieval V2 remains lexical and policy-first
+
+Phase 1 keeps the Core as the only canonical authority and decomposes retrieval
+behind the existing facade into eligible-record selection, bounded lexical
+channels, reciprocal-rank fusion, context compilation, and internal ranking
+explanations. Authorization and lifecycle predicates produce the eligible ID
+set before any FTS/BM25 channel executes. The temporary permitted-ID table is a
+derived query artifact, not authority.
+
+Phrase, all-term AND, and broad OR channels are capped at 256 candidates each.
+RRF combines their ranks with small deterministic coverage, phrase, kind, tag,
+project, and explicit-preference signals; recency only breaks otherwise equal
+ranking. The small lexical alias table is source-controlled and independent of
+vault contents. No embeddings or graph database are introduced.
+
+Ranking explanations are not an MCP contract. They are limited to authorized
+returned IDs and exposed initially through the local administrator CLI. Context
+compilation reserves preference budget, suppresses normalized exact and
+conservative near duplicates, diversifies kinds/projects/sources, and orders
+support after primary answers. This intentionally trades frozen-gold coverage
+of duplicate records for lower compiled-context redundancy.

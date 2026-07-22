@@ -1,23 +1,33 @@
 # Retrieval and context compilation
 
-`RetrievalBackend` is a replaceable interface. The initial implementation uses
-SQLite FTS5 plus structured SQL filters and recency ordering; no embedding is
-canonical or required.
+`RetrievalEngine` is a stable facade over replaceable internal components. Phase
+1 uses only SQLite FTS5 and deterministic lexical signals; no embedding or graph
+database is canonical or required. Existing search/bootstrap response models and
+MCP tool names are unchanged.
 
-The context compiler receives task/query text, client identity, requested
-scopes, an optional project, and a character budget. It returns mandatory
-interaction preferences first, then relevant facts/projects/decisions while
-deduplicating and stopping at the budget. The response includes provenance,
-omitted/unavailable scopes, a mode (`local_core`, `relay_only`,
-`relay_plus_core`, or `reduced_context`), and an audit trace ID.
+The pipeline has five explicit responsibilities:
 
-Permission, validity, deletion, and supersession are hard predicates applied
-before relevance. `CandidateRanker` is the narrow boundary for relevance
-ordering: it receives only candidates that have passed record scope selection,
-client allow/deny policy, approval, validity, deletion, and supersession checks.
-V1's `V1CandidateRanker` retains SQLite FTS5 BM25 and recency behavior. A future
-semantic backend may rank only this already-permitted candidate set and its
-indexes must be rebuildable from canonical records.
+1. `EligibleRecordSelector` applies vault, approval, deletion, validity,
+   expiry, supersession, request filters, and client allow/deny policy.
+2. `LexicalCandidateChannels` receives only eligible IDs and runs bounded
+   phrase, all-term AND, and broad OR/BM25 channels (256 results per channel).
+3. `ReciprocalRankFusion` combines channel ranks and bounded token-coverage,
+   exact-phrase, kind, tag, project, and explicit interaction-preference
+   signals. Updated time is only a deterministic tie-breaker.
+4. `ContextCompiler` reserves budget for mandatory interaction preferences,
+   normalizes exact duplicates, conservatively suppresses near duplicates,
+   diversifies kinds/projects/sources, and places supporting records after
+   primary answers.
+5. `RankingExplanation` records authorized-only channel ranks and signals.
+   Explanations are available through local `atc search --explain` or the
+   administrator-checked internal method; they are not added to MCP responses.
+
+Permission, validity, deletion, and supersession remain hard predicates before
+all relevance work. The eligible set is materialized as a temporary ID table;
+every FTS channel joins that table. `CandidateRanker` remains the fail-fast seam,
+and `V1CandidateRanker` remains available for the frozen comparator and boundary
+tests. A future backend may rank only this already-permitted set and any derived
+index must remain rebuildable from canonical Core records.
 
 ## Reproducible V1 baseline
 
@@ -40,5 +50,21 @@ Retrieval V2 acceptance is executable through the comparison command. Every
 common profile must have zero policy violations, exact Recall@5 no worse than
 V1, overall MRR at least 10% better, and multi-term empty rate at least 50%
 lower. The 10k profile additionally requires warm p95 below
-`max(150 ms, 1.25 × V1)`. Phase 0 freezes these gates; it does not implement a
-V2 ranker or claim that V2 meets them.
+`max(150 ms, 1.25 × V1)`.
+
+## Phase 1 measured evidence
+
+Two consecutive Windows runs on Python 3.14.3/SQLite 3.50.4 produced identical
+rankings and quality metrics at 1k and 10k. Against the checked-in Windows
+Python 3.12 V1 baseline, exact Recall@5 remained `1.0`; MRR increased from
+`0.666667` to `0.777778` (+16.67%); multi-term empty rate fell from `0.5` to
+`0.0`; and forbidden-result count remained zero. The two 10k warm p95 values
+were `73.13693 ms` and `75.00416 ms`, below the `150 ms` gate.
+
+Near-duplicate suppression reduced benchmark context redundancy from `0.25` to
+`0.0`. Context coverage changed from `1.0` to `0.75` because the frozen gold set
+counts both members of its declared near-duplicate pair while Phase 1 retains
+one. Temporal precision remains `0.5`. The bounded alias table currently closes
+one explicit vocabulary gap (`eviction` to `cache`); typo, general paraphrase,
+and broader vocabulary recovery remain out of scope. Timing is local evidence,
+not a cross-platform performance claim.

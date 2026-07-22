@@ -272,7 +272,7 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
         measured = [run_profile(profile, directory, fixture) for profile in profiles]
     return {
         "schema_version": 1,
-        "engine": "retrieval_v1_sqlite_fts5",
+        "engine": "retrieval_v2_lexical_rrf",
         "fixture_sha256": fixture_hash,
         "environment": {
             "python": platform.python_version(),
