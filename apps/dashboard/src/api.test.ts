@@ -103,7 +103,9 @@ describe("desktop browser session", () => {
       }));
     vi.stubGlobal("fetch", fetch);
 
-    await expect(api.verifiedUpdateArtifact()).resolves.toBeInstanceOf(Blob);
+    const artifact = await api.verifiedUpdateArtifact();
+    expect(artifact.size).toBe(16);
+    expect(await artifact.text()).toBe("verified package");
 
     expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/updates/artifact");
     const init = fetch.mock.calls[0]?.[1] as RequestInit;

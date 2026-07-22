@@ -34,7 +34,7 @@ from .application_install import (
 from .client_config import apply_managed_client_cleanup, plan_managed_client_cleanup
 from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE
-from .desktop_runtime import RuntimeCommand, mcp_helper_name, update_helper_name
+from .desktop_runtime import RuntimeCommand
 from .desktop_setup import (
     CLAUDE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
@@ -58,6 +58,8 @@ from .storage import CoreStore, StorageError
 from .user_startup import remove_user_startup
 
 WINDOWS_APP_NAME = "AllTheContext.exe"
+WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
+WINDOWS_UPDATE_HELPER_NAME = "AllTheContextUpdater.exe"
 
 
 def _retire_installed_ai_clients(
@@ -272,8 +274,8 @@ def prepare_installed_runtime(
 
     install_dir = windows_install_directory()
     app_target = install_dir / WINDOWS_APP_NAME
-    helper_target = install_dir / mcp_helper_name()
-    update_target = install_dir / update_helper_name()
+    helper_target = install_dir / WINDOWS_MCP_NAME
+    update_target = install_dir / WINDOWS_UPDATE_HELPER_NAME
     app_needs_update = not _same_file(runtime.executable, app_target)
     if runtime.executable != app_target and app_target.is_file() and app_needs_update:
         _stop_installed_core_for_upgrade()
