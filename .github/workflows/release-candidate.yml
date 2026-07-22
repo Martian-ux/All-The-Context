@@ -1,0 +1,127 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact SemVer (stable x.y.z or beta x.y.z-beta.N)
+        required: true
+        type: string
+      channel:
+        description: Update channel
+        required: true
+        type: choice
+        options: [beta, stable]
+      source_commit:
+        description: Full 40-character commit SHA to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - id: validate
+        shell: python
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          import os, pathlib, re, tomllib
+          version = os.environ["RELEASE_VERSION"]
+          channel = os.environ["RELEASE_CHANNEL"]
+          commit = os.environ["SOURCE_COMMIT"]
+          pattern = r"[0-9]+\.[0-9]+\.[0-9]+" + (r"-beta\.[1-9][0-9]*" if channel == "beta" else "")
+          if re.fullmatch(pattern, version) is None or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+              raise SystemExit("version/channel or immutable source commit is invalid")
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          package_init = pathlib.Path("packages/allthecontext/src/allthecontext/__init__.py").read_text(encoding="utf-8")
+          if project["project"]["version"] != version or f'__version__ = "{version}"' not in package_init:
+              raise SystemExit("candidate version must match project and runtime versions")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+
+  native:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            architecture: x86_64
+            source: AllTheContextSetup.exe
+          - os: macos-14
+            platform: macos
+            architecture: x86_64
+            source: AllTheContext.app
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x86_64
+            source: all-the-context
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Linux Tk runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes python3-tk
+      - run: python -m pip install -e ".[packaging]"
+      - run: python scripts/build_desktop.py
+      - run: python scripts/smoke_desktop_artifact.py
+      - run: python scripts/smoke_packaged_first_run.py
+      - name: Build immutable archive, checksum, and SPDX metadata
+        run: >-
+          python scripts/build_release_assets.py
+          --source dist/desktop/${{ matrix.source }}
+          --output-dir dist/release
+          --version ${{ inputs.version }}
+          --platform ${{ matrix.platform }}
+          --architecture ${{ matrix.architecture }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/release/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  draft:
+    needs: [validate, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+      - name: Create or update an unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$SOURCE_COMMIT" --title "All The Context $TAG" --notes "Unsigned candidate for offline manifest promotion ($CHANNEL)."
+          gh release upload "$TAG" dist/release/* --clobber
+          gh release view "$TAG" --json url,isDraft,assets

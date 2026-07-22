@@ -59,9 +59,12 @@ config backups that could contain a development-fallback token. If retained
 SQLite cannot be read, uninstall says that its internal rows were not revoked
 and warns against restoring that data until it is repaired or deleted.
 
-The current artifacts are unsigned engineering builds. Windows signing,
-notarized macOS distribution, and native Linux package metadata remain release
-engineering work.
+The current artifacts are unsigned engineering builds. Candidate CI wraps each
+native output in an immutable versioned ZIP with a SHA-256 sidecar, SPDX
+metadata, and provenance. Those controls do not substitute for Windows
+Authenticode signing, notarized macOS distribution, or native Linux package
+metadata. See the [release runbook](RELEASES.md) for offline manifest signing,
+stable/beta promotion, key rotation, and downgrade rules.
 
 ## Source development installation
 
@@ -99,7 +102,8 @@ a functional keyring; it is not equivalent to an OS-protected credential.
 
 ## Packaging roadmap
 
-- **Windows:** sign the existing self-installing artifact, add publisher
+- **Windows:** sign the existing self-installing artifact, verify the signed
+  immutable candidate and publisher chain, add publisher
   identity, and then evaluate a Windows service only if per-user startup proves
   insufficient. The per-user uninstaller path is already implemented.
 - **macOS:** sign and notarize the application bundle and its per-user

@@ -38,7 +38,9 @@ jobs:
       - name: Tests and platform smoke coverage
         run: python -m pytest
       - name: Build Python artifacts
-        run: python -m build
+        run: python -m build --outdir dist/python
+      - name: Diagnose Python package resources
+        run: python scripts/diagnose_python_packages.py --directory dist/python
 
   dashboard:
     name: Dashboard - Node ${{ matrix.node }}
@@ -69,7 +71,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            platform: windows
+            architecture: x86_64
+            source: AllTheContextSetup.exe
+          - os: macos-14
+            platform: macos
+            architecture: x86_64
+            source: AllTheContext.app
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x86_64
+            source: all-the-context
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -87,10 +101,18 @@ jobs:
         run: python scripts/smoke_desktop_artifact.py
       - name: Smoke-test first run and packaged MCP
         run: python scripts/smoke_packaged_first_run.py
+      - name: Create deterministic candidate archive and metadata
+        run: >-
+          python scripts/build_release_assets.py
+          --source dist/desktop/${{ matrix.source }}
+          --output-dir dist/release
+          --version 0.1.0
+          --platform ${{ matrix.platform }}
+          --architecture ${{ matrix.architecture }}
       - uses: actions/upload-artifact@v4
         with:
-          name: all-the-context-${{ matrix.os }}
-          path: dist/desktop/**
+          name: all-the-context-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: dist/release/**
           if-no-files-found: error
 
   relay-container:
@@ -101,3 +123,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build hosted Relay image
         run: docker build --file apps/relay/Dockerfile --tag all-the-context-relay:ci .
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet

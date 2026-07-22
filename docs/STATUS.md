@@ -1,6 +1,8 @@
 # Project status
 
-- Current phase: first vertical slice implemented and locally verified.
+- Current phase: first vertical slice, release/CI foundation, release-candidate
+  UX/backup repair, and Retrieval V2 Phase 0 are implemented. Retrieval V2
+  Phase 1 is under active implementation.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -18,10 +20,10 @@
   dashboard backup with bounded temporary resources; demonstration and
   automated tests; Retrieval V2 Phase 0 with an
   offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
-  ranking invariant, bounded opt-in 50k profile, and executable V2 gates.
-- Pre-integration slice evidence on Windows 11: the release-candidate UI/backup
-  branch passed 136 Python tests and 15 dashboard tests; the Retrieval V2 Phase
-  0 branch passed 138 Python tests and 10 dashboard
+  ranking invariant, bounded opt-in 50k profile, and executable V2 gates; and
+  cross-platform release workflows with strict offline-signed OTA metadata.
+- Pre-release-foundation integration evidence on Windows 11 and Python 3.12:
+  144 Python tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -33,10 +35,19 @@
   rebuilt frozen artifact passes resource diagnostics and an isolated real
   install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/uninstall
   smoke; uninstall preserves the vault while removing the app, shortcuts,
-  registration, managed client credential, and temporary data.
-- CI authored: Python smoke/test jobs for Windows, macOS, and Linux; dashboard
-  jobs for Node 20 and 22; hosted Edge image build; native desktop build,
-  resource diagnostics, and packaged first-run/MCP smoke.
+  registration, managed client credential, and temporary data. Signed-manifest
+  tamper/revocation/downgrade tests, deterministic native-archive tests, an
+  isolated wheel/sdist build with resource/private-key diagnostics, release
+  JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
+  Desktop was not running for a fresh local Edge image build in this release
+  infrastructure validation.
+- CI authored: Python smoke/test and package/resource diagnostic jobs for
+  Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
+  image/config build; native desktop build, resource diagnostics, bounded
+  packaged first-run/MCP smoke, deterministic versioned archives, checksums,
+  and SPDX metadata. Draft-only candidate and digest-addressed GHCR workflows,
+  a strict signed OTA manifest contract, offline signing/verification tooling,
+  and stable/beta operator policy are present. No desktop updater is included.
 - Blockers: none for evaluating the vertical slice locally.
 
 ## Retrieval V2 status
@@ -63,6 +74,10 @@
 - The Windows engineering artifact is unsigned. Windows publisher signing,
   macOS signing/notarization, and native Linux package metadata remain release
   work.
+- No production release key has been created or configured. `release/keys.json`
+  intentionally trusts no keys until an offline key ceremony and public-key
+  review occur. Candidate workflows create drafts only; production promotion
+  remains a human/offline operation.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
 - Docker Compose parses successfully and a configured Linux Edge container was

@@ -51,6 +51,22 @@ def test_cross_platform_workflow_and_operations_are_present() -> None:
     assert "127.0.0.1" in runbook
 
 
+def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> None:
+    candidate = (REPOSITORY_ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
+    image = (REPOSITORY_ROOT / ".github" / "workflows" / "edge-image.yml").read_text()
+    releases = (REPOSITORY_ROOT / "docs" / "operations" / "RELEASES.md").read_text()
+    keys = json.loads((REPOSITORY_ROOT / "release" / "keys.json").read_text())
+
+    assert "source_commit" in candidate
+    assert "--draft" in candidate
+    assert "attest-build-provenance" in candidate
+    assert "type=sha,format=long,prefix=sha-" in image
+    assert "subject-digest" in image
+    assert "private key" in releases
+    assert "outside GitHub" in releases
+    assert keys == {"schema_version": 1, "keys": []}
+
+
 def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
     dockerfile = (REPOSITORY_ROOT / "apps" / "relay" / "Dockerfile").read_text()
     compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
