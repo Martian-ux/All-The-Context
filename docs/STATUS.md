@@ -14,10 +14,11 @@
   Menu/Desktop launchers and uninstall registration; owner-gated hosted Edge
   enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
   remote-app revocation, and terminal decommissioning; self-repairing source
-  bootstrap; demonstration and automated tests; Retrieval V2 Phase 0 with an
+  bootstrap; demonstration and automated tests; Retrieval V2 Phase 1 with an
   offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
-  ranking invariant, bounded opt-in 50k profile, and executable V2 gates.
-- Local evidence (Windows 11, Python 3.12): 138 Python tests and 10 dashboard
+  ranking invariant, bounded lexical channels/RRF, improved context compiler,
+  administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates.
+- Local evidence (Windows 11; latest Python run on 3.14.3): 142 Python tests and 10 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -37,21 +38,29 @@
 
 ## Retrieval V2 status
 
-- Phase 0 is implemented. The synthetic frozen V1 baseline measures retrieval
-  quality, policy/temporal behavior, context compilation, latency, index size,
-  indexing throughput, and mutation/reindex cost.
-- A ranker seam now makes policy-before-ranking executable without changing V1
-  BM25/recency ranking. A failing spy test proves denied, allowlisted-away,
-  deleted, expired, and superseded records cannot enter relevance scoring.
-- Production Retrieval V2 ranking is intentionally not implemented. V2 has not
-  been evaluated against, and is not claimed to meet, the acceptance gates.
+- Phase 1 is implemented. Hard policy selection precedes bounded phrase/AND and
+  broad OR/BM25 channels; reciprocal-rank fusion uses bounded lexical and
+  structured boosts with recency limited to tie-breaking. The existing MCP and
+  default API response contracts are unchanged.
+- A failing ranker spy and administrator-diagnostic regression prove denied,
+  allowlisted-away, deleted, expired, and superseded records cannot enter
+  scoring or explanations.
+- Two deterministic 1k/10k runs passed all gates: exact Recall@5 `1.0` (V1
+  `1.0`), MRR `0.777778` (V1 `0.666667`, +16.67%), multi-term empty rate `0.0`
+  (V1 `0.5`), and zero policy violations. 10k warm p95 was `73.13693 ms` and
+  `75.00416 ms`, below the `150 ms` gate.
+- Context redundancy improved from `0.25` to `0.0`; frozen-gold coverage moved
+  from `1.0` to `0.75` because one declared near-duplicate is intentionally
+  suppressed.
 
 ## Explicitly unexercised or deferred
 
-- Retrieval V2 ranking, semantic retrieval, typo/paraphrase recovery, and
-  near-duplicate suppression remain deferred beyond the frozen Phase 0
-  baseline. The benchmark is synthetic and its timing evidence is local, not a
-  production workload or cross-platform performance claim.
+- Semantic retrieval, typo/general paraphrase recovery, and broader lexical
+  vocabulary expansion remain deferred. Phase 1 uses a small inspectable alias
+  table and has no embeddings or graph database. The benchmark is synthetic and
+  timing evidence is local, not a production workload or cross-platform claim.
+- Temporal precision remains `0.5`; diversity and near-duplicate thresholds
+  need evaluation on a larger sanitized judgment set before further tuning.
 
 - The GitHub Actions matrix has not run because this local repository has no
   configured remote; macOS and Linux behavior is therefore designed and

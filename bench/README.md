@@ -29,8 +29,9 @@ python -m bench.retrieval_benchmark compare tmp/retrieval-candidate.json
 The gates require zero unauthorized results, exact Recall@5 no worse than V1,
 overall MRR at least 10% better, multi-term empty-result rate at least 50%
 lower, and 10k warm p95 no greater than `max(150 ms, 1.25 × V1)`. Comparing V1
-to itself must fail the two improvement gates; Phase 0 does not claim Retrieval
-V2 passes.
+to itself must fail the two improvement gates. Retrieval V2 Phase 1 passes the
+frozen gates; measured evidence and limitations are recorded in
+`docs/architecture/RETRIEVAL.md`.
 
 ## Metric definitions
 

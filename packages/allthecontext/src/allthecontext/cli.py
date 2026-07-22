@@ -222,8 +222,14 @@ def _cmd_reject(args: argparse.Namespace) -> None:
 
 
 def _cmd_search(args: argparse.Namespace) -> None:
-    result = RetrievalEngine(_store(args)).search(
-        SearchRequest(query=args.query, scopes=args.scope, kinds=args.kind, limit=args.limit)
+    engine = RetrievalEngine(_store(args))
+    request = SearchRequest(
+        query=args.query, scopes=args.scope, kinds=args.kind, limit=args.limit
+    )
+    result = (
+        engine.diagnose_search(request, local_administrator=True)
+        if args.explain
+        else engine.search(request)
     )
     _dump(result)
 
@@ -444,6 +450,11 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--scope", action="append", default=[])
     search.add_argument("--kind", action="append", default=[])
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument(
+        "--explain",
+        action="store_true",
+        help="include administrator-only lexical ranking explanations",
+    )
     search.set_defaults(handler=_cmd_search)
 
     availability = commands.add_parser("availability", help="Change record availability")
