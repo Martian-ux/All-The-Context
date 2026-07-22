@@ -1,6 +1,7 @@
 # Project status
 
-- Current phase: first vertical slice implemented and locally verified.
+- Current phase: first vertical slice implemented; release/CI foundation is
+  authored and undergoing local verification.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -15,7 +16,7 @@
   enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
   remote-app revocation, and terminal decommissioning; self-repairing source
   bootstrap; demonstration and automated tests.
-- Local evidence (Windows 11, Python 3.12): 130 Python tests and 10 dashboard
+- Local evidence (Windows 11, Python 3.12): 137 Python tests and 10 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -27,10 +28,19 @@
   rebuilt frozen artifact passes resource diagnostics and an isolated real
   install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/uninstall
   smoke; uninstall preserves the vault while removing the app, shortcuts,
-  registration, managed client credential, and temporary data.
-- CI authored: Python smoke/test jobs for Windows, macOS, and Linux; dashboard
-  jobs for Node 20 and 22; hosted Edge image build; native desktop build,
-  resource diagnostics, and packaged first-run/MCP smoke.
+  registration, managed client credential, and temporary data. Signed-manifest
+  tamper/revocation/downgrade tests, deterministic native-archive tests, an
+  isolated wheel/sdist build with resource/private-key diagnostics, release
+  JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
+  Desktop was not running for a fresh local Edge image build in this release
+  infrastructure validation.
+- CI authored: Python smoke/test and package/resource diagnostic jobs for
+  Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
+  image/config build; native desktop build, resource diagnostics, bounded
+  packaged first-run/MCP smoke, deterministic versioned archives, checksums,
+  and SPDX metadata. Draft-only candidate and digest-addressed GHCR workflows,
+  a strict signed OTA manifest contract, offline signing/verification tooling,
+  and stable/beta operator policy are present. No desktop updater is included.
 - Blockers: none for evaluating the vertical slice locally.
 
 ## Explicitly unexercised or deferred
@@ -41,6 +51,10 @@
 - The Windows engineering artifact is unsigned. Windows publisher signing,
   macOS signing/notarization, and native Linux package metadata remain release
   work.
+- No production release key has been created or configured. `release/keys.json`
+  intentionally trusts no keys until an offline key ceremony and public-key
+  review occur. Candidate workflows create drafts only; production promotion
+  remains a human/offline operation.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
 - Docker Compose parses successfully and a configured Linux Edge container was

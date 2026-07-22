@@ -140,3 +140,23 @@ managed config and verifies deletion before changing any file. Existing token-
 bearing ATC backups are scrubbed without creating a new backup; exact-content
 checks make concurrent edits fail retryably. A corrupt retained vault is kept
 with an explicit warning that its internal rows could not be revoked.
+
+## ADR-017: Offline-signed immutable OTA metadata
+
+Release candidates are native, versioned artifacts built from a full commit
+SHA. GitHub may build an unpublished draft and attach checksums, SPDX metadata,
+and provenance, but it never receives the Ed25519 release private key. An
+operator signs the strict v1 manifest offline after verifying the candidate;
+only reviewed public keys live in the repository. Mutable channel pointers may
+select a signed manifest, but executable URLs must be HTTPS, versioned, and
+must never resolve through `main` or `latest`. Downgrades are rejected. Desktop
+update download and installation are explicitly deferred to a separately
+reviewed implementation.
+
+## ADR-018: Edge images are release- or commit-addressed
+
+The hosted Edge image is published to GHCR only from a published release or an
+explicit full commit SHA. Every deployment record uses the returned OCI digest;
+`latest` is not a deployment input. OCI metadata, BuildKit provenance/SBOM, and
+GitHub provenance accompany the image. Making the package public and creating
+paid hosting remain explicit operator actions.

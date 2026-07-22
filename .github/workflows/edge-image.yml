@@ -1,0 +1,80 @@
+name: Publish Edge image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full commit SHA to publish (never a branch name)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate manually supplied source
+        if: github.event_name == 'workflow_dispatch'
+        shell: python
+        env:
+          INPUT_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          import os, re
+          if re.fullmatch(r"[0-9a-f]{40}", os.environ["INPUT_COMMIT"]) is None:
+              raise SystemExit("Edge publication requires a full immutable commit SHA")
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_commit || github.event.release.tag_name }}
+          persist-credentials: false
+      - name: Resolve checked-out source
+        id: source
+        shell: python
+        run: |
+          import os, subprocess
+          value = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"commit={value}\n")
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/all-the-context-edge
+          tags: |
+            type=sha,format=long,prefix=sha-
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.title=All The Context Edge
+            org.opencontainers.image.description=Restricted projection and proposal relay for All The Context
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.revision=${{ steps.source.outputs.commit }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/relay/Dockerfile
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/all-the-context-edge
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable image digest
+        run: echo "ghcr.io/${{ github.repository_owner }}/all-the-context-edge@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+build
+dist
+tmp
+apps/dashboard/node_modules
+**/__pycache__
+**/*.pyc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
