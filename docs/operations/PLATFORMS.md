@@ -66,6 +66,15 @@ Authenticode signing, notarized macOS distribution, or native Linux package
 metadata. See the [release runbook](RELEASES.md) for offline manifest signing,
 stable/beta promotion, key rotation, and downgrade rules.
 
+The native updater verifies and stages a versioned ZIP but reports manual
+installation on every current platform. The packaged Windows self-installer can
+authenticate to and stop Core before atomic replacement, but it cannot yet act
+as an independent journaled recovery process that restores both the prior
+binary and pre-migration database after failed health. It is therefore not
+exposed as one-click update. macOS app bundles and Linux standalone archives
+have the same manual-required boundary. These are deliberate safety states,
+not missing success messages.
+
 ## Source development installation
 
 PowerShell on Windows, without relying on script activation policy:

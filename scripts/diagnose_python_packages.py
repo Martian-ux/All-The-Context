@@ -11,6 +11,7 @@ REQUIRED_SUFFIXES = {
     "allthecontext/migrations/core/001_initial.sql",
     "allthecontext/migrations/relay/0001_initial.sql",
     "allthecontext/web/index.html",
+    "allthecontext/update_keys.json",
 }
 PRIVATE_KEY_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 

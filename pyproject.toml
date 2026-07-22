@@ -53,7 +53,7 @@ include-package-data = true
 where = ["packages/allthecontext/src"]
 
 [tool.setuptools.package-data]
-allthecontext = ["migrations/**/*.sql", "web/**/*"]
+allthecontext = ["migrations/**/*.sql", "web/**/*", "update_keys.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

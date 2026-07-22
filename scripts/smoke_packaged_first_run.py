@@ -203,6 +203,11 @@ def main() -> int:
         status = api_request(f"{base_url}/v1/context/status", token)
         if status.get("core_online") is not True:
             raise SystemExit(f"installed Core status was not ready: {status}")
+        updates = api_request(f"{base_url}/v1/admin/updates", admin_token)
+        if updates.get("automatic_install_supported") is not False:
+            raise SystemExit(f"packaged updater exposed unsafe automatic install: {updates}")
+        if "binary-and-database rollback" not in str(updates.get("installer_detail", "")):
+            raise SystemExit(f"packaged updater did not explain its manual boundary: {updates}")
 
         mcp_environment = dict(environment)
         mcp_environment.update(client_environment)
@@ -342,6 +347,7 @@ def main() -> int:
                 "mcp_handshake": "passed",
                 "mcp_core_restart": "passed",
                 "installed_reopen": "passed",
+                "ota_automatic_install": False,
                 "core_shutdown": "passed",
                 "packaged_uninstall": uninstall_result,
                 "temporary_data_removed": True,

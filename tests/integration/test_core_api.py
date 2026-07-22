@@ -68,6 +68,37 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         assert status["database_size_bytes"] == expected_size
 
 
+def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        status = client.get("/v1/admin/updates")
+        assert status.status_code == 200
+        assert (
+            status.json().items()
+            >= {
+                "enabled": True,
+                "channel": "stable",
+                "configured": False,
+                "current_version": "0.1.0",
+            }.items()
+        )
+        changed = client.put(
+            "/v1/admin/updates/preferences",
+            json={"enabled": False, "channel": "beta"},
+        )
+        assert changed.status_code == 200
+        assert changed.json()["phase"] == "disabled"
+        assert json.loads(
+            (tmp_path / "updates" / "preferences.json").read_text(encoding="utf-8")
+        ) == {"channel": "beta", "deferred_version": None, "enabled": False}
+
+        invalid = client.put(
+            "/v1/admin/updates/preferences",
+            json={"enabled": True, "channel": "nightly"},
+        )
+        assert invalid.status_code == 422
+
+
 def test_dashboard_downloads_complete_encrypted_export(tmp_path: Path, monkeypatch) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     destination = tmp_path / "download.atcexp"

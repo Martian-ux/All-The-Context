@@ -21,7 +21,10 @@
   automated tests; Retrieval V2 Phase 0 with an
   offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
   ranking invariant, bounded opt-in 50k profile, and executable V2 gates; and
-  cross-platform release workflows with strict offline-signed OTA metadata.
+  cross-platform release workflows with strict offline-signed OTA metadata;
+  and a fail-closed native updater with stable/beta preferences, bounded signed
+  checks, verified staging, recovery abstractions, dashboard
+  controls, and interruption recovery.
 - Pre-release-foundation integration evidence on Windows 11 and Python 3.12:
   144 Python tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
@@ -41,13 +44,24 @@
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
   Desktop was not running for a fresh local Edge image build in this release
   infrastructure validation.
+- OTA branch evidence on Windows 11/Python 3.14.3: 184 Python tests and 16
+  dashboard tests pass; Ruff check, strict mypy, dashboard type/build/audit,
+  wheel/sdist resource diagnostics, and documentation checks pass. The frozen
+  Windows artifact includes the reviewed public-key resource and passes the
+  isolated first-run/browser/MCP/Core-restart/reopen/shutdown/uninstall smoke.
+  That smoke also asserts `automatic_install_supported` is false. Python source
+  resolution was pinned and asserted inside this `8b6b` worktree; this is not
+  macOS/Linux evidence and does not supersede the Python 3.12 CI target.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
   packaged first-run/MCP smoke, deterministic versioned archives, checksums,
   and SPDX metadata. Draft-only candidate and digest-addressed GHCR workflows,
   a strict signed OTA manifest contract, offline signing/verification tooling,
-  and stable/beta operator policy are present. No desktop updater is included.
+  and stable/beta operator policy are present. The updater consumes only
+  operator-configured HTTPS channel endpoints and a packaged reviewed public
+  keyring; both production channel URLs and that keyring remain intentionally
+  empty until release approval.
 - Blockers: none for evaluating the vertical slice locally.
 
 ## Retrieval V2 status
@@ -78,6 +92,12 @@
   intentionally trusts no keys until an offline key ceremony and public-key
   review occur. Candidate workflows create drafts only; production promotion
   remains a human/offline operation.
+- Every current platform, including packaged Windows, verifies and stages
+  downloads but stops in a precise manual-install-required state. The existing
+  Windows self-installer can replace a stopped executable but cannot yet run an
+  independent journaled cutover that restores both the prior binary and the
+  pre-migration database after failed health. One-click install therefore
+  remains disabled rather than claiming rollback from fake adapters.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
 - Docker Compose parses successfully and a configured Linux Edge container was

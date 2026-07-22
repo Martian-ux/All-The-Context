@@ -30,6 +30,7 @@ def main() -> int:
     expected = {
         "frozen": True,
         "dashboard_bundled": True,
+        "update_keyring_bundled": True,
         "mcp_stdio_available": True,
         "platform": system,
     }

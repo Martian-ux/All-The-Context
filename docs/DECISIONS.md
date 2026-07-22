@@ -194,3 +194,25 @@ explicit full commit SHA. Every deployment record uses the returned OCI digest;
 `latest` is not a deployment input. OCI metadata, BuildKit provenance/SBOM, and
 GitHub provenance accompany the image. Making the package public and creating
 paid hosting remain explicit operator actions.
+
+## ADR-021: OTA verification and installation are separate fail-closed phases
+
+The Core owns a serialized update transaction and stores only nonsecret
+preferences and recovery state below its platformdirs-derived per-user data
+directory. Stable is the default; beta requires an explicit preference. Launch
+checks run only when a reviewed HTTPS endpoint is configured and at most once
+per 24 hours. Metadata is size/time/redirect bounded, then must pass the strict
+manifest schema, active Ed25519 key, channel, platform, architecture, and
+version policy before its artifact URL is used. Artifacts stream into private
+per-operation staging and must match both signed byte length and SHA-256.
+
+Installer, backup, health, transport, and rollback behavior are explicit
+interfaces. All real platform adapters currently stop after verified staging.
+The Windows self-installer can quiesce Core and atomically replace its
+executable, but it is not an independent journaled helper that can restore both
+the prior executable and the verified pre-migration SQLite backup after a
+failed health check. Enabling one-click install without that property would be
+a false recovery claim. macOS app bundles and Linux standalone archives also
+lack a reviewed automatic cutover. Persisted phases make interrupted checks and
+downloads cleanable; fake installers exercise the future transaction contract
+without being treated as production capability.

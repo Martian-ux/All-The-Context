@@ -180,6 +180,43 @@ describe("dashboard", () => {
     expect(screen.getByText(/source material never goes through MCP/i)).toBeInTheDocument();
   });
 
+  it("checks and downloads a verified desktop update", async () => {
+    const update = {
+      phase: "idle",
+      current_version: "0.1.0",
+      offered_version: null,
+      mandatory: false,
+      last_checked_at: null,
+      last_error: null,
+      recovery_attempts: 0,
+      enabled: true,
+      channel: "stable",
+      deferred_version: null,
+      automatic_install_supported: true,
+      installer_detail: "Packaged Windows update can restart into the verified installer",
+      configured: true,
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/edge")) return json(edgeStatus());
+      if (url.endsWith("/admin/updates/check")) return json({ ...update, phase: "available", offered_version: "0.2.0", last_checked_at: "2026-07-21T00:00:00Z" });
+      if (url.endsWith("/admin/updates/download")) return json({ ...update, phase: "ready", offered_version: "0.2.0" });
+      if (url.endsWith("/admin/updates") && !init?.method) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+
+    expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
+  });
+
   it("connects Claude Desktop without showing credentials", async () => {
     let claudeConnected = false;
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {

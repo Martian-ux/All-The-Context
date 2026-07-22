@@ -83,6 +83,7 @@ from ..storage import (
     StorageError,
     durable_sqlite_footprint,
 )
+from ..updater import Channel, UpdateConfig, UpdateError, UpdateManager, UpdatePhase
 from .service import CoreService
 
 DashboardPage = Literal[
@@ -93,6 +94,7 @@ DashboardPage = Literal[
     "relay",
     "audit",
     "backup",
+    "updates",
 ]
 
 
@@ -108,20 +110,49 @@ class EdgeForgetRequest(BaseModel):
     confirmation: Literal["DELETE HOSTED EDGE"]
 
 
+class UpdatePreferencesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    channel: Channel
+
+
 def create_app(
     config: CoreConfig | None = None,
     *,
     service: CoreService | None = None,
     shutdown_callback: Callable[[], None] | None = None,
+    update_manager: UpdateManager | None = None,
 ) -> FastAPI:
     active_config = config or CoreConfig.default()
     core = service or CoreService(active_config)
     edge_connections = EdgeConnectionStore(active_config)
     edge_sync = EdgeSyncManager(edge_connections, core.store)
+    default_update = UpdateConfig.default()
+    updates = update_manager or UpdateManager(
+        UpdateConfig(
+            data_dir=active_config.data_dir / "updates",
+            keyring_path=default_update.keyring_path,
+            manifest_urls=default_update.manifest_urls,
+            current_version=default_update.current_version,
+            platform_name=default_update.platform_name,
+            architecture=default_update.architecture,
+        ),
+        database_path=active_config.database_path,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         edge_sync.start()
+        if (
+            updates.preferences.enabled
+            and updates.preferences.channel in updates.config.manifest_urls
+        ):
+            threading.Thread(target=updates.scheduled_check, daemon=True).start()
+        if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+            recovery = threading.Timer(1.0, updates.recover_after_restart)
+            recovery.daemon = True
+            recovery.start()
         try:
             yield
         finally:
@@ -141,6 +172,7 @@ def create_app(
     app.state.core = core
     app.state.edge_connections = edge_connections
     app.state.edge_sync = edge_sync
+    app.state.updates = updates
     instance_secret = ensure_instance_secret(active_config)
     browser_tickets = BrowserSessionTickets()
     browser_sessions = BrowserSessions()
@@ -999,6 +1031,54 @@ def create_app(
     def list_audit(principal: Principal, limit: int = 100) -> dict[str, Any]:
         require(principal, "admin")
         return {"items": core.store.list_audit(limit=limit)}
+
+    @app.get("/v1/admin/updates")
+    def update_status(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return updates.public_status()
+
+    @app.put("/v1/admin/updates/preferences")
+    def update_preferences(
+        request: UpdatePreferencesRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        return updates.configure(enabled=request.enabled, channel=request.channel)
+
+    def update_action(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return action()
+        except UpdateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/v1/admin/updates/check")
+    def check_for_updates(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return update_action(updates.check)
+
+    @app.post("/v1/admin/updates/download")
+    def download_update(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return update_action(updates.download)
+
+    @app.post("/v1/admin/updates/install")
+    def install_update(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return update_action(updates.install)
+
+    @app.post("/v1/admin/updates/defer")
+    def defer_update(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return update_action(updates.defer)
+
+    @app.post("/v1/admin/updates/cancel")
+    def cancel_update(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return updates.cancel()
+
+    @app.delete("/v1/admin/updates/error")
+    def clear_update_error(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return updates.clear_error()
 
     @app.post("/v1/admin/shutdown")
     def shutdown(principal: Principal) -> dict[str, bool]:

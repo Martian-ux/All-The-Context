@@ -16,6 +16,7 @@ import type {
   Page,
   ReplicationStatus,
   SourceRecord,
+  UpdateStatus,
 } from "./types";
 
 const API_ROOT = (import.meta.env.VITE_ATC_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/v1";
@@ -261,4 +262,16 @@ export const api = {
   },
   exportBackup: (passphrase: string): Promise<Blob> =>
     requestDownload("/admin/export", { passphrase }),
+  updateStatus: () => request<UpdateStatus>("/admin/updates"),
+  updatePreferences: (enabled: boolean, channel: "stable" | "beta") =>
+    request<UpdateStatus>("/admin/updates/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ enabled, channel }),
+    }),
+  checkForUpdates: () => request<UpdateStatus>("/admin/updates/check", { method: "POST" }),
+  downloadUpdate: () => request<UpdateStatus>("/admin/updates/download", { method: "POST" }),
+  installUpdate: () => request<UpdateStatus>("/admin/updates/install", { method: "POST" }),
+  deferUpdate: () => request<UpdateStatus>("/admin/updates/defer", { method: "POST" }),
+  cancelUpdate: () => request<UpdateStatus>("/admin/updates/cancel", { method: "POST" }),
+  clearUpdateError: () => request<UpdateStatus>("/admin/updates/error", { method: "DELETE" }),
 };

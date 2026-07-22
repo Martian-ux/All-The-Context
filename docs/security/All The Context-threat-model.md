@@ -115,6 +115,7 @@ does not possess them.
 | Replication apply | Core push | Core -> Relay | HMAC, sequence, hash | `replication.py` |
 | Export restore | local file | backup -> Core | AEAD and integrity checks | `export.py` |
 | Desktop setup | user launch | installer -> OS/config/browser | per-user paths, verified credential write, parsed/atomic config replacement | `desktop_setup.py`, `client_config.py` |
+| Native updater | configured HTTPS endpoint | release service -> Core -> installer | bounded no-redirect fetch, Ed25519 policy, streamed size/hash verification, isolated staging, backup | `release_manifest.py`, `updater.py` |
 
 ## Top abuse paths
 
@@ -146,6 +147,8 @@ does not possess them.
     decommission -> supposedly removed Edge data or authority is resurrected.
 14. Core crashes after one-time MCP setup -> clients silently stop using context
     or the user must manually recover the service.
+15. A mutable/tampered update, archive traversal, or interrupted cutover executes
+    attacker bytes or damages the local vault.
 
 ## Threat model table
 
@@ -167,6 +170,7 @@ does not possess them.
 | TM-014 | Crash, offline host, or corrupted local state | Partial setup or uninstall | Skip remote erasure but report successful uninstall | Persistent remote data/access | Edge context, credentials | Uninstall inspects state and credential independently, cryptographically verifies the origin, requires terminal zero-record response, revokes readable local AI identities, strictly removes authority-bearing credentials when SQLite is corrupt, and blocks on orphan/offline Edge state (`desktop.py`, `edge_connection.py`) | Manual hosting deletion may still be required | Guided recovery and provider deletion checklist | Uninstall error with no application-file deletion | low | high | medium |
 | TM-015 | Concurrent request/process | Request began before Edge decommission or Core forget | Commit after terminal purge or recreate local connection state | Deleted context/access returns | Edge context, lifecycle state | Terminal recheck in the same `BEGIN IMMEDIATE` transaction, database write triggers, cross-process Edge file lock, interrupted-purge restart (`relay/service.py`, `relay/oauth.py`, `0006_terminal_write_guards.sql`, `edge_connection.py`) | Host-level database replacement remains operator authority | Keep terminal state in durable backups and never reuse disks across vaults | 410 responses, trigger violations, lifecycle error logs | low | high | high |
 | TM-016 | Core crash or hostile loopback listener | Managed STDIO client invokes a tool | Keep Core offline or trick adapter into starting/sending to another service | Context unavailable or credential disclosure | Availability, client tokens | Managed-only auto-start, exact 127.0.0.1 origin, installation-bound proof, unknown-listener refusal, exact Core command, bounded readiness wait (`mcp_adapter.py`, `desktop_setup.py`) | Hostile same-account process can read installation material and is out of scope | Signed packages and OS account protection | Proof failures and Core restart log | low | high | medium |
+| TM-017 | Release-service/build attacker or interrupted installer | Configured update check or cutover | Substitute metadata/artifact, exploit archive paths, truncate bytes, or leave a half-applied version | Code execution, vault corruption, availability loss | Application, vault, update trust | Exact signed manifest, active/channel-scoped Ed25519 key, HTTPS/no redirect/time/size bounds, immutable version URL, streamed signed size/hash, safe ZIP paths, durable recovery phases; every real platform adapter currently stops at manual-required (`release_manifest.py`, `updater.py`) | Production public key/native publisher signing and independent journaled binary+DB rollback are absent | Complete offline key ceremony, Authenticode/notarization/native packaging, observed platform rollback drills | Signature/checksum failures, persisted error/recovery phase | low | critical | high |
 
 ## Criticality calibration
 
@@ -193,6 +197,7 @@ does not possess them.
 | `packages/allthecontext/src/allthecontext/relay/oauth.py` | Owner sessions, registration, token rotation, durable identity binding | TM-011, TM-012 |
 | `packages/allthecontext/src/allthecontext/edge_connection.py` | Core-to-Edge proof, credential/state recovery, terminal decommission | TM-012, TM-014 |
 | `packages/allthecontext/src/allthecontext/client_config.py` | Reversible client configuration and credential handoff | TM-002, TM-009 |
+| `packages/allthecontext/src/allthecontext/updater.py` | Release trust, staging, backup, native handoff, and recovery | TM-008, TM-017 |
 
 ## Quality check
 
