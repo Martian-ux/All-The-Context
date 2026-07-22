@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import platform
 import queue
+import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable
@@ -34,6 +36,29 @@ SUCCESS = "#2f7d61"
 WHITE = "#ffffff"
 
 SetupRunner = Callable[..., SetupResult]
+
+
+def community_build_notice(*, system: str | None = None, frozen: bool | None = None) -> str | None:
+    """Explain expected OS trust prompts without adding another setup decision."""
+
+    packaged = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if not packaged:
+        return None
+    active_system = system or platform.system()
+    if active_system == "Windows":
+        return (
+            "Unsigned community build. Windows may show an Unknown publisher or SmartScreen "
+            "warning. Install only the asset you verified from the project's GitHub Release."
+        )
+    if active_system == "Darwin":
+        return (
+            "Unsigned community build. This app is not notarized, so macOS may require Open "
+            "Anyway. Use only the asset you verified from the project's GitHub Release."
+        )
+    return (
+        "Unsigned community build. Verify the release checksum before running this portable "
+        "Linux package."
+    )
 
 
 class SetupWizard:
@@ -261,6 +286,20 @@ class SetupWizard:
             tk.Label(copy, text=body, bg=PAPER, fg=MUTED, anchor="w", font=("Segoe UI", 9)).pack(
                 fill="x", pady=(2, 0)
             )
+        notice = community_build_notice()
+        if notice:
+            tk.Label(
+                self.content,
+                text=notice,
+                bg="#e9edf5",
+                fg=INK_SOFT,
+                anchor="w",
+                justify="left",
+                wraplength=480,
+                padx=14,
+                pady=10,
+                font=("Segoe UI", 8),
+            ).pack(fill="x", pady=(16, 0))
         self._footer("Continue  →", self.show_preferences)
 
     def _field(self, label: str, variable: tk.StringVar) -> None:

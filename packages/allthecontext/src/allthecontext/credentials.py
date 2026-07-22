@@ -95,3 +95,26 @@ class DevelopmentFileCredentialStore:
             values = self._read()
             values.pop(name, None)
             self._write(values)
+
+
+def verify_isolated_os_credential_round_trip() -> None:
+    """Set, read, and remove one unique test credential without exposing its value."""
+
+    credential_name = f"acceptance:{secrets.token_hex(16)}"
+    value = secrets.token_urlsafe(48)
+    store = KeyringCredentialStore(
+        service_name=f"All The Context packaging acceptance {secrets.token_hex(12)}"
+    )
+    stored = False
+    try:
+        store.set(credential_name, value)
+        stored = True
+        if store.get(credential_name) != value:
+            raise RuntimeError("the operating-system credential did not round trip")
+        store.delete(credential_name)
+        if store.get(credential_name) is not None:
+            raise RuntimeError("the operating-system credential was not deleted")
+        stored = False
+    finally:
+        if stored:
+            store.delete(credential_name)

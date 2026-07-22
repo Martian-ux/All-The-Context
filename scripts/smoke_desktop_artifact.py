@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +31,7 @@ def main() -> int:
     payload = json.loads(report.read_text(encoding="utf-8"))
     expected = {
         "frozen": True,
+        "distribution_trust": "unsigned-community",
         "dashboard_bundled": True,
         "update_keyring_bundled": True,
         "mcp_stdio_available": True,
@@ -43,6 +46,27 @@ def main() -> int:
         raise SystemExit(f"the Windows build is missing its recovery helper: {payload}")
     if payload.get("core_migrations", 0) < 1 or payload.get("relay_migrations", 0) < 1:
         raise SystemExit(f"migrations were not bundled: {payload}")
+    if system in {"Windows", "Darwin"}:
+        with tempfile.TemporaryDirectory(prefix="atc-packaged-credential-") as temporary:
+            credential_report = Path(temporary) / "credential.json"
+            environment = os.environ.copy()
+            environment["ATC_PACKAGED_SMOKE"] = "1"
+            subprocess.run(
+                [
+                    str(executable),
+                    "--packaged-credential-acceptance",
+                    str(credential_report),
+                ],
+                check=True,
+                timeout=60,
+                env=environment,
+            )
+            credential_payload = json.loads(credential_report.read_text(encoding="utf-8"))
+            if credential_payload != {
+                "platform": system,
+                "os_credential": "round-trip-and-delete-passed",
+            }:
+                raise SystemExit(f"unexpected packaged credential acceptance: {credential_payload}")
     print(json.dumps(payload, indent=2))
     return 0
 
