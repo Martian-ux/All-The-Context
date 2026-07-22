@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from dataclasses import replace
@@ -14,8 +15,10 @@ from allthecontext.browser_session import (
 )
 from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
+from allthecontext.core import app as core_app
 from allthecontext.core.app import create_app
 from allthecontext.desktop_runtime import RuntimeCommand
+from allthecontext.export import restore_export
 from fastapi.testclient import TestClient
 
 
@@ -56,7 +59,107 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         assert search.status_code == 200
         assert search.json()["items"][0]["id"] == record_id
         assert client.get(f"/v1/context/{record_id}").status_code == 200
-        assert client.get("/v1/context/status").json()["counts"]["approved_records"] == 1
+        status = client.get("/v1/context/status").json()
+        assert status["counts"]["approved_records"] == 1
+        expected_size = config.database_path.stat().st_size
+        wal_path = config.database_path.with_name(f"{config.database_path.name}-wal")
+        if wal_path.exists():
+            expected_size += wal_path.stat().st_size
+        assert status["database_size_bytes"] == expected_size
+
+
+def test_dashboard_downloads_complete_encrypted_export(tmp_path: Path, monkeypatch) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    destination = tmp_path / "download.atcexp"
+    temporary_export = tmp_path / "temporary-export.atcexp"
+
+    def isolated_mkstemp(**_kwargs: object) -> tuple[int, str]:
+        descriptor = os.open(temporary_export, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        return descriptor, str(temporary_export)
+
+    monkeypatch.setattr(core_app.tempfile, "mkstemp", isolated_mkstemp)
+    with TestClient(create_app(config)) as client:
+        imported = client.post(
+            "/v1/admin/import",
+            files={"file": ("context.txt", b"A private source record")},
+        )
+        assert imported.status_code == 200
+        response = client.post(
+            "/v1/admin/export",
+            json={"passphrase": "correct horse battery staple"},
+            headers={DASHBOARD_REQUEST_HEADER: "1"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"].endswith(
+        'filename="all-the-context-backup.atcexp"'
+    )
+    assert b"private source" not in response.content.lower()
+    destination.write_bytes(response.content)
+    restored = restore_export(
+        destination,
+        tmp_path / "unused.sqlite3",
+        "correct horse battery staple",
+        dry_run=True,
+    )
+    assert restored["manifest"]["include_sources"] is True
+    assert restored["manifest"]["include_audit"] is True
+    assert not temporary_export.exists()
+
+
+def test_dashboard_export_failure_cleans_temporary_file_and_redacts_passphrase(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    temporary_export = tmp_path / "failed-export.atcexp"
+
+    def isolated_mkstemp(**_kwargs: object) -> tuple[int, str]:
+        descriptor = os.open(temporary_export, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        return descriptor, str(temporary_export)
+
+    monkeypatch.setattr(core_app.tempfile, "mkstemp", isolated_mkstemp)
+    monkeypatch.setattr(
+        core_app,
+        "create_export",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("export failed")),
+    )
+    passphrase = "never return this secret"
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            "/v1/admin/export",
+            json={"passphrase": passphrase},
+            headers={DASHBOARD_REQUEST_HEADER: "1"},
+        )
+
+    assert response.status_code == 500
+    assert passphrase not in response.text
+    assert not temporary_export.exists()
+
+
+def test_dashboard_export_refuses_vault_above_resource_bound(tmp_path: Path, monkeypatch) -> None:
+    config = replace(
+        CoreConfig.in_directory(tmp_path, require_auth=False),
+        max_dashboard_export_bytes=0,
+    )
+    called: list[bool] = []
+    monkeypatch.setattr(
+        core_app,
+        "create_export",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            "/v1/admin/export",
+            json={"passphrase": "correct horse battery staple"},
+            headers={DASHBOARD_REQUEST_HEADER: "1"},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "The Core is too large for dashboard export; use the CLI instead"
+    )
+    assert not called
 
 
 def test_edge_local_forget_requires_explicit_host_deletion_phrase(
@@ -165,6 +268,22 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
             == 403
         )
         dashboard_headers = {**browser_auth, DASHBOARD_REQUEST_HEADER: "1"}
+
+        unprotected_export = client.post(
+            "/v1/admin/export",
+            headers=browser_auth,
+            json={"passphrase": "do not expose this passphrase"},
+        )
+        assert unprotected_export.status_code == 403
+        assert "do not expose this passphrase" not in unprotected_export.text
+
+        short_passphrase = client.post(
+            "/v1/admin/export",
+            headers=dashboard_headers,
+            json={"passphrase": "short"},
+        )
+        assert short_passphrase.status_code == 422
+        assert "short" not in short_passphrase.text
 
         codex_connection = client.post(
             "/v1/admin/integrations/chatgpt_codex", headers=dashboard_headers

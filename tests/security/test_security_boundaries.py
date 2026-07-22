@@ -18,6 +18,22 @@ PRIMARY_TOKEN = "fictional-security-primary-token"
 OTHER_TOKEN = "fictional-security-other-token"
 
 
+def test_dashboard_export_validation_never_reflects_passphrase_and_bounds_body(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_core_app(config)) as client:
+        short_secret = "secret"
+        invalid = client.post("/v1/admin/export", json={"passphrase": short_secret})
+        oversized_secret = "private-" + ("x" * (17 * 1024))
+        oversized = client.post("/v1/admin/export", json={"passphrase": oversized_secret})
+
+    assert invalid.status_code == 422
+    assert short_secret not in invalid.text
+    assert oversized.status_code == 413
+    assert oversized_secret not in oversized.text
+
+
 def _record_payload(
     record_id: str, *, content: str = "Fictional safe context"
 ) -> dict[str, object]:

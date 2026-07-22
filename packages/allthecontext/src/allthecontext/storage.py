@@ -46,6 +46,19 @@ class InvalidStateError(StorageError):
     pass
 
 
+def durable_sqlite_footprint(database_path: Path) -> int:
+    """Return bytes needed for durable SQLite state (main database plus WAL)."""
+    resolved = database_path.resolve()
+    paths = (resolved, resolved.with_name(f"{resolved.name}-wal"))
+    total = 0
+    for path in paths:
+        try:
+            total += path.stat().st_size
+        except FileNotFoundError:
+            continue
+    return total
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -1231,6 +1244,7 @@ class CoreStore:
             "vault_id": str(vault["id"]),
             "vault_name": str(vault["name"]),
             "schema_version": int(vault["schema_version"]),
+            "database_size_bytes": durable_sqlite_footprint(self.database_path),
             "counts": counts,
         }
 

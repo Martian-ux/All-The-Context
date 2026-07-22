@@ -27,6 +27,14 @@ function edgeStatus(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function status() {
+  return { core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 2, sources: 1, pending_replication_events: 0 } };
+}
+
+function matchMedia(matches: boolean): MediaQueryList {
+  return { matches, media: "(max-width: 760px)", onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() };
+}
+
 describe("dashboard", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
@@ -59,6 +67,84 @@ describe("dashboard", () => {
     expect(await screen.findByRole("heading", { name: "Connect your AI apps" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Edge for web and mobile" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up Edge" })).toBeEnabled();
+  });
+
+  it("removes closed mobile navigation from focus and accessibility, then restores focus", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(true)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/edge")) return json(edgeStatus());
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    const open = screen.getByRole("button", { name: "Open navigation" });
+    const sidebar = document.getElementById("primary-navigation");
+    expect(sidebar).toHaveAttribute("aria-hidden", "true");
+    expect(sidebar).toHaveAttribute("inert");
+    expect(screen.queryByRole("button", { name: "Sources" })).not.toBeInTheDocument();
+
+    fireEvent.click(open);
+    const close = await screen.findByRole("button", { name: "Close navigation" });
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(open).toHaveAttribute("aria-expanded", "true");
+    expect(sidebar).not.toHaveAttribute("aria-hidden");
+    expect(sidebar).not.toHaveAttribute("inert");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(open).toHaveFocus());
+    expect(open).toHaveAttribute("aria-expanded", "false");
+    expect(sidebar).toHaveAttribute("aria-hidden", "true");
+    expect(sidebar).toHaveAttribute("inert");
+  });
+
+  it("keeps the desktop sidebar exposed", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(false)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => String(request).includes("/context/status") ? json(status()) : json(edgeStatus())));
+
+    render(<App />);
+
+    expect(document.getElementById("primary-navigation")).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("button", { name: "Sources" })).toBeInTheDocument();
+  });
+
+  it("downloads a complete encrypted backup without persisting the passphrase", async () => {
+    const passphrase = "correct horse battery staple";
+    const fetch = vi.fn(async (request: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/edge")) return json(edgeStatus());
+      if (url.endsWith("/admin/export")) return new Response(new Blob(["encrypted"]), { status: 200 });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const createObjectURL = vi.fn(() => "blob:encrypted-backup");
+    const revokeObjectURL = vi.fn();
+    const NativeURL = URL;
+    class DownloadURL extends NativeURL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    }
+    vi.stubGlobal("URL", DownloadURL);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Backup" }));
+    fireEvent.change(await screen.findByLabelText("Backup passphrase"), { target: { value: passphrase } });
+    fireEvent.change(screen.getByLabelText("Confirm passphrase"), { target: { value: passphrase } });
+    fireEvent.click(screen.getByRole("button", { name: "Download encrypted backup" }));
+
+    expect(await screen.findByText(/encrypted backup downloaded/i)).toBeInTheDocument();
+    const exportCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/export"));
+    expect(exportCall).toBeDefined();
+    expect(String(exportCall?.[0])).not.toContain(passphrase);
+    expect(exportCall?.[1]?.body).toBe(JSON.stringify({ passphrase }));
+    expect(window.sessionStorage.getItem(passphrase)).toBeNull();
+    expect(window.localStorage.getItem(passphrase)).toBeNull();
+    expect(click).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:encrypted-backup");
   });
 
   it("shows pending review candidates and their evidence", async () => {

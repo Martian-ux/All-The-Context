@@ -14,8 +14,9 @@
   Menu/Desktop launchers and uninstall registration; owner-gated hosted Edge
   enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
   remote-app revocation, and terminal decommissioning; self-repairing source
-  bootstrap; demonstration and automated tests.
-- Local evidence (Windows 11, Python 3.12): 130 Python tests and 10 dashboard
+  bootstrap; accessible responsive navigation; one-click complete encrypted
+  dashboard backup with bounded temporary resources; demonstration and automated tests.
+- Local release-candidate evidence (Windows 11, Python 3.14): 136 Python tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -65,3 +66,6 @@
 - The local SQLite vault is not application-encrypted at rest; operators rely
   on operating-system account and disk protection. Portable exports are
   passphrase-encrypted.
+- Dashboard restore is intentionally deferred: the release candidate keeps the
+  existing deliberate CLI restore until a stopped-Core validation, rollback,
+  verification, and explicit vault-cutover flow is designed and tested.

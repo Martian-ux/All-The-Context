@@ -182,7 +182,7 @@ export interface CoreStatus {
   pending_candidates: number;
   approved_records: number;
   sources: number;
-  database_size_bytes?: number;
+  database_size_bytes: number;
   replication: ReplicationStatus;
 }
 
