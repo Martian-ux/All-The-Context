@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -81,6 +82,10 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "release:" not in promote
     assert "type=sha,format=long,prefix=sha-" in image
     assert "subject-digest" in image
+    assert "verify-public" in image
+    assert "verify_edge_image.py" in image
+    assert "smoke_edge_container.py" in image
+    assert "platforms: linux/amd64" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
     assert "unsigned community builds" in releases
@@ -101,10 +106,21 @@ def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
 
 def test_render_blueprint_accepts_only_the_one_time_claim_handoff() -> None:
     blueprint = (REPOSITORY_ROOT / "render.yaml").read_text(encoding="utf-8")
+    permanent_template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
+        encoding="utf-8"
+    )
 
     assert "autoDeploy: false" in blueprint
+    assert "runtime: image" in blueprint
+    assert "runtime: docker" not in blueprint
+    assert "dockerfilePath:" not in blueprint
+    assert "url: __ATC_EDGE_IMAGE_REFERENCE__" in blueprint or re.search(
+        r"url: ghcr\.io/[a-z0-9._-]+/all-the-context-edge@sha256:[0-9a-f]{64}",
+        blueprint,
+    )
     assert "key: ATC_EDGE_BUNDLE" in blueprint
     assert "sync: false" in blueprint
     assert "ATC_RELAY_REPLICATION_SECRET" not in blueprint
     assert "ATC_RELAY_BEARER_TOKEN" not in blueprint
     assert "ATC_RELAY_CLIENTS_JSON" not in blueprint
+    assert permanent_template.count("__ATC_EDGE_IMAGE_REFERENCE__") == 1

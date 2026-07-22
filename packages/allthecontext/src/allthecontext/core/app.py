@@ -64,6 +64,7 @@ from ..desktop_setup import (
     retire_other_named_clients,
 )
 from ..edge_connection import EdgeConnectionStore, EdgeSyncManager
+from ..edge_distribution import deployment_config
 from ..export import create_export
 from ..ids import new_id
 from ..instance_identity import ensure_instance_secret, instance_proof
@@ -639,6 +640,8 @@ def create_app(
     def edge_status_payload() -> dict[str, Any]:
         """Return public Edge state without enrollment or replication credentials."""
 
+        distribution = deployment_config()
+
         state_error: str | None = None
         material_error: str | None = None
         try:
@@ -727,7 +730,14 @@ def create_app(
             },
             "deployment": {
                 "provider": "render_blueprint",
-                "deploy_url": os.environ.get("ATC_EDGE_DEPLOY_URL", "").strip() or None,
+                "available": distribution.enabled,
+                "deploy_url": distribution.deploy_url,
+                "deploy_branch": distribution.deploy_branch,
+                "image_reference": distribution.image_reference,
+                "source_commit": distribution.source_commit,
+                "blueprint_commit": distribution.blueprint_commit,
+                "configuration_source": distribution.source,
+                "configuration_error": distribution.error,
                 "enrollment_environment_variable": "ATC_EDGE_BUNDLE",
                 "requires_host_account": True,
                 "estimated_monthly_cost_usd": 7.25,

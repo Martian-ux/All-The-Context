@@ -1,25 +1,40 @@
-name: Publish Edge image
+name: Publish or verify Edge image
 
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
-      source_commit:
-        description: Full commit SHA to publish (never a branch name)
+      operation:
+        description: Publish a frozen source commit or verify an existing public digest
         required: true
+        default: publish
+        type: choice
+        options:
+          - publish
+          - verify-public
+      source_commit:
+        description: Full source commit SHA (required for either operation)
+        required: true
+        type: string
+      image_reference:
+        description: Exact ghcr.io/...@sha256:... reference (verify-public only)
+        required: false
         type: string
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 jobs:
-  image:
+  publish:
+    if: github.event_name == 'release' || inputs.operation == 'publish'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     steps:
       - name: Validate manually supplied source
         if: github.event_name == 'workflow_dispatch'
@@ -28,21 +43,48 @@ jobs:
           INPUT_COMMIT: ${{ inputs.source_commit }}
         run: |
           import os, re
-          if re.fullmatch(r"[0-9a-f]{40}", os.environ["INPUT_COMMIT"]) is None:
-              raise SystemExit("Edge publication requires a full immutable commit SHA")
+          value = os.environ["INPUT_COMMIT"]
+          if re.fullmatch(r"[0-9a-f]{40}", value) is None or value == "0" * 40:
+              raise SystemExit("Edge publication requires a full lowercase nonzero commit SHA")
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_commit || github.event.release.tag_name }}
           persist-credentials: false
-      - name: Resolve checked-out source
+      - name: Resolve immutable image identity
         id: source
         shell: python
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_COMMIT: ${{ inputs.source_commit }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           import os, subprocess
-          value = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          requested = os.environ.get("INPUT_COMMIT", "")
+          if os.environ["EVENT_NAME"] == "workflow_dispatch" and commit != requested:
+              raise SystemExit("checkout did not resolve to the requested immutable commit")
+          image = f"ghcr.io/{os.environ['REPOSITORY_OWNER'].lower()}/all-the-context-edge"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"commit={value}\n")
+              output.write(f"commit={commit}\n")
+              output.write(f"short_commit={commit[:12]}\n")
+              output.write(f"image={image}\n")
       - uses: docker/setup-buildx-action@v3
+      - name: Build loadable verification image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/relay/Dockerfile
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: atc-edge:verification-${{ steps.source.outputs.short_commit }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=edge-image
+      - name: Verify container startup and inert claim boundary
+        run: >-
+          python scripts/smoke_edge_container.py
+          --image atc-edge:verification-${{ steps.source.outputs.short_commit }}
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -51,7 +93,8 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/all-the-context-edge
+          images: ${{ steps.source.outputs.image }}
+          flavor: latest=false
           tags: |
             type=sha,format=long,prefix=sha-
             type=ref,event=tag
@@ -59,22 +102,120 @@ jobs:
             org.opencontainers.image.title=All The Context Edge
             org.opencontainers.image.description=Restricted projection and proposal relay for All The Context
             org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.source.outputs.commit }}
       - id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/relay/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           provenance: mode=max
           sbom: true
+          cache-from: type=gha,scope=edge-image
+          cache-to: type=gha,mode=max,scope=edge-image
       - name: Attest image provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/all-the-context-edge
+          subject-name: ${{ steps.source.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-      - name: Record immutable image digest
-        run: echo "ghcr.io/${{ github.repository_owner }}/all-the-context-edge@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate immutable deployment handoff
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.source.outputs.image }}@${{ steps.build.outputs.digest }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          mkdir -p dist/edge-handoff
+          python scripts/prepare_edge_distribution.py \
+            --image-reference "$IMAGE_REFERENCE" \
+            --source-commit "$SOURCE_COMMIT" \
+            --blueprint-output dist/edge-handoff/render.yaml \
+            --metadata-output dist/edge-handoff/edge-image.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-handoff-${{ steps.source.outputs.commit }}
+          path: dist/edge-handoff
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record immutable operator gate
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.source.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Edge image published by digest"
+            echo '```text'
+            echo "$IMAGE_REFERENCE"
+            echo '```'
+            echo "The package must now be made public explicitly. Then run this workflow with operation=verify-public before enabling the Render deploy link."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-public:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'verify-public'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Validate exact repository image and source
+        shell: python
+        env:
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          import os, re
+          commit = os.environ["SOURCE_COMMIT"]
+          image = os.environ["IMAGE_REFERENCE"]
+          expected = f"ghcr.io/{os.environ['REPOSITORY_OWNER'].lower()}/all-the-context-edge@"
+          if re.fullmatch(r"[0-9a-f]{40}", commit) is None or commit == "0" * 40:
+              raise SystemExit("verification requires the full source commit")
+          if not image.startswith(expected) or re.fullmatch(
+              re.escape(expected) + r"sha256:[0-9a-f]{64}", image
+          ) is None:
+              raise SystemExit("verification image must be this repository's exact GHCR digest")
+      - name: Verify raw anonymous registry access and manifest digest
+        run: >-
+          python scripts/verify_edge_image.py
+          --image-reference "${{ inputs.image_reference }}"
+      - name: Verify fresh-runner Docker pull and source label
+        shell: python
+        env:
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          import json, os, subprocess
+          image = os.environ["IMAGE_REFERENCE"]
+          subprocess.run(["docker", "pull", image], check=True)
+          raw = subprocess.check_output(
+              ["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"],
+              text=True,
+          )
+          labels = json.loads(raw)
+          if labels.get("org.opencontainers.image.revision") != os.environ["SOURCE_COMMIT"]:
+              raise SystemExit("pulled image revision label does not match the frozen source")
+      - name: Authenticate only after anonymous pull evidence
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Verify GitHub provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh attestation verify
+          "oci://${{ inputs.image_reference }}"
+          --repo "${{ github.repository }}"
+      - name: Record public verification
+        run: echo "Anonymous digest pull, source label, and GitHub provenance passed." >> "$GITHUB_STEP_SUMMARY"

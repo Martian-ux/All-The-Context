@@ -71,6 +71,40 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         assert status["database_size_bytes"] == expected_size
 
 
+def test_edge_deploy_button_requires_complete_digest_bound_activation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    digest = "1" * 64
+    branch = f"edge-deploy-{digest}"
+    deploy_url = (
+        "https://render.com/deploy?"
+        "repo=https%3A%2F%2Fgithub.com%2FMartian-ux%2FAll-The-Context%2Ftree%2F"
+        f"{branch}"
+    )
+    monkeypatch.setenv("ATC_EDGE_DEPLOY_URL", deploy_url)
+    monkeypatch.setenv("ATC_EDGE_DEPLOY_BRANCH", branch)
+    monkeypatch.setenv(
+        "ATC_EDGE_IMAGE_REFERENCE",
+        f"ghcr.io/martian-ux/all-the-context-edge@sha256:{digest}",
+    )
+    monkeypatch.setenv("ATC_EDGE_SOURCE_COMMIT", "a" * 40)
+    monkeypatch.setenv("ATC_EDGE_BLUEPRINT_COMMIT", "b" * 40)
+
+    with TestClient(create_app(CoreConfig.in_directory(tmp_path, require_auth=False))) as client:
+        deployment = client.get("/v1/admin/edge").json()["deployment"]
+        assert deployment["available"] is True
+        assert deployment["deploy_url"] == deploy_url
+        assert deployment["deploy_branch"] == branch
+        assert deployment["source_commit"] == "a" * 40
+        assert deployment["blueprint_commit"] == "b" * 40
+
+        monkeypatch.setenv("ATC_EDGE_IMAGE_REFERENCE", "private-invalid-value")
+        disabled = client.get("/v1/admin/edge").json()["deployment"]
+        assert disabled["available"] is False
+        assert disabled["deploy_url"] is None
+        assert "private-invalid-value" not in json.dumps(disabled)
+
+
 def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     with TestClient(create_app(config)) as client:

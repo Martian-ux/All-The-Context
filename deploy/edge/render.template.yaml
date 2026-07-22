@@ -1,10 +1,5 @@
-# Hosted Edge Blueprint template.
-#
-# This initial root copy is intentionally not deployable. The Edge image
-# workflow reads deploy/edge/render.template.yaml, replaces its sole placeholder
-# with the exact public GHCR digest, and emits a reviewed render.yaml artifact.
-# Activation later replaces this file; the permanent template remains inert for
-# beta2 and later images. Never use a tag or restore a source-build runtime.
+# Permanent fail-closed hosted Edge Blueprint template.
+# The publication workflow replaces the sole placeholder in its output only.
 services:
   - type: web
     name: all-the-context-edge

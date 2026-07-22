@@ -14,7 +14,7 @@ performs the Core side of the workflow:
 1. **Set up Edge** creates a vault-bound, 24-hour public-key claim and a private
    recovery code.
 2. **Open Render** opens the user-owned hosting flow when the release has a
-   configured `ATC_EDGE_DEPLOY_URL`.
+   complete reviewed deployment handoff. A URL alone never enables the button.
 3. **Download setup file** produces a no-store `.env` containing only a random
    24-hour claim reference, vault/recovery metadata, and Core Ed25519/X25519
    public keys. It contains no Core, admin, client, or durable replication
@@ -54,11 +54,14 @@ Workspace policy can gate provider setup.
 - HTTPS termination at the hosting platform or trusted reverse proxy.
 - One instance. Do not horizontally scale the SQLite service.
 
-The included [`render.yaml`](../../render.yaml) declares the service, health
-check, secret prompt, and 1 GB disk. A release can set `ATC_EDGE_DEPLOY_URL`
-in Core to expose its public blueprint link. Until a public repository or image
-exists, the dashboard deliberately labels that link unavailable rather than
-opening a fake deployment.
+The permanent [`render.template.yaml`](../../deploy/edge/render.template.yaml)
+declares the service, health check, secret prompt, and 1 GB disk. Publication
+generates a root `render.yaml` pinned to an exact public GHCR digest. A later
+activation commit embeds the digest-bound deployment branch, image source, and
+Blueprint commit in Core. Until that coupled handoff exists, the dashboard
+labels the link unavailable rather than opening a placeholder deployment. See
+[`HOSTED_EDGE_ACCEPTANCE.md`](HOSTED_EDGE_ACCEPTANCE.md) for the two-commit
+activation and real-provider gate.
 
 For contributor-only local checks, place the enrollment bundle in the current
 shell's environment and run Docker Compose. Compose publishes only on

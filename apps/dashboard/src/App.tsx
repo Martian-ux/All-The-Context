@@ -799,7 +799,7 @@ function EdgeSetupPanel() {
           <div className="edge-step">
             <span className="edge-step-number">2</span>
             <div><strong>Deploy your personal Edge</strong><p>Open Render, approve the Blueprint, and use Add from .env to upload the downloaded file when setting environment variables. Render requires these account clicks. {prepared.deployment.cost_note}</p></div>
-            {deployUrl ? <a className="secondary-button" href={deployUrl} target="_blank" rel="noreferrer">Open Render <ExternalLink size={14} /></a> : <span className="support-label">Deployment link unavailable in this development build</span>}
+            {deployUrl ? <a className="secondary-button" href={deployUrl} target="_blank" rel="noreferrer">Open Render <ExternalLink size={14} /></a> : <span className="support-label">A reviewed public Edge image is not available in this build</span>}
           </div>
           <div className="edge-step edge-step--recovery">
             <span className="edge-step-number">3</span>
