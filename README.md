@@ -8,6 +8,11 @@ context when your computer is offline.
 
 The AI client is replaceable. Your context is not.
 
+The current integration target is the unsigned community beta
+`0.1.0-beta.1`. Public beta downloads are not available until the exact-SHA
+cross-platform, supply-chain, hosted Edge, privacy, and human-approval gates in
+[`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md) pass.
+
 ## Install
 
 Normal users do not need Python, Docker, a terminal, a token, or a hand-edited

@@ -1,5 +1,12 @@
 # Project status
 
+- Beta milestone: Wave 1 integration for `0.1.0-beta.1` is in progress from the
+  green public-main baseline `a2e50ab`. Release/channel foundations,
+  cross-platform packaging, and public Edge preparation are isolated on
+  separate branches. No beta release/image has been published, no provider has
+  been deployed, and no production private key has been created. The acceptance
+  contract is `docs/operations/BETA_ACCEPTANCE.md`.
+
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
   implemented. The secure Edge/mobile forwarding foundation, signed desktop

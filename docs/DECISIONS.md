@@ -405,3 +405,19 @@ constructing a Node `Response` from a jsdom-specific `Blob`. The production API
 continues to return a browser `Blob`; only the test fixture crosses the
 Node/jsdom boundary. CI retains both supported Node versions so compatibility
 failures remain observable.
+
+## ADR-030: Distribution acceptance precedes new retrieval infrastructure
+
+The next milestone is the installable `0.1.0-beta.1` community release, a real
+hosted Edge/provider acceptance pass, and a signed beta1-to-beta2 update and
+rollback drill. Embeddings and other backend expansion are deferred until those
+distribution paths are observed end to end.
+
+Release automation may assemble and verify drafts, but it cannot silently
+enable hosting, publish a release or channel, create a production private key,
+or convert incomplete evidence into approval. The integration lead freezes one
+source commit; platform, supply-chain, privacy, hosted Edge, provider, and OTA
+evidence attach to that identity. Operator-controlled publication, provider
+accounts/costs, and the offline Ed25519 ceremony remain explicit human gates.
+The complete evidence contract is maintained in
+`docs/operations/BETA_ACCEPTANCE.md`.
