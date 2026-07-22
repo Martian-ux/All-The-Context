@@ -17,6 +17,7 @@ class CoreConfig:
     host: str = "127.0.0.1"
     port: int = 7337
     max_import_bytes: int = 50 * 1024 * 1024
+    max_dashboard_export_bytes: int = 2 * 1024 * 1024 * 1024
     require_auth: bool = True
 
     @classmethod

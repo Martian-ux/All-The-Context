@@ -140,3 +140,23 @@ managed config and verifies deletion before changing any file. Existing token-
 bearing ATC backups are scrubbed without creating a new backup; exact-content
 checks make concurrent edits fail retryably. A corrupt retained vault is kept
 with an explicit warning that its internal rows could not be revoked.
+
+## ADR-017: Dashboard backup is a bounded encrypted download; restore stays deliberate
+
+The Core status contract reports `database_size_bytes` as the durable SQLite
+footprint: the main database plus the write-ahead log when present, excluding
+the transient shared-memory file. This is a stable, cross-platform `pathlib`
+measurement and reflects durable bytes rather than one implementation file.
+
+The dashboard may request one complete portable export at a time through an
+administrator, same-origin-protected POST. Its passphrase exists only in the
+JSON request body and in request-local memory; it is not logged, persisted,
+placed in a URL, or repeated in an error. Core reuses the CLI's AES-GCM portable
+export implementation, enforces a configured durable-footprint bound, streams
+the encrypted file, disables response caching, and deletes its temporary file
+after success or failure. The CLI contract is unchanged.
+
+Dashboard restore is deferred. A safe native restore requires stopping Core,
+validating into an isolated destination, transactional migration and rollback,
+post-restore checks, and an explicit vault switch. Adding an upload button
+without that lifecycle would create a destructive recovery path.

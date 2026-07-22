@@ -25,7 +25,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   AuditEvent,
@@ -97,6 +97,9 @@ function errorMessage(error: unknown): string {
 function App() {
   const [page, setPage] = useState<PageKey>(pageFromLocation);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia?.("(max-width: 760px)").matches ?? false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
 
@@ -117,6 +120,37 @@ function App() {
     return () => window.clearInterval(timer);
   }, [refreshStatus]);
 
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const query = window.matchMedia("(max-width: 760px)");
+    const update = () => {
+      setMobileNavigation(query.matches);
+      if (!query.matches) setMenuOpen(false);
+    };
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileNavigation || !menuOpen) return;
+    closeButtonRef.current?.focus();
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [menuOpen, mobileNavigation]);
+
+  function closeMobileNavigation(restoreFocus: boolean) {
+    setMenuOpen(false);
+    if (restoreFocus) window.requestAnimationFrame(() => menuButtonRef.current?.focus());
+  }
+
   function navigate(next: PageKey) {
     setPage(next);
     setMenuOpen(false);
@@ -128,14 +162,14 @@ function App() {
   const current = titles[page];
   return (
     <div className="app-shell">
-      <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation">
+      <button ref={menuButtonRef} className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-controls="primary-navigation" aria-expanded={menuOpen}>
         <Menu size={19} />
       </button>
-      <aside className={`sidebar ${menuOpen ? "sidebar--open" : ""}`} aria-label="Primary navigation">
+      <aside id="primary-navigation" className={`sidebar ${menuOpen ? "sidebar--open" : ""}`} aria-label="Primary navigation" aria-hidden={mobileNavigation && !menuOpen ? true : undefined} inert={mobileNavigation && !menuOpen}>
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
           <div><strong>All The Context</strong><small>Local Core</small></div>
-          <button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={18} /></button>
+          <button ref={closeButtonRef} className="sidebar-close" onClick={() => closeMobileNavigation(true)} aria-label="Close navigation"><X size={18} /></button>
         </div>
         <nav>
           {navigation.map((item) => {
@@ -159,7 +193,7 @@ function App() {
           <p>Your source material stays on this device.</p>
         </div>
       </aside>
-      {menuOpen ? <button className="scrim" onClick={() => setMenuOpen(false)} aria-label="Close navigation" /> : null}
+      {menuOpen && mobileNavigation ? <button className="scrim" onClick={() => closeMobileNavigation(true)} aria-label="Close navigation overlay" /> : null}
 
       <main className="workspace">
         <header className="workspace-header">
@@ -803,8 +837,39 @@ function AuditView() {
 }
 
 function BackupView({ status }: { status: CoreStatus | null }) {
+  const [passphrase, setPassphrase] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function download(event: React.FormEvent) {
+    event.preventDefault();
+    setNotice(null); setError(null);
+    if (passphrase.length < 10) { setError("Use a passphrase with at least 10 characters."); return; }
+    if (passphrase !== confirmation) { setError("The passphrases do not match."); return; }
+    setWorking(true);
+    try {
+      const blob = await api.exportBackup(passphrase);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = "all-the-context-backup.atcexp"; anchor.click();
+      URL.revokeObjectURL(url);
+      setPassphrase(""); setConfirmation("");
+      setNotice("Encrypted backup downloaded. Keep the passphrase separately; it cannot be recovered.");
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
+  }
+
   return (
-    <div className="narrow-column"><section className="backup-intro"><span className="backup-icon"><Download size={24} /></span><span className="eyebrow">Portable by design</span><h2>Your context should never be trapped.</h2><p>Create a complete encrypted export containing canonical records, history, approvals, sources, permissions, and integrity metadata.</p><div className="command-line"><code>python -m allthecontext.cli export PATH_TO_EXPORT --include-sources --include-audit</code></div><p className="quiet-copy">Run this in a local terminal. The CLI prompts for an export passphrase without displaying it.</p></section>
+    <div className="narrow-column"><section className="backup-intro"><span className="backup-icon"><Download size={24} /></span><span className="eyebrow">Portable by design</span><h2>Your context should never be trapped.</h2><p>Create a complete encrypted export containing canonical records, history, approvals, sources, permissions, and integrity metadata.</p>
+      <form className="backup-form" onSubmit={(event) => void download(event)}>
+        <label>Backup passphrase<input type="password" autoComplete="new-password" minLength={10} maxLength={1024} required value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
+        <label>Confirm passphrase<input type="password" autoComplete="new-password" minLength={10} maxLength={1024} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+        <button className="primary-button" type="submit" disabled={working}>{working ? "Encrypting…" : "Download encrypted backup"}</button>
+      </form>
+      {notice ? <Notice kind="success">{notice}</Notice> : null}{error ? <Notice kind="error">{error}</Notice> : null}
+      <p className="quiet-copy">The passphrase is used only for this request and is not saved. Restore remains a deliberate CLI operation in this release.</p></section>
       <dl className="metric-line"><div><dt>Approved records</dt><dd>{status?.approved_records ?? "—"}</dd></div><div><dt>Raw sources</dt><dd>{status?.sources ?? "—"}</dd></div><div><dt>Core database</dt><dd>{formatBytes(status?.database_size_bytes)}</dd></div></dl>
       <Notice kind="info"><CircleHelp size={16} /> Keep exports private. They may contain the complete source material that Edge intentionally excludes.</Notice>
     </div>

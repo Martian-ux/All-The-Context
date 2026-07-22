@@ -66,4 +66,31 @@ describe("desktop browser session", () => {
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "DELETE" });
     expect(window.sessionStorage.getItem("atc.browserSession")).toBeNull();
   });
+
+  it("maps the durable database footprint from Core status", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input).includes("/admin/edge")
+        ? { configured: false, state: "not_configured", last_sequence: 0, pending_events: 0 }
+        : { core_online: true, schema_version: 1, database_size_bytes: 12345, counts: { sources: 1, pending_candidates: 2, approved_records: 3, pending_replication_events: 0 } },
+    ), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345 });
+  });
+
+  it("sends export passphrases only in the protected request body", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(new Blob(["encrypted"]), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await api.exportBackup("a private passphrase");
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/export");
+    const init = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect((init.headers as Headers).get("X-ATC-Dashboard")).toBe("1");
+    expect((init.headers as Headers).get("Authorization")).toBe("Browser browser-session");
+    expect(init.body).toBe(JSON.stringify({ passphrase: "a private passphrase" }));
+    expect(String(fetch.mock.calls[0]?.[0])).not.toContain("passphrase");
+  });
 });

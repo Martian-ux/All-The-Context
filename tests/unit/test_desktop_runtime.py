@@ -35,6 +35,9 @@ def test_bundled_dashboard_contains_current_edge_setup() -> None:
     assert "/admin/edge/prepare" in javascript
     assert "Cancel Edge setup" in javascript
     assert "Web + mobile" in javascript
+    assert "Download encrypted backup" in javascript
+    assert "/admin/export" in javascript
+    assert "Restore remains a deliberate CLI operation" in javascript
     assert "Cloud setup unavailable" not in javascript
     assert "custom MCP apps are currently web-only" not in javascript
 
@@ -91,6 +94,45 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert launch_environments[0]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert stopped == [True]
     assert registered == [installed.executable]
+
+
+def test_current_installed_runtime_does_not_reinstall_or_relaunch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_dir = tmp_path / "installed"
+    app = install_dir / "AllTheContext.exe"
+    helper = install_dir / "AllTheContextMCP.exe"
+    install_dir.mkdir()
+    app.write_bytes(b"desktop")
+    helper.write_bytes(b"mcp")
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
+    monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
+    stopped: list[bool] = []
+    registered: list[Path] = []
+    launched: list[object] = []
+    monkeypatch.setattr(
+        "allthecontext.desktop._stop_installed_core_for_upgrade", lambda: stopped.append(True)
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop.install_application_entrypoints",
+        lambda target: registered.append(target),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop.subprocess.Popen",
+        lambda *_args, **_kwargs: launched.append(object()),
+    )
+
+    installed, relaunched = prepare_installed_runtime(
+        RuntimeCommand(app, mcp_executable=helper),
+        relaunch_args=("--setup",),
+    )
+
+    assert installed == RuntimeCommand(app, mcp_executable=helper)
+    assert relaunched is False
+    assert not stopped
+    assert not registered
+    assert not launched
 
 
 def test_windows_uninstall_retries_self_removal_after_bootloader_exits(

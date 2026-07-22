@@ -3,6 +3,8 @@
 import json
 import os
 import secrets
+import tempfile
+import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,9 +23,11 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from ..browser_session import (
     BROWSER_AUTH_SCHEME,
@@ -53,6 +57,7 @@ from ..desktop_setup import (
     retire_other_named_clients,
 )
 from ..edge_connection import EdgeConnectionStore, EdgeSyncManager
+from ..export import create_export
 from ..instance_identity import ensure_instance_secret, instance_proof
 from ..lifecycle import CoreInstanceLock
 from ..models import (
@@ -71,7 +76,13 @@ from ..models import (
     SubmitBatchRequest,
 )
 from ..security import ClientPrincipal
-from ..storage import ConflictError, InvalidStateError, NotFoundError, StorageError
+from ..storage import (
+    ConflictError,
+    InvalidStateError,
+    NotFoundError,
+    StorageError,
+    durable_sqlite_footprint,
+)
 from .service import CoreService
 
 DashboardPage = Literal[
@@ -133,6 +144,7 @@ def create_app(
     instance_secret = ensure_instance_secret(active_config)
     browser_tickets = BrowserSessionTickets()
     browser_sessions = BrowserSessions()
+    dashboard_export_lock = threading.Lock()
     app.state.browser_tickets = browser_tickets
     app.state.browser_sessions = browser_sessions
     development_principal = (
@@ -465,6 +477,77 @@ def create_app(
             raise HTTPException(status_code=409, detail="Authenticated browser handoff unavailable")
         ticket = browser_tickets.issue(credential)
         return {"connect_path": f"/v1/browser/connect?ticket={ticket}"}
+
+    @app.post("/v1/admin/export")
+    async def export_dashboard(http_request: Request, principal: Principal) -> FileResponse:
+        """Create one complete encrypted export for a same-origin dashboard download."""
+        require(principal, "admin")
+        body = bytearray()
+        async for chunk in http_request.stream():
+            body.extend(chunk)
+            if len(body) > 16 * 1024:
+                raise HTTPException(status_code=413, detail="Export request is too large")
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid export request") from exc
+        if not isinstance(payload, dict) or set(payload) != {"passphrase"}:
+            raise HTTPException(status_code=422, detail="Invalid export request")
+        passphrase = payload.get("passphrase")
+        if not isinstance(passphrase, str) or not 10 <= len(passphrase) <= 1_024:
+            raise HTTPException(
+                status_code=422,
+                detail="Export passphrase must contain between 10 and 1024 characters",
+            )
+        if not dashboard_export_lock.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="Another dashboard export is in progress")
+        temporary_path: Path | None = None
+        try:
+            footprint = durable_sqlite_footprint(active_config.database_path)
+            if footprint > active_config.max_dashboard_export_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail="The Core is too large for dashboard export; use the CLI instead",
+                )
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix="atc-dashboard-export-", suffix=".atcexp"
+            )
+            os.close(descriptor)
+            temporary_path = Path(raw_path)
+            await run_in_threadpool(
+                create_export,
+                active_config.database_path,
+                temporary_path,
+                passphrase,
+                include_sources=True,
+                include_audit=True,
+            )
+
+            def cleanup_export() -> None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                finally:
+                    dashboard_export_lock.release()
+
+            return FileResponse(
+                temporary_path,
+                media_type="application/octet-stream",
+                filename="all-the-context-backup.atcexp",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+                background=BackgroundTask(cleanup_export),
+            )
+        except HTTPException:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            dashboard_export_lock.release()
+            raise
+        except Exception as exc:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            dashboard_export_lock.release()
+            raise HTTPException(
+                status_code=500, detail="Encrypted export could not be created"
+            ) from exc
 
     def edge_status_payload() -> dict[str, Any]:
         """Return public Edge state without enrollment or replication credentials."""

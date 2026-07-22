@@ -126,6 +126,29 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+async function requestDownload(path: string, body: unknown): Promise<Blob> {
+  const headers = new Headers({
+    "Accept": "application/octet-stream",
+    "Content-Type": "application/json",
+    "X-ATC-Dashboard": "1",
+  });
+  const browserSession = window.sessionStorage.getItem(BROWSER_SESSION_KEY);
+  if (browserSession) headers.set("Authorization", `Browser ${browserSession}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_ROOT}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch {
+    throw new ApiError("Core is not reachable on this device.", 0);
+  }
+  if (response.status === 401) window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => undefined) as unknown;
+    const detail = payload && typeof payload === "object" && "detail" in payload ? payload.detail : undefined;
+    throw new ApiError(typeof detail === "string" ? detail : `Request failed (${response.status}).`, response.status);
+  }
+  return response.blob();
+}
+
 function queryString(values: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -138,7 +161,7 @@ function queryString(values: Record<string, string | number | undefined>): strin
 export const api = {
   status: async (): Promise<CoreStatus> => {
     const [result, edge] = await Promise.all([
-      request<{ core_online: boolean; schema_version: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status"),
+      request<{ core_online: boolean; schema_version: number; database_size_bytes: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status"),
       request<EdgeStatus>("/admin/edge"),
     ]);
     return {
@@ -147,6 +170,7 @@ export const api = {
       pending_candidates: result.counts.pending_candidates,
       approved_records: result.counts.approved_records,
       sources: result.counts.sources,
+      database_size_bytes: result.database_size_bytes,
       replication: replicationFromEdge(edge),
     };
   },
@@ -235,4 +259,6 @@ export const api = {
     const result = await request<Page<AuditWire>>("/admin/audit");
     return { ...result, items: result.items.map((item) => ({ id: item.id, action: item.action, actor: item.client_id ?? "system", target_type: item.record_ids.length ? "context_record" : "system", target_id: item.record_ids[0], outcome: item.denied_record_ids.length ? "denied" : "allowed", created_at: item.created_at })) };
   },
+  exportBackup: (passphrase: string): Promise<Blob> =>
+    requestDownload("/admin/export", { passphrase }),
 };

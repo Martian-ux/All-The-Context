@@ -195,6 +195,9 @@ button:disabled { opacity: .55; cursor: wait; }
 .audit-outcome { width: 14px; height: 14px; display: grid; place-items: center; border: 1px solid var(--rule); border-radius: 50%; }.audit-outcome span { width: 4px; height: 4px; border-radius: 50%; background: var(--green); }.audit-outcome--denied span, .audit-outcome--error span { background: var(--red); }
 .backup-intro { max-width: 620px; margin-bottom: 45px; }
 .backup-intro .primary-button { margin-top: 16px; }
+.backup-form { display: grid; gap: 14px; max-width: 440px; margin-top: 24px; }
+.backup-form label { display: grid; gap: 7px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.backup-form input { min-height: 42px; border: 1px solid #c7cfdb; border-radius: 7px; background: var(--surface); color: var(--ink); padding: 0 11px; }
 .command-line { overflow-x: auto; margin-top: 18px; border: 1px solid var(--rule); border-radius: 7px; background: #e9edf4; padding: 13px 14px; color: #465065; }
 .command-line code { white-space: nowrap; font-size: 9px; }
 .backup-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--rule); border-radius: 50%; color: var(--amber-dark); margin-bottom: 24px; }
