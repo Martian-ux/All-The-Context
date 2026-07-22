@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import plistlib
 import subprocess
 import tarfile
@@ -41,29 +40,52 @@ def _load_report(directory: Path, platform_name: str) -> tuple[Path, dict[str, A
     return report_path, payload
 
 
+def windows_has_authenticode_certificate_table(package: Path) -> bool:
+    """Read the PE certificate-table directory without invoking a platform shell."""
+
+    file_size = package.stat().st_size
+    with package.open("rb") as stream:
+        dos_header = stream.read(64)
+        if len(dos_header) != 64 or dos_header[:2] != b"MZ":
+            raise RuntimeError("Windows package is not a valid PE executable")
+        pe_offset = int.from_bytes(dos_header[60:64], "little")
+        if pe_offset < 64 or pe_offset > file_size - 24:
+            raise RuntimeError("Windows package has an invalid PE header offset")
+        stream.seek(pe_offset)
+        pe_header = stream.read(24)
+        if len(pe_header) != 24 or pe_header[:4] != b"PE\0\0":
+            raise RuntimeError("Windows package is missing its PE signature")
+        optional_header_size = int.from_bytes(pe_header[20:22], "little")
+        optional_header = stream.read(optional_header_size)
+        if len(optional_header) != optional_header_size:
+            raise RuntimeError("Windows package has a truncated PE optional header")
+
+    magic = int.from_bytes(optional_header[:2], "little")
+    if magic == 0x10B:  # PE32
+        directory_count_offset = 92
+        directory_offset = 96
+    elif magic == 0x20B:  # PE32+
+        directory_count_offset = 108
+        directory_offset = 112
+    else:
+        raise RuntimeError("Windows package has an unsupported PE optional header")
+    if len(optional_header) < directory_count_offset + 4:
+        raise RuntimeError("Windows package is missing its PE data-directory count")
+    directory_count = int.from_bytes(
+        optional_header[directory_count_offset : directory_count_offset + 4], "little"
+    )
+    certificate_entry = directory_offset + (4 * 8)
+    if directory_count <= 4:
+        return False
+    if len(optional_header) < certificate_entry + 8:
+        raise RuntimeError("Windows package has a truncated certificate-table directory")
+    location = int.from_bytes(optional_header[certificate_entry : certificate_entry + 4], "little")
+    size = int.from_bytes(optional_header[certificate_entry + 4 : certificate_entry + 8], "little")
+    return location != 0 or size != 0
+
+
 def _verify_windows_unsigned(package: Path) -> None:
-    environment = os.environ.copy()
-    environment["ATC_PACKAGE_PATH"] = str(package)
-    script = (
-        "$signature=Get-AuthenticodeSignature -LiteralPath $env:ATC_PACKAGE_PATH;"
-        "[Console]::Out.Write($signature.Status.ToString())"
-    )
-    completed = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=environment,
-    )
-    if completed.stdout.strip() != "NotSigned":
+    if windows_has_authenticode_certificate_table(package):
         raise RuntimeError("Windows artifact trust state is not the declared unsigned state")
 
 

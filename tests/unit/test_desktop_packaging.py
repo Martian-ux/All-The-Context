@@ -22,7 +22,11 @@ from scripts.build_desktop import (
 from scripts.check_runner_architecture import normalized_architecture, verify_runner_architecture
 from scripts.evaluate_appimage import evaluate_appimage
 from scripts.package_desktop import _write_macos_dmg, build_platform_package
-from scripts.smoke_platform_package import macos_has_publisher_identity, verify_package
+from scripts.smoke_platform_package import (
+    macos_has_publisher_identity,
+    verify_package,
+    windows_has_authenticode_certificate_table,
+)
 
 
 def test_windows_packaging_embeds_console_mcp_helper() -> None:
@@ -177,6 +181,41 @@ def test_windows_direct_package_preserves_self_installer(tmp_path: Path) -> None
     assert checksum.name == f"{package.name}.sha256"
     assert notice.name.endswith(".IMPORTANT-UNSIGNED.txt")
     assert json.loads(report.read_text(encoding="utf-8"))["format"] == "exe"
+
+
+def test_windows_trust_parser_reads_pe_certificate_table_without_powershell(
+    tmp_path: Path,
+) -> None:
+    def pe_image(*, certificate_offset: int = 0, certificate_size: int = 0) -> bytes:
+        pe_offset = 128
+        optional_size = 240
+        image = bytearray(pe_offset + 24 + optional_size)
+        image[:2] = b"MZ"
+        image[60:64] = pe_offset.to_bytes(4, "little")
+        image[pe_offset : pe_offset + 4] = b"PE\0\0"
+        image[pe_offset + 20 : pe_offset + 22] = optional_size.to_bytes(2, "little")
+        optional_offset = pe_offset + 24
+        image[optional_offset : optional_offset + 2] = (0x20B).to_bytes(2, "little")
+        image[optional_offset + 108 : optional_offset + 112] = (16).to_bytes(4, "little")
+        certificate_entry = optional_offset + 112 + (4 * 8)
+        image[certificate_entry : certificate_entry + 4] = certificate_offset.to_bytes(4, "little")
+        image[certificate_entry + 4 : certificate_entry + 8] = certificate_size.to_bytes(
+            4, "little"
+        )
+        return bytes(image)
+
+    unsigned = tmp_path / "unsigned.exe"
+    unsigned.write_bytes(pe_image())
+    signed = tmp_path / "signed.exe"
+    signed.write_bytes(pe_image(certificate_offset=392, certificate_size=128))
+
+    assert windows_has_authenticode_certificate_table(unsigned) is False
+    assert windows_has_authenticode_certificate_table(signed) is True
+
+    malformed = tmp_path / "malformed.exe"
+    malformed.write_bytes(b"not a PE image")
+    with pytest.raises(RuntimeError, match="valid PE"):
+        windows_has_authenticode_certificate_table(malformed)
 
 
 def test_appimage_spike_selects_standard_library_fallback(monkeypatch) -> None:

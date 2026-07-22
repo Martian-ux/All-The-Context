@@ -44,7 +44,7 @@
   Windows recovery helper, and binary/database rollback; and signed ordered
   Edge purge application with opaque
   replay barriers and resumable physical SQLite compaction.
-- Current combined evidence on Windows 11 and Python 3.12: 329 Python and 19
+- Current combined evidence on Windows 11 and Python 3.12: 330 Python and 19
   dashboard tests pass. Coverage includes forged-Core refusal, cross-Core
   browser-session isolation, terminal Edge races, bounded remote registration,
   permissions before pagination, credential/config cleanup, and real MCP
@@ -64,7 +64,9 @@
   updater helper, and SQLite database, and restarts Core. Uninstall preserves
   the vault while removing the app, shortcuts, registration, managed client
   credential, and temporary data. The direct unsigned Windows `.exe` package,
-  SHA-256 sidecar, warning, and package metadata pass their trust smoke.
+  SHA-256 sidecar, warning, and package metadata pass their shell-free PE trust
+  smoke. Pytest isolates credential storage from the host backend; the separate
+  native acceptance script performs the real OS credential round trip.
   Signed-manifest tamper/revocation/downgrade tests, deterministic native-
   archive tests, an isolated wheel/sdist build with resource/private-key
   diagnostics, and release JSON/workflow validation also pass.

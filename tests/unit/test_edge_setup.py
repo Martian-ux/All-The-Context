@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import keyring
 import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.edge_connection import EdgeConnectionStore
@@ -21,20 +19,6 @@ from allthecontext.edge_setup import (
 from allthecontext.relay.oauth import _logical_client_id, client_display_name
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import AnyUrl
-
-
-@pytest.fixture(autouse=True)
-def isolated_null_keyring() -> Iterator[None]:
-    """Do not depend on whether another test initialized keyring first."""
-
-    from keyring.backends.null import Keyring as NullKeyring
-
-    previous = keyring.get_keyring()
-    keyring.set_keyring(NullKeyring())
-    try:
-        yield
-    finally:
-        keyring.set_keyring(previous)
 
 
 def test_enrollment_bundle_round_trips_without_weakening_credentials() -> None:
