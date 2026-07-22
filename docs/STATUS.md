@@ -1,8 +1,9 @@
 # Project status
 
 - Current phase: first vertical slice, release/CI foundation, release-candidate
-  UX/backup repair, and Retrieval V2 Phase 1 are implemented. Signed desktop
-  updates and seamless Edge/mobile access are under active implementation.
+  UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
+  implemented. Signed desktop updates and seamless Edge/mobile access are
+  under active implementation.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -23,7 +24,7 @@
   ranking invariant, bounded lexical channels/RRF, improved context compiler,
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
   and cross-platform release workflows with strict offline-signed OTA metadata.
-- Prior local integrated evidence on Windows 11 and Python 3.12: 155 Python
+- Current local integrated evidence on Windows 11 and Python 3.12: 167 Python
   tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
@@ -42,12 +43,11 @@
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
   Desktop was not running for a fresh local Edge image build in this release
   infrastructure validation.
-- Current memory-integrity/purge worktree evidence on Windows and Python 3.14:
-  167 Python tests pass, including legacy migration, export resurrection,
-  locked-file, insufficient-disk, restart, API authority, physical-content, and
-  replication-contract coverage. Ruff, strict mypy, docs checks, and wheel
-  resource diagnostics also pass. Python 3.12 remains the project target; this
-  slice did not rerun the dashboard because dashboard sources were untouched.
+- Integrated memory-integrity/purge evidence includes legacy migration, export
+  resurrection, locked-file, insufficient-disk, restart, API authority,
+  physical-content, and replication-contract coverage. Ruff formatting/lint,
+  strict mypy, and docs checks pass on the combined branch. This slice did not
+  rerun the dashboard because dashboard sources were untouched.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
