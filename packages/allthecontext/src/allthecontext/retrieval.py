@@ -109,12 +109,7 @@ class RetrievalEngine:
             placeholders = ",".join("?" for _ in request.availability)
             conditions.append(f"r.availability IN ({placeholders})")
             parameters.extend(item.value for item in request.availability)
-        sql = (
-            "SELECT r.* FROM context_records r"
-            + join
-            + " WHERE "
-            + " AND ".join(conditions)
-        )
+        sql = "SELECT r.* FROM context_records r" + join + " WHERE " + " AND ".join(conditions)
         with self.store.connect() as connection:
             rows = connection.execute(sql, parameters).fetchall()
             requested_scopes = set(request.scopes)

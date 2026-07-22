@@ -76,11 +76,7 @@ def test_policy_rejected_records_never_reach_relevance_scoring(tmp_path: Path) -
 
 def test_benchmark_covers_frozen_scenarios_and_metrics(tmp_path: Path) -> None:
     fixture = _fixture()
-    categories = {
-        str(query["category"])
-        for query in fixture["queries"]
-        if isinstance(query, dict)
-    }
+    categories = {str(query["category"]) for query in fixture["queries"] if isinstance(query, dict)}
     assert {
         "exact",
         "multi_term",

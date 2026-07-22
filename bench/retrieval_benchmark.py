@@ -116,10 +116,14 @@ def build_database(path: Path, size: int, fixture: dict[str, Any]) -> tuple[Core
             values = _record_tuple(vault_id, record, ordinal)
             connection.execute(insert_sql, values)
             connection.execute(
-                "INSERT INTO context_fts(record_id,content,kind,tags,scopes) "
-                "VALUES(?,?,?,?,?)",
-                (values[0], values[3], values[2], " ".join(record.get("tags", [])),
-                 " ".join(record.get("scopes", []))),
+                "INSERT INTO context_fts(record_id,content,kind,tags,scopes) VALUES(?,?,?,?,?)",
+                (
+                    values[0],
+                    values[3],
+                    values[2],
+                    " ".join(record.get("tags", [])),
+                    " ".join(record.get("scopes", [])),
+                ),
             )
     elapsed = time.perf_counter() - started
     return store, elapsed
@@ -134,9 +138,7 @@ def _dcg(ids: Sequence[str], gold: dict[str, int]) -> float:
 
 def _query_metrics(results: list[dict[str, Any]]) -> dict[str, float | int]:
     judged = [result for result in results if result["gold"]]
-    forbidden_ids = {
-        str(record_id) for result in results for record_id in result["forbidden"]
-    }
+    forbidden_ids = {str(record_id) for result in results for record_id in result["forbidden"]}
     recalls: dict[int, list[float]] = {1: [], 3: [], 5: []}
     reciprocal_ranks: list[float] = []
     ndcgs: list[float] = []
@@ -213,9 +215,7 @@ def run_profile(size: int, directory: Path, fixture: dict[str, Any]) -> dict[str
     temporal = next(item for item in results if item["category"] == "temporal")
     temporal_ids = temporal["ids"]
     temporal_precision = (
-        len(set(temporal_ids) & set(temporal["gold"])) / len(temporal_ids)
-        if temporal_ids
-        else 0.0
+        len(set(temporal_ids) & set(temporal["gold"])) / len(temporal_ids) if temporal_ids else 0.0
     )
     bootstrap_data = fixture["bootstrap"]
     bootstrap = engine.bootstrap(

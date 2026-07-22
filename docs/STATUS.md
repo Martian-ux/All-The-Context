@@ -22,8 +22,8 @@
   offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
   ranking invariant, bounded opt-in 50k profile, and executable V2 gates; and
   cross-platform release workflows with strict offline-signed OTA metadata.
-- Pre-release-foundation integration evidence on Windows 11 and Python 3.12:
-  144 Python tests and 15 dashboard
+- Local integrated evidence on Windows 11 and Python 3.12: 151 Python tests and
+  15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
