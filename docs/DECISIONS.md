@@ -421,3 +421,28 @@ evidence attach to that identity. Operator-controlled publication, provider
 accounts/costs, and the offline Ed25519 ceremony remain explicit human gates.
 The complete evidence contract is maintained in
 `docs/operations/BETA_ACCEPTANCE.md`.
+
+## ADR-031: Beta 1 separates native installation, OTA eligibility, and Edge activation
+
+Beta 1 publishes direct unsigned native packages for people to install:
+Windows uses a one-click `.exe`, macOS uses a `.dmg` containing the per-user
+self-installing application, and Linux uses a deterministic portable `.tar.gz`.
+The macOS build restores an identity-free ad-hoc structural seal after its
+`Info.plist` is finalized and verifies that seal. This costs nothing and detects
+bundle damage; it is not publisher identity or notarization. AppImage remains a
+follow-up until its toolchain is pinned and its desktop integration is observed.
+
+Direct packages and updater ZIPs are different release assets. Only Windows
+x86_64 is eligible for automatic Beta 1 OTA because its independent journaled
+helper has exercised interruption recovery and full rollback. macOS and Linux
+may verify and save release packages, but installation remains manual until
+equivalent native cutover safety is implemented and observed.
+
+Hosted Edge distribution is also deliberately staged. Commit A supplies the
+reviewed image source and permanent deployment template; the manual workflow
+publishes and anonymously verifies A's immutable image digest. Commit B adds
+the exact digest-pinned Blueprint and a one-use digest-derived deployment
+branch. Commit C packages the deploy URL and A/B identities into Core only
+after the activation tool proves the template, Blueprint, digest, branch, and
+commits agree. No GitHub Release event automatically performs these steps, and
+no provider resource is created without an operator decision.

@@ -95,9 +95,11 @@ def test_public_key_import_fails_closed_on_unreviewed_or_private_material(tmp_pa
 def test_private_key_audit_allows_policy_text_but_detects_complete_blocks() -> None:
     marker_reference = b'policy = b"-----BEGIN ENCRYPTED PRIVATE KEY-----"'
     complete_block = (
-        b"-----BEGIN " b"ENCRYPTED PRIVATE KEY-----\n"
+        b"-----BEGIN "
+        b"ENCRYPTED PRIVATE KEY-----\n"
         b"dGVzdC1vbmx5LW5vdC1hLXJlYWwta2V5\n"
-        b"-----END " b"ENCRYPTED PRIVATE KEY-----\n"
+        b"-----END "
+        b"ENCRYPTED PRIVATE KEY-----\n"
     )
 
     assert contains_private_key_block(marker_reference) is False

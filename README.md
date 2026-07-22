@@ -78,8 +78,9 @@ Windows publisher certificates or Apple notarization for community releases.
 Downloads are explicitly labeled unsigned and use GitHub Releases, SHA-256,
 SBOM/provenance, and the application's offline Ed25519 release manifest for
 integrity. Windows and macOS may therefore show their normal unknown-publisher
-warning on first install. macOS and Linux artifacts still need their first
-observed native runs and packaging work.
+warning on first install. The macOS DMG and Linux portable `tar.gz` packaging
+paths are implemented, but their first observed native acceptance runs are
+still pending.
 
 ## Current release target
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import tomllib
 import urllib.request
 from dataclasses import replace
@@ -31,6 +33,7 @@ from allthecontext.desktop_setup import (
 )
 from allthecontext.models import ClientCreate
 from allthecontext.storage import CoreStore
+from filelock import FileLock
 
 
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
@@ -63,6 +66,44 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     environment = kwargs["env"]
     assert isinstance(environment, dict)
     assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+def test_core_launch_waits_for_a_shutting_down_process_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_438)
+    config.prepare()
+    runtime = RuntimeCommand(tmp_path / "AllTheContext.exe")
+    lock_ready = threading.Event()
+    launched: list[tuple[str, ...]] = []
+
+    def hold_previous_core_lock() -> None:
+        with FileLock(str(config.lock_path), timeout=1):
+            lock_ready.set()
+            time.sleep(0.08)
+
+    holder = threading.Thread(target=hold_previous_core_lock)
+    holder.start()
+    assert lock_ready.wait(timeout=1)
+
+    class Process:
+        pass
+
+    def fake_popen(command: tuple[str, ...], **_kwargs: object) -> Process:
+        launched.append(command)
+        return Process()
+
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.probe_core",
+        lambda _config: CoreProbe.VERIFIED if launched else CoreProbe.UNREACHABLE,
+    )
+    monkeypatch.setattr("allthecontext.desktop_setup.subprocess.Popen", fake_popen)
+
+    launch_core(runtime, config, wait_seconds=0.5)
+    holder.join(timeout=1)
+
+    assert not holder.is_alive()
+    assert launched == [runtime.core()]
 
 
 def test_client_credential_deletion_is_verified_before_removing_fallback(

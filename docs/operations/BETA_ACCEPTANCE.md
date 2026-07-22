@@ -38,6 +38,9 @@ The integration lead verifies, on one exact commit:
   startup, ingestion, retrieval, export, and shutdown smoke tests.
 - Linux: the selected portable package and documented fallback run without
   Docker or root and pass the same lifecycle smoke tests.
+- Beta 1 direct-install formats are Windows `.exe`, macOS `.dmg`, and Linux
+  `.tar.gz`. Only Windows x86_64 is eligible for an automatic Beta 1 OTA
+  manifest; macOS and Linux remain verified direct-package/manual-install paths.
 - Credential and startup acceptance is observed on each real target OS. A mock
   or cross-target build is supporting evidence, not a substitute.
 
@@ -70,9 +73,11 @@ The integration lead verifies, on one exact commit:
 ## Gate 5: beta update drill
 
 After beta 1 is accepted, beta 2 must exercise a real signed beta1-to-beta2
-update. The evidence includes successful cutover, restart, interruption resume,
-forced failed-health rollback, preserved vault integrity, and immutable channel
-promotion. Same-version engineering transactions do not satisfy this gate.
+Windows x86_64 update. The evidence includes successful cutover, restart,
+interruption resume, forced failed-health rollback, preserved vault integrity,
+and immutable channel promotion. Same-version engineering transactions do not
+satisfy this gate. Automatic macOS or Linux OTA remains disabled until each has
+equivalent native transactional recovery and real-platform acceptance.
 
 ## Human approval record
 

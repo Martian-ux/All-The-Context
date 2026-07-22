@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+from allthecontext import __version__
 from allthecontext.browser_session import (
     BROWSER_AUTH_SCHEME,
     BROWSER_STORAGE_KEY,
@@ -116,7 +117,7 @@ def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path
                 "enabled": True,
                 "channel": "stable",
                 "configured": False,
-                "current_version": "0.1.0",
+                "current_version": __version__,
             }.items()
         )
         changed = client.put(

@@ -21,6 +21,9 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
+
 from .client_config import (
     ClientConfigResult,
     ManagedClientConfig,
@@ -146,6 +149,26 @@ def _log_path(config: CoreConfig) -> Path:
     return path
 
 
+def _wait_for_previous_core_exit(config: CoreConfig, *, wait_seconds: float) -> CoreProbe:
+    """Wait for an unreachable Core to release its process lock after shutdown."""
+
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            with FileLock(str(config.lock_path), timeout=0):
+                return CoreProbe.UNREACHABLE
+        except FileLockTimeout:
+            state = probe_core(config)
+            if state is not CoreProbe.UNREACHABLE:
+                return state
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "The previous All The Context Core is still shutting down. Try again."
+                ) from None
+            time.sleep(min(0.1, remaining))
+
+
 def launch_core(
     runtime: RuntimeCommand,
     config: CoreConfig,
@@ -154,57 +177,81 @@ def launch_core(
 ) -> Path:
     ensure_instance_secret(config)
     log_path = _log_path(config)
-    initial = probe_core(config)
-    if initial is CoreProbe.VERIFIED:
-        return log_path
-    if initial is CoreProbe.UNVERIFIED:
-        raise RuntimeError(
-            f"Port {config.port} is already used by a service that is not this "
-            "All The Context Core. Close that service or choose another Core port."
-        )
+    launch_lock = FileLock(str(config.data_dir / "core-launch.lock"), timeout=wait_seconds)
+    try:
+        with launch_lock:
+            initial = probe_core(config)
+            if initial is CoreProbe.VERIFIED:
+                return log_path
+            if initial is CoreProbe.UNVERIFIED:
+                raise RuntimeError(
+                    f"Port {config.port} is already used by a service that is not this "
+                    "All The Context Core. Close that service or choose another Core port."
+                )
 
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "ATC_CORE_DATA_DIR": str(config.data_dir),
-            "ATC_CORE_HOST": config.host,
-            "ATC_CORE_PORT": str(config.port),
-        }
-    )
-    if getattr(sys, "frozen", False):
-        # A long-lived Core spawned from a PyInstaller one-file application
-        # must not reuse the caller's temporary extraction. Reuse can keep a
-        # completed setup process alive until Core exits and can interfere
-        # with one-file cleanup on Windows.
-        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-    creation_flags = 0
-    start_new_session = os.name != "nt"
-    if os.name == "nt":
-        creation_flags = windows_creation_flags("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")
-
-    with log_path.open("ab") as log:
-        subprocess.Popen(
-            runtime.core(),
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-            close_fds=True,
-            creationflags=creation_flags,
-            start_new_session=start_new_session,
-        )
-
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        state = probe_core(config)
-        if state is CoreProbe.VERIFIED:
-            return log_path
-        if state is CoreProbe.UNVERIFIED:
-            raise RuntimeError(
-                f"Port {config.port} was claimed by a service that is not this "
-                "All The Context Core."
+            after_shutdown = _wait_for_previous_core_exit(
+                config,
+                wait_seconds=wait_seconds,
             )
-        time.sleep(0.1)
+            if after_shutdown is CoreProbe.VERIFIED:
+                return log_path
+            if after_shutdown is CoreProbe.UNVERIFIED:
+                raise RuntimeError(
+                    f"Port {config.port} was claimed by a service that is not this "
+                    "All The Context Core."
+                )
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "ATC_CORE_DATA_DIR": str(config.data_dir),
+                    "ATC_CORE_HOST": config.host,
+                    "ATC_CORE_PORT": str(config.port),
+                }
+            )
+            if getattr(sys, "frozen", False):
+                # A long-lived Core spawned from a PyInstaller one-file application
+                # must not reuse the caller's temporary extraction. Reuse can keep a
+                # completed setup process alive until Core exits and can interfere
+                # with one-file cleanup on Windows.
+                environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            creation_flags = 0
+            start_new_session = os.name != "nt"
+            if os.name == "nt":
+                creation_flags = windows_creation_flags(
+                    "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"
+                )
+
+            with log_path.open("ab") as log:
+                subprocess.Popen(
+                    runtime.core(),
+                    env=environment,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=log,
+                    close_fds=True,
+                    creationflags=creation_flags,
+                    start_new_session=start_new_session,
+                )
+
+            deadline = time.monotonic() + wait_seconds
+            while time.monotonic() < deadline:
+                state = probe_core(config)
+                if state is CoreProbe.VERIFIED:
+                    return log_path
+                if state is CoreProbe.UNVERIFIED:
+                    raise RuntimeError(
+                        f"Port {config.port} was claimed by a service that is not this "
+                        "All The Context Core."
+                    )
+                time.sleep(0.1)
+    except FileLockTimeout:
+        if probe_core(config) is CoreProbe.VERIFIED:
+            return log_path
+        raise RuntimeError(
+            "Another All The Context client is already restarting Core. Try again."
+        ) from None
+
     tail = ""
     with suppress(OSError):
         tail = log_path.read_text(encoding="utf-8", errors="replace")[-2_000:]
