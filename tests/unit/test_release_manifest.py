@@ -15,6 +15,7 @@ from allthecontext.release_manifest import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 TEST_ONLY_SEED = bytes(range(32))
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _release(tmp_path: Path) -> tuple[dict[str, object], dict[str, object]]:
@@ -57,6 +58,16 @@ def test_manifest_is_deterministic_and_verifies(tmp_path: Path) -> None:
     repeated, _ = _release(tmp_path)
     assert json.dumps(manifest, sort_keys=True) == json.dumps(repeated, sort_keys=True)
     verify_manifest(manifest, keyring, current_version="0.1.0", expected_channel="stable")
+
+
+def test_packaged_update_keyring_matches_operator_keyring() -> None:
+    operator = json.loads((ROOT / "release" / "keys.json").read_text(encoding="utf-8"))
+    packaged = json.loads(
+        (
+            ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "update_keys.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert packaged == operator
 
 
 def test_tamper_revocation_and_downgrade_are_rejected(tmp_path: Path) -> None:

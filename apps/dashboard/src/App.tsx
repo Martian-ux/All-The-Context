@@ -42,9 +42,10 @@ import type {
   IntegrationsStatus,
   ReplicationStatus,
   SourceRecord,
+  UpdateStatus,
 } from "./types";
 
-type PageKey = "sources" | "review" | "context" | "connections" | "relay" | "audit" | "backup";
+type PageKey = "sources" | "review" | "context" | "connections" | "relay" | "audit" | "backup" | "updates";
 
 const navigation: Array<{ key: PageKey; label: string; icon: typeof Archive }> = [
   { key: "sources", label: "Sources", icon: Archive },
@@ -54,6 +55,7 @@ const navigation: Array<{ key: PageKey; label: string; icon: typeof Archive }> =
   { key: "relay", label: "Edge", icon: Cloud },
   { key: "audit", label: "Audit", icon: FileClock },
   { key: "backup", label: "Backup", icon: Database },
+  { key: "updates", label: "Updates", icon: Download },
 ];
 
 const titles: Record<PageKey, { eyebrow: string; title: string; description: string }> = {
@@ -64,6 +66,7 @@ const titles: Record<PageKey, { eyebrow: string; title: string; description: str
   relay: { eyebrow: "Availability", title: "Edge", description: "Monitor the small approved replica available away from this device." },
   audit: { eyebrow: "Accountability", title: "Audit", description: "Review administrative decisions and access outcomes." },
   backup: { eyebrow: "Portability", title: "Backup", description: "Export a complete encrypted copy of your Core data." },
+  updates: { eyebrow: "Desktop", title: "Updates", description: "Check signed release metadata and control when updates are installed." },
 };
 
 function pageFromLocation(): PageKey {
@@ -209,6 +212,7 @@ function App() {
             {page === "relay" && <RelayView fallback={status?.replication} />}
             {page === "audit" && <AuditView />}
             {page === "backup" && <BackupView status={status} />}
+            {page === "updates" && <UpdatesView />}
           </>}
         </div>
       </main>
@@ -919,6 +923,81 @@ function BackupView({ status }: { status: CoreStatus | null }) {
       <p className="quiet-copy">The passphrase is used only for this request and is not saved. Restore remains a deliberate CLI operation in this release.</p></section>
       <dl className="metric-line"><div><dt>Approved records</dt><dd>{status?.approved_records ?? "—"}</dd></div><div><dt>Raw sources</dt><dd>{status?.sources ?? "—"}</dd></div><div><dt>Core database</dt><dd>{formatBytes(status?.database_size_bytes)}</dd></div></dl>
       <Notice kind="info"><CircleHelp size={16} /> Keep exports private. They may contain the complete source material that Edge intentionally excludes.</Notice>
+    </div>
+  );
+}
+
+function UpdatesView() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [channel, setChannel] = useState<"stable" | "beta">("stable");
+  const [enabled, setEnabled] = useState(true);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const apply = useCallback((next: UpdateStatus) => {
+    setStatus(next); setChannel(next.channel); setEnabled(next.enabled); setError(null);
+  }, []);
+  useEffect(() => {
+    void api.updateStatus().then(apply).catch((caught) => setError(errorMessage(caught)));
+  }, [apply]);
+
+  async function act(label: string, action: () => Promise<UpdateStatus>) {
+    setWorking(label); setError(null); setNotice(null);
+    try { apply(await action()); }
+    catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(null); }
+  }
+
+  async function saveVerifiedArtifact() {
+    setWorking("save-artifact"); setError(null); setNotice(null);
+    try {
+      const blob = await api.verifiedUpdateArtifact();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `all-the-context-${status?.offered_version ?? "verified-update"}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+      setNotice("Verified package saved. Follow the platform installation instructions.");
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(null); }
+  }
+
+  const busy = working !== null || status?.phase === "checking" || status?.phase === "downloading" || status?.phase === "installing";
+  const phaseLabel = status?.phase.replaceAll("_", " ") ?? "loading";
+  return (
+    <div className="narrow-column">
+      <section className="backup-intro">
+        <span className="backup-icon"><RefreshCw size={24} /></span>
+        <span className="eyebrow">Signed releases</span>
+        <h2>{status?.offered_version && status.phase !== "current" ? `Version ${status.offered_version}` : "Your update policy"}</h2>
+        <p>Release metadata must pass Ed25519 signature, channel, platform, architecture, version, size, and checksum policy before installer handoff.</p>
+        {status ? <dl className="metric-line update-metrics"><div><dt>Installed</dt><dd>{status.current_version}</dd></div><div><dt>Status</dt><dd>{phaseLabel}</dd></div><div><dt>Last check</dt><dd>{formatDate(status.last_checked_at)}</dd></div></dl> : <LoadingRows />}
+        {status?.last_error ? <Notice kind="error">{status.last_error}</Notice> : null}
+        {error ? <Notice kind="error">{error}</Notice> : null}
+        {notice ? <Notice kind="success">{notice}</Notice> : null}
+        {status?.deferred_version ? <Notice kind="info">Version {status.deferred_version} is deferred. A manual check can offer it again.</Notice> : null}
+      </section>
+      <section className="section-block update-controls">
+        <div className="section-heading"><div><h2>Preferences</h2><p>Stable is the default. Beta releases require an explicit choice.</p></div></div>
+        <div className="update-preferences">
+          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable">Stable</option><option value="beta">Beta</option></select></label>
+          <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check automatically at launch, at most daily</label>
+          <button className="secondary-button" disabled={busy || (status?.enabled === enabled && status?.channel === channel)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel))}>Save preferences</button>
+        </div>
+        <div className="decision-bar update-actions">
+          {status?.last_error ? <button className="quiet-button" disabled={busy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
+          {status?.phase === "available" && !status.mandatory ? <button className="secondary-button" disabled={busy} onClick={() => void act("defer", api.deferUpdate)}>Defer</button> : null}
+          {status?.phase === "available" ? <button className="primary-button" disabled={busy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
+          {status?.verified_artifact_available ? <button className="primary-button" disabled={busy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
+          {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={busy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
+          <button className="secondary-button" disabled={busy || !enabled} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
+        </div>
+        <p className="quiet-copy">{status?.installer_detail ?? "Loading installer capability…"}</p>
+        {status && !status.configured ? <Notice kind="info">No channel metadata endpoint is configured in this build. Checks fail closed until an operator provides the reviewed HTTPS endpoint and trusted public keyring.</Notice> : null}
+        {status?.release_notes_url ? <a href={status.release_notes_url} target="_blank" rel="noreferrer">Read release notes <ExternalLink size={12} /></a> : null}
+      </section>
     </div>
   );
 }

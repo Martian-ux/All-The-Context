@@ -201,6 +201,14 @@ button:disabled { opacity: .55; cursor: wait; }
 .command-line { overflow-x: auto; margin-top: 18px; border: 1px solid var(--rule); border-radius: 7px; background: #e9edf4; padding: 13px 14px; color: #465065; }
 .command-line code { white-space: nowrap; font-size: 9px; }
 .backup-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid var(--rule); border-radius: 50%; color: var(--amber-dark); margin-bottom: 24px; }
+.update-metrics { margin-top: 28px; }
+.update-metrics dd { font-size: 13px; text-transform: capitalize; }
+.update-controls { max-width: 680px; }
+.update-preferences { display: grid; grid-template-columns: 180px minmax(240px, 1fr) auto; gap: 14px; align-items: end; }
+.update-checkbox { min-height: 39px; display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 10px; }
+.update-checkbox input { accent-color: var(--amber-dark); }
+.update-actions { flex-wrap: wrap; }
+.update-controls > a { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; font-size: 10px; text-decoration: none; }
 
 .empty-state { min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--faint); text-align: center; }
 .empty-state svg { margin-bottom: 13px; }.empty-state strong { color: var(--ink); font-size: 15px; font-weight: 680; }.empty-state p { max-width: 300px; margin: 6px 0 0; font-size: 10px; line-height: 1.5; }
@@ -337,6 +345,7 @@ button:disabled { opacity: .55; cursor: wait; }
   .edge-step > .secondary-button { grid-column: 2; justify-self: start; }
   .provider-row { grid-template-columns: 1fr auto; }
   .provider-row > .secondary-button { grid-column: 1 / -1; justify-self: start; }
+  .update-preferences { grid-template-columns: 1fr; align-items: stretch; }
 }
 
 @media (max-width: 480px) {
@@ -367,6 +376,7 @@ button:disabled { opacity: .55; cursor: wait; }
   .support-label { justify-self: start; }
   .edge-metrics { grid-template-columns: 1fr; }
   .edge-metrics div, .edge-metrics div + div { border-right: 0; border-bottom: 1px solid var(--rule); padding: 12px 0; }
+  .update-actions button { flex: 1 1 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

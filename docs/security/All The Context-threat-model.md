@@ -115,6 +115,7 @@ does not possess them.
 | Replication apply | Core push | Core -> Relay | HMAC, sequence, hash | `replication.py` |
 | Export restore | local file | backup -> Core | AEAD and integrity checks | `export.py` |
 | Desktop setup | user launch | installer -> OS/config/browser | per-user paths, verified credential write, parsed/atomic config replacement | `desktop_setup.py`, `client_config.py` |
+| Native updater | configured HTTPS endpoint | release service -> Core -> installer | bounded no-redirect fetch, Ed25519 policy, streamed size/hash verification, isolated staging, atomic state, authenticated reverified manual save, backup | `release_manifest.py`, `updater.py` |
 
 ## Top abuse paths
 
@@ -153,6 +154,8 @@ does not possess them.
     takeover creates credentials for the wrong party.
 17. A remote client floods/replays forwarding or Edge retains a Core-only
     response -> private canonical context persists outside Core.
+18. A mutable/tampered update, archive traversal, or interrupted cutover executes
+    attacker bytes or damages the local vault.
 
 ## Threat model table
 
@@ -177,6 +180,7 @@ does not possess them.
 | TM-017 | Storage bug, crash, or stale backup | Administrator requests purge | Retain content in history/index/WAL/audit/outbox or resurrect a stable ID | Irreversible-removal expectation fails | Core content, sources, exports | Exact admin phrase; one-transaction logical scrub; opaque hash-free tombstone/event; foreign keys; `secure_delete`; WAL checkpoint; resumable VACUUM; restore barrier (`storage.py`, `export.py`) | Snapshots, SSD remanence, external backups, user copies, and Edge storage before purge parity lands are outside Core erasure | Edge parity slice, backup expiry guidance, encrypted-disk policy | Pending purge jobs, compaction error codes, replication lag | low | high | high |
 | TM-018 | Remote first-claimer or leaked setup file | Public inert Edge and claim reference | Claim Edge, probe identity, replay proof, or wait out abandoned deploy | Edge takeover or durable credential disclosure | Claim authority, replication credentials | Setup file contains only public keys/expiring reference; inert preclaim middleware; Ed25519 possession proof over claim/challenge/origin; one-use challenge; X25519+AES-GCM credential return; acknowledgement revocation; 24-hour expiry (`edge_claim.py`, `0008_edge_claim.sql`) | Host provider controls the process/disk | Provider account MFA; delete setup download; alert stale unclaimed deployment | Claim rejection/expiry counters | low | high | high |
 | TM-019 | Authorized/stolen OAuth client or hostile Edge process | Public Edge MCP and forwarding poll | Flood, replay, forge another client/admin scope, inspect queued queries, race revocation, or retain forwarded results | Core-only disclosure or denial of service | Core-available context, availability | OAuth before enqueue; X25519/AES-GCM request sealing before SQLite; Core-local user-approved client mapping and scope clamp; Core allow/deny authorization; random IDs; expiries; one-use hashed claims; leases; cancellation; rate/concurrency/size bounds; memory-only responses; decommission/revoke purge (`relay/forwarding.py`, `edge_connection.py`, `004_remote_edge_clients.sql`) | A fully compromised live Edge can assert another already-approved logical client and observe response bytes while forwarding them; provider MCP transport supplies no client-held proof to Core | Separate Edge deployments for mutually distrusting clients; future end-to-end client signatures; reverse-proxy rate limits and alerting | Queue depth, timeouts, rejected claims, denied unknown mappings | medium | high | high |
+| TM-020 | Release-service/build attacker or interrupted installer | Configured update check or cutover | Substitute metadata/artifact, exploit archive paths, truncate bytes, or leave a half-applied version | Code execution, vault corruption, availability loss | Application, vault, update trust | Exact signed manifest, active/channel-scoped Ed25519 key, HTTPS/no redirect/time/size bounds, immutable version URL, streamed signed size/hash, safe ZIP paths, durable recovery phases; every real platform adapter currently stops at manual-required (`release_manifest.py`, `updater.py`) | Production public key/native publisher signing and independent journaled binary+DB rollback are absent | Complete offline key ceremony, Authenticode/notarization/native packaging, observed platform rollback drills | Signature/checksum failures, persisted error/recovery phase | low | critical | high |
 
 ## Criticality calibration
 
@@ -205,6 +209,7 @@ does not possess them.
 | `packages/allthecontext/src/allthecontext/edge_claim.py` | First claim, origin-bound proof, and credential rotation | TM-018 |
 | `packages/allthecontext/src/allthecontext/relay/forwarding.py` | Bounded online-Core request broker | TM-019 |
 | `packages/allthecontext/src/allthecontext/client_config.py` | Reversible client configuration and credential handoff | TM-002, TM-009 |
+| `packages/allthecontext/src/allthecontext/updater.py` | Release trust, staging, backup, native handoff, and recovery | TM-008, TM-017 |
 
 ## Quality check
 

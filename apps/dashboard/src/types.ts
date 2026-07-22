@@ -195,6 +195,26 @@ export interface CoreStatus {
   replication: ReplicationStatus;
 }
 
+export type UpdatePhase = "idle" | "disabled" | "checking" | "current" | "available" | "deferred" | "downloading" | "ready" | "installing" | "restart_required" | "installed" | "rolled_back" | "manual_required" | "error" | "cancelled";
+
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  current_version: string;
+  offered_version?: string | null;
+  mandatory: boolean;
+  release_notes_url?: string | null;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  recovery_attempts: number;
+  enabled: boolean;
+  channel: "stable" | "beta";
+  deferred_version?: string | null;
+  automatic_install_supported: boolean;
+  verified_artifact_available: boolean;
+  installer_detail: string;
+  configured: boolean;
+}
+
 export interface Page<T> {
   items: T[];
   next_cursor?: string | null;

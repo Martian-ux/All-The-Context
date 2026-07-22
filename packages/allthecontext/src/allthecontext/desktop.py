@@ -311,6 +311,7 @@ def diagnostics() -> dict[str, Any]:
         "core_migrations": len(tuple(core_migrations.glob("*.sql"))),
         "relay_migrations": len(tuple(relay_migrations.glob("*.sql"))),
         "dashboard_bundled": (package_root / "web" / "index.html").is_file(),
+        "update_keyring_bundled": (package_root / "update_keys.json").is_file(),
         "mcp_helper_bundled": runtime.mcp_executable is not None,
         "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
         "core_data_directory": str(CoreConfig.default().data_dir),

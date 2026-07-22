@@ -3,7 +3,8 @@
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
   implemented. The secure Edge/mobile forwarding foundation is integrated;
-  signed desktop updates and Edge purge parity are under active integration.
+  signed desktop update verification and manual package handoff are integrated.
+  Edge purge parity and a transactional Windows update helper are next.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -24,10 +25,12 @@
   offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
   ranking invariant, bounded lexical channels/RRF, improved context compiler,
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
-  and cross-platform release workflows with strict offline-signed OTA metadata.
-- Current local integrated evidence on Windows 11 and Python 3.12: 181 Python
-  tests and 15 dashboard
-  tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
+  cross-platform release workflows with strict offline-signed OTA metadata;
+  and a fail-closed native updater with stable/beta preferences, bounded signed
+  checks, verified staging, recovery abstractions, dashboard controls, and
+  interruption recovery.
+- Current combined evidence on Windows 11 and Python 3.12: 224 Python and 18
+  dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
   call plus Core crash/restart recovery. Ruff formatting/lint, strict mypy,
@@ -47,21 +50,35 @@
 - Integrated memory-integrity/purge evidence includes legacy migration, export
   resurrection, locked-file, insufficient-disk, restart, API authority,
   physical-content, and replication-contract coverage. Ruff formatting/lint,
-  strict mypy, and docs checks pass on the combined branch. This slice did not
-  rerun the dashboard because dashboard sources were untouched.
+  strict mypy, docs checks, and the rebuilt combined dashboard pass.
 - The integrated Edge/mobile slice additionally exercised sealed forwarding-request
   persistence, memory-only responses with DB/WAL/SHM byte scans, unknown or
   revoked identity and Edge-asserted admin-scope rejection, claim
   rotation/replay/restart, outbound-only
   polling, and local offline/online mobile demonstrations. Real hosting and
   provider handshakes remain external gaps.
+- OTA integration evidence includes updater unit/API/UI coverage, dashboard
+  type/build/audit checks, wheel/sdist resource diagnostics, and documentation
+  checks. The combined frozen Windows artifact includes the reviewed public-key
+  resource and passes the isolated first-run/browser/MCP/Core-restart/reopen/
+  shutdown/uninstall smoke, including the assertion that
+  `automatic_install_supported` is false.
+- OTA hardening serializes every preference/state mutation, rejects unknown or
+  32-bit architectures, sanitizes malformed transport lengths and persisted
+  state, bounds orphan cleanup, and gives manual-required platforms an
+  authenticated no-store package response that is re-verified without exposing
+  private staging paths. Automatic installation remains disabled on every real
+  platform.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
   packaged first-run/MCP smoke, deterministic versioned archives, checksums,
   and SPDX metadata. Draft-only candidate and digest-addressed GHCR workflows,
   a strict signed OTA manifest contract, offline signing/verification tooling,
-  and stable/beta operator policy are present. No desktop updater is included.
+  and stable/beta operator policy are present. The updater consumes only
+  operator-configured HTTPS channel endpoints and a packaged reviewed public
+  keyring; both production channel URLs and that keyring remain intentionally
+  empty until release approval.
 - Blockers: none for evaluating the vertical slice locally.
 
 ## Core memory-integrity and purge status
@@ -122,6 +139,12 @@
   intentionally trusts no keys until an offline key ceremony and public-key
   review occur. Candidate workflows create drafts only; production promotion
   remains a human/offline operation.
+- Every current platform, including packaged Windows, verifies and stages
+  downloads but stops in a precise manual-install-required state. The existing
+  Windows self-installer can replace a stopped executable but cannot yet run an
+  independent journaled cutover that restores both the prior binary and the
+  pre-migration database after failed health. One-click install therefore
+  remains disabled rather than claiming rollback from fake adapters.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
 - Docker Compose parses successfully and a configured Linux Edge container was

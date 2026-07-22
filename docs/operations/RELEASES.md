@@ -1,8 +1,8 @@
 # Release and update operations
 
-This runbook covers candidate artifacts and signed update metadata. It does not
-implement a desktop updater, create a signing key, or authorize an unattended
-production release.
+This runbook covers candidate artifacts, signed update metadata, and the native
+updater's operator boundary. It does not create a signing key, configure a
+production channel, publish a release, or authorize unattended promotion.
 
 ## Trust and channel layout
 
@@ -50,7 +50,9 @@ operator-controlled system outside GitHub and outside this repository. Do not
 put it in Actions secrets, repository files, fixtures, logs, shell history, or
 cloud build inputs. Only the raw Ed25519 public key is added to
 `release/keys.json` in base64url form after an independently reviewed key
-ceremony.
+ceremony. The reviewed public entries in repository `release/keys.json` and
+packaged `allthecontext/update_keys.json` must be byte-for-byte equivalent; the
+release tests reject drift between operator verification and client trust.
 
 For each platform and architecture:
 
@@ -79,10 +81,55 @@ For each platform and architecture:
    release log. Never replace an asset underneath an already signed URL; issue a
    new version instead.
 
+## Client updater operation
+
+Production packages embed the reviewed public `update_keys.json`; private keys
+never enter a package. Operators configure immutable channel metadata origins
+with `ATC_UPDATE_STABLE_URL` and, only when beta is supported,
+`ATC_UPDATE_BETA_URL`. Each value must be an exact HTTPS manifest endpoint.
+The application ships with neither endpoint configured and with an empty
+keyring until the release ceremony is complete, so development builds fail
+closed rather than contacting an inferred repository.
+
+The dashboard **Updates** page supports check now, stable/beta preference,
+automatic launch/daily checks, opt-out, defer, verified download, and error
+clearing. State and nonsecret preferences live under
+the Core per-user app-data directory. Do not place credentials, release private
+keys, personal context, or raw server response bodies there or in logs.
+
+When a real platform remains manual-required, **Save verified package** asks
+Core for a new authenticated, no-store copy. Core re-verifies the stored signed
+manifest and the artifact's target, length, and SHA-256 during that request and
+deletes the response copy afterward. The dashboard never receives the private
+staging path. Saving a package does not make its installation automatic or
+assert that platform rollback has been observed.
+
+The check/download sequence is: bounded no-redirect manifest fetch; strict
+schema/key/signature/channel/platform/architecture/version verification;
+stream to per-operation staging; exact signed length and SHA-256 verification;
+disk preflight; and, only for a future recovery-capable adapter, verified SQLite
+backup plus native handoff. Partial files are
+deleted after cancellation or failure. A replacement is complete only after
+its version and bounded loopback `/health` response pass. Preserve the backup
+and state files until recovery finishes.
+
+Every current platform stops at a manual-required state. The packaged Windows
+self-installer can authenticate to and stop Core, but it is not a separate
+journaled recovery helper and cannot guarantee restoration of both the prior
+binary and pre-migration database after failed health. Do not enable or claim
+self-apply on Windows, macOS, or Linux until native publisher signing and a
+transactional cutover, health check, interrupted-recovery journal, and rollback
+have been observed on the authored OS.
+
+Unknown operating systems, unknown CPU identifiers, and 32-bit application
+runtimes fail closed. Repeated checks and channel changes remove a bounded
+number of orphan staging entries; startup also safely resets corrupt persisted
+state and bounded stale response copies.
+
 ## Verification and downgrade policy
 
-An updater, when separately designed and implemented, must verify in this
-order: schema and exact fields; selected channel/platform/architecture; active
+The updater verifies in this order: schema and exact fields; selected
+channel/platform/architecture; active
 and channel-authorized key ID; Ed25519 signature; version policy; HTTPS
 immutable URL; declared size; downloaded SHA-256; then native publisher
 signature where the platform supports one. It must stage rather than execute
