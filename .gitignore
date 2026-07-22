@@ -20,5 +20,12 @@ apps/dashboard/dist/
 *.lock
 !uv.lock
 .env
+*.key
+*.p12
+*.pfx
+id_ed25519
+id_ecdsa
+id_rsa
+id_dsa
 .DS_Store
 Thumbs.db

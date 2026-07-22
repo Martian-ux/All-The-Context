@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "All The Context Native Release Candidate Inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "version", "channel", "tag", "source_commit",
+    "unsigned_community_build", "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-beta\\.[1-9][0-9]*)?$"
+    },
+    "channel": {"enum": ["stable", "beta"]},
+    "tag": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-beta\\.[1-9][0-9]*)?$"
+    },
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "unsigned_community_build": {"const": true},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform", "architecture", "direct_package", "direct_package_checksum",
+          "direct_package_notice", "direct_package_report", "direct_package_sbom",
+          "direct_package_provenance_bundle", "direct_package_sbom_bundle",
+          "ota_manifest_eligible",
+          "ota_archive", "ota_checksum", "ota_sbom", "ota_provenance_bundle",
+          "ota_sbom_bundle"
+        ],
+        "properties": {
+          "platform": {"enum": ["windows", "macos", "linux"]},
+          "architecture": {"enum": ["x86_64", "arm64"]},
+          "direct_package": {"$ref": "#/$defs/file"},
+          "direct_package_checksum": {"$ref": "#/$defs/file"},
+          "direct_package_notice": {"$ref": "#/$defs/file"},
+          "direct_package_report": {"$ref": "#/$defs/file"},
+          "direct_package_sbom": {"$ref": "#/$defs/file"},
+          "direct_package_provenance_bundle": {"$ref": "#/$defs/file"},
+          "direct_package_sbom_bundle": {"$ref": "#/$defs/file"},
+          "ota_manifest_eligible": {"type": "boolean"},
+          "ota_archive": {"$ref": "#/$defs/file"},
+          "ota_checksum": {"$ref": "#/$defs/file"},
+          "ota_sbom": {"$ref": "#/$defs/file"},
+          "ota_provenance_bundle": {"$ref": "#/$defs/file"},
+          "ota_sbom_bundle": {"$ref": "#/$defs/file"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256", "size"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

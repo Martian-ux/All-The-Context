@@ -13,48 +13,59 @@ on:
         type: choice
         options: [beta, stable]
       source_commit:
-        description: Full 40-character commit SHA to build
+        description: Full 40-character commit SHA at the default-branch head
         required: true
         type: string
 
+concurrency:
+  group: release-candidate-${{ inputs.version }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  attestations: write
-  id-token: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.validate.outputs.version }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - id: validate
-        shell: python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Validate exact source and Python/SemVer metadata
+        run: >-
+          python scripts/release_candidate.py validate-source
+          --version "${{ inputs.version }}"
+          --channel "${{ inputs.channel }}"
+          --source-commit "${{ inputs.source_commit }}"
+      - name: Reject tracked private-key material
+        run: python scripts/release_keyring.py audit
+      - name: Require a reviewed public key for this channel
+        run: >-
+          python scripts/release_keyring.py validate
+          --require-channel "${{ inputs.channel }}"
+      - name: Require immutable releases, default-branch head, and unused version
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
-        run: |
-          import os, pathlib, re, tomllib
-          version = os.environ["RELEASE_VERSION"]
-          channel = os.environ["RELEASE_CHANNEL"]
-          commit = os.environ["SOURCE_COMMIT"]
-          pattern = r"[0-9]+\.[0-9]+\.[0-9]+" + (r"-beta\.[1-9][0-9]*" if channel == "beta" else "")
-          if re.fullmatch(pattern, version) is None or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
-              raise SystemExit("version/channel or immutable source commit is invalid")
-          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
-          package_init = pathlib.Path("packages/allthecontext/src/allthecontext/__init__.py").read_text(encoding="utf-8")
-          if project["project"]["version"] != version or f'__version__ = "{version}"' not in package_init:
-              raise SystemExit("candidate version must match project and runtime versions")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={version}\n")
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/github_release_gate.py
+          --repository "${{ github.repository }}"
+          --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
 
   native:
     needs: validate
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -63,14 +74,22 @@ jobs:
             platform: windows
             architecture: x86_64
             source: AllTheContextSetup.exe
-          - os: macos-14
+            package_suffix: .exe
+          - os: macos-26
+            platform: macos
+            architecture: arm64
+            source: AllTheContext.app
+            package_suffix: .dmg
+          - os: macos-26-intel
             platform: macos
             architecture: x86_64
             source: AllTheContext.app
+            package_suffix: .dmg
           - os: ubuntu-latest
             platform: linux
             architecture: x86_64
             source: all-the-context
+            package_suffix: .tar.gz
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -86,42 +105,206 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
       - run: python -m pip install -e ".[packaging]"
+      - name: Reject a mislabeled or non-native runner
+        run: >-
+          python scripts/release_candidate.py validate-runner
+          --platform "${{ matrix.platform }}"
+          --architecture "${{ matrix.architecture }}"
       - run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
       - run: python scripts/smoke_packaged_first_run.py
-      - name: Build immutable archive, checksum, and SPDX metadata
+      - name: Build direct unsigned native package and disclosure sidecars
+        run: >-
+          python scripts/package_desktop.py
+          --platform "${{ matrix.platform }}"
+          --architecture "${{ matrix.architecture }}"
+          --version "${{ inputs.version }}"
+          --output-dir dist/release
+      - name: Build deterministic archive, checksum, and SPDX inventory
         run: >-
           python scripts/build_release_assets.py
           --source dist/desktop/${{ matrix.source }}
           --output-dir dist/release
-          --version ${{ inputs.version }}
-          --platform ${{ matrix.platform }}
-          --architecture ${{ matrix.architecture }}
-      - uses: actions/attest-build-provenance@v2
+          --version "${{ inputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --architecture "${{ matrix.architecture }}"
+      - name: Build SPDX subject document for direct native package
+        run: >-
+          python scripts/build_release_assets.py
+          --source dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
+          --output-dir dist/release
+          --version "${{ inputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --architecture "${{ matrix.architecture }}"
+          --subject-metadata-only
+      - name: Attest SLSA build provenance
+        id: provenance
+        uses: actions/attest@v4
         with:
-          subject-path: dist/release/*.zip
+          subject-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip
+      - name: Attest SPDX inventory
+        id: sbom
+        uses: actions/attest@v4
+        with:
+          subject-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip
+          sbom-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip.spdx.json
+      - name: Attest direct native package SLSA provenance
+        id: package_provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
+      - name: Attest direct native package SPDX subject
+        id: package_sbom
+        uses: actions/attest@v4
+        with:
+          subject-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
+          sbom-path: >-
+            dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}.spdx.json
+      - name: Attach offline-verifiable attestation bundles
+        run: >-
+          python scripts/release_candidate.py attach-attestations
+          --release-dir dist/release
+          --provenance-bundle "${{ steps.provenance.outputs.bundle-path }}"
+          --sbom-bundle "${{ steps.sbom.outputs.bundle-path }}"
+      - name: Attach direct native package attestation bundles
+        run: >-
+          python scripts/release_candidate.py attach-attestations
+          --release-dir dist/release
+          --subject dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
+          --provenance-bundle "${{ steps.package_provenance.outputs.bundle-path }}"
+          --sbom-bundle "${{ steps.package_sbom.outputs.bundle-path }}"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}-${{ matrix.architecture }}
           path: dist/release/*
           if-no-files-found: error
+          retention-days: 7
 
   draft:
     needs: [validate, native]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: dist/release
           merge-multiple: true
-      - name: Create or update an unpublished draft
+      - name: Verify native SLSA and SPDX attestations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-candidate.yml
+        run: |
+          set -euo pipefail
+          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.dmg dist/release/*-unsigned.tar.gz; do
+            [[ -f "$subject" ]] || continue
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$subject.provenance.sigstore.json" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$subject.sbom.sigstore.json" \
+              --predicate-type "https://spdx.dev/Document/v2.3" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners
+          done
+      - name: Assemble and verify the exact candidate inventory
+        run: >-
+          python scripts/release_candidate.py assemble
+          --release-dir dist/release
+          --version "${{ inputs.version }}"
+          --channel "${{ inputs.channel }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --target windows:x86_64
+          --target macos:arm64
+          --target macos:x86_64
+          --target linux:x86_64
+          --ota-target windows:x86_64
+      - name: Attest candidate inventory provenance
+        id: candidate_provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/release/release-candidate-v1.json
+      - name: Preserve candidate inventory attestation bundle
+        env:
+          BUNDLE: ${{ steps.candidate_provenance.outputs.bundle-path }}
+        run: >-
+          cp "$BUNDLE"
+          dist/release/release-candidate-v1.json.provenance.sigstore.json
+      - name: Verify candidate inventory provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh attestation verify dist/release/release-candidate-v1.json
+          --repo "${{ github.repository }}"
+          --bundle dist/release/release-candidate-v1.json.provenance.sigstore.json
+          --signer-workflow "${{ github.repository }}/.github/workflows/release-candidate.yml"
+          --source-digest "${{ inputs.source_commit }}"
+          --deny-self-hosted-runners
+      - name: Recheck the immutable unused release slot after the build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/github_release_gate.py
+          --repository "${{ github.repository }}"
+          --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --allow-default-branch-advance
+      - name: Write explicit unsigned candidate notes
+        run: >-
+          python scripts/release_candidate.py write-notes
+          --release-dir dist/release
+          --output dist/release-notes.md
+      - name: Create a single-use unpublished draft from the exact allowlist
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ inputs.version }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           CHANNEL: ${{ inputs.channel }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --target "$SOURCE_COMMIT" --title "All The Context $TAG" --notes "Unsigned candidate for offline manifest promotion ($CHANNEL)."
-          gh release upload "$TAG" dist/release/* --clobber
-          gh release view "$TAG" --json url,isDraft,assets
+          set -euo pipefail
+          mapfile -t assets < <(
+            python scripts/release_candidate.py list-assets \
+              --release-dir dist/release \
+              --stage draft
+          )
+          (( ${#assets[@]} > 0 ))
+          prerelease=()
+          if [[ "$CHANNEL" == "beta" ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" "${assets[@]}" \
+            --draft \
+            "${prerelease[@]}" \
+            --target "$SOURCE_COMMIT" \
+            --title "All The Context $TAG — unsigned community build" \
+            --notes-file dist/release-notes.md
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SOURCE_COMMIT"
+          gh release view "$TAG" --json url,isDraft,isImmutable,isPrerelease,targetCommitish,assets

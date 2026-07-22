@@ -53,19 +53,40 @@ def test_cross_platform_workflow_and_operations_are_present() -> None:
 
 def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> None:
     candidate = (REPOSITORY_ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
+    publish = (REPOSITORY_ROOT / ".github" / "workflows" / "publish-beta-release.yml").read_text()
+    promote = (REPOSITORY_ROOT / ".github" / "workflows" / "promote-beta-channel.yml").read_text()
     image = (REPOSITORY_ROOT / ".github" / "workflows" / "edge-image.yml").read_text()
     releases = (REPOSITORY_ROOT / "docs" / "operations" / "RELEASES.md").read_text()
     keys = json.loads((REPOSITORY_ROOT / "release" / "keys.json").read_text())
 
     assert "source_commit" in candidate
     assert "--draft" in candidate
-    assert "attest-build-provenance" in candidate
+    assert "actions/attest@v4" in candidate
+    assert "package_desktop.py" in candidate
+    assert "macos-26\n" in candidate
+    assert "macos-26-intel" in candidate
+    assert "validate-runner" in candidate
+    assert "direct unsigned native package" in candidate
+    assert "direct unsigned one-click" not in candidate
+    assert "--ota-target windows:x86_64" in candidate
+    assert "--clobber" not in candidate
+    assert "github_release_gate.py" in candidate
+    assert "environment: release-promotion" in publish
+    assert "gh release verify" in publish
+    assert "workflow_dispatch" in promote
+    assert "actions/upload-pages-artifact@v4" in promote
+    assert "actions/deploy-pages@v4" in promote
+    assert "--ota-target windows:x86_64" in promote
+    assert "push:" not in promote
+    assert "release:" not in promote
     assert "type=sha,format=long,prefix=sha-" in image
     assert "subject-digest" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
     assert "unsigned community builds" in releases
     assert "not a community release gate" in releases
+    assert "Pages is an explicit operator gate" in releases
+    assert "encrypted PKCS8" in releases
     assert keys == {"schema_version": 1, "keys": []}
 
 

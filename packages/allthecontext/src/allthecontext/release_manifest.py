@@ -28,6 +28,7 @@ CHANNELS = frozenset({"stable", "beta"})
 PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
 SHA256 = re.compile(r"[0-9a-f]{64}")
+SHA256_FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 KEY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}")
 VERSION = re.compile(
     r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
@@ -174,11 +175,13 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError("signature must be a base64url-encoded Ed25519 signature")
 
 
-def load_private_key(path: Path) -> Ed25519PrivateKey:
+def load_private_key(path: Path, *, password: bytes | None = None) -> Ed25519PrivateKey:
     try:
-        value = serialization.load_pem_private_key(path.read_bytes(), password=None)
+        value = serialization.load_pem_private_key(path.read_bytes(), password=password)
     except (TypeError, ValueError) as exc:
-        raise ManifestError("private key is not an unencrypted PEM Ed25519 key") from exc
+        raise ManifestError(
+            "private key is not a valid PEM Ed25519 key for the supplied password"
+        ) from exc
     if not isinstance(value, Ed25519PrivateKey):
         raise ManifestError("private key is not Ed25519")
     return value
@@ -221,12 +224,78 @@ def create_manifest(
 
 def load_keyring(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("schema_version") != SCHEMA_VERSION:
+    if not isinstance(value, dict):
+        raise ManifestError("keyring must be a JSON object")
+    validate_keyring(value)
+    return cast(dict[str, Any], value)
+
+
+def public_key_fingerprint(public_value: str) -> str:
+    """Return the review fingerprint for a raw base64url Ed25519 public key."""
+
+    public_bytes = _base64url_decode(public_value)
+    if len(public_bytes) != 32:
+        raise ManifestError("Ed25519 public key must contain exactly 32 bytes")
+    return f"sha256:{hashlib.sha256(public_bytes).hexdigest()}"
+
+
+def validate_keyring(keyring: dict[str, Any]) -> None:
+    """Validate the complete, deliberately small OTA trust store."""
+
+    if set(keyring) != {"schema_version", "keys"}:
+        raise ManifestError("keyring fields differ from the version 1 schema")
+    if keyring.get("schema_version") != SCHEMA_VERSION:
         raise ManifestError("unsupported keyring schema")
-    keys = value.get("keys")
+    keys = keyring.get("keys")
     if not isinstance(keys, list):
         raise ManifestError("keyring keys must be a list")
-    return cast(dict[str, Any], value)
+    if len(keys) > 32:
+        raise ManifestError("keyring contains too many keys")
+    seen_ids: set[str] = set()
+    seen_public_keys: set[str] = set()
+    required = {
+        "key_id",
+        "algorithm",
+        "public_key",
+        "public_key_sha256",
+        "channels",
+        "status",
+    }
+    for entry in keys:
+        if not isinstance(entry, dict) or set(entry) != required:
+            raise ManifestError("keyring entry fields differ from the version 1 schema")
+        key_id = entry.get("key_id")
+        if not isinstance(key_id, str) or KEY_ID.fullmatch(key_id) is None:
+            raise ManifestError("invalid keyring key ID")
+        if key_id in seen_ids:
+            raise ManifestError("keyring key IDs must be unique")
+        seen_ids.add(key_id)
+        if entry.get("algorithm") != "Ed25519":
+            raise ManifestError("keyring algorithm must be Ed25519")
+        public_value = entry.get("public_key")
+        if not isinstance(public_value, str):
+            raise ManifestError("keyring public key must be a string")
+        fingerprint = public_key_fingerprint(public_value)
+        if public_value in seen_public_keys:
+            raise ManifestError("keyring public keys must be unique")
+        seen_public_keys.add(public_value)
+        declared_fingerprint = entry.get("public_key_sha256")
+        if (
+            not isinstance(declared_fingerprint, str)
+            or SHA256_FINGERPRINT.fullmatch(declared_fingerprint) is None
+            or declared_fingerprint != fingerprint
+        ):
+            raise ManifestError("keyring public-key fingerprint does not match")
+        channels = entry.get("channels")
+        if (
+            not isinstance(channels, list)
+            or not channels
+            or any(not isinstance(channel, str) or channel not in CHANNELS for channel in channels)
+            or len(set(channels)) != len(channels)
+        ):
+            raise ManifestError("keyring channels must be a non-empty unique channel list")
+        if entry.get("status") not in {"active", "revoked"}:
+            raise ManifestError("keyring status must be active or revoked")
 
 
 def verify_manifest(
@@ -237,6 +306,7 @@ def verify_manifest(
     expected_channel: str | None = None,
 ) -> None:
     validate_manifest(manifest)
+    validate_keyring(keyring)
     if expected_channel is not None and manifest["channel"] != expected_channel:
         raise ManifestError("manifest channel does not match the requested channel")
     keys = keyring.get("keys")
@@ -275,6 +345,16 @@ def verify_manifest(
 
 def public_key_value(private_key: Ed25519PrivateKey) -> str:
     public = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return _base64url_encode(public)
+
+
+def encoded_public_key(public_key: Ed25519PublicKey) -> str:
+    """Encode an already-public Ed25519 key for the OTA keyring."""
+
+    public = public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )

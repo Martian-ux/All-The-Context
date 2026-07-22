@@ -9,10 +9,18 @@ from allthecontext.release_manifest import (
     ManifestError,
     canonical_payload,
     create_manifest,
+    public_key_fingerprint,
     public_key_value,
     verify_manifest,
 )
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from scripts import release_manifest as release_manifest_script
+from scripts.release_manifest import (
+    load_encrypted_private_key_interactive,
+    require_private_key_outside_repository,
+)
 
 TEST_ONLY_SEED = bytes(range(32))
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +53,7 @@ def _release(tmp_path: Path) -> tuple[dict[str, object], dict[str, object]]:
                 "key_id": "test-only-2026",
                 "algorithm": "Ed25519",
                 "public_key": public_key_value(private_key),
+                "public_key_sha256": public_key_fingerprint(public_key_value(private_key)),
                 "channels": ["stable", "beta"],
                 "status": "active",
             }
@@ -117,3 +126,73 @@ def test_mutable_or_insecure_artifact_urls_are_rejected(tmp_path: Path, url: str
             key_id="test-only-2026",
             private_key=Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED),
         )
+
+
+def test_offline_signing_key_must_resolve_outside_checkout(tmp_path: Path) -> None:
+    repository = tmp_path / "checkout"
+    repository.mkdir()
+    inside = repository / "release-private.pem"
+    outside = tmp_path / "offline-private.pem"
+    inside.write_text("test-only", encoding="utf-8")
+    outside.write_text("test-only", encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="outside"):
+        require_private_key_outside_repository(inside, repository)
+    assert require_private_key_outside_repository(outside, repository) == outside.resolve()
+
+
+def test_offline_signing_loads_password_protected_key_with_no_echo_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = "test-only-password"
+    private = Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED)
+    encrypted = tmp_path / "encrypted-private.pem"
+    encrypted.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.BestAvailableEncryption(password.encode()),
+        )
+    )
+    prompts: list[str] = []
+    monkeypatch.setattr(release_manifest_script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        release_manifest_script.getpass,
+        "getpass",
+        lambda prompt: prompts.append(prompt) or password,
+    )
+
+    loaded = load_encrypted_private_key_interactive(encrypted)
+
+    assert public_key_value(loaded) == public_key_value(private)
+    assert prompts == ["Offline release key password: "]
+
+
+def test_offline_signing_rejects_plaintext_key_and_noninteractive_password(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private = Ed25519PrivateKey.from_private_bytes(TEST_ONLY_SEED)
+    plaintext = tmp_path / "plaintext-private.pem"
+    plaintext.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    with pytest.raises(ManifestError, match="encrypted PKCS8"):
+        load_encrypted_private_key_interactive(plaintext)
+
+    encrypted = tmp_path / "encrypted-private.pem"
+    encrypted.write_bytes(
+        private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.BestAvailableEncryption(b"test-only-password"),
+        )
+    )
+    monkeypatch.setattr(release_manifest_script.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(ManifestError, match="interactive terminal"):
+        load_encrypted_private_key_interactive(encrypted)

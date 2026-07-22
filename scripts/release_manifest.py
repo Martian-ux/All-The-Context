@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +16,44 @@ from allthecontext.release_manifest import (
     load_private_key,
     verify_manifest,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def require_private_key_outside_repository(path: Path, repository_root: Path) -> Path:
+    """Reject a signing key located anywhere in the source checkout."""
+
+    resolved = path.resolve(strict=True)
+    try:
+        resolved.relative_to(repository_root.resolve(strict=True))
+    except ValueError:
+        return resolved
+    raise ManifestError("release signing private key must remain outside the repository")
+
+
+def load_encrypted_private_key_interactive(path: Path) -> Ed25519PrivateKey:
+    """Load an encrypted PKCS8 key using a no-echo terminal prompt only."""
+
+    value = path.read_bytes()
+    if b"-----BEGIN ENCRYPTED PRIVATE KEY-----" not in value:
+        raise ManifestError("offline release signing requires an encrypted PKCS8 PEM private key")
+    if not sys.stdin.isatty():
+        raise ManifestError("an interactive terminal is required for the private-key password")
+    password_text = getpass.getpass("Offline release key password: ")
+    if not password_text:
+        raise ManifestError("private-key password cannot be empty")
+    password = password_text.encode("utf-8")
+    password_text = ""
+    try:
+        return load_private_key(path, password=password)
+    finally:
+        password = b""
 
 
 def parser() -> argparse.ArgumentParser:
@@ -36,6 +71,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--release-notes-url", required=True)
     create.add_argument("--key-id", required=True)
     create.add_argument("--private-key", type=Path, required=True)
+    create.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     create.add_argument("--output", type=Path, required=True)
     verify = commands.add_parser("verify", help="verify signature, trust, channel, and policy")
     verify.add_argument("--manifest", type=Path, required=True)
@@ -50,6 +86,10 @@ def main() -> int:
     arguments = parser().parse_args()
     try:
         if arguments.command == "create":
+            private_key_path = require_private_key_outside_repository(
+                arguments.private_key,
+                arguments.repository_root,
+            )
             manifest = create_manifest(
                 artifact=arguments.artifact,
                 version=arguments.version,
@@ -61,7 +101,7 @@ def main() -> int:
                 mandatory=arguments.mandatory,
                 release_notes_url=arguments.release_notes_url,
                 key_id=arguments.key_id,
-                private_key=load_private_key(arguments.private_key),
+                private_key=load_encrypted_private_key_interactive(private_key_path),
             )
             _write_json(arguments.output, manifest)
             return 0
