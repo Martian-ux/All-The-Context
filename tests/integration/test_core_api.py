@@ -6,6 +6,8 @@ import re
 import tomllib
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 from allthecontext.browser_session import (
     BROWSER_AUTH_SCHEME,
@@ -19,6 +21,7 @@ from allthecontext.core import app as core_app
 from allthecontext.core.app import create_app
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.export import restore_export
+from allthecontext.updater import PreparedArtifact, UpdatePhase
 from fastapi.testclient import TestClient
 
 
@@ -97,6 +100,43 @@ def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path
             json={"enabled": True, "channel": "nightly"},
         )
         assert invalid.status_code == 422
+
+
+def test_verified_update_artifact_is_private_no_store_and_ephemeral(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    artifact = tmp_path / "private-export.zip"
+    artifact.write_bytes(b"freshly reverified package")
+
+    class ArtifactManager:
+        preferences = SimpleNamespace(enabled=False, channel="stable")
+        config = SimpleNamespace(manifest_urls={})
+        state = SimpleNamespace(phase=UpdatePhase.MANUAL_REQUIRED)
+
+        @staticmethod
+        def public_status() -> dict[str, Any]:
+            return {"phase": "manual_required"}
+
+        @staticmethod
+        def prepare_artifact_export() -> PreparedArtifact:
+            return PreparedArtifact(
+                artifact,
+                "all-the-context-0.2.0-linux-x86_64.zip",
+                artifact.stat().st_size,
+            )
+
+    with TestClient(create_app(config, update_manager=cast(Any, ArtifactManager()))) as client:
+        response = client.get(
+            "/v1/admin/updates/artifact",
+            headers={DASHBOARD_REQUEST_HEADER: "1"},
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"freshly reverified package"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "all-the-context-0.2.0-linux-x86_64.zip" in response.headers["content-disposition"]
+    assert str(artifact) not in response.text
+    assert not artifact.exists()
 
 
 def test_dashboard_downloads_complete_encrypted_export(tmp_path: Path, monkeypatch) -> None:

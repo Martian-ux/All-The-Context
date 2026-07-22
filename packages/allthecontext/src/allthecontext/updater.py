@@ -14,13 +14,16 @@ import os
 import platform
 import shutil
 import sqlite3
+import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.request
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -30,7 +33,13 @@ from urllib.parse import urlsplit
 
 from platformdirs import user_data_path
 
-from .release_manifest import ManifestError, ReleaseVersion, load_keyring, verify_manifest
+from .release_manifest import (
+    ManifestError,
+    ReleaseVersion,
+    load_keyring,
+    sha256_file,
+    verify_manifest,
+)
 
 CURRENT_VERSION = "0.1.0"
 MAX_MANIFEST_BYTES = 128 * 1024
@@ -39,6 +48,7 @@ CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 20.0
 MAX_REDIRECTS = 0
 CHECK_INTERVAL = timedelta(hours=24)
+MAX_CLEANUP_ENTRIES = 32
 
 Channel = Literal["stable", "beta"]
 
@@ -92,6 +102,13 @@ class UpdateState:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedArtifact:
+    path: Path
+    filename: str
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
 class UpdateConfig:
     data_dir: Path
     keyring_path: Path
@@ -116,11 +133,19 @@ class UpdateConfig:
 
 def current_platform() -> tuple[str, str]:
     system = platform.system()
-    platform_name = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}.get(
-        system, system.casefold()
-    )
+    try:
+        platform_name = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}[system]
+    except KeyError as exc:
+        raise UpdateError("Automatic update checks do not support this operating system") from exc
+    if struct.calcsize("P") * 8 != 64:
+        raise UpdateError("Automatic update checks require a 64-bit application runtime")
     machine = platform.machine().casefold()
-    architecture = "arm64" if machine in {"arm64", "aarch64"} else "x86_64"
+    if machine in {"arm64", "aarch64"}:
+        architecture = "arm64"
+    elif machine in {"amd64", "x86_64"}:
+        architecture = "x86_64"
+    else:
+        raise UpdateError("Automatic update checks do not support this CPU architecture")
     return platform_name, architecture
 
 
@@ -204,10 +229,23 @@ class HttpsTransport:
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise UpdateError("Update endpoint could not be reached within the time limit") from exc
 
+    @staticmethod
+    def _content_length(headers: Any) -> int | None:
+        declared = headers.get("Content-Length")
+        if declared is None:
+            return None
+        try:
+            value = int(declared)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise UpdateError("Update endpoint returned an invalid Content-Length") from exc
+        if value < 0:
+            raise UpdateError("Update endpoint returned an invalid Content-Length")
+        return value
+
     def get_bytes(self, url: str, *, maximum_bytes: int) -> bytes:
         with self._open(url) as response:
-            declared = response.headers.get("Content-Length")
-            if declared is not None and int(declared) > maximum_bytes:
+            declared = self._content_length(response.headers)
+            if declared is not None and declared > maximum_bytes:
                 raise UpdateError("Update metadata exceeds the size limit")
             value = response.read(maximum_bytes + 1)
         if len(value) > maximum_bytes:
@@ -228,8 +266,8 @@ class HttpsTransport:
         received = 0
         try:
             with self._open(url) as response, target.open("xb") as output:
-                declared = response.headers.get("Content-Length")
-                if declared is not None and int(declared) != expected_bytes:
+                declared = self._content_length(response.headers)
+                if declared is not None and declared != expected_bytes:
                     raise UpdateError("Release download length differs from signed metadata")
                 while True:
                     if cancelled():
@@ -433,33 +471,57 @@ class UpdateManager:
         self.installer = installer or PlatformInstaller()
         self.backup = backup or SQLiteBackup()
         self.health_probe = health_probe or LoopbackHealthProbe()
-        self._operation_lock = threading.Lock()
+        self._operation_gate = threading.Lock()
+        self._operation_lock = threading.RLock()
         self._cancel = threading.Event()
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
         self.preferences_path = self.config.data_dir / "preferences.json"
         self.state_path = self.config.data_dir / "state.json"
-        self.preferences = self._load_preferences()
-        self.state = self._load_state()
-        self.state.current_version = config.current_version
-        self._recover_interrupted()
+        with self._operation_lock:
+            self.preferences = self._load_preferences()
+            self.state = self._load_state()
+            self.state.current_version = config.current_version
+            self._validate_internal_state()
+            self._recover_interrupted()
+            self._prune_directory(self.config.data_dir / "staging", keep=self.state.operation_id)
+            self._prune_directory(self.config.data_dir / "exports", keep=None)
+            self._atomic_json(self.preferences_path, asdict(self.preferences))
+            self._save()
 
     @staticmethod
     def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f"{path.name}.atc-new")
-        temporary.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f"{path.name}.", suffix=".atc-new", dir=path.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(json.dumps(value, sort_keys=True, indent=2) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def _load_preferences(self) -> UpdatePreferences:
         try:
             value = json.loads(self.preferences_path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or not isinstance(value.get("enabled", True), bool):
+                raise ValueError("invalid preferences")
             channel = value.get("channel")
             if channel not in {"stable", "beta"}:
                 raise ValueError("invalid channel")
+            deferred = value.get("deferred_version")
+            if deferred is not None:
+                if not isinstance(deferred, str):
+                    raise ValueError("invalid deferred version")
+                ReleaseVersion.parse(deferred)
             return UpdatePreferences(
-                enabled=bool(value.get("enabled", True)),
+                enabled=value.get("enabled", True),
                 channel=cast(Channel, channel),
-                deferred_version=value.get("deferred_version"),
+                deferred_version=deferred,
             )
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
             return UpdatePreferences()
@@ -467,16 +529,94 @@ class UpdateManager:
     def _load_state(self) -> UpdateState:
         try:
             value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("invalid state")
             value["phase"] = UpdatePhase(value["phase"])
             allowed = set(UpdateState.__dataclass_fields__)
-            return UpdateState(**{key: item for key, item in value.items() if key in allowed})
+            state = UpdateState(**{key: item for key, item in value.items() if key in allowed})
+            optional_strings = (
+                state.offered_version,
+                state.release_notes_url,
+                state.downloaded_path,
+                state.backup_path,
+                state.last_checked_at,
+                state.last_error,
+                state.operation_id,
+            )
+            if any(item is not None and not isinstance(item, str) for item in optional_strings):
+                raise ValueError("invalid state string")
+            if not isinstance(state.current_version, str):
+                raise ValueError("invalid current version")
+            ReleaseVersion.parse(state.current_version)
+            if state.offered_version is not None:
+                ReleaseVersion.parse(state.offered_version)
+            if not isinstance(state.mandatory, bool):
+                raise ValueError("invalid mandatory flag")
+            if (
+                isinstance(state.recovery_attempts, bool)
+                or not isinstance(state.recovery_attempts, int)
+                or state.recovery_attempts < 0
+            ):
+                raise ValueError("invalid recovery attempts")
+            if state.operation_id is not None and (
+                len(state.operation_id) != 24
+                or any(character not in "0123456789abcdef" for character in state.operation_id)
+            ):
+                raise ValueError("invalid operation ID")
+            return state
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+            if self.state_path.exists():
+                return UpdateState(
+                    phase=UpdatePhase.ERROR,
+                    current_version=self.config.current_version,
+                    last_error="Persisted update state was corrupt and was reset safely",
+                )
             return UpdateState(current_version=self.config.current_version)
+
+    def _validate_internal_state(self) -> None:
+        invalid = False
+        operation = self.state.operation_id
+        expected_artifact = (
+            self.config.data_dir / "staging" / operation / "artifact.zip"
+            if operation is not None
+            else None
+        )
+        if self.state.downloaded_path is not None:
+            try:
+                downloaded_path_valid = (
+                    expected_artifact is not None
+                    and Path(self.state.downloaded_path).resolve() == expected_artifact.resolve()
+                )
+            except OSError:
+                downloaded_path_valid = False
+            if not downloaded_path_valid:
+                self.state.downloaded_path = None
+                invalid = True
+        if self.state.backup_path is not None:
+            backup_root = (self.config.data_dir / "backups").resolve()
+            try:
+                Path(self.state.backup_path).resolve().relative_to(backup_root)
+            except (OSError, ValueError):
+                self.state.backup_path = None
+                invalid = True
+        if invalid:
+            self.state.phase = UpdatePhase.ERROR
+            self.state.last_error = "Persisted update paths were invalid and were reset safely"
 
     def _save(self) -> None:
         value = asdict(self.state)
         value["phase"] = self.state.phase.value
         self._atomic_json(self.state_path, value)
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        if not self._operation_gate.acquire(blocking=False):
+            raise UpdateBusyError("Another update operation is already in progress")
+        try:
+            with self._operation_lock:
+                yield
+        finally:
+            self._operation_gate.release()
 
     def _recover_interrupted(self) -> None:
         if self.state.phase in {UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING}:
@@ -488,29 +628,45 @@ class UpdateManager:
     def recover_after_restart(self) -> dict[str, Any]:
         """Resolve a persisted handoff exactly once after the replacement starts."""
 
-        if self.state.phase not in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-            return self.public_status()
-        offered = self.state.offered_version
-        version_advanced = offered is not None and (
-            ReleaseVersion.parse(self.config.current_version) >= ReleaseVersion.parse(offered)
-        )
-        if version_advanced and self.health_probe.healthy():
-            self.state.phase = UpdatePhase.INSTALLED
-            self.state.last_error = None
-            self._clean_operation()
+        with self._exclusive():
+            if self.state.phase not in {
+                UpdatePhase.INSTALLING,
+                UpdatePhase.RESTART_REQUIRED,
+            }:
+                return self.public_status()
+            offered = self.state.offered_version
+            try:
+                version_advanced = offered is not None and (
+                    ReleaseVersion.parse(self.config.current_version)
+                    >= ReleaseVersion.parse(offered)
+                )
+            except ManifestError:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = (
+                    "Persisted update recovery metadata was invalid and was reset safely"
+                )
+                self._save()
+                return self.public_status()
+            if version_advanced and self.health_probe.healthy():
+                self.state.phase = UpdatePhase.INSTALLED
+                self.state.last_error = None
+                self._clean_operation()
+                self._save()
+                return self.public_status()
+            try:
+                self.installer.rollback(self.state)
+                self.state.phase = UpdatePhase.ROLLED_BACK
+                self.state.last_error = (
+                    "The new version failed its health check and was rolled back"
+                )
+            except UpdateError as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = (
+                    "The new version did not become healthy and automatic rollback failed: "
+                    + str(exc)
+                )[:500]
             self._save()
             return self.public_status()
-        try:
-            self.installer.rollback(self.state)
-            self.state.phase = UpdatePhase.ROLLED_BACK
-            self.state.last_error = "The new version failed its health check and was rolled back"
-        except UpdateError as exc:
-            self.state.phase = UpdatePhase.ERROR
-            self.state.last_error = (
-                "The new version did not become healthy and automatic rollback failed: " + str(exc)
-            )[:500]
-        self._save()
-        return self.public_status()
 
     def _operation_directory(self) -> Path:
         operation = self.state.operation_id or "pending"
@@ -522,40 +678,67 @@ class UpdateManager:
             shutil.rmtree(operation, ignore_errors=True)
         self.state.downloaded_path = None
 
+    @staticmethod
+    def _prune_directory(root: Path, *, keep: str | None) -> None:
+        """Remove at most a bounded number of private orphan entries."""
+
+        if not root.is_dir():
+            return
+        removed = 0
+        try:
+            entries = root.iterdir()
+            for entry in entries:
+                if removed >= MAX_CLEANUP_ENTRIES:
+                    break
+                if keep is not None and entry.name == keep:
+                    continue
+                try:
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry)
+                    else:
+                        entry.unlink(missing_ok=True)
+                except OSError:
+                    continue
+                removed += 1
+        except OSError:
+            return
+
     def public_status(self) -> dict[str, Any]:
-        result = asdict(self.state)
-        result["phase"] = self.state.phase.value
-        result.update(
-            {
-                "enabled": self.preferences.enabled,
-                "channel": self.preferences.channel,
-                "deferred_version": self.preferences.deferred_version,
-                "automatic_install_supported": self.installer.supported,
-                "installer_detail": (
-                    "Packaged Windows update can restart into the verified installer"
-                    if self.installer.supported
-                    else self.installer.unsupported_reason
-                ),
-                "configured": self.preferences.channel in self.config.manifest_urls,
-            }
-        )
-        # Private staging and backup paths are intentionally not exposed to the dashboard.
-        result.pop("downloaded_path", None)
-        result.pop("backup_path", None)
-        result.pop("operation_id", None)
-        return result
+        with self._operation_lock:
+            result = asdict(self.state)
+            result["phase"] = self.state.phase.value
+            result.update(
+                {
+                    "enabled": self.preferences.enabled,
+                    "channel": self.preferences.channel,
+                    "deferred_version": self.preferences.deferred_version,
+                    "automatic_install_supported": self.installer.supported,
+                    "verified_artifact_available": self.state.downloaded_path is not None
+                    and self.state.phase in {UpdatePhase.READY, UpdatePhase.MANUAL_REQUIRED},
+                    "installer_detail": (
+                        "Packaged update can restart into the verified installer"
+                        if self.installer.supported
+                        else self.installer.unsupported_reason
+                    ),
+                    "configured": self.preferences.channel in self.config.manifest_urls,
+                }
+            )
+            # Private staging and backup paths are intentionally not exposed.
+            result.pop("downloaded_path", None)
+            result.pop("backup_path", None)
+            result.pop("operation_id", None)
+            return result
 
     def configure(self, *, enabled: bool, channel: Channel) -> dict[str, Any]:
         if channel not in {"stable", "beta"}:
             raise UpdateError("Update channel must be stable or beta")
-        if not self._operation_lock.acquire(blocking=False):
-            raise UpdateBusyError("Another update operation is already in progress")
-        try:
+        with self._exclusive():
             channel_changed = channel != self.preferences.channel
             self.preferences = UpdatePreferences(enabled, channel, None)
             self._atomic_json(self.preferences_path, asdict(self.preferences))
             if channel_changed:
                 self._clean_operation()
+                self._prune_directory(self.config.data_dir / "staging", keep=None)
                 self.state.offered_version = None
                 self.state.mandatory = False
                 self.state.release_notes_url = None
@@ -569,191 +752,276 @@ class UpdateManager:
                 self.state.last_error = None
             self._save()
             return self.public_status()
-        finally:
-            self._operation_lock.release()
 
     def defer(self) -> dict[str, Any]:
-        if self.state.offered_version is None:
-            raise UpdateError("There is no available update to defer")
-        if self.state.mandatory:
-            raise UpdateError("This compatibility or security update cannot be deferred")
-        self.preferences = UpdatePreferences(
-            self.preferences.enabled, self.preferences.channel, self.state.offered_version
-        )
-        self._atomic_json(self.preferences_path, asdict(self.preferences))
-        self.state.phase = UpdatePhase.DEFERRED
-        self._save()
-        return self.public_status()
+        with self._exclusive():
+            if self.state.offered_version is None:
+                raise UpdateError("There is no available update to defer")
+            if self.state.mandatory:
+                raise UpdateError("This compatibility or security update cannot be deferred")
+            self.preferences = UpdatePreferences(
+                self.preferences.enabled, self.preferences.channel, self.state.offered_version
+            )
+            self._atomic_json(self.preferences_path, asdict(self.preferences))
+            self.state.phase = UpdatePhase.DEFERRED
+            self._save()
+            return self.public_status()
 
     def clear_error(self) -> dict[str, Any]:
-        self.state.last_error = None
-        if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
-            self.state.phase = UpdatePhase.IDLE
-        self._save()
-        return self.public_status()
+        with self._exclusive():
+            self.state.last_error = None
+            if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
+                self.state.phase = UpdatePhase.IDLE
+            self._save()
+            return self.public_status()
 
     def cancel(self) -> dict[str, Any]:
         self._cancel.set()
-        return self.public_status()
+        with self._operation_gate, self._operation_lock:
+            return self.public_status()
 
     def scheduled_check(self) -> dict[str, Any]:
-        last = _parse_time(self.state.last_checked_at)
-        if not self.preferences.enabled or (
-            last is not None and datetime.now(UTC) - last < CHECK_INTERVAL
-        ):
-            return self.public_status()
+        with self._operation_lock:
+            last = _parse_time(self.state.last_checked_at)
+            if not self.preferences.enabled or (
+                last is not None and datetime.now(UTC) - last < CHECK_INTERVAL
+            ):
+                return self.public_status()
         return self.check(respect_defer=True)
 
-    def _begin(self, phase: UpdatePhase) -> None:
-        if not self._operation_lock.acquire(blocking=False):
-            raise UpdateBusyError("Another update operation is already in progress")
-        self._cancel.clear()
-        self.state.phase = phase
-        self.state.last_error = None
-        self._save()
-
-    def _finish(self) -> None:
-        self._operation_lock.release()
-
     def check(self, *, respect_defer: bool = False) -> dict[str, Any]:
-        if not self.preferences.enabled:
-            self.state.phase = UpdatePhase.DISABLED
+        with self._exclusive():
+            if not self.preferences.enabled:
+                self.state.phase = UpdatePhase.DISABLED
+                self._save()
+                return self.public_status()
+            url = self.config.manifest_urls.get(self.preferences.channel)
+            if url is None:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = (
+                    "No HTTPS metadata endpoint is configured for this update channel"
+                )
+                self._save()
+                return self.public_status()
+            self._cancel.clear()
+            self.state.phase = UpdatePhase.CHECKING
+            self.state.last_error = None
             self._save()
-            return self.public_status()
-        url = self.config.manifest_urls.get(self.preferences.channel)
-        if url is None:
-            self.state.phase = UpdatePhase.ERROR
-            self.state.last_error = (
-                "No HTTPS metadata endpoint is configured for this update channel"
-            )
-            self._save()
-            return self.public_status()
-        self._begin(UpdatePhase.CHECKING)
-        try:
-            raw = self.transport.get_bytes(url, maximum_bytes=MAX_MANIFEST_BYTES)
-            value = json.loads(raw.decode("utf-8"))
-            if not isinstance(value, dict):
-                raise UpdateError("Update metadata must be a JSON object")
-            manifest = cast(dict[str, Any], value)
-            keyring = load_keyring(self.config.keyring_path)
-            verify_manifest(
-                manifest,
-                keyring,
-                current_version=self.config.current_version,
-                expected_channel=self.preferences.channel,
-            )
-            if manifest["platform"] != self.config.platform_name:
-                raise UpdateError("Signed update metadata targets a different platform")
-            if manifest["architecture"] != self.config.architecture:
-                raise UpdateError("Signed update metadata targets a different architecture")
-            offered = cast(str, manifest["version"])
-            self.state.last_checked_at = _utc_now()
-            self.state.offered_version = offered
-            self.state.mandatory = cast(bool, manifest["mandatory"])
-            self.state.release_notes_url = cast(str, manifest["release_notes_url"])
-            self.state.operation_id = hashlib.sha256(raw).hexdigest()[:24]
-            self._atomic_json(self._operation_directory() / "manifest.json", manifest)
-            if ReleaseVersion.parse(offered) == ReleaseVersion.parse(self.config.current_version):
-                self.state.phase = UpdatePhase.CURRENT
-            elif (
-                respect_defer
-                and not self.state.mandatory
-                and offered == self.preferences.deferred_version
-            ):
-                self.state.phase = UpdatePhase.DEFERRED
-            else:
-                self.state.phase = UpdatePhase.AVAILABLE
-            self._save()
-            return self.public_status()
-        except (
-            ManifestError,
-            OSError,
-            UnicodeError,
-            ValueError,
-            TypeError,
-            json.JSONDecodeError,
-            UpdateError,
-        ) as exc:
-            self.state.phase = UpdatePhase.ERROR
-            self.state.last_error = str(exc)[:500]
-            self.state.last_checked_at = _utc_now()
-            self._save()
-            return self.public_status()
-        finally:
-            self._finish()
+            try:
+                raw = self.transport.get_bytes(url, maximum_bytes=MAX_MANIFEST_BYTES)
+                value = json.loads(raw.decode("utf-8"))
+                if not isinstance(value, dict):
+                    raise UpdateError("Update metadata must be a JSON object")
+                manifest = cast(dict[str, Any], value)
+                keyring = load_keyring(self.config.keyring_path)
+                verify_manifest(
+                    manifest,
+                    keyring,
+                    current_version=self.config.current_version,
+                    expected_channel=self.preferences.channel,
+                )
+                if manifest["platform"] != self.config.platform_name:
+                    raise UpdateError("Signed update metadata targets a different platform")
+                if manifest["architecture"] != self.config.architecture:
+                    raise UpdateError("Signed update metadata targets a different architecture")
+                offered = cast(str, manifest["version"])
+                operation_id = hashlib.sha256(raw).hexdigest()[:24]
+                self._prune_directory(self.config.data_dir / "staging", keep=operation_id)
+                self.state.last_checked_at = _utc_now()
+                self.state.offered_version = offered
+                self.state.mandatory = cast(bool, manifest["mandatory"])
+                self.state.release_notes_url = cast(str, manifest["release_notes_url"])
+                self.state.operation_id = operation_id
+                self.state.downloaded_path = None
+                self._atomic_json(self._operation_directory() / "manifest.json", manifest)
+                if ReleaseVersion.parse(offered) == ReleaseVersion.parse(
+                    self.config.current_version
+                ):
+                    self.state.phase = UpdatePhase.CURRENT
+                elif (
+                    respect_defer
+                    and not self.state.mandatory
+                    and offered == self.preferences.deferred_version
+                ):
+                    self.state.phase = UpdatePhase.DEFERRED
+                else:
+                    self.state.phase = UpdatePhase.AVAILABLE
+                self._save()
+                return self.public_status()
+            except (
+                ManifestError,
+                OSError,
+                UnicodeError,
+                ValueError,
+                TypeError,
+                json.JSONDecodeError,
+                UpdateError,
+            ) as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = str(exc)[:500]
+                self.state.last_checked_at = _utc_now()
+                self._save()
+                return self.public_status()
 
     def download(self) -> dict[str, Any]:
-        if self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
-            raise UpdateError("A verified available update is required before download")
-        manifest_path = self._operation_directory() / "manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise UpdateError(
-                "Verified update metadata is no longer available; check again"
-            ) from exc
-        self._begin(UpdatePhase.DOWNLOADING)
-        target = self._operation_directory() / "artifact.zip"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
-        try:
-            digest, received = self.transport.stream(
-                cast(str, manifest["url"]),
-                target,
-                expected_bytes=cast(int, manifest["size"]),
-                cancelled=self._cancel.is_set,
-            )
-            if received != manifest["size"] or digest != manifest["sha256"]:
-                raise UpdateError("Release artifact checksum does not match signed metadata")
-            self.state.downloaded_path = str(target)
-            self.state.phase = (
-                UpdatePhase.READY if self.installer.supported else UpdatePhase.MANUAL_REQUIRED
-            )
-            if not self.installer.supported:
-                self.state.last_error = self.installer.unsupported_reason
+        with self._exclusive():
+            if self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
+                raise UpdateError("A verified available update is required before download")
+            manifest_path = self._operation_directory() / "manifest.json"
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise UpdateError(
+                    "Verified update metadata is no longer available; check again"
+                ) from exc
+            self._cancel.clear()
+            self.state.phase = UpdatePhase.DOWNLOADING
+            self.state.last_error = None
             self._save()
-            return self.public_status()
-        except (OSError, UpdateError) as exc:
+            target = self._operation_directory() / "artifact.zip"
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.unlink(missing_ok=True)
-            self.state.downloaded_path = None
-            self.state.phase = (
-                UpdatePhase.CANCELLED if "cancel" in str(exc).casefold() else UpdatePhase.ERROR
+            try:
+                digest, received = self.transport.stream(
+                    cast(str, manifest["url"]),
+                    target,
+                    expected_bytes=cast(int, manifest["size"]),
+                    cancelled=self._cancel.is_set,
+                )
+                if received != manifest["size"] or digest != manifest["sha256"]:
+                    raise UpdateError("Release artifact checksum does not match signed metadata")
+                self.state.downloaded_path = str(target)
+                self.state.phase = (
+                    UpdatePhase.READY if self.installer.supported else UpdatePhase.MANUAL_REQUIRED
+                )
+                if not self.installer.supported:
+                    self.state.last_error = self.installer.unsupported_reason
+                self._save()
+                return self.public_status()
+            except (OSError, UpdateError) as exc:
+                target.unlink(missing_ok=True)
+                self.state.downloaded_path = None
+                self.state.phase = (
+                    UpdatePhase.CANCELLED if "cancel" in str(exc).casefold() else UpdatePhase.ERROR
+                )
+                self.state.last_error = str(exc)[:500]
+                self._save()
+                return self.public_status()
+
+    def prepare_artifact_export(self) -> PreparedArtifact:
+        """Copy a freshly re-verified staged artifact for one authenticated response."""
+
+        with self._exclusive():
+            if (
+                self.state.phase
+                not in {
+                    UpdatePhase.READY,
+                    UpdatePhase.MANUAL_REQUIRED,
+                }
+                or self.state.downloaded_path is None
+            ):
+                raise UpdateError("A completely verified update must be ready before saving")
+            try:
+                raw_manifest = json.loads(
+                    (self._operation_directory() / "manifest.json").read_text(encoding="utf-8")
+                )
+                if not isinstance(raw_manifest, dict):
+                    raise UpdateError("Verified update metadata is invalid; check again")
+                manifest = cast(dict[str, Any], raw_manifest)
+                verify_manifest(
+                    manifest,
+                    load_keyring(self.config.keyring_path),
+                    current_version=self.config.current_version,
+                    expected_channel=self.preferences.channel,
+                )
+                if manifest["platform"] != self.config.platform_name:
+                    raise UpdateError("Signed update metadata targets a different platform")
+                if manifest["architecture"] != self.config.architecture:
+                    raise UpdateError("Signed update metadata targets a different architecture")
+                if manifest["version"] != self.state.offered_version:
+                    raise UpdateError("Verified update state no longer matches its metadata")
+                source = Path(self.state.downloaded_path)
+                expected = self._operation_directory() / "artifact.zip"
+                if source.resolve() != expected.resolve() or not source.is_file():
+                    raise UpdateError(
+                        "Verified update artifact is no longer available; download again"
+                    )
+                source_digest, source_size = sha256_file(source)
+                if source_size != manifest["size"] or source_digest != manifest["sha256"]:
+                    raise UpdateError("Saved update artifact failed signed checksum verification")
+            except (ManifestError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise UpdateError(
+                    "Verified update artifact could not be re-verified; check again"
+                ) from exc
+
+            export_root = self.config.data_dir / "exports"
+            export_root.mkdir(parents=True, exist_ok=True)
+            descriptor, export_name = tempfile.mkstemp(suffix=".zip", dir=export_root)
+            export_path = Path(export_name)
+            try:
+                digest = hashlib.sha256()
+                copied = 0
+                with (
+                    source.open("rb") as input_stream,
+                    os.fdopen(descriptor, "wb") as output_stream,
+                ):
+                    while chunk := input_stream.read(1024 * 1024):
+                        copied += len(chunk)
+                        if copied > cast(int, manifest["size"]):
+                            raise UpdateError("Saved update artifact exceeded its signed size")
+                        digest.update(chunk)
+                        output_stream.write(chunk)
+                    output_stream.flush()
+                    os.fsync(output_stream.fileno())
+                if copied != manifest["size"] or digest.hexdigest() != manifest["sha256"]:
+                    raise UpdateError("Saved update artifact failed signed checksum verification")
+            except BaseException:
+                with suppress(OSError):
+                    os.close(descriptor)
+                export_path.unlink(missing_ok=True)
+                raise
+            filename = (
+                f"all-the-context-{manifest['version']}-{manifest['platform']}-"
+                f"{manifest['architecture']}.zip"
             )
-            self.state.last_error = str(exc)[:500]
-            self._save()
-            return self.public_status()
-        finally:
-            self._finish()
+            return PreparedArtifact(export_path, filename, copied)
 
     def install(self) -> dict[str, Any]:
-        if self.state.phase != UpdatePhase.READY or self.state.downloaded_path is None:
-            raise UpdateError("A completely verified update must be ready before install")
-        artifact = Path(self.state.downloaded_path)
-        manifest = json.loads(
-            (self._operation_directory() / "manifest.json").read_text(encoding="utf-8")
-        )
-        self._begin(UpdatePhase.INSTALLING)
-        try:
-            self.installer.preflight(artifact, cast(int, manifest["size"]))
-            backup_path = (
-                self.config.data_dir
-                / "backups"
-                / (f"core-{self.config.current_version}-before-{manifest['version']}.sqlite3")
-            )
-            self.backup.create(self.database_path, backup_path)
-            self.state.backup_path = str(backup_path)
-            self.state.recovery_attempts += 1
+        with self._exclusive():
+            if self.state.phase != UpdatePhase.READY or self.state.downloaded_path is None:
+                raise UpdateError("A completely verified update must be ready before install")
+            artifact = Path(self.state.downloaded_path)
+            try:
+                manifest = json.loads(
+                    (self._operation_directory() / "manifest.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise UpdateError(
+                    "Verified update metadata is no longer available; check again"
+                ) from exc
+            self._cancel.clear()
+            self.state.phase = UpdatePhase.INSTALLING
+            self.state.last_error = None
             self._save()
-            self.installer.handoff(
-                artifact, cast(str, manifest["version"]), self._operation_directory()
-            )
-            self.state.phase = UpdatePhase.RESTART_REQUIRED
-            self._save()
-            return self.public_status()
-        except (OSError, ValueError, UpdateError) as exc:
-            self.state.phase = UpdatePhase.ERROR
-            self.state.last_error = str(exc)[:500]
-            self._save()
-            return self.public_status()
-        finally:
-            self._finish()
+            try:
+                self.installer.preflight(artifact, cast(int, manifest["size"]))
+                backup_path = (
+                    self.config.data_dir
+                    / "backups"
+                    / (f"core-{self.config.current_version}-before-{manifest['version']}.sqlite3")
+                )
+                self.backup.create(self.database_path, backup_path)
+                self.state.backup_path = str(backup_path)
+                self.state.recovery_attempts += 1
+                self._save()
+                self.installer.handoff(
+                    artifact, cast(str, manifest["version"]), self._operation_directory()
+                )
+                self.state.phase = UpdatePhase.RESTART_REQUIRED
+                self._save()
+                return self.public_status()
+            except (OSError, ValueError, UpdateError) as exc:
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = str(exc)[:500]
+                self._save()
+                return self.public_status()

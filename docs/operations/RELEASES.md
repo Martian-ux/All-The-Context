@@ -97,6 +97,13 @@ clearing. State and nonsecret preferences live under
 the Core per-user app-data directory. Do not place credentials, release private
 keys, personal context, or raw server response bodies there or in logs.
 
+When a real platform remains manual-required, **Save verified package** asks
+Core for a new authenticated, no-store copy. Core re-verifies the stored signed
+manifest and the artifact's target, length, and SHA-256 during that request and
+deletes the response copy afterward. The dashboard never receives the private
+staging path. Saving a package does not make its installation automatic or
+assert that platform rollback has been observed.
+
 The check/download sequence is: bounded no-redirect manifest fetch; strict
 schema/key/signature/channel/platform/architecture/version verification;
 stream to per-operation staging; exact signed length and SHA-256 verification;
@@ -113,6 +120,11 @@ binary and pre-migration database after failed health. Do not enable or claim
 self-apply on Windows, macOS, or Linux until native publisher signing and a
 transactional cutover, health check, interrupted-recovery journal, and rollback
 have been observed on the authored OS.
+
+Unknown operating systems, unknown CPU identifiers, and 32-bit application
+runtimes fail closed. Repeated checks and channel changes remove a bounded
+number of orphan staging entries; startup also safely resets corrupt persisted
+state and bounded stale response copies.
 
 ## Verification and downgrade policy
 

@@ -201,6 +201,7 @@ export interface UpdateStatus {
   channel: "stable" | "beta";
   deferred_version?: string | null;
   automatic_install_supported: boolean;
+  verified_artifact_available: boolean;
   installer_detail: string;
   configured: boolean;
 }

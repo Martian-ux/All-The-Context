@@ -886,6 +886,7 @@ function UpdatesView() {
   const [enabled, setEnabled] = useState(true);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const apply = useCallback((next: UpdateStatus) => {
     setStatus(next); setChannel(next.channel); setEnabled(next.enabled); setError(null);
@@ -895,9 +896,24 @@ function UpdatesView() {
   }, [apply]);
 
   async function act(label: string, action: () => Promise<UpdateStatus>) {
-    setWorking(label); setError(null);
+    setWorking(label); setError(null); setNotice(null);
     try { apply(await action()); }
     catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(null); }
+  }
+
+  async function saveVerifiedArtifact() {
+    setWorking("save-artifact"); setError(null); setNotice(null);
+    try {
+      const blob = await api.verifiedUpdateArtifact();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `all-the-context-${status?.offered_version ?? "verified-update"}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+      setNotice("Verified package saved. Follow the platform installation instructions.");
+    } catch (caught) { setError(errorMessage(caught)); }
     finally { setWorking(null); }
   }
 
@@ -913,6 +929,7 @@ function UpdatesView() {
         {status ? <dl className="metric-line update-metrics"><div><dt>Installed</dt><dd>{status.current_version}</dd></div><div><dt>Status</dt><dd>{phaseLabel}</dd></div><div><dt>Last check</dt><dd>{formatDate(status.last_checked_at)}</dd></div></dl> : <LoadingRows />}
         {status?.last_error ? <Notice kind="error">{status.last_error}</Notice> : null}
         {error ? <Notice kind="error">{error}</Notice> : null}
+        {notice ? <Notice kind="success">{notice}</Notice> : null}
         {status?.deferred_version ? <Notice kind="info">Version {status.deferred_version} is deferred. A manual check can offer it again.</Notice> : null}
       </section>
       <section className="section-block update-controls">
@@ -926,6 +943,7 @@ function UpdatesView() {
           {status?.last_error ? <button className="quiet-button" disabled={busy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
           {status?.phase === "available" && !status.mandatory ? <button className="secondary-button" disabled={busy} onClick={() => void act("defer", api.deferUpdate)}>Defer</button> : null}
           {status?.phase === "available" ? <button className="primary-button" disabled={busy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
+          {status?.verified_artifact_available ? <button className="primary-button" disabled={busy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
           {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={busy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
           <button className="secondary-button" disabled={busy || !enabled} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
         </div>

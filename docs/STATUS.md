@@ -44,7 +44,7 @@
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
   Desktop was not running for a fresh local Edge image build in this release
   infrastructure validation.
-- OTA branch evidence on Windows 11/Python 3.14.3: 184 Python tests and 16
+- OTA branch evidence on Windows 11/Python 3.14.3: 194 Python tests and 18
   dashboard tests pass; Ruff check, strict mypy, dashboard type/build/audit,
   wheel/sdist resource diagnostics, and documentation checks pass. The frozen
   Windows artifact includes the reviewed public-key resource and passes the
@@ -52,6 +52,12 @@
   That smoke also asserts `automatic_install_supported` is false. Python source
   resolution was pinned and asserted inside this `8b6b` worktree; this is not
   macOS/Linux evidence and does not supersede the Python 3.12 CI target.
+- OTA hardening serializes every preference/state mutation, rejects unknown or
+  32-bit architectures, sanitizes malformed transport lengths and persisted
+  state, bounds orphan cleanup, and gives manual-required platforms an
+  authenticated no-store package response that is re-verified without exposing
+  private staging paths. Automatic installation remains disabled on every real
+  platform.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded

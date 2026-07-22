@@ -193,6 +193,7 @@ describe("dashboard", () => {
       channel: "stable",
       deferred_version: null,
       automatic_install_supported: true,
+      verified_artifact_available: false,
       installer_detail: "Packaged Windows update can restart into the verified installer",
       configured: true,
     };
@@ -215,6 +216,50 @@ describe("dashboard", () => {
     expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
+  });
+
+  it("saves a reverified package when automatic installation is unavailable", async () => {
+    const update = {
+      phase: "idle",
+      current_version: "0.1.0",
+      offered_version: null,
+      mandatory: false,
+      last_checked_at: null,
+      last_error: null,
+      recovery_attempts: 0,
+      enabled: true,
+      channel: "stable",
+      deferred_version: null,
+      automatic_install_supported: false,
+      verified_artifact_available: false,
+      installer_detail: "Manual installation is required",
+      configured: true,
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/edge")) return json(edgeStatus());
+      if (url.endsWith("/admin/updates/check")) return json({ ...update, phase: "available", offered_version: "0.2.0" });
+      if (url.endsWith("/admin/updates/download")) return json({ ...update, phase: "manual_required", offered_version: "0.2.0", verified_artifact_available: true });
+      if (url.endsWith("/admin/updates/artifact")) return new Response(new Blob(["verified package"]), { status: 200 });
+      if (url.endsWith("/admin/updates") && !init?.method) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:verified") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+    click.mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: /save verified package/i }));
+
+    expect(await screen.findByText(/verified package saved/i)).toBeInTheDocument();
+    expect(click).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/artifact"))).toBe(true);
   });
 
   it("connects Claude Desktop without showing credentials", async () => {

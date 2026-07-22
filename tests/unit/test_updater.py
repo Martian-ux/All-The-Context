@@ -4,10 +4,12 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import allthecontext.updater as updater_module
 import pytest
 from allthecontext.release_manifest import canonical_payload, create_manifest, public_key_value
 from allthecontext.updater import (
@@ -341,6 +343,28 @@ def test_manual_platform_fails_closed_after_verified_download(tmp_path: Path) ->
         manager.install()
 
 
+def test_manual_platform_can_save_only_a_freshly_reverified_package(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(
+        tmp_path, manifest, artifact, keyring, installer=FakeInstaller(supported=False)
+    )
+    manager.check()
+    status = manager.download()
+    assert status["verified_artifact_available"] is True
+    assert "downloaded_path" not in status
+
+    prepared = manager.prepare_artifact_export()
+    try:
+        assert prepared.path.read_bytes() == artifact
+        assert prepared.filename == "all-the-context-0.2.0-windows-x86_64.zip"
+    finally:
+        prepared.path.unlink(missing_ok=True)
+
+    Path(manager.state.downloaded_path or "missing").write_bytes(b"tampered")
+    with pytest.raises(UpdateError, match="checksum"):
+        manager.prepare_artifact_export()
+
+
 def test_failed_health_check_rolls_back_and_recovery_is_idempotent(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     installer = FakeInstaller()
@@ -380,7 +404,7 @@ def test_interrupted_download_recovers_as_cancelled(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
     manager.state.phase = UpdatePhase.DOWNLOADING
-    manager.state.operation_id = "interrupted"
+    manager.state.operation_id = "1" * 24
     operation = manager._operation_directory()
     operation.mkdir(parents=True)
     (operation / "artifact.zip").write_bytes(b"partial")
@@ -393,12 +417,96 @@ def test_interrupted_download_recovers_as_cancelled(tmp_path: Path) -> None:
 def test_concurrent_check_and_install_are_rejected(tmp_path: Path) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
     manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
-    manager._operation_lock.acquire()
+    manager._operation_gate.acquire()
     try:
         with pytest.raises(UpdateBusyError):
             manager.check()
     finally:
-        manager._operation_lock.release()
+        manager._operation_gate.release()
+
+
+@pytest.mark.parametrize("action", ["defer", "clear_error", "recover_after_restart"])
+def test_all_state_mutations_share_the_operation_gate(tmp_path: Path, action: str) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager._operation_gate.acquire()
+    try:
+        with pytest.raises(UpdateBusyError):
+            getattr(manager, action)()
+    finally:
+        manager._operation_gate.release()
+
+
+def test_cancel_signals_before_waiting_for_serialized_state(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager._operation_gate.acquire()
+    completed = threading.Event()
+
+    def cancel() -> None:
+        manager.cancel()
+        completed.set()
+
+    worker = threading.Thread(target=cancel)
+    worker.start()
+    assert manager._cancel.wait(timeout=1)
+    assert not completed.is_set()
+    manager._operation_gate.release()
+    worker.join(timeout=1)
+    assert completed.is_set()
+
+
+def test_corrupt_persisted_preferences_and_state_reset_safely(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    updates = tmp_path / "updates"
+    updates.mkdir()
+    (updates / "preferences.json").write_text('{"enabled": ', encoding="utf-8")
+    (updates / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "restart_required",
+                "current_version": "invalid",
+                "offered_version": "also-invalid",
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    status = manager.public_status()
+    assert status["channel"] == "stable"
+    assert status["enabled"] is True
+    assert status["phase"] == "error"
+    assert "corrupt" in status["last_error"].casefold()
+
+
+def test_repeated_checks_remove_bounded_orphan_staging(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    staging = manager.config.data_dir / "staging"
+    for index in range(40):
+        (staging / f"orphan-{index:02d}").mkdir(parents=True)
+    manager.check()
+    assert len(list(staging.iterdir())) <= 9
+    manager.check()
+    assert [entry.name for entry in staging.iterdir()] == [manager.state.operation_id]
+
+
+def test_current_platform_rejects_unknown_and_32_bit_architectures(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(updater_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(updater_module.platform, "machine", lambda: "i686")
+    monkeypatch.setattr(updater_module.struct, "calcsize", lambda _format: 4)
+    with pytest.raises(UpdateError, match="64-bit"):
+        updater_module.current_platform()
+    monkeypatch.setattr(updater_module.struct, "calcsize", lambda _format: 8)
+    with pytest.raises(UpdateError, match="CPU architecture"):
+        updater_module.current_platform()
+
+
+def test_malformed_content_length_is_sanitized() -> None:
+    with pytest.raises(UpdateError, match="invalid Content-Length"):
+        HttpsTransport._content_length({"Content-Length": "not-a-number"})
 
 
 def test_windows_preflight_detects_insufficient_disk(tmp_path: Path, monkeypatch: Any) -> None:

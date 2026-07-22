@@ -127,17 +127,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-async function requestDownload(path: string, body: unknown): Promise<Blob> {
+async function requestDownload(path: string, body?: unknown): Promise<Blob> {
   const headers = new Headers({
     "Accept": "application/octet-stream",
-    "Content-Type": "application/json",
     "X-ATC-Dashboard": "1",
   });
+  if (body !== undefined) headers.set("Content-Type", "application/json");
   const browserSession = window.sessionStorage.getItem(BROWSER_SESSION_KEY);
   if (browserSession) headers.set("Authorization", `Browser ${browserSession}`);
   let response: Response;
   try {
-    response = await fetch(`${API_ROOT}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    response = await fetch(`${API_ROOT}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   } catch {
     throw new ApiError("Core is not reachable on this device.", 0);
   }
@@ -270,6 +274,7 @@ export const api = {
     }),
   checkForUpdates: () => request<UpdateStatus>("/admin/updates/check", { method: "POST" }),
   downloadUpdate: () => request<UpdateStatus>("/admin/updates/download", { method: "POST" }),
+  verifiedUpdateArtifact: (): Promise<Blob> => requestDownload("/admin/updates/artifact"),
   installUpdate: () => request<UpdateStatus>("/admin/updates/install", { method: "POST" }),
   deferUpdate: () => request<UpdateStatus>("/admin/updates/defer", { method: "POST" }),
   cancelUpdate: () => request<UpdateStatus>("/admin/updates/cancel", { method: "POST" }),

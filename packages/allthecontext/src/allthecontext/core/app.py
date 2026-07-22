@@ -1060,6 +1060,32 @@ def create_app(
         require(principal, "admin")
         return update_action(updates.download)
 
+    @app.get("/v1/admin/updates/artifact")
+    def save_verified_update(principal: Principal) -> FileResponse:
+        require(principal, "admin")
+        try:
+            prepared = updates.prepare_artifact_export()
+        except UpdateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        def cleanup_artifact() -> None:
+            prepared.path.unlink(missing_ok=True)
+
+        try:
+            return FileResponse(
+                prepared.path,
+                media_type="application/zip",
+                filename=prepared.filename,
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+                background=BackgroundTask(cleanup_artifact),
+            )
+        except Exception:
+            cleanup_artifact()
+            raise
+
     @app.post("/v1/admin/updates/install")
     def install_update(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")

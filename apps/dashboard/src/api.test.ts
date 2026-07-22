@@ -93,4 +93,23 @@ describe("desktop browser session", () => {
     expect(init.body).toBe(JSON.stringify({ passphrase: "a private passphrase" }));
     expect(String(fetch.mock.calls[0]?.[0])).not.toContain("passphrase");
   });
+
+  it("downloads the verified update package with tab-scoped authentication", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(new Blob(["verified package"]), {
+        status: 200,
+        headers: { "Cache-Control": "no-store" },
+      }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.verifiedUpdateArtifact()).resolves.toBeInstanceOf(Blob);
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/updates/artifact");
+    const init = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("GET");
+    expect((init.headers as Headers).get("Authorization")).toBe("Browser browser-session");
+    expect((init.headers as Headers).get("X-ATC-Dashboard")).toBe("1");
+    expect(init.body).toBeUndefined();
+  });
 });

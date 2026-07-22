@@ -216,3 +216,12 @@ a false recovery claim. macOS app bundles and Linux standalone archives also
 lack a reviewed automatic cutover. Persisted phases make interrupted checks and
 downloads cleanable; fake installers exercise the future transaction contract
 without being treated as production capability.
+
+All preference/state mutations share the transaction gate and use atomic
+same-directory replacement. Invalid persisted versions, phases, identifiers,
+or private paths reset to an operator-visible error instead of entering
+recovery with untrusted state. Unsupported and non-64-bit architectures fail
+before channel selection. Manual-required packages are available only through
+an authenticated, no-store Core response that re-verifies the signed manifest,
+target, exact length, and SHA-256 while copying to a one-response temporary
+file; private staging paths remain undisclosed.

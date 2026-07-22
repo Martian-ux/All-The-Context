@@ -115,7 +115,7 @@ does not possess them.
 | Replication apply | Core push | Core -> Relay | HMAC, sequence, hash | `replication.py` |
 | Export restore | local file | backup -> Core | AEAD and integrity checks | `export.py` |
 | Desktop setup | user launch | installer -> OS/config/browser | per-user paths, verified credential write, parsed/atomic config replacement | `desktop_setup.py`, `client_config.py` |
-| Native updater | configured HTTPS endpoint | release service -> Core -> installer | bounded no-redirect fetch, Ed25519 policy, streamed size/hash verification, isolated staging, backup | `release_manifest.py`, `updater.py` |
+| Native updater | configured HTTPS endpoint | release service -> Core -> installer | bounded no-redirect fetch, Ed25519 policy, streamed size/hash verification, isolated staging, atomic state, authenticated reverified manual save, backup | `release_manifest.py`, `updater.py` |
 
 ## Top abuse paths
 
