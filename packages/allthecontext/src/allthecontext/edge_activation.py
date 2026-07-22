@@ -11,9 +11,9 @@ from .edge_distribution import (
     deployment_branch,
     normalize_github_repository_url,
     parse_edge_image_metadata,
+    render_blueprint,
     render_deploy_url,
     render_packaged_defaults,
-    validate_pinned_blueprint,
     validate_source_commit,
 )
 
@@ -27,6 +27,16 @@ def _git(repository: Path, *arguments: str) -> str:
         text=True,
         stderr=subprocess.STDOUT,
     ).strip()
+
+
+def _git_blob(repository: Path, revision_path: str) -> bytes:
+    """Read one committed file without normalizing its bytes."""
+
+    return subprocess.check_output(
+        ["git", "show", revision_path],
+        cwd=repository,
+        stderr=subprocess.STDOUT,
+    )
 
 
 def _resolve_remote_branch(repository: Path, repository_url: str, branch: str) -> str:
@@ -55,10 +65,30 @@ def activate_edge_deployment(
     if head != blueprint_sha:
         raise RuntimeError("activate from the exact commit that added the pinned Blueprint")
     branch = deployment_branch(image_reference)
-    committed_blueprint = _git(root, "show", f"{blueprint_sha}:render.yaml") + "\n"
-    validate_pinned_blueprint(committed_blueprint, image_reference)
-    working_blueprint = (root / "render.yaml").read_text(encoding="utf-8")
-    if working_blueprint != committed_blueprint:
+    try:
+        source_template = _git_blob(
+            root,
+            f"{source_commit}:deploy/edge/render.template.yaml",
+        ).decode("utf-8")
+    except (subprocess.CalledProcessError, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            "image source commit does not contain the trusted UTF-8 Edge template"
+        ) from exc
+    expected_blueprint = render_blueprint(source_template, image_reference).encode("utf-8")
+    committed_blueprint = _git_blob(root, f"{blueprint_sha}:render.yaml")
+    if committed_blueprint != expected_blueprint:
+        raise RuntimeError(
+            "committed render.yaml differs from the image source commit's trusted template"
+        )
+    try:
+        working_blueprint = (root / "render.yaml").read_text(encoding="utf-8")
+        committed_blueprint_text = committed_blueprint.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("working render.yaml is not valid UTF-8") from exc
+    # Path.read_text() performs universal-newline translation. Git may
+    # materialize CRLF on Windows even though both committed blobs are exactly
+    # LF-bound above; line endings do not change Blueprint behavior.
+    if working_blueprint != committed_blueprint_text:
         raise RuntimeError("working render.yaml differs from the committed Blueprint")
     remote_lines = remote_resolver(root, normalized_repository, branch).splitlines()
     expected_ref = f"refs/heads/{branch}"

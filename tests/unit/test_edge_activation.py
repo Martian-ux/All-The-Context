@@ -14,7 +14,6 @@ from allthecontext.edge_distribution import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 IMAGE = f"ghcr.io/martian-ux/all-the-context-edge@sha256:{'1' * 64}"
-SOURCE_COMMIT = "a" * 40
 REPOSITORY_URL = "https://github.com/Martian-ux/All-The-Context"
 
 
@@ -22,7 +21,11 @@ def _git(repository: Path, *arguments: str) -> str:
     return subprocess.check_output(["git", *arguments], cwd=repository, text=True).strip()
 
 
-def _activation_repository(tmp_path: Path) -> tuple[Path, Path, str]:
+def _activation_repository(
+    tmp_path: Path,
+    *,
+    mutation: str | None = None,
+) -> tuple[Path, Path, str]:
     repository = tmp_path / "repository"
     repository.mkdir()
     subprocess.run(["git", "init"], cwd=repository, check=True, capture_output=True)
@@ -35,7 +38,38 @@ def _activation_repository(tmp_path: Path) -> tuple[Path, Path, str]:
     template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
         encoding="utf-8"
     )
-    (repository / "render.yaml").write_text(render_blueprint(template, IMAGE), encoding="utf-8")
+    template_path = repository / "deploy" / "edge" / "render.template.yaml"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text(template, encoding="utf-8")
+    subprocess.run(["git", "add", "deploy/edge/render.template.yaml"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add trusted Edge template"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    source_commit = _git(repository, "rev-parse", "HEAD")
+    blueprint = render_blueprint(template, IMAGE)
+    if mutation == "command":
+        blueprint = blueprint.replace(
+            "    plan: starter\n",
+            "    plan: starter\n    dockerCommand: python unexpected.py\n",
+        )
+    elif mutation == "service":
+        blueprint += (
+            "  - type: web\n"
+            "    name: unexpected-service\n"
+            "    runtime: image\n"
+            f"    image:\n      url: {IMAGE}\n"
+        )
+    elif mutation == "environment":
+        blueprint = blueprint.replace(
+            "      - key: ATC_RELAY_HOST\n        value: 0.0.0.0\n",
+            "      - key: ATC_RELAY_HOST\n        value: unexpected.example.invalid\n",
+        )
+    elif mutation is not None:  # pragma: no cover - defensive test helper
+        raise AssertionError(f"unknown mutation: {mutation}")
+    (repository / "render.yaml").write_text(blueprint, encoding="utf-8")
     subprocess.run(["git", "add", "render.yaml"], cwd=repository, check=True)
     subprocess.run(
         ["git", "commit", "-m", "Pin Edge blueprint"],
@@ -46,7 +80,7 @@ def _activation_repository(tmp_path: Path) -> tuple[Path, Path, str]:
     commit = _git(repository, "rev-parse", "HEAD")
     metadata = tmp_path / "edge-image.json"
     metadata.write_text(
-        json.dumps(edge_image_metadata(IMAGE, SOURCE_COMMIT), indent=2, sort_keys=True) + "\n",
+        json.dumps(edge_image_metadata(IMAGE, source_commit), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return repository, metadata, commit
@@ -97,5 +131,28 @@ def test_activation_rejects_branch_proof_from_a_different_repository(tmp_path: P
             repository_url=REPOSITORY_URL,
             defaults_output=defaults,
             remote_resolver=mismatched_repository,
+        )
+    assert not defaults.exists()
+
+
+@pytest.mark.parametrize("mutation", ["command", "service", "environment"])
+def test_activation_rejects_any_blueprint_behavior_not_in_source_template(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repository, metadata, commit = _activation_repository(tmp_path, mutation=mutation)
+    defaults = tmp_path / "must-not-exist.py"
+
+    def remote_must_not_be_queried(_repository: Path, _url: str, _branch: str) -> str:
+        raise AssertionError("remote proof must follow local template verification")
+
+    with pytest.raises(RuntimeError, match="trusted template"):
+        activate_edge_deployment(
+            repository=repository,
+            metadata_path=metadata,
+            blueprint_commit=commit,
+            repository_url=REPOSITORY_URL,
+            defaults_output=defaults,
+            remote_resolver=remote_must_not_be_queried,
         )
     assert not defaults.exists()

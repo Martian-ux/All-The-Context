@@ -81,9 +81,12 @@ a one-use deployment branch:
    `edge-deploy-<full 64-character digest hex>`. Create that branch at the Blueprint
    commit and push it explicitly. Never move or reuse this branch.
 3. Run the activation tool from the exact Blueprint commit. It reads the image
-   metadata, verifies committed `render.yaml`, and uses `git ls-remote` to prove
-   that the public versioned branch resolves to the same commit before writing
-   the packaged defaults:
+   metadata, reads the permanent template from the earlier image source commit,
+   and renders that template with the published digest. Both the committed and
+   working `render.yaml` must match those rendered bytes exactly, so an added
+   command, service, or environment change fails closed. It then uses
+   `git ls-remote` to prove that the public versioned branch resolves to the same
+   commit before writing the packaged defaults:
 
 ```powershell
 $blueprintCommit = git rev-parse HEAD
