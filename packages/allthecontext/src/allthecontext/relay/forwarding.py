@@ -7,6 +7,8 @@ import json
 import secrets
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -55,6 +57,15 @@ class EdgeForwardingBroker:
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA secure_delete = ON")
         return connection
+
+    @contextmanager
+    def _connection_scope(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connection()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _cleanup(connection: sqlite3.Connection, now: float) -> None:
@@ -108,7 +119,7 @@ class EdgeForwardingBroker:
         request_json = encrypt_forward_request(
             self.request_encryption_public_key, request_plaintext, associated_data
         )
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             self._cleanup_memory(now)
             connection.execute("BEGIN IMMEDIATE")
             self._cleanup(connection, now)
@@ -161,7 +172,7 @@ class EdgeForwardingBroker:
         deadline = time.monotonic() + min(max(timeout_seconds, 0.1), 15.0)
         while time.monotonic() < deadline:
             consumed: dict[str, Any] | None = None
-            with self._lock, self._connection() as connection:
+            with self._lock, self._connection_scope() as connection:
                 now = time.time()
                 self._cleanup_memory(now)
                 connection.execute("BEGIN IMMEDIATE")
@@ -187,7 +198,7 @@ class EdgeForwardingBroker:
         return ForwardResult("timeout")
 
     def cancel(self, request_id: str) -> bool:
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             self._responses.pop(request_id, None)
             result = connection.execute(
                 "UPDATE edge_forward_requests SET state='cancelled',request_json='{}',"
@@ -198,7 +209,7 @@ class EdgeForwardingBroker:
         return result.rowcount == 1
 
     def cancel_client(self, client_id: str) -> int:
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             request_ids = [
                 str(row[0])
                 for row in connection.execute(
@@ -218,7 +229,7 @@ class EdgeForwardingBroker:
     def claim(self, *, limit: int = MAX_CLAIMS) -> list[dict[str, Any]]:
         now = time.time()
         claimed: list[dict[str, Any]] = []
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._cleanup_memory(now)
             self._cleanup(connection, now)
@@ -252,7 +263,7 @@ class EdgeForwardingBroker:
         return claimed
 
     def core_online(self, *, within_seconds: float = 35.0) -> bool:
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             row = connection.execute(
                 "SELECT last_seen_at FROM edge_forward_core_state WHERE singleton=1"
             ).fetchone()
@@ -264,7 +275,7 @@ class EdgeForwardingBroker:
             raise ForwardingError("Core retrieval response is too large")
         supplied = hashlib.sha256(claim_token.encode()).hexdigest()
         now = time.time()
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._cleanup_memory(now)
             self._cleanup(connection, now)
@@ -299,7 +310,7 @@ class EdgeForwardingBroker:
         ).encode("utf-8")
 
     def status(self) -> dict[str, int]:
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             connection.execute("BEGIN IMMEDIATE")
             now = time.time()
             self._cleanup_memory(now)
@@ -311,7 +322,7 @@ class EdgeForwardingBroker:
         return {"queued": counts.get("queued", 0), "claimed": counts.get("claimed", 0)}
 
     def purge(self) -> None:
-        with self._lock, self._connection() as connection:
+        with self._lock, self._connection_scope() as connection:
             self._responses.clear()
             connection.execute("DELETE FROM edge_forward_requests")
             connection.execute("DELETE FROM edge_forward_rate_events")

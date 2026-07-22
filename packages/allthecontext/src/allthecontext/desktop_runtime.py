@@ -14,6 +14,10 @@ def mcp_helper_name() -> str:
     return "AllTheContextMCP.exe" if sys.platform == "win32" else "all-the-context-mcp"
 
 
+def update_helper_name() -> str:
+    return "AllTheContextUpdater.exe" if sys.platform == "win32" else "all-the-context-updater"
+
+
 def _packaged_mcp_helper(executable: Path) -> Path | None:
     configured = os.environ.get("ATC_MCP_EXECUTABLE")
     if configured:
@@ -49,17 +53,38 @@ def _packaged_mcp_helper(executable: Path) -> Path | None:
     return data_helper if data_helper.is_file() else None
 
 
+def _packaged_update_helper(executable: Path) -> Path | None:
+    configured = os.environ.get("ATC_UPDATE_HELPER_EXECUTABLE")
+    if configured:
+        candidate = Path(configured).expanduser().resolve()
+        return candidate if candidate.is_file() else None
+    sibling = executable.with_name(update_helper_name())
+    if sibling.is_file():
+        return sibling
+    bundle_root_value = getattr(sys, "_MEIPASS", None)
+    if bundle_root_value:
+        candidate = Path(bundle_root_value).resolve() / update_helper_name()
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeCommand:
     executable: Path
     base_args: tuple[str, ...] = ()
     mcp_executable: Path | None = None
+    update_executable: Path | None = None
 
     @classmethod
     def current(cls) -> RuntimeCommand:
         executable = Path(sys.executable).resolve()
         if getattr(sys, "frozen", False):
-            return cls(executable, mcp_executable=_packaged_mcp_helper(executable))
+            return cls(
+                executable,
+                mcp_executable=_packaged_mcp_helper(executable),
+                update_executable=_packaged_update_helper(executable),
+            )
         return cls(executable, ("-m", "allthecontext.desktop"))
 
     def mode(self, argument: str) -> tuple[str, ...]:

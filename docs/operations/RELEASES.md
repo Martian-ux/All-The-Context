@@ -97,7 +97,7 @@ clearing. State and nonsecret preferences live under
 the Core per-user app-data directory. Do not place credentials, release private
 keys, personal context, or raw server response bodies there or in logs.
 
-When a real platform remains manual-required, **Save verified package** asks
+When a platform remains manual-required, **Save verified package** asks
 Core for a new authenticated, no-store copy. Core re-verifies the stored signed
 manifest and the artifact's target, length, and SHA-256 during that request and
 deletes the response copy afterward. The dashboard never receives the private
@@ -107,19 +107,31 @@ assert that platform rollback has been observed.
 The check/download sequence is: bounded no-redirect manifest fetch; strict
 schema/key/signature/channel/platform/architecture/version verification;
 stream to per-operation staging; exact signed length and SHA-256 verification;
-disk preflight; and, only for a future recovery-capable adapter, verified SQLite
-backup plus native handoff. Partial files are
+disk preflight; and either a manual verified-package response or a
+recovery-capable native handoff. Partial files are
 deleted after cancellation or failure. A replacement is complete only after
 its version and bounded loopback `/health` response pass. Preserve the backup
 and state files until recovery finishes.
 
-Every current platform stops at a manual-required state. The packaged Windows
-self-installer can authenticate to and stop Core, but it is not a separate
-journaled recovery helper and cannot guarantee restoration of both the prior
-binary and pre-migration database after failed health. Do not enable or claim
-self-apply on Windows, macOS, or Linux until native publisher signing and a
-transactional cutover, health check, interrupted-recovery journal, and rollback
-have been observed on the authored OS.
+The packaged Windows application enables **Install and restart** only when its
+separate recovery executable and stable installed files are present. Core takes
+an initial consistent backup, writes a strict operation journal, registers
+per-user RunOnce recovery, and exits. The helper waits for that process, takes a
+final stopped-Core backup, applies the verified executable, validates the app,
+MCP adapter, and installed updater, runs frozen diagnostics and a real one-shot
+loopback Core health check, then commits and restarts Core. A failed or
+interrupted post-cutover check restores the prior app, MCP adapter, updater, and
+database; a pre-cutover failure leaves the current files and vault untouched.
+The packaged Windows smoke injects both a crash after replacement and a failed
+post-migration health check and verifies resume and rollback.
+
+macOS and Linux remain manual-required. The Windows evidence is an unsigned
+same-version engineering transaction, not a production promotion. Do not
+publish or describe Windows OTA as production-ready until the offline key
+ceremony, immutable channel publication, Authenticode/publisher checks, and a
+real signed N-1 update drill pass. Do not enable automatic macOS or Linux
+cutover until equivalent native signing, journaling, health, interruption, and
+rollback work is implemented and observed on those systems.
 
 Unknown operating systems, unknown CPU identifiers, and 32-bit application
 runtimes fail closed. Repeated checks and channel changes remove a bounded

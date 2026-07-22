@@ -2,10 +2,9 @@
 
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
-  implemented. The secure Edge/mobile forwarding foundation is integrated;
-  signed desktop update verification and manual package handoff are integrated;
-  and irreversible Edge purge parity is integrated. A transactional Windows
-  update helper is next.
+  implemented. The secure Edge/mobile forwarding foundation, signed desktop
+  update verification, automatic transactional Windows installation, and
+  irreversible Edge purge parity are integrated.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -28,10 +27,11 @@
   administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
   cross-platform release workflows with strict offline-signed OTA metadata;
   and a fail-closed native updater with stable/beta preferences, bounded signed
-  checks, verified staging, recovery abstractions, dashboard controls, and
-  interruption recovery; and signed ordered Edge purge application with opaque
+  checks, verified staging, dashboard controls, an independent journaled
+  Windows recovery helper, and binary/database rollback; and signed ordered
+  Edge purge application with opaque
   replay barriers and resumable physical SQLite compaction.
-- Current combined evidence on Windows 11 and Python 3.12: 227 Python and 18
+- Current combined evidence on Windows 11 and Python 3.12: 251 Python and 18
   dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -42,8 +42,11 @@
   read, and delete round trip also passed. The
   rebuilt frozen artifact passes resource diagnostics and an isolated real
   install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/uninstall
-  smoke; uninstall preserves the vault while removing the app, shortcuts,
-  registration, managed client credential, and temporary data. Signed-manifest
+  smoke. The same packaged run injects a crash after binary replacement,
+  resumes the journal, forces a post-migration health failure, restores the
+  prior application, MCP adapter, updater helper, and SQLite database, and
+  restarts Core. Uninstall preserves the vault while removing the app,
+  shortcuts, registration, managed client credential, and temporary data. Signed-manifest
   tamper/revocation/downgrade tests, deterministic native-archive tests, an
   isolated wheel/sdist build with resource/private-key diagnostics, release
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
@@ -59,20 +62,24 @@
   persistence, memory-only responses with DB/WAL/SHM byte scans, unknown or
   revoked identity and Edge-asserted admin-scope rejection, claim
   rotation/replay/restart, outbound-only
-  polling, and local offline/online mobile demonstrations. Real hosting and
+  polling, explicit per-operation SQLite handle release, and local
+  offline/online mobile demonstrations. Real hosting and
   provider handshakes remain external gaps.
 - OTA integration evidence includes updater unit/API/UI coverage, dashboard
   type/build/audit checks, wheel/sdist resource diagnostics, and documentation
   checks. The combined frozen Windows artifact includes the reviewed public-key
   resource and passes the isolated first-run/browser/MCP/Core-restart/reopen/
-  shutdown/uninstall smoke, including the assertion that
-  `automatic_install_supported` is false.
+  shutdown/uninstall smoke, including Windows automatic-install capability and
+  the packaged crash/resume/health-failure/database-rollback transaction.
 - OTA hardening serializes every preference/state mutation, rejects unknown or
   32-bit architectures, sanitizes malformed transport lengths and persisted
-  state, bounds orphan cleanup, and gives manual-required platforms an
+  state, rejects cross-platform ZIP traversal and Windows alternate-data-stream
+  paths, bounds orphan cleanup, and gives manual-required platforms an
   authenticated no-store package response that is re-verified without exposing
-  private staging paths. Automatic installation remains disabled on every real
-  platform.
+  private staging paths. On Windows, a separately packaged helper uses a strict
+  per-user journal, cross-process lock, RunOnce recovery, a stopped-Core final
+  backup, replacement diagnostics, a real one-shot loopback Core health check,
+  and idempotent commit/rollback. macOS and Linux remain manual-required.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
@@ -146,12 +153,14 @@
   intentionally trusts no keys until an offline key ceremony and public-key
   review occur. Candidate workflows create drafts only; production promotion
   remains a human/offline operation.
-- Every current platform, including packaged Windows, verifies and stages
-  downloads but stops in a precise manual-install-required state. The existing
-  Windows self-installer can replace a stopped executable but cannot yet run an
-  independent journaled cutover that restores both the prior binary and the
-  pre-migration database after failed health. One-click install therefore
-  remains disabled rather than claiming rollback from fake adapters.
+- The packaged Windows engineering build exposes automatic install through its
+  independent recovery helper and passed a same-version frozen transaction
+  drill with injected crash and failed-health rollback. No production key,
+  channel endpoint, Authenticode signature, or real signed N-1 release has been
+  exercised, so this is not a public-production OTA claim. macOS and Linux
+  continue to verify and stage downloads but stop in a precise
+  manual-install-required state until their native cutovers are implemented and
+  observed.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
 - Docker Compose parses successfully and a configured Linux Edge container was

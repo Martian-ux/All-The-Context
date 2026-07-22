@@ -39,6 +39,8 @@ def main() -> int:
         raise SystemExit(f"unexpected frozen diagnostics: {payload}")
     if system in {"Windows", "Darwin"} and not payload.get("mcp_helper_bundled"):
         raise SystemExit(f"the GUI build is missing its console MCP helper: {payload}")
+    if system == "Windows" and not payload.get("update_helper_bundled"):
+        raise SystemExit(f"the Windows build is missing its recovery helper: {payload}")
     if payload.get("core_migrations", 0) < 1 or payload.get("relay_migrations", 0) < 1:
         raise SystemExit(f"migrations were not bundled: {payload}")
     print(json.dumps(payload, indent=2))

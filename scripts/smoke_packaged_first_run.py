@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import platform
@@ -20,6 +21,9 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import anyio
+from allthecontext import __version__
+from allthecontext.release_manifest import sha256_file
+from allthecontext.windows_update_helper import HelperPhase, UpdateJournal
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from smoke_desktop_artifact import ROOT, artifact_executable
@@ -56,6 +60,123 @@ def stop_core(base_url: str, admin_token: str) -> None:
             return
         time.sleep(0.1)
     raise RuntimeError("installed Core did not shut down within ten seconds")
+
+
+def wait_for_core(base_url: str, token: str) -> None:
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            if api_request(f"{base_url}/v1/context/status", token).get("core_online") is True:
+                return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(0.1)
+    raise RuntimeError("transactional updater did not restart Core within twenty seconds")
+
+
+def prepare_packaged_update_transaction(
+    *,
+    data_dir: Path,
+    installed_app: Path,
+    release_app: Path,
+    operation_id: str,
+    core_port: int,
+    target_version: str,
+) -> tuple[Path, Path]:
+    updates = data_dir / "updates"
+    transaction_dir = updates / "transactions" / operation_id
+    rollback_dir = transaction_dir / "rollback"
+    replacement_dir = transaction_dir / "replacement"
+    rollback_dir.mkdir(parents=True)
+    replacement_dir.mkdir()
+    transaction_helper = transaction_dir / "AllTheContextUpdater.exe"
+    stable_helper = installed_app.with_name("AllTheContextUpdater.exe")
+    stable_mcp = installed_app.with_name("AllTheContextMCP.exe")
+    if not stable_helper.is_file() or not stable_mcp.is_file():
+        raise RuntimeError("installed update or MCP helper is missing")
+    shutil.copy2(stable_helper, transaction_helper)
+    replacement = replacement_dir / "AllTheContextSetup.exe"
+    rollback_app = rollback_dir / "AllTheContext.exe"
+    rollback_mcp = rollback_dir / "AllTheContextMCP.exe"
+    rollback_update_helper = rollback_dir / "AllTheContextUpdater.exe"
+    shutil.copy2(release_app, replacement)
+    shutil.copy2(installed_app, rollback_app)
+    shutil.copy2(stable_mcp, rollback_mcp)
+    shutil.copy2(stable_helper, rollback_update_helper)
+
+    database = data_dir / "core.sqlite3"
+    backup = updates / "backups" / f"packaged-smoke-{operation_id}.sqlite3"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(database)
+    destination = sqlite3.connect(backup)
+    try:
+        source.backup(destination)
+        if destination.execute("PRAGMA quick_check").fetchone() != ("ok",):
+            raise RuntimeError("packaged update backup was not valid")
+    finally:
+        destination.close()
+        source.close()
+
+    journal_path = transaction_dir / "journal.json"
+    state_path = updates / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "restart_required",
+            "current_version": __version__,
+            "offered_version": target_version,
+            "downloaded_path": None,
+            "backup_path": str(backup),
+            "last_error": None,
+            "operation_id": operation_id,
+            "transaction_path": str(journal_path),
+            "recovery_attempts": int(state.get("recovery_attempts", 0)) + 1,
+        }
+    )
+    state_temporary = state_path.with_name(f"{state_path.name}.{operation_id}.atc-new")
+    state_temporary.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+    state_temporary.replace(state_path)
+
+    replacement_digest, replacement_size = sha256_file(replacement)
+    rollback_digest, rollback_size = sha256_file(rollback_app)
+    rollback_mcp_digest, rollback_mcp_size = sha256_file(rollback_mcp)
+    rollback_update_digest, rollback_update_size = sha256_file(rollback_update_helper)
+    backup_digest, backup_size = sha256_file(backup)
+    now = "2026-07-22T12:00:00+00:00"
+    journal = UpdateJournal(
+        operation_id=operation_id,
+        phase=HelperPhase.PREPARED,
+        current_version=__version__,
+        target_version=target_version,
+        parent_pid=0,
+        application_path=str(installed_app),
+        replacement_path=str(replacement),
+        replacement_sha256=replacement_digest,
+        replacement_size=replacement_size,
+        rollback_application_path=str(rollback_app),
+        rollback_application_sha256=rollback_digest,
+        rollback_application_size=rollback_size,
+        mcp_path=str(stable_mcp),
+        rollback_mcp_path=str(rollback_mcp),
+        rollback_mcp_sha256=rollback_mcp_digest,
+        rollback_mcp_size=rollback_mcp_size,
+        stable_update_helper_path=str(stable_helper),
+        rollback_update_helper_path=str(rollback_update_helper),
+        rollback_update_helper_sha256=rollback_update_digest,
+        rollback_update_helper_size=rollback_update_size,
+        database_path=str(database),
+        database_backup_path=str(backup),
+        database_backup_sha256=backup_digest,
+        database_backup_size=backup_size,
+        state_path=str(state_path),
+        helper_path=str(transaction_helper),
+        core_host="127.0.0.1",
+        core_port=core_port,
+        created_at=now,
+        updated_at=now,
+    )
+    journal.save(journal_path)
+    return transaction_helper, journal_path
 
 
 async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> None:
@@ -109,8 +230,38 @@ def main() -> int:
                 "ATC_SMOKE_UNINSTALL_KEY": (
                     f"Software\\AllTheContext\\Smoke\\packaged-{os.getpid()}"
                 ),
+                "ATC_SMOKE_UPDATE_RUNONCE_KEY": (
+                    f"Software\\AllTheContext\\Smoke\\packaged-update-{os.getpid()}"
+                ),
             }
         )
+
+    base_url = f"http://127.0.0.1:{port}"
+    cleanup_admin_token = ""
+
+    def cleanup_failed_smoke() -> None:
+        if cleanup_admin_token:
+            with suppress(Exception):
+                stop_core(base_url, cleanup_admin_token)
+        if system == "Windows":
+            import winreg
+
+            for key_name in (
+                environment["ATC_SMOKE_UNINSTALL_KEY"],
+                environment["ATC_SMOKE_UPDATE_RUNONCE_KEY"],
+            ):
+                with suppress(OSError):
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
+        deadline = time.monotonic() + 10
+        while work.exists() and time.monotonic() < deadline:
+            try:
+                shutil.rmtree(work)
+            except OSError:
+                time.sleep(0.1)
+            else:
+                return
+
+    atexit.register(cleanup_failed_smoke)
 
     subprocess.run(
         [
@@ -157,6 +308,7 @@ def main() -> int:
     admin_token = str(credential_map.get(f"client:{desktop_client_id}", ""))
     if not admin_token:
         raise SystemExit("isolated setup did not retain its desktop administrator credential")
+    cleanup_admin_token = admin_token
 
     if system == "Windows":
         expected_shortcuts = (
@@ -174,7 +326,6 @@ def main() -> int:
         ):
             pass
 
-    base_url = f"http://127.0.0.1:{port}"
     try:
         dashboard_url = str(report.get("dashboard_url", ""))
         if "atc_token" in dashboard_url or "/v1/browser/connect?ticket=" not in dashboard_url:
@@ -204,9 +355,13 @@ def main() -> int:
         if status.get("core_online") is not True:
             raise SystemExit(f"installed Core status was not ready: {status}")
         updates = api_request(f"{base_url}/v1/admin/updates", admin_token)
-        if updates.get("automatic_install_supported") is not False:
-            raise SystemExit(f"packaged updater exposed unsafe automatic install: {updates}")
-        if "binary-and-database rollback" not in str(updates.get("installer_detail", "")):
+        expected_automatic = system == "Windows"
+        if updates.get("automatic_install_supported") is not expected_automatic:
+            raise SystemExit(f"packaged updater capability was incorrect: {updates}")
+        if (
+            system != "Windows"
+            and "manual" not in str(updates.get("installer_detail", "")).casefold()
+        ):
             raise SystemExit(f"packaged updater did not explain its manual boundary: {updates}")
 
         mcp_environment = dict(environment)
@@ -261,6 +416,106 @@ def main() -> int:
         raise SystemExit("reopened installed Core was not ready")
     stop_core(base_url, admin_token)
 
+    packaged_update_result = "not_applicable"
+    if system == "Windows":
+        crash_helper, crash_journal = prepare_packaged_update_transaction(
+            data_dir=data_dir,
+            installed_app=installed_app,
+            release_app=executable,
+            operation_id="d" * 24,
+            core_port=port,
+            target_version=__version__,
+        )
+        interrupted_environment = dict(environment)
+        interrupted_environment["ATC_UPDATE_FAULT_AFTER_PHASE"] = "binary_replaced"
+        interrupted = subprocess.run(
+            [str(crash_helper), "--journal", str(crash_journal)],
+            env=interrupted_environment,
+            check=False,
+            timeout=180,
+        )
+        if interrupted.returncode != 86:
+            raise SystemExit(
+                f"packaged updater did not stop at the injected crash point: "
+                f"{interrupted.returncode}"
+            )
+        if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != (
+            "binary_replaced"
+        ):
+            raise SystemExit("packaged updater did not persist the interrupted cutover")
+        subprocess.run(
+            [str(crash_helper), "--journal", str(crash_journal)],
+            env=environment,
+            check=True,
+            timeout=180,
+        )
+        wait_for_core(base_url, token)
+        if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
+            raise SystemExit("packaged updater did not commit after crash recovery")
+        stop_core(base_url, admin_token)
+
+        rollback_helper, rollback_journal = prepare_packaged_update_transaction(
+            data_dir=data_dir,
+            installed_app=installed_app,
+            release_app=executable,
+            operation_id="e" * 24,
+            core_port=port,
+            target_version=__version__,
+        )
+        rollback_environment = dict(environment)
+        rollback_environment.update(
+            {
+                "ATC_UPDATE_FORCE_HEALTH_FAILURE": "1",
+                "ATC_UPDATE_SMOKE_MUTATE_DB": "1",
+            }
+        )
+        rolled_back = subprocess.run(
+            [str(rollback_helper), "--journal", str(rollback_journal)],
+            env=rollback_environment,
+            check=False,
+            timeout=180,
+        )
+        if rolled_back.returncode != 2:
+            raise SystemExit(
+                f"packaged updater did not report the exercised rollback: {rolled_back.returncode}"
+            )
+        wait_for_core(base_url, token)
+        rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
+        if rollback_status.get("phase") != "rolled_back":
+            raise SystemExit(f"packaged updater did not roll back: {rollback_status}")
+        restored_files = (
+            (
+                Path(str(rollback_status["application_path"])),
+                str(rollback_status["rollback_application_sha256"]),
+                int(rollback_status["rollback_application_size"]),
+            ),
+            (
+                Path(str(rollback_status["mcp_path"])),
+                str(rollback_status["rollback_mcp_sha256"]),
+                int(rollback_status["rollback_mcp_size"]),
+            ),
+            (
+                Path(str(rollback_status["stable_update_helper_path"])),
+                str(rollback_status["rollback_update_helper_sha256"]),
+                int(rollback_status["rollback_update_helper_size"]),
+            ),
+        )
+        if any(sha256_file(path) != (digest, size) for path, digest, size in restored_files):
+            raise SystemExit("packaged updater did not restore every installed binary")
+        connection = sqlite3.connect(data_dir / "core.sqlite3")
+        try:
+            leaked_migration = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='packaged_update_smoke'"
+            ).fetchone()
+            if leaked_migration is not None:
+                raise SystemExit("packaged updater did not restore the pre-update database")
+            if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                raise SystemExit("packaged updater rollback database is not valid")
+        finally:
+            connection.close()
+        stop_core(base_url, admin_token)
+        packaged_update_result = "passed"
+
     uninstall_result = "not_applicable"
     if system == "Windows":
         uninstall_report_path = work / "uninstall-report.json"
@@ -305,6 +560,11 @@ def main() -> int:
             pass
         else:
             raise SystemExit("packaged uninstaller left its Apps & Features registration")
+        with suppress(FileNotFoundError):
+            winreg.DeleteKey(
+                winreg.HKEY_CURRENT_USER,
+                environment["ATC_SMOKE_UPDATE_RUNONCE_KEY"],
+            )
 
         cleaned_config = config_path.read_text(encoding="utf-8")
         if "all_the_context" in cleaned_config or token in cleaned_config:
@@ -338,6 +598,7 @@ def main() -> int:
             if time.monotonic() >= cleanup_deadline:
                 raise SystemExit(f"temporary smoke data remained locked: {work}") from None
             time.sleep(0.1)
+    atexit.unregister(cleanup_failed_smoke)
     print(
         json.dumps(
             {
@@ -347,7 +608,8 @@ def main() -> int:
                 "mcp_handshake": "passed",
                 "mcp_core_restart": "passed",
                 "installed_reopen": "passed",
-                "ota_automatic_install": False,
+                "ota_automatic_install": system == "Windows",
+                "ota_transaction_recovery": packaged_update_result,
                 "core_shutdown": "passed",
                 "packaged_uninstall": uninstall_result,
                 "temporary_data_removed": True,

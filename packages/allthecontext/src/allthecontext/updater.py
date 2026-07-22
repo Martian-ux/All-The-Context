@@ -15,7 +15,6 @@ import platform
 import shutil
 import sqlite3
 import struct
-import subprocess
 import sys
 import tempfile
 import threading
@@ -33,6 +32,8 @@ from urllib.parse import urlsplit
 
 from platformdirs import user_data_path
 
+from . import __version__
+from .desktop_runtime import RuntimeCommand
 from .release_manifest import (
     ManifestError,
     ReleaseVersion,
@@ -40,8 +41,18 @@ from .release_manifest import (
     sha256_file,
     verify_manifest,
 )
+from .windows_update_helper import (
+    HelperError,
+    HelperPhase,
+    UpdateJournal,
+    launch_recovery_helper,
+    register_recovery,
+    request_rollback,
+    transaction_outcome,
+    unregister_recovery,
+)
 
-CURRENT_VERSION = "0.1.0"
+CURRENT_VERSION = __version__
 MAX_MANIFEST_BYTES = 128 * 1024
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 CONNECT_TIMEOUT_SECONDS = 5.0
@@ -98,6 +109,7 @@ class UpdateState:
     last_checked_at: str | None = None
     last_error: str | None = None
     operation_id: str | None = None
+    transaction_path: str | None = None
     recovery_attempts: int = 0
 
 
@@ -106,6 +118,21 @@ class PreparedArtifact:
     path: Path
     filename: str
     size: int
+
+
+@dataclass(frozen=True, slots=True)
+class InstallPlan:
+    artifact: Path
+    target_version: str
+    current_version: str
+    operation_id: str
+    operation_dir: Path
+    transaction_dir: Path
+    database_path: Path
+    database_backup_path: Path
+    state_path: Path
+    core_host: str
+    core_port: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,9 +326,11 @@ class Installer(Protocol):
 
     def preflight(self, artifact: Path, required_bytes: int) -> None: ...
 
-    def handoff(self, artifact: Path, version: str, operation_dir: Path) -> None: ...
+    def handoff(self, plan: InstallPlan) -> None: ...
 
     def rollback(self, state: UpdateState) -> None: ...
+
+    def recovery_outcome(self, state: UpdateState) -> str | None: ...
 
 
 class HealthProbe(Protocol):
@@ -329,25 +358,42 @@ class LoopbackHealthProbe:
 class PlatformInstaller:
     """Native handoff for the artifact forms the project can safely apply."""
 
-    def __init__(self, *, system: str | None = None, frozen: bool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        system: str | None = None,
+        frozen: bool | None = None,
+        application_path: Path | None = None,
+        helper_path: Path | None = None,
+        mcp_path: Path | None = None,
+    ) -> None:
         self.system = system or platform.system()
         self.frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+        runtime = RuntimeCommand.current()
+        self.application_path = (application_path or runtime.executable).resolve()
+        self.helper_path = helper_path or runtime.update_executable
+        self.mcp_path = mcp_path or self.application_path.with_name("AllTheContextMCP.exe")
+        self.stable_update_helper_path = self.application_path.with_name("AllTheContextUpdater.exe")
 
     @property
     def supported(self) -> bool:
-        # The current Windows setup executable can replace a stopped app, but
-        # it has no independent journaled helper capable of restoring both the
-        # prior executable and database after a failed post-migration health
-        # check.  Do not expose one-click install until that recovery boundary
-        # exists and has been exercised as a real packaged transaction.
-        return False
+        return bool(
+            self.system == "Windows"
+            and self.frozen
+            and self.application_path.is_file()
+            and self.helper_path is not None
+            and self.helper_path.is_file()
+            and self.stable_update_helper_path.is_file()
+        )
 
     @property
     def unsupported_reason(self) -> str:
         if self.system == "Windows":
+            if not self.frozen:
+                return "Automatic Windows updates require the installed desktop application"
             return (
-                "The verified Windows update requires manual installation until the packaged "
-                "installer has independent binary-and-database rollback"
+                "The installed Windows recovery helper is unavailable; reinstall the current "
+                "desktop package before applying updates"
             )
         if self.system == "Darwin":
             return (
@@ -375,6 +421,8 @@ class PlatformInstaller:
             entries = bundle.infolist()
             expanded = 0
             for entry in entries:
+                if "\\" in entry.filename or ":" in entry.filename:
+                    raise UpdateError("Release archive contains an unsafe path")
                 name = PurePosixPath(entry.filename)
                 if name.is_absolute() or ".." in name.parts or entry.is_dir():
                     if entry.is_dir():
@@ -397,28 +445,109 @@ class PlatformInstaller:
             raise UpdateError("Release archive does not contain AllTheContextSetup.exe")
         return setup
 
-    def handoff(self, artifact: Path, version: str, operation_dir: Path) -> None:
-        del version
+    @staticmethod
+    def _copy_verified(source: Path, target: Path) -> tuple[str, int]:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.atc-new")
+        temporary.unlink(missing_ok=True)
+        try:
+            with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+                shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
+                output_stream.flush()
+                os.fsync(output_stream.fileno())
+            digest, size = sha256_file(temporary)
+            temporary.replace(target)
+            return digest, size
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def handoff(self, plan: InstallPlan) -> None:
         if not self.supported:
             raise UpdateError(self.unsupported_reason)
-        setup = self._extract_windows_setup(artifact, operation_dir / "extracted")
-        environment = os.environ.copy()
-        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-        subprocess.Popen(
-            (str(setup),),
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
+        assert self.helper_path is not None
+        recovery_registered = False
+        try:
+            plan.transaction_dir.mkdir(parents=True, exist_ok=False)
+            setup = self._extract_windows_setup(plan.artifact, plan.operation_dir / "extracted")
+            replacement = plan.transaction_dir / "replacement" / "AllTheContextSetup.exe"
+            replacement_digest, replacement_size = self._copy_verified(setup, replacement)
+            rollback_application = plan.transaction_dir / "rollback" / "AllTheContext.exe"
+            rollback_digest, rollback_size = self._copy_verified(
+                self.application_path, rollback_application
+            )
+            rollback_mcp: Path | None = None
+            rollback_mcp_digest: str | None = None
+            rollback_mcp_size: int | None = None
+            if self.mcp_path.is_file():
+                rollback_mcp = plan.transaction_dir / "rollback" / "AllTheContextMCP.exe"
+                rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
+                    self.mcp_path, rollback_mcp
+                )
+            rollback_update_helper = plan.transaction_dir / "rollback" / "AllTheContextUpdater.exe"
+            rollback_update_digest, rollback_update_size = self._copy_verified(
+                self.stable_update_helper_path, rollback_update_helper
+            )
+            copied_helper = plan.transaction_dir / "AllTheContextUpdater.exe"
+            self._copy_verified(self.helper_path, copied_helper)
+            backup_digest, backup_size = sha256_file(plan.database_backup_path)
+            journal_path = plan.transaction_dir / "journal.json"
+            now = _utc_now()
+            journal = UpdateJournal(
+                operation_id=plan.operation_id,
+                phase=HelperPhase.PREPARED,
+                current_version=plan.current_version,
+                target_version=plan.target_version,
+                parent_pid=os.getpid(),
+                application_path=str(self.application_path),
+                replacement_path=str(replacement),
+                replacement_sha256=replacement_digest,
+                replacement_size=replacement_size,
+                rollback_application_path=str(rollback_application),
+                rollback_application_sha256=rollback_digest,
+                rollback_application_size=rollback_size,
+                mcp_path=str(self.mcp_path),
+                rollback_mcp_path=str(rollback_mcp) if rollback_mcp else None,
+                rollback_mcp_sha256=rollback_mcp_digest,
+                rollback_mcp_size=rollback_mcp_size,
+                stable_update_helper_path=str(self.stable_update_helper_path),
+                rollback_update_helper_path=str(rollback_update_helper),
+                rollback_update_helper_sha256=rollback_update_digest,
+                rollback_update_helper_size=rollback_update_size,
+                database_path=str(plan.database_path),
+                database_backup_path=str(plan.database_backup_path),
+                database_backup_sha256=backup_digest,
+                database_backup_size=backup_size,
+                state_path=str(plan.state_path),
+                helper_path=str(copied_helper),
+                core_host=plan.core_host,
+                core_port=plan.core_port,
+                created_at=now,
+                updated_at=now,
+            )
+            journal.validate(journal_path)
+            journal.save(journal_path)
+            register_recovery(copied_helper, journal_path, plan.operation_id)
+            recovery_registered = True
+            launch_recovery_helper(copied_helper, journal_path)
+        except (HelperError, OSError, zipfile.BadZipFile) as exc:
+            if recovery_registered:
+                with suppress(HelperError, OSError):
+                    unregister_recovery(plan.operation_id)
+            raise UpdateError("The Windows recovery transaction could not be prepared") from exc
 
     def rollback(self, state: UpdateState) -> None:
-        del state
-        raise UpdateError(
-            "Automatic binary rollback is unavailable; the verified database backup is preserved"
-        )
+        if state.transaction_path is None:
+            raise UpdateError("The independent Windows recovery journal is unavailable")
+        try:
+            request_rollback(Path(state.transaction_path))
+        except (HelperError, OSError) as exc:
+            raise UpdateError("The independent Windows rollback could not be requested") from exc
+
+    def recovery_outcome(self, state: UpdateState) -> str | None:
+        if state.transaction_path is None:
+            return None
+        return transaction_outcome(Path(state.transaction_path))
 
 
 class DatabaseBackup(Protocol):
@@ -484,6 +613,12 @@ class UpdateManager:
             self._validate_internal_state()
             self._recover_interrupted()
             self._prune_directory(self.config.data_dir / "staging", keep=self.state.operation_id)
+            active_transaction = (
+                Path(self.state.transaction_path).parent.name
+                if self.state.transaction_path is not None
+                else self.state.operation_id
+            )
+            self._prune_directory(self.config.data_dir / "transactions", keep=active_transaction)
             self._prune_directory(self.config.data_dir / "exports", keep=None)
             self._atomic_json(self.preferences_path, asdict(self.preferences))
             self._save()
@@ -542,6 +677,7 @@ class UpdateManager:
                 state.last_checked_at,
                 state.last_error,
                 state.operation_id,
+                state.transaction_path,
             )
             if any(item is not None and not isinstance(item, str) for item in optional_strings):
                 raise ValueError("invalid state string")
@@ -599,6 +735,22 @@ class UpdateManager:
             except (OSError, ValueError):
                 self.state.backup_path = None
                 invalid = True
+        if self.state.transaction_path is not None:
+            transaction_root = (self.config.data_dir / "transactions").resolve()
+            expected_transaction = (
+                transaction_root / operation / "journal.json" if operation is not None else None
+            )
+            try:
+                transaction_valid = (
+                    expected_transaction is not None
+                    and Path(self.state.transaction_path).resolve()
+                    == expected_transaction.resolve()
+                )
+            except OSError:
+                transaction_valid = False
+            if not transaction_valid:
+                self.state.transaction_path = None
+                invalid = True
         if invalid:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = "Persisted update paths were invalid and were reset safely"
@@ -607,6 +759,13 @@ class UpdateManager:
         value = asdict(self.state)
         value["phase"] = self.state.phase.value
         self._atomic_json(self.state_path, value)
+
+    def _require_no_active_handoff(self) -> None:
+        if self.state.transaction_path is not None and self.state.phase in {
+            UpdatePhase.INSTALLING,
+            UpdatePhase.RESTART_REQUIRED,
+        }:
+            raise UpdateBusyError("The Windows recovery helper owns the active update")
 
     @contextmanager
     def _exclusive(self) -> Iterator[None]:
@@ -634,6 +793,30 @@ class UpdateManager:
                 UpdatePhase.RESTART_REQUIRED,
             }:
                 return self.public_status()
+            recovery_outcome = self.installer.recovery_outcome(self.state)
+            if recovery_outcome == "pending":
+                return self.public_status()
+            if recovery_outcome == "installed":
+                self.state.phase = UpdatePhase.INSTALLED
+                self.state.last_error = None
+                self.state.transaction_path = None
+                self._clean_operation()
+                self._save()
+                return self.public_status()
+            if recovery_outcome == "rolled_back":
+                self.state.phase = UpdatePhase.ROLLED_BACK
+                self.state.last_error = (
+                    "The update did not become healthy; the previous app and vault were restored"
+                )
+                self.state.transaction_path = None
+                self._clean_operation()
+                self._save()
+                return self.public_status()
+            if recovery_outcome == "failed":
+                self.state.phase = UpdatePhase.ERROR
+                self.state.last_error = "The Windows update recovery journal was invalid"
+                self._save()
+                return self.public_status()
             offered = self.state.offered_version
             try:
                 version_advanced = offered is not None and (
@@ -650,6 +833,7 @@ class UpdateManager:
             if version_advanced and self.health_probe.healthy():
                 self.state.phase = UpdatePhase.INSTALLED
                 self.state.last_error = None
+                self.state.transaction_path = None
                 self._clean_operation()
                 self._save()
                 return self.public_status()
@@ -659,6 +843,7 @@ class UpdateManager:
                 self.state.last_error = (
                     "The new version failed its health check and was rolled back"
                 )
+                self.state.transaction_path = None
             except UpdateError as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = (
@@ -727,12 +912,14 @@ class UpdateManager:
             result.pop("downloaded_path", None)
             result.pop("backup_path", None)
             result.pop("operation_id", None)
+            result.pop("transaction_path", None)
             return result
 
     def configure(self, *, enabled: bool, channel: Channel) -> dict[str, Any]:
         if channel not in {"stable", "beta"}:
             raise UpdateError("Update channel must be stable or beta")
         with self._exclusive():
+            self._require_no_active_handoff()
             channel_changed = channel != self.preferences.channel
             self.preferences = UpdatePreferences(enabled, channel, None)
             self._atomic_json(self.preferences_path, asdict(self.preferences))
@@ -743,6 +930,7 @@ class UpdateManager:
                 self.state.mandatory = False
                 self.state.release_notes_url = None
                 self.state.operation_id = None
+                self.state.transaction_path = None
             if not enabled:
                 self._cancel.set()
                 self.state.phase = UpdatePhase.DISABLED
@@ -755,6 +943,7 @@ class UpdateManager:
 
     def defer(self) -> dict[str, Any]:
         with self._exclusive():
+            self._require_no_active_handoff()
             if self.state.offered_version is None:
                 raise UpdateError("There is no available update to defer")
             if self.state.mandatory:
@@ -769,6 +958,7 @@ class UpdateManager:
 
     def clear_error(self) -> dict[str, Any]:
         with self._exclusive():
+            self._require_no_active_handoff()
             self.state.last_error = None
             if self.state.phase in {UpdatePhase.ERROR, UpdatePhase.CANCELLED}:
                 self.state.phase = UpdatePhase.IDLE
@@ -791,6 +981,7 @@ class UpdateManager:
 
     def check(self, *, respect_defer: bool = False) -> dict[str, Any]:
         with self._exclusive():
+            self._require_no_active_handoff()
             if not self.preferences.enabled:
                 self.state.phase = UpdatePhase.DISABLED
                 self._save()
@@ -865,6 +1056,7 @@ class UpdateManager:
 
     def download(self) -> dict[str, Any]:
         with self._exclusive():
+            self._require_no_active_handoff()
             if self.state.phase not in {UpdatePhase.AVAILABLE, UpdatePhase.CANCELLED}:
                 raise UpdateError("A verified available update is required before download")
             manifest_path = self._operation_directory() / "manifest.json"
@@ -912,6 +1104,7 @@ class UpdateManager:
         """Copy a freshly re-verified staged artifact for one authenticated response."""
 
         with self._exclusive():
+            self._require_no_active_handoff()
             if (
                 self.state.phase
                 not in {
@@ -988,6 +1181,7 @@ class UpdateManager:
 
     def install(self) -> dict[str, Any]:
         with self._exclusive():
+            self._require_no_active_handoff()
             if self.state.phase != UpdatePhase.READY or self.state.downloaded_path is None:
                 raise UpdateError("A completely verified update must be ready before install")
             artifact = Path(self.state.downloaded_path)
@@ -1013,15 +1207,37 @@ class UpdateManager:
                 self.backup.create(self.database_path, backup_path)
                 self.state.backup_path = str(backup_path)
                 self.state.recovery_attempts += 1
-                self._save()
-                self.installer.handoff(
-                    artifact, cast(str, manifest["version"]), self._operation_directory()
-                )
+                operation_id = self.state.operation_id
+                if operation_id is None:
+                    raise UpdateError("Verified update transaction identity is unavailable")
+                transaction_dir = self.config.data_dir / "transactions" / operation_id
+                self.state.transaction_path = str(transaction_dir / "journal.json")
                 self.state.phase = UpdatePhase.RESTART_REQUIRED
                 self._save()
+                core_host = os.environ.get("ATC_CORE_HOST", "127.0.0.1")
+                try:
+                    core_port = int(os.environ.get("ATC_CORE_PORT", "7337"))
+                except ValueError as exc:
+                    raise UpdateError("The Core port is invalid for update recovery") from exc
+                self.installer.handoff(
+                    InstallPlan(
+                        artifact=artifact,
+                        target_version=cast(str, manifest["version"]),
+                        current_version=self.config.current_version,
+                        operation_id=operation_id,
+                        operation_dir=self._operation_directory(),
+                        transaction_dir=transaction_dir,
+                        database_path=self.database_path,
+                        database_backup_path=backup_path,
+                        state_path=self.state_path,
+                        core_host=core_host,
+                        core_port=core_port,
+                    )
+                )
                 return self.public_status()
             except (OSError, ValueError, UpdateError) as exc:
                 self.state.phase = UpdatePhase.ERROR
                 self.state.last_error = str(exc)[:500]
+                self.state.transaction_path = None
                 self._save()
                 return self.public_status()

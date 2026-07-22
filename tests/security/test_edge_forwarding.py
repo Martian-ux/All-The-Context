@@ -81,6 +81,16 @@ def test_forwarding_claims_are_bounded_one_time_cancelable_and_restart_safe(
         broker.answer(cancelled, str(cancelled_claim["claim_token"]), {"found": False})
 
 
+def test_forwarding_broker_releases_sqlite_handles_after_each_operation(tmp_path: Path) -> None:
+    database = tmp_path / "edge.sqlite3"
+    broker, _ = _broker(database)
+    assert broker.status() == {"queued": 0, "claimed": 0}
+
+    moved = tmp_path / "moved.sqlite3"
+    database.replace(moved)
+    moved.replace(database)
+
+
 def test_forwarding_expiry_rate_concurrency_and_decommission_cleanup(tmp_path: Path) -> None:
     broker, _ = _broker(tmp_path / "edge.sqlite3")
     first = broker.enqueue(

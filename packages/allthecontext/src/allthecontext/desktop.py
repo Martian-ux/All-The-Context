@@ -26,6 +26,7 @@ from typing import Any
 
 from platformdirs import user_data_path
 
+from . import __version__
 from .application_install import (
     install_application_entrypoints,
     remove_application_entrypoints,
@@ -33,7 +34,7 @@ from .application_install import (
 from .client_config import apply_managed_client_cleanup, plan_managed_client_cleanup
 from .config import CoreConfig
 from .credentials import FALLBACK_CREDENTIAL_STORAGE
-from .desktop_runtime import RuntimeCommand, mcp_helper_name
+from .desktop_runtime import RuntimeCommand, mcp_helper_name, update_helper_name
 from .desktop_setup import (
     CLAUDE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
@@ -264,18 +265,27 @@ def prepare_installed_runtime(
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
+    update_source = runtime.update_executable
+    if update_source is None or not update_source.is_file():
+        raise RuntimeError("The packaged update helper is missing. Download the installer again.")
 
     install_dir = windows_install_directory()
     app_target = install_dir / WINDOWS_APP_NAME
     helper_target = install_dir / mcp_helper_name()
+    update_target = install_dir / update_helper_name()
     app_needs_update = not _same_file(runtime.executable, app_target)
     if runtime.executable != app_target and app_target.is_file() and app_needs_update:
         _stop_installed_core_for_upgrade()
     installed_helper = _install_mcp_helper(helper_source, helper_target)
+    _copy_atomically(update_source, update_target)
     _copy_atomically(runtime.executable, app_target)
     if runtime.executable != app_target:
         install_application_entrypoints(app_target)
-    installed = RuntimeCommand(app_target, mcp_executable=installed_helper)
+    installed = RuntimeCommand(
+        app_target,
+        mcp_executable=installed_helper,
+        update_executable=update_target,
+    )
 
     if runtime.executable != app_target and relaunch_args is not None:
         environment = os.environ.copy()
@@ -303,7 +313,7 @@ def diagnostics() -> dict[str, Any]:
     runtime = RuntimeCommand.current()
     return {
         "application": "All The Context",
-        "version": "0.1.0",
+        "version": __version__,
         "frozen": bool(getattr(sys, "frozen", False)),
         "platform": platform.system(),
         "python": platform.python_version(),
@@ -312,10 +322,76 @@ def diagnostics() -> dict[str, Any]:
         "relay_migrations": len(tuple(relay_migrations.glob("*.sql"))),
         "dashboard_bundled": (package_root / "web" / "index.html").is_file(),
         "update_keyring_bundled": (package_root / "update_keys.json").is_file(),
+        "update_helper_bundled": runtime.update_executable is not None,
         "mcp_helper_bundled": runtime.mcp_executable is not None,
         "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
         "core_data_directory": str(CoreConfig.default().data_dir),
     }
+
+
+def _valid_update_operation() -> str:
+    operation = os.environ.get("ATC_UPDATE_OPERATION", "")
+    if len(operation) != 24 or any(character not in "0123456789abcdef" for character in operation):
+        raise RuntimeError("The update transaction identity is invalid")
+    return operation
+
+
+def _update_report_path(value: str, operation: str, expected_name: str) -> Path:
+    target = Path(value).expanduser().resolve()
+    root = CoreConfig.default().data_dir / "updates" / "transactions" / operation
+    expected = (root / expected_name).resolve()
+    if target != expected:
+        raise RuntimeError("The update report path is invalid for this transaction")
+    return target
+
+
+def _apply_packaged_update(report_value: str) -> int:
+    if platform.system() != "Windows" or not getattr(sys, "frozen", False):
+        raise RuntimeError("Packaged update application is available only on Windows")
+    operation = _valid_update_operation()
+    report_path = _update_report_path(report_value, operation, "apply-report.json")
+    installed, _ = prepare_installed_runtime(RuntimeCommand.current(), relaunch_args=None)
+    install_application_entrypoints(installed.executable)
+    app_digest, app_size = _file_digest(installed.executable)
+    helper = installed.mcp_executable
+    if helper is None or not helper.is_file():
+        raise RuntimeError("The installed MCP helper is unavailable after update")
+    helper_digest, helper_size = _file_digest(helper)
+    update_helper = installed.update_executable
+    if update_helper is None or not update_helper.is_file():
+        raise RuntimeError("The installed update helper is unavailable after update")
+    update_helper_digest, update_helper_size = _file_digest(update_helper)
+    payload = {
+        "status": "installed",
+        "version": __version__,
+        "application": str(installed.executable),
+        "application_sha256": app_digest,
+        "application_size": app_size,
+        "mcp": str(helper),
+        "mcp_sha256": helper_digest,
+        "mcp_size": helper_size,
+        "update_helper": str(update_helper),
+        "update_helper_sha256": update_helper_digest,
+        "update_helper_size": update_helper_size,
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+    try:
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(report_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return 0
+
+
+def _file_digest(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
 
 
 def write_diagnostics(path: Path) -> None:
@@ -577,6 +653,8 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--setup", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--diagnostics", type=Path, help=argparse.SUPPRESS)
     mode.add_argument("--headless-setup", metavar="REPORT_PATH", help=argparse.SUPPRESS)
+    mode.add_argument("--apply-update", metavar="REPORT_PATH", help=argparse.SUPPRESS)
+    mode.add_argument("--update-health-check", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument(
         "--packaged-smoke-uninstall",
         metavar="REPORT_PATH",
@@ -613,6 +691,10 @@ def _run_graphical(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.core:
+        from .windows_update_helper import ensure_recovery_before_core
+
+        if not ensure_recovery_before_core():
+            return 0
         from .core.app import main as core_main
 
         core_main()
@@ -627,6 +709,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.headless_setup:
         return _headless_setup(args, RuntimeCommand.current())
+    if args.apply_update:
+        return _apply_packaged_update(args.apply_update)
+    if args.update_health_check:
+        operation = _valid_update_operation()
+        report_path = _update_report_path(args.update_health_check, operation, "health.json")
+        from .core.app import run_update_health_check
+
+        return run_update_health_check(report_path)
     if args.packaged_smoke_uninstall:
         if os.environ.get("ATC_PACKAGED_SMOKE") != "1":
             raise RuntimeError("Packaged smoke uninstall is disabled")

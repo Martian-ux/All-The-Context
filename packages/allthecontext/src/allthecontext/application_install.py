@@ -9,6 +9,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import __version__
+
 WINDOWS_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\AllTheContext"
 WINDOWS_APP_ID = "AllTheContext"
 WINDOWS_USER_SHELL_FOLDERS = (
@@ -158,7 +160,7 @@ def install_application_entrypoints(executable: Path) -> ApplicationRegistration
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _windows_uninstall_key()) as key:
         string_values = {
             "DisplayName": "All The Context",
-            "DisplayVersion": "0.1.0",
+            "DisplayVersion": __version__,
             "Publisher": "All The Context",
             "InstallLocation": str(target.parent),
             "DisplayIcon": str(target),

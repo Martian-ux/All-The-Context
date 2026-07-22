@@ -285,15 +285,14 @@ version policy before its artifact URL is used. Artifacts stream into private
 per-operation staging and must match both signed byte length and SHA-256.
 
 Installer, backup, health, transport, and rollback behavior are explicit
-interfaces. All real platform adapters currently stop after verified staging.
-The Windows self-installer can quiesce Core and atomically replace its
-executable, but it is not an independent journaled helper that can restore both
-the prior executable and the verified pre-migration SQLite backup after a
-failed health check. Enabling one-click install without that property would be
-a false recovery claim. macOS app bundles and Linux standalone archives also
-lack a reviewed automatic cutover. Persisted phases make interrupted checks and
-downloads cleanable; fake installers exercise the future transaction contract
-without being treated as production capability.
+interfaces. Windows automatic installation is enabled only when the frozen
+desktop, stable installed application, and separately packaged recovery helper
+are all present. That helper owns the native cutover and rollback described in
+ADR-026. macOS app bundles and Linux standalone archives still stop after
+verified staging because neither has a reviewed automatic cutover. Persisted
+phases make interrupted checks and downloads cleanable; a manual-required
+platform can save a newly reverified package without receiving a private
+staging path.
 
 All preference/state mutations share the transaction gate and use atomic
 same-directory replacement. Invalid persisted versions, phases, identifiers,
@@ -324,3 +323,38 @@ Tests close and reopen the store after an injected lock, reject resurrection,
 and scan the live database, WAL, and shared-memory files for both raw content
 and its SHA-256. This protects the live Edge storage set, not provider snapshots,
 external backups, media remanence, or user-created copies.
+
+## ADR-026: Windows cutover belongs to a separate journaled recovery executable
+
+The Windows desktop bundles `AllTheContextUpdater.exe` and installs a stable
+copy next to the application and STDIO MCP adapter. For each update, Core makes
+a verified SQLite backup, copies the current application, MCP adapter, and
+updater into an operation-scoped rollback directory, copies the recovery helper
+outside the binary being replaced, writes an exact-schema journal below the
+per-user update directory, registers a per-user RunOnce recovery command, and
+then exits. Journal paths are constrained to the expected Core data and
+per-user installation roots; replacement bytes retain the digest and size from
+the already verified release archive.
+
+After the old process exits, the helper refreshes the backup from the stopped
+Core database so writes completed during HTTP handoff are not lost. It applies
+the replacement, verifies the installed application and helper files, runs
+frozen diagnostics, starts the real migrated Core once on `127.0.0.1`, probes
+its exact health response, shuts it down, and runs SQLite `quick_check`. Only
+then does it commit state, remove RunOnce recovery, and relaunch Core. Ordinary
+Core startup refuses to race an active journal; only the matching one-shot
+health process may start during cutover.
+
+Every phase is durable and protected by a cross-process lock. A crash can
+resume from the last phase. A failure before cutover marks the attempt stopped
+without overwriting the still-current application or database. A failure after
+cutover restores the prior application, MCP adapter, updater helper, and final
+stopped-Core database, removes WAL/shared-memory sidecars, records a terminal
+rollback, and relaunches the prior Core. Recovery inputs and persisted error
+codes are bounded and path-validated. The latest terminal journal is retained
+until a later operation supersedes it.
+
+This decision establishes an exercised engineering recovery boundary, not a
+public release claim. Production Windows OTA still requires an offline release
+key ceremony, immutable channel publication, Authenticode/publisher gates, and
+a real signed N-1 release drill. macOS and Linux remain manual-required.

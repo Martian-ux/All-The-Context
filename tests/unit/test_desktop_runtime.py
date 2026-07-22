@@ -45,10 +45,12 @@ def test_bundled_dashboard_contains_current_edge_setup() -> None:
 def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkeypatch) -> None:
     source_app = tmp_path / "download" / "AllTheContextSetup.exe"
     source_helper = tmp_path / "bundle" / "AllTheContextMCP.exe"
+    source_updater = tmp_path / "bundle" / "AllTheContextUpdater.exe"
     source_app.parent.mkdir()
     source_helper.parent.mkdir()
     source_app.write_bytes(b"desktop")
     source_helper.write_bytes(b"mcp")
+    source_updater.write_bytes(b"updater")
     install_dir = tmp_path / "installed"
     install_dir.mkdir()
     (install_dir / "AllTheContext.exe").write_bytes(b"older desktop")
@@ -81,7 +83,11 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     )
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(source_app, mcp_executable=source_helper),
+        RuntimeCommand(
+            source_app,
+            mcp_executable=source_helper,
+            update_executable=source_updater,
+        ),
         relaunch_args=(),
     )
 
@@ -90,6 +96,8 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert installed.executable.read_bytes() == b"desktop"
     assert installed.mcp_executable == install_dir / "AllTheContextMCP.exe"
     assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert installed.update_executable == install_dir / "AllTheContextUpdater.exe"
+    assert installed.update_executable.read_bytes() == b"updater"
     assert launched == [(str(installed.executable),)]
     assert launch_environments[0]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert stopped == [True]
@@ -102,9 +110,11 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     install_dir = tmp_path / "installed"
     app = install_dir / "AllTheContext.exe"
     helper = install_dir / "AllTheContextMCP.exe"
+    updater = install_dir / "AllTheContextUpdater.exe"
     install_dir.mkdir()
     app.write_bytes(b"desktop")
     helper.write_bytes(b"mcp")
+    updater.write_bytes(b"updater")
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
     monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
@@ -124,11 +134,15 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     )
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(app, mcp_executable=helper),
+        RuntimeCommand(app, mcp_executable=helper, update_executable=updater),
         relaunch_args=("--setup",),
     )
 
-    assert installed == RuntimeCommand(app, mcp_executable=helper)
+    assert installed == RuntimeCommand(
+        app,
+        mcp_executable=helper,
+        update_executable=updater,
+    )
     assert relaunched is False
     assert not stopped
     assert not registered

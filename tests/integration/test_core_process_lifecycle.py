@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -8,6 +9,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from allthecontext import __version__
+from allthecontext.core.app import run_update_health_check
 
 
 def _available_port() -> int:
@@ -70,3 +74,23 @@ def test_core_process_starts_stops_and_restarts(tmp_path: Path) -> None:
         _wait_for_health(second, port)
     finally:
         _stop_core(second)
+
+
+def test_update_health_mode_runs_real_loopback_core_and_exits_cleanly(
+    tmp_path: Path, monkeypatch
+) -> None:
+    port = _available_port()
+    data_dir = tmp_path / "health-core"
+    report = data_dir / "updates" / "transactions" / ("c" * 24) / "health.json"
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("ATC_CORE_HOST", "127.0.0.1")
+    monkeypatch.setenv("ATC_CORE_PORT", str(port))
+    monkeypatch.setenv("ATC_UPDATE_HEALTH_OPERATION", "c" * 24)
+
+    assert run_update_health_check(report) == 0
+    assert json.loads(report.read_text(encoding="utf-8")) == {
+        "component": "core",
+        "health": "ok",
+        "version": __version__,
+    }
+    assert (data_dir / "core.sqlite3").is_file()

@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import threading
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,7 @@ from allthecontext.release_manifest import canonical_payload, create_manifest, p
 from allthecontext.updater import (
     MAX_MANIFEST_BYTES,
     HttpsTransport,
+    InstallPlan,
     PlatformInstaller,
     UpdateBusyError,
     UpdateConfig,
@@ -23,6 +25,7 @@ from allthecontext.updater import (
     UpdatePhase,
     UpdateState,
 )
+from allthecontext.windows_update_helper import HelperPhase, UpdateJournal
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SEED = bytes(range(32))
@@ -84,15 +87,19 @@ class FakeInstaller:
         if self.failure == "preflight":
             raise UpdateError("Insufficient disk space")
 
-    def handoff(self, artifact: Path, version: str, operation_dir: Path) -> None:
-        assert artifact.is_file()
-        assert version == "0.2.0"
-        assert operation_dir.is_dir()
+    def handoff(self, plan: InstallPlan) -> None:
+        assert plan.artifact.is_file()
+        assert plan.target_version == "0.2.0"
+        assert plan.operation_dir.is_dir()
         if self.failure == "locked":
             raise UpdateError("Installed files are locked")
         if self.failure == "crash":
             raise UpdateError("Installer process crashed")
         self.handed_off = True
+
+    def recovery_outcome(self, state: UpdateState) -> str | None:
+        del state
+        return None
 
     def rollback(self, state: UpdateState) -> None:
         assert state.backup_path
@@ -425,6 +432,22 @@ def test_concurrent_check_and_install_are_rejected(tmp_path: Path) -> None:
         manager._operation_gate.release()
 
 
+@pytest.mark.parametrize("action", ["check", "defer", "clear_error"])
+def test_external_windows_handoff_blocks_competing_state_mutations(
+    tmp_path: Path, action: str
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    manager.check()
+    manager.download()
+    assert manager.install()["phase"] == "restart_required"
+
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        getattr(manager, action)()
+    with pytest.raises(UpdateBusyError, match="recovery helper"):
+        manager.configure(enabled=True, channel="stable")
+
+
 @pytest.mark.parametrize("action", ["defer", "clear_error", "recover_after_restart"])
 def test_all_state_mutations_share_the_operation_gate(tmp_path: Path, action: str) -> None:
     manifest, artifact, keyring = _fixture(tmp_path)
@@ -491,6 +514,34 @@ def test_repeated_checks_remove_bounded_orphan_staging(tmp_path: Path) -> None:
     assert [entry.name for entry in staging.iterdir()] == [manager.state.operation_id]
 
 
+def test_restart_retains_the_latest_terminal_recovery_journal(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    operation_id = "c" * 24
+    updates = tmp_path / "updates"
+    retained = updates / "transactions" / operation_id
+    orphan = updates / "transactions" / ("d" * 24)
+    retained.mkdir(parents=True)
+    orphan.mkdir()
+    (retained / "journal.json").write_text('{"phase":"committed"}', encoding="utf-8")
+    (orphan / "journal.json").write_text('{"phase":"committed"}', encoding="utf-8")
+    (updates / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "installed",
+                "current_version": "0.1.0",
+                "operation_id": operation_id,
+                "transaction_path": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _manager(tmp_path, manifest, artifact, keyring)
+
+    assert retained.is_dir()
+    assert not orphan.exists()
+
+
 def test_current_platform_rejects_unknown_and_32_bit_architectures(
     monkeypatch: Any,
 ) -> None:
@@ -518,10 +569,138 @@ def test_windows_preflight_detects_insufficient_disk(tmp_path: Path, monkeypatch
         PlatformInstaller(system="Windows", frozen=True).preflight(artifact, 10)
 
 
-def test_real_windows_adapter_stays_manual_until_transactional_rollback_exists() -> None:
+@pytest.mark.parametrize(
+    "member_name",
+    [
+        "../outside/AllTheContextSetup.exe",
+        r"..\outside\AllTheContextSetup.exe",
+        "AllTheContextSetup.exe:stream",
+    ],
+)
+def test_windows_archive_rejects_unsafe_member_paths(tmp_path: Path, member_name: str) -> None:
+    archive = tmp_path / "artifact.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(member_name, b"untrusted application")
+
+    with pytest.raises(UpdateError, match="unsafe path"):
+        PlatformInstaller._extract_windows_setup(archive, tmp_path / "extracted")
+
+
+def test_windows_adapter_requires_the_packaged_recovery_helper() -> None:
     installer = PlatformInstaller(system="Windows", frozen=True)
     assert installer.supported is False
-    assert "binary-and-database rollback" in installer.unsupported_reason
+    assert "recovery helper" in installer.unsupported_reason
+
+
+def test_windows_adapter_enables_automatic_install_with_independent_helper(
+    tmp_path: Path,
+) -> None:
+    application = tmp_path / "AllTheContext.exe"
+    helper = tmp_path / "AllTheContextUpdater.exe"
+    application.write_bytes(b"application")
+    helper.write_bytes(b"helper")
+    installer = PlatformInstaller(
+        system="Windows",
+        frozen=True,
+        application_path=application,
+        helper_path=helper,
+    )
+    assert installer.supported is True
+
+
+def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    data_dir = tmp_path / "data"
+    updates = data_dir / "updates"
+    install_dir = tmp_path / "installed"
+    install_dir.mkdir()
+    application = install_dir / "AllTheContext.exe"
+    mcp = install_dir / "AllTheContextMCP.exe"
+    stable_update_helper = install_dir / "AllTheContextUpdater.exe"
+    packaged_helper = tmp_path / "bundle" / "AllTheContextUpdater.exe"
+    packaged_helper.parent.mkdir()
+    application.write_bytes(b"old application")
+    mcp.write_bytes(b"old mcp")
+    stable_update_helper.write_bytes(b"old update helper")
+    packaged_helper.write_bytes(b"helper")
+    database = data_dir / "core.sqlite3"
+    data_dir.mkdir()
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("CREATE TABLE records(id INTEGER PRIMARY KEY)")
+        connection.commit()
+    finally:
+        connection.close()
+    backup = updates / "backups" / "core.sqlite3"
+    backup.parent.mkdir(parents=True)
+    shutil.copy2(database, backup)
+    operation_id = "b" * 24
+    operation_dir = updates / "staging" / operation_id
+    operation_dir.mkdir(parents=True)
+    artifact = operation_dir / "artifact.zip"
+    with zipfile.ZipFile(artifact, "w") as bundle:
+        bundle.writestr("AllTheContextSetup.exe", b"new application")
+    transaction_dir = updates / "transactions" / operation_id
+    state_path = updates / "state.json"
+    journal_path = transaction_dir / "journal.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "phase": "restart_required",
+                "current_version": "0.1.0",
+                "offered_version": "0.2.0",
+                "operation_id": operation_id,
+                "transaction_path": str(journal_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ATC_CORE_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
+    registrations: list[tuple[Path, Path, str]] = []
+    launches: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        updater_module,
+        "register_recovery",
+        lambda helper, journal, operation: registrations.append((helper, journal, operation)),
+    )
+    monkeypatch.setattr(
+        updater_module,
+        "launch_recovery_helper",
+        lambda helper, journal: launches.append((helper, journal)),
+    )
+    installer = PlatformInstaller(
+        system="Windows",
+        frozen=True,
+        application_path=application,
+        helper_path=packaged_helper,
+        mcp_path=mcp,
+    )
+    plan = InstallPlan(
+        artifact=artifact,
+        target_version="0.2.0",
+        current_version="0.1.0",
+        operation_id=operation_id,
+        operation_dir=operation_dir,
+        transaction_dir=transaction_dir,
+        database_path=database,
+        database_backup_path=backup,
+        state_path=state_path,
+        core_host="127.0.0.1",
+        core_port=7337,
+    )
+
+    installer.handoff(plan)
+
+    journal = UpdateJournal.load(journal_path)
+    assert journal.phase is HelperPhase.PREPARED
+    assert Path(journal.rollback_application_path).read_bytes() == b"old application"
+    assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
+    assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
+    assert Path(journal.replacement_path).read_bytes() == b"new application"
+    assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]
+    assert launches == [(Path(journal.helper_path), journal_path)]
 
 
 @pytest.mark.parametrize(

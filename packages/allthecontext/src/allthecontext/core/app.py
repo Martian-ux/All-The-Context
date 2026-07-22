@@ -3,8 +3,12 @@
 import json
 import os
 import secrets
+import sqlite3
 import tempfile
 import threading
+import time
+import urllib.error
+import urllib.request
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+from .. import __version__
 from ..browser_session import (
     BROWSER_AUTH_SCHEME,
     BROWSER_STORAGE_KEY,
@@ -153,24 +158,27 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
-        edge_sync.start()
-        if (
-            updates.preferences.enabled
-            and updates.preferences.channel in updates.config.manifest_urls
-        ):
-            threading.Thread(target=updates.scheduled_check, daemon=True).start()
-        if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-            recovery = threading.Timer(1.0, updates.recover_after_restart)
-            recovery.daemon = True
-            recovery.start()
+        update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
+        if not update_health_process:
+            edge_sync.start()
+            if (
+                updates.preferences.enabled
+                and updates.preferences.channel in updates.config.manifest_urls
+            ):
+                threading.Thread(target=updates.scheduled_check, daemon=True).start()
+            if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+                recovery = threading.Timer(1.0, updates.recover_after_restart)
+                recovery.daemon = True
+                recovery.start()
         try:
             yield
         finally:
-            edge_sync.stop()
+            if not update_health_process:
+                edge_sync.stop()
 
     app = FastAPI(
         title="All The Context Core",
-        version="0.1.0",
+        version=__version__,
         docs_url="/docs",
         redoc_url=None,
         lifespan=lifespan,
@@ -1233,7 +1241,16 @@ def create_app(
     @app.post("/v1/admin/updates/install")
     def install_update(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        return update_action(updates.install)
+        status = update_action(updates.install)
+        if (
+            status.get("phase") == UpdatePhase.RESTART_REQUIRED.value
+            and status.get("automatic_install_supported") is True
+            and shutdown_callback is not None
+        ):
+            shutdown = threading.Timer(0.25, shutdown_callback)
+            shutdown.daemon = True
+            shutdown.start()
+        return status
 
     @app.post("/v1/admin/updates/defer")
     def defer_update(principal: Principal) -> dict[str, Any]:
@@ -1263,6 +1280,99 @@ def create_app(
         app.mount("/", StaticFiles(directory=dashboard_root, html=True), name="dashboard")
 
     return app
+
+
+def run_update_health_check(report_path: Path) -> int:
+    """Start the real loopback Core once, prove health, and shut down cleanly."""
+
+    config = CoreConfig.default()
+    finished = threading.Event()
+    healthy = threading.Event()
+    servers: list[uvicorn.Server] = []
+
+    def probe() -> None:
+        deadline = time.monotonic() + 30
+        url = f"http://{config.host}:{config.port}/health"
+        while not finished.is_set() and time.monotonic() < deadline:
+            try:
+                request = urllib.request.Request(url, headers={"Accept": "application/json"})
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    value = json.loads(response.read(4097).decode("utf-8"))
+                if value == {"status": "ok", "component": "core"}:
+                    healthy.set()
+                    if servers:
+                        servers[0].should_exit = True
+                    return
+            except (
+                OSError,
+                UnicodeError,
+                ValueError,
+                urllib.error.URLError,
+                json.JSONDecodeError,
+            ):
+                time.sleep(0.1)
+        if servers:
+            servers[0].should_exit = True
+
+    try:
+        with CoreInstanceLock(config):
+            app = create_app(config)
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host=config.host,
+                    port=config.port,
+                    log_config=None,
+                    timeout_graceful_shutdown=5,
+                )
+            )
+            servers.append(server)
+            watcher = threading.Thread(target=probe, daemon=True)
+            watcher.start()
+            try:
+                server.run()
+            finally:
+                finished.set()
+                watcher.join(timeout=2)
+        if healthy.is_set():
+            connection = sqlite3.connect(config.database_path)
+            try:
+                if (
+                    os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+                    and os.environ.get("ATC_UPDATE_SMOKE_MUTATE_DB") == "1"
+                ):
+                    connection.execute(
+                        "CREATE TABLE IF NOT EXISTS packaged_update_smoke(value TEXT NOT NULL)"
+                    )
+                    connection.execute("DELETE FROM packaged_update_smoke")
+                    connection.execute("INSERT INTO packaged_update_smoke VALUES ('new-version')")
+                    connection.commit()
+                integrity = connection.execute("PRAGMA quick_check").fetchone()
+            finally:
+                connection.close()
+            forced_failure = (
+                os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+                and os.environ.get("ATC_UPDATE_FORCE_HEALTH_FAILURE") == "1"
+            )
+            success = integrity == ("ok",) and not forced_failure
+        else:
+            success = False
+    except (OSError, sqlite3.Error, ValueError):
+        success = False
+
+    payload = (
+        {"component": "core", "health": "ok", "version": __version__}
+        if success
+        else {"component": "core", "health": "failed", "version": __version__}
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = report_path.with_name(f"{report_path.name}.{secrets.token_hex(6)}.atc-new")
+    try:
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(report_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return 0 if success else 1
 
 
 def main() -> None:

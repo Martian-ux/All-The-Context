@@ -66,14 +66,16 @@ Authenticode signing, notarized macOS distribution, or native Linux package
 metadata. See the [release runbook](RELEASES.md) for offline manifest signing,
 stable/beta promotion, key rotation, and downgrade rules.
 
-The native updater verifies and stages a versioned ZIP but reports manual
-installation on every current platform. The packaged Windows self-installer can
-authenticate to and stop Core before atomic replacement, but it cannot yet act
-as an independent journaled recovery process that restores both the prior
-binary and pre-migration database after failed health. It is therefore not
-exposed as one-click update. macOS app bundles and Linux standalone archives
-have the same manual-required boundary. These are deliberate safety states,
-not missing success messages.
+The native updater verifies and stages a versioned ZIP on every platform. The
+packaged Windows application also includes a separate recovery executable, so
+it exposes one-click install when running from the complete per-user
+installation. The helper journals each phase, registers per-user RunOnce
+recovery, waits for Core to stop, refreshes the SQLite backup, verifies the
+replacement and its MCP/updater helpers, runs a real loopback Core health check,
+and either commits or restores all prior binaries and the database. Its frozen
+smoke covers a crash after replacement and a failed-health rollback. macOS app
+bundles and Linux standalone archives remain manual-required; those are
+deliberate safety states, not missing success messages.
 
 ## Source development installation
 
@@ -111,10 +113,11 @@ a functional keyring; it is not equivalent to an OS-protected credential.
 
 ## Packaging roadmap
 
-- **Windows:** sign the existing self-installing artifact, verify the signed
-  immutable candidate and publisher chain, add publisher
-  identity, and then evaluate a Windows service only if per-user startup proves
-  insufficient. The per-user uninstaller path is already implemented.
+- **Windows:** complete the offline release-key ceremony, sign the existing
+  self-installing artifact and helper, verify the immutable candidate and
+  publisher chain, run a real signed N-1 transaction, and then evaluate a
+  Windows service only if per-user startup proves insufficient. The per-user
+  installer, transactional updater, and uninstaller paths are implemented.
 - **macOS:** sign and notarize the application bundle and its per-user
   LaunchAgent.
 - **Linux:** wrap the executable in native packages and add a user-service
