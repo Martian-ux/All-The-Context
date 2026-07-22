@@ -9,7 +9,7 @@
 | Large/malicious imports | Enforce byte/record/archive limits and keep source text inert |
 | Deletion/permission replication lag | Durable outbox, checkpoints, status visibility, reconciliation tests |
 | Full provider capability changes over time | Official-source capability matrix with verification date and unverified labels |
-| Hosted Relay cannot reach online Core for deep retrieval yet | Return a clean reduced result for `core_available`; add an authenticated outbound Core channel later |
+| A public Edge forwarding queue could amplify requests, forge client authority, replay results, or retain private Core data | Core initiates outbound polling; seal requests to Core before SQLite; resolve a Core-local user approval instead of Edge assertions; enforce one-use expiring claims, replay/cancel checks, per-client/global bounds, response limits, sanitized errors, and memory-only responses; byte-scan DB/WAL/SHM sentinels in security tests |
 | Local SQLite content is plaintext to the OS account | Document the boundary; rely on OS disk/account protection until an application-encrypted vault is designed |
 | Cross-platform claims exceed local hardware | Keep CI for all three operating systems and withhold observed-support claims until those jobs run |
 | A reused venv retains compiled modules from another Python version | Bootstrap compares runtime versions and probes compiled imports before reuse; rebuild stale environments |

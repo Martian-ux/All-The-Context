@@ -43,13 +43,14 @@ ChatGPT or Claude on the web and mobile cannot reach a private `127.0.0.1`
 service. The dashboard can now prepare, cryptographically pair, synchronize,
 manage, and decommission a personal hosted Edge from the same **Connect apps**
 page. The user deploys the included Edge blueprint under their own hosting
-account, pastes the resulting HTTPS address once, and then adds the displayed
+account, enters the resulting HTTPS address once, and then adds the displayed
 MCP address in an eligible AI provider. Claude custom connectors and ChatGPT
-developer-mode apps linked on the web can then be used from their mobile apps;
-workspace policy may gate setup. These capability labels were checked on
+developer-mode apps have different surfaces: Claude connectors added on
+web/Desktop can be used on mobile, while ChatGPT developer-mode MCP is currently
+web-only; workspace policy may gate setup. These labels were checked on
 2026-07-21 against the official
-[Claude connector guide](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)
-and [ChatGPT app guide](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt).
+[Claude connector guide](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers)
+and [ChatGPT developer-mode guide](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta).
 
 The repository does not yet have a public release URL, so its engineering build
 truthfully shows that the one-click Render deployment link is unavailable.

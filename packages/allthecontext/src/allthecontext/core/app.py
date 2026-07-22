@@ -58,6 +58,7 @@ from ..desktop_setup import (
 )
 from ..edge_connection import EdgeConnectionStore, EdgeSyncManager
 from ..export import create_export
+from ..ids import new_id
 from ..instance_identity import ensure_instance_secret, instance_proof
 from ..lifecycle import CoreInstanceLock
 from ..models import (
@@ -106,6 +107,13 @@ class EdgeForgetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirmation: Literal["DELETE HOSTED EDGE"]
+
+
+class EdgeClientApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    context_scopes: list[str] = Field(default_factory=list, max_length=64)
 
 
 def create_app(
@@ -592,6 +600,18 @@ def create_app(
         else:
             connection_state = "paired"
 
+        wizard_state = (
+            "recover"
+            if connection_state == "degraded"
+            else "preflight"
+            if connection_state == "not_configured"
+            else "deploy"
+            if connection_state == "prepared"
+            else "sync"
+            if connection_state == "paired"
+            else "connect"
+        )
+
         edge_url = state.edge_url if state is not None else None
         last_error = (
             state_error
@@ -619,6 +639,13 @@ def create_app(
             "last_success_at": state.last_success_at if state is not None else None,
             "last_error": last_error,
             "proposals_imported": state.proposals_imported if state is not None else 0,
+            "wizard": {
+                "state": wizard_state,
+                "preflight_ok": material_available or state is None,
+                "paired": edge_url is not None,
+                "synchronized": connection_state == "ready",
+                "ordinary_path_requires_terminal": False,
+            },
             "deployment": {
                 "provider": "render_blueprint",
                 "deploy_url": os.environ.get("ATC_EDGE_DEPLOY_URL", "").strip() or None,
@@ -635,13 +662,13 @@ def create_app(
                     "mobile_supported": True,
                     "setup_url": "https://claude.ai/settings/connectors",
                     "detail": (
-                        "Claude Free currently supports one custom connector; paid plans support "
-                        "more. Team/Enterprise owners may need to enable it. Add on web or "
-                        "Desktop, then use it on web, desktop, iOS, and Android."
+                        "Claude remote custom connectors currently require Pro, Max, Team, or "
+                        "Enterprise. Add one on claude.ai or Claude Desktop; an existing "
+                        "connector can then be used on iOS and Android."
                     ),
                     "setup_steps": [
-                        "Open Claude Customize → Connectors on the web or Desktop.",
-                        "Select + → Add custom connector and paste the Remote MCP address.",
+                        "Open Settings → Connectors on claude.ai or Claude Desktop.",
+                        "Choose Add custom connector and enter the Remote MCP address.",
                         "Complete Edge authorization; the connector can then be used on mobile.",
                     ],
                 },
@@ -649,24 +676,21 @@ def create_app(
                     "id": "chatgpt",
                     "name": "ChatGPT",
                     "web_supported": True,
-                    "mobile_supported": True,
-                    "setup_url": "https://chatgpt.com/plugins",
+                    "mobile_supported": False,
+                    "setup_url": "https://chatgpt.com/",
                     "detail": (
-                        "Developer-mode apps are supported on all ChatGPT plans. Link the app "
-                        "on the web, subject to workspace policy, then use it in ChatGPT mobile."
+                        "Developer-mode MCP apps are currently a web-only beta for ChatGPT "
+                        "Business, Enterprise, and Edu workspaces. Admin or owner policy applies."
                     ),
                     "setup_steps": [
                         (
-                            "On ChatGPT web, open Settings → Security and login and enable "
-                            "Developer mode."
+                            "On ChatGPT web, an eligible workspace admin enables developer mode "
+                            "under Apps or workspace permissions."
                         ),
-                        (
-                            "Open Settings → Plugins (or chatgpt.com/plugins) and select + to "
-                            "create a developer-mode app."
-                        ),
+                        ("Create or test a developer-mode app from the workspace Apps settings."),
                         (
                             "Paste the Remote MCP address, create the app, and complete Edge "
-                            "authorization; it will then be available on mobile."
+                            "authorization. Current developer-mode MCP apps are not on mobile."
                         ),
                     ],
                 },
@@ -688,13 +712,33 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return {
             **edge_status_payload(),
-            "enrollment_bundle": material.bundle.encode(),
+            "enrollment_bundle": (
+                material.claim_bundle.encode()
+                if material.claim_bundle
+                else material.bundle.encode()
+            ),
             "recovery_code": material.recovery_code,
             "secret_notice": (
-                "Paste the enrollment bundle only into the hosting provider's secret field. "
-                "Keep the recovery code somewhere private."
+                "The deployment claim contains only an expiring reference and Core public keys. "
+                "Keep the separate recovery code private."
             ),
         }
+
+    @app.post("/v1/admin/edge/deployment-env")
+    def download_edge_claim(principal: Principal) -> Response:
+        require(principal, "admin")
+        material = edge_connections.material()
+        if material is None or material.claim_bundle is None:
+            raise HTTPException(status_code=409, detail="Prepare a new Edge claim first")
+        return Response(
+            content=f"ATC_EDGE_BUNDLE={material.claim_bundle.encode()}\n",
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'attachment; filename="setup.env"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.post("/v1/admin/edge/connect")
     def connect_edge(request: EdgeConnectRequest, principal: Principal) -> dict[str, Any]:
@@ -737,17 +781,65 @@ def create_app(
             items = edge_sync.authorized_clients()
         except RuntimeError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"items": items, "count": len(items)}
+        approved = {
+            str(item["id"]): item
+            for item in core.store.remote_edge_clients()
+            if not bool(item["revoked"])
+        }
+        merged = [
+            {
+                **item,
+                "core_approved": str(item.get("id")) in approved,
+                "core_context_scopes": approved.get(str(item.get("id")), {}).get(
+                    "context_scopes", []
+                ),
+            }
+            for item in items
+        ]
+        return {"items": merged, "count": len(merged)}
+
+    @app.post("/v1/admin/edge/clients/{logical_client_id}/approve")
+    def approve_edge_client(
+        logical_client_id: str,
+        request: EdgeClientApprovalRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        try:
+            approved = core.store.approve_remote_edge_client(
+                logical_client_id,
+                name=request.name,
+                scopes=("context:read", "context:status"),
+                context_scopes=request.context_scopes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        core.store.audit_access(
+            principal.id,
+            "edge.remote_client.approve",
+            (),
+            trace_id=new_id(),
+            metadata={"remote_client_id": approved.id, "scopes": sorted(approved.scopes)},
+        )
+        return {"id": approved.id, "core_approved": True, "scopes": sorted(approved.scopes)}
 
     @app.delete("/v1/admin/edge/clients/{logical_client_id}")
     def revoke_edge_client(logical_client_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
+        core.store.revoke_remote_edge_client(logical_client_id)
         try:
             edge_sync.revoke_client(logical_client_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        core.store.audit_access(
+            principal.id,
+            "edge.remote_client.revoke",
+            (),
+            trace_id=new_id(),
+            metadata={"remote_client_id": logical_client_id},
+        )
         return {"id": logical_client_id, "revoked": True}
 
     @app.post("/v1/admin/edge/decommission")
@@ -757,6 +849,13 @@ def create_app(
             edge_sync.decommission()
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        core.store.revoke_all_remote_edge_clients()
+        core.store.audit_access(
+            principal.id,
+            "edge.decommission",
+            (),
+            trace_id=new_id(),
+        )
         return {
             "status": "decommissioned",
             "active_records_remaining": 0,

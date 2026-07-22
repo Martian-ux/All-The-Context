@@ -13,6 +13,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 
+from allthecontext.relay.forwarding import EdgeForwardingBroker, ForwardingError
 from allthecontext.relay.oauth import (
     EDGE_SCOPES,
     PROPOSE_SCOPE,
@@ -89,6 +90,7 @@ def build_edge_mcp(
     provider: EdgeOAuthProvider,
     *,
     vault_id: str,
+    forwarding: EdgeForwardingBroker | None = None,
 ) -> FastMCP:
     public = urlsplit(provider.public_url)
     if public.hostname is None:  # pragma: no cover - provider validates the URL
@@ -134,6 +136,25 @@ def build_edge_mcp(
         ),
     )
 
+    def forward(
+        identity: ClientIdentity, operation: str, payload: dict[str, Any]
+    ) -> tuple[str, dict[str, Any] | None]:
+        if forwarding is None or not forwarding.core_online():
+            return "core_offline", None
+        try:
+            request_id = forwarding.enqueue(
+                client_id=identity.client_id,
+                client_scopes=sorted(identity.permissions),
+                operation=operation,
+                payload=payload,
+            )
+            result = forwarding.wait(request_id, timeout_seconds=10.0)
+        except ForwardingError:
+            return "busy", None
+        if result.state == "available":
+            return "available", result.response
+        return result.state, None
+
     @server.tool(
         title="Bootstrap approved context",
         annotations=_annotations(read_only=True, idempotent=True),
@@ -156,14 +177,15 @@ def build_edge_mcp(
         query = " ".join(
             value for value in (task_description.strip(), (current_project or "").strip()) if value
         )[:4_000]
+        identity = _identity(vault_id)
         mandatory = service.search(
-            _identity(vault_id),
+            identity,
             query="",
             kinds=["interaction_preference"],
             limit=100,
         )
         relevant = service.search(
-            _identity(vault_id),
+            identity,
             query=query,
             scopes=requested_scopes,
             limit=100,
@@ -173,6 +195,25 @@ def build_edge_mcp(
             *mandatory,
             *(record for record in relevant if record["id"] not in mandatory_ids),
         ]
+        core_state, core_response = forward(
+            identity,
+            "bootstrap_context",
+            {
+                "task_description": task_description,
+                "requested_scopes": requested_scopes or [],
+                "character_budget": character_budget,
+                "current_project": current_project,
+            },
+        )
+        if core_response is not None:
+            forwarded_items = core_response.get("items", [])
+            if isinstance(forwarded_items, list):
+                known = {str(item.get("id")) for item in records}
+                records.extend(
+                    item
+                    for item in forwarded_items
+                    if isinstance(item, dict) and str(item.get("id")) not in known
+                )
         selected: list[dict[str, Any]] = []
         used = 0
         for raw in records:
@@ -192,6 +233,7 @@ def build_edge_mcp(
             "characters_used": used,
             "served_by": "edge",
             "authority": "core",
+            "core_available": core_state,
         }
 
     @server.tool(
@@ -216,8 +258,9 @@ def build_edge_mcp(
             raise ValueError("cursor must be between 0 and 10000")
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
+        identity = _identity(vault_id)
         records = service.search(
-            _identity(vault_id),
+            identity,
             query=query,
             scopes=scopes,
             kinds=kinds,
@@ -226,12 +269,34 @@ def build_edge_mcp(
         )
         has_more = len(records) > limit
         page = [_public_record(record) for record in records[:limit]]
+        core_state, core_response = forward(
+            identity,
+            "search_context",
+            {
+                "query": query,
+                "scopes": scopes or [],
+                "kinds": kinds or [],
+                "limit": limit,
+                "cursor": cursor,
+            },
+        )
+        if core_response is not None:
+            forwarded_items = core_response.get("items", [])
+            if isinstance(forwarded_items, list):
+                known = {str(item.get("id")) for item in page}
+                page.extend(
+                    item
+                    for item in forwarded_items
+                    if isinstance(item, dict) and str(item.get("id")) not in known
+                )
+                page = page[:limit]
         return {
             "items": page,
             "count": len(page),
             "next_cursor": cursor + len(page) if has_more else None,
             "served_by": "edge",
             "authority": "core",
+            "core_available": core_state,
         }
 
     @server.tool(
@@ -240,10 +305,32 @@ def build_edge_mcp(
     )
     def get_context_item(record_id: str) -> dict[str, Any]:
         """Get one approved always-available context record by its stable ID."""
-        record = service.get(_identity(vault_id), record_id)
+        identity = _identity(vault_id)
+        record = service.get(identity, record_id)
         if record is None:
-            return {"found": False, "id": record_id, "served_by": "edge"}
-        return {"found": True, "item": _public_record(record), "served_by": "edge"}
+            core_state, core_response = forward(
+                identity, "get_context_item", {"record_id": record_id}
+            )
+            item = core_response.get("item") if core_response is not None else None
+            if isinstance(item, dict):
+                return {
+                    "found": True,
+                    "item": item,
+                    "served_by": "core_via_edge",
+                    "core_available": core_state,
+                }
+            return {
+                "found": False,
+                "id": record_id,
+                "served_by": "edge",
+                "core_available": core_state,
+            }
+        return {
+            "found": True,
+            "item": _public_record(record),
+            "served_by": "edge",
+            "core_available": "not_needed",
+        }
 
     @server.tool(
         title="Check context availability",
@@ -254,6 +341,9 @@ def build_edge_mcp(
         result = service.status(_identity(vault_id))
         result.pop("vault_id", None)
         result["served_by"] = "edge"
+        result["core_available"] = (
+            "online" if forwarding is not None and forwarding.core_online() else "offline"
+        )
         return result
 
     @server.tool(
@@ -343,16 +433,34 @@ def build_edge_mcp(
     )
     def provider_search(query: str) -> dict[str, Any]:
         """Search approved context using the data-app compatibility schema."""
-        records = service.search(_identity(vault_id), query=query, limit=20)
-        return {
-            "results": [
+        identity = _identity(vault_id)
+        records = service.search(identity, query=query, limit=20)
+        core_state, core_response = forward(
+            identity,
+            "search_context",
+            {"query": query, "scopes": [], "kinds": [], "limit": 20, "cursor": 0},
+        )
+        forwarded = core_response.get("items", []) if core_response is not None else []
+        combined = [*records, *(forwarded if isinstance(forwarded, list) else [])]
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for record in combined:
+            if not isinstance(record, dict):
+                continue
+            record_id = str(record.get("id"))
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            results.append(
                 {
-                    "id": str(record["id"]),
-                    "title": f"{str(record['kind']).replace('_', ' ').title()}",
-                    "url": f"{provider.public_url}/context/{record['id']}",
+                    "id": record_id,
+                    "title": str(record["kind"]).replace("_", " ").title(),
+                    "url": f"{provider.public_url}/context/{record_id}",
                 }
-                for record in records
-            ]
+            )
+        return {
+            "results": results,
+            "core_available": core_state,
         }
 
     @server.tool(
@@ -362,7 +470,13 @@ def build_edge_mcp(
     )
     def provider_fetch(id: str) -> dict[str, Any]:
         """Fetch one approved context item using the data-app compatibility schema."""
-        record = service.get(_identity(vault_id), id)
+        identity = _identity(vault_id)
+        record = service.get(identity, id)
+        core_state = "not_needed"
+        if record is None:
+            core_state, core_response = forward(identity, "get_context_item", {"record_id": id})
+            forwarded = core_response.get("item") if core_response is not None else None
+            record = forwarded if isinstance(forwarded, dict) else None
         if record is None:
             raise ValueError("context item not found")
         return {
@@ -376,6 +490,7 @@ def build_edge_mcp(
                 "source_service": record["source_service"],
                 "version": record["version"],
             },
+            "core_available": core_state,
         }
 
     for tool in server._tool_manager.list_tools():

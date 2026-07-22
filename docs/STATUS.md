@@ -23,7 +23,7 @@
   ranking invariant, bounded opt-in 50k profile, and executable V2 gates; and
   cross-platform release workflows with strict offline-signed OTA metadata.
 - Pre-release-foundation integration evidence on Windows 11 and Python 3.12:
-  144 Python tests and 15 dashboard
+  163 Python tests and 15 dashboard
   tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
   isolation, terminal Edge races, bounded remote registration, permissions
   before pagination, credential/config cleanup, and real MCP initialize/list/
@@ -41,6 +41,11 @@
   JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
   Desktop was not running for a fresh local Edge image build in this release
   infrastructure validation.
+  The Edge/mobile pass additionally exercised sealed forwarding-request
+  persistence, memory-only responses with DB/WAL/SHM byte scans, hostile Edge
+  identity/admin-scope forgery, claim rotation/replay/restart, outbound-only
+  polling, and local offline/online mobile demonstrations. Real hosting and
+  provider handshakes remain external gaps.
 - CI authored: Python smoke/test and package/resource diagnostic jobs for
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
@@ -98,7 +103,14 @@
   mobile apps, subject to plan and workspace-admin policy; real ChatGPT and
   Claude hosted/mobile handshakes remain unobserved.
 - Edge provides the offline `always_available` projection and proposal queue.
-  It does not yet forward `core_available` retrieval to an online Core.
+  It also forwards authorized `core_available` retrieval through Core-initiated
+  outbound polling, without exposing loopback Core. Real hosted/NAT observation
+  remains pending; local integration tests exercise the same HTTP contracts.
+  Forwarded queries are sealed to Core before Edge persistence, responses are
+  memory-only, and Core requires a locally approved remote-client identity.
+- New Edge deployments use an expiring public-key claim package. The Edge is
+  inert before claim, generates durable replication credentials itself, returns
+  them encrypted to Core, and revokes claim capability after acknowledgement.
 - The local SQLite vault is not application-encrypted at rest; operators rely
   on operating-system account and disk protection. Portable exports are
   passphrase-encrypted.

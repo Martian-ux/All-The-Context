@@ -101,6 +101,8 @@ export interface EdgeAuthorizedClient {
   authorized_at?: string | null;
   active_until: number;
   token_families: number;
+  core_approved: boolean;
+  core_context_scopes: string[];
 }
 
 export interface EdgeStatus {
@@ -119,6 +121,13 @@ export interface EdgeStatus {
   last_success_at?: string | null;
   last_error?: string | null;
   proposals_imported: number;
+  wizard: {
+    state: "preflight" | "deploy" | "enroll" | "pair" | "sync" | "connect" | "verify" | "recover";
+    preflight_ok: boolean;
+    paired: boolean;
+    synchronized: boolean;
+    ordinary_path_requires_terminal: boolean;
+  };
   deployment: {
     provider: "render_blueprint";
     deploy_url?: string | null;

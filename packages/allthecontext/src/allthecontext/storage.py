@@ -366,6 +366,93 @@ class CoreStore:
             for row in rows
         ]
 
+    def approve_remote_edge_client(
+        self,
+        client_id: str,
+        *,
+        name: str,
+        scopes: Sequence[str] = ("context:read", "context:status"),
+        context_scopes: Sequence[str] = (),
+    ) -> ClientPrincipal:
+        """Persist the Core-side half of an explicitly approved remote identity."""
+
+        if not client_id.startswith("edge:") or len(client_id) > 200:
+            raise ValueError("invalid remote Edge client ID")
+        allowed = frozenset(scopes).intersection({"context:read", "context:status"})
+        if "context:read" not in allowed:
+            raise ValueError("remote Edge clients require context:read")
+        bounded_context = sorted({str(scope) for scope in context_scopes if str(scope)})
+        if len(bounded_context) > 64 or any(len(scope) > 200 for scope in bounded_context):
+            raise ValueError("remote Edge context scopes are invalid")
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT INTO remote_edge_clients"
+                "(id,name,scopes_json,context_scopes_json,approved_at,revoked_at) "
+                "VALUES(?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET "
+                "name=excluded.name,scopes_json=excluded.scopes_json,"
+                "context_scopes_json=excluded.context_scopes_json,"
+                "approved_at=excluded.approved_at,revoked_at=NULL",
+                (client_id, name[:200], _json(sorted(allowed)), _json(bounded_context), utc_now()),
+            )
+        return ClientPrincipal(client_id, name[:200], allowed)
+
+    def remote_edge_principal(self, client_id: str) -> ClientPrincipal | None:
+        """Resolve only Core-stored approvals; Edge-asserted scopes are never trusted."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT name,scopes_json,context_scopes_json FROM remote_edge_clients "
+                "WHERE id=? AND revoked_at IS NULL",
+                (client_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        scopes = frozenset(cast(list[str], _loads(row["scopes_json"], [])))
+        return ClientPrincipal(client_id, str(row["name"]), scopes, False)
+
+    def remote_edge_context_scopes(self, client_id: str) -> frozenset[str]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT context_scopes_json FROM remote_edge_clients "
+                "WHERE id=? AND revoked_at IS NULL",
+                (client_id,),
+            ).fetchone()
+        if row is None:
+            return frozenset()
+        return frozenset(cast(list[str], _loads(row["context_scopes_json"], [])))
+
+    def revoke_remote_edge_client(self, client_id: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE remote_edge_clients SET revoked_at=? WHERE id=?",
+                (utc_now(), client_id),
+            )
+
+    def revoke_all_remote_edge_clients(self) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE remote_edge_clients SET revoked_at=? WHERE revoked_at IS NULL",
+                (utc_now(),),
+            )
+
+    def remote_edge_clients(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,name,scopes_json,context_scopes_json,approved_at,revoked_at "
+                "FROM remote_edge_clients ORDER BY approved_at"
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "name": str(row["name"]),
+                "scopes": _loads(row["scopes_json"], []),
+                "context_scopes": _loads(row["context_scopes_json"], []),
+                "approved_at": str(row["approved_at"]),
+                "revoked": row["revoked_at"] is not None,
+            }
+            for row in rows
+        ]
+
     def authenticate(self, token: str) -> ClientPrincipal | None:
         with self.transaction() as connection:
             rows = connection.execute(

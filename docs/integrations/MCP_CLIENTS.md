@@ -47,8 +47,9 @@ ChatGPT and Claude cloud clients cannot reach the loopback Core. The dashboard
 therefore prepares and pairs a personal HTTPS Edge with OAuth 2.1/PKCE, then
 shows its MCP URL and provider eligibility notes. An owner link opens a short
 registration window; the same recovery code can manage Edge while Core is
-temporarily offline. Claude custom connectors and ChatGPT developer-mode apps
-linked on web can be used from their mobile apps. The engineering build
+temporarily offline. Claude custom connectors linked on web/Desktop can be
+used from Claude mobile. ChatGPT developer-mode MCP apps are currently
+web-only. The engineering build
 cannot offer its Render deployment button until a public release URL is
 configured, so it exposes the manual blueprint/enrollment path honestly.
 
@@ -56,8 +57,8 @@ Capability check (official documentation reviewed 2026-07-21):
 
 | Provider path | Eligible surfaces | Repository evidence |
 |---|---|---|
-| [Claude custom connector](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities) | Free (one connector), Pro, Max, Team, and Enterprise; web, Desktop, iOS, and Android after account setup | OAuth/MCP exercised with the generic SDK client; provider UI handshake not observed |
-| [ChatGPT developer-mode app](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt) | All plans; configure on web under Settings → Security and login → Developer mode, then Settings → Plugins; available in ChatGPT mobile after linking; workspace policy may gate setup | OAuth/MCP exercised with the generic SDK client; provider UI handshake not observed |
+| [Claude custom connector](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers) | Pro, Max, Team, and Enterprise; add on web/Desktop, then use the existing connector on iOS/Android | OAuth/MCP exercised with the generic SDK client; provider UI handshake not observed |
+| [ChatGPT developer-mode MCP app](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta) | Eligible Business, Enterprise, and Edu workspaces; web only; admin/owner policy applies | OAuth/MCP exercised with the generic SDK client; provider UI handshake not observed |
 
 Provider pages change independently of this project. The date and unobserved
 provider handshake are intentional so the dashboard never turns a generic MCP

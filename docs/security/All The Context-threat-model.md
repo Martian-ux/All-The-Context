@@ -146,6 +146,10 @@ does not possess them.
     decommission -> supposedly removed Edge data or authority is resurrected.
 14. Core crashes after one-time MCP setup -> clients silently stop using context
     or the user must manually recover the service.
+15. An attacker obtains a deployment claim or races Core -> first-claimer
+    takeover creates credentials for the wrong party.
+16. A remote client floods/replays forwarding or Edge retains a Core-only
+    response -> private canonical context persists outside Core.
 
 ## Threat model table
 
@@ -167,6 +171,8 @@ does not possess them.
 | TM-014 | Crash, offline host, or corrupted local state | Partial setup or uninstall | Skip remote erasure but report successful uninstall | Persistent remote data/access | Edge context, credentials | Uninstall inspects state and credential independently, cryptographically verifies the origin, requires terminal zero-record response, revokes readable local AI identities, strictly removes authority-bearing credentials when SQLite is corrupt, and blocks on orphan/offline Edge state (`desktop.py`, `edge_connection.py`) | Manual hosting deletion may still be required | Guided recovery and provider deletion checklist | Uninstall error with no application-file deletion | low | high | medium |
 | TM-015 | Concurrent request/process | Request began before Edge decommission or Core forget | Commit after terminal purge or recreate local connection state | Deleted context/access returns | Edge context, lifecycle state | Terminal recheck in the same `BEGIN IMMEDIATE` transaction, database write triggers, cross-process Edge file lock, interrupted-purge restart (`relay/service.py`, `relay/oauth.py`, `0006_terminal_write_guards.sql`, `edge_connection.py`) | Host-level database replacement remains operator authority | Keep terminal state in durable backups and never reuse disks across vaults | 410 responses, trigger violations, lifecycle error logs | low | high | high |
 | TM-016 | Core crash or hostile loopback listener | Managed STDIO client invokes a tool | Keep Core offline or trick adapter into starting/sending to another service | Context unavailable or credential disclosure | Availability, client tokens | Managed-only auto-start, exact 127.0.0.1 origin, installation-bound proof, unknown-listener refusal, exact Core command, bounded readiness wait (`mcp_adapter.py`, `desktop_setup.py`) | Hostile same-account process can read installation material and is out of scope | Signed packages and OS account protection | Proof failures and Core restart log | low | high | medium |
+| TM-017 | Remote first-claimer or leaked setup file | Public inert Edge and claim reference | Claim Edge, probe identity, replay proof, or wait out abandoned deploy | Edge takeover or durable credential disclosure | Claim authority, replication credentials | Setup file contains only public keys/expiring reference; inert preclaim middleware; Ed25519 possession proof over claim/challenge/origin; one-use challenge; X25519+AES-GCM credential return; acknowledgement revocation; 24-hour expiry (`edge_claim.py`, `0008_edge_claim.sql`) | Host provider controls the process/disk | Provider account MFA; delete setup download; alert stale unclaimed deployment | Claim rejection/expiry counters | low | high | high |
+| TM-018 | Authorized/stolen OAuth client or hostile Edge process | Public Edge MCP and forwarding poll | Flood, replay, forge another client/admin scope, inspect queued queries, race revocation, or retain forwarded results | Core-only disclosure or denial of service | Core-available context, availability | OAuth before enqueue; X25519/AES-GCM request sealing before SQLite; Core-local user-approved client mapping and scope clamp; Core allow/deny authorization; random IDs; expiries; one-use hashed claims; leases; cancellation; rate/concurrency/size bounds; memory-only responses; decommission/revoke purge (`relay/forwarding.py`, `edge_connection.py`, `003_remote_edge_clients.sql`) | Host process sees request metadata and live response bytes needed to answer the waiting client | Reverse-proxy rate limits and operational alerting | Queue depth, timeouts, rejected claims, denied unknown mappings | medium | high | high |
 
 ## Criticality calibration
 
@@ -192,6 +198,8 @@ does not possess them.
 | `packages/allthecontext/src/allthecontext/relay/app.py` | Internet-facing surface | TM-002, TM-003, TM-005 |
 | `packages/allthecontext/src/allthecontext/relay/oauth.py` | Owner sessions, registration, token rotation, durable identity binding | TM-011, TM-012 |
 | `packages/allthecontext/src/allthecontext/edge_connection.py` | Core-to-Edge proof, credential/state recovery, terminal decommission | TM-012, TM-014 |
+| `packages/allthecontext/src/allthecontext/edge_claim.py` | First claim, origin-bound proof, and credential rotation | TM-017 |
+| `packages/allthecontext/src/allthecontext/relay/forwarding.py` | Bounded online-Core request broker | TM-018 |
 | `packages/allthecontext/src/allthecontext/client_config.py` | Reversible client configuration and credential handoff | TM-002, TM-009 |
 
 ## Quality check

@@ -11,12 +11,15 @@ offers **Continue with web & mobile setup** by default and opens the local
 dashboard directly on **Connect apps → Edge for web and mobile**. That screen
 performs the Core side of the workflow:
 
-1. **Set up Edge** creates a vault-bound enrollment bundle and recovery code.
+1. **Set up Edge** creates a vault-bound, 24-hour public-key claim and a private
+   recovery code.
 2. **Open Render** opens the user-owned hosting flow when the release has a
    configured `ATC_EDGE_DEPLOY_URL`.
-3. The user puts the enrollment bundle in the host's secret
-   `ATC_EDGE_BUNDLE` field. It must never be committed or pasted into an AI
-   conversation.
+3. **Download setup file** produces a no-store `.env` containing only a random
+   24-hour claim reference, vault/recovery metadata, and Core Ed25519/X25519
+   public keys. It contains no Core, admin, client, or durable replication
+   credential. Upload it through Render's provider-owned environment-variable
+   confirmation, then delete the local download.
 4. After deployment, the user pastes the service's HTTPS origin into Core.
    Core requires a cryptographic challenge proof before sending any context.
 5. Core pushes approved `always_available` records and keeps synchronizing in
@@ -33,16 +36,17 @@ the installer cannot safely bypass those external steps.
 
 Edge must have a stable public HTTPS URL because provider-hosted clients connect
 from their own cloud, including when the user is on a phone. As of 2026-07-21,
-[Claude custom connectors](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)
-are available across Claude web, Desktop, and mobile after account setup (Free
-is limited to one custom connector). [ChatGPT developer-mode apps](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt)
-are supported on all plans and become available in ChatGPT mobile after being
-linked on the web. Workspace policy can gate developer/custom connector setup.
+[Claude custom connectors](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers)
+require Pro, Max, Team, or Enterprise, are added on web/Desktop, and can then be
+used on iOS/Android. [ChatGPT developer-mode MCP apps](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta)
+are currently web-only for eligible Business, Enterprise, and Edu workspaces.
+Workspace policy can gate provider setup.
 
 ## Deployment requirements
 
 - Persistent disk mounted at `/var/lib/allthecontext`.
-- `ATC_EDGE_BUNDLE` stored as a host secret.
+- `ATC_EDGE_BUNDLE` set to the expiring public-key claim package (legacy
+  operator deployments may still use the durable bundle format).
 - `ATC_RELAY_DATABASE=/var/lib/allthecontext/edge.sqlite3`.
 - `ATC_RELAY_HOST=0.0.0.0` inside the container only.
 - A provider-supplied public URL (`RENDER_EXTERNAL_URL`) or an exact
@@ -68,8 +72,10 @@ docker compose ps
 
 ## Security and lifecycle
 
-The enrollment bundle contains high-value secrets. Edge derives its proposal
-encryption key from that bundle, binds the durable database to the vault,
+Legacy operator enrollment bundles contain high-value secrets. The ordinary
+claim package does not: Edge generates durable replication credentials only
+after the signed claim and returns them encrypted to Core. Edge derives its
+proposal encryption key from the rotated credential, binds the durable database to the vault,
 pairing secret, and public origin, and refuses to start if a different authority
 is pointed at the same disk. Dynamic OAuth client registration is closed by
 default and opens for ten minutes after an owner link or explicit owner action.
@@ -104,3 +110,34 @@ Back up Edge only for operational continuity. Core is authoritative and can
 reconstruct the approved projection from its event history. Never restore an
 Edge database over Core, reuse one Edge disk for another vault, or replicate a
 whole SQLite file.
+
+## Outbound Core forwarding
+
+Core polls the stable Edge HTTPS origin; Edge never connects to `127.0.0.1` and
+no inbound firewall or NAT rule is required. Each request has a random ID,
+expiry, one-use claim token, lease, and a logical client identifier. The query
+payload is sealed to Core's enrollment X25519 public key before it reaches the
+Edge database or WAL. Edge OAuth scopes are not forwarded as authorization
+facts. Core requires a matching user-approved local remote-client mapping,
+clamps operation and context scopes to that policy, and enforces record
+allow/deny lists. The queue has
+per-client/global concurrency and rate bounds, a 16 KiB request bound, and a
+64 KiB response bound. Timeout, cancellation, token revocation, decommission,
+and expired-lease cleanup are idempotent. A response exists only in bounded
+memory in the Edge process serving the waiting MCP request. It is consumed once;
+an Edge restart safely returns unavailable/timeout and never recovers private
+response content from disk. `local_only` is never eligible, and offline
+`always_available` search is independent.
+
+## One-time claim and credential rotation
+
+A new claim-based Edge is inert: all context, proposal, OAuth, owner, and
+replication routes fail closed. Health exposes no pairing proof. Core requests
+a short-lived challenge, signs the claim ID, challenge, and exact public origin
+with its private Ed25519 key, and Edge verifies the public key from deployment.
+Edge then generates the durable replication secret/token locally and encrypts
+them to Core's X25519 public key. Core decrypts, persists them in its credential
+store, verifies the Edge proof, and acknowledges receipt. Only then does Edge
+serve. Challenge replay, wrong-origin proof, first-claimer attempts, expired
+claims, and post-ack reuse fail. A lost response is restart-safe: a fresh signed
+challenge returns the same durable credentials until acknowledgement.

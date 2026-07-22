@@ -234,3 +234,32 @@ class CoreRelaySync:
             acknowledge.raise_for_status()
             imported += 1
         return imported
+
+    def claim_forward_requests(self, *, limit: int = 8) -> list[dict[str, Any]]:
+        response = self.client.get(
+            f"{self.relay_url}/v1/forward/requests",
+            headers=self.headers,
+            params={"limit": min(max(limit, 1), 8)},
+        )
+        if getattr(response, "status_code", 200) == 404:
+            # Older/self-hosted Edges remain compatible; forwarding is additive.
+            return []
+        response.raise_for_status()
+        body = response.json()
+        items = body.get("items", []) if isinstance(body, Mapping) else []
+        if not isinstance(items, list) or any(not isinstance(item, Mapping) for item in items):
+            raise RuntimeError("Edge returned an invalid forwarding queue")
+        return [dict(item) for item in items]
+
+    def answer_forward_request(
+        self, request_id: str, claim_token: str, response_payload: dict[str, Any]
+    ) -> bool:
+        response = self.client.post(
+            f"{self.relay_url}/v1/forward/requests/{request_id}/response",
+            headers=self.headers,
+            json={"claim_token": claim_token, "response": response_payload},
+        )
+        if getattr(response, "status_code", 200) == 409:
+            return False
+        response.raise_for_status()
+        return True

@@ -996,6 +996,12 @@ class RelayService:
         self._replication_secret = bytes(replication_secret)
         self.store.configure_proposal_protection(self._replication_secret)
 
+    def rotate_replication_secret(self, replication_secret: bytes) -> None:
+        if len(replication_secret) < 32:
+            raise ValueError("replication_secret must contain at least 32 bytes")
+        self._replication_secret = bytes(replication_secret)
+        self.store.configure_proposal_protection(self._replication_secret)
+
     def apply(self, event: ReplicationEvent | Mapping[str, Any]) -> ApplyResult:
         parsed = (
             event if isinstance(event, ReplicationEvent) else ReplicationEvent.from_mapping(event)

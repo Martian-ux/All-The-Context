@@ -68,3 +68,12 @@ Run the focused proof suite with:
 Use `.\.venv\Scripts\python.exe -m pytest tests/e2e tests/security` in
 PowerShell or `./.venv/bin/python -m pytest tests/e2e tests/security` on macOS
 and Linux.
+
+## Mobile/offline and online-Core proof
+
+Run `python scripts/demo_edge_mobile.py --workspace <fresh-directory>` to prove
+the mobile data boundary without contacting a provider. The script verifies an
+offline Edge can retrieve only `always_available`, an approved remote identity
+can retrieve `core_available` through the sealed outbound-poll path while Core
+is online, and `local_only` is absent from both. It intentionally reports that
+no real Render, ChatGPT, or Claude handshake was exercised.
