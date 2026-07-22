@@ -262,16 +262,20 @@ compromised manifest key must not authorize its own replacement.
 
 ## Edge image and hosted deployment
 
-Publishing a reviewed release triggers the **Publish Edge image** workflow. A
-manual run accepts only a full commit SHA. The image is pushed to GHCR with an
-immutable `sha-<40-character-commit>` tag and is recorded by digest
-(`ghcr.io/OWNER/all-the-context-edge@sha256:...`). OCI source/revision/license
-labels, BuildKit provenance, an SBOM attestation, and GitHub provenance are
-attached. Deployment configuration must pin the digest, not `latest`.
+The **Publish or verify Edge image** workflow is manual-only and accepts only a
+full commit SHA. It must publish and publicly verify the frozen image source
+commit before the later Blueprint and packaged-Core release commits exist;
+publishing a GitHub Release does not trigger another image build. The image is
+pushed to GHCR with an immutable `sha-<40-character-commit>` tag and recorded by
+digest (`ghcr.io/OWNER/all-the-context-edge@sha256:...`). OCI
+source/revision/license labels, BuildKit provenance, an SBOM attestation, and
+GitHub provenance are attached. Deployment configuration must pin the digest,
+not `latest`.
 
 After the first push, an owner must explicitly make the GHCR package public and
-verify anonymous pull access. `render.yaml` is a public-ready example requiring
-an HTTPS public URL, a generated Edge bundle, and persistent storage. Its
-starter service and disk can incur charges; this repository does not create
-them. Provider OAuth/mobile handshakes and production hosting remain acceptance
-tests for the operator, not claims made by the authored configuration.
+verify anonymous pull access plus startup of that exact digest. The initial
+`render.yaml` is deliberately inert until the reviewed digest-pinned handoff is
+committed and activated. The starter service and disk can incur charges; this
+repository does not create them. Provider OAuth/mobile handshakes and production
+hosting remain acceptance tests for the operator, not claims made by the
+authored configuration.

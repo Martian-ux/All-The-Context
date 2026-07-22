@@ -11,8 +11,10 @@ image; it must not rebuild an Edge from the repository or consume `latest`.
 
 ## 1. Publish one frozen source commit
 
-First record a full commit that passed the local and hosted test gates. On
-PowerShell:
+Edge publication is manual-only. Publishing a GitHub Release does not start this
+workflow: image source commit A must be selected and verified before the later
+Blueprint and packaged-Core commits exist. First record a full commit that
+passed the local and hosted test gates. On PowerShell:
 
 ```powershell
 $sourceCommit = git rev-parse HEAD
@@ -61,7 +63,9 @@ gh workflow run edge-image.yml -f operation=verify-public -f source_commit="$sou
 
 That fresh job requests an anonymous GHCR bearer token, hashes the returned
 manifest, performs a Docker pull without a login step, checks the embedded source
-revision, and verifies GitHub provenance. A private package or mismatched digest
+revision, and starts that exact digest to recheck inertness, the bounded claim
+route, and UID 10001 before any registry login. It then verifies GitHub
+provenance. A private package, mismatched digest, or nonfunctional public image
 fails closed.
 
 ## 3. Commit and activate the reviewed deploy handoff

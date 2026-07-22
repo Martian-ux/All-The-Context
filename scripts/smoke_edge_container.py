@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 CONTAINER_NAME_PATTERN = re.compile(r"atc-edge-smoke-[0-9a-f]{12}")
-LOCAL_IMAGE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._/-]*(?::[a-zA-Z0-9._-]+)?")
+LOCAL_IMAGE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._/-]*(?::[a-zA-Z0-9._-]+|@sha256:[0-9a-f]{64})?")
 
 
 def _encoded_claim() -> str:

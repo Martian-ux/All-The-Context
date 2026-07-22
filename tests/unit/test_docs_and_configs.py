@@ -5,6 +5,8 @@ import re
 import tomllib
 from pathlib import Path
 
+from scripts.smoke_edge_container import LOCAL_IMAGE_PATTERN
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -82,9 +84,19 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "release:" not in promote
     assert "type=sha,format=long,prefix=sha-" in image
     assert "subject-digest" in image
+    assert "workflow_dispatch:" in image
+    assert "\n  release:" not in image
+    assert "github.event.release" not in image
+    assert "if: inputs.operation == 'publish'" in image
     assert "verify-public" in image
     assert "verify_edge_image.py" in image
     assert "smoke_edge_container.py" in image
+    assert '--image "${{ inputs.image_reference }}"' in image
+    anonymous_manifest = image.index("Verify raw anonymous registry access")
+    anonymous_pull = image.index("Verify fresh-runner Docker pull")
+    exact_smoke = image.index("Smoke the exact anonymously pulled digest")
+    authenticated = image.index("Authenticate only after anonymous pull evidence")
+    assert anonymous_manifest < anonymous_pull < exact_smoke < authenticated
     assert "platforms: linux/amd64" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
@@ -102,6 +114,14 @@ def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
     assert "USER 10001:10001" in dockerfile
     assert "127.0.0.1:${ATC_RELAY_PORT:-8743}:8743" in compose
     assert "ATC_RELAY_REPLICATION_SECRET" in compose
+
+
+def test_edge_container_smoke_accepts_exact_digest_and_rejects_tags_with_at_signs() -> None:
+    digest_reference = "ghcr.io/martian-ux/all-the-context-edge@sha256:" + "a" * 64
+
+    assert LOCAL_IMAGE_PATTERN.fullmatch(digest_reference)
+    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification")
+    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification@sha256:" + "a" * 64) is None
 
 
 def test_render_blueprint_accepts_only_the_one_time_claim_handoff() -> None:

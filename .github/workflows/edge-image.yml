@@ -1,8 +1,6 @@
 name: Publish or verify Edge image
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       operation:
@@ -27,7 +25,7 @@ permissions:
 
 jobs:
   publish:
-    if: github.event_name == 'release' || inputs.operation == 'publish'
+    if: inputs.operation == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -36,8 +34,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Validate manually supplied source
-        if: github.event_name == 'workflow_dispatch'
+      - name: Validate immutable source
         shell: python
         env:
           INPUT_COMMIT: ${{ inputs.source_commit }}
@@ -48,20 +45,19 @@ jobs:
               raise SystemExit("Edge publication requires a full lowercase nonzero commit SHA")
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_commit || github.event.release.tag_name }}
+          ref: ${{ inputs.source_commit }}
           persist-credentials: false
       - name: Resolve immutable image identity
         id: source
         shell: python
         env:
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_COMMIT: ${{ inputs.source_commit }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           import os, subprocess
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           requested = os.environ.get("INPUT_COMMIT", "")
-          if os.environ["EVENT_NAME"] == "workflow_dispatch" and commit != requested:
+          if commit != requested:
               raise SystemExit("checkout did not resolve to the requested immutable commit")
           image = f"ghcr.io/{os.environ['REPOSITORY_OWNER'].lower()}/all-the-context-edge"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -155,7 +151,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify-public:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'verify-public'
+    if: inputs.operation == 'verify-public'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -204,6 +200,10 @@ jobs:
           labels = json.loads(raw)
           if labels.get("org.opencontainers.image.revision") != os.environ["SOURCE_COMMIT"]:
               raise SystemExit("pulled image revision label does not match the frozen source")
+      - name: Smoke the exact anonymously pulled digest
+        run: >-
+          python scripts/smoke_edge_container.py
+          --image "${{ inputs.image_reference }}"
       - name: Authenticate only after anonymous pull evidence
         uses: docker/login-action@v3
         with:

@@ -56,7 +56,7 @@ def image_digest(value: str) -> str:
 
 
 def validate_render_deploy_url(value: str) -> str:
-    """Canonicalize a Render link pinned to the reviewed Blueprint commit."""
+    """Canonicalize a Render link pinned to the reviewed Blueprint branch."""
 
     parsed = urlsplit(value.strip())
     try:
