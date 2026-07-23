@@ -326,9 +326,7 @@ def parse_archive(
     elif suffix in {".md", ".markdown", ".txt", ""}:
         result = parse_text(text, provider=provider, source_name=safe_name)
     else:
-        raise InvalidStateError(
-            "supported import types are ZIP, JSON, JSONL, Markdown, and text"
-        )
+        raise InvalidStateError("supported import types are ZIP, JSON, JSONL, Markdown, and text")
     return ParsedArchive(
         candidates=result.candidates,
         warnings=[*decode_warnings, *result.warnings],
@@ -471,8 +469,7 @@ def parse_zip_bundle(
                 ):
                     _append_warning(
                         warnings,
-                        f"{safe_name}: text entry exceeds the per-entry parse limit; "
-                        "retained raw",
+                        f"{safe_name}: text entry exceeds the per-entry parse limit; retained raw",
                     )
                     continue
                 supported_members.append(member)
@@ -504,9 +501,7 @@ def parse_zip_bundle(
                         if not recognized:
                             generic.extend(_labeled_text_candidates(text))
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                    _append_warning(
-                        warnings, f"{safe_name}: {_invalid_json_error(error)}"
-                    )
+                    _append_warning(warnings, f"{safe_name}: {_invalid_json_error(error)}")
                 except InvalidStateError as error:
                     _append_warning(warnings, f"{safe_name}: {error}")
     except zipfile.BadZipFile as error:
@@ -637,9 +632,7 @@ def _iter_json_documents(
 
 def _invalid_json_error(error: UnicodeDecodeError | json.JSONDecodeError) -> InvalidStateError:
     if isinstance(error, json.JSONDecodeError):
-        return InvalidStateError(
-            f"invalid JSON at line {error.lineno}, column {error.colno}"
-        )
+        return InvalidStateError(f"invalid JSON at line {error.lineno}, column {error.colno}")
     return InvalidStateError("JSON is not valid UTF-8")
 
 
@@ -772,9 +765,7 @@ class ArchiveImportService:
                     "source extraction was already complete",
                 ],
                 "provider": str(source.metadata.get("provider", source.source_service)),
-                "export_format": str(
-                    source.metadata.get("export_format", "generic_document")
-                ),
+                "export_format": str(source.metadata.get("export_format", "generic_document")),
                 "stats": (
                     source.metadata.get("stats", {})
                     if isinstance(source.metadata.get("stats", {}), dict)
@@ -849,9 +840,7 @@ class ArchiveImportService:
                 submitted = self.ingestion.submit(
                     SubmitBatchRequest(
                         session_id=str(begin["session_id"]),
-                        idempotency_key=(
-                            f"{source.content_hash}:{PARSER_VERSION}:{index}"
-                        ),
+                        idempotency_key=(f"{source.content_hash}:{PARSER_VERSION}:{index}"),
                         candidates=batch,
                     )
                 )

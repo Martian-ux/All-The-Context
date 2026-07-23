@@ -135,8 +135,7 @@ def test_claude_conversations_and_memory_are_normalized() -> None:
                     "sender": "human",
                     "created_at": "2026-01-01T00:00:00Z",
                     "text": (
-                        "I am building All The Context. "
-                        "My goal is a one-click local installer."
+                        "I am building All The Context. My goal is a one-click local installer."
                     ),
                 },
                 {
@@ -211,8 +210,7 @@ def test_grok_json_and_markdown_exports_are_supported() -> None:
     }
     json_parsed = parse_json(json.dumps(json_export), source_name="grok-data.json")
     markdown_parsed = parse_text(
-        "# Grok export\n\n## User\nWe decided to keep context local.\n\n"
-        "## Grok\nFact: fabricated.",
+        "# Grok export\n\n## User\nWe decided to keep context local.\n\n## Grok\nFact: fabricated.",
         source_name="grok-session.md",
     )
 
@@ -243,9 +241,7 @@ def test_grok_nested_turn_pairs_are_adapted_without_trusting_responses() -> None
         }
     }
 
-    parsed = parse_json(
-        json.dumps(export), provider="grok", source_name="grok-account-data.json"
-    )
+    parsed = parse_json(json.dumps(export), provider="grok", source_name="grok-account-data.json")
 
     assert parsed.stats["message_records"] == 1
     assert parsed.stats["messages"] == 2
@@ -273,9 +269,7 @@ def test_case_insensitive_zip_member_collisions_are_deterministic() -> None:
 
 def test_streaming_json_array_rejects_missing_separator(tmp_path: Path) -> None:
     malformed = tmp_path / "conversations.json"
-    malformed.write_text(
-        '[{"goals":["first"]} {"goals":["second"]}]', encoding="utf-8"
-    )
+    malformed.write_text('[{"goals":["first"]} {"goals":["second"]}]', encoding="utf-8")
 
     with pytest.raises(InvalidStateError, match="invalid JSON"):
         parse_archive_path(malformed)
@@ -286,9 +280,7 @@ def test_interrupted_archive_ingestion_resumes_without_duplicate_candidates(
 ) -> None:
     store = CoreService.in_directory(tmp_path).store
     service = ArchiveImportService(store)
-    content = json.dumps(
-        {"goals": [f"Durable goal {index}" for index in range(205)]}
-    ).encode()
+    content = json.dumps({"goals": [f"Durable goal {index}" for index in range(205)]}).encode()
     original_submit = service.ingestion.submit
     calls = 0
 
@@ -358,9 +350,7 @@ def test_user_questions_secrets_and_assistant_text_do_not_become_memory() -> Non
 
     parsed = parse_json(json.dumps(export))
 
-    assert [item.content for item in parsed.candidates] == [
-        "I prefer evidence-backed answers."
-    ]
+    assert [item.content for item in parsed.candidates] == ["I prefer evidence-backed answers."]
 
 
 def test_project_constraints_and_named_decisions_are_extracted() -> None:

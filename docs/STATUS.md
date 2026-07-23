@@ -65,7 +65,7 @@ means connecting directly to Core while Core is online.
   on the minimum supported Python 3.12 runtime.
 - Dashboard: 19 tests passed; type check, production build, and high-severity
   dependency audit passed.
-- Ruff lint, strict mypy across 53 source files, documentation-link
+- Ruff lint and formatting, strict mypy across 53 source files, documentation-link
   checks, and the seven-step single-Core demonstration passed.
 - A live isolated browser smoke imported a fictional ChatGPT export through the
   bundled dashboard, reported one conversation/two candidates, retained the raw

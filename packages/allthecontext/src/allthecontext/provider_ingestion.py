@@ -189,9 +189,7 @@ class ProviderArchiveBuilder:
             conversations = [value]
         if conversations:
             for conversation in conversations:
-                conversation_provider = _detect_json_provider(
-                    conversation, safe_name, provider
-                )
+                conversation_provider = _detect_json_provider(conversation, safe_name, provider)
                 messages = _normalize_conversation(
                     conversation,
                     conversation_provider,
@@ -206,16 +204,12 @@ class ProviderArchiveBuilder:
                 self._stats["conversations"] += 1
                 raw_message_count = _conversation_message_count(conversation)
                 self._stats["message_records"] += raw_message_count
-                self._stats["unparsed_messages"] += max(
-                    raw_message_count - len(messages), 0
-                )
+                self._stats["unparsed_messages"] += max(raw_message_count - len(messages), 0)
                 self._consume_messages(messages)
 
         memory_items = list(_deduplicate_strings(_memory_strings(value)))
         if not memory_items and _looks_like_memory_filename(safe_name):
-            memory_items = list(
-                _deduplicate_strings(_dedicated_memory_strings(value))
-            )
+            memory_items = list(_deduplicate_strings(_dedicated_memory_strings(value)))
         if memory_items and (_looks_like_memory_document(value, safe_name) or recognized):
             memory_provider = provider
             if memory_provider in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
@@ -440,9 +434,7 @@ def _provider_from_text_or_filename(text: str, source_name: str) -> ArchiveProvi
         return ArchiveProvider.GROK
     if re.search(r"(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?claude(?:\*\*)?\s*:", sample):
         return ArchiveProvider.CLAUDE
-    if re.search(
-        r"(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?chatgpt(?:\*\*)?\s*:", sample
-    ):
+    if re.search(r"(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?chatgpt(?:\*\*)?\s*:", sample):
         return ArchiveProvider.CHATGPT
     return ArchiveProvider.AUTO
 
@@ -473,14 +465,18 @@ def _conversation_values(value: Any) -> list[Mapping[str, Any]]:
 def _looks_like_conversation(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    return isinstance(value.get("mapping"), dict) or any(
-        isinstance(value.get(key), list)
-        for key in ("chat_messages", "messages", "turns", "responses")
-    ) or (
-        any(isinstance(value.get(key), str) for key in ("user", "query", "prompt", "human"))
-        and any(
-            isinstance(value.get(key), str)
-            for key in ("assistant", "response", "answer", "grok")
+    return (
+        isinstance(value.get("mapping"), dict)
+        or any(
+            isinstance(value.get(key), list)
+            for key in ("chat_messages", "messages", "turns", "responses")
+        )
+        or (
+            any(isinstance(value.get(key), str) for key in ("user", "query", "prompt", "human"))
+            and any(
+                isinstance(value.get(key), str)
+                for key in ("assistant", "response", "answer", "grok")
+            )
         )
     )
 
@@ -576,8 +572,7 @@ def _looks_like_turn_pair(value: Mapping[str, Any]) -> bool:
     return any(
         isinstance(value.get(key), str) for key in ("user", "query", "prompt", "human")
     ) and any(
-        isinstance(value.get(key), str)
-        for key in ("assistant", "response", "answer", "grok")
+        isinstance(value.get(key), str) for key in ("assistant", "response", "answer", "grok")
     )
 
 
@@ -778,8 +773,7 @@ def _assistant_provider(messages: Sequence[NormalizedMessage]) -> ArchiveProvide
 def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
     text = _FENCED_CODE.sub(" ", message.text)
     reference = (
-        f"{message.source_name}#conversation={message.conversation_id}"
-        f"&message={message.message_id}"
+        f"{message.source_name}#conversation={message.conversation_id}&message={message.message_id}"
     )
     result: list[CandidateInput] = []
     for raw_segment in _SENTENCE_BREAK.split(text):
@@ -922,9 +916,7 @@ def _memory_candidate(
     label = _LABEL.match(cleaned)
     candidate_content = label.group(2).strip() if label else cleaned
     sensitivity = (
-        Sensitivity.SENSITIVE
-        if _SENSITIVE_HINT.search(candidate_content)
-        else Sensitivity.NORMAL
+        Sensitivity.SENSITIVE if _SENSITIVE_HINT.search(candidate_content) else Sensitivity.NORMAL
     )
     return CandidateInput(
         kind=kind,

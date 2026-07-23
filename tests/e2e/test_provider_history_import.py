@@ -66,8 +66,7 @@ def test_chatgpt_claude_and_grok_history_survive_review_and_core_restart(
     )
     grok = _bundle(
         "grok/session.md",
-        "## User\nI use PowerShell for local automation.\n"
-        "## Grok\nFact: fabricated Grok memory.\n",
+        "## User\nI use PowerShell for local automation.\n## Grok\nFact: fabricated Grok memory.\n",
     )
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
 
