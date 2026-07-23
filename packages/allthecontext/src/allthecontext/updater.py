@@ -28,7 +28,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from platformdirs import user_data_path
 
@@ -57,9 +57,13 @@ MAX_MANIFEST_BYTES = 128 * 1024
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 20.0
-MAX_REDIRECTS = 0
+MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
 MAX_CLEANUP_ENTRIES = 32
+DEFAULT_BETA_MANIFEST_URL = (
+    "https://martian-ux.github.io/All-The-Context/"
+    "beta/windows/x86_64/manifest-v1.json"
+)
 
 Channel = Literal["stable", "beta"]
 
@@ -148,14 +152,39 @@ class UpdateConfig:
     def default(cls) -> UpdateConfig:
         data_dir = Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
         package_keyring = Path(__file__).resolve().with_name("update_keys.json")
+        platform_name, architecture = current_platform()
         urls: dict[Channel, str] = {}
+        if (
+            bool(getattr(sys, "frozen", False))
+            and platform_name == "windows"
+            and architecture == "x86_64"
+        ):
+            try:
+                keyring = load_keyring(package_keyring)
+            except (ManifestError, OSError, ValueError, TypeError, json.JSONDecodeError):
+                keyring = {"keys": []}
+            keys = keyring.get("keys")
+            if isinstance(keys, list) and any(
+                isinstance(key, dict)
+                and key.get("status") == "active"
+                and isinstance(key.get("channels"), list)
+                and "beta" in key["channels"]
+                for key in keys
+            ):
+                urls["beta"] = DEFAULT_BETA_MANIFEST_URL
         stable = os.environ.get("ATC_UPDATE_STABLE_URL")
         beta = os.environ.get("ATC_UPDATE_BETA_URL")
         if stable:
             urls["stable"] = stable
         if beta:
             urls["beta"] = beta
-        return cls(data_dir / "updates", package_keyring, urls)
+        return cls(
+            data_dir / "updates",
+            package_keyring,
+            urls,
+            platform_name=platform_name,
+            architecture=architecture,
+        )
 
 
 def current_platform() -> tuple[str, str]:
@@ -218,16 +247,34 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class HttpsTransport:
-    """HTTPS-only transport with bounded bodies, timeouts, and no redirects."""
+    """HTTPS-only transport with bounded bodies and a pinned release-asset redirect."""
 
     def __init__(self) -> None:
         self._opener = urllib.request.build_opener(_NoRedirect())
 
     @staticmethod
-    def _request(url: str) -> urllib.request.Request:
+    def _request(
+        url: str, *, redirected_release_asset: bool = False
+    ) -> urllib.request.Request:
         parsed = urlsplit(url)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise UpdateError("Update endpoint has an invalid network port") from exc
         if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
             raise UpdateError("Update endpoint must be HTTPS without embedded credentials")
+        if redirected_release_asset:
+            if (
+                parsed.hostname != "release-assets.githubusercontent.com"
+                or port not in {None, 443}
+                or not parsed.path.startswith("/github-production-release-asset/")
+                or not parsed.query
+                or parsed.fragment
+            ):
+                raise UpdateError("Release download redirect was refused")
+            return urllib.request.Request(
+                url, headers={"User-Agent": "AllTheContext-Updater/1"}
+            )
         lowered_path = parsed.path.casefold()
         if (
             parsed.query
@@ -240,21 +287,72 @@ class HttpsTransport:
             )
         return urllib.request.Request(url, headers={"User-Agent": "AllTheContext-Updater/1"})
 
-    def _open(self, url: str) -> Any:
+    @staticmethod
+    def _release_asset_redirect(source_url: str, location: str | None) -> str:
+        source = urlsplit(source_url)
         try:
-            response = self._opener.open(self._request(url), timeout=CONNECT_TIMEOUT_SECONDS)
-            # urllib uses the socket timeout for subsequent reads as well.
-            raw = getattr(response, "fp", None)
-            socket = getattr(getattr(raw, "raw", None), "_sock", None)
-            if socket is not None:
-                socket.settimeout(READ_TIMEOUT_SECONDS)
-            return response
-        except urllib.error.HTTPError as exc:
-            if 300 <= exc.code < 400:
-                raise UpdateError("Update endpoint redirect was refused") from exc
-            raise UpdateError(f"Update endpoint returned HTTP {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise UpdateError("Update endpoint could not be reached within the time limit") from exc
+            source_port = source.port
+        except ValueError as exc:
+            raise UpdateError("Release download redirect was refused") from exc
+        parts = source.path.split("/")
+        if (
+            source.scheme != "https"
+            or source.hostname != "github.com"
+            or source_port not in {None, 443}
+            or source.query
+            or source.fragment
+            or len(parts) != 7
+            or parts[0] != ""
+            or parts[3:5] != ["releases", "download"]
+            or any(not part for part in (parts[1], parts[2], parts[5], parts[6]))
+            or parts[5].casefold() == "latest"
+            or not location
+        ):
+            raise UpdateError("Release download redirect was refused")
+        redirected = urljoin(source_url, location)
+        try:
+            HttpsTransport._request(redirected, redirected_release_asset=True)
+        except UpdateError as exc:
+            raise UpdateError("Release download redirect was refused") from exc
+        return redirected
+
+    def _open(self, url: str, *, allow_release_redirect: bool = False) -> Any:
+        current_url = url
+        redirect_count = 0
+        while True:
+            try:
+                response = self._opener.open(
+                    self._request(
+                        current_url,
+                        redirected_release_asset=redirect_count > 0,
+                    ),
+                    timeout=CONNECT_TIMEOUT_SECONDS,
+                )
+                # urllib uses the socket timeout for subsequent reads as well.
+                raw = getattr(response, "fp", None)
+                socket = getattr(getattr(raw, "raw", None), "_sock", None)
+                if socket is not None:
+                    socket.settimeout(READ_TIMEOUT_SECONDS)
+                return response
+            except urllib.error.HTTPError as exc:
+                if 300 <= exc.code < 400:
+                    if (
+                        not allow_release_redirect
+                        or exc.code not in {302, 307, 308}
+                        or redirect_count >= MAX_REDIRECTS
+                    ):
+                        raise UpdateError("Update endpoint redirect was refused") from exc
+                    headers = exc.headers
+                    current_url = self._release_asset_redirect(
+                        url, headers.get("Location") if headers is not None else None
+                    )
+                    redirect_count += 1
+                    continue
+                raise UpdateError(f"Update endpoint returned HTTP {exc.code}") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise UpdateError(
+                    "Update endpoint could not be reached within the time limit"
+                ) from exc
 
     @staticmethod
     def _content_length(headers: Any) -> int | None:
@@ -292,7 +390,9 @@ class HttpsTransport:
         digest = hashlib.sha256()
         received = 0
         try:
-            with self._open(url) as response, target.open("xb") as output:
+            with self._open(url, allow_release_redirect=True) as response, target.open(
+                "xb"
+            ) as output:
                 declared = self._content_length(response.headers)
                 if declared is not None and declared != expected_bytes:
                     raise UpdateError("Release download length differs from signed metadata")
@@ -642,6 +742,7 @@ class UpdateManager:
             raise
 
     def _load_preferences(self) -> UpdatePreferences:
+        default_preferences = self._default_preferences()
         try:
             value = json.loads(self.preferences_path.read_text(encoding="utf-8"))
             if not isinstance(value, dict) or not isinstance(value.get("enabled", True), bool):
@@ -654,13 +755,26 @@ class UpdateManager:
                 if not isinstance(deferred, str):
                     raise ValueError("invalid deferred version")
                 ReleaseVersion.parse(deferred)
+            selected_channel = cast(Channel, channel)
+            if (
+                selected_channel not in self.config.manifest_urls
+                and default_preferences.channel in self.config.manifest_urls
+            ):
+                selected_channel = default_preferences.channel
+                deferred = None
             return UpdatePreferences(
                 enabled=value.get("enabled", True),
-                channel=cast(Channel, channel),
+                channel=selected_channel,
                 deferred_version=deferred,
             )
         except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
-            return UpdatePreferences()
+            return default_preferences
+
+    def _default_preferences(self) -> UpdatePreferences:
+        version = ReleaseVersion.parse(self.config.current_version)
+        if version.stability == 0 and "beta" in self.config.manifest_urls:
+            return UpdatePreferences(channel="beta")
+        return UpdatePreferences()
 
     def _load_state(self) -> UpdateState:
         try:

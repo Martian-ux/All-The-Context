@@ -38,11 +38,12 @@ all represent the requested release. Beta tags, asset names, and manifests keep
 the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
 equivalent `x.y.zbN` spelling.
 
-An operator must first enable GitHub's **immutable releases** repository setting
-and commit at least one independently reviewed public key for the selected
-channel. The workflow only reads that setting; it never enables it. It also
-refuses a version whose tag or release already exists. A failed candidate is
-reissued under a new version rather than uploaded with `--clobber`.
+GitHub's **immutable releases** repository setting was enabled on 2026-07-22.
+The workflow only reads that setting; it never changes it. An operator must
+still commit at least one independently reviewed public key for the selected
+channel. The workflow also refuses a version whose tag or release already
+exists. A failed candidate is reissued under a new version rather than uploaded
+with `--clobber`.
 
 The native matrix builds Windows x86_64, Linux x86_64, macOS arm64 on
 `macos-26`, and macOS x86_64 on `macos-26-intel`. Each job compares the actual
@@ -136,11 +137,12 @@ x86_64 OTA ZIP:
 
 ## GitHub Pages beta channel
 
-GitHub Pages is an explicit operator gate and is currently not enabled by these
-files. Before the first real promotion, an owner selects **GitHub Actions** as
-the Pages publishing source and adds required reviewers to the `github-pages`
-environment. This can be done on GitHub Free for a public repository and does
-not require a paid signing identity.
+GitHub Pages is an explicit operator gate and was enabled with **GitHub
+Actions** as its publishing source on 2026-07-22. No channel content is
+deployed merely by enabling the site. Before the first real promotion, an owner
+adds required reviewers to the `github-pages` environment. This can be done on
+GitHub Free for a public repository and does not require a paid signing
+identity.
 
 The manual **Promote signed beta update channel** workflow accepts only an exact
 immutable published tag, source commit, reviewed candidate digest, and the
@@ -165,13 +167,23 @@ cannot change a versioned GitHub Release asset.
 ## Client updater operation
 
 Production packages embed the reviewed public `update_keys.json`; private keys
-never enter a package. Operators configure immutable channel metadata origins
-with `ATC_UPDATE_STABLE_URL` and, only when beta is supported,
-`ATC_UPDATE_BETA_URL`. Each value must be an exact HTTPS manifest endpoint.
-The application ships with neither endpoint configured and with an empty
-keyring until the release ceremony and live endpoint acceptance are complete,
-so development builds fail
-closed rather than contacting an inferred repository.
+never enter a package. A frozen Windows x86_64 package whose embedded keyring
+contains an active beta key automatically uses the canonical project endpoint:
+
+```text
+https://martian-ux.github.io/All-The-Context/beta/windows/x86_64/manifest-v1.json
+```
+
+Fresh prerelease packages select beta, and an older persisted stable default
+migrates to beta only when no stable endpoint exists and the reviewed beta
+endpoint does. Source runs, unsupported targets, and packages without an active
+beta trust key still configure no inferred endpoint and do not make background
+update requests.
+
+`ATC_UPDATE_STABLE_URL` and `ATC_UPDATE_BETA_URL` remain explicit overrides for
+forks and acceptance environments. Each value must be an exact HTTPS manifest
+endpoint. The release ceremony must import the reviewed public key before a
+package can gain the built-in beta endpoint.
 
 The dashboard **Updates** page supports check now, stable/beta preference,
 automatic launch/daily checks, opt-out, defer, verified download, and error
@@ -190,10 +202,17 @@ The check/download sequence is: bounded no-redirect manifest fetch; strict
 schema/key/signature/channel/platform/architecture/version verification;
 stream to per-operation staging; exact signed length and SHA-256 verification;
 disk preflight; and either a manual verified-package response or a
-recovery-capable native handoff. Partial files are
-deleted after cancellation or failure. A replacement is complete only after
-its version and bounded loopback `/health` response pass. Preserve the backup
-and state files until recovery finishes.
+recovery-capable native handoff. GitHub's versioned release download URL
+returns a temporary CDN redirect, so the artifact transport accepts exactly
+one HTTPS redirect from a `github.com/<owner>/<repository>/releases/download/`
+path to `release-assets.githubusercontent.com/github-production-release-asset/`.
+Metadata redirects, other hosts or paths, missing signed CDN queries, and
+additional redirects remain refused. The signed artifact length and SHA-256
+remain authoritative after transport.
+
+Partial files are deleted after cancellation or failure. A replacement is
+complete only after its version and bounded loopback `/health` response pass.
+Preserve the backup and state files until recovery finishes.
 
 The packaged Windows application enables **Install and restart** only when its
 separate recovery executable and stable installed files are present. Core takes

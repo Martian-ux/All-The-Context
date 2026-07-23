@@ -277,12 +277,13 @@ provider transport can carry a client-held proof through to Core.
 
 The Core owns a serialized update transaction and stores only nonsecret
 preferences and recovery state below its platformdirs-derived per-user data
-directory. Stable is the default; beta requires an explicit preference. Launch
-checks run only when a reviewed HTTPS endpoint is configured and at most once
-per 24 hours. Metadata is size/time/redirect bounded, then must pass the strict
-manifest schema, active Ed25519 key, channel, platform, architecture, and
-version policy before its artifact URL is used. Artifacts stream into private
-per-operation staging and must match both signed byte length and SHA-256.
+directory. Stable releases default to stable; ADR-034 defines the reviewed
+prerelease bootstrap behavior. Launch checks run only when a reviewed HTTPS
+endpoint is configured and at most once per 24 hours. Metadata is
+size/time/redirect bounded, then must pass the strict manifest schema, active
+Ed25519 key, channel, platform, architecture, and version policy before its
+artifact URL is used. Artifacts stream into private per-operation staging and
+must match both signed byte length and SHA-256.
 
 Installer, backup, health, transport, and rollback behavior are explicit
 interfaces. Windows automatic installation is enabled only when the frozen
@@ -506,3 +507,23 @@ and replays completed batches exactly, allowing one-click crash recovery
 without another upload or duplicate candidates. A future learned extractor can
 use a new parser version against the same raw source without changing this
 authority boundary.
+
+## ADR-034: Packaged beta updates have a trust-gated default channel
+
+**Status:** accepted 2026-07-22.
+
+A frozen Windows x86_64 prerelease whose embedded keyring contains an active
+beta key uses the canonical project Pages manifest endpoint and selects beta on
+first run. A legacy persisted stable selection moves to beta only when stable
+has no configured endpoint and beta does. Source runs, unsupported targets, and
+packages without an active beta key infer no endpoint. Environment variables
+remain explicit overrides for forks and acceptance environments.
+
+GitHub's immutable versioned release download URL responds with a temporary CDN
+redirect. Artifact download may therefore follow exactly one HTTPS redirect,
+and only from a structurally versioned `github.com` release-asset path to the
+exact `release-assets.githubusercontent.com/github-production-release-asset/`
+origin and path prefix with a signed query. Manifest fetches, different
+origins/paths, and further redirects remain refused. Redirect acceptance does
+not confer trust on bytes: the already verified Ed25519 manifest's exact size
+and SHA-256 are still required before staging succeeds.

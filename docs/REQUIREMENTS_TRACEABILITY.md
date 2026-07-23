@@ -24,7 +24,7 @@ the hosted jobs pass on the exact release commit.
 | OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows local and Windows/macOS/Linux hosted acceptance observed at `05c7638` |
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Push and draft-PR matrices observed green at `05c7638` |
 | One-click desktop packaging | Windows installer, macOS app/DMG, Linux portable archive | Platform acceptance observed at `05c7638`; final release SHA pending |
-| Signed community updates | Ed25519 manifests/keyring, checksums, SBOM/provenance, Windows recovery helper | Implemented locally; real N-1 drill pending |
+| Signed community updates | Ed25519 manifests/keyring, canonical packaged beta endpoint, pinned GitHub release-asset redirect, checksums, SBOM/provenance, Windows recovery helper | Client and release mechanics implemented locally; public key, channel deployment, and real N-1 drill pending |
 | No third-party V1 runtime | no Edge UI/onboarding/status call/background worker; Edge publication workflow and Render templates removed | Implemented |
 | Direct-Core mobile model | integration API/dashboard/architecture state Core-online requirement | Product contract implemented; secure pairing/transport not yet implemented |
 | No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |

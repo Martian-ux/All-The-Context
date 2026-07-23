@@ -33,6 +33,10 @@ means connecting directly to Core while Core is online.
   a vector dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
+- Frozen Windows x86_64 beta packages with an active reviewed key now select
+  the canonical Pages channel automatically. The artifact transport follows
+  GitHub's single pinned release-CDN redirect while retaining signed size and
+  SHA-256 verification; metadata and arbitrary redirects remain refused.
 
 ## V1 Edge removal
 
@@ -51,6 +55,8 @@ means connecting directly to Core while Core is online.
 
 - Complete the offline public-key ceremony and publish only the reviewed public
   key.
+- Add required reviewers to the release-promotion and `github-pages`
+  environments; no live channel or public release exists yet.
 - Freeze the final release commit after review and repeat the full hosted
   Windows/macOS/Linux and dashboard matrix on that release identity.
 - Exercise a real signed beta1-to-beta2 Windows update and rollback.
@@ -74,6 +80,8 @@ means connecting directly to Core while Core is online.
   390-pixel mobile widths.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.
+- GitHub release immutability is enabled, and GitHub Pages is configured to
+  deploy only from Actions. No channel artifact has been deployed.
 - The Python 3.12 Windows frozen application passed resource discovery and the
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows

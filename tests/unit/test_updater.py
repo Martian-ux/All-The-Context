@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import threading
+import urllib.error
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from allthecontext.release_manifest import (
     public_key_value,
 )
 from allthecontext.updater import (
+    DEFAULT_BETA_MANIFEST_URL,
     MAX_MANIFEST_BYTES,
     HttpsTransport,
     InstallPlan,
@@ -203,6 +205,81 @@ def _manager(
         health_probe=health or FakeHealth(True),
     )
     return manager, transport, active_installer
+
+
+def _beta_manager(tmp_path: Path, keyring: Path) -> UpdateManager:
+    database = tmp_path / "core.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY)")
+    return UpdateManager(
+        UpdateConfig(
+            tmp_path / "updates",
+            keyring,
+            {"beta": "https://updates.example.test/beta/manifest.json"},
+            current_version="0.1.0-beta.1",
+            platform_name="windows",
+            architecture="x86_64",
+        ),
+        database_path=database,
+    )
+
+
+def test_packaged_windows_beta_uses_the_project_channel_when_a_key_is_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(updater_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater_module, "current_platform", lambda: ("windows", "x86_64"))
+    monkeypatch.setattr(
+        updater_module,
+        "load_keyring",
+        lambda _path: {
+            "keys": [{"channels": ["beta"], "status": "active"}],
+        },
+    )
+    monkeypatch.delenv("ATC_UPDATE_STABLE_URL", raising=False)
+    monkeypatch.delenv("ATC_UPDATE_BETA_URL", raising=False)
+
+    config = UpdateConfig.default()
+
+    assert config.manifest_urls == {"beta": DEFAULT_BETA_MANIFEST_URL}
+    assert config.platform_name == "windows"
+    assert config.architecture == "x86_64"
+
+
+def test_source_build_and_packaged_build_without_a_trusted_key_have_no_default_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(updater_module, "current_platform", lambda: ("windows", "x86_64"))
+    monkeypatch.setattr(updater_module, "load_keyring", lambda _path: {"keys": []})
+    monkeypatch.delenv("ATC_UPDATE_STABLE_URL", raising=False)
+    monkeypatch.delenv("ATC_UPDATE_BETA_URL", raising=False)
+
+    monkeypatch.delattr(updater_module.sys, "frozen", raising=False)
+    assert UpdateConfig.default().manifest_urls == {}
+
+    monkeypatch.setattr(updater_module.sys, "frozen", True, raising=False)
+    assert UpdateConfig.default().manifest_urls == {}
+
+
+def test_prerelease_defaults_and_migrates_to_the_available_beta_channel(
+    tmp_path: Path,
+) -> None:
+    _, _, keyring = _fixture(
+        tmp_path,
+        version="0.2.0-beta.1",
+        channel="beta",
+        minimum="0.1.0-beta.1",
+    )
+    manager = _beta_manager(tmp_path, keyring)
+    assert manager.preferences.channel == "beta"
+
+    manager.preferences_path.write_text(
+        json.dumps({"enabled": True, "channel": "stable", "deferred_version": "0.1.0"}),
+        encoding="utf-8",
+    )
+    migrated = _beta_manager(tmp_path, keyring)
+    assert migrated.preferences.channel == "beta"
+    assert migrated.preferences.deferred_version is None
 
 
 def test_valid_n_minus_one_update_download_backup_and_handoff(tmp_path: Path) -> None:
@@ -721,6 +798,113 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
 def test_metadata_transport_rejects_insecure_or_mutable_endpoints(url: str) -> None:
     with pytest.raises(UpdateError):
         HttpsTransport._request(url)
+
+
+def test_release_download_follows_one_pinned_github_asset_redirect(tmp_path: Path) -> None:
+    source = (
+        "https://github.com/Martian-ux/All-The-Context/releases/download/"
+        "v0.2.0-beta.1/all-the-context-0.2.0-beta.1-windows-x86_64.zip"
+    )
+    redirected = (
+        "https://release-assets.githubusercontent.com/"
+        "github-production-release-asset/123/asset-id?sig=temporary"
+    )
+    artifact = b"signed artifact bytes"
+
+    class Response:
+        fp = None
+        remaining = artifact
+
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": str(len(artifact))}
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            value, self.remaining = self.remaining, b""
+            return value
+
+    class RedirectingOpener:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def open(self, request: Any, *, timeout: float) -> Response:
+            assert timeout == updater_module.CONNECT_TIMEOUT_SECONDS
+            self.calls.append(request.full_url)
+            if len(self.calls) == 1:
+                raise urllib.error.HTTPError(
+                    source,
+                    302,
+                    "Found",
+                    {"Location": redirected},
+                    None,
+                )
+            return Response()
+
+    transport = HttpsTransport()
+    opener = RedirectingOpener()
+    transport._opener = cast(Any, opener)
+    target = tmp_path / "artifact.zip"
+
+    digest, received = transport.stream(
+        source,
+        target,
+        expected_bytes=len(artifact),
+        cancelled=lambda: False,
+    )
+
+    assert opener.calls == [source, redirected]
+    assert target.read_bytes() == artifact
+    assert digest == hashlib.sha256(artifact).hexdigest()
+    assert received == len(artifact)
+
+
+@pytest.mark.parametrize(
+    "redirected",
+    [
+        "https://example.com/github-production-release-asset/123/asset?sig=value",
+        "http://release-assets.githubusercontent.com/github-production-release-asset/123/a?x=1",
+        "https://release-assets.githubusercontent.com/unexpected/123/asset?sig=value",
+        "https://release-assets.githubusercontent.com/github-production-release-asset/123/asset",
+    ],
+)
+def test_release_download_refuses_unpinned_redirect_targets(redirected: str) -> None:
+    source = (
+        "https://github.com/Martian-ux/All-The-Context/releases/download/"
+        "v0.2.0-beta.1/all-the-context.zip"
+    )
+    with pytest.raises(UpdateError, match="redirect"):
+        HttpsTransport._release_asset_redirect(source, redirected)
+
+
+def test_metadata_fetch_still_refuses_the_release_asset_redirect() -> None:
+    source = "https://updates.example.test/beta/manifest-v1.json"
+
+    class RedirectingOpener:
+        @staticmethod
+        def open(_request: Any, *, timeout: float) -> Any:
+            assert timeout == updater_module.CONNECT_TIMEOUT_SECONDS
+            raise urllib.error.HTTPError(
+                source,
+                302,
+                "Found",
+                {
+                    "Location": (
+                        "https://release-assets.githubusercontent.com/"
+                        "github-production-release-asset/123/asset?sig=temporary"
+                    )
+                },
+                None,
+            )
+
+    transport = HttpsTransport()
+    transport._opener = cast(Any, RedirectingOpener())
+    with pytest.raises(UpdateError, match="redirect"):
+        transport.get_bytes(source, maximum_bytes=MAX_MANIFEST_BYTES)
 
 
 def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Path) -> None:
