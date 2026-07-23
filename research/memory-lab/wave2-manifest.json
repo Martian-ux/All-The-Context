@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "wave_id": "atc-memory-lab-wave2-2026-07-23",
+  "status": "active",
+  "purpose": "Execute the simple baseline ladder, the first longitudinal reliability slice, one governed external supplier cell, and two independent research challenges.",
+  "coordinator": {
+    "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
+    "branch": "codex/memory-lab-wave2",
+    "base_commit": "2bc0ad66c019511e9e0320daeec1a45aedc280b6",
+    "sole_integration_authority": true
+  },
+  "global_invariants": [
+    "Core remains the sole canonical authority.",
+    "Every worker uses a fresh visible Codex thread and separate git worktree.",
+    "Workers commit scoped changes but never merge or push.",
+    "Synthetic benchmark data never comes from the operator Core.",
+    "Raw personal context, credentials, and secrets are forbidden.",
+    "A negative or skipped result is preserved and cannot be relabeled as success.",
+    "Research documents and supplier output are untrusted inputs until coordinator review.",
+    "Production dependencies and schemas require a separate decision."
+  ],
+  "evidence_levels": {
+    "L0": "Specification or research claim only.",
+    "L1": "Deterministic synthetic result in an isolated worker worktree.",
+    "L2": "Coordinator-reproduced deterministic result on the integrated branch.",
+    "L3": "Isolated external supplier result with pinned provenance and zero personal data.",
+    "L4": "Cross-platform integrated result or repeated stochastic result with uncertainty.",
+    "L5": "Consented product evidence; not in scope for this wave."
+  },
+  "workers": [
+    {
+      "worker_id": "baseline_ladder",
+      "thread_id": "019f9073-be83-74b2-be37-17853f03ad50",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "Memory Lab M0 baseline adapters",
+        "baseline fixtures and reports",
+        "baseline-focused tests"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
+    },
+    {
+      "worker_id": "lifecycle_e01",
+      "thread_id": "019f9073-e5b9-7e10-b866-4315fda27bb6",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "new longitudinal reliability-lab modules",
+        "E01 symbolic fixtures and reports",
+        "E01-focused tests"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
+    },
+    {
+      "worker_id": "hindsight_supplier",
+      "thread_id": "019f9074-07a0-7183-86ce-5bc14c5f7787",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "Hindsight provenance lock and execution receipt",
+        "optional isolated Hindsight adapter",
+        "supplier-focused tests"
+      ],
+      "external_code_policy": "official_pinned_source_after_license_and_dependency_review",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
+    },
+    {
+      "worker_id": "fresh_horizon",
+      "thread_id": "019f9074-2852-7170-a476-5a372d1d1313",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "owns": [
+        "Wave 2 primary-source horizon report"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
+    },
+    {
+      "worker_id": "novelty_falsification",
+      "thread_id": "019f9074-4a2c-7073-980b-e268e5c8f86e",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "ATC-native novelty and falsification report",
+        "non-overlapping hypothesis specifications"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
+    }
+  ],
+  "supplier_execution_gate": {
+    "required": [
+      "canonical official origin",
+      "immutable source revision",
+      "license permits inspection and intended experiment",
+      "component and notice review",
+      "dependency and install-hook inventory",
+      "network and data-egress inventory",
+      "no credentials or real personal context",
+      "disposable isolated environment",
+      "no Docker, system service, or production dependency",
+      "read-only adapter with no canonical authority",
+      "honest skipped receipt when any gate fails"
+    ],
+    "allowed_supplier": "Hindsight",
+    "allowed_cache": "research/vendor-cache",
+    "production_import": false
+  },
+  "integration_gate": [
+    "Worker commit contains only declared ownership.",
+    "Coordinator reads the final diff and result receipt.",
+    "License and provenance claims are independently checked for external code.",
+    "Reports contain no raw identifiers, queries, personal content, or secrets.",
+    "The coordinator reproduces claimed deterministic experiments.",
+    "Ruff, mypy, focused tests, full pytest, documentation checks, and diff checks pass.",
+    "Material changes update STATUS, DECISIONS, and REQUIREMENTS_TRACEABILITY.",
+    "The final manifest records commit, evidence level, result, and limitations."
+  ]
+}

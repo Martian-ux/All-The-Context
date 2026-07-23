@@ -860,3 +860,30 @@ an abstention task returns no memory. Recall, reciprocal rank, disclosure,
 latency, storage, determinism, model calls, tokens, and cost remain separate
 measurements. The initial five-task fixture is a contract regression and
 diagnostic comparison, not evidence of real-user quality or a promotion gate.
+
+## ADR-044: Independent Memory Lab workers produce evidence, not integration authority
+
+**Status:** accepted for governed research waves 2026-07-23; does not grant
+workers, external systems, or research results production authority.
+
+Each parallel Memory Lab cell runs in a fresh visible Codex thread and separate
+git worktree from one immutable coordinator commit. Its prompt freezes scope,
+file ownership, allowed external actions, validation duties, and completion
+receipt. Workers may commit scoped results but do not merge, push, edit wave
+governance, connect to the operator Core, or describe their result as an
+integrated ATC result.
+
+The coordinator is the sole integrator. Worker output is untrusted until its
+diff, provenance, privacy boundary, and result are reviewed and reproduced on
+the integration branch. Evidence levels distinguish specification, isolated
+synthetic, coordinator-reproduced, external-supplier, cross-platform, and
+consented-product results. Negative, unsafe, blocked, and skipped cells remain
+visible and cannot be promoted by aggregate scores from other cells.
+
+External code is denied by default. A wave may name a bounded supplier cell
+only after recording canonical origin, immutable revision, licenses and
+notices, dependencies and install hooks, vulnerabilities, network and data
+flows, disposable isolation, and zero personal data or credentials. A clone is
+not permission to install, execute, copy, or make the supplier a production
+dependency. The machine-readable wave manifest records the exact workers,
+authority boundaries, gates, commits, results, and limitations.

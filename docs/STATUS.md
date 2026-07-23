@@ -106,6 +106,22 @@ OneDrive-synchronized pytest temporary directory and hit one transient Windows
 database-replacement lock; the exact updater test and then the complete suite
 passed from a nonsynchronized local temporary directory.
 
+## Memory Lab Wave 2
+
+ADR-044 and
+`research/memory-lab/wave2-manifest.json` govern five fresh visible
+GPT-5.6-sol worktree cells from coordinator commit `2bc0ad6`: the simple
+baseline ladder, lifecycle E01, an optional isolated Hindsight supplier cell,
+a fresh primary-source horizon review, and an independent novelty/falsification
+review. Workers own non-overlapping scopes, cannot merge or push, and return
+committed evidence to the coordinator for review and reproduction.
+
+The wave is active. No Wave 2 worker result or external-system result has been
+accepted yet. Hindsight is the only cell allowed to clone official pinned
+source, and clone permission does not imply install or execution permission.
+No worker may use credentials, real personal context, the operator Core, a
+production dependency, Docker, or a system service.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,
