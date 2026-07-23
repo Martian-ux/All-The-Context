@@ -245,10 +245,12 @@ def build_edge_mcp(
         query: str,
         scopes: list[str] | None = None,
         kinds: list[str] | None = None,
+        as_of: str | None = None,
+        current_project: str | None = None,
         limit: int = 20,
         cursor: int = 0,
     ) -> dict[str, Any]:
-        """Search approved always-available context with structured filters and full text."""
+        """Search context now, or ask the authoritative Core for historical state."""
         if len(query) > 4_000:
             raise ValueError("query must contain at most 4000 characters")
         if scopes is not None and len(scopes) > 64:
@@ -260,13 +262,17 @@ def build_edge_mcp(
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         identity = _identity(vault_id)
-        records = service.search(
-            identity,
-            query=query,
-            scopes=scopes,
-            kinds=kinds,
-            limit=limit + 1,
-            offset=cursor,
+        records = (
+            []
+            if as_of is not None or current_project is not None
+            else service.search(
+                identity,
+                query=query,
+                scopes=scopes,
+                kinds=kinds,
+                limit=limit + 1,
+                offset=cursor,
+            )
         )
         has_more = len(records) > limit
         page = [_public_record(record) for record in records[:limit]]
@@ -277,6 +283,8 @@ def build_edge_mcp(
                 "query": query,
                 "scopes": scopes or [],
                 "kinds": kinds or [],
+                "as_of": as_of,
+                "current_project": current_project,
                 "limit": limit,
                 "cursor": cursor,
             },

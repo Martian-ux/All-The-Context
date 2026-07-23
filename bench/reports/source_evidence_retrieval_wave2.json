@@ -1,0 +1,612 @@
+{
+  "authority": "research_only_no_runtime_integration",
+  "bounds": {
+    "maximum_repetitions": 20,
+    "normal_source_count_max": 256,
+    "opt_in_source_count_max": 1024
+  },
+  "environment": {
+    "platform": "Windows",
+    "python": "3.12.10",
+    "sqlite": "3.49.1"
+  },
+  "fixture": {
+    "path": "source_evidence_fixtures.json",
+    "query_count": 4,
+    "seed_source_count": 10,
+    "sha256": "98081f4e197482e1c8407152b23e5567c58eeab7cbeb4efcbf48f18e7ad196e9"
+  },
+  "frozen_comparator": {
+    "id": "current_lexical_candidate_pool",
+    "implementation": "allthecontext.lexical_v3.LexicalV3",
+    "selection_semantics": "Gold evidence available anywhere inside each selected source; passage variants instead require exact evidence-message selection.",
+    "source_commit": "659c79136b5d5ba66b9cc5e38640a9d3f341cff3"
+  },
+  "profiles": {
+    "256": {
+      "candidate_limit": 6,
+      "eligible_source_count": 255,
+      "evidence_limit": 5,
+      "passage_count": 2054,
+      "repetitions": 5,
+      "safety_passed": true,
+      "source_count": 256,
+      "variants": {
+        "current_lexical_candidate_pool": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 0,
+            "redundancy_delta": 0.0,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 0.0
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 18.4397,
+              "p95_ms": 18.666
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 1.8889,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "71527190e5e88db1d00feb2091aee81b5019a5296ad92747b73a8ed33c9f955a",
+            "redundancy_at_limit": 0.083334,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 335872,
+              "incremental_over_candidate_pool_bytes": 0,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 17.9673,
+              "p95_ms": 18.6496
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.166667,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.166667,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "source",
+          "status": "exercised"
+        },
+        "deterministic_diverse_maxsim": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 356136,
+            "redundancy_delta": -0.083334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 0.3076
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 18.394,
+              "p95_ms": 18.8516
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 11.3096,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "ce568f876d72325aa6b56389197ac328f3969b709382ebf37ca6545595230902",
+            "redundancy_at_limit": 0.0,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 692008,
+              "incremental_over_candidate_pool_bytes": 356136,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 18.44195,
+              "p95_ms": 18.9572
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        },
+        "deterministic_passage_maxsim": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 356136,
+            "redundancy_delta": -0.033334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 5.186
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 18.5798,
+              "p95_ms": 18.7925
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 11.3096,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "1356fcb3618ed4a87b2d0b16030ebd13d614c7bcb4651e327c61c3bde1deaa0d",
+            "redundancy_at_limit": 0.05,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 692008,
+              "incremental_over_candidate_pool_bytes": 356136,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 18.6579,
+              "p95_ms": 23.8356
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.2,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        },
+        "lexical_passages": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 397312,
+            "redundancy_delta": -0.033334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 3.9626
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 22.5258,
+              "p95_ms": 22.8873
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 6.8273,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "84ff0ec492e42c1435d4e559051ebe4393ad97c43b22ad1151123236d29b29d2",
+            "redundancy_at_limit": 0.05,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 733184,
+              "incremental_over_candidate_pool_bytes": 397312,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 21.96375,
+              "p95_ms": 22.6122
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.2,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        }
+      }
+    },
+    "64": {
+      "candidate_limit": 6,
+      "eligible_source_count": 63,
+      "evidence_limit": 5,
+      "passage_count": 518,
+      "repetitions": 5,
+      "safety_passed": true,
+      "source_count": 64,
+      "variants": {
+        "current_lexical_candidate_pool": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 0,
+            "redundancy_delta": 0.0,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 0.0
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 6.2997,
+              "p95_ms": 6.6792
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 1.0542,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "543212e7bc85d5aea2d294352d5c6e2bd76114e9eebc5cb252c0278e68e4da79",
+            "redundancy_at_limit": 0.083334,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 90112,
+              "incremental_over_candidate_pool_bytes": 0,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 6.17555,
+              "p95_ms": 6.2762
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.166667,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.166667,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 6,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "source",
+          "status": "exercised"
+        },
+        "deterministic_diverse_maxsim": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 86168,
+            "redundancy_delta": -0.083334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 0.5501
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 6.33805,
+              "p95_ms": 6.4304
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 3.3875,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "ce568f876d72325aa6b56389197ac328f3969b709382ebf37ca6545595230902",
+            "redundancy_at_limit": 0.0,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 176280,
+              "incremental_over_candidate_pool_bytes": 86168,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 6.30575,
+              "p95_ms": 6.8263
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        },
+        "deterministic_passage_maxsim": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 86168,
+            "redundancy_delta": -0.033334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 0.0405
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 6.0877,
+              "p95_ms": 6.1902
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 3.3875,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "1356fcb3618ed4a87b2d0b16030ebd13d614c7bcb4651e327c61c3bde1deaa0d",
+            "redundancy_at_limit": 0.05,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 176280,
+              "incremental_over_candidate_pool_bytes": 86168,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 6.0985,
+              "p95_ms": 6.3167
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.2,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        },
+        "lexical_passages": {
+          "comparison_to_current_lexical_pool": {
+            "facet_coverage_delta": 0.0,
+            "incremental_storage_bytes": 114688,
+            "redundancy_delta": -0.033334,
+            "source_evidence_recall_delta": 0.0,
+            "warm_p95_ms_delta": 2.7592
+          },
+          "metrics": {
+            "cold_latency": {
+              "p50_ms": 8.9983,
+              "p95_ms": 9.1895
+            },
+            "facet_coverage_at_limit": 1.0,
+            "gold_source_recall_at_limit": 1.0,
+            "index_build_ms": 2.6476,
+            "ineligible_corpus_invariance": true,
+            "policy_violation_count": 0,
+            "ranking_fingerprint_sha256": "84ff0ec492e42c1435d4e559051ebe4393ad97c43b22ad1151123236d29b29d2",
+            "redundancy_at_limit": 0.05,
+            "repeated_rankings_deterministic": true,
+            "source_evidence_recall_at_limit": 1.0,
+            "storage": {
+              "benchmark_ephemeral_index_bytes": 204800,
+              "incremental_over_candidate_pool_bytes": 114688,
+              "persistent_growth_bytes": 0
+            },
+            "warm_latency": {
+              "p50_ms": 8.5886,
+              "p95_ms": 9.0354
+            }
+          },
+          "queries": {
+            "atlas-color-approval": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.2,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "cache-threshold-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "nimbus-license-review": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            },
+            "release-rollback-validation": {
+              "facet_coverage_at_limit": 1.0,
+              "gold_source_recall_at_limit": 1.0,
+              "policy_violation_count": 0,
+              "redundancy_at_limit": 0.0,
+              "selected_item_count": 5,
+              "source_evidence_recall_at_limit": 1.0
+            }
+          },
+          "selection_kind": "passage",
+          "status": "exercised"
+        }
+      }
+    }
+  },
+  "report_kind": "wave2_source_evidence_retrieval_research",
+  "research_paths": [
+    {
+      "id": "neural_model_late_interaction",
+      "reason": "No optional model or model runtime is declared for this bounded offline experiment.",
+      "status": "not_exercised"
+    }
+  ],
+  "runtime_seconds": 3.029126,
+  "safety_passed": true,
+  "schema_version": 1
+}

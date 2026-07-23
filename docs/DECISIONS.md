@@ -545,3 +545,76 @@ first-install warnings. Two recoverable encrypted private-key backups must be
 verified before first use. Losing the only trusted private half requires a
 separately authenticated manual recovery release; suspected compromise stops
 all publication and promotion.
+
+## ADR-036: Retrieval V3 separates authority, time, relevance, and admissibility
+
+**Status:** accepted 2026-07-22; advances ADR-018 and ADR-021 without adding a
+hosted or vector authority.
+
+Authorization is the first retrieval boundary. The temporal resolver receives
+only authorized opaque IDs; lexical ranking receives only IDs selected by that
+resolver; admissibility receives only authorized, temporally eligible rows and
+passes numeric factors rather than raw context to its gate. Administrator
+diagnostics use closed reason codes and aggregates. Returned authorized IDs may
+be explained, but rejected or unauthorized IDs and raw content are absent.
+
+Temporal state is a separate content-free SQLite sidecar using its own schema
+version. Core records and purge tombstones remain authoritative. The sidecar is
+discardable, migratable, and reconciled after startup, canonical mutations, and
+restore. Intervals are UTC half-open, expiry is exclusive, supersession remains
+effective after a superseder expires, and deletion/purge are terminal even for
+historical queries. Ordinary current records use a deterministic fast path;
+`as_of` resolves the complete authorized set. An in-place correction is the
+latest canonical content for its stable ID; earlier content remains available
+through record history, while separate superseding records are searchable by
+historical instant.
+
+Production lexical retrieval uses weighted BM25 over a temporary candidate-only
+FTS5 corpus. Exact channels precede carefully bounded OR/prefix fallback, and
+FTS5 secure-delete is enabled only when the linked SQLite build accepts it.
+Admissibility combines task/query coverage, project/scope fit, requested-kind
+fit, confidence/explicitness, and conflict state with a conservative fail-open
+rule. A learned gate can observe sanitized features in shadow but cannot reject,
+reorder, or create canonical context.
+
+The V2 comparator remains a named frozen pipeline, not the current production
+default. The combined gate requires exact Recall@5 and semantic coverage at
+least that comparator, improved temporal and admissibility precision, zero
+policy violations and duplicate redundancy, deterministic rankings/conflicts,
+no deletion/purge resurrection, exercised restart/restore/history paths, and a
+10k warm p95 below 150 ms. Dense retrieval, late interaction, rerankers, and ANN
+remain experiments until stage diagnostics meet their explicit escalation
+conditions.
+
+## ADR-037: Context assembly is set-level; dense and source evidence stay shadow-only
+
+**Status:** accepted 2026-07-22; extends ADR-036 without granting a new
+canonical or production ranking authority.
+
+Context assembly is a deterministic set-selection problem rather than a linear
+packing loop. `ContextCompiler` derives bounded opaque labels only after policy,
+temporal, lexical, and task-admissibility stages have completed. The selector
+uses integer utilities and exact rational benefit-per-character comparisons,
+prioritizes feasible interaction preferences, and enforces character budget,
+duplicate, conflict, compatibility, and supporting-evidence constraints. The
+selector's diagnostics remain closed aggregate codes. Raw content, query text,
+unauthorized identifiers, and arbitrary metadata are not diagnostic fields.
+
+Dense retrieval is not a production dependency. The checked-in 384-dimensional
+CPU experiment is disabled by default, rebuild-only, nonpersistent, and outside
+application package discovery. Its deterministic synthetic runtime can measure
+exact-scan mechanics but cannot establish semantic value. The 10,000-candidate
+measurement missed the explicit `150 ms` p95 target at `400.294955 ms`, so a
+future optional ANN shadow study is latency-justified. It is not approved yet:
+the real local model and semantic comparison were not exercised, and no default
+native dependency, canonical vector state, or production ANN authority is
+allowed.
+
+Long imported-chat evidence also remains research-only. Deterministic passage
+MaxSim variants are benchmarked after the frozen authorized lexical source
+pool; they do not alter runtime results. The diversity-aware variant preserved
+the bounded fixture's `1.0` evidence recall and coverage while reducing measured
+redundancy to zero. Neural late interaction, learned sparse retrieval, and
+reranking remain unexercised. Promotion requires representative evidence,
+cross-platform measurements, explicit packaging review, and the same
+policy-first and rebuildable-state guarantees as production retrieval.

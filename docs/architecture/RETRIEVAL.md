@@ -1,33 +1,68 @@
 # Retrieval and context compilation
 
-`RetrievalEngine` is a stable facade over replaceable internal components. Phase
-1 uses only SQLite FTS5 and deterministic lexical signals; no embedding or graph
-database is canonical or required. Existing search/bootstrap response models and
-MCP tool names are unchanged.
+`RetrievalEngine` is a stable facade over replaceable local components. Retrieval
+V3 remains SQLite-first and deterministic; no embedding, graph database, hosted
+service, native extension, or production vector dependency is required.
 
-The pipeline has five explicit responsibilities:
+The production pipeline has six ordered boundaries:
 
-1. `EligibleRecordSelector` applies vault, approval, deletion, validity,
-   expiry, supersession, request filters, and client allow/deny policy.
-2. `LexicalCandidateChannels` receives only eligible IDs and runs bounded
-   phrase, all-term AND, and broad OR/BM25 channels (256 results per channel).
-3. `ReciprocalRankFusion` combines channel ranks and bounded token-coverage,
-   exact-phrase, kind, tag, project, and explicit interaction-preference
-   signals. Updated time is only a deterministic tie-breaker.
-4. `ContextCompiler` reserves budget for mandatory interaction preferences,
-   normalizes exact duplicates, conservatively suppresses near duplicates,
-   diversifies kinds/projects/sources, and places supporting records after
-   primary answers.
-5. `RankingExplanation` records authorized-only channel ranks and signals.
-   Explanations are available through local `atc search --explain` or the
-   administrator-checked internal method; they are not added to MCP responses.
+1. `EligibleRecordSelector.select_authorized` applies vault, approval, request
+   filters, and client allow/deny policy. Relevance never receives a rejected
+   row. Deleted rows can cross only this metadata boundary so the temporal
+   resolver can enforce their terminal state; they never reach ranking.
+2. `TemporalSidecar` rebuilds content-free UTC interval metadata from canonical
+   Core rows and purge tombstones. It resolves `current` or an offset-aware
+   `as_of` instant over the already-authorized ID set.
+3. `LexicalV3CandidateRanker` runs weighted BM25 over an ephemeral FTS5 corpus
+   containing only temporally eligible IDs. Phrase/all-term channels precede a
+   bounded exact-OR fallback; prefix fallback is limited to four tokens of at
+   least four characters. The production evidence-pool threshold is two hits.
+4. `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
+   scope/project fit, requested-kind compatibility, confidence/explicitness,
+   and conflict state. Sparse or underspecified evidence fails open. An optional
+   learned gate can run only in shadow and has no production authority.
+5. `ContextCompiler` maps only the already-authorized, temporally eligible, and
+   task-admitted result set into opaque hashed semantic/diversity labels. A
+   `DeterministicSetSelector` then maximizes exact rational marginal utility per
+   character while prioritizing mandatory preferences and enforcing transitive
+   duplicate groups, same-slot conflict exclusion, supporting-evidence
+   relationships, and the exact budget. It cannot weaken an upstream gate.
+6. Administrator-only diagnostics expose authorized returned record IDs plus
+   numeric values, aggregate counts, and closed reason codes. They never include
+   raw query/context text, denied IDs, or unauthorized-derived vocabulary.
 
-Permission, validity, deletion, and supersession remain hard predicates before
-all relevance work. The eligible set is materialized as a temporary ID table;
-every FTS channel joins that table. `CandidateRanker` remains the fail-fast seam,
-and `V1CandidateRanker` remains available for the frozen comparator and boundary
-tests. A future backend may rank only this already-permitted set and any derived
-index must remain rebuildable from canonical Core records.
+The frozen V2 comparator uses the legacy complete policy selector and V2 ranker
+behind `FrozenV2Comparator.frozen_pipeline`; advancing the production default
+therefore cannot silently move the baseline. `CandidateRanker` remains the
+fail-fast seam. Future backends may rank only the already-permitted set, and
+every derived index must remain discardable and rebuildable from Core.
+
+## Temporal semantics
+
+All intervals are normalized to UTC and half-open: `[valid_from, valid_to)`;
+expiry is exclusive. With no explicit `valid_from`, canonical creation is the
+start. Already-expired imported records with no asserted start are treated as
+historical rather than making the sidecar invalid. A superseder closes its
+predecessor at the superseder's effective start and the predecessor does not
+return merely because the superseder expires. Unrelated conflicting claims
+remain separate series for later conflict-aware set selection.
+
+Deletion and purge are terminal for both current and historical search. Restore
+never imports the sidecar as authority: startup/restart/search reconciles it
+against current canonical rows and purge tombstones, replacing stale or corrupt
+derived state. The normal current path resolves only records with meaningful
+temporal state through the sidecar; ordinary active IDs are a deterministic
+fast path. `as_of` always resolves the complete authorized set.
+
+An in-place Core correction retains its stable record ID and advances its
+canonical revision. Retrieval uses that latest approved content across the
+record's interval; `record_history` remains the audit API for earlier content
+snapshots. Separate superseding records provide content-addressable historical
+search across revisions.
+
+`SearchRequest.as_of`, MCP `search_context(as_of=...)`, and CLI `atc search
+--as-of ...` require an offset-aware ISO 8601 timestamp. `current_project` is an
+optional admissibility hint, not an authorization grant.
 
 ## Reproducible V1 baseline
 
@@ -68,3 +103,47 @@ one. Temporal precision remains `0.5`. The bounded alias table currently closes
 one explicit vocabulary gap (`eviction` to `cache`); typo, general paraphrase,
 and broader vocabulary recovery remain out of scope. Timing is local evidence,
 not a cross-platform performance claim.
+
+## Retrieval V3 gates
+
+`python -m bench.retrieval_v3_foundation run` measures the immutable V2
+comparator and pins its base commit, sanitized fixture hashes, and ranking
+fingerprints. `python -m bench.retrieval_v3_combined` runs the production V3
+candidate at 1k and 10k and fails unless exact Recall@5 and semantic coverage
+are at least the comparator, admissibility and temporal precision improve,
+duplicate redundancy and policy violations are zero, conflict/ranking behavior
+is deterministic, deleted/purged records do not resurrect, historical and
+restore paths are exercised, and 10k warm p95 stays below 150 ms.
+
+The standalone lexical, temporal, and admissibility harnesses remain useful for
+stage diagnosis. The set-selection harness adds compatibility, semantic
+coverage, diversity, supporting-evidence, mandatory-preference, conflict,
+redundancy, and budget scenarios; all 11 local gates pass.
+
+## Optional shadow research
+
+The repository contains two research-only paths under `bench/`; neither is
+imported by the application package or has ranking authority:
+
+- `dense_shadow` is explicitly disabled by default, rebuild-only, in-memory,
+  CPU-only, and fixed at 384 float32 dimensions. A deterministic synthetic
+  runtime measures storage and exact-scan mechanics but makes no semantic
+  claim. At 10,000 candidates, exact scan used 15,360,000 vector bytes and
+  measured `400.294955 ms` warm p95 against a `150 ms` target. This satisfies the
+  latency precondition for a later ANN shadow study, but the real local-model
+  and semantic-coverage paths remain `not_exercised`; no ANN or production
+  dense retrieval is implemented.
+- `source_evidence_retrieval` freezes the candidate-scoped lexical source pool
+  and compares lexical passages, deterministic token MaxSim, and
+  diversity-aware token MaxSim on sanitized imported-chat evidence. At the
+  normal 64/256-source profiles, every variant preserves `1.0` evidence recall
+  and facet coverage with zero policy violations; diversity-aware MaxSim
+  reduces measured redundancy to zero. Neural late interaction remains
+  `not_exercised`, and no source-evidence variant is wired into runtime.
+
+Learned sparse retrieval and production late interaction remain unscheduled.
+A reranker still requires evidence that candidate-pool recall is strong while
+final ordering is measurably poor. ANN may now be researched only as an
+optional local shadow because exact scan missed its explicit target; production
+use still requires a genuine model, semantic benefit, recall parity, and a
+default dependency strategy consistent with the local cross-platform boundary.

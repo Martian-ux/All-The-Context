@@ -31,8 +31,10 @@ means connecting directly to Core while Core is online.
   backup, audit, and signed-update controls.
 - Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
   app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
-- Deterministic policy-first lexical retrieval and context compilation without
-  a vector dependency.
+- Deterministic Retrieval V3 with policy-first authorization, rebuildable UTC
+  interval sidecars, weighted candidate-scoped FTS5, conservative task
+  admissibility, safe diagnostics, and deterministic marginal context-set
+  selection without a vector dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
 - The active beta-only `release-2026-a` public key is embedded in the package
@@ -57,6 +59,46 @@ means connecting directly to Core while Core is online.
   earlier engineering state can be inspected/decommissioned without data loss.
   They are not a supported V1 feature.
 
+## Retrieval V3 integration
+
+- The frozen V2 comparator is pinned to `70a4808` with checked fixture hashes
+  and ranking fingerprints; production V3 cannot silently move it.
+- Core, MCP, and CLI accept offset-aware `as_of` search. Current and historical
+  resolution is UTC-normalized, deterministic across restart, and treats
+  deletion/purge as terminal across restore.
+- Weighted BM25 runs only over authorized and temporally eligible candidate
+  IDs. Prefix fallback, candidate count, tokens, channel results, query length,
+  and result count are hard bounded; FTS5 secure-delete is feature-detected.
+- Task admissibility uses only upstream numeric factors after hard policy and
+  time filtering. Sparse/underspecified evidence fails open; learned authority
+  remains shadow-only.
+- The integrated 1k/10k comparator gate passes locally on Windows. Both profiles
+  have exact Recall@5 `1.0`, admissibility precision `1.0`, temporal precision
+  `1.0`, semantic coverage `1.0`, zero redundancy, zero policy violations, and
+  deterministic rankings/conflicts. After set-selection integration, the 10k
+  warm p95 is `80.6885 ms`; total database-plus-sidecar growth from 1k to 10k
+  is `1027.185778` bytes per added record. Lifecycle resurrection count is zero.
+- `ContextCompiler` now uses metadata-only deterministic marginal utility,
+  mandatory-preference priority, semantic/diversity gains, transitive duplicate
+  groups, same-slot conflict exclusion, supporting-evidence relationships, and
+  exact character budgets. Its standalone benchmark passes all 11 gates with
+  semantic coverage `1.0`, zero set violations, and deterministic input-order
+  behavior.
+- The optional 384-dimensional float32 dense shadow remains disabled,
+  in-memory, noncanonical, and outside default packaging. Synthetic exact scan
+  is deterministic but misses its 10k target: `400.294955 ms` warm p95 versus
+  `150 ms`, with `15,360,000` vector bytes. No real local model or semantic
+  comparison was exercised, so dense ranking and ANN were not promoted.
+- Research-only source-evidence selection preserves `1.0` recall and facet
+  coverage with zero policy violations at 64/256 sources. Diversity-aware
+  token MaxSim reduces measured redundancy from `0.083334` to zero; the final
+  256-source warm p95 is `18.9572 ms`. Neural late interaction remains
+  unexercised and there is no runtime integration.
+- Integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
+  macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
+  Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
+  measurements rather than cross-platform performance claims.
+
 ## Remaining beta gates
 
 - Create and verify two recoverable encrypted backups of the operator-held
@@ -71,13 +113,13 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python suite: 354 passed; four Windows-host symlink tests skipped because
+- Full Python 3.12 suite: 459 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests
   on the minimum supported Python 3.12 runtime.
 - Dashboard: 19 tests passed; type check, production build, and high-severity
   dependency audit passed.
-- Ruff lint and formatting, strict mypy across 53 source files, documentation-link
+- Ruff format/lint, strict mypy across 58 source files, documentation-link
   checks, and the seven-step single-Core demonstration passed.
 - A live isolated browser smoke imported a fictional ChatGPT export through the
   bundled dashboard, reported one conversation/two candidates, retained the raw
@@ -96,6 +138,11 @@ means connecting directly to Core while Core is online.
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29969999250)
   and
   [draft-PR matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29970013608):
+  Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
+  on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
+  20 and 22.
+- Retrieval V3 integration commit `67dd11c` passed its
+  [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29976224653):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
   20 and 22.
