@@ -1,0 +1,108 @@
+{
+  "schema": "atc.memory-lab.m3-fixture.v1",
+  "synthetic_only": true,
+  "default_repeats": 20,
+  "seeds": [47001, 47017, 47033, 47049, 47065],
+  "principals": ["principal-alpha", "principal-beta"],
+  "policy_generations": [7, 8],
+  "surfaces": [
+    "retrieval_selection",
+    "issued_context",
+    "procedure",
+    "selection_cache",
+    "working_state",
+    "use_statistics"
+  ],
+  "topologies": {
+    "chain": {
+      "roots": ["root-chain"],
+      "artifacts": ["sel-chain", "issue-chain", "proc-chain", "cache-chain", "work-chain", "stats-chain"],
+      "edges": [
+        ["root-chain", "sel-chain", "selection"],
+        ["sel-chain", "issue-chain", "issued_intervention"],
+        ["issue-chain", "proc-chain", "content"],
+        ["proc-chain", "cache-chain", "negative_decision"],
+        ["cache-chain", "work-chain", "working_state"],
+        ["work-chain", "stats-chain", "statistic"]
+      ]
+    },
+    "fan_out": {
+      "roots": ["root-fan"],
+      "artifacts": ["sel-fan", "issue-fan", "proc-fan", "cache-fan", "work-fan", "stats-fan"],
+      "edges": [
+        ["root-fan", "sel-fan", "selection"],
+        ["root-fan", "issue-fan", "issued_intervention"],
+        ["root-fan", "proc-fan", "content"],
+        ["root-fan", "cache-fan", "negative_decision"],
+        ["root-fan", "work-fan", "working_state"],
+        ["root-fan", "stats-fan", "statistic"]
+      ]
+    },
+    "fan_in": {
+      "roots": ["root-in-a", "root-in-b"],
+      "artifacts": ["issue-in", "proc-in"],
+      "edges": [
+        ["root-in-a", "issue-in", "content"],
+        ["root-in-b", "issue-in", "content"],
+        ["root-in-a", "proc-in", "selection"],
+        ["root-in-b", "proc-in", "selection"]
+      ]
+    },
+    "shared_descendant": {
+      "roots": ["root-shared-a", "root-shared-b"],
+      "artifacts": ["issue-shared-a", "issue-shared-b", "proc-shared", "cache-shared", "work-shared", "stats-shared"],
+      "edges": [
+        ["root-shared-a", "issue-shared-a", "issued_intervention"],
+        ["root-shared-b", "issue-shared-b", "issued_intervention"],
+        ["issue-shared-a", "proc-shared", "content"],
+        ["issue-shared-b", "proc-shared", "content"],
+        ["proc-shared", "cache-shared", "negative_decision"],
+        ["proc-shared", "work-shared", "working_state"],
+        ["work-shared", "stats-shared", "statistic"]
+      ]
+    },
+    "cycle_attempt": {
+      "roots": ["root-cycle"],
+      "artifacts": ["proc-cycle", "cache-cycle"],
+      "edges": [
+        ["root-cycle", "proc-cycle", "content"],
+        ["proc-cycle", "cache-cycle", "selection"]
+      ],
+      "attempted_edge": ["cache-cycle", "root-cycle"]
+    },
+    "cross_scope_edge_attempt": {
+      "roots": ["root-scope-alpha"],
+      "artifacts": ["proc-scope-beta"],
+      "attempted_edge": ["root-scope-alpha", "proc-scope-beta"]
+    }
+  },
+  "f02_case_mapping": [
+    ["M3-C01-CORRECTION-CHAIN", "correction", "chain"],
+    ["M3-C02-SCOPE-NARROWING-FANOUT", "scope_narrowing", "fan_out"],
+    ["M3-C03-PERMISSION-REVOCATION-FANIN", "permission_revocation", "fan_in"],
+    ["M3-C04-ORDINARY-DELETE-RESTORE", "ordinary_delete", "fan_out"],
+    ["M3-C05-TERMINAL-PURGE-IDENTIFIER-REUSE", "terminal_purge", "shared_descendant"],
+    ["M3-C06-POLICY-GENERATION-CHANGE", "policy_generation_change", "fan_out"],
+    ["M3-C07-PARTIAL-REPAIR-BARRIER", "correction", "chain"],
+    ["M3-C08-STALE-WRITER", "correction", "shared_descendant"],
+    ["M3-C09-CYCLE-EDGE-ATTEMPT", "edge_rejection", "cycle_attempt"],
+    ["M3-C10-CROSS-SCOPE-EDGE-ATTEMPT", "edge_rejection", "cross_scope_edge_attempt"],
+    ["M3-C11-DUPLICATE-AND-CONFLICTING-REPLAY", "event_replay", "fan_in"],
+    ["M3-C12-OUT-OF-ORDER-MUTATION", "ordered_delivery", "chain"],
+    ["M3-C13-SHARED-DESCENDANT-CORRECTION", "correction", "shared_descendant"],
+    ["M3-C14-PURGE-DURING-ISSUE", "terminal_purge", "fan_out"],
+    ["M3-C15-OPTIMIZATION-WORK-CONTROL", "correction", "fan_out_100"]
+  ],
+  "ablations": [
+    "repair_before_withdrawal",
+    "direct_edge_only",
+    "content_only_lineage",
+    "generation_only",
+    "inventory_only",
+    "raw_record_only_purge"
+  ],
+  "injected_faults": [
+    "missing_inventory_edge",
+    "stale_writer"
+  ]
+}

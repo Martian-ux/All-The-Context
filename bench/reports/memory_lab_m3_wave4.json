@@ -1,0 +1,666 @@
+{
+  "ablations": {
+    "content_only_lineage": {
+      "published_stale_descendant_count": 5
+    },
+    "direct_edge_only": {
+      "optimized_full_rebuild_mismatch_count": 1,
+      "published_stale_descendant_count": 5
+    },
+    "generation_only": {
+      "terminal_purge_residue_count": 1
+    },
+    "inventory_only": {
+      "stale_writer_accept_count": 1
+    },
+    "raw_record_only_purge": {
+      "fail_open_publication_count": 6,
+      "terminal_purge_residue_count": 7
+    },
+    "repair_before_withdrawal": {
+      "fail_open_publication_count": 6,
+      "published_stale_descendant_count": 6
+    }
+  },
+  "ablations_decisive": true,
+  "availability": {
+    "final_eligible_fraction_of_full_rebuild": 1.0,
+    "safe_barrier_observation_fraction": 1.0
+  },
+  "case_count": 15,
+  "case_coverage_fraction": 1.0,
+  "cases": [
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C01-CORRECTION-CHAIN",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I04",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 120,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C02-SCOPE-NARROWING-FANOUT",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I04",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 240,
+        "descendants_scanned": 240,
+        "full_rebuild_nodes_evaluated": 240
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C03-PERMISSION-REVOCATION-FANIN",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I04"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 40,
+        "descendants_scanned": 40,
+        "full_rebuild_nodes_evaluated": 40
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C04-ORDINARY-DELETE-RESTORE",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I05"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 120,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C05-TERMINAL-PURGE-IDENTIFIER-REUSE",
+      "f02_invariants": [
+        "M3-I02",
+        "M3-I03",
+        "M3-I04",
+        "M3-I05",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 20,
+        "shared_descendant_recipes_validated": 80
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 80,
+        "descendants_scanned": 100,
+        "full_rebuild_nodes_evaluated": 100
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C06-POLICY-GENERATION-CHANGE",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I04",
+        "M3-I07"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 120,
+        "descendants_scanned": 0,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C07-PARTIAL-REPAIR-BARRIER",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02",
+        "M3-I04"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 160,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C08-STALE-WRITER",
+      "f02_invariants": [
+        "M3-I02",
+        "M3-I04"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 100,
+        "descendants_scanned": 100,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C09-CYCLE-EDGE-ATTEMPT",
+      "f02_invariants": [
+        "M3-I06",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 0,
+        "descendants_scanned": 0,
+        "full_rebuild_nodes_evaluated": 40
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C10-CROSS-SCOPE-EDGE-ATTEMPT",
+      "f02_invariants": [
+        "M3-I06",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 0,
+        "descendants_scanned": 0,
+        "full_rebuild_nodes_evaluated": 20
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C11-DUPLICATE-AND-CONFLICTING-REPLAY",
+      "f02_invariants": [
+        "M3-I02",
+        "M3-I04"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 0,
+        "descendants_scanned": 0,
+        "full_rebuild_nodes_evaluated": 40
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C12-OUT-OF-ORDER-MUTATION",
+      "f02_invariants": [
+        "M3-I02",
+        "M3-I04"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 120,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C13-SHARED-DESCENDANT-CORRECTION",
+      "f02_invariants": [
+        "M3-I01",
+        "M3-I02"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 100,
+        "descendants_scanned": 100,
+        "full_rebuild_nodes_evaluated": 120
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C14-PURGE-DURING-ISSUE",
+      "f02_invariants": [
+        "M3-I02",
+        "M3-I03",
+        "M3-I04",
+        "M3-I08"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 120,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 0,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 0
+      }
+    },
+    {
+      "availability": {
+        "final_eligible_fraction_of_full_rebuild": 1.0,
+        "safe_barrier_observation_fraction": 1.0
+      },
+      "case_id": "M3-C15-OPTIMIZATION-WORK-CONTROL",
+      "f02_invariants": [
+        "M3-I02"
+      ],
+      "purge_boundary": {
+        "exclusive_descendant_ids_checked": 0,
+        "shared_descendant_recipes_validated": 0
+      },
+      "repeats": 20,
+      "safety_metrics": {
+        "conflicting_replay_accept_count": 0,
+        "duplicate_side_effect_count": 0,
+        "fail_open_publication_count": 0,
+        "illegal_edge_accept_count": 0,
+        "optimized_full_rebuild_mismatch_count": 0,
+        "ordinary_delete_purge_conflation_count": 0,
+        "partial_repair_exposure_count": 0,
+        "privacy_receipt_violation_count": 0,
+        "published_stale_descendant_count": 0,
+        "purged_lineage_revival_count": 0,
+        "stale_writer_accept_count": 0,
+        "terminal_purge_residue_count": 0
+      },
+      "verdict": "PASS",
+      "work_metrics": {
+        "descendants_rebuilt": 120,
+        "descendants_scanned": 120,
+        "full_rebuild_nodes_evaluated": 12000
+      }
+    }
+  ],
+  "decision": "RETAIN_M3_CONTRACT_AND_OPTIMIZATION",
+  "decisive_metrics": {
+    "conflicting_replay_accept_count": 0,
+    "duplicate_side_effect_count": 0,
+    "fail_open_publication_count": 0,
+    "illegal_edge_accept_count": 0,
+    "optimized_full_rebuild_mismatch_count": 0,
+    "ordinary_delete_purge_conflation_count": 0,
+    "partial_repair_exposure_count": 0,
+    "privacy_receipt_violation_count": 0,
+    "published_stale_descendant_count": 0,
+    "purged_lineage_revival_count": 0,
+    "stale_writer_accept_count": 0,
+    "terminal_purge_residue_count": 0
+  },
+  "deterministic_seeds": [
+    47001,
+    47017,
+    47033,
+    47049,
+    47065
+  ],
+  "evidence_level": "L1",
+  "execution_origin_attestation": {
+    "governance_base_sha": "f545c37157845f0bd402215719cb8c747b7fc21d",
+    "import_origin_verified_to_worker_worktree": true,
+    "imported_module_paths": [
+      "packages/allthecontext/src/allthecontext/memory_lab_m3.py",
+      "bench/memory_lab_m3.py"
+    ]
+  },
+  "f02_oracle_commit": "a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e",
+  "fixture_schema": "atc.memory-lab.m3-fixture.v1",
+  "governance_base_commit": "f545c37157845f0bd402215719cb8c747b7fc21d",
+  "injected_faults": {
+    "missing_inventory_edge": {
+      "optimized_full_rebuild_mismatch_count": 1,
+      "published_stale_descendant_count": 6
+    },
+    "stale_writer": {
+      "conflicting_replay_accept_count": 0,
+      "duplicate_side_effect_count": 0,
+      "fail_open_publication_count": 0,
+      "illegal_edge_accept_count": 0,
+      "optimized_full_rebuild_mismatch_count": 0,
+      "ordinary_delete_purge_conflation_count": 0,
+      "partial_repair_exposure_count": 0,
+      "privacy_receipt_violation_count": 0,
+      "published_stale_descendant_count": 0,
+      "purged_lineage_revival_count": 0,
+      "stale_writer_accept_count": 0,
+      "terminal_purge_residue_count": 0
+    }
+  },
+  "purge_boundary": {
+    "declared_boundary_includes_graph_inventory": true,
+    "exclusive_descendant_ids_checked": 140,
+    "shared_descendant_recipes_validated": 80
+  },
+  "repeats_per_case": 20,
+  "schema": "atc.memory-lab.m3-report.v1",
+  "surface_coverage_fraction": 1.0,
+  "synthetic_only": true,
+  "validity_limitations": [
+    "isolated_deterministic_symbolic_evidence_only",
+    "no_operator_core_personal_context_credentials_network_models_or_real_actions",
+    "six_declared_surfaces_do_not_prove_unknown_production_surfaces_absent",
+    "full_rebuild_is_independently_coded_but_shares_the_frozen_artifact_semantics",
+    "opaque_sha256_commitments_are_synthetic_semantics_not_privacy_redactions",
+    "availability_is_logical_publication_eligibility_not_wall_clock_latency",
+    "generation_barrier_models_disconnected_stale_state_without_external_clients"
+  ],
+  "work_control": {
+    "evaluated_node_reduction_fraction": 0.99,
+    "full_rebuild_nodes_evaluated": 12000,
+    "optimized_descendants_rebuilt": 120,
+    "optimized_descendants_scanned": 120,
+    "retain_optimization_minimum": 0.25
+  }
+}
