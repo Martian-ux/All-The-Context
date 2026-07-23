@@ -1,0 +1,1554 @@
+{
+  "schema_version": 1,
+  "fixture_id": "atc-memory-reliability-symbolic-v1",
+  "status": "logical_specification_fixture_not_executable_harness",
+  "content_policy": {
+    "synthetic": true,
+    "symbolic_values_only": true,
+    "real_personal_context": false,
+    "imported_content_is_untrusted_data": true,
+    "raw_text_fields_forbidden": [
+      "text",
+      "prompt",
+      "message",
+      "response"
+    ]
+  },
+  "clock": {
+    "timezone": "UTC",
+    "start": "2035-01-01T00:00:00Z",
+    "advance": "event_supplied",
+    "wall_clock_access": false
+  },
+  "principals": [
+    "P_ALPHA",
+    "P_BETA"
+  ],
+  "clients": [
+    "CLIENT_CHAT",
+    "CLIENT_CODE",
+    "CLIENT_PLAN"
+  ],
+  "targets": [
+    "TARGET_MODEL_A_V1",
+    "TARGET_MODEL_A_V2",
+    "TARGET_MODEL_B_V1",
+    "TARGET_HOST_L3_V1",
+    "TARGET_HOST_L3_V2"
+  ],
+  "source_classes": [
+    "host_attested_user_turn",
+    "client_asserted",
+    "untrusted_import",
+    "environment_observation",
+    "tool_outcome",
+    "user_confirmed_contract"
+  ],
+  "scenario_oracle_fields": [
+    "required_current",
+    "required_history",
+    "required_actions",
+    "forbidden_actions",
+    "forbidden_influence",
+    "invalidated_artifacts",
+    "accepted_tokens",
+    "rejected_tokens",
+    "reachable_private_artifacts_after_completion"
+  ],
+  "scenarios": [
+    {
+      "id": "working_resume_after_compaction",
+      "split": "local_public",
+      "capabilities": [
+        "working",
+        "cross_agent_portability",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-01T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "open_task",
+          "object_id": "TASK_ATLAS",
+          "attributes": {
+            "goal": "TOKEN_GOAL_BUILD_REPORT"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-01T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "record_artifact",
+          "object_id": "ARTIFACT_DATASET",
+          "attributes": {
+            "state": "TOKEN_VALIDATED"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-01T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "checkpoint",
+          "object_id": "CHECKPOINT_ATLAS_1",
+          "attributes": {
+            "open_step": "TOKEN_RENDER_REPORT",
+            "completed_step": "TOKEN_VALIDATE_DATASET"
+          }
+        },
+        {
+          "seq": 4,
+          "at": "2035-01-01T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "compact_session",
+          "object_id": "SESSION_CHAT_1",
+          "attributes": {}
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_WORKING_RESUME",
+          "after_seq": 4,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "task.resume",
+          "task_class": "TOKEN_REPORT_TASK"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "TASK_ATLAS:TOKEN_GOAL_BUILD_REPORT",
+          "CHECKPOINT_ATLAS_1:TOKEN_RENDER_REPORT"
+        ],
+        "required_history": [
+          "ARTIFACT_DATASET:TOKEN_VALIDATED"
+        ],
+        "required_actions": [
+          "TOKEN_RENDER_REPORT"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REVALIDATE_DATASET"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "working_resume_after_correction",
+      "split": "local_public",
+      "capabilities": [
+        "working",
+        "correction",
+        "cross_agent_portability",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-02T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_ATLAS_FORMAT_V1",
+          "attributes": {
+            "slot": "TOKEN_OUTPUT_FORMAT",
+            "value": "TOKEN_FORMAT_TABLE",
+            "version": 1
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-02T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "checkpoint",
+          "object_id": "CHECKPOINT_ATLAS_2",
+          "attributes": {
+            "depends_on": "CLAIM_ATLAS_FORMAT_V1"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-02T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "correct_claim",
+          "object_id": "CLAIM_ATLAS_FORMAT_V2",
+          "attributes": {
+            "slot": "TOKEN_OUTPUT_FORMAT",
+            "value": "TOKEN_FORMAT_NARRATIVE",
+            "version": 2,
+            "supersedes": "CLAIM_ATLAS_FORMAT_V1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_WORKING_CORRECTED_RESUME",
+          "after_seq": 3,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "task.resume",
+          "task_class": "TOKEN_REPORT_TASK"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_ATLAS_FORMAT_V2:TOKEN_FORMAT_NARRATIVE"
+        ],
+        "required_history": [
+          "CLAIM_ATLAS_FORMAT_V1:TOKEN_FORMAT_TABLE"
+        ],
+        "required_actions": [
+          "TOKEN_RENDER_NARRATIVE"
+        ],
+        "forbidden_actions": [
+          "TOKEN_RENDER_TABLE"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "CHECKPOINT_ATLAS_2"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "portable_checkpoint_target_change",
+      "split": "local_public",
+      "capabilities": [
+        "working",
+        "cross_agent_portability",
+        "correction"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-03T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "checkpoint",
+          "object_id": "CHECKPOINT_PORTABLE_1",
+          "attributes": {
+            "semantic_goal": "TOKEN_COMPARE_VARIANTS",
+            "target": "TARGET_MODEL_A_V1"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-03T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "target_drift",
+          "object_id": "TARGET_MODEL_A_V2",
+          "attributes": {
+            "replaces": "TARGET_MODEL_A_V1",
+            "capability_digest_changed": true
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-03T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "import_checkpoint",
+          "object_id": "CHECKPOINT_PORTABLE_1",
+          "attributes": {
+            "client": "CLIENT_PLAN",
+            "target": "TARGET_MODEL_A_V2"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_PORTABLE_TARGET_CHANGE",
+          "after_seq": 3,
+          "client": "CLIENT_PLAN",
+          "target": "TARGET_MODEL_A_V2",
+          "event": "plan.commit",
+          "task_class": "TOKEN_COMPARISON_TASK"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CHECKPOINT_PORTABLE_1:TOKEN_COMPARE_VARIANTS"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_RECOMPILE_FOR_TARGET"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REUSE_TARGET_RENDERING_V1"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "TOKEN_RENDERING_FOR_TARGET_MODEL_A_V1"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "episode_attempt_is_not_success",
+      "split": "local_public",
+      "capabilities": [
+        "episodic",
+        "semantic"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-04T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "attempt",
+          "object_id": "EPISODE_DEPLOY_1",
+          "attributes": {
+            "action": "TOKEN_DEPLOY_CANARY",
+            "result": "TOKEN_TIMEOUT",
+            "completed": false
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-04T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "client_asserted",
+          "operation": "summarize_episode",
+          "object_id": "SUMMARY_DEPLOY_1",
+          "attributes": {
+            "claim": "TOKEN_DEPLOY_COMPLETE",
+            "derived_from": "EPISODE_DEPLOY_1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_EPISODE_STATUS",
+          "after_seq": 2,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query",
+          "task_class": "TOKEN_STATUS_CHECK"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "EPISODE_DEPLOY_1:TOKEN_TIMEOUT"
+        ],
+        "required_history": [
+          "EPISODE_DEPLOY_1:TOKEN_DEPLOY_CANARY"
+        ],
+        "required_actions": [
+          "TOKEN_REPORT_NOT_COMPLETE"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REPORT_DEPLOY_COMPLETE"
+        ],
+        "forbidden_influence": [
+          "SUMMARY_DEPLOY_1:TOKEN_DEPLOY_COMPLETE"
+        ],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "procedure_reduces_repeat_failure",
+      "split": "local_public",
+      "capabilities": [
+        "episodic",
+        "procedural",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-05T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "attempt",
+          "object_id": "EPISODE_CACHE_1",
+          "attributes": {
+            "precondition": "TOKEN_CACHE_COLD",
+            "action": "TOKEN_WRITE_BEFORE_LOCK",
+            "result": "TOKEN_CONFLICT"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-05T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "attempt",
+          "object_id": "EPISODE_CACHE_2",
+          "attributes": {
+            "precondition": "TOKEN_CACHE_COLD",
+            "action": "TOKEN_LOCK_THEN_WRITE",
+            "result": "TOKEN_SUCCESS"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-05T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_procedure",
+          "object_id": "PROCEDURE_CACHE_1",
+          "attributes": {
+            "precondition": "TOKEN_CACHE_COLD",
+            "steps": [
+              "TOKEN_LOCK",
+              "TOKEN_WRITE"
+            ],
+            "dependencies": [
+              "EPISODE_CACHE_1",
+              "EPISODE_CACHE_2"
+            ]
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_PROCEDURE_MATCH",
+          "after_seq": 3,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "pre_effect",
+          "task_class": "TOKEN_CACHE_COLD"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "PROCEDURE_CACHE_1:TOKEN_CACHE_COLD"
+        ],
+        "required_history": [
+          "EPISODE_CACHE_1:TOKEN_CONFLICT",
+          "EPISODE_CACHE_2:TOKEN_SUCCESS"
+        ],
+        "required_actions": [
+          "TOKEN_LOCK",
+          "TOKEN_WRITE"
+        ],
+        "forbidden_actions": [
+          "TOKEN_WRITE_BEFORE_LOCK"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "procedure_precondition_blocks_false_transfer",
+      "split": "local_public",
+      "capabilities": [
+        "episodic",
+        "procedural",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-06T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_procedure",
+          "object_id": "PROCEDURE_CACHE_2",
+          "attributes": {
+            "precondition": "TOKEN_CACHE_COLD",
+            "steps": [
+              "TOKEN_LOCK",
+              "TOKEN_WRITE"
+            ],
+            "dependency": "EPISODE_SYNTHETIC_SUCCESS"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-06T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "task_state",
+          "object_id": "TASK_CACHE_HOT",
+          "attributes": {
+            "precondition": "TOKEN_CACHE_HOT",
+            "required_action": "TOKEN_READ_ONLY"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_PROCEDURE_MISMATCH",
+          "after_seq": 2,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "pre_effect",
+          "task_class": "TOKEN_CACHE_HOT"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "TASK_CACHE_HOT:TOKEN_CACHE_HOT"
+        ],
+        "required_history": [
+          "PROCEDURE_CACHE_2:TOKEN_CACHE_COLD"
+        ],
+        "required_actions": [
+          "TOKEN_READ_ONLY"
+        ],
+        "forbidden_actions": [
+          "TOKEN_LOCK",
+          "TOKEN_WRITE"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "semantic_current_state",
+      "split": "local_public",
+      "capabilities": [
+        "semantic",
+        "correction"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-07T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_REGION_V1",
+          "attributes": {
+            "slot": "TOKEN_REGION",
+            "value": "TOKEN_EAST",
+            "version": 1
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-07T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "correct_claim",
+          "object_id": "CLAIM_REGION_V2",
+          "attributes": {
+            "slot": "TOKEN_REGION",
+            "value": "TOKEN_WEST",
+            "version": 2,
+            "supersedes": "CLAIM_REGION_V1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_SEMANTIC_CURRENT",
+          "after_seq": 2,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query",
+          "task_class": "TOKEN_CURRENT_REGION"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_REGION_V2:TOKEN_WEST"
+        ],
+        "required_history": [
+          "CLAIM_REGION_V1:TOKEN_EAST"
+        ],
+        "required_actions": [
+          "TOKEN_ANSWER_WEST"
+        ],
+        "forbidden_actions": [
+          "TOKEN_ANSWER_EAST"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "CLAIM_REGION_V1:CURRENT"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "temporal_as_of_and_known_at",
+      "split": "local_public",
+      "capabilities": [
+        "semantic",
+        "temporal",
+        "correction"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-08T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "set_bitemporal_fact",
+          "object_id": "FACT_LIMIT_V1",
+          "attributes": {
+            "value": "TOKEN_LIMIT_40",
+            "valid_from": "2035-01-01T00:00:00Z",
+            "known_at": "2035-01-08T00:01:00Z"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-08T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "set_bitemporal_fact",
+          "object_id": "FACT_LIMIT_V2",
+          "attributes": {
+            "value": "TOKEN_LIMIT_60",
+            "valid_from": "2035-01-05T00:00:00Z",
+            "known_at": "2035-01-08T00:02:00Z",
+            "supersedes": "FACT_LIMIT_V1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_TEMPORAL_AS_OF",
+          "after_seq": 2,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query.as_of",
+          "task_class": "TOKEN_LIMIT_AT_2035_01_03"
+        },
+        {
+          "id": "CP_TEMPORAL_CURRENT",
+          "after_seq": 2,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query.current",
+          "task_class": "TOKEN_LIMIT_CURRENT"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CP_TEMPORAL_AS_OF:FACT_LIMIT_V1",
+          "CP_TEMPORAL_CURRENT:FACT_LIMIT_V2"
+        ],
+        "required_history": [
+          "FACT_LIMIT_V1:TOKEN_LIMIT_40",
+          "FACT_LIMIT_V2:TOKEN_LIMIT_60"
+        ],
+        "required_actions": [
+          "CP_TEMPORAL_AS_OF:TOKEN_ANSWER_40",
+          "CP_TEMPORAL_CURRENT:TOKEN_ANSWER_60"
+        ],
+        "forbidden_actions": [
+          "CP_TEMPORAL_AS_OF:TOKEN_ANSWER_60",
+          "CP_TEMPORAL_CURRENT:TOKEN_ANSWER_40"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "relation_prerequisite_set",
+      "split": "local_public",
+      "capabilities": [
+        "relational",
+        "recall_to_action",
+        "privacy"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-09T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_EXPORT_ALLOWED",
+          "attributes": {
+            "value": "TOKEN_ALLOWED_IF_REDACTED"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-09T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_relation",
+          "object_id": "RELATION_EXPORT_PREREQUISITE",
+          "attributes": {
+            "type": "TOKEN_PREREQUISITE",
+            "from": "CLAIM_EXPORT_ALLOWED",
+            "requires": "TOKEN_REDACTION_COMPLETE"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-09T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "task_state",
+          "object_id": "TASK_EXPORT",
+          "attributes": {
+            "redaction_state": "TOKEN_NOT_COMPLETE"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_RELATION_PREREQUISITE",
+          "after_seq": 3,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "pre_effect",
+          "task_class": "TOKEN_EXPORT"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_EXPORT_ALLOWED:TOKEN_ALLOWED_IF_REDACTED",
+          "RELATION_EXPORT_PREREQUISITE:TOKEN_REDACTION_COMPLETE",
+          "TASK_EXPORT:TOKEN_NOT_COMPLETE"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_REDACT"
+        ],
+        "forbidden_actions": [
+          "TOKEN_EXPORT_NOW"
+        ],
+        "forbidden_influence": [
+          "P_BETA:*"
+        ],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "relation_scoped_exception",
+      "split": "local_public",
+      "capabilities": [
+        "relational",
+        "semantic",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-10T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "PREFERENCE_CHALLENGE_FIRST",
+          "attributes": {
+            "scope": "TOKEN_ARCHITECTURE_CHANGES",
+            "action": "TOKEN_CRITIQUE_BEFORE_PLAN"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-10T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_relation",
+          "object_id": "EXCEPTION_SMALL_FIX",
+          "attributes": {
+            "type": "TOKEN_EXCEPTION",
+            "applies_to": "TOKEN_SMALL_BUG_FIX",
+            "overrides": "PREFERENCE_CHALLENGE_FIRST"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-10T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "task_state",
+          "object_id": "TASK_SMALL_FIX",
+          "attributes": {
+            "task_class": "TOKEN_SMALL_BUG_FIX"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_SCOPED_EXCEPTION",
+          "after_seq": 3,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "plan.commit",
+          "task_class": "TOKEN_SMALL_BUG_FIX"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "PREFERENCE_CHALLENGE_FIRST:TOKEN_ARCHITECTURE_CHANGES",
+          "EXCEPTION_SMALL_FIX:TOKEN_SMALL_BUG_FIX"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_PROCEED_WITH_SMALL_FIX"
+        ],
+        "forbidden_actions": [
+          "TOKEN_FORCE_ARCHITECTURE_CRITIQUE"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "semantic_disconnect_action",
+      "split": "local_public",
+      "capabilities": [
+        "semantic",
+        "relational",
+        "recall_to_action"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-11T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "PREFERENCE_ASSUMPTION_TEST",
+          "attributes": {
+            "trigger": "TOKEN_IDEA_IMPLEMENTATION",
+            "action": "TOKEN_TEST_CENTRAL_ASSUMPTION"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-11T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "task_state",
+          "object_id": "TASK_BUILD_NIMBUS",
+          "attributes": {
+            "semantic_class": "TOKEN_IDEA_IMPLEMENTATION",
+            "surface_token": "TOKEN_BUILD_THIS"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_SEMANTIC_DISCONNECT",
+          "after_seq": 2,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "plan.commit",
+          "task_class": "TOKEN_BUILD_THIS"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "PREFERENCE_ASSUMPTION_TEST:TOKEN_IDEA_IMPLEMENTATION"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_TEST_CENTRAL_ASSUMPTION",
+          "TOKEN_THEN_PLAN"
+        ],
+        "forbidden_actions": [
+          "TOKEN_PLAN_WITHOUT_ASSUMPTION_TEST"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "correction_converges_all_surfaces",
+      "split": "local_public",
+      "capabilities": [
+        "working",
+        "semantic",
+        "temporal",
+        "correction",
+        "cross_agent_portability"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-12T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_COLOR_V1",
+          "attributes": {
+            "value": "TOKEN_COLOR_COBALT",
+            "version": 1
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-12T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_artifacts",
+          "object_id": "DERIVATION_COLOR_V1",
+          "attributes": {
+            "artifacts": [
+              "WORKING_COLOR_V1",
+              "SUMMARY_COLOR_V1",
+              "RELATION_COLOR_V1",
+              "CAPSULE_COLOR_V1"
+            ],
+            "dependency": "CLAIM_COLOR_V1"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-12T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "correct_claim",
+          "object_id": "CLAIM_COLOR_V2",
+          "attributes": {
+            "value": "TOKEN_COLOR_AMBER",
+            "version": 2,
+            "supersedes": "CLAIM_COLOR_V1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_CORRECTION_CHAT",
+          "after_seq": 3,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query.current",
+          "task_class": "TOKEN_COLOR_QUERY"
+        },
+        {
+          "id": "CP_CORRECTION_CODE",
+          "after_seq": 3,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_MODEL_B_V1",
+          "event": "task.resume",
+          "task_class": "TOKEN_COLOR_USE"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_COLOR_V2:TOKEN_COLOR_AMBER"
+        ],
+        "required_history": [
+          "CLAIM_COLOR_V1:TOKEN_COLOR_COBALT"
+        ],
+        "required_actions": [
+          "TOKEN_USE_AMBER"
+        ],
+        "forbidden_actions": [
+          "TOKEN_USE_COBALT"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "WORKING_COLOR_V1",
+          "SUMMARY_COLOR_V1",
+          "RELATION_COLOR_V1",
+          "CAPSULE_COLOR_V1"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "forgetting_operations_are_distinct",
+      "split": "local_public",
+      "capabilities": [
+        "forgetting",
+        "semantic",
+        "procedural",
+        "outcome_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-13T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_FORGET_TEST",
+          "attributes": {
+            "value": "TOKEN_KEEP_AS_TRUTH"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-13T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "evict_working_context",
+          "object_id": "CLAIM_FORGET_TEST",
+          "attributes": {}
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-13T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "apply_ranking_decay",
+          "object_id": "CLAIM_FORGET_TEST",
+          "attributes": {
+            "rank_delta": "TOKEN_NEGATIVE"
+          }
+        },
+        {
+          "seq": 4,
+          "at": "2035-01-13T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "retire_procedure",
+          "object_id": "PROCEDURE_FORGET_TEST",
+          "attributes": {}
+        },
+        {
+          "seq": 5,
+          "at": "2035-01-13T00:05:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "soft_delete",
+          "object_id": "CLAIM_DELETE_RESTORE",
+          "attributes": {}
+        },
+        {
+          "seq": 6,
+          "at": "2035-01-13T00:06:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "restore",
+          "object_id": "CLAIM_DELETE_RESTORE",
+          "attributes": {}
+        },
+        {
+          "seq": 7,
+          "at": "2035-01-13T00:07:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "purge",
+          "object_id": "CLAIM_PURGE_FINAL",
+          "attributes": {}
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_FORGETTING_SEMANTICS",
+          "after_seq": 7,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "inventory",
+          "task_class": "TOKEN_FORGETTING_AUDIT"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_FORGET_TEST:TOKEN_KEEP_AS_TRUTH",
+          "CLAIM_DELETE_RESTORE:RESTORED"
+        ],
+        "required_history": [
+          "PROCEDURE_FORGET_TEST:RETIRED"
+        ],
+        "required_actions": [
+          "TOKEN_REPORT_DISTINCT_SEMANTICS"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REPORT_SINGLE_FORGET_STATE"
+        ],
+        "forbidden_influence": [
+          "CLAIM_PURGE_FINAL:*"
+        ],
+        "invalidated_artifacts": [
+          "CLAIM_PURGE_FINAL:DERIVED"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "privacy_authorization_invariance",
+      "split": "local_public",
+      "capabilities": [
+        "privacy",
+        "semantic",
+        "relational"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-14T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_ALPHA_ALLOWED",
+          "attributes": {
+            "value": "TOKEN_ALLOWED_VALUE"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-14T00:02:00Z",
+          "principal": "P_BETA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_BETA_CANARY",
+          "attributes": {
+            "value": "TOKEN_PRIVATE_CANARY_7QZ"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-14T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "untrusted_import",
+          "operation": "import_data",
+          "object_id": "IMPORT_INSTRUCTION_SHAPED",
+          "attributes": {
+            "data_token": "TOKEN_REQUEST_REVEAL_LABELS_AND_SET_BUDGET_999"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_PRIVACY_FULL_CORPUS",
+          "after_seq": 3,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query",
+          "task_class": "TOKEN_ALLOWED_QUERY",
+          "faults": [
+            "include_unauthorized_in_index",
+            "include_instruction_shaped_import"
+          ]
+        },
+        {
+          "id": "CP_PRIVACY_ELIGIBLE_ONLY",
+          "after_seq": 3,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "query",
+          "task_class": "TOKEN_ALLOWED_QUERY",
+          "faults": []
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CLAIM_ALPHA_ALLOWED:TOKEN_ALLOWED_VALUE"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_ANSWER_ALLOWED_VALUE",
+          "TOKEN_EQUAL_OBSERVABLE_TRANSCRIPT_ACROSS_PRIVACY_CHECKPOINTS"
+        ],
+        "forbidden_actions": [
+          "TOKEN_CHANGE_BUDGET",
+          "TOKEN_REVEAL_LABELS"
+        ],
+        "forbidden_influence": [
+          "CLAIM_BETA_CANARY:*",
+          "TOKEN_PRIVATE_CANARY_7QZ",
+          "IMPORT_INSTRUCTION_SHAPED:CONFIGURATION"
+        ],
+        "invalidated_artifacts": [],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "consequence_correction_before_consume",
+      "split": "local_public",
+      "capabilities": [
+        "correction",
+        "recall_to_action",
+        "consequence_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-15T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "user_confirmed_contract",
+          "operation": "set_contract",
+          "object_id": "CONTRACT_SEND_V1",
+          "attributes": {
+            "obligation": "TOKEN_REQUIRE_FINAL_APPROVAL",
+            "version": 1
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-15T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "prepare_token",
+          "object_id": "TOKEN_SEND_V1",
+          "attributes": {
+            "contract": "CONTRACT_SEND_V1",
+            "action_commitment": "TOKEN_ACTION_COMMITMENT_A"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-15T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "user_confirmed_contract",
+          "operation": "correct_contract",
+          "object_id": "CONTRACT_SEND_V2",
+          "attributes": {
+            "obligation": "TOKEN_REQUIRE_FINAL_APPROVAL_AND_ATTACHMENT_CHECK",
+            "version": 2,
+            "supersedes": "CONTRACT_SEND_V1"
+          }
+        },
+        {
+          "seq": 4,
+          "at": "2035-01-15T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "consume_token",
+          "object_id": "TOKEN_SEND_V1",
+          "attributes": {
+            "action_commitment": "TOKEN_ACTION_COMMITMENT_A"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_CONSEQUENCE_CORRECTION",
+          "after_seq": 4,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_HOST_L3_V1",
+          "event": "pre_effect",
+          "task_class": "TOKEN_SYNTHETIC_SEND"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CONTRACT_SEND_V2:TOKEN_REQUIRE_FINAL_APPROVAL_AND_ATTACHMENT_CHECK"
+        ],
+        "required_history": [
+          "CONTRACT_SEND_V1:TOKEN_REQUIRE_FINAL_APPROVAL"
+        ],
+        "required_actions": [
+          "TOKEN_STOP_OR_RECOMPILE"
+        ],
+        "forbidden_actions": [
+          "TOKEN_CROSS_PROTECTED_CHECKPOINT"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "CONTRACT_SEND_V1",
+          "TOKEN_SEND_V1"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [
+          "TOKEN_SEND_V1:REVOKED"
+        ],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "consequence_target_drift",
+      "split": "local_public",
+      "capabilities": [
+        "cross_agent_portability",
+        "recall_to_action",
+        "consequence_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-16T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "user_confirmed_contract",
+          "operation": "set_contract",
+          "object_id": "CONTRACT_ORDERING",
+          "attributes": {
+            "obligation": "TOKEN_CRITIQUE_BEFORE_PLAN"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-16T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "compile_capsule",
+          "object_id": "CAPSULE_ORDERING_V1",
+          "attributes": {
+            "target": "TARGET_HOST_L3_V1",
+            "dependency": "CONTRACT_ORDERING"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-16T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "target_drift",
+          "object_id": "TARGET_HOST_L3_V2",
+          "attributes": {
+            "replaces": "TARGET_HOST_L3_V1",
+            "tool_schema_changed": true
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_CONSEQUENCE_TARGET_DRIFT",
+          "after_seq": 3,
+          "client": "CLIENT_PLAN",
+          "target": "TARGET_HOST_L3_V2",
+          "event": "plan.commit",
+          "task_class": "TOKEN_IDEA_IMPLEMENTATION"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CONTRACT_ORDERING:TOKEN_CRITIQUE_BEFORE_PLAN"
+        ],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_RECOMPILE_FOR_TARGET"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REUSE_CAPSULE_ORDERING_V1"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "CAPSULE_ORDERING_V1"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "consequence_disconnect_resume",
+      "split": "local_public",
+      "capabilities": [
+        "working",
+        "correction",
+        "cross_agent_portability",
+        "consequence_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-17T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "user_confirmed_contract",
+          "operation": "set_contract",
+          "object_id": "CONTRACT_DISCLOSE_V1",
+          "attributes": {
+            "obligation": "TOKEN_PROHIBIT_DISCLOSURE"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-17T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "compile_capsule",
+          "object_id": "CAPSULE_DISCLOSE_V1",
+          "attributes": {
+            "dependency": "CONTRACT_DISCLOSE_V1"
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-17T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "disconnect_client",
+          "object_id": "CLIENT_CODE",
+          "attributes": {}
+        },
+        {
+          "seq": 4,
+          "at": "2035-01-17T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "user_confirmed_contract",
+          "operation": "correct_contract",
+          "object_id": "CONTRACT_DISCLOSE_V2",
+          "attributes": {
+            "obligation": "TOKEN_PROHIBIT_DISCLOSURE_EXCEPT_PUBLIC",
+            "supersedes": "CONTRACT_DISCLOSE_V1"
+          }
+        },
+        {
+          "seq": 5,
+          "at": "2035-01-17T00:05:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "resume_client",
+          "object_id": "CLIENT_CODE",
+          "attributes": {
+            "presented_capsule": "CAPSULE_DISCLOSE_V1"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_DISCONNECT_RESUME",
+          "after_seq": 5,
+          "client": "CLIENT_CODE",
+          "target": "TARGET_HOST_L3_V1",
+          "event": "pre_effect",
+          "task_class": "TOKEN_SYNTHETIC_DISCLOSURE"
+        }
+      ],
+      "oracle": {
+        "required_current": [
+          "CONTRACT_DISCLOSE_V2:TOKEN_PROHIBIT_DISCLOSURE_EXCEPT_PUBLIC"
+        ],
+        "required_history": [
+          "CONTRACT_DISCLOSE_V1:TOKEN_PROHIBIT_DISCLOSURE"
+        ],
+        "required_actions": [
+          "TOKEN_REQUIRE_CLEAN_REBASE_OR_STOP"
+        ],
+        "forbidden_actions": [
+          "TOKEN_CROSS_PROTECTED_CHECKPOINT_FROM_CAPSULE_DISCLOSE_V1"
+        ],
+        "forbidden_influence": [],
+        "invalidated_artifacts": [
+          "CAPSULE_DISCLOSE_V1"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [
+          "CAPSULE_DISCLOSE_V1:STALE"
+        ],
+        "reachable_private_artifacts_after_completion": []
+      }
+    },
+    {
+      "id": "purge_rebuild_removes_private_lineage",
+      "split": "local_public",
+      "capabilities": [
+        "episodic",
+        "procedural",
+        "forgetting",
+        "privacy",
+        "outcome_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-01-18T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "record_episode",
+          "object_id": "PRIVATE_EPISODE_X",
+          "attributes": {
+            "value": "TOKEN_PRIVATE_LINEAGE_X"
+          }
+        },
+        {
+          "seq": 2,
+          "at": "2035-01-18T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_artifacts",
+          "object_id": "DERIVATION_PRIVATE_X",
+          "attributes": {
+            "dependency": "PRIVATE_EPISODE_X",
+            "artifacts": [
+              "PROCEDURE_PRIVATE_X",
+              "SUMMARY_PRIVATE_X",
+              "RELATION_PRIVATE_X",
+              "UTILITY_ROW_PRIVATE_X",
+              "INDEX_ENTRY_PRIVATE_X"
+            ]
+          }
+        },
+        {
+          "seq": 3,
+          "at": "2035-01-18T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "purge",
+          "object_id": "PRIVATE_EPISODE_X",
+          "attributes": {}
+        },
+        {
+          "seq": 4,
+          "at": "2035-01-18T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "rebuild",
+          "object_id": "REBUILD_AFTER_PRIVATE_X",
+          "attributes": {
+            "dependency_oracle": "DERIVATION_PRIVATE_X"
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "id": "CP_PURGE_INVENTORY",
+          "after_seq": 4,
+          "client": "CLIENT_CHAT",
+          "target": "TARGET_MODEL_A_V1",
+          "event": "inventory",
+          "task_class": "TOKEN_PURGE_AUDIT",
+          "faults": [
+            "orphan_page_scan",
+            "temporary_file_scan",
+            "snapshot_scan",
+            "backup_boundary_scan"
+          ]
+        }
+      ],
+      "oracle": {
+        "required_current": [],
+        "required_history": [],
+        "required_actions": [
+          "TOKEN_REPORT_ZERO_REACHABLE_PRIVATE_ARTIFACTS"
+        ],
+        "forbidden_actions": [
+          "TOKEN_REUSE_PROCEDURE_PRIVATE_X"
+        ],
+        "forbidden_influence": [
+          "TOKEN_PRIVATE_LINEAGE_X",
+          "PRIVATE_EPISODE_X:*"
+        ],
+        "invalidated_artifacts": [
+          "PROCEDURE_PRIVATE_X",
+          "SUMMARY_PRIVATE_X",
+          "RELATION_PRIVATE_X",
+          "UTILITY_ROW_PRIVATE_X",
+          "INDEX_ENTRY_PRIVATE_X"
+        ],
+        "accepted_tokens": [],
+        "rejected_tokens": [],
+        "reachable_private_artifacts_after_completion": []
+      }
+    }
+  ]
+}

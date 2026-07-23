@@ -1,0 +1,869 @@
+{
+  "schema_version": 1,
+  "specification_id": "atc-memory-reliability-evaluation-v1",
+  "status": "specification_only_no_harness_or_adapter_implemented",
+  "documentation": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
+  "fixture": {
+    "path": "bench/memory_reliability_fixtures.json",
+    "schema_version": 1,
+    "content_policy": "synthetic_symbolic_no_real_personal_context",
+    "adapter_visible_gold": false
+  },
+  "claim_under_test": "ATC improves current authorized outcomes and longitudinal continuity beyond retrieval under fixed quality, privacy, latency, context, and cost budgets.",
+  "primary_endpoint": {
+    "id": "current_authorized_outcome_success",
+    "abbreviation": "CAOS",
+    "aggregation": "episode_level_conjunction",
+    "required_components": [
+      "task_or_action_oracle_pass",
+      "current_state_use",
+      "zero_unauthorized_or_purged_influence",
+      "required_prerequisites_and_exceptions_respected",
+      "within_context_and_cost_budget",
+      "zero_known_stale_protected_checkpoint_crossing"
+    ],
+    "report_components_separately": true
+  },
+  "capabilities": [
+    "working",
+    "episodic",
+    "semantic",
+    "procedural",
+    "relational",
+    "temporal",
+    "correction",
+    "forgetting",
+    "privacy",
+    "cross_agent_portability",
+    "recall_to_action",
+    "consequence_closure",
+    "outcome_closure"
+  ],
+  "stages": [
+    "capture",
+    "canonicalize",
+    "consolidate_project",
+    "retrieve",
+    "compile",
+    "read_reason",
+    "act",
+    "verify_outcome",
+    "correct_forget",
+    "invalidate_rebuild"
+  ],
+  "system_groups": {
+    "simple_baselines": [
+      {
+        "id": "simple_no_memory",
+        "description": "Current task only; estimates pretraining and task leakage."
+      },
+      {
+        "id": "simple_long_context",
+        "description": "Full authorized history under a frozen deterministic truncation policy and the same context cap."
+      },
+      {
+        "id": "simple_static_profile",
+        "description": "Frozen compact user, project, or task profile."
+      },
+      {
+        "id": "simple_append_log_search",
+        "description": "Append-only logical event log with exact and lexical search but no canonical current-state model."
+      },
+      {
+        "id": "simple_atc_retrieval_v3",
+        "description": "Current ATC authorization-first retrieval and deterministic set compilation."
+      }
+    ],
+    "individual_competitors": [
+      {
+        "id": "competitor_mem0",
+        "system": "Mem0",
+        "adapter_cell": "individual_unwrapped",
+        "unsupported_operations_must_be_reported": true
+      },
+      {
+        "id": "competitor_graphiti",
+        "system": "Graphiti",
+        "adapter_cell": "individual_unwrapped",
+        "unsupported_operations_must_be_reported": true
+      },
+      {
+        "id": "competitor_hindsight",
+        "system": "Hindsight",
+        "adapter_cell": "individual_unwrapped",
+        "unsupported_operations_must_be_reported": true
+      },
+      {
+        "id": "competitor_letta",
+        "system": "Letta",
+        "adapter_cell": "individual_unwrapped",
+        "unsupported_operations_must_be_reported": true
+      },
+      {
+        "id": "competitor_langmem",
+        "system": "LangMem",
+        "adapter_cell": "individual_unwrapped",
+        "unsupported_operations_must_be_reported": true
+      }
+    ],
+    "hybrids": [
+      {
+        "id": "hybrid_best_non_atc",
+        "description": "Frozen development-set recipe using winning non-ATC mechanisms without ATC-specific authority or closure."
+      },
+      {
+        "id": "hybrid_atc_governed",
+        "description": "Best non-ATC mechanisms behind Core authorization, temporal resolution, canonical reread, dependency manifests, and deterministic closure."
+      }
+    ],
+    "atc_research_ablations": [
+      {
+        "id": "atc_plus_working_checkpoints",
+        "mechanism": "working_checkpoints"
+      },
+      {
+        "id": "atc_plus_episodic_outcomes",
+        "mechanism": "episodic_outcome_records"
+      },
+      {
+        "id": "atc_plus_temporal_relational",
+        "mechanism": "temporal_relational_projections"
+      },
+      {
+        "id": "atc_plus_procedures",
+        "mechanism": "procedure_distillation_and_retrieval"
+      },
+      {
+        "id": "atc_plus_event_activation",
+        "mechanism": "typed_event_activation"
+      },
+      {
+        "id": "atc_plus_consequence_closure",
+        "mechanism": "consequence_contracts_and_checkpoint_tokens"
+      },
+      {
+        "id": "atc_plus_outcome_closure",
+        "mechanism": "outcome_dependency_closure"
+      },
+      {
+        "id": "atc_full_research_stack",
+        "mechanism": "all_preregistered_winning_atc_mechanisms"
+      }
+    ]
+  },
+  "adapter_boundary": {
+    "status": "conceptual_contract_for_future_abi",
+    "logical_operations": [
+      "reset",
+      "present_event",
+      "checkpoint",
+      "observe_outcome",
+      "correct",
+      "forget",
+      "export_state",
+      "import_state",
+      "inventory_dependencies",
+      "close"
+    ],
+    "harness_owned": [
+      "episode_order",
+      "principal",
+      "frozen_clock",
+      "budgets",
+      "faults",
+      "outcome_oracle",
+      "condition_randomization"
+    ],
+    "adapter_forbidden_inputs": [
+      "gold_labels",
+      "forbidden_sets",
+      "promotion_thresholds",
+      "future_events",
+      "other_condition_outputs"
+    ],
+    "required_declaration_fields": [
+      "system_version",
+      "source_revision",
+      "network_and_provider_calls",
+      "models_and_parameters",
+      "cache_and_persistence_locations",
+      "supported_operations",
+      "reset_cleanup_behavior",
+      "data_egress",
+      "correction_semantics",
+      "purge_test_boundary",
+      "common_harness_emulation"
+    ],
+    "common_emulation_cannot_earn_adapter_capability_credit": true
+  },
+  "experiments": [
+    {
+      "order": 1,
+      "id": "E01",
+      "name": "State, authority, correction, and forgetting",
+      "execution_mode": "deterministic_local",
+      "capabilities": [
+        "semantic",
+        "temporal",
+        "correction",
+        "forgetting",
+        "privacy",
+        "outcome_closure"
+      ],
+      "fixture_ids": [
+        "semantic_current_state",
+        "temporal_as_of_and_known_at",
+        "correction_converges_all_surfaces",
+        "forgetting_operations_are_distinct",
+        "privacy_authorization_invariance",
+        "purge_rebuild_removes_private_lineage"
+      ],
+      "required_system_groups": [
+        "simple_baselines",
+        "individual_competitors",
+        "hybrids"
+      ],
+      "primary_metrics": [
+        "exact_current_authorized_state",
+        "unauthorized_influence_count",
+        "purge_residue_count"
+      ],
+      "go_gate_ids": [
+        "universal_safety",
+        "semantic_temporal",
+        "correction",
+        "forgetting_privacy",
+        "outcome_closure"
+      ]
+    },
+    {
+      "order": 2,
+      "id": "E02",
+      "name": "Working continuity and cross-agent portability",
+      "execution_mode": "deterministic_then_stochastic",
+      "capabilities": [
+        "working",
+        "correction",
+        "cross_agent_portability",
+        "recall_to_action"
+      ],
+      "fixture_ids": [
+        "working_resume_after_compaction",
+        "working_resume_after_correction",
+        "portable_checkpoint_target_change"
+      ],
+      "required_system_ids": [
+        "simple_long_context",
+        "simple_static_profile",
+        "simple_append_log_search",
+        "competitor_letta",
+        "competitor_langmem",
+        "hybrid_best_non_atc",
+        "hybrid_atc_governed",
+        "atc_plus_working_checkpoints"
+      ],
+      "primary_metrics": [
+        "exact_resume_state",
+        "correct_next_action",
+        "stale_resume_rate",
+        "portability_semantic_parity"
+      ],
+      "go_gate_ids": [
+        "universal_safety",
+        "working_portability",
+        "recall_to_action"
+      ]
+    },
+    {
+      "order": 3,
+      "id": "E03",
+      "name": "Episodic and procedural learning",
+      "execution_mode": "deterministic_then_stochastic",
+      "capabilities": [
+        "episodic",
+        "procedural",
+        "recall_to_action",
+        "outcome_closure"
+      ],
+      "fixture_ids": [
+        "episode_attempt_is_not_success",
+        "procedure_reduces_repeat_failure",
+        "procedure_precondition_blocks_false_transfer"
+      ],
+      "required_system_ids": [
+        "simple_long_context",
+        "simple_append_log_search",
+        "competitor_hindsight",
+        "competitor_letta",
+        "hybrid_best_non_atc",
+        "hybrid_atc_governed",
+        "atc_plus_episodic_outcomes",
+        "atc_plus_procedures"
+      ],
+      "primary_metrics": [
+        "repeated_failure_reduction",
+        "false_procedure_transfer_rate",
+        "task_success"
+      ],
+      "go_gate_ids": [
+        "universal_safety",
+        "episodic_procedural",
+        "recall_to_action",
+        "outcome_closure"
+      ]
+    },
+    {
+      "order": 4,
+      "id": "E04",
+      "name": "Relational, temporal, and recall-to-action",
+      "execution_mode": "deterministic_then_stochastic",
+      "capabilities": [
+        "relational",
+        "temporal",
+        "semantic",
+        "recall_to_action",
+        "privacy"
+      ],
+      "fixture_ids": [
+        "relation_prerequisite_set",
+        "relation_scoped_exception",
+        "semantic_disconnect_action",
+        "temporal_as_of_and_known_at"
+      ],
+      "required_system_ids": [
+        "simple_append_log_search",
+        "simple_atc_retrieval_v3",
+        "competitor_graphiti",
+        "competitor_hindsight",
+        "hybrid_best_non_atc",
+        "hybrid_atc_governed",
+        "atc_plus_temporal_relational"
+      ],
+      "primary_metrics": [
+        "set_sufficiency",
+        "current_authorized_outcome_success",
+        "retrieval_to_action_gap",
+        "selected_context_tokens"
+      ],
+      "go_gate_ids": [
+        "universal_safety",
+        "semantic_temporal",
+        "relational",
+        "recall_to_action",
+        "forgetting_privacy"
+      ]
+    },
+    {
+      "order": 5,
+      "id": "E05",
+      "name": "Consequence and outcome closure",
+      "execution_mode": "deterministic_exhaustive_faults",
+      "capabilities": [
+        "correction",
+        "consequence_closure",
+        "outcome_closure",
+        "privacy"
+      ],
+      "fixture_ids": [
+        "consequence_correction_before_consume",
+        "consequence_target_drift",
+        "consequence_disconnect_resume",
+        "purge_rebuild_removes_private_lineage"
+      ],
+      "required_system_ids": [
+        "hybrid_atc_governed",
+        "atc_plus_consequence_closure",
+        "atc_plus_outcome_closure"
+      ],
+      "primary_metrics": [
+        "stale_protected_checkpoint_escape_count",
+        "invalid_token_acceptance_count",
+        "missed_dependency_count",
+        "purge_residue_count"
+      ],
+      "go_gate_ids": [
+        "universal_safety",
+        "correction",
+        "consequence_closure",
+        "outcome_closure"
+      ]
+    },
+    {
+      "order": 6,
+      "id": "E06",
+      "name": "LongMemEval cleaned",
+      "execution_mode": "official_benchmark_plus_atc_receipts",
+      "upstream": "https://github.com/xiaowu0162/LongMemEval",
+      "official_metrics_preserved": [
+        "question_accuracy"
+      ],
+      "added_metrics": [
+        "source_span_precision",
+        "current_state_correctness",
+        "unauthorized_influence",
+        "disclosure",
+        "stage_attribution",
+        "correction_replay"
+      ]
+    },
+    {
+      "order": 7,
+      "id": "E07",
+      "name": "MemoryAgentBench incremental competencies",
+      "execution_mode": "official_benchmark_plus_atc_receipts",
+      "upstream": "https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+      "official_metrics_preserved": [
+        "per_competency_results"
+      ],
+      "added_metrics": [
+        "current_state_accuracy",
+        "false_write_rate",
+        "false_forgetting_rate",
+        "stage_attribution"
+      ]
+    },
+    {
+      "order": 8,
+      "id": "E08",
+      "name": "LongMemEval-V2 context gathering",
+      "execution_mode": "official_benchmark_plus_atc_receipts",
+      "upstream": "https://github.com/xiaowu0162/LongMemEval-V2",
+      "official_metrics_preserved": [
+        "answer_accuracy",
+        "query_latency"
+      ],
+      "added_metrics": [
+        "evidence_sufficiency",
+        "workflow_to_action_transfer",
+        "disclosure",
+        "model_tool_and_monetary_cost"
+      ]
+    },
+    {
+      "order": 9,
+      "id": "E09",
+      "name": "MemoryArena agentic outcomes",
+      "execution_mode": "official_benchmark_plus_atc_receipts",
+      "upstream": "https://memoryarena.github.io/",
+      "official_metrics_preserved": [
+        "task_progress_score",
+        "task_success_rate"
+      ],
+      "added_metrics": [
+        "current_authorized_outcome_success",
+        "prerequisite_coverage",
+        "current_state_use",
+        "false_transfer",
+        "intervention_ablation"
+      ]
+    },
+    {
+      "order": 10,
+      "id": "E10",
+      "name": "Multi-target consequence behavior",
+      "execution_mode": "stochastic_fixed_target_roster",
+      "prerequisite_experiment": "E05",
+      "hard_effects": "synthetic_host_predicates_only",
+      "conditions": [
+        "identical_text",
+        "best_static_template",
+        "sequential_compilation",
+        "joint_compilation"
+      ]
+    },
+    {
+      "order": 11,
+      "id": "E11",
+      "name": "Opt-in longitudinal pilot",
+      "execution_mode": "consented_local_product_pilot",
+      "prerequisite_experiments": [
+        "E01",
+        "E02",
+        "E03",
+        "E04",
+        "E05",
+        "E06",
+        "E07",
+        "E08",
+        "E09",
+        "E10"
+      ],
+      "metrics": [
+        "user_reported_usefulness",
+        "correction_trust",
+        "repeated_restatement_reduction",
+        "user_burden"
+      ]
+    }
+  ],
+  "metric_families": {
+    "capture": [
+      "capture_precision",
+      "capture_recall",
+      "false_write_rate",
+      "witness_accuracy",
+      "source_span_completeness"
+    ],
+    "state": [
+      "current_state_accuracy",
+      "temporal_accuracy",
+      "correction_convergence",
+      "conflict_accuracy",
+      "abstention_accuracy"
+    ],
+    "retrieval_compilation": [
+      "recall_at_k",
+      "mrr",
+      "ndcg",
+      "set_sufficiency",
+      "prerequisite_recall",
+      "exception_recall",
+      "stale_inclusion",
+      "contradiction",
+      "redundancy"
+    ],
+    "continuity_learning": [
+      "working_resume_accuracy",
+      "portability_semantic_parity",
+      "repeated_failure_reduction",
+      "false_procedure_transfer",
+      "task_success"
+    ],
+    "action": [
+      "current_authorized_outcome_success",
+      "recall_to_action_conversion",
+      "retrieval_to_action_gap",
+      "task_progress"
+    ],
+    "closure": [
+      "false_activation",
+      "invalid_token_acceptance",
+      "stale_checkpoint_escape",
+      "dependency_completeness",
+      "rebuild_determinism",
+      "purge_residue"
+    ],
+    "privacy_efficiency": [
+      "fields_disclosed",
+      "tokens_disclosed",
+      "cumulative_disclosure",
+      "model_calls",
+      "tool_calls",
+      "input_tokens",
+      "output_tokens",
+      "storage_bytes",
+      "monetary_cost",
+      "latency_p50",
+      "latency_p95",
+      "latency_p99"
+    ]
+  },
+  "budgets": {
+    "reference_profile_required_fields": [
+      "cpu",
+      "memory",
+      "operating_system",
+      "python",
+      "filesystem",
+      "cold_warm_definition",
+      "concurrency",
+      "background_load"
+    ],
+    "local": [
+      {
+        "id": "ingest_p95_ms",
+        "operation": "deterministic_local_ingest",
+        "profile_objects": 10000,
+        "quantile": "p95",
+        "maximum": 25,
+        "unit": "ms_per_event"
+      },
+      {
+        "id": "query_compile_p95_ms",
+        "operation": "authorized_query_and_compile",
+        "profile_objects": 10000,
+        "quantile": "p95",
+        "maximum": 150,
+        "unit": "ms"
+      },
+      {
+        "id": "checkpoint_export_p95_ms",
+        "operation": "working_checkpoint_export",
+        "quantile": "p95",
+        "maximum": 100,
+        "unit": "ms"
+      },
+      {
+        "id": "checkpoint_import_p95_ms",
+        "operation": "working_checkpoint_import",
+        "quantile": "p95",
+        "maximum": 100,
+        "unit": "ms"
+      },
+      {
+        "id": "correction_invalidation_p95_ms",
+        "operation": "correction_to_local_invalidation",
+        "profile_artifact_fanout": 1000,
+        "quantile": "p95",
+        "maximum": 250,
+        "unit": "ms"
+      },
+      {
+        "id": "token_consume_p99_ms",
+        "operation": "protected_token_consume",
+        "quantile": "p99",
+        "maximum": 100,
+        "unit": "ms"
+      },
+      {
+        "id": "deterministic_rebuild_seconds",
+        "operation": "deterministic_rebuild",
+        "profile_objects": 10000,
+        "profile_dependency_edges": 100000,
+        "maximum": 30,
+        "unit": "seconds"
+      }
+    ],
+    "context": [
+      {
+        "id": "ordinary_compiled_context",
+        "maximum": 2048,
+        "unit": "tokens"
+      },
+      {
+        "id": "specialized_agentic_context",
+        "maximum": 8192,
+        "unit": "tokens",
+        "upstream_benchmark_override_must_be_reported": true
+      }
+    ],
+    "cost_promotion": {
+      "same_reader_controller_and_reasoning_effort": true,
+      "failed_and_retried_calls_count": true,
+      "development_cost_reported_separately": true,
+      "frozen_price_sheet_required": true,
+      "maximum_end_to_end_cost_premium": 0.25,
+      "minimum_caos_gain_if_cost_premium_positive": 0.05
+    }
+  },
+  "contamination_controls": [
+    "freeze_public_development_private_confirmatory_and_fault_partitions_by_digest",
+    "use_opaque_symbolic_values_and_per_run_canaries",
+    "exclude_labels_forbidden_ids_future_events_and_gates_from_adapter_inputs",
+    "keep_unpresented_benchmark_data_outside_adapter_search_roots",
+    "reset_state_caches_namespaces_files_and_provider_threads_between_conditions",
+    "test_cross_principal_canary_absence_after_reset",
+    "treat_imported_instruction_shaped_content_as_data",
+    "keep_policy_and_budget_configuration_outside_imported_content",
+    "record_model_build_prompt_digest_parameters_and_reasoning_effort",
+    "use_no_memory_condition_to_estimate_task_leakage",
+    "prefer_programmatic_or_environment_oracles",
+    "blind_soft_judges_to_condition_name",
+    "keep_all_attempted_runs_including_crashes_and_unsafe_outputs"
+  ],
+  "statistics": {
+    "deterministic": {
+      "comparison": "exact_equality_and_exhaustive_fault_enumeration_where_finite",
+      "safety_interval": "exact_one_sided_95_percent_clopper_pearson",
+      "zero_events_claim": "zero_observed_failures_not_zero_risk",
+      "counterexample_lineage_required": true
+    },
+    "stochastic": {
+      "paired_episode_snapshots_and_seeds": true,
+      "cluster_unit": "episode",
+      "development_generation_seeds_per_episode_minimum": 3,
+      "confirmatory_sample_size": {
+        "method": "simulation_from_smallest_effect_worth_detecting",
+        "familywise_alpha": 0.05,
+        "minimum_power": 0.8,
+        "preferred_primary_caos_power": 0.9
+      },
+      "primary_binary_interval": "paired_cluster_bootstrap",
+      "primary_binary_test": "paired_randomization_test",
+      "binary_sensitivity_test": "mcnemar_for_single_run_pairs",
+      "continuous_interval": "paired_cluster_bootstrap",
+      "secondary_model": "mixed_effects_with_condition_fixed_and_episode_model_random_intercepts",
+      "multiplicity": "holm_within_confirmatory_family",
+      "required_effect_reporting": [
+        "absolute_risk_difference",
+        "relative_change",
+        "number_needed_to_improve",
+        "raw_numerator",
+        "raw_denominator",
+        "confidence_interval"
+      ]
+    }
+  },
+  "failure_taxonomy": [
+    "CAPTURE_MISS",
+    "CAPTURE_FALSE_WRITE",
+    "WITNESS_COLLAPSE",
+    "CANONICAL_WRONG_CURRENT",
+    "CANONICAL_FALSE_INFERENCE",
+    "EPISODE_OUTCOME_CONFUSION",
+    "TEMPORAL_BOUNDARY",
+    "RELATION_CLOSURE_MISS",
+    "RETRIEVAL_MISS",
+    "RETRIEVAL_STALE",
+    "SET_INSUFFICIENT",
+    "EXCESS_DISCLOSURE",
+    "UNAUTHORIZED_INFLUENCE",
+    "WORKING_STATE_DRIFT",
+    "PORTABILITY_SEMANTIC_DRIFT",
+    "READER_MISUSE",
+    "ACTION_NONUSE",
+    "PROCEDURE_FALSE_TRANSFER",
+    "SELF_REINFORCEMENT",
+    "CORRECTION_NONCONVERGENCE",
+    "FORGETTING_SEMANTIC_COLLAPSE",
+    "STALE_CHECKPOINT_ESCAPE",
+    "DEPENDENCY_OMISSION",
+    "PURGE_RESIDUE",
+    "EVALUATOR_ERROR",
+    "BUDGET_ESCAPE",
+    "CONTAMINATION"
+  ],
+  "promotion_gates": [
+    {
+      "id": "universal_safety",
+      "kind": "hard",
+      "requirements": [
+        "zero_observed_unauthorized_influence",
+        "zero_observed_imported_or_inferred_hard_force_escalation",
+        "zero_observed_invalid_token_acceptance",
+        "zero_missed_affected_artifacts_against_oracle",
+        "zero_reachable_attributable_purge_residue",
+        "complete_provenance_and_dependency_manifests",
+        "deterministic_fallback_for_learned_components",
+        "zero_raw_personal_context_in_operational_logs_or_reports"
+      ],
+      "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound"
+    },
+    {
+      "id": "working_portability",
+      "kind": "quality",
+      "absolute_floor": {
+        "exact_resume_accuracy": 0.95,
+        "maximum_stale_resume_rate": 0.01
+      },
+      "paired_improvement": {
+        "metric": "correct_next_action",
+        "minimum_absolute_gain": 0.10,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      }
+    },
+    {
+      "id": "semantic_temporal",
+      "kind": "quality",
+      "absolute_floor": {
+        "deterministic_current_state_accuracy": 0.98
+      },
+      "noninferiority": {
+        "metric": "ordinary_qa_accuracy",
+        "margin": 0.01,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      }
+    },
+    {
+      "id": "episodic_procedural",
+      "kind": "quality",
+      "paired_improvement": {
+        "metric": "repeated_failure_rate",
+        "minimum_relative_reduction": 0.20,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      },
+      "noninferiority": {
+        "metric": "false_procedure_transfer_rate",
+        "margin": 0.01,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      }
+    },
+    {
+      "id": "relational",
+      "kind": "quality",
+      "paired_improvement": {
+        "metric": "multi_record_set_sufficiency",
+        "minimum_absolute_gain": 0.08,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      },
+      "noninferiority": {
+        "metric": "ordinary_recall",
+        "margin": 0.01,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      }
+    },
+    {
+      "id": "recall_to_action",
+      "kind": "quality",
+      "paired_improvement": {
+        "metric": "current_authorized_outcome_success",
+        "minimum_absolute_gain": 0.05,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_must_clear_margin": true
+      },
+      "secondary_improvement": {
+        "metric": "retrieval_to_action_gap",
+        "minimum_relative_reduction": 0.10
+      }
+    },
+    {
+      "id": "correction",
+      "kind": "quality_and_safety",
+      "absolute_floor": {
+        "deterministic_local_convergence": 1.0,
+        "stochastic_supported_surface_convergence": 0.99
+      }
+    },
+    {
+      "id": "forgetting_privacy",
+      "kind": "hard_and_quality",
+      "requirements": [
+        "zero_hard_boundary_failures"
+      ],
+      "paired_improvement": {
+        "metric": "minimum_disclosure",
+        "minimum_absolute_gain": 0.0,
+        "comparator": "strongest_simpler_eligible_condition",
+        "confidence_interval_lower_bound_strictly_above_margin": true
+      }
+    },
+    {
+      "id": "consequence_closure",
+      "kind": "hard",
+      "requirements": [
+        "zero_stale_protected_checkpoint_escapes_against_declared_fault_oracle"
+      ],
+      "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound"
+    },
+    {
+      "id": "outcome_closure",
+      "kind": "hard",
+      "requirements": [
+        "zero_missing_dependencies",
+        "zero_reachable_attributable_artifacts_after_rebuild_or_purge"
+      ],
+      "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound"
+    }
+  ],
+  "decision_states": {
+    "GO": "Universal and capability-specific absolute and relative gates pass.",
+    "HOLD": "Safety passes but power, replication, cost, or effect size is insufficient.",
+    "NARROW": "A bounded capability works but the broader memory claim fails.",
+    "ADOPT_COMPETITOR": "An individual adapter wins and meets authority, lifecycle, and packaging requirements.",
+    "KILL_MECHANISM": "A simpler baseline is noninferior, gains are budget-driven, or a hard-boundary failure occurs.",
+    "STOP_PROGRAM_CLAIM": "Correction, privacy, consequence closure, or outcome closure remains unsound after two independently reviewed redesigns."
+  },
+  "first_five_execution_order": [
+    "E01",
+    "E02",
+    "E03",
+    "E04",
+    "E05"
+  ]
+}

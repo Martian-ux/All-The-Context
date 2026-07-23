@@ -30,6 +30,26 @@ working directory. It does not connect to or modify an operator's Core. No
 third-party competitor package is installed or executed; future competitors
 implement the same small adapter protocol.
 
+## Memory reliability evaluation specification
+
+The memory reliability program is specified in
+`docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md`, with machine-readable
+experiment and promotion contracts in `memory_reliability_spec.json` and
+sanitized symbolic event fixtures in `memory_reliability_fixtures.json`.
+
+These files intentionally do not implement an adapter ABI or executable memory
+harness. They freeze the scientific comparison matrix, first five experiments,
+stage-level failure taxonomy, contamination controls, statistical plan,
+latency/cost budgets, and deterministic oracles that a future harness must
+honor. The structural tests run with:
+
+```text
+python -m pytest tests/unit/test_memory_reliability_spec.py
+```
+
+Passing those tests proves specification consistency only. It is not evidence
+that ATC or any external memory system passes an experiment.
+
 ## Wave 2 source-evidence retrieval research
 
 The Wave 2 harness is isolated research for long sanitized imported chats and
