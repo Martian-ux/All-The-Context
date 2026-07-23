@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "context": {
+        "query_specificity": 0.9,
+        "task_specificity": 0.9
+      },
+      "candidates": [
+        {
+          "key": "project-relevant-primary",
+          "fixture_role": "relevant",
+          "relevant": true,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.95,
+            "scope_project_fit": 1.0,
+            "kind_compatibility": 0.9,
+            "confidence": 0.9,
+            "explicitness": 1.0,
+            "conflict_state": "clear"
+          }
+        },
+        {
+          "key": "project-scope-false-positive",
+          "fixture_role": "project_scope_mismatch",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.35,
+            "scope_project_fit": 0.0,
+            "kind_compatibility": 0.7,
+            "confidence": 0.8,
+            "explicitness": 1.0,
+            "conflict_state": "clear"
+          }
+        },
+        {
+          "key": "kind-false-positive",
+          "fixture_role": "kind_mismatch",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.35,
+            "scope_project_fit": 0.7,
+            "kind_compatibility": 0.0,
+            "confidence": 0.4,
+            "explicitness": 0.0,
+            "conflict_state": "clear"
+          }
+        },
+        {
+          "key": "project-relevant-sparse",
+          "fixture_role": "sparse_relevant",
+          "relevant": true,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.8,
+            "scope_project_fit": 0.9
+          }
+        },
+        {
+          "key": "structurally-denied",
+          "fixture_role": "unauthorized_control",
+          "relevant": false,
+          "candidate_authorized": false,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": false,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 9.0,
+            "scope_project_fit": 9.0,
+            "kind_compatibility": 9.0,
+            "confidence": 9.0,
+            "explicitness": 9.0,
+            "conflict_state": "clear"
+          }
+        }
+      ]
+    },
+    {
+      "context": {
+        "query_specificity": 0.85,
+        "task_specificity": 0.8
+      },
+      "candidates": [
+        {
+          "key": "conflict-relevant-current",
+          "fixture_role": "relevant",
+          "relevant": true,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.9,
+            "scope_project_fit": 0.9,
+            "kind_compatibility": 0.9,
+            "confidence": 0.8,
+            "explicitness": 1.0,
+            "conflict_state": "clear"
+          }
+        },
+        {
+          "key": "active-conflict-false-positive",
+          "fixture_role": "active_conflict",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.8,
+            "scope_project_fit": 0.8,
+            "kind_compatibility": 0.8,
+            "confidence": 0.8,
+            "explicitness": 1.0,
+            "conflict_state": "active"
+          }
+        },
+        {
+          "key": "mixed-mismatch-false-positive",
+          "fixture_role": "scope_kind_conflict_mismatch",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.4,
+            "scope_project_fit": 0.4,
+            "kind_compatibility": 0.4,
+            "confidence": 0.4,
+            "explicitness": 1.0,
+            "conflict_state": "possible"
+          }
+        },
+        {
+          "key": "conflict-relevant-resolved",
+          "fixture_role": "resolved_conflict_relevant",
+          "relevant": true,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.75,
+            "scope_project_fit": 0.8,
+            "kind_compatibility": 0.7,
+            "confidence": 0.7,
+            "explicitness": 1.0,
+            "conflict_state": "resolved"
+          }
+        },
+        {
+          "key": "structurally-expired",
+          "fixture_role": "temporally_ineligible_control",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": false,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": false,
+          "signals": {
+            "task_query_coverage": 9.0,
+            "scope_project_fit": 9.0,
+            "kind_compatibility": 9.0,
+            "confidence": 9.0,
+            "explicitness": 9.0,
+            "conflict_state": "active"
+          }
+        }
+      ]
+    },
+    {
+      "context": {
+        "query_specificity": 0.0,
+        "task_specificity": 0.0
+      },
+      "candidates": [
+        {
+          "key": "underspecified-relevant",
+          "fixture_role": "underspecified_relevant",
+          "relevant": true,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.1,
+            "scope_project_fit": 0.1,
+            "kind_compatibility": 0.1,
+            "confidence": 0.1,
+            "explicitness": 0.0,
+            "conflict_state": "unknown"
+          }
+        },
+        {
+          "key": "underspecified-unknown",
+          "fixture_role": "underspecified_unknown",
+          "relevant": false,
+          "candidate_authorized": true,
+          "candidate_temporally_eligible": true,
+          "evidence_authorized": true,
+          "evidence_temporally_eligible": true,
+          "signals": {
+            "task_query_coverage": 0.0,
+            "scope_project_fit": 0.0,
+            "kind_compatibility": 0.0,
+            "confidence": 0.0,
+            "explicitness": 0.0,
+            "conflict_state": "unknown"
+          }
+        }
+      ]
+    }
+  ]
+}
