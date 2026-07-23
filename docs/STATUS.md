@@ -45,17 +45,15 @@ means connecting directly to Core while Core is online.
 
 ## Remaining beta gates
 
-- Observe macOS and Linux native credential/startup/package acceptance on their
-  real CI runners.
 - Complete the offline public-key ceremony and publish only the reviewed public
   key.
-- Freeze one exact commit and pass the full hosted Windows/macOS/Linux and
-  dashboard matrix.
+- Freeze the final release commit after review and repeat the full hosted
+  Windows/macOS/Linux and dashboard matrix on that release identity.
 - Exercise a real signed beta1-to-beta2 Windows update and rollback.
 - Design and test secure direct-Core mobile pairing before claiming one-click
   mobile access. Core remains `127.0.0.1` by default in the meantime.
 
-## Current local evidence
+## Current evidence
 
 - Full Python suite: 328 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
@@ -69,6 +67,13 @@ means connecting directly to Core while Core is online.
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
   package also passed its platform trust smoke.
+- Implementation commit `05c7638` passed both its
+  [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29969999250)
+  and
+  [draft-PR matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29970013608):
+  Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
+  on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
+  20 and 22.
 
 ## Explicitly unclaimed
 

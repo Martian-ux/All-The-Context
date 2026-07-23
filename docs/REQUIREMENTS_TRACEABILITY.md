@@ -5,7 +5,7 @@ the hosted jobs pass on the exact release commit.
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Cross-platform Core | `config.py`, `lifecycle.py`, `platform_compat.py`; platform and package smoke tests | Implemented locally; exact-commit OS matrix pending |
+| Cross-platform Core | `config.py`, `lifecycle.py`, `platform_compat.py`; platform and package smoke tests | Observed on Windows/macOS/Linux at `05c7638`; final release SHA pending |
 | Correct per-user data paths | `platformdirs` configuration and setup/package tests | Implemented |
 | Loopback-only default | `CoreConfig`, server CLI, dashboard copy, security tests | Implemented |
 | Source/candidate/approved lifecycle | models, migrations, storage/service APIs; unit/integration/demo tests | Implemented |
@@ -20,9 +20,9 @@ the hosted jobs pass on the exact release commit.
 | Minimal administration UI | `apps/dashboard`; component, type, build, and browser-serving tests | Implemented |
 | Portable export/restore | encrypted export/dashboard download and CLI restore tests | Implemented; dashboard restore deferred |
 | Locking, shutdown, restart | lifecycle locks, managed adapter self-heal, packaged first-run smoke | Implemented locally |
-| OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows observed locally; macOS/Linux hosted observation pending |
-| Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Authored |
-| One-click desktop packaging | Windows installer, macOS app/DMG, Linux portable archive | Implemented; final real-platform acceptance pending |
+| OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows local and Windows/macOS/Linux hosted acceptance observed at `05c7638` |
+| Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Push and draft-PR matrices observed green at `05c7638` |
+| One-click desktop packaging | Windows installer, macOS app/DMG, Linux portable archive | Platform acceptance observed at `05c7638`; final release SHA pending |
 | Signed community updates | Ed25519 manifests/keyring, checksums, SBOM/provenance, Windows recovery helper | Implemented locally; real N-1 drill pending |
 | No third-party V1 runtime | no Edge UI/onboarding/status call/background worker; Edge publication workflow and Render templates removed | Implemented |
 | Direct-Core mobile model | integration API/dashboard/architecture state Core-online requirement | Product contract implemented; secure pairing/transport not yet implemented |
