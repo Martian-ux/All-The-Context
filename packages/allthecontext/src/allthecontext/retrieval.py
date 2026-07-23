@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -30,6 +31,11 @@ from .models import (
     SearchResponse,
 )
 from .security import ClientPrincipal, record_is_allowed
+from .set_selection import (
+    DeterministicSetSelector,
+    SetSelectionCandidate,
+    total_budget_cost,
+)
 from .storage import CoreStore
 from .temporal import (
     PolicyEligibility,
@@ -515,7 +521,10 @@ def _dedupe_tokens(value: str) -> set[str]:
 
 
 class ContextCompiler:
-    """Compile deduplicated, diverse mandatory/primary/supporting context."""
+    """Compile a compatible context set with deterministic marginal utility."""
+
+    def __init__(self, selector: DeterministicSetSelector | None = None) -> None:
+        self.selector = selector or DeterministicSetSelector()
 
     @staticmethod
     def _cost(item: ContextRecordOut) -> int:
@@ -527,39 +536,6 @@ class ContextCompiler:
         return item.evidence is not None or any(
             marker in kind for marker in ("evidence", "reference", "source", "support")
         )
-
-    @staticmethod
-    def _diversify(items: Sequence[ContextRecordOut]) -> list[ContextRecordOut]:
-        remaining = list(enumerate(items))
-        ordered: list[ContextRecordOut] = []
-        seen: set[tuple[str, str]] = set()
-        while remaining:
-
-            def novelty(entry: tuple[int, ContextRecordOut]) -> tuple[int, int]:
-                index, item = entry
-                dimensions = {("kind", item.kind)}
-                dimensions.update(
-                    ("project", scope.casefold())
-                    for scope in item.scopes
-                    if scope.casefold().startswith("project:")
-                )
-                if item.source_service:
-                    dimensions.add(("source", item.source_service))
-                return (len(dimensions - seen), -index)
-
-            chosen = max(remaining, key=novelty)
-            remaining.remove(chosen)
-            item = chosen[1]
-            ordered.append(item)
-            seen.add(("kind", item.kind))
-            seen.update(
-                ("project", scope.casefold())
-                for scope in item.scopes
-                if scope.casefold().startswith("project:")
-            )
-            if item.source_service:
-                seen.add(("source", item.source_service))
-        return ordered
 
     @staticmethod
     def _duplicate(item: ContextRecordOut, selected: Sequence[ContextRecordOut]) -> bool:
@@ -574,36 +550,151 @@ class ContextCompiler:
                 return True
         return False
 
+    @staticmethod
+    def _opaque_label(domain: str, value: str) -> str:
+        digest = hashlib.sha256(f"{domain}\0{value}".encode()).hexdigest()
+        return f"{domain}:{digest}"
+
+    @classmethod
+    def _redundancy_groups(
+        cls, items: Sequence[ContextRecordOut]
+    ) -> dict[str, frozenset[str]]:
+        """Return transitive near-duplicate groups without exposing record text."""
+
+        parents = list(range(len(items)))
+
+        def find(index: int) -> int:
+            while parents[index] != index:
+                parents[index] = parents[parents[index]]
+                index = parents[index]
+            return index
+
+        def union(left: int, right: int) -> None:
+            left_root = find(left)
+            right_root = find(right)
+            if left_root != right_root:
+                parents[max(left_root, right_root)] = min(left_root, right_root)
+
+        for left_index, left in enumerate(items):
+            for right_index in range(left_index + 1, len(items)):
+                if cls._duplicate(items[right_index], (left,)):
+                    union(left_index, right_index)
+
+        components: dict[int, list[str]] = {}
+        for index, item in enumerate(items):
+            components.setdefault(find(index), []).append(item.id)
+        labels: dict[str, frozenset[str]] = {item.id: frozenset() for item in items}
+        for member_ids in components.values():
+            if len(member_ids) < 2:
+                continue
+            label = cls._opaque_label("redundancy", "\0".join(sorted(member_ids)))
+            for record_id in member_ids:
+                labels[record_id] = frozenset({label})
+        return labels
+
+    @classmethod
+    def _semantic_facets(cls, item: ContextRecordOut) -> frozenset[str]:
+        values = {f"kind:{item.kind.casefold()}"}
+        values.update(f"token:{token}" for token in _dedupe_tokens(item.content))
+        values.update(f"tag:{tag.casefold()}" for tag in item.tags)
+        if item.entity_key and item.attribute_key:
+            values.add(
+                f"slot:{item.entity_key.casefold()}\0{item.attribute_key.casefold()}"
+            )
+        return frozenset(cls._opaque_label("semantic", value) for value in values)
+
+    @classmethod
+    def _diversity_dimensions(cls, item: ContextRecordOut) -> frozenset[str]:
+        values = {f"kind:{item.kind.casefold()}"}
+        values.update(
+            f"project:{scope.casefold()}"
+            for scope in item.scopes
+            if scope.casefold().startswith("project:")
+        )
+        for name, value in (
+            ("source", item.source_id),
+            ("service", item.source_service),
+            ("type", item.source_type),
+        ):
+            if value:
+                values.add(f"{name}:{value.casefold()}")
+        return frozenset(cls._opaque_label("diversity", value) for value in values)
+
+    @classmethod
+    def _conflict_groups(cls, item: ContextRecordOut) -> frozenset[str]:
+        if not item.entity_key or not item.attribute_key:
+            return frozenset()
+        slot = f"{item.entity_key.casefold()}\0{item.attribute_key.casefold()}"
+        return frozenset({cls._opaque_label("conflict", slot)})
+
     def compile(
         self,
         mandatory: Sequence[ContextRecordOut],
         relevant: Sequence[ContextRecordOut],
         budget_chars: int,
     ) -> tuple[list[ContextRecordOut], int]:
-        mandatory_ordered = self._diversify(mandatory)
-        primary = self._diversify([item for item in relevant if not self._is_supporting(item)])
-        supporting = self._diversify([item for item in relevant if self._is_supporting(item)])
-        reserve = min(budget_chars, max(256, budget_chars // 3))
-        selected: list[ContextRecordOut] = []
-        used = 0
-        mandatory_used = 0
-        for item in mandatory_ordered:
-            cost = self._cost(item)
-            if mandatory_used + cost > reserve or used + cost > budget_chars:
-                continue
-            if not self._duplicate(item, selected):
-                selected.append(item)
-                used += cost
-                mandatory_used += cost
+        from .retrieval_contracts import SetSelectionConstraints
+
+        ordered: list[ContextRecordOut] = []
         mandatory_ids = {item.id for item in mandatory}
-        for item in [*primary, *supporting]:
-            if item.id in mandatory_ids or self._duplicate(item, selected):
-                continue
-            cost = self._cost(item)
-            if used + cost <= budget_chars:
-                selected.append(item)
-                used += cost
-        return selected, used
+        seen_ids: set[str] = set()
+        for item in (*mandatory, *relevant):
+            if item.id not in seen_ids:
+                seen_ids.add(item.id)
+                ordered.append(item)
+
+        redundancy = self._redundancy_groups(ordered)
+        primary = [
+            item
+            for item in ordered
+            if item.id not in mandatory_ids and not self._is_supporting(item)
+        ]
+        candidates: list[SetSelectionCandidate] = []
+        count = len(ordered)
+        for index, item in enumerate(ordered):
+            mandatory_preference = item.id in mandatory_ids
+            supports: set[str] = set()
+            if not mandatory_preference and self._is_supporting(item):
+                supports.update(
+                    target.id
+                    for target in primary
+                    if (
+                        item.source_id is not None
+                        and item.source_id == target.source_id
+                    )
+                    or (
+                        item.entity_key is not None
+                        and item.entity_key == target.entity_key
+                        and item.attribute_key == target.attribute_key
+                    )
+                )
+                # Preserve the established primary-before-evidence boundary when
+                # imported evidence lacks explicit source/slot relationships.
+                if not supports:
+                    supports.update(target.id for target in primary)
+            candidates.append(
+                SetSelectionCandidate(
+                    key=item.id,
+                    budget_cost=self._cost(item),
+                    base_utility=(count - index) * 1_000,
+                    semantic_facets=self._semantic_facets(item),
+                    diversity_dimensions=self._diversity_dimensions(item),
+                    redundancy_groups=redundancy[item.id],
+                    conflict_groups=self._conflict_groups(item),
+                    supports=frozenset(supports),
+                    mandatory_interaction_preference=mandatory_preference,
+                    policy_authorized=True,
+                    temporally_eligible=True,
+                    task_admissible=True,
+                )
+            )
+        selection = self.selector.select(
+            candidates,
+            SetSelectionConstraints(limit=len(candidates), budget=budget_chars),
+        )
+        by_id = {item.id: item for item in ordered}
+        selected = [by_id[candidate.key] for candidate in selection.candidates]
+        return selected, total_budget_cost(selection.candidates)
 
 
 def _temporal_sidecar_path(database_path: Path) -> Path:
