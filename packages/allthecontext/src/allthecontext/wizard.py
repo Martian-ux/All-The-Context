@@ -496,8 +496,9 @@ class SetupWizard:
         self._eyebrow("Setup complete")
         self._heading(
             "You're ready.",
-            "Core is running privately on this device. Open the dashboard now; normal context "
-            "retrieval and proposals happen through MCP from here on.",
+            "Core is running privately on this device. Start by bringing over your ChatGPT, "
+            "Claude, or Grok history; normal retrieval and new proposals happen through MCP "
+            "from then on.",
         )
         summary = tk.Frame(self.content, bg=PAPER)
         summary.pack(fill="x", pady=(38, 0))
@@ -517,6 +518,7 @@ class SetupWizard:
                 "Startup",
                 "Enabled for this user" if self.result and self.result.startup else "Manual",
             ),
+            ("History", "ChatGPT, Claude, and Grok exports are ready to import"),
             ("Mobile", "Connects directly whenever this Core is online"),
         ]
         for label, value in details:
@@ -539,7 +541,7 @@ class SetupWizard:
                 wraplength=500,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(18, 0))
-        self._footer("Open All The Context  →", self.finish)
+        self._footer("Import AI history  →", self.finish)
 
     def show_error(self, error: Exception) -> None:
         self._clear()
@@ -578,6 +580,7 @@ class SetupWizard:
             url = authenticated_dashboard_url(
                 config,
                 access.token,
+                landing_page="sources",
             )
             opened = open_dashboard(url)
         except Exception as exc:

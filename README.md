@@ -58,8 +58,9 @@ pass.
 - typed Python 3.12+ Core with SQLite migrations and FTS5;
 - source records, candidates, approval/rejection, correction, supersession,
   tombstones, permissions, history, and provenance;
-- idempotent/resumable model-assisted ingestion and generic JSON, JSONL, and
-  Markdown archive import;
+- idempotent/resumable model-assisted ingestion plus full local raw-history
+  import and reviewable memory extraction for ChatGPT, Claude, Grok, generic
+  JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
 - one-click local Codex and Claude Desktop configuration;
 - local review/search/backup/update dashboard;
@@ -113,6 +114,7 @@ python scripts/smoke_packaged_first_run.py
 ```
 
 See [architecture](docs/architecture/ARCHITECTURE.md),
+[provider history import](docs/integrations/PROVIDER_IMPORTS.md),
 [platform support](docs/operations/PLATFORMS.md),
 [project status](docs/STATUS.md), and [security](SECURITY.md).
 

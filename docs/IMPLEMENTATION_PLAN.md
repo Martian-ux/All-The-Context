@@ -8,7 +8,8 @@
    structured policy, and FTS retrieval.
 3. Implement source, candidate, approval, correction, supersession, tombstone,
    permission, history, and audit lifecycles.
-4. Implement idempotent model-assisted ingestion and generic archive import.
+4. Implement idempotent model-assisted ingestion, generic archive import, and
+   local ChatGPT/Claude/Grok history adapters with raw-source recovery.
 5. Implement required MCP tools, HTTP transport, and STDIO adapter.
 6. Implement desktop setup, local client connections, dashboard, encrypted
    export/restore path, updates, and cross-platform packages/tests.

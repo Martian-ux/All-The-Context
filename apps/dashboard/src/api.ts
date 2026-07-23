@@ -1,5 +1,6 @@
 import type {
   AuditEvent,
+  ArchiveProvider,
   Availability,
   ClientRegistration,
   ContextCandidate,
@@ -56,6 +57,16 @@ interface AuditWire {
   created_at: string;
 }
 
+interface ImportWire {
+  source: SourceWire;
+  candidate_ids: string[];
+  provider: string;
+  export_format: string;
+  stats: ImportResult["stats"];
+  warnings: string[];
+  coverage: ImportResult["coverage"];
+}
+
 function candidateFromWire(item: CandidateWire): ContextCandidate {
   return {
     ...item,
@@ -72,6 +83,19 @@ function recordFromWire(item: RecordWire): ContextRecord {
     scope: item.scopes.join(", ") || "general",
     source_record_id: item.source_id,
     valid_until: item.expires_at,
+  };
+}
+
+function importFromWire(result: ImportWire): ImportResult {
+  return {
+    source_id: result.source.id,
+    candidate_count: result.candidate_ids.length,
+    duplicate: Boolean(result.source.duplicate),
+    provider: result.provider,
+    export_format: result.export_format,
+    stats: result.stats,
+    warnings: result.warnings,
+    coverage: result.coverage,
   };
 }
 
@@ -163,13 +187,17 @@ export const api = {
     const result = await request<Page<SourceWire>>("/admin/sources");
     return { ...result, items: result.items.map((item) => ({ ...item, size_bytes: item.byte_size, candidate_count: item.candidate_count })) };
   },
-  importSource: async (file: File, sourceService?: string): Promise<ImportResult> => {
+  importSource: async (
+    file: File,
+    provider: ArchiveProvider = "auto",
+  ): Promise<ImportResult> => {
     const body = new FormData();
     body.set("file", file);
-    if (sourceService) body.set("source_service", sourceService);
-    const result = await request<{ source: SourceWire; candidate_ids: string[] }>("/admin/import", { method: "POST", body });
-    return { source_id: result.source.id, candidate_count: result.candidate_ids.length, duplicate: Boolean(result.source.duplicate) };
+    body.set("provider", provider);
+    return importFromWire(await request<ImportWire>("/admin/import", { method: "POST", body }));
   },
+  reprocessSource: async (sourceId: string): Promise<ImportResult> =>
+    importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess`, { method: "POST" })),
   candidates: async (status = "pending"): Promise<Page<ContextCandidate>> => {
     const result = await request<Page<CandidateWire>>(`/admin/candidates${queryString({ status })}`);
     return { ...result, items: result.items.map(candidateFromWire) };

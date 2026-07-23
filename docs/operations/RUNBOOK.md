@@ -49,8 +49,10 @@ lock before process exit. A restart never copies or replaces a live database.
   platform bootstrap command from the README; it will rebuild the environment.
 - If startup reports an existing owner, confirm the prior process has exited;
   do not delete a lock file while that process is alive.
-- If an import is interrupted, resume its ingestion session or re-import the
-  same content. Content hashes and idempotency keys prevent duplication.
+- If an import is interrupted, open **Sources** and choose **Retry extraction**
+  on the failed source. Core reuses the preserved raw blob and versioned
+  session/batch idempotency keys; no second upload or duplicate candidate is
+  required.
 - Before repair or migration, create a verified export and stop Core cleanly.
 
 ## Integrity review and secure purge

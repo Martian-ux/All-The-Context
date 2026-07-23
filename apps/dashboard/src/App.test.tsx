@@ -156,8 +156,92 @@ describe("dashboard", () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Sources" }));
-    await waitFor(() => expect(screen.getByText("Drop an archive or document")).toBeInTheDocument());
-    expect(screen.getByText(/source material never goes through MCP/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Drop the provider export here")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Bring your AI history home." })).toBeInTheDocument();
+    expect(screen.getByText(/never sent through MCP/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open ChatGPT export instructions" })).toHaveAttribute("href", expect.stringContaining("openai.com"));
+    expect(screen.getByRole("link", { name: "Open Claude export instructions" })).toHaveAttribute("href", expect.stringContaining("claude.com"));
+    expect(screen.getByRole("link", { name: "Open Grok export instructions" })).toHaveAttribute("href", expect.stringContaining("x.ai"));
+    expect(document.querySelector('input[type="file"]')).toHaveAttribute("accept", expect.stringContaining(".zip"));
+  });
+
+  it("imports a provider export and shows local coverage", async () => {
+    let submittedProvider: FormDataEntryValue | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+      if (url.endsWith("/admin/import")) {
+        const body = init?.body as FormData;
+        submittedProvider = body.get("provider");
+        return json({
+          source: { id: "source-1", duplicate: false },
+          candidate_ids: ["candidate-1", "candidate-2", "candidate-3"],
+          provider: "claude",
+          export_format: "claude_conversations",
+          stats: { conversations: 2, user_messages: 7, candidates: 3 },
+          warnings: [],
+          coverage: { available: ["2 conversations"], unavailable: [], limitations: [], warnings: [], complete: true },
+        });
+      }
+      if (url.endsWith("/admin/sources")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.change(await screen.findByLabelText("Archive type"), { target: { value: "claude" } });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["archive"], "claude-export.zip", { type: "application/zip" })] } });
+
+    expect(await screen.findByText(/Claude: 2 conversations scanned and 3 memories/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("7");
+    expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("Saved locally");
+    expect(submittedProvider).toBe("claude");
+  });
+
+  it("retries failed extraction from the preserved source", async () => {
+    let retried = false;
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 0, sources: 1, pending_replication_events: 0 } });
+      if (url.endsWith("/admin/sources/source-failed/reprocess")) {
+        retried = true;
+        return json({
+          source: { id: "source-failed", duplicate: true },
+          candidate_ids: ["candidate-1"],
+          provider: "chatgpt",
+          export_format: "chatgpt_conversation_graph",
+          stats: { conversations: 1, user_messages: 1, candidates: 1 },
+          warnings: [],
+          coverage: { available: ["1 conversation"], unavailable: [], limitations: [], warnings: [], complete: true },
+        });
+      }
+      if (url.endsWith("/admin/sources")) return json({
+        total: 1,
+        items: [{
+          id: "source-failed",
+          filename: "chatgpt-export.zip",
+          media_type: "application/zip",
+          source_service: "chatgpt",
+          byte_size: 2048,
+          content_hash: "hash",
+          candidate_count: retried ? 1 : 0,
+          import_status: retried ? "complete" : "failed",
+          metadata: { provider: "chatgpt", stats: { conversations: 1 } },
+          created_at: "2026-07-22T00:00:00Z",
+        }],
+      });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry extraction" }));
+
+    expect(await screen.findByText(/extraction resumed; 1 memories are ready/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, init]) => String(request).endsWith("/admin/sources/source-failed/reprocess") && init?.method === "POST")).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
   });
 
   it("checks and downloads a verified desktop update", async () => {

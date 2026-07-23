@@ -78,6 +78,23 @@ a { color: var(--amber-dark); font-weight: 700; }
 .section-heading.compact h3 { display: flex; align-items: center; gap: 7px; font-family: inherit; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .section-heading.compact > span { color: var(--faint); font-size: 10px; }
 
+.provider-import-intro { margin-bottom: 24px; }
+.provider-import-title { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin: 9px 0 20px; }
+.provider-import-title h2 { margin: 0; font-size: clamp(24px, 3vw, 34px); font-weight: 680; letter-spacing: -.035em; }
+.provider-import-title p { max-width: 620px; margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.provider-select { min-width: 215px; display: grid; gap: 7px; color: var(--faint); font-size: 8px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.provider-select select { min-height: 39px; border: 1px solid #c7cfdb; border-radius: 7px; background: var(--surface); color: var(--ink); padding: 0 10px; font-size: 10px; letter-spacing: 0; text-transform: none; }
+.provider-guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule); }
+.provider-guide { min-width: 0; min-height: 72px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 12px 15px 12px 0; border-right: 1px solid var(--rule); }
+.provider-guide + .provider-guide { padding-left: 15px; }
+.provider-guide:last-child { border-right: 0; }
+.provider-mark { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid var(--rule); border-radius: 9px; background: var(--surface); color: var(--amber-dark); font-size: 11px; font-weight: 850; }
+.provider-guide strong, .provider-guide small { display: block; }
+.provider-guide strong { font-size: 11px; }
+.provider-guide small { overflow: hidden; margin-top: 4px; color: var(--faint); font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.provider-guide a { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 6px; color: var(--faint); }
+.provider-guide a:hover { background: var(--amber-pale); color: var(--amber-dark); }
+
 .primary-button, .secondary-button, .quiet-button, .icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; cursor: pointer; font-weight: 750; transition: transform .14s ease, background .14s ease, color .14s ease, border-color .14s ease; }
 .primary-button { min-height: 39px; border: 1px solid var(--amber); background: var(--amber); color: #ffffff; padding: 0 17px; font-size: 11px; }
 .primary-button:hover:not(:disabled) { background: var(--amber-dark); border-color: var(--amber-dark); transform: translateY(-1px); }
@@ -98,6 +115,13 @@ button:disabled { opacity: .55; cursor: wait; }
 .drop-zone > span:not(.upload-icon):not(.secondary-button) { color: var(--muted); font-size: 11px; margin-top: 6px; }
 .drop-zone .secondary-button { margin-top: 17px; }
 .upload-icon { width: 43px; height: 43px; display: grid; place-items: center; border: 1px solid var(--rule); border-radius: 50%; color: var(--amber-dark); }
+.import-receipt { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 16px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule); background: rgb(255 255 255 / 40%); }
+.import-receipt > div { min-height: 70px; padding: 14px; border-right: 1px solid var(--rule); }
+.import-receipt > div:last-of-type { border-right: 0; }
+.import-receipt span, .import-receipt strong { display: block; }
+.import-receipt span { color: var(--faint); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.import-receipt strong { margin-top: 8px; font-size: 13px; }
+.import-receipt p { grid-column: 1 / -1; margin: 0; border-top: 1px solid var(--rule); padding: 11px 14px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 
 .notice { display: flex; align-items: center; gap: 9px; border-left: 2px solid var(--amber); border-radius: 0 7px 7px 0; color: #424b5c; background: var(--surface); padding: 12px 14px; margin: 16px 0; font-size: 11px; line-height: 1.5; }
 .notice--success { border-color: var(--green); }.notice--error { border-color: var(--red); }.notice--info { border-color: #77838d; }
@@ -114,6 +138,7 @@ button:disabled { opacity: .55; cursor: wait; }
 .primary-cell > span { min-width: 0; }
 .primary-cell strong, .primary-cell small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .primary-cell strong { font-size: 12px; }.primary-cell small { color: var(--faint); font-size: 10px; margin-top: 4px; }
+.source-retry { justify-self: start; color: var(--red); }
 
 .review-layout, .context-layout { display: grid; grid-template-columns: minmax(390px, 1fr) minmax(330px, .72fr); min-height: calc(100vh - 154px); }
 .review-list, .context-results { padding: 27px clamp(25px, 4vw, 58px) 70px; border-right: 1px solid var(--rule); }
@@ -277,6 +302,11 @@ button:disabled { opacity: .55; cursor: wait; }
   .integration-row > .integration-state { grid-column: 2; }
   .integration-row > .integration-actions { grid-column: 3; grid-row: 1 / span 2; }
   .update-preferences { grid-template-columns: 1fr; align-items: stretch; }
+  .provider-import-title { display: grid; align-items: stretch; }
+  .provider-select { min-width: 0; }
+  .provider-guide-grid { grid-template-columns: 1fr; }
+  .provider-guide, .provider-guide + .provider-guide { padding: 11px 0; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .provider-guide:last-child { border-bottom: 0; }
 }
 
 @media (max-width: 480px) {
@@ -289,6 +319,9 @@ button:disabled { opacity: .55; cursor: wait; }
   .integration-row > .integration-actions { grid-column: 1 / -1; grid-row: auto; justify-self: stretch; }
   .integration-actions > button { flex: 1; }
   .update-actions button { flex: 1 1 100%; }
+  .import-receipt { grid-template-columns: 1fr 1fr; }
+  .import-receipt > div:nth-child(2) { border-right: 0; }
+  .import-receipt > div:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
 }
 
 @media (prefers-reduced-motion: reduce) {

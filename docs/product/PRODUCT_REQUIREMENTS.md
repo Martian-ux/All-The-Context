@@ -25,8 +25,9 @@ clients. One user-owned Core remains the only authority.
   file.
 - Connect detected Codex and Claude Desktop installations with one selection or
   button while preserving unrelated settings.
-- Import archives locally, review candidates, and inspect evidence for every
-  approved record.
+- Import complete raw ChatGPT, Claude, and Grok account-history archives
+  locally, see coverage, review extracted candidates, recover interrupted
+  extraction without re-upload, and inspect evidence for every approved record.
 - Search approved context with deterministic permissions and validity rules.
 - Correct, supersede, delete, export, restore, and audit context.
 - Use a phone or another computer by connecting to the same online Core once a

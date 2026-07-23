@@ -202,7 +202,7 @@ def _cmd_config_mcp(args: argparse.Namespace) -> None:
 def _cmd_import(args: argparse.Namespace) -> None:
     path = Path(args.path).expanduser().resolve()
     service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
-    _dump(service.import_bytes(path.name, path.read_bytes(), source_service=args.source_service))
+    _dump(service.import_path(path, source_service=args.provider))
 
 
 def _cmd_candidates(args: argparse.Namespace) -> None:
@@ -438,11 +438,24 @@ def build_parser() -> argparse.ArgumentParser:
     config_mcp.add_argument("--target")
     config_mcp.set_defaults(handler=_cmd_config_mcp)
 
-    import_command = commands.add_parser("import", help="Import JSON/JSONL/Markdown/text")
+    import_command = commands.add_parser(
+        "import", help="Import ChatGPT, Claude, Grok, or generic local archives"
+    )
     _common_data(import_command)
     import_command.add_argument("path")
-    import_command.add_argument("--source-service", default="generic")
-    import_command.add_argument("--max-bytes", type=int, default=50 * 1024 * 1024)
+    import_command.add_argument(
+        "--provider",
+        choices=["auto", "chatgpt", "claude", "grok", "generic"],
+        default="auto",
+        help="provider hint; auto detects supported export schemas",
+    )
+    import_command.add_argument(
+        "--source-service",
+        dest="provider",
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    import_command.add_argument("--max-bytes", type=int, default=512 * 1024 * 1024)
     import_command.set_defaults(handler=_cmd_import)
 
     candidates = commands.add_parser("candidates", help="List review candidates")
