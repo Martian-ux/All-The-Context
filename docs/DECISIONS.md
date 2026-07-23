@@ -887,3 +887,56 @@ flows, disposable isolation, and zero personal data or credentials. A clone is
 not permission to install, execute, copy, or make the supplier a production
 dependency. The machine-readable wave manifest records the exact workers,
 authority boundaries, gates, commits, results, and limitations.
+
+## ADR-045: Wave 2 advances the simple current-state log and gates complexity behind longitudinal evidence
+
+**Status:** accepted as bounded research evidence 2026-07-23; no production
+memory implementation or external supplier is accepted.
+
+The first governed Memory Lab wave completed five independent cells and the
+coordinator reproduced both executable synthetic experiments. On the unchanged
+seven-object/five-task M0 retrieval fixture, a stable observation log with
+deterministic current-state resolution achieved task success `1.0`, evidence
+group recall `1.0`, and zero forbidden output. Current ATC Retrieval V3
+achieved `0.8`, `0.9`, and zero respectively. The stable condition advances to
+mutation, poisoning, scale, action, and CAOS fixtures; it is not an
+implementation-acceptance or production-replacement decision.
+
+The retrieval adapter ABI remains `atc.memory-lab.retrieval-adapter.v1`.
+Optional task budgets and identifier-safe failure diagnostics are additive, and
+the aggregate report is versioned separately as v2. The original M0 fixture
+remains byte-for-byte frozen; Wave 2 baseline controls have their own
+schema-versioned configuration and digest. Current-state resolution occurs
+over the complete authorized temporal snapshot before task scope and project
+applicability so a narrower or inapplicable superseder cannot resurrect an
+older broad record.
+
+The bounded E01 reference slice executed six of eighteen specified lifecycle
+scenarios. The in-memory governed reference passed 6/6, append-only search
+passed 0/6, and no-memory passed 1/6. Removing authority,
+currentness/invalidation, applicability, or purge closure caused a distinct
+regression. This accepts those four rule families as required conformance
+hypotheses, not as evidence that current production Core implements the
+reference. The fixture, oracle, and rules were co-designed; an isolated
+production-semantics E01b cell is required.
+
+The Hindsight supplier execution was skipped with
+`not_executed_dependency_and_egress_gate`. Only its official MIT source at
+`fa69b5b73b3b50bf5dcbae5bccbc7197de03692f` was temporarily cloned for static
+review and then removed. No supplier package, model, container, provider,
+credential, service, or benchmark ran, and no Hindsight score exists.
+Checked-in code is a dependency-free injected-client boundary tested with a
+fake. A future real cell requires immutable local model artifacts,
+loopback-only binding, and an externally enforced default-deny egress boundary.
+
+Wave 2 also changes the experiment order. Lossless structured-log inspection,
+online/off-policy/shift testing, and admission-to-delayed-action poisoning
+precede framework tournaments. Raw fidelity and localized maintenance precede
+lossy consolidation. External systems remain valued competitors and suppliers,
+but a skipped or failed gate is preserved rather than bypassed.
+
+ATC does not claim generic selective reminder or barrier-first repair novelty.
+Immediate ATC-native hypotheses are the Sealed Projection Minimal Compiler,
+the authority/purge-aware Record-Influence Barrier Closure composition, and
+Portable Working-State Three-Way Repair. Each remains specification-level
+until it beats simple controls on CAOS and hard lifecycle gates.

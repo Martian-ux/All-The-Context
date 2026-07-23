@@ -701,27 +701,53 @@ confirmatory set and revised only for future preregistered rounds.
 
 ---
 
-## 13. First five experiments in execution order
+## 13. Experiment execution order
 
-1. **E01 — State, authority, correction, and forgetting.** Run the symbolic
-   local state suite across every simple baseline, each individual competitor
-   adapter that can run locally, `hybrid_best_non_atc`, and
-   `hybrid_atc_governed`. Eliminate unsafe or state-incoherent conditions before
-   model evaluation.
-2. **E02 — Working continuity and cross-agent portability.** Compare raw recent
-   turns, static task note, append-log search, Letta, LangMem, hybrids, and ATC
-   checkpoints across compaction, restart, target change, and correction.
-3. **E03 — Episodic and procedural learning.** Measure repeated-failure
-   reduction and false transfer on held-out matched/mismatched tasks using only
-   observable trajectory and outcome evidence.
-4. **E04 — Relational, temporal, and recall-to-action.** Quantify the gap between
+Wave 2 completed the retrieval-only baseline ladder and a bounded 6-of-18 E01
+reference slice. It did not execute production Core semantics or an external
+system. The simple stable current-state log advanced, each of the four
+governance-rule ablations regressed, and the Hindsight supplier cell was
+skipped at its dependency/egress gate. The exact results and validity limits
+are in
+[ATC Memory Lab Wave 2 Integrated Results](ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md).
+
+Do not infer the rest of E01 from that reference result. Insert the following
+preregistered gates before full model-backed capability evaluation:
+
+1. **B01 — Lossless-log inspection.** Compare the stable current-state lexical
+   control with a restricted programmatic reader over a complete structured
+   log, current ATC, and a frozen combination under identical context and
+   action budgets.
+2. **O01 — Online/off-policy/shift triangulation.** Compare rankings under
+   offline retrieval, online formation/utilization, and a frozen distribution
+   shift with measured recovery.
+3. **P01 — Admission and delayed-activation poisoning.** Separate poisoned
+   durable-write, later-retrieval, later-influence, and protected-action rates
+   across each supported write channel.
+4. **E01b — Production-semantics conformance.** Run authority, currentness,
+   correction, epistemic role, applicability, forgetting, and purge scenarios
+   against an isolated current Core-shaped implementation without exposing
+   oracle labels.
+
+After those gates:
+
+5. **E02 — Working continuity and cross-agent portability.** Compare raw recent
+   turns, static task note, append-log search, hybrids, and ATC checkpoints
+   across compaction, restart, target/capability change, correction, poisoned
+   import, and multi-hop re-entry. External SDK conditions enter only after
+   their own supplier gates.
+6. **E03 — Episodic and procedural learning.** Measure repeated-failure
+   reduction, poisoned feedback, repair, quarantine, and false transfer on
+   held-out matched/mismatched tasks using only observable trajectory and
+   outcome evidence.
+7. **E04 — Relational, temporal, and recall-to-action.** Quantify the gap between
    sufficient retrieval and correct action under prerequisites, exceptions,
    conflicts, updates, and semantic disconnect.
-5. **E05 — Consequence and outcome closure.** Exhaustively fault token,
+8. **E05 — Consequence and outcome closure.** Exhaustively fault token,
    correction, drift, disconnect, dependency, rebuild, and purge state before
    any stochastic multi-target consequence trial.
 
-Only after these five establish coherent local semantics should the program run
+Only after these establish coherent local semantics should the program run
 E06–E10 on official or paid model-backed benchmarks.
 
 ---

@@ -65,3 +65,38 @@ def test_governance_documents_evidence_and_integration_gates() -> None:
     assert "untrusted until the coordinator" in governance
     assert "Cloning source is not permission to install or execute it." in governance
     assert "Rejected commits remain visible" in governance
+
+
+def test_completed_wave_preserves_results_evidence_and_supplier_skip() -> None:
+    manifest = _manifest()
+    workers = {worker["worker_id"]: worker for worker in manifest["workers"]}
+
+    assert manifest["status"] == "completed_with_supplier_skip"
+    assert all(worker["result"] is not None for worker in workers.values())
+    for worker in workers.values():
+        result = worker["result"]
+        assert re.fullmatch(r"[0-9a-f]{40}", result["worker_commit"])
+        assert re.fullmatch(r"[0-9a-f]{40}", result["integrated_commit"])
+        assert result["evidence_level"] in manifest["evidence_levels"]
+        assert result["outcome"]
+        assert result["report"]
+        assert result["limitations"]
+
+    supplier = workers["hindsight_supplier"]["result"]
+    assert supplier["outcome"] == "not_executed_dependency_and_egress_gate"
+    assert supplier["supplier_evidence_level"] is None
+    assert manifest["completion"]["coordinator_reproductions"] == {
+        "baseline_ladder_repeats": 20,
+        "lifecycle_e01_repeats": 20,
+        "operator_core_touched": False,
+        "personal_context_used": False,
+        "external_supplier_executed": False,
+    }
+    assert manifest["completion"]["accepted_evidence"] == {
+        "L0": 2,
+        "L1": 0,
+        "L2": 3,
+        "L3": 0,
+        "L4": 0,
+        "L5": 0,
+    }

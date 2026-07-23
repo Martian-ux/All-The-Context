@@ -6,8 +6,8 @@
 |---|---|
 | Version | 1 |
 | Date | July 23, 2026 |
-| Status | Active research governance; no production authority |
-| Current wave | `research/memory-lab/wave2-manifest.json` |
+| Status | Accepted research governance; no production authority |
+| Completed reference wave | `research/memory-lab/wave2-manifest.json` |
 
 ATC uses independent visible Codex worker threads to reduce shared-context
 anchoring and to run implementation, supplier, and research challenges in
@@ -88,4 +88,7 @@ Wave 2 has five independent cells:
 | Novelty and falsification | ATC-native mechanisms, closest prior art, and decisive experiments | Forbidden |
 
 The machine-readable manifest is authoritative for exact thread IDs, source
-commit, worker settings, allowed actions, and final receipts.
+commit, worker settings, allowed actions, and final receipts. The
+[integrated result](ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md) records the
+coordinator's reproduction, accepted limitations, research decision, and next
+experiment order.

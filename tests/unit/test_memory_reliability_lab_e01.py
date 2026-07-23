@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 from allthecontext.memory_reliability_lab import (
@@ -19,6 +20,12 @@ from allthecontext.memory_reliability_lab import (
 from bench.memory_reliability_lab_e01 import FIXTURES, load_fixture, run_fixture
 
 FIXTURE_SHA256 = "19f52ad16b398248866b5bfac930380ee71071a3414a4678a316bd161f762086"
+FROZEN_REPORT = (
+    Path(__file__).parents[2]
+    / "bench"
+    / "reports"
+    / "memory_reliability_e01_wave2.json"
+)
 
 
 def test_fixture_is_frozen_symbolic_partial_e01_with_required_coverage() -> None:
@@ -59,6 +66,13 @@ def test_fixture_is_frozen_symbolic_partial_e01_with_required_coverage() -> None
             for key in event
         }
     )
+
+
+def test_checked_in_twenty_repeat_report_matches_the_deterministic_slice() -> None:
+    frozen = json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))
+
+    assert frozen == run_fixture(repeats=20)
+    assert frozen["repeats"] == 20
 
 
 def test_partial_e01_compares_equal_budget_controls_and_reference_model() -> None:

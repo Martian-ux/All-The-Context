@@ -53,12 +53,11 @@ The memory reliability program is specified in
 experiment and promotion contracts in `memory_reliability_spec.json` and
 sanitized symbolic event fixtures in `memory_reliability_fixtures.json`.
 
-These files intentionally do not implement a longitudinal adapter ABI or
-executable longitudinal harness. The retrieval-only M0 ABI above is the first
-bounded comparison surface; these files freeze the broader scientific matrix,
-first five experiments, stage-level failure taxonomy, contamination controls,
-statistical plan, latency/cost budgets, and deterministic oracles that its
-longitudinal successor must honor. The structural tests run with:
+The specification freezes the broader scientific matrix, experiment order,
+stage-level failure taxonomy, contamination controls, statistical plan,
+latency/cost budgets, and deterministic oracles. The retrieval-only M0 ABI
+above remains the first general comparison surface. Its structural tests run
+with:
 
 ```text
 python -m pytest tests/unit/test_memory_reliability_spec.py
@@ -66,6 +65,29 @@ python -m pytest tests/unit/test_memory_reliability_spec.py
 
 Passing those tests proves specification consistency only. It is not evidence
 that ATC or any external memory system passes an experiment.
+
+### Bounded E01 longitudinal reference slice
+
+`memory_reliability_lab_e01.py` adds a separate research-only
+`atc.memory-reliability-lab.longitudinal-adapter.v1` reset/present/checkpoint
+ABI and executes six of the specification's eighteen scenarios:
+
+```text
+python -m bench.memory_reliability_lab_e01 --repeats 20 --output tmp/e01.json
+```
+
+The conditions are no memory, append-only log search, an in-memory governed
+reference, and four one-rule removals covering authority,
+currentness/invalidation, applicability, and purge closure. Adapters see
+ordered opaque events and task descriptors but never harness oracles. Reusable
+reports omit scenario, checkpoint, object, value, topic, project, domain, and
+query symbols.
+
+The governed condition is not production ATC. It opens no Core database,
+defines no production schema, and exercises no external system or real action.
+The fixture and reference rules were co-designed, so its 6/6 result is a
+bounded conformance hypothesis. The checked-in 20-repeat aggregate is
+`reports/memory_reliability_e01_wave2.json`.
 
 ## Wave 2 source-evidence retrieval research
 

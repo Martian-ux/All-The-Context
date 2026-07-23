@@ -61,9 +61,11 @@ the primary endpoint rather than retrieval quality alone.
 The 2026-07-23 AI-memory competitor intake records official repositories,
 immutable revisions, licenses, dependency burden, integration surfaces, and
 safety risks for eleven candidates in
-`research/competitor-intake/memory-systems-intake.v1.json`. No third-party
-source was cloned, installed, executed, imported, or copied. The intake adds no
-runtime dependency or production claim.
+`research/competitor-intake/memory-systems-intake.v1.json`. During that intake,
+no third-party source was cloned, installed, executed, imported, or copied.
+Wave 2 later performed the separately governed temporary Hindsight static
+clone described below. Neither activity adds a runtime dependency or
+production claim.
 
 ## Executable Memory Lab M0 slice
 
@@ -95,16 +97,15 @@ The Memory Lab now also has a longitudinal evaluation specification in
 `docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md`, a machine-readable experiment
 and promotion contract, and 18 deterministic symbolic scenarios validated by
 11 structural tests. They cover 13 capabilities from working continuity
-through correction, privacy, recall-to-action, and closure. These artifacts
-freeze future evidence requirements only; no longitudinal adapter, competitor
-result, or production memory mechanism is implemented.
+through correction, privacy, recall-to-action, and closure. The specification
+itself freezes evidence requirements; the separate Wave 2 section below
+records a bounded longitudinal reference adapter and six-scenario result. No
+external competitor result or production memory mechanism is implemented.
 
-The integrated research branch passes documentation validation, Ruff, mypy
-over 60 source files, all 17 new focused tests, and the full Python 3.12.10
-suite with 530 passes and 4 platform skips. The first full run used a
-OneDrive-synchronized pytest temporary directory and hit one transient Windows
-database-replacement lock; the exact updater test and then the complete suite
-passed from a nonsynchronized local temporary directory.
+The completed Wave 2 integration passes documentation validation, Ruff, mypy
+over 62 source files, 35 focused Memory Lab/governance/documentation tests, and
+the full Python 3.12.10 suite with 560 passes and 4 host-limited symlink skips.
+The complete suite passed from the coordinator worktree without a retry.
 
 ## Memory Lab Wave 2
 
@@ -116,11 +117,50 @@ a fresh primary-source horizon review, and an independent novelty/falsification
 review. Workers own non-overlapping scopes, cannot merge or push, and return
 committed evidence to the coordinator for review and reproduction.
 
-The wave is active. No Wave 2 worker result or external-system result has been
-accepted yet. Hindsight is the only cell allowed to clone official pinned
-source, and clone permission does not imply install or execution permission.
-No worker may use credentials, real personal context, the operator Core, a
-production dependency, Docker, or a system service.
+The wave is complete. Its integrated report is
+[`docs/research/ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md`](research/ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md).
+The coordinator reviewed every worker diff, sent lifecycle, scope,
+fixture-freeze, and evidence-boundary defects back for amendment, and
+reproduced both deterministic experiments with 20 repeats. No worker used
+credentials, real personal context, the operator Core, a production
+dependency, Docker, or a system service.
+
+The baseline ladder preserves the original M0 fixture hash
+`5601692ea305448f6b299c32725a93c73ca83ccee66f325e22cbcbedfa0cc68f`
+and freezes separate Wave 2 controls at
+`6dbf75db008b1be2d3db643b8dd19fe45f1a45c88121ac1ac3af16a0a0cd3c98`.
+On seven objects and five retrieval tasks, the stable current-state log is the
+only condition with success `1.0`, evidence-group recall `1.0`, and zero
+forbidden output. Current ATC Retrieval V3 has success `0.8`, recall `0.9`, and
+zero forbidden output. The stable log advances only to mutation, poisoning,
+scale, action, and CAOS fixtures; the result is not production acceptance and
+may be fixture-aligned. The local file ranker is explicitly not a reproduction
+of programmatic action-model log inspection.
+
+The bounded E01 slice executes 6 of the 18 specified longitudinal scenarios.
+The in-memory governed reference passes 6/6, append-only search passes 0/6, and
+no-memory passes 1/6. Removing authority, currentness/invalidation,
+applicability, or purge closure produces a distinct failure. Coordinator review
+added authoritative control-operation checks and terminal purge behavior
+before integration. The report explicitly states that the fixture and
+reference were co-designed and production Core semantics were not exercised.
+
+The Hindsight result is
+`not_executed_dependency_and_egress_gate`, not a benchmark score. Its official
+MIT source was temporarily cloned at
+`fa69b5b73b3b50bf5dcbae5bccbc7197de03692f`, statically reviewed, and removed.
+No supplier package, model, container, provider, credential, service, or
+upstream script ran. The dependency-free injected-client seam and fake tests
+remain; a future real cell requires loopback-only binding, immutable local
+model artifacts, and externally enforced default-deny egress.
+
+The fresh horizon and novelty reviews move lossless programmatic logs,
+online/off-policy/shift evaluation, write-admission poisoning, correction and
+residue repair, and secure portability ahead of framework tournaments and
+learned consolidation. Generic selective reminder and barrier-first repair
+novelty claims are retired. The next ATC-native experiments are the Sealed
+Projection Minimal Compiler, Record-Influence Barrier Closure, and Portable
+Working-State Three-Way Repair.
 
 ## Previously verified baseline
 
@@ -311,13 +351,13 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
-- Current ADR-039 worktree on Windows Python 3.14.3: Ruff passes; strict mypy
-  passes across 59 source files; the full suite passes 513 tests with four
-  host-limited symlink skips; documentation links and `git diff --check` pass.
-  This includes automatic policy, ACL/session isolation, migration restart,
-  pre-v5 restore, source-free foreign-key/FTS recovery, purge resurrection
-  barriers, context-error idempotency, delete/restore history, Relay queue
-  identity, ordered projection restoration, and the approval-free E2E demo.
+- Current Wave 2 integration worktree on Windows Python 3.12.10: Ruff passes;
+  strict mypy passes across 62 source files; the full suite passes 560 tests
+  with four host-limited symlink skips; 35 focused
+  Memory Lab/governance/documentation tests pass; documentation links and
+  `git diff --check` pass. This includes the earlier automatic-policy,
+  ACL/session, migration/restore, purge, Relay, and approval-free demo
+  evidence plus the governed Wave 2 research harnesses.
 - Current dashboard on Node 25.6.1: 27 tests, TypeScript checking, and the
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build

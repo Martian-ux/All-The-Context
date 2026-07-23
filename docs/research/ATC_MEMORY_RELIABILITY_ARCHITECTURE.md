@@ -1068,27 +1068,47 @@ successful research outcome when the deterministic product becomes clearer.
 
 ## 14. Recommended near-term deliverables
 
-The next artifacts should be concrete and separable:
+Wave 2 completed the first simple baseline ladder and a bounded six-scenario
+lifecycle reference slice. The stable current-state log advanced on the small
+retrieval fixture; the governed reference passed all six lifecycle episodes;
+and the Hindsight execution cell was honestly skipped at its dependency and
+egress gate. These are synthetic, fixture-bounded results, not production
+acceptance. The integrated evidence and limitations are recorded in
+[ATC Memory Lab Wave 2 Integrated Results](ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md).
 
-1. **Execute the baseline ladder** — extend the implemented M0 retrieval slice
-   with long context, static profile, raw append-log, stable observation-log,
-   and file-search controls.
-2. **Run the first reliability gates** — current-state mutation, applicability,
-   harmful memory, action grounding, and derived-state purge residue.
-3. **Add isolated supplier adapters** — Hindsight first, then Mem0 and
-   Graphiti, each pinned and reviewed before execution.
-4. **Implement longitudinal Memory Lab episodes** — bridge the M0 retrieval ABI
-   to the frozen CAOS scenarios without giving an adapter canonical authority.
-5. **Inventory derived state** — define exact lineage, invalidation, rebuild,
-   and purge contracts before adding summaries, graphs, or learned artifacts.
-6. **Experience and working-state schema** — no production migration until
-   benchmark scenarios prove the need.
-7. **Foundation repair design** — witness classes, direct-secret refusal,
-   append-only decisions, and epistemic/applicability gates.
-8. **Contracts Lite prototype** — one soft cross-agent behavior with static
-   lowering and an observable verifier.
-9. **Reference host fault model** — prove consequence closure on synthetic
-   actions before any real effect integration.
+The next artifacts should remain concrete and separable, in this revised order:
+
+1. **Implement lossless-log inspection as a real baseline** — compare the
+   advancing stable current-state lexical condition with a restricted
+   programmatic reader over a complete structured event log. The existing
+   bounded file ranker is only an infrastructure control.
+2. **Add online/off-policy/shift evaluation** — test memory formation,
+   utilization, and recovery after a frozen distribution or environment
+   change before selecting a winner from static results.
+3. **Test admission and delayed-activation poisoning** — measure poisoned
+   durable writes, later retrieval, later influence, and protected action
+   separately across every automatic write channel.
+4. **Run production-semantics E01 conformance** — exercise authority,
+   currentness, applicability, correction, forgetting, and purge against an
+   isolated Core-shaped store rather than the co-designed in-memory reference.
+5. **Prototype the Sealed Projection Minimal Compiler** — seal authorization
+   and applicability before relevance, test one-deletion minimality, and
+   require paired-vault noninterference.
+6. **Inventory and close record influence** — define exact lineage,
+   invalidation, rebuild, permission-change, issued-context, outcome-statistic,
+   and purge contracts before summaries, graphs, or learned artifacts.
+7. **Prototype portable working-state three-way repair** — compare acknowledged
+   base, local delta, and current Core state with typed
+   carry/refresh/recompute/drop/conflict/compensate/stop outcomes.
+8. **Reopen external supplier cells only after the simple winner clears the
+   harder gates** — every supplier remains individually pinned, isolated,
+   privacy-bounded, optional, and honestly skippable.
+9. **Delay experience and procedure promotion** — no production schema or
+   consolidator until outcome labels, quarantine, repair, poisoning, and false
+   transfer tests justify it.
+10. **Continue consequence research after memory-state conformance** — use a
+    Contracts Lite prototype and reference-host fault model for one soft
+    cross-agent behavior with an observable verifier.
 
 The first implementation milestone is not a neural memory model or a general
 graph. It is an apples-to-apples result showing:
