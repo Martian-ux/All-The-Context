@@ -48,6 +48,14 @@ production schema, host checkpoint protocol, private learned model, or
 behavioral enforcement claim has been accepted or implemented by this
 documentation work. The beta remains the immediate product milestone.
 
+The July 2026 fresh-horizon review amended the execution order: simple
+long-context, append-log, stable-observation, and file-search baselines precede
+framework adapters; typed relations must earn a graph; applicability follows
+authorization before relevance; derived-state closure is foundational; and
+procedural learning waits for trustworthy outcome and repair evidence. The
+updated charter uses CAOS—correct current authorized outcome within budget—as
+the primary endpoint rather than retrieval quality alone.
+
 ## Research supplier intake
 
 The 2026-07-23 AI-memory competitor intake records official repositories,
@@ -76,7 +84,27 @@ schema is involved.
 
 The fixture is intentionally diagnostic rather than a promotion gate: the
 no-memory control succeeds only on the abstention task; the simple baseline and
-ATC each succeed on four of five tasks while exposing different failure modes.
+ATC each succeed on four of five tasks. The simple baseline retrieves one
+forbidden cross-project distractor; ATC retrieves none, but ATC reaches only
+`0.90` mean evidence-group recall because it misses one required item in the
+multi-memory task.
+
+## Falsifiable memory evaluation program
+
+The Memory Lab now also has a longitudinal evaluation specification in
+`docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md`, a machine-readable experiment
+and promotion contract, and 18 deterministic symbolic scenarios validated by
+11 structural tests. They cover 13 capabilities from working continuity
+through correction, privacy, recall-to-action, and closure. These artifacts
+freeze future evidence requirements only; no longitudinal adapter, competitor
+result, or production memory mechanism is implemented.
+
+The integrated research branch passes documentation validation, Ruff, mypy
+over 60 source files, all 17 new focused tests, and the full Python 3.12.10
+suite with 530 passes and 4 platform skips. The first full run used a
+OneDrive-synchronized pytest temporary directory and hit one transient Windows
+database-replacement lock; the exact updater test and then the complete suite
+passed from a nonsynchronized local temporary directory.
 
 ## Previously verified baseline
 

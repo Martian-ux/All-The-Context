@@ -37,11 +37,12 @@ The memory reliability program is specified in
 experiment and promotion contracts in `memory_reliability_spec.json` and
 sanitized symbolic event fixtures in `memory_reliability_fixtures.json`.
 
-These files intentionally do not implement an adapter ABI or executable memory
-harness. They freeze the scientific comparison matrix, first five experiments,
-stage-level failure taxonomy, contamination controls, statistical plan,
-latency/cost budgets, and deterministic oracles that a future harness must
-honor. The structural tests run with:
+These files intentionally do not implement a longitudinal adapter ABI or
+executable longitudinal harness. The retrieval-only M0 ABI above is the first
+bounded comparison surface; these files freeze the broader scientific matrix,
+first five experiments, stage-level failure taxonomy, contamination controls,
+statistical plan, latency/cost budgets, and deterministic oracles that its
+longitudinal successor must honor. The structural tests run with:
 
 ```text
 python -m pytest tests/unit/test_memory_reliability_spec.py

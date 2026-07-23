@@ -807,6 +807,23 @@ The beta remains the immediate milestone. Research does not block release, add
 a mandatory hosted service, or make unimplemented checkpoint, behavioral,
 graph, vector, neural, or experiential-learning claims.
 
+The 2026-07-23 horizon amendment narrows the execution order. The Memory Lab
+must climb a simple baseline ladder before external framework adapters. A
+versioned event stream is the foundation; a general graph, retrieval council,
+or learned procedure must earn its complexity against a simpler rung.
+Authorization is followed by a separate epistemic-role and task-applicability
+gate before relevance. Derived-state lineage, invalidation, rebuild, and purge
+move into the authority foundation, while host behavioral closure remains
+research.
+
+Memory research promotion uses Current Authorized Outcome Success (CAOS) and
+separately reported stage metrics. Applicable evaluations compare simple
+baselines, each individual competitor, frozen hybrids, and ATC ablations under
+equal reader, context, cost, and clock conditions. Official benchmark metrics
+remain comparability measures, not sole promotion criteria. Authorization,
+correction, forgetting, harmful-memory, consequence-closure, outcome-closure,
+and purge gates cannot be offset by aggregate quality.
+
 ## ADR-043: Memory Lab adapters rank authorized snapshots and never own truth
 
 **Status:** accepted for the bounded M0 research harness 2026-07-23; not a

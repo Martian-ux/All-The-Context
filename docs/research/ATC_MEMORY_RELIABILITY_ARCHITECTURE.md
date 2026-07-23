@@ -5,11 +5,11 @@
 | Field | Value |
 |---|---|
 | Working name | ATC Memory Reliability Stack |
-| Version | 0.1 |
+| Version | 0.2 |
 | Date | July 23, 2026 |
 | Repository baseline | `e5cb50a518aff571af46238682d8f7a082ca19f0` |
-| Status | Research and product-direction proposal; not accepted production architecture or implemented behavior |
-| Internal inputs | Current ATC direction, From Recall to Reaction, Relational Potential Memory, Behavioral Memory Virtualization, and Consequence-Closed Context |
+| Status | Accepted research direction under ADR-042; not accepted production architecture or implemented behavior beyond explicitly documented lab slices |
+| Internal inputs | Current ATC direction, From Recall to Reaction, Relational Potential Memory, Behavioral Memory Virtualization, Consequence-Closed Context, the July 2026 horizon report, and the ATC Memory Evaluation Program |
 | External inputs | Mem0, Graphiti/Zep, Hindsight, Letta/MemGPT, LangGraph/LangMem, HippoRAG, A-MEM, MemOS, ReasoningBank, and current memory benchmarks |
 
 **North star:** An authorized experience that matters should become useful
@@ -62,6 +62,34 @@ win. External extractors, graph engines, retrievers, consolidators, and memory
 models may produce observations or discardable projections. They may not
 directly establish current user truth, expand permissions, assign behavioral
 force, or weaken correction and purge.
+
+### July 2026 horizon amendment
+
+The [fresh-horizon review](ATC_MEMORY_HORIZON_REPORT_2026-07-23.md) changes the
+execution order without abandoning the two-plane direction:
+
+1. **Use a baseline ladder before a framework tournament.** No memory, long
+   context, static profiles, raw append-log search, stable observation logs,
+   file-search agents, and current ATC must establish the frontier before an
+   external framework can justify its complexity.
+2. **Do not make a general graph the default representation.** Start with a
+   versioned event stream and add typed temporal, causal, prerequisite,
+   exception, or entity projections only when a simpler representation fails.
+3. **Treat retrieval as a potentially harmful intervention.** Authorization is
+   necessary but insufficient; epistemic role and task applicability must be
+   resolved before relevance ranking and context compilation.
+4. **Move derived-state closure into the authority foundation.** Every summary,
+   relation, index, cache, checkpoint, export, backup, and learned artifact
+   needs lineage, invalidation, purge, and rebuild semantics before promotion.
+5. **Delay procedural learning.** Capture outcome-labeled experiences first.
+   Distill a reusable procedure only after recurrence, external outcome
+   evidence, counterexamples, repair, negative-transfer, and purge tests.
+
+The primary evaluation endpoint is
+[Current Authorized Outcome Success (CAOS)](ATC_MEMORY_EVALUATION_PROGRAM.md):
+correct current action within budget, with no unauthorized or purged influence
+and no known stale checkpoint crossing. Retrieval scores remain stage
+diagnostics, not the product claim.
 
 ---
 
@@ -398,19 +426,23 @@ do not ask an extraction model to mutate or delete earlier evidence. Add what
 was observed, deduplicate exact repeats, and let Core’s versioned policy resolve
 current state.
 
-### 6.4 Build a bitemporal derived graph
+### 6.4 Build a bitemporal event stream; earn typed relation projections
 
-Borrow Graphiti’s useful separation:
+Borrow Graphiti’s useful separation without adopting a general graph as the
+default:
 
-- episodes are the provenance-bearing stream;
-- entities are stable projections;
-- fact/relationship edges carry event-valid and system-known time; and
-- summaries evolve but remain derived.
+- episodes are the provenance-bearing bitemporal stream;
+- current claims resolve through Core rather than through graph traversal;
+- entity, causal, temporal, prerequisite, exception, and support relations are
+  typed discardable projections; and
+- summaries evolve but remain source-linked derived artifacts.
 
-The first implementation should remain SQLite-native and rebuildable unless an
-external graph engine proves enough value to justify its operational cost.
-Graph edges may propose candidates for retrieval and consolidation. They never
-become a second canonical truth store.
+The first implementation remains SQLite-native and rebuildable. A relation
+projection or external graph engine advances only when it beats flat event
+notes and deterministic links on a preregistered temporal, causal, exception,
+or multi-hop test at acceptable invalidation cost. Relations may propose
+retrieval and consolidation candidates. They never become a second canonical
+truth store.
 
 ### 6.5 Consolidate during background time
 
@@ -426,21 +458,24 @@ Borrow the sleep-time pattern without giving a model authority over Core:
 More background compute is useful only when held-out future tasks improve. A
 longer profile is not automatically better memory.
 
-### 6.6 Learn procedures from success and failure
+### 6.6 Record outcomes before learning procedures
 
-Use a ReasoningBank-style loop for procedural memory:
+The first procedural-memory artifact is an outcome-labeled experience, not a
+distilled instruction. Capture the observable action trace, environment result,
+feedback, cost, uncertainty, and exact evaluator version. Quarantine
+self-judgment and poisoned or contradictory feedback.
 
-- retrieve related procedures before a task;
-- observe the action trace and external result;
-- label success, failure, partial success, and uncertainty from observable
-  evidence where possible;
-- distill a compact tactic, precondition, warning, or anti-pattern;
-- link it to the exact experiences and evaluator version; and
-- keep it derived until corroborated or explicitly confirmed.
+A ReasoningBank-style procedure loop may begin only after the system can:
 
+- distinguish recurring success from one favorable outcome;
+- retain counterexamples and detect task-boundary transfer;
+- repair a tactic after wrong feedback or later correction;
+- demonstrate repeated-failure reduction without easy-task regression; and
+- invalidate and purge every procedure and cache derived from an experience.
+
+Promoted procedures remain derived, source-linked, versioned, and removable.
 Do not persist hidden chain-of-thought. Store observable action summaries,
-decision rationales intentionally exposed for audit, result evidence, and
-compact procedures.
+deliberately exposed audit rationales, result evidence, and compact tactics.
 
 ---
 
@@ -458,9 +493,9 @@ handles semantic disconnect: the relevant preference may become obvious only
 when an agent is about to commit a plan, disclose data, send a message, or
 perform another effect.
 
-### 7.2 Policy before every retrieval strategy
+### 7.2 Authorization and applicability before every retrieval strategy
 
-Core first resolves:
+Core first resolves the hard authorization boundary:
 
 - principal and client authorization;
 - current/applied lifecycle state;
@@ -470,25 +505,35 @@ Core first resolves:
 - sensitivity and disclosure policy; and
 - hard conflicts and confirmed force ceilings.
 
-Only the resulting authorized identifiers may reach lexical, dense, graph,
-learned, or external strategies.
+It then resolves epistemic role and applicability: whether an item is evidence,
+a current claim, hypothesis, constraint, warning, procedure, or working-state
+dependency; whether that role is valid for this task and domain; and whether
+using it would invite sycophancy, stale defaults, or unrelated personalization.
 
-### 7.3 A hybrid retrieval council
+Only identifiers that pass both gates may reach lexical, dense, relation,
+learned, or external relevance strategies. Authorized-but-inapplicable
+retrieval is a measured safety failure, not a harmless false positive.
 
-The candidate council should allow bounded, independently inspectable channels:
+### 7.3 Climb a retrieval ladder before forming a council
+
+Begin with independently inspectable rungs:
 
 - Retrieval V3 lexical ranking;
 - exact structured and entity matches;
+- raw append-log and stable-observation search;
+- bounded file-search over authorized artifacts;
 - temporal intent and interval retrieval;
 - optional local dense retrieval;
-- graph neighborhood and Personalized PageRank;
+- typed relation traversal;
 - experience/procedure retrieval;
 - recency and reversible access decay;
 - current working-state dependencies; and
 - later, an interaction-aware coalition proposer.
 
-Fuse channels using a fixed deterministic baseline such as reciprocal rank
-fusion before introducing learned arbitration. Preserve per-channel receipts.
+Add or fuse a channel only when the preceding rung fails a stage diagnostic and
+the new channel improves CAOS at fixed reader, context, disclosure, latency,
+and cost. Use a fixed deterministic baseline such as reciprocal rank fusion
+before learned arbitration, and preserve per-channel receipts.
 
 ### 7.4 Deterministic closure before learned set proposals
 
@@ -692,23 +737,28 @@ predicate over the same immutable action object.
 
 ### 10.1 Frozen baseline matrix
 
-At minimum, compare:
+The first comparison is a ladder, not a framework bake-off. At minimum,
+compare:
 
 1. no durable memory;
 2. full or long-context history;
 3. a concise static `MEMORY.md` or user profile;
-4. ATC Retrieval V3;
-5. lexical + dense reciprocal-rank fusion;
-6. Mem0 v3;
-7. Graphiti;
-8. Hindsight;
-9. Letta/LangMem-style working and consolidated memory;
-10. the strongest practical hybrid assembled from winning mechanisms; and
-11. the hybrid plus each ATC research component as an ablation.
+4. raw authorized event chunks with exact and lexical search;
+5. a stable observation log with deterministic current-state resolution;
+6. a bounded file-search agent;
+7. ATC Retrieval V3;
+8. lexical + optional dense reciprocal-rank fusion;
+9. Hindsight, Mem0, and Graphiti as individually pinned framework adapters;
+10. Letta/LangMem-style working and consolidated memory;
+11. the strongest practical hybrid assembled from winning mechanisms; and
+12. the hybrid plus each ATC research component as an ablation.
 
 All systems must use the same answer model, extraction model where applicable,
 context budget, corpus, clock, and evaluator protocol. Report model calls and
-cost separately from storage and search latency.
+cost separately from storage and search latency. A higher rung is retained only
+when it beats the strongest lower rung on CAOS or a preregistered capability
+without violating universal authority, correction, forgetting, privacy, or
+purge gates.
 
 ### 10.2 Benchmark portfolio
 
@@ -717,6 +767,9 @@ cost separately from storage and search latency.
 | [LongMemEval](https://github.com/xiaowu0162/LongMemEval) | Information extraction, multi-session reasoning, knowledge updates, temporal reasoning, and abstention |
 | [MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) | Incremental retrieval, test-time learning, long-range understanding, and conflict/forgetting behavior |
 | [MemoryArena](https://memoryarena.github.io/) | Whether memory from earlier sessions improves later interdependent agent actions |
+| [LongMemEval-V2](https://github.com/xiaowu0162/LongMemEval-V2) | Retrieval and use over very long multimodal environment experience, workflows, and premise awareness |
+| [Mem2ActBench](https://arxiv.org/abs/2601.19935) | Memory-grounded tool choice and argument selection |
+| [PersistBench](https://arxiv.org/abs/2602.01146) and [MemSyco-Bench](https://github.com/XMUDeepLIT/MemSyco-Bench) | Cross-domain leakage, sycophancy, memory role, scope, conflict, and update safety |
 | Relation Drift benchmark from Relational Potential Memory | Exceptions, prerequisites, synergy, contradiction, and jointly misleading sets |
 | ConsequenceBench | Event activation, target compilation, observable compliance, correction closure, and host fault injection |
 | ATC Authority and Purge suite | Origin spoofing, instruction injection, permissions, secret refusal, source deletion, restoration, purge residue, and learned-artifact lineage |
@@ -751,6 +804,9 @@ multi-session agent tasks.
 **Retrieval and compilation**
 
 - Recall@k, MRR, and nDCG;
+- authorized-but-inapplicable retrieval;
+- memory-role classification and cross-domain leakage;
+- memory-induced sycophancy and hallucinated tool defaults;
 - set sufficiency and answer coverage;
 - exception and prerequisite recall;
 - contradictory-set and stale-inclusion rate;
@@ -770,6 +826,7 @@ multi-session agent tasks.
 
 **Consequence**
 
+- CAOS and every conjunct reported separately;
 - applicable-obligation activation;
 - false activation;
 - worst-target compliance;
@@ -795,7 +852,10 @@ No component reaches production merely because its standalone score is high.
 
 Required rules:
 
+- CAOS is the primary endpoint; retrieval and benchmark scores are diagnostic;
 - zero known authorization or purge violations in the declared test boundary;
+- zero cross-domain memory leakage and no known memory-induced sycophancy in
+  the declared safety suite;
 - no ordinary recall regression when a specialized mechanism is enabled;
 - end-to-end task or behavioral gain over the strongest simpler baseline;
 - fixed-budget comparison against long context;
@@ -877,10 +937,14 @@ This determines whether ordinary cross-client continuity creates real value.
 
 #### Phase M0: Memory Lab
 
-- frozen benchmark harness;
-- common episode and result format;
-- long-context and static-profile baselines;
-- Mem0, Graphiti, and Hindsight adapters;
+- frozen retrieval ABI, fixture, and identifier-safe report;
+- no-memory, static lexical, and current ATC controls;
+- common longitudinal episode and result format;
+- long-context, static-profile, raw append-log, stable-observation-log, and
+  file-search baselines;
+- harmful-memory, applicability, action-grounding, and derived-residue gates;
+- individually pinned Hindsight, Mem0, and Graphiti adapters only after
+  license, dependency, data-flow, provider, packaging, and purge review;
 - stage-level metrics and cost accounting; and
 - reproducible same-backbone reports.
 
@@ -889,7 +953,10 @@ This determines whether ordinary cross-client continuity creates real value.
 - `WitnessEnvelope`;
 - direct-secret pre-persistence refusal;
 - append-only policy-decision transitions;
-- stronger learned-artifact inventory and purge tests; and
+- a complete derived-artifact inventory with source/version dependencies;
+- invalidation, rebuild, and purge tests for summaries, relations, indexes,
+  caches, checkpoints, exports, backups, and learned artifacts;
+- epistemic-role and task-applicability gates; and
 - adversarial origin/role tests.
 
 #### Phase M2: episodic and working memory
@@ -904,7 +971,8 @@ This determines whether ordinary cross-client continuity creates real value.
 #### Phase M3: strong nonlearned hybrid
 
 - additive extraction baseline;
-- temporal/entity projections;
+- flat bitemporal event notes and deterministic links;
+- typed temporal/entity/causal projections only where an ablation earns them;
 - lexical + optional dense + entity/time fusion;
 - deterministic conflict/exception/support closure;
 - background summaries with exact lineage; and
@@ -913,9 +981,11 @@ This determines whether ordinary cross-client continuity creates real value.
 #### Phase M4: procedural experience
 
 - observable outcome records;
-- success/failure procedure distillation;
+- recurrence, counterexample, wrong-feedback repair, and outcome-quality gates;
+- success/failure procedure distillation only after those gates pass;
 - procedure retrieval and ranking;
-- false-transfer and repeated-failure benchmarks; and
+- false-transfer, easy-task regression, repeated-failure, and purge
+  benchmarks; and
 - no private shared weights.
 
 ### Track C — build the differentiated plane
@@ -951,8 +1021,8 @@ No real message, payment, deployment, or destructive action.
 #### Phase C3: outcome closure
 
 - `MemoryUseTransaction`;
-- reverse dependencies across projections and local learned artifacts;
-- correction and purge rebuild;
+- host-level reverse dependencies across issued capsules and interventions;
+- correction and purge repair across supported checkpoints;
 - offline contribution evaluation; and
 - audit showing no reachable private residue in the declared boundary.
 
@@ -1000,23 +1070,28 @@ successful research outcome when the deterministic product becomes clearer.
 
 The next artifacts should be concrete and separable:
 
-1. **ATC Memory Lab specification** — common input, output, model, cost, and
-   stage-diagnostic contracts.
-2. **Baseline adapters** — ATC, long context, static profile, Mem0 v3,
-   Graphiti, and Hindsight on one pinned subset.
-3. **Memory reliability scorecard** — capture through outcome, including
-   correction, abstention, disclosure, and purge.
-4. **Experience and working-state schema** — no production migration until
+1. **Execute the baseline ladder** — extend the implemented M0 retrieval slice
+   with long context, static profile, raw append-log, stable observation-log,
+   and file-search controls.
+2. **Run the first reliability gates** — current-state mutation, applicability,
+   harmful memory, action grounding, and derived-state purge residue.
+3. **Add isolated supplier adapters** — Hindsight first, then Mem0 and
+   Graphiti, each pinned and reviewed before execution.
+4. **Implement longitudinal Memory Lab episodes** — bridge the M0 retrieval ABI
+   to the frozen CAOS scenarios without giving an adapter canonical authority.
+5. **Inventory derived state** — define exact lineage, invalidation, rebuild,
+   and purge contracts before adding summaries, graphs, or learned artifacts.
+6. **Experience and working-state schema** — no production migration until
    benchmark scenarios prove the need.
-5. **Foundation repair design** — witness classes, direct-secret refusal, and
-   append-only decisions.
-6. **Contracts Lite prototype** — one soft cross-agent behavior with static
+7. **Foundation repair design** — witness classes, direct-secret refusal,
+   append-only decisions, and epistemic/applicability gates.
+8. **Contracts Lite prototype** — one soft cross-agent behavior with static
    lowering and an observable verifier.
-7. **Reference host fault model** — prove consequence closure on synthetic
+9. **Reference host fault model** — prove consequence closure on synthetic
    actions before any real effect integration.
 
-The first implementation milestone should not be a neural memory model. It
-should be an apples-to-apples result showing:
+The first implementation milestone is not a neural memory model or a general
+graph. It is an apples-to-apples result showing:
 
 - which existing system best captures and retrieves ATC-like personal context;
 - where that system fails on authority, correction, action, or purge;
@@ -1038,18 +1113,18 @@ constraints:
 3. **Consequence-Closed Context is the differentiated second plane.** Do not
    present it as the entire memory solution or make its protocol depend on
    learned compilation.
-4. **The moat is governed learning across the whole lifecycle.** Core keeps
-   truth, external and learned systems improve derived memory, observable
-   outcomes teach the system, and correction/purge can remove future private
-   influence.
+4. **The moat is governed memory use across the whole lifecycle.** Core keeps
+   truth, external and learned systems may improve derived memory, observable
+   outcomes test those improvements, and correction/purge can remove future
+   private influence. Learning is optional and must earn promotion.
 
 The strongest long-term product statement is:
 
-> ATC is a user-owned memory reliability layer: it preserves evidence, maintains
-> current knowledge, learns from experience, supplies the smallest sufficient
-> context across agents, carries confirmed intent to the checkpoint where it
-> matters, and can stop corrected private memory from remaining current in its
-> own future derived behavior.
+> ATC is a user-owned memory reliability control plane: it preserves evidence,
+> governs what may become current, selects the minimum authorized and
+> applicable context across agents, measures whether that context improved the
+> outcome, carries confirmed intent to the checkpoint where it matters, and can
+> invalidate or purge its future derived influence.
 
 That is broader than retrieval, narrower than a claim of human memory, and
 measurable enough to build.
