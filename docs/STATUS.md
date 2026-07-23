@@ -45,6 +45,11 @@ means connecting directly to Core while Core is online.
   the canonical Pages channel automatically. The artifact transport follows
   GitHub's single pinned release-CDN redirect while retaining signed size and
   SHA-256 verification; metadata and arbitrary redirects remain refused.
+- Manual candidate and publish workflows keep repository-admin credentials out
+  of Actions. An owner verifies the immutable-release setting locally, enters
+  an exact nonsecret dispatch phrase, and Actions independently enforces the
+  source head, unused release slot, artifact evidence, and final immutable
+  published state.
 
 ## V1 Edge removal
 
@@ -113,7 +118,7 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python 3.12 suite: 459 passed; four Windows-host symlink tests skipped because
+- Full Python 3.12 suite: 461 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests
   on the minimum supported Python 3.12 runtime.

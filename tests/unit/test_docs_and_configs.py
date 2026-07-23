@@ -80,7 +80,11 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--ota-target windows:x86_64" in candidate
     assert "--clobber" not in candidate
     assert "github_release_gate.py" in candidate
+    assert "BUILD IMMUTABLE CANDIDATE" in candidate
+    assert "--operator-verified-immutability" in candidate
     assert "environment: release-promotion" in publish
+    assert "immutable-releases" not in publish
+    assert "PUBLISH UNSIGNED BETA" in publish
     assert "gh release verify" in publish
     assert "workflow_dispatch" in promote
     assert "actions/upload-pages-artifact@v4" in promote
@@ -93,6 +97,8 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "unsigned community builds" in releases
     assert "not a community release gate" in releases
     assert "Pages is an explicit operator gate" in releases
+    assert "Administration: read" in releases
+    assert "BUILD IMMUTABLE CANDIDATE" in releases
     assert "encrypted PKCS8" in releases
     assert packaged_keys == keys
     assert keys == {

@@ -1,4 +1,4 @@
-"""Read-only GitHub release preflight for immutable, single-use candidates."""
+"""Read-only GitHub release preflight for single-use candidates."""
 
 from __future__ import annotations
 
@@ -25,7 +25,9 @@ class GitHubReader:
     api_url: str = "https://api.github.com"
 
     def get(self, endpoint: str, *, missing_ok: bool = False) -> dict[str, Any] | None:
-        url = f"{self.api_url.rstrip('/')}/repos/{self.repository}/{endpoint.lstrip('/')}"
+        repository_url = f"{self.api_url.rstrip('/')}/repos/{self.repository}"
+        normalized_endpoint = endpoint.lstrip("/")
+        url = f"{repository_url}/{normalized_endpoint}" if normalized_endpoint else repository_url
         request = urllib.request.Request(
             url,
             headers={
@@ -59,6 +61,7 @@ def preflight_candidate(
     token: str,
     api_url: str,
     require_default_head: bool = True,
+    require_immutability_api: bool = True,
 ) -> None:
     if REPOSITORY.fullmatch(repository) is None:
         raise ManifestError("GitHub repository must be OWNER/REPOSITORY")
@@ -69,9 +72,10 @@ def preflight_candidate(
         raise ManifestError("GitHub token is required for fail-closed release preflight")
     tag = f"v{version}"
     reader = GitHubReader(repository, token, api_url)
-    immutable = reader.get("immutable-releases")
-    if immutable is None or immutable.get("enabled") is not True:
-        raise ManifestError("repository release immutability must be enabled by an operator")
+    if require_immutability_api:
+        immutable = reader.get("immutable-releases")
+        if immutable is None or immutable.get("enabled") is not True:
+            raise ManifestError("repository release immutability must be enabled by an operator")
     if require_default_head:
         metadata = reader.get("")
         default_branch = metadata.get("default_branch") if metadata is not None else None
@@ -101,7 +105,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-default-branch-advance",
         action="store_true",
-        help="recheck immutability and the unused tag without requiring main to remain stationary",
+        help="recheck the unused tag without requiring the default branch to remain stationary",
+    )
+    parser.add_argument(
+        "--operator-verified-immutability",
+        action="store_true",
+        help=(
+            "skip the admin-only immutability API after a repository owner has "
+            "verified it outside GitHub Actions"
+        ),
     )
     return parser
 
@@ -116,8 +128,14 @@ def main() -> int:
             token=os.environ.get(arguments.token_env, ""),
             api_url=arguments.api_url,
             require_default_head=not arguments.allow_default_branch_advance,
+            require_immutability_api=not arguments.operator_verified_immutability,
         )
-        print("validated immutable, unused GitHub release slot at the default-branch head")
+        immutability = (
+            "operator-verified immutable"
+            if arguments.operator_verified_immutability
+            else "API-verified immutable"
+        )
+        print(f"validated {immutability}, unused GitHub release slot")
         return 0
     except ManifestError as exc:
         raise SystemExit(f"GitHub release gate error: {exc}") from exc

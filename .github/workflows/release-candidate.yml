@@ -16,6 +16,10 @@ on:
         description: Full 40-character commit SHA at the default-branch head
         required: true
         type: string
+      approval:
+        description: After owner preflight, type BUILD IMMUTABLE CANDIDATE
+        required: true
+        type: string
 
 concurrency:
   group: release-candidate-${{ inputs.version }}
@@ -29,6 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require deliberate operator preflight phrase
+        shell: bash
+        env:
+          APPROVAL: ${{ inputs.approval }}
+        run: test "$APPROVAL" = "BUILD IMMUTABLE CANDIDATE"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -50,7 +59,7 @@ jobs:
         run: >-
           python scripts/release_keyring.py validate
           --require-channel "${{ inputs.channel }}"
-      - name: Require immutable releases, default-branch head, and unused version
+      - name: Require operator-verified immutability, default-branch head, and unused version
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
@@ -58,6 +67,7 @@ jobs:
           --repository "${{ github.repository }}"
           --version "${{ inputs.version }}"
           --source-commit "${{ inputs.source_commit }}"
+          --operator-verified-immutability
 
   native:
     needs: validate
@@ -266,7 +276,7 @@ jobs:
           --signer-workflow "${{ github.repository }}/.github/workflows/release-candidate.yml"
           --source-digest "${{ inputs.source_commit }}"
           --deny-self-hosted-runners
-      - name: Recheck the immutable unused release slot after the build
+      - name: Recheck the operator-confirmed unused release slot after the build
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
@@ -274,6 +284,7 @@ jobs:
           --repository "${{ github.repository }}"
           --version "${{ inputs.version }}"
           --source-commit "${{ inputs.source_commit }}"
+          --operator-verified-immutability
           --allow-default-branch-advance
       - name: Write explicit unsigned candidate notes
         run: >-
