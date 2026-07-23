@@ -1049,3 +1049,34 @@ that role, applicability, lineage, and procedure-precondition semantics can be
 implemented without creating a second authority. M2's unkeyed synthetic
 commitments, logical timing classes, hand-authored obligations, and
 compiler-visible attestations are not production privacy or security designs.
+
+## ADR-048: Wave 4 tests influence closure and observable use before product promotion
+
+**Status:** accepted for active research execution 2026-07-23; no Wave 4
+result or production change is accepted.
+
+Wave 4 starts four fresh visible worktree tasks from one immutable
+governance-only base. M3 tests incremental dependency-complete repair against
+a full-rebuild oracle across correction, scope narrowing, permission
+revocation, delete, purge, and policy-generation change. E02 exercises the six
+semantic gaps recorded by Wave 3 against disposable synthetic instances of
+the frozen production Core. M1 tests an observable assignment/use/outcome
+ledger that is forbidden from storing hidden reasoning or raw context. F02
+commits an independent falsification oracle before mechanism implementation
+and performs the final result review.
+
+M3 can advance only with zero published stale descendants, zero optimized
+versus full-rebuild eligibility mismatches, zero purge residue in inspectable
+derived state, and fail-closed behavior across partial repair and stale-writer
+attempts. Correct closure without a work reduction may retain the contract
+while holding the optimization. E02 must preserve `UNSUPPORTED` and
+`NOT_EXERCISED` as distinct outcomes and cannot patch a failed path. M1 events
+must bind canonical record identifiers and versions, reject impossible causal
+transitions and conflicting replay, and distinguish non-acknowledgement from
+non-use.
+
+Core remains the sole authority. Workers may add only research-specific files,
+cannot access the operator Core, cannot use personal context, credentials,
+external code, models, or providers, and cannot merge, push, edit governance,
+or change production behavior. A separate decision is required before any
+schema or runtime promotion.

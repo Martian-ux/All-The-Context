@@ -202,6 +202,25 @@ dependency-complete influence closure. Only the bounded M2 compiler contract
 advanced; no production implementation, external benchmark result, or claim
 that ATC has solved AI memory is accepted.
 
+## Memory Lab Wave 4
+
+Wave 4 is preparing under ADR-048 and
+`research/memory-lab/wave4-manifest.json`. Four fresh visible
+`gpt-5.6-sol` worktree tasks will start from one immutable governance-only
+commit:
+
+- F02 independent falsification and primary-source prior-art review, medium;
+- M3 dependency-complete influence closure versus a full rebuild, high;
+- E02 frozen production-Core semantic-gap conformance, high; and
+- M1 observable assignment/use/outcome/invalidation receipts, medium.
+
+The independent oracle must precede mechanism implementation. Workers own only
+new research files, cannot edit production or governance, and cannot access
+the operator Core, personal context, credentials, external code, models, or
+providers. M3 fails on any stale publication, rebuild mismatch, purge residue,
+or fail-open partial repair. M1 cannot store hidden reasoning or raw supplied
+context. No Wave 4 evidence or production promotion is accepted yet.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,

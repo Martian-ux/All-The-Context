@@ -126,3 +126,23 @@ execution-denied external intake. The
 [integrated Wave 3 result](ATC_MEMORY_LAB_WAVE3_RESULTS_2026-07-23.md) records
 coordinator reproduction and the resulting Evidence-Compiled Memory research
 direction. No result grants production authority.
+
+## Wave 4 ownership
+
+Wave 4 applies the same coordinator-only governance to four new-file-only
+cells from one immutable governance commit:
+
+| Cell | Scope | Reasoning |
+|---|---|---|
+| F02 | Independent falsification oracle, closest prior art, and post-result review | `gpt-5.6-sol` medium |
+| M3 | Dependency-complete incremental influence closure versus full rebuild | `gpt-5.6-sol` high |
+| E02 | Frozen production-Core semantic-gap conformance and implementation boundary | `gpt-5.6-sol` high |
+| M1 | Observable assignment, supply, use, action, outcome, and invalidation ledger | `gpt-5.6-sol` medium |
+
+F02 commits its oracle before mechanism implementation so M3 and M1 cannot
+choose their own attacks. All workers are forbidden from editing production,
+existing shared harnesses, governance, or another worker's files. E02 may
+exercise only disposable synthetic Core stores and cannot patch a gap. No
+worker may access personal context, credentials, external code, providers,
+models, or the operator Core. The machine-readable Wave 4 manifest is
+authoritative for the frozen gates and final worker identities.
