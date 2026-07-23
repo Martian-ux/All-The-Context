@@ -1,0 +1,332 @@
+{
+  "schema": "atc.memory-lab.supplier-provenance.v1",
+  "supplier": "Hindsight",
+  "observed_at": "2026-07-23T19:43:12Z",
+  "official_repository": {
+    "owner": "vectorize-io",
+    "name": "hindsight",
+    "url": "https://github.com/vectorize-io/hindsight",
+    "clone_url": "https://github.com/vectorize-io/hindsight.git",
+    "default_branch": "main",
+    "reviewed_revision": "fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+    "reviewed_tree": "23003d0cf9222bb5e7443d5fbddca80ac6fbb20d",
+    "commit_url": "https://github.com/vectorize-io/hindsight/commit/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+    "commit_time": "2026-07-23T18:47:55Z",
+    "commit_signature_verified_by_github": true,
+    "head_at_reverification": "0db0d3ec93468ccaa3fa921b51ac486f33863108",
+    "head_difference": "The intake pin remained available and verified but was no longer main HEAD."
+  },
+  "source_cache": {
+    "logical_path": "research/vendor-cache/hindsight-fa69b5b",
+    "ignored_by_git": true,
+    "partial_clone_filter": "blob:none",
+    "checkout_mode": "detached",
+    "retained_after_static_audit": false,
+    "removal_scope": "Only the exact disposable clone path was removed after static review.",
+    "source_executed": false,
+    "source_copied_into_atc": false
+  },
+  "license_review": {
+    "root_spdx": "MIT",
+    "root_license_sha256": "336b67b88975e3e39335aea1bc516cf340c5b75290079e01eb3bac65ec399e29",
+    "root_copyright": "Copyright (c) 2025 Vectorize AI, Inc.",
+    "license_like_files": 13,
+    "nested_license_files": 12,
+    "nested_license_spdx": "MIT",
+    "notice_files": 0,
+    "component_caveat": "Repository MIT terms do not license hosted services, trademarks, container bases, dependencies, database extensions, or model weights."
+  },
+  "packaging": {
+    "python_version_file": "3.11",
+    "declared_python": ">=3.11",
+    "api_version": "0.8.5",
+    "uv_lock_sha256": "eb1dd31ab436bc41df8b34886ce93a8cd8033cdda2e03775a31b23f2a1bfe5f9",
+    "uv_index_strategy": "unsafe-best-match",
+    "locked_package_records": 258,
+    "locked_registry_records_queried_in_osv": 251,
+    "windows_python_3_12_closures": {
+      "hindsight_client": 19,
+      "hindsight_api_slim_base": 195,
+      "hindsight_api_slim_with_embedded_db": 196,
+      "hindsight_api_slim_all": 208,
+      "hindsight_all": 212
+    },
+    "api_slim_direct_dependencies": 54,
+    "api_slim_direct_dependency_graph": [
+      "aiohttp",
+      "alembic",
+      "anthropic",
+      "asyncpg",
+      "authlib",
+      "boto3",
+      "claude-agent-sdk",
+      "cohere",
+      "croniter",
+      "cryptography",
+      "dateparser",
+      "fastapi[standard]",
+      "fastmcp",
+      "filelock",
+      "google-auth",
+      "google-genai",
+      "greenlet",
+      "httpx",
+      "json-repair",
+      "langchain-core",
+      "langchain-text-splitters",
+      "langsmith",
+      "litellm",
+      "markitdown[docx,pdf,pptx,xls,xlsx]",
+      "obstore",
+      "openai",
+      "opentelemetry-api",
+      "opentelemetry-exporter-otlp-proto-http",
+      "opentelemetry-exporter-prometheus",
+      "opentelemetry-instrumentation-fastapi",
+      "opentelemetry-sdk",
+      "opentelemetry-semantic-conventions",
+      "orjson",
+      "pgvector",
+      "pillow",
+      "protobuf",
+      "psycopg2-binary",
+      "pyasn1",
+      "pydantic",
+      "pygments",
+      "pyjwt[crypto]",
+      "python-dateutil",
+      "python-dotenv",
+      "python-multipart",
+      "rich",
+      "sqlalchemy",
+      "tiktoken",
+      "tornado",
+      "typer",
+      "urllib3",
+      "uvicorn",
+      "uvloop; sys_platform != 'win32'",
+      "winloop; sys_platform == 'win32'",
+      "wsproto"
+    ],
+    "api_slim_optional_dependency_graph": {
+      "all": [
+        "einops",
+        "flashrank",
+        "huggingface-hub",
+        "mlx; sys_platform != 'win32'",
+        "mlx-lm; sys_platform != 'win32'",
+        "numpy",
+        "onnxruntime",
+        "pg0-embedded",
+        "safetensors",
+        "sentence-transformers",
+        "tokenizers",
+        "torch; sys_platform == 'darwin'",
+        "torch; sys_platform != 'darwin'",
+        "transformers"
+      ],
+      "embedded-db": [
+        "pg0-embedded"
+      ],
+      "local-llm": [
+        "huggingface-hub",
+        "llama-cpp-python"
+      ],
+      "local-ml": [
+        "einops",
+        "flashrank",
+        "mlx; sys_platform != 'win32'",
+        "mlx-lm; sys_platform != 'win32'",
+        "safetensors",
+        "sentence-transformers",
+        "tokenizers",
+        "torch; sys_platform == 'darwin'",
+        "torch; sys_platform != 'darwin'",
+        "transformers"
+      ],
+      "local-onnx": [
+        "huggingface-hub",
+        "numpy",
+        "onnxruntime",
+        "tokenizers",
+        "transformers"
+      ]
+    },
+    "native_or_model_runtime_examples": [
+      "asyncpg",
+      "cryptography",
+      "obstore",
+      "onnxruntime",
+      "orjson",
+      "pg0-embedded",
+      "pillow",
+      "psycopg2-binary",
+      "sentence-transformers",
+      "tokenizers",
+      "torch",
+      "transformers",
+      "winloop"
+    ],
+    "provider_or_egress_runtime_examples": [
+      "anthropic",
+      "boto3",
+      "claude-agent-sdk",
+      "cohere",
+      "google-genai",
+      "langsmith",
+      "litellm",
+      "openai",
+      "opentelemetry-exporter-otlp-proto-http"
+    ]
+  },
+  "dependency_license_review": {
+    "scope": "208-package Windows/Python 3.12 hindsight-api-slim[all] closure",
+    "metadata_source": "Exact-version PyPI JSON metadata; PyTorch CPU index and model repositories reviewed separately.",
+    "pypi_records_reviewed": 206,
+    "unresolved_or_special_cases": [
+      "caio 0.9.25 did not declare a license in PyPI metadata",
+      "psycopg2-binary 2.9.11 declares LGPL with exceptions",
+      "docutils 0.22.3 publishes mixed BSD/GPL/public-domain classifiers",
+      "torch 2.10.0+cpu comes from the PyTorch CPU index rather than PyPI",
+      "downloaded model artifacts would require their own immutable revision and file digest inventory"
+    ],
+    "default_model_repositories": [
+      {
+        "id": "BAAI/bge-small-en-v1.5",
+        "declared_license": "MIT",
+        "hindsight_revision_pin": null
+      },
+      {
+        "id": "cross-encoder/ms-marco-MiniLM-L6-v2",
+        "declared_license": "Apache-2.0",
+        "hindsight_revision_pin": null
+      },
+      {
+        "id": "intfloat/multilingual-e5-small",
+        "declared_license": "MIT",
+        "hindsight_revision_pin": null
+      }
+    ]
+  },
+  "vulnerability_review": {
+    "source": "OSV querybatch against exact locked registry versions on 2026-07-23",
+    "result_records": 10,
+    "unique_advisories": [
+      {
+        "package": "click",
+        "version": "8.1.8",
+        "id": "CVE-2026-7246",
+        "aliases": [
+          "GHSA-47fr-3ffg-hgmw",
+          "PYSEC-2026-2132"
+        ],
+        "fixed": "8.3.3",
+        "runtime_scope": "api-slim base"
+      },
+      {
+        "package": "jaraco-context",
+        "version": "6.0.1",
+        "id": "CVE-2026-23949",
+        "aliases": [
+          "GHSA-58pv-8j8x-9vj2",
+          "PYSEC-2026-1469"
+        ],
+        "fixed": "6.1.0",
+        "runtime_scope": "api-slim base through fastmcp/keyring"
+      },
+      {
+        "package": "setuptools",
+        "version": "80.9.0",
+        "id": "CVE-2026-59890",
+        "aliases": [
+          "GHSA-h35f-9h28-mq5c",
+          "PYSEC-2026-3447"
+        ],
+        "fixed": "83.0.0",
+        "runtime_scope": "all/local-ML closure through torch; macOS sdist risk"
+      },
+      {
+        "package": "torch",
+        "version": "2.10.0+cpu",
+        "id": "CVE-2025-3000",
+        "aliases": [
+          "GHSA-rrmf-rvhw-rf47",
+          "PYSEC-2025-194"
+        ],
+        "fixed": "2.13.0",
+        "runtime_scope": "all/local-ML closure"
+      },
+      {
+        "package": "torch",
+        "version": "2.10.0+cpu",
+        "id": "CVE-2026-4538",
+        "aliases": [
+          "PYSEC-2026-139"
+        ],
+        "fixed": null,
+        "runtime_scope": "all/local-ML closure"
+      },
+      {
+        "package": "diskcache",
+        "version": "5.6.3",
+        "id": "CVE-2025-69872",
+        "aliases": [
+          "GHSA-w8v5-vhqr-4h9v",
+          "PYSEC-2026-2447"
+        ],
+        "fixed": null,
+        "runtime_scope": "optional local-LLM closure through llama-cpp-python"
+      }
+    ],
+    "interpretation": "The client-only 19-package boundary did not contain these findings, but it requires a separately running Hindsight service. The reviewed service closures contain known affected versions and were not installed."
+  },
+  "network_and_data_flow": {
+    "default_api_bind": "0.0.0.0:8888",
+    "python_in_process_bind": "127.0.0.1 with an automatically selected port",
+    "default_database": "pg0 embedded PostgreSQL",
+    "default_llm": "OpenAI gpt-4o-mini",
+    "default_embeddings": "local BAAI/bge-small-en-v1.5 with an unpinned model revision",
+    "default_reranker": "local cross-encoder/ms-marco-MiniLM-L6-v2 with an unpinned model revision",
+    "default_raw_document_storage": true,
+    "default_llm_trace_storage": "Enabled; local database rows may retain up to 50,000 input/output characters for one day.",
+    "opentelemetry_export": "Available but disabled by default",
+    "webhooks": "Available; global URL disabled by default and per-bank registration is exposed",
+    "optional_external_storage": [
+      "S3-compatible",
+      "Google Cloud Storage",
+      "Azure Blob Storage"
+    ],
+    "provider_egress": "Retain/reflect/consolidation can send memory content to configured LLMs; remote embeddings and rerankers can send memory/query content; webhooks and OTLP can emit operational data when enabled.",
+    "configuration_risk": "Importing config searches current and parent directories for .env and loads it with override=True.",
+    "adapter_assurance_boundary": "The adapter validates a zero-egress configuration declaration and rejects reported model usage, but cannot enforce transport or network behavior.",
+    "future_runtime_prerequisites": [
+      "Bind every supplier listener to 127.0.0.1 only.",
+      "Apply an external default-deny egress control to the supplier process.",
+      "Provide pre-reviewed, immutable local model artifacts without runtime downloads.",
+      "Keep webhooks, OTLP export, remote storage, remote providers, and credential discovery disabled."
+    ]
+  },
+  "supported_local_modes": [
+    "Docker all-in-one with embedded PostgreSQL and local embedding/reranking models; still requires an LLM provider unless none mode is selected.",
+    "Bare-metal API with embedded pg0 or external PostgreSQL.",
+    "Python in-process HindsightServer bound to loopback.",
+    "Managed HindsightEmbedded daemon with profile state under the user directory.",
+    "LLM provider none: real chunks-only retain/recall with observations, consolidation, and reflect disabled.",
+    "Local llama.cpp LLM, local/ONNX embeddings, and local/RRF reranking are possible only with additional native/model artifacts."
+  ],
+  "trusted_sources": [
+    "https://api.github.com/repos/vectorize-io/hindsight",
+    "https://api.github.com/repos/vectorize-io/hindsight/commits/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+    "https://github.com/vectorize-io/hindsight/tree/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+    "https://raw.githubusercontent.com/vectorize-io/hindsight/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f/LICENSE",
+    "https://hindsight.vectorize.io/developer/installation",
+    "https://hindsight.vectorize.io/developer/storage",
+    "https://hindsight.vectorize.io/developer/models",
+    "https://api.osv.dev/v1/querybatch",
+    "https://pypi.org/",
+    "https://huggingface.co/BAAI/bge-small-en-v1.5",
+    "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2",
+    "https://huggingface.co/intfloat/multilingual-e5-small",
+    "https://aclanthology.org/2026.acl-demo.27/"
+  ]
+}
