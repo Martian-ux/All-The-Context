@@ -1,0 +1,404 @@
+{
+  "base_commit": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
+  "canary_boundary": {
+    "compiler_visible_attestation_patterns": 3,
+    "named_families": 5,
+    "patterns": [
+      "unauthorized",
+      "not_temporally_current",
+      "not_applicable"
+    ],
+    "upstream_distinctions_not_tested": [
+      "deleted_vs_purged",
+      "out_of_scope_vs_other_authorized_inapplicability"
+    ]
+  },
+  "compiler_module": "allthecontext.memory_lab_m2",
+  "conditions": {
+    "ablation_applicability_after_ranking": {
+      "budget_violations": 0,
+      "caos_passes": 29600,
+      "caos_rate": 0.74,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 10400,
+      "issued_sufficient_trials": 29600,
+      "mean_disclosure_chars": 46.9,
+      "minimal_trials": 7200,
+      "one_deletion_minimality_rate": 0.243243,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 8000,
+        "full_observable_receipt": 8000,
+        "learning_update_state": 8000,
+        "reason_code_multiset": 6400,
+        "semantic_output": 8000,
+        "timing_class": 6400
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 0.74,
+      "sufficient_trials": 29600,
+      "trial_count": 40000
+    },
+    "ablation_authorization_after_relevance": {
+      "budget_violations": 0,
+      "caos_passes": 26000,
+      "caos_rate": 0.65,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 14000,
+      "issued_sufficient_trials": 26000,
+      "mean_disclosure_chars": 41.05,
+      "minimal_trials": 12000,
+      "one_deletion_minimality_rate": 0.461538,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 20000,
+        "full_observable_receipt": 20000,
+        "learning_update_state": 20000,
+        "reason_code_multiset": 16000,
+        "semantic_output": 20000,
+        "timing_class": 16000
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 0.65,
+      "sufficient_trials": 26000,
+      "trial_count": 40000
+    },
+    "ablation_no_cumulative_disclosure": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 104000,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 38.0,
+      "minimal_trials": 40000,
+      "one_deletion_minimality_rate": 1.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "ablation_no_current_version_reread": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 104000,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 38.0,
+      "minimal_trials": 40000,
+      "one_deletion_minimality_rate": 1.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "ablation_no_delete_and_recompile": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 66.9,
+      "minimal_trials": 0,
+      "one_deletion_minimality_rate": 0.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "ablation_no_epistemic_role": {
+      "budget_violations": 0,
+      "caos_passes": 32000,
+      "caos_rate": 0.8,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 8000,
+      "issued_sufficient_trials": 32000,
+      "mean_disclosure_chars": 37.1,
+      "minimal_trials": 32000,
+      "one_deletion_minimality_rate": 1.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 0.8,
+      "sufficient_trials": 32000,
+      "trial_count": 40000
+    },
+    "ablation_top_k_without_closure": {
+      "budget_violations": 0,
+      "caos_passes": 20000,
+      "caos_rate": 0.5,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 20000,
+      "issued_sufficient_trials": 20000,
+      "mean_disclosure_chars": 31.3,
+      "minimal_trials": 20000,
+      "one_deletion_minimality_rate": 1.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 0.5,
+      "sufficient_trials": 20000,
+      "trial_count": 40000
+    },
+    "existing_deterministic_set_selection": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 66.9,
+      "minimal_trials": 0,
+      "one_deletion_minimality_rate": 0.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "full_authorized_context": {
+      "budget_violations": 0,
+      "caos_passes": 33600,
+      "caos_rate": 0.84,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 6400,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 70.1,
+      "minimal_trials": 0,
+      "one_deletion_minimality_rate": 0.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 6400,
+        "full_observable_receipt": 7200,
+        "learning_update_state": 6400,
+        "reason_code_multiset": 6400,
+        "semantic_output": 6400,
+        "timing_class": 6400
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "sealed_minimal_projection": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 104000,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 38.0,
+      "minimal_trials": 40000,
+      "one_deletion_minimality_rate": 1.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    },
+    "sealed_non_minimal_projection": {
+      "budget_violations": 0,
+      "caos_passes": 40000,
+      "caos_rate": 1.0,
+      "deletion_tests": 0,
+      "forbidden_influence_trials": 0,
+      "insufficient_issued_trials": 0,
+      "issued_sufficient_trials": 40000,
+      "mean_disclosure_chars": 66.9,
+      "minimal_trials": 0,
+      "one_deletion_minimality_rate": 0.0,
+      "pair_channel_failure_counts": {
+        "cursor_page_shape": 0,
+        "full_observable_receipt": 0,
+        "learning_update_state": 0,
+        "reason_code_multiset": 0,
+        "semantic_output": 0,
+        "timing_class": 0
+      },
+      "paired_vault_opportunities": 20000,
+      "repeat_deterministic": true,
+      "sufficiency_rate": 1.0,
+      "sufficient_trials": 40000,
+      "trial_count": 40000
+    }
+  },
+  "contrasts": {
+    "minimal_vs_full_authorized_caos_delta": 0.16,
+    "minimal_vs_full_authorized_mean_disclosure_reduction": 32.1,
+    "minimal_vs_sealed_non_minimal_caos_delta": 0.0,
+    "minimal_vs_sealed_non_minimal_mean_disclosure_reduction": 28.9
+  },
+  "decision": {
+    "reason_codes": [
+      "sealed_projection_noninterference_passed",
+      "finite_one_deletion_minimality_passed",
+      "minimum_disclosure_improved",
+      "generalized_product_claim_not_established"
+    ],
+    "state": "narrow_retain_bounded_m2"
+  },
+  "decisive_faults": {
+    "cumulative_limit_opportunities": 1000,
+    "current_version_change_opportunities": 1000,
+    "no_cumulative_ablation_enforced_limit": 0,
+    "no_current_reread_detected_current_version_change": 0,
+    "sealed_minimal_detected_current_version_change": 1000,
+    "sealed_minimal_enforced_cumulative_limit": 1000
+  },
+  "deterministic_fingerprints": {
+    "ablation_applicability_after_ranking": "facd2dac2ab4e8d1e3d4377c40000c6c54670f24d9c208cfe87fbae90eb1659c",
+    "ablation_authorization_after_relevance": "ce8c76f3d2656a943ff44786c1aa2e4d7d96736d226fe4e133d7201aeffcb448",
+    "ablation_no_cumulative_disclosure": "963b7a87ea3ca3ad841c9e8e63dd7cd187daa8c5a3d4feaca5160e49988019b3",
+    "ablation_no_current_version_reread": "963b7a87ea3ca3ad841c9e8e63dd7cd187daa8c5a3d4feaca5160e49988019b3",
+    "ablation_no_delete_and_recompile": "6ad93b890c79d0aef0e9cab85941177d6c69e2b0d08e1a63c08c8c7e2c9b7c9d",
+    "ablation_no_epistemic_role": "65cc3f36c76619d3f358ef4640c046f43ea2eb1beb206c1e1751cff0c452ba4e",
+    "ablation_top_k_without_closure": "435432dbca2aa22480b3a715ffd5c8f408e9353fc49974cc7062d3af5bb40551",
+    "existing_deterministic_set_selection": "638b47b9cb827b0d41f67a5069d8c3ca9e6f0123a6bc6bd3a2e1baf2d390ec98",
+    "full_authorized_context": "ec5a55f44ad217ceb4d06e03cea09cdf5622372a2fe3c0041d7267f3118140f2",
+    "sealed_minimal_projection": "963b7a87ea3ca3ad841c9e8e63dd7cd187daa8c5a3d4feaca5160e49988019b3",
+    "sealed_non_minimal_projection": "6ad93b890c79d0aef0e9cab85941177d6c69e2b0d08e1a63c08c8c7e2c9b7c9d"
+  },
+  "environment": {
+    "implementation": "CPython",
+    "model_calls": 0,
+    "monetary_cost_usd": 0.0,
+    "network_calls": 0,
+    "operating_system": "Windows",
+    "provider_tokens": 0,
+    "python": "3.12.10",
+    "timing_measurement": "post_seal_logical_bucket_only_excludes_pre_seal_scan_and_machine_timing"
+  },
+  "evidence_level": "L1_isolated_deterministic_synthetic",
+  "exhaustive_finite_checks": {
+    "case_count": 1000,
+    "maximum_character_gap": 0,
+    "nonzero_optimum_gap_cases": 0,
+    "one_deletion_checks": 2600,
+    "removable_item_failures": 0
+  },
+  "falsifiers": {
+    "exhaustive_optimum_gap_cases": 0,
+    "insufficient_issued_set": 0,
+    "protected_observable_difference": 0,
+    "removable_selected_item": 0
+  },
+  "finite_bounds": {
+    "character_budget_unit": "unicode_code_points",
+    "maximum_candidates": 12,
+    "maximum_obligations": 4
+  },
+  "fixture_sha256": "20981c3da697f95c1bd791ab4aba9d2b1031afc586f71c94a70f0b9c359082b7",
+  "leak_scan": {
+    "forbidden_value_count": 2058,
+    "matches": 0,
+    "passed": true,
+    "scanned_for_raw_record_keys_contents_obligations_and_canaries": true
+  },
+  "oracle_boundary": {
+    "compiler_inputs": [
+      "record_policy_currentness_applicability_attestations",
+      "typed_roles",
+      "declared_obligations",
+      "dependencies",
+      "fixed_character_budget"
+    ],
+    "compiler_receives_harness_oracle": false,
+    "harness_only": [
+      "required_item_groups",
+      "forbidden_canary_identity",
+      "caos_judgment",
+      "deletion_minimality_judgment",
+      "exhaustive_optimum"
+    ],
+    "semantic_label_assumption": "obligation_ids_coverage_ids_and_accepted_roles_are_frozen_hand_authored_upstream_labels"
+  },
+  "pair_count": 1000,
+  "paired_trace_executions": 20000,
+  "repeats": 20,
+  "schema": "atc.memory-lab.m2-report.v1",
+  "trial_count": 40000,
+  "validity_limitations": [
+    "symbolic_fixture_and_compiler_contract_were_co_designed",
+    "no_reader_model_or_real_action",
+    "caos_is_harness_deterministic_not_product_evidence",
+    "local_one_deletion_minimality_not_global_prompt_optimality",
+    "obligation_coverage_and_role_labels_are_hand_authored_and_fixture_aligned",
+    "sha256_fields_are_linkable_dictionary_attackable_synthetic_commitments",
+    "production_receipts_require_a_reviewed_keyed_or_blinded_construction",
+    "five_named_canaries_collapse_to_three_compiler_visible_attestations",
+    "deletion_vs_purge_and_scope_vs_other_inapplicability_remain_upstream",
+    "timing_class_covers_post_seal_logical_work_only",
+    "pre_seal_authorization_scan_length_and_actual_runtime_are_not_protected_claims",
+    "existing_set_selection_is_used_only_where_its_metadata_contract_applies",
+    "no_production_core_or_operator_context"
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "schema": "atc.memory-lab.m2-fixture.v1",
+  "pair_generation": {
+    "template_count": 10,
+    "canary_families": [
+      "unauthorized",
+      "deleted",
+      "purged",
+      "out_of_scope",
+      "authorized_inapplicable"
+    ],
+    "variants_per_family": 20,
+    "expected_unique_pairs": 1000,
+    "maximum_candidates_per_vault": 12,
+    "maximum_obligations_per_need": 4
+  },
+  "templates": [
+    {
+      "template": "t00",
+      "budget": 96,
+      "cumulative_limit": 160,
+      "prior_disclosure": 20,
+      "obligations": [
+        {"id": "o-a", "roles": ["current_claim"]},
+        {"id": "o-b", "roles": ["constraint", "warning"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "ALPHA_CURRENT", "role": "current_claim", "covers": ["o-a"], "relevance": 90},
+        {"key": "r-b", "content": "BRAVO_BOUNDARY", "role": "constraint", "covers": ["o-b"], "relevance": 80},
+        {"key": "r-b2", "content": "BRAVO_BOUNDARY_REDUNDANT_LONG", "role": "warning", "covers": ["o-b"], "relevance": 50},
+        {"key": "r-noise", "content": "NEUTRAL_NOTE", "role": "evidence", "covers": [], "relevance": 70}
+      ],
+      "oracle_groups": [["r-a"], ["r-b", "r-b2"]]
+    },
+    {
+      "template": "t01",
+      "budget": 90,
+      "cumulative_limit": 150,
+      "prior_disclosure": 15,
+      "obligations": [
+        {"id": "o-a", "roles": ["procedure"]},
+        {"id": "o-b", "roles": ["warning"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "DELTA_PROCEDURE", "role": "procedure", "covers": ["o-a"], "dependencies": ["r-dep"], "relevance": 95},
+        {"key": "r-dep", "content": "DELTA_PREREQUISITE", "role": "working_dependency", "covers": [], "relevance": 30},
+        {"key": "r-b", "content": "ECHO_WARNING", "role": "warning", "covers": ["o-b"], "relevance": 85},
+        {"key": "r-noise", "content": "LOW_VALUE_NOTE", "role": "evidence", "covers": [], "relevance": 10}
+      ],
+      "oracle_groups": [["r-a"], ["r-dep"], ["r-b"]]
+    },
+    {
+      "template": "t02",
+      "budget": 88,
+      "cumulative_limit": 150,
+      "prior_disclosure": 10,
+      "obligations": [
+        {"id": "o-a", "roles": ["evidence"]},
+        {"id": "o-b", "roles": ["current_claim"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "FOXTROT_EVIDENCE", "role": "evidence", "covers": ["o-a"], "relevance": 88},
+        {"key": "r-a2", "content": "FOXTROT_EVIDENCE_EXTENDED", "role": "evidence", "covers": ["o-a"], "relevance": 60},
+        {"key": "r-b", "content": "GOLF_CURRENT", "role": "current_claim", "covers": ["o-b"], "relevance": 92},
+        {"key": "r-hyp", "content": "GOLF_GUESS", "role": "hypothesis", "covers": ["o-b"], "relevance": 99}
+      ],
+      "oracle_groups": [["r-a", "r-a2"], ["r-b"]]
+    },
+    {
+      "template": "t03",
+      "budget": 100,
+      "cumulative_limit": 175,
+      "prior_disclosure": 25,
+      "obligations": [
+        {"id": "o-a", "roles": ["constraint"]},
+        {"id": "o-b", "roles": ["procedure"]},
+        {"id": "o-c", "roles": ["warning"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "HOTEL_CONSTRAINT", "role": "constraint", "covers": ["o-a"], "relevance": 75},
+        {"key": "r-b", "content": "INDIA_PROCEDURE", "role": "procedure", "covers": ["o-b"], "relevance": 74},
+        {"key": "r-c", "content": "JULIET_WARNING", "role": "warning", "covers": ["o-c"], "relevance": 73},
+        {"key": "r-all", "content": "COMBINED_RULE_LONGER_THAN_THREE", "role": "constraint", "covers": ["o-a"], "relevance": 20}
+      ],
+      "oracle_groups": [["r-a"], ["r-b"], ["r-c"]]
+    },
+    {
+      "template": "t04",
+      "budget": 76,
+      "cumulative_limit": 120,
+      "prior_disclosure": 5,
+      "obligations": [
+        {"id": "o-a", "roles": ["current_claim"]},
+        {"id": "o-b", "roles": ["evidence"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "KILO_CURRENT", "role": "current_claim", "covers": ["o-a"], "relevance": 90},
+        {"key": "r-b", "content": "LIMA_EVIDENCE", "role": "evidence", "covers": ["o-b"], "relevance": 89},
+        {"key": "r-noise1", "content": "OPTIONAL_ONE", "role": "evidence", "covers": [], "relevance": 88},
+        {"key": "r-noise2", "content": "OPTIONAL_TWO", "role": "evidence", "covers": [], "relevance": 87}
+      ],
+      "oracle_groups": [["r-a"], ["r-b"]]
+    },
+    {
+      "template": "t05",
+      "budget": 110,
+      "cumulative_limit": 170,
+      "prior_disclosure": 30,
+      "obligations": [
+        {"id": "o-a", "roles": ["procedure"]},
+        {"id": "o-b", "roles": ["constraint"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "MIKE_PROCEDURE", "role": "procedure", "covers": ["o-a"], "dependencies": ["r-dep"], "relevance": 98},
+        {"key": "r-dep", "content": "NOVEMBER_DEPENDENCY", "role": "working_dependency", "covers": [], "relevance": 20},
+        {"key": "r-b", "content": "OSCAR_CONSTRAINT", "role": "constraint", "covers": ["o-b"], "relevance": 80},
+        {"key": "r-alt", "content": "OSCAR_CONSTRAINT_ALTERNATE_LONG", "role": "constraint", "covers": ["o-b"], "relevance": 60},
+        {"key": "r-note", "content": "OPTIONAL_CONTEXT", "role": "evidence", "covers": [], "relevance": 40}
+      ],
+      "oracle_groups": [["r-a"], ["r-dep"], ["r-b", "r-alt"]]
+    },
+    {
+      "template": "t06",
+      "budget": 92,
+      "cumulative_limit": 155,
+      "prior_disclosure": 18,
+      "obligations": [
+        {"id": "o-a", "roles": ["warning"]},
+        {"id": "o-b", "roles": ["current_claim"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "PAPA_WARNING", "role": "warning", "covers": ["o-a"], "relevance": 93},
+        {"key": "r-b", "content": "QUEBEC_CURRENT", "role": "current_claim", "covers": ["o-b"], "relevance": 91},
+        {"key": "r-hyp", "content": "Q_GUESS", "role": "hypothesis", "covers": ["o-b"], "relevance": 100},
+        {"key": "r-note", "content": "REFERENCE_NOTE", "role": "evidence", "covers": [], "relevance": 50}
+      ],
+      "oracle_groups": [["r-a"], ["r-b"]]
+    },
+    {
+      "template": "t07",
+      "budget": 104,
+      "cumulative_limit": 180,
+      "prior_disclosure": 22,
+      "obligations": [
+        {"id": "o-a", "roles": ["evidence"]},
+        {"id": "o-b", "roles": ["procedure"]},
+        {"id": "o-c", "roles": ["constraint"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "ROMEO_EVIDENCE", "role": "evidence", "covers": ["o-a"], "relevance": 81},
+        {"key": "r-b", "content": "SIERRA_PROCEDURE", "role": "procedure", "covers": ["o-b"], "relevance": 82},
+        {"key": "r-c", "content": "TANGO_CONSTRAINT", "role": "constraint", "covers": ["o-c"], "relevance": 83},
+        {"key": "r-note", "content": "SUPPLEMENTAL_NOTE", "role": "evidence", "covers": [], "relevance": 79}
+      ],
+      "oracle_groups": [["r-a"], ["r-b"], ["r-c"]]
+    },
+    {
+      "template": "t08",
+      "budget": 84,
+      "cumulative_limit": 135,
+      "prior_disclosure": 12,
+      "obligations": [
+        {"id": "o-a", "roles": ["current_claim"]},
+        {"id": "o-b", "roles": ["warning"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "UNIFORM_CURRENT", "role": "current_claim", "covers": ["o-a"], "relevance": 96},
+        {"key": "r-b", "content": "VICTOR_WARNING", "role": "warning", "covers": ["o-b"], "relevance": 85},
+        {"key": "r-b2", "content": "VICTOR_WARNING_VERBOSE_COPY", "role": "warning", "covers": ["o-b"], "relevance": 84},
+        {"key": "r-note", "content": "BACKGROUND_NOTE", "role": "evidence", "covers": [], "relevance": 70}
+      ],
+      "oracle_groups": [["r-a"], ["r-b", "r-b2"]]
+    },
+    {
+      "template": "t09",
+      "budget": 112,
+      "cumulative_limit": 190,
+      "prior_disclosure": 28,
+      "obligations": [
+        {"id": "o-a", "roles": ["procedure"]},
+        {"id": "o-b", "roles": ["current_claim"]},
+        {"id": "o-c", "roles": ["warning"]}
+      ],
+      "records": [
+        {"key": "r-a", "content": "WHISKEY_PROCEDURE", "role": "procedure", "covers": ["o-a"], "dependencies": ["r-dep"], "relevance": 94},
+        {"key": "r-dep", "content": "XRAY_PREREQUISITE", "role": "working_dependency", "covers": [], "relevance": 25},
+        {"key": "r-b", "content": "YANKEE_CURRENT", "role": "current_claim", "covers": ["o-b"], "relevance": 92},
+        {"key": "r-c", "content": "ZULU_WARNING", "role": "warning", "covers": ["o-c"], "relevance": 90},
+        {"key": "r-note", "content": "OPTIONAL_APPENDIX", "role": "evidence", "covers": [], "relevance": 40}
+      ],
+      "oracle_groups": [["r-a"], ["r-dep"], ["r-b"], ["r-c"]]
+    }
+  ]
+}
