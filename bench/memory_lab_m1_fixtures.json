@@ -1,0 +1,45 @@
+{
+  "schema": "atc.memory-lab.m1-fixtures.v1",
+  "synthetic_only": true,
+  "episodes_per_kind": 10,
+  "episode_kinds": [
+    {
+      "kind": "applicable_required_memory",
+      "baseline_success": false,
+      "host_observed_success": true,
+      "controlled_omission_success": false
+    },
+    {
+      "kind": "authorized_inapplicable_distractor",
+      "baseline_success": true,
+      "host_observed_success": true,
+      "controlled_omission_success": true
+    },
+    {
+      "kind": "redundant_with_task_input",
+      "baseline_success": true,
+      "host_observed_success": true,
+      "controlled_omission_success": true
+    },
+    {
+      "kind": "harmful_memory",
+      "baseline_success": true,
+      "host_observed_success": false,
+      "controlled_omission_success": true
+    }
+  ],
+  "arms": [
+    "no_memory",
+    "supplied",
+    "acknowledged_only",
+    "host_observed",
+    "controlled_omission"
+  ],
+  "closed_observables": [
+    "candidate_count",
+    "reason_codes",
+    "page_cursor_shape",
+    "timing_class",
+    "learned_aggregates"
+  ]
+}
