@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import fields
 from pathlib import Path
 
 from allthecontext.memory_lab_o01 import (
     O01_REPORT_SCHEMA,
     PRIMARY_CONDITIONS,
-    VisibleOutcome,
-    VisibleStep,
+    SyntheticMemoryCondition,
+    _environment_outcome,
     load_protocol,
     run_o01_file,
 )
@@ -17,15 +16,23 @@ ROOT = Path(__file__).parents[2]
 FIXTURE = ROOT / "bench" / "memory_lab_o01_fixture.json"
 
 
-def test_visible_condition_input_cannot_contain_oracle_action() -> None:
-    assert "expected_action" not in {field.name for field in fields(VisibleStep)}
-    assert "expected_action" not in {field.name for field in fields(VisibleOutcome)}
+def test_pre_action_input_separates_post_action_corrective_oracle() -> None:
     protocol = load_protocol(FIXTURE)
-    assert all(
-        not hasattr(step.visible, "expected_action")
-        for regime in protocol.regimes
-        for step in regime.steps
+    hidden = next(
+        regime.steps[1] for regime in protocol.regimes if regime.name == "online"
     )
+    reference_spec = next(
+        condition
+        for condition in PRIMARY_CONDITIONS
+        if condition.condition_id == "atc_governed_in_memory_reference"
+    )
+    condition = SyntheticMemoryCondition(reference_spec, protocol.budget)
+
+    pre_action_read = condition.read(hidden.visible)
+    assert pre_action_read.action is None
+    outcome = _environment_outcome(hidden, "A0")
+    assert outcome.accepted is False
+    assert outcome.corrective_action == hidden.expected_action
 
 
 def test_o01_is_deterministic_identifier_safe_and_equal_budget() -> None:
@@ -45,14 +52,13 @@ def test_o01_is_deterministic_identifier_safe_and_equal_budget() -> None:
         "production_core_semantics_claimed": False,
         "external_code_models_or_network": False,
         "condition_state_isolated": True,
-        "oracle_action_exposed_to_conditions": False,
-        "post_action_feedback_is_explicit_visible_environment_outcome": True,
+        "pre_action_oracle_exposed": False,
+        "post_action_corrective_oracle_exposed": True,
         "wall_clock_access": False,
     }
     rendered = json.dumps(first, sort_keys=True)
     assert '"S0"' not in rendered
     assert '"S1"' not in rendered
-    assert "expected_action" not in rendered
     assert first["equal_budget"]["max_reads_per_step"] == 1
     assert first["equal_budget"]["max_writes_per_step"] == 2
     for condition in first["conditions"].values():
@@ -67,7 +73,8 @@ def test_o01_separates_write_read_utilization_action_and_recovery() -> None:
     report = run_o01_file(FIXTURE)
     required = {
         "write_admission_accuracy",
-        "later_read_correct_rate",
+        "correct_later_read_coverage",
+        "later_read_precision",
         "read_utilization_rate",
         "correct_next_action_count",
         "caos",
@@ -80,6 +87,11 @@ def test_o01_separates_write_read_utilization_action_and_recovery() -> None:
     reference = report["conditions"]["atc_governed_in_memory_reference"]
     assert reference["label"] == "non-production governed in-memory reference"
     assert report["execution_scope"]["production_core_semantics_claimed"] is False
+    append_online = report["conditions"]["append_log"]["regimes"]["online"]
+    assert append_online["correct_later_read_coverage"] == 0.333333
+    assert append_online["later_read_precision"] == 0.5
+    assert reference["regimes"]["online"]["correct_later_read_coverage"] == 0.666667
+    assert reference["regimes"]["online"]["later_read_precision"] == 1.0
 
 
 def test_o01_frozen_ranking_instability_forces_hold() -> None:
@@ -90,7 +102,21 @@ def test_o01_frozen_ranking_instability_forces_hold() -> None:
     }
     assert report["decision"]["state"] == "HOLD"
     assert "spearman_below_frozen_threshold" in report["decision"]["hold_reasons"]
-    assert min(report["spearman"].values()) < 0.7
+    assert "rank_move_exceeds_frozen_threshold" not in report["decision"]["hold_reasons"]
+    assert report["max_rank_move"] == 1.5
+    assert min(report["tie_aware_spearman"].values()) < 0.7
+    assert report["decision_average_ranks"]["off_policy"] == {
+        "append_log": 2.0,
+        "atc_governed_in_memory_reference": 2.0,
+        "no_memory": 4.0,
+        "stable_current_state": 2.0,
+    }
+    assert report["decision_tie_groups"]["off_policy"][0]["average_rank"] == 2.0
+    assert report["tie_aware_spearman"] == {
+        "off_policy_to_online": 0.333333,
+        "off_policy_to_shifted": 0.816497,
+        "online_to_shifted": 0.544331,
+    }
     assert report["decision"]["frozen_criteria"] == {
         "rank_move_greater_than": 2,
         "spearman_less_than": 0.7,
@@ -145,7 +171,7 @@ def test_stable_control_resolves_epoch_and_feedback_ablation_is_reported() -> No
         "reference_without_post_action_feedback"
     ]
     assert no_feedback["removed_condition"] == (
-        "explicit_post_action_environment_feedback"
+        "supervised_post_action_corrective_oracle_feedback"
     )
     assert no_feedback["repeat_deterministic"] is True
     assert any(

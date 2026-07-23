@@ -2,14 +2,16 @@
 
 This module is an isolated, in-memory experiment. It does not exercise the
 operator Core, create canonical records, define a production schema, or model
-personal context. Adapter-visible inputs deliberately omit oracle actions.
+personal context. Pre-action inputs omit oracle actions; after an action, the
+synthetic environment can provide explicit supervised corrective-oracle feedback.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -57,7 +59,7 @@ class VisibleStep:
 
 @dataclass(frozen=True, slots=True)
 class VisibleOutcome:
-    """Generic post-action environment feedback visible only after action."""
+    """Post-action feedback that can expose the corrective oracle action."""
 
     clock: int
     state: str
@@ -307,7 +309,7 @@ def _outcome_write(outcome: VisibleOutcome) -> VisibleWrite:
         epoch=outcome.epoch,
         trusted=True,
         applies=True,
-        source="explicit_post_action_environment_feedback",
+        source="supervised_post_action_corrective_oracle_feedback",
     )
 
 
@@ -392,7 +394,8 @@ def _run_once(
             correct_admission_decisions / writes_offered if writes_offered else 1.0, 6
         ),
         "later_read_count": reads,
-        "later_read_correct_rate": round(correct_reads / step_count, 6),
+        "correct_later_read_coverage": round(correct_reads / step_count, 6),
+        "later_read_precision": round(correct_reads / reads if reads else 0.0, 6),
         "read_utilization_rate": round(utilized_reads / reads if reads else 0.0, 6),
         "correct_next_action_count": correct_actions,
         "caos": round(correct_actions / step_count, 6),
@@ -407,6 +410,8 @@ def _run_once(
 
 
 def _rank_conditions(results: Mapping[str, Mapping[str, Any]], regime: str) -> list[str]:
+    """Return a deterministic display order; this order is not used for decisions."""
+
     complexity = {
         "no_memory": 0,
         "append_log": 1,
@@ -422,15 +427,56 @@ def _rank_conditions(results: Mapping[str, Mapping[str, Any]], regime: str) -> l
     )
 
 
-def _spearman(left: Sequence[str], right: Sequence[str]) -> float:
+def _average_ranks(
+    results: Mapping[str, Mapping[str, Any]],
+    regime: str,
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    """Assign average ranks to exact CAOS ties."""
+
+    grouped: dict[float, list[str]] = {}
+    for condition_id, condition_result in results.items():
+        score = float(condition_result[regime]["caos"])
+        grouped.setdefault(score, []).append(condition_id)
+    ranks: dict[str, float] = {}
+    tie_groups: list[dict[str, Any]] = []
+    next_position = 1
+    for score in sorted(grouped, reverse=True):
+        conditions = sorted(grouped[score])
+        final_position = next_position + len(conditions) - 1
+        average_rank = (next_position + final_position) / 2.0
+        for condition_id in conditions:
+            ranks[condition_id] = average_rank
+        tie_groups.append(
+            {
+                "caos": score,
+                "average_rank": average_rank,
+                "conditions": conditions,
+            }
+        )
+        next_position = final_position + 1
+    return ranks, tie_groups
+
+
+def _pearson_rank_correlation(
+    left: Mapping[str, float],
+    right: Mapping[str, float],
+) -> float:
+    """Compute tie-aware Spearman as Pearson correlation of average ranks."""
+
     if set(left) != set(right) or len(left) < 2:
-        raise ValueError("Spearman rankings must cover the same conditions")
-    right_rank = {condition: rank for rank, condition in enumerate(right, 1)}
-    squared = sum(
-        (rank - right_rank[condition]) ** 2 for rank, condition in enumerate(left, 1)
-    )
-    count = len(left)
-    return round(1.0 - (6.0 * squared / (count * (count**2 - 1))), 6)
+        raise ValueError("rank correlations must cover the same conditions")
+    conditions = sorted(left)
+    left_mean = sum(left.values()) / len(left)
+    right_mean = sum(right.values()) / len(right)
+    left_delta = [left[condition] - left_mean for condition in conditions]
+    right_delta = [right[condition] - right_mean for condition in conditions]
+    numerator = sum(a * b for a, b in zip(left_delta, right_delta, strict=True))
+    left_variance = sum(value**2 for value in left_delta)
+    right_variance = sum(value**2 for value in right_delta)
+    denominator = math.sqrt(left_variance * right_variance)
+    if denominator == 0.0:
+        raise ValueError("rank correlation is undefined when every condition is tied")
+    return round(numerator / denominator, 6)
 
 
 def _condition_report(
@@ -465,27 +511,38 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
         primary[spec.condition_id], fingerprints = _condition_report(spec, protocol)
         deterministic[spec.condition_id] = len(set(fingerprints)) == 1
 
-    rankings = {
+    presentation_order = {
         regime.name: _rank_conditions(primary, regime.name) for regime in protocol.regimes
     }
+    decision_ranks: dict[str, dict[str, float]] = {}
+    tie_groups: dict[str, list[dict[str, Any]]] = {}
+    for regime in protocol.regimes:
+        decision_ranks[regime.name], tie_groups[regime.name] = _average_ranks(
+            primary,
+            regime.name,
+        )
     correlations = {
-        "off_policy_to_online": _spearman(rankings["off_policy"], rankings["online"]),
-        "off_policy_to_shifted": _spearman(rankings["off_policy"], rankings["shifted"]),
-        "online_to_shifted": _spearman(rankings["online"], rankings["shifted"]),
+        "off_policy_to_online": _pearson_rank_correlation(
+            decision_ranks["off_policy"], decision_ranks["online"]
+        ),
+        "off_policy_to_shifted": _pearson_rank_correlation(
+            decision_ranks["off_policy"], decision_ranks["shifted"]
+        ),
+        "online_to_shifted": _pearson_rank_correlation(
+            decision_ranks["online"], decision_ranks["shifted"]
+        ),
     }
-    ranks = {
-        regime: {
-            condition: position for position, condition in enumerate(order, 1)
-        }
-        for regime, order in rankings.items()
-    }
-    max_rank_move = max(
-        max(values) - min(values)
+    rank_movements = {
+        condition: max(values) - min(values)
         for condition in primary
         for values in (
-            [ranks[regime][condition] for regime in ("off_policy", "online", "shifted")],
+            [
+                decision_ranks[regime][condition]
+                for regime in ("off_policy", "online", "shifted")
+            ],
         )
-    )
+    }
+    max_rank_move = round(max(rank_movements.values()), 6)
     strongest_simple_shifted = max(
         primary[condition]["shifted"]["caos"]
         for condition in ("no_memory", "append_log", "stable_current_state")
@@ -534,7 +591,7 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
     no_feedback, feedback_fingerprints = _condition_report(NO_FEEDBACK_CONDITION, protocol)
     condition_ablations = {
         NO_FEEDBACK_CONDITION.condition_id: {
-            "removed_condition": "explicit_post_action_environment_feedback",
+            "removed_condition": "supervised_post_action_corrective_oracle_feedback",
             "repeat_deterministic": len(set(feedback_fingerprints)) == 1,
             "regime_caos_delta_from_full_reference": {
                 regime.name: round(
@@ -557,8 +614,8 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
             "production_core_semantics_claimed": False,
             "external_code_models_or_network": False,
             "condition_state_isolated": True,
-            "oracle_action_exposed_to_conditions": False,
-            "post_action_feedback_is_explicit_visible_environment_outcome": True,
+            "pre_action_oracle_exposed": False,
+            "post_action_corrective_oracle_exposed": True,
             "wall_clock_access": False,
         },
         "equal_budget": asdict(protocol.budget),
@@ -588,8 +645,10 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
             }
             for spec in PRIMARY_CONDITIONS
         },
-        "rankings": rankings,
-        "spearman": correlations,
+        "presentation_order": presentation_order,
+        "decision_average_ranks": decision_ranks,
+        "decision_tie_groups": tie_groups,
+        "tie_aware_spearman": correlations,
         "max_rank_move": max_rank_move,
         "condition_rule_ablations": ablations,
         "condition_ablations": condition_ablations,
@@ -614,12 +673,13 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
             "trusted_and_applies_are_fixture_supplied_upstream_governance_signals",
             "upstream_signal_availability_and_accuracy_are_not_established",
             "admission_is_rule_based_not_learned_or_generic",
-            "binary_fixture_feedback_exposes_a_corrective_action_after_failure",
+            "post_action_feedback_is_supervised_corrective_oracle_feedback",
+            "binary_fixture_feedback_exposes_the_expected_action_after_failure",
             "corrective_feedback_does_not_establish_generic_answer_recovery",
             "deterministic_symbolic_policy_not_model_backed",
             "off_policy_replay_is_neutral_synthetic_trace_not_logged_product_behavior",
             "no_current_core_behavior_was_exercised",
-            "ranking_ties_use_frozen_simplicity_order",
+            "presentation_ties_use_frozen_simplicity_order_but_decisions_use_average_ranks",
         ],
     }
 
