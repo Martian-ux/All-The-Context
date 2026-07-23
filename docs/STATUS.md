@@ -165,10 +165,12 @@ Working-State Three-Way Repair.
 ## Memory Lab Wave 3
 
 Wave 3 is active under ADR-044/ADR-046 and
-`research/memory-lab/wave3-manifest.json`. Five fresh visible
-`gpt-5.6-sol` worktree tasks start from immutable coordinator commit
-`950f649d9e3cc106fb8ff4febbe38919f8e00d11` with new-file-only,
-non-overlapping ownership:
+`research/memory-lab/wave3-manifest.json`. Five fresh visible falsification
+tasks start from immutable coordinator commit
+`950f649d9e3cc106fb8ff4febbe38919f8e00d11`; a sixth metadata-only intake
+starts from governance-only coordinator head
+`dd4b880a68842dd0c797741ba2ffe673e768c55d`. All use `gpt-5.6-sol`
+worktrees with new-file-only, non-overlapping ownership:
 
 - B01 programmatic inspection of a complete structured event log;
 - O01 online/off-policy/distribution-shift triangulation, assigned medium
@@ -176,13 +178,18 @@ non-overlapping ownership:
 - P01 write-admission through delayed-retrieval/influence/protected-action
   poisoning;
 - E01b conformance against a disposable synthetic instance of current
-  production Core; and
+  production Core;
 - M2 sealed authorized-and-applicable minimal projection with paired-vault
-  noninterference.
+  noninterference;
+- and a smaller medium-reasoning, metadata-only external-artifact intake for the
+  newly discoverable official MPBench repository and the still-unavailable
+  paper-linked PRO-LONG repository.
 
 Workers cannot edit production behavior, shared harnesses, governance, or each
 other's files, and cannot merge or push. External code, models, providers,
 credentials, personal context, and operator-Core access are forbidden. A
+metadata-only intake may inspect official repository metadata, README, license,
+and tree shape, but cannot clone or read raw adversarial payload rows. A
 failed, unsupported, held, killed, or not-exercised cell remains a result. No
 Wave 3 evidence has been accepted yet.
 

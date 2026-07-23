@@ -971,3 +971,13 @@ No external code, model, provider, credential, real personal context, operator
 Core, or production schema is allowed. Negative, unsupported, held, killed,
 and not-exercised outcomes are preserved. Promotion order remains B01, O01,
 P01, E01b, then M2 even though implementation proceeds in parallel.
+
+During active execution, the authors' official page exposed an Apache-2.0
+MPBench repository that the prior horizon had not located, while PRO-LONG's
+paper-linked repository still returned 404. A sixth, smaller
+`gpt-5.6-sol` medium task is therefore appended after the five falsification
+surfaces for metadata-only provenance, license, and safe-cell design. It may
+inspect official metadata, README, license, and tree shape only: cloning,
+payload-row access, third-party execution, and contamination of the frozen P01
+or B01 cells remain forbidden. This intake is evidence preparation, not an
+external benchmark result or production promotion.

@@ -12,7 +12,7 @@
   "global_invariants": [
     "Core remains the sole canonical authority.",
     "Every worker uses a fresh visible Codex thread and separate git worktree.",
-    "Every worker starts from the same immutable coordinator base.",
+    "The five falsification workers start from the same immutable coordinator base; the later metadata-only intake starts from the governance-only coordinator head recorded in its worker entry.",
     "Workers commit scoped changes but never merge or push.",
     "Synthetic benchmark data never comes from the operator Core.",
     "Raw personal context, credentials, secrets, external models, and provider calls are forbidden.",
@@ -125,6 +125,28 @@
       "may_merge": false,
       "may_push": false,
       "result": null
+    },
+    {
+      "worker_id": "external_artifact_intake",
+      "thread_id": "019f90c0-be8c-75b1-8165-b236ea2d3acb",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "base_commit": "dd4b880a68842dd0c797741ba2ffe673e768c55d",
+      "owns": [
+        "new external-memory-artifact intake research report",
+        "optional new machine-readable external-intake receipt",
+        "optional new external-intake validation test"
+      ],
+      "question": "Are the newly discoverable MPBench artifact and still-missing PRO-LONG artifact licensed, attributable, and safe enough to justify a later isolated external-validation cell?",
+      "external_code_policy": "forbidden",
+      "official_metadata_only": true,
+      "raw_adversarial_payload_access": false,
+      "may_edit_existing_shared_harness": false,
+      "may_edit_production": false,
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": null
     }
   ],
   "promotion_order": [
@@ -132,7 +154,8 @@
     "o01_online_shift",
     "p01_poisoning",
     "e01b_production_conformance",
-    "m2_sealed_minimal_projection"
+    "m2_sealed_minimal_projection",
+    "external_artifact_intake"
   ],
   "integration_gate": [
     "Worker commit contains only declared new-file ownership.",

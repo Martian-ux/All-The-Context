@@ -15,7 +15,7 @@ def _manifest() -> dict[str, Any]:
     return value
 
 
-def test_wave3_has_one_coordinator_and_five_unique_visible_workers() -> None:
+def test_wave3_has_one_coordinator_and_six_unique_visible_workers() -> None:
     manifest = _manifest()
     workers = manifest["workers"]
 
@@ -23,9 +23,9 @@ def test_wave3_has_one_coordinator_and_five_unique_visible_workers() -> None:
     assert manifest["status"] == "active"
     assert manifest["coordinator"]["sole_integration_authority"] is True
     assert re.fullmatch(r"[0-9a-f]{40}", manifest["coordinator"]["base_commit"])
-    assert len(workers) == 5
-    assert len({worker["worker_id"] for worker in workers}) == 5
-    assert len({worker["thread_id"] for worker in workers}) == 5
+    assert len(workers) == 6
+    assert len({worker["worker_id"] for worker in workers}) == 6
+    assert len({worker["thread_id"] for worker in workers}) == 6
     assert all(
         re.fullmatch(
             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -52,6 +52,14 @@ def test_wave3_workers_have_disjoint_authority_and_no_external_code() -> None:
         for worker in workers
         if worker["worker_id"] == "e01b_production_conformance"
     )["operator_core_access"] is False
+    intake = next(
+        worker
+        for worker in workers
+        if worker["worker_id"] == "external_artifact_intake"
+    )
+    assert intake["official_metadata_only"] is True
+    assert intake["raw_adversarial_payload_access"] is False
+    assert re.fullmatch(r"[0-9a-f]{40}", intake["base_commit"])
 
 
 def test_wave3_freezes_questions_results_and_integration_gates() -> None:
