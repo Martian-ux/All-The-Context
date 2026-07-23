@@ -7,7 +7,7 @@ Schemas carry `schema_version`; mutable canonical records also carry a monotonic
 | Entity | Purpose |
 |---|---|
 | `vault` | User-owned authority and display time zone |
-| `source_record` / `source_blob` | Deduplicated raw local evidence and metadata |
+| `source_record` / `source_blob` | Deduplicated raw local evidence; provider/format/coverage metadata and extraction status |
 | `ingestion_session` / `ingestion_batch` | Coverage, resumability, and idempotency |
 | `context_candidate` | Untrusted proposed or extracted durable context |
 | `context_record` | Current approved canonical state |
@@ -40,3 +40,10 @@ Purge tombstones retain only stable ID, vault, target type, time, and optional
 ordered-event coordinates. Purge jobs retain target identity, phase, timestamps,
 and a bounded error code. Neither stores canonical content, evidence, reasons,
 content-derived hashes, or confirmation text.
+
+Provider archive metadata is intentionally schema-flexible JSON attached to the
+source record. The current writer records detected provider, export format,
+parser version, coverage completion, and bounded aggregate statistics. Durable
+session/batch rows—not metadata—remain the authority for replay and
+idempotency. `import_status` exposes `processing`, `failed`, or `complete`; the
+content-addressed source blob is retained for a safe retry or later parser.

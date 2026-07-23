@@ -46,10 +46,50 @@ export interface SourceRecord {
   filename?: string | null;
   media_type: string;
   source_service?: string | null;
+  source_type?: string | null;
   size_bytes: number;
   content_hash: string;
   candidate_count?: number;
+  import_status?: "processing" | "complete" | "failed";
+  metadata?: SourceMetadata;
+  parser_warnings?: string[];
   created_at: string;
+}
+
+export type ArchiveProvider = "auto" | "chatgpt" | "claude" | "grok" | "generic";
+
+export interface IngestionStats {
+  provider?: string;
+  parser_version?: string;
+  files?: number;
+  recognized_files?: number;
+  conversations?: number;
+  messages?: number;
+  message_records?: number;
+  user_messages?: number;
+  assistant_messages?: number;
+  memory_items?: number;
+  skipped_messages?: number;
+  unparsed_messages?: number;
+  unsupported_entries?: number;
+  candidates?: number;
+  [key: string]: string | number | undefined;
+}
+
+export interface SourceMetadata {
+  provider?: string;
+  export_format?: string;
+  parser_version?: string;
+  coverage_complete?: boolean;
+  stats?: IngestionStats;
+}
+
+export interface IngestionCoverage {
+  available: string[];
+  unavailable: string[];
+  limitations: string[];
+  warnings: string[];
+  complete: boolean;
 }
 
 export interface ClientRegistration {
@@ -144,4 +184,9 @@ export interface ImportResult {
   source_id: string;
   candidate_count: number;
   duplicate: boolean;
+  provider: string;
+  export_format: string;
+  stats: IngestionStats;
+  warnings: string[];
+  coverage: IngestionCoverage;
 }
