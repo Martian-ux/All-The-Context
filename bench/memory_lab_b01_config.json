@@ -1,0 +1,19 @@
+{
+  "schema": "atc.memory-lab.b01-config.v1",
+  "repeats": 20,
+  "frozen_clock": "2026-07-01T12:00:00+00:00",
+  "context_budget_chars": 720,
+  "max_selected_events": 3,
+  "max_operations": 5,
+  "max_events_scanned_per_operation": 96,
+  "max_results_per_operation": 48,
+  "confirmatory_partition": "confirmatory",
+  "minimum_confirmatory_caos_gain": 0.05,
+  "maximum_operation_premium": 0.25,
+  "frozen_combination": {
+    "schema": "atc.memory-lab.b01-combination.v1",
+    "recipe": "programmatic_then_atc_only_for_unsupported_strategy",
+    "programmatic_precedence": true,
+    "deduplicate_by_event_id": true
+  }
+}
