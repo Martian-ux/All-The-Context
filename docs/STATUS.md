@@ -204,22 +204,25 @@ that ATC has solved AI memory is accepted.
 
 ## Memory Lab Wave 4
 
-Wave 4 is preparing under ADR-048 and
+Wave 4 is active under ADR-048 and
 `research/memory-lab/wave4-manifest.json`. Four fresh visible
-`gpt-5.6-sol` worktree tasks will start from one immutable governance-only
-commit:
+`gpt-5.6-sol` worktree tasks started from immutable governance-only commit
+`f545c37157845f0bd402215719cb8c747b7fc21d`:
 
 - F02 independent falsification and primary-source prior-art review, medium;
 - M3 dependency-complete influence closure versus a full rebuild, high;
 - E02 frozen production-Core semantic-gap conformance, high; and
 - M1 observable assignment/use/outcome/invalidation receipts, medium.
 
-The independent oracle must precede mechanism implementation. Workers own only
+The independent F02 oracle was committed at
+`a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e` before M3 or M1 was
+dispatched. Workers own only
 new research files, cannot edit production or governance, and cannot access
 the operator Core, personal context, credentials, external code, models, or
 providers. M3 fails on any stale publication, rebuild mismatch, purge residue,
 or fail-open partial repair. M1 cannot store hidden reasoning or raw supplied
-context. No Wave 4 evidence or production promotion is accepted yet.
+context. Worker evidence remains untrusted pending coordinator review and
+reproduction; no production promotion is accepted.
 
 ## Previously verified baseline
 

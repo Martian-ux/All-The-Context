@@ -66,9 +66,15 @@ def test_wave4_workers_cannot_patch_or_promote_production() -> None:
 def test_wave4_freezes_independent_oracles_and_hard_safety_gates() -> None:
     manifest = _manifest()
     contracts = manifest["frozen_contracts"]
+    oracle = manifest["frozen_oracle"]
 
     assert manifest["promotion_stages"][0] == "f02_independent_oracle"
     assert manifest["promotion_stages"][-1] == "f02_post_result_review"
+    assert re.fullmatch(r"[0-9a-f]{40}", oracle["commit"])
+    assert oracle["committed_before_m3_and_m1_dispatch"] is True
+    assert oracle["m3_case_count"] == 15
+    assert oracle["m1_case_count"] == 16
+    assert oracle["integrated"] is False
     assert len(contracts["m3"]["hard_safety_gates"]) >= 5
     assert len(contracts["m1"]["hard_safety_gates"]) >= 6
     assert set(contracts["e02"]["classifications"]) == {

@@ -1,14 +1,22 @@
 {
   "schema_version": 1,
   "wave_id": "atc-memory-lab-wave4-2026-07-23",
-  "status": "preparing",
+  "status": "active",
   "purpose": "Falsify dependency-complete influence closure, current-Core semantic readiness, and observable memory-use receipts before any Evidence-Compiled Memory production promotion.",
   "coordinator": {
     "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
     "branch": "codex/memory-lab-wave4-coordinator",
     "parent_commit": "d0e1c7679ee4c1560db67222496ac3054c1faeda",
-    "worker_base_commit": null,
+    "worker_base_commit": "f545c37157845f0bd402215719cb8c747b7fc21d",
     "sole_integration_authority": true
+  },
+  "frozen_oracle": {
+    "worker_id": "f02_independent_falsification",
+    "commit": "a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e",
+    "committed_before_m3_and_m1_dispatch": true,
+    "m3_case_count": 15,
+    "m1_case_count": 16,
+    "integrated": false
   },
   "global_invariants": [
     "Core remains the sole canonical authority.",
@@ -34,7 +42,7 @@
   "workers": [
     {
       "worker_id": "f02_independent_falsification",
-      "thread_id": null,
+      "thread_id": "019f90f6-c489-7702-85ca-8bc70842eb07",
       "model": "gpt-5.6-sol",
       "reasoning_effort": "medium",
       "owns": [
@@ -55,7 +63,7 @@
     },
     {
       "worker_id": "m3_influence_closure",
-      "thread_id": null,
+      "thread_id": "019f90ff-6e6e-7873-bfed-4470d461fd32",
       "model": "gpt-5.6-sol",
       "reasoning_effort": "high",
       "owns": [
@@ -74,7 +82,7 @@
     },
     {
       "worker_id": "e02_production_semantic_gaps",
-      "thread_id": null,
+      "thread_id": "019f90f7-002a-7872-8adb-0abc5fee3fde",
       "model": "gpt-5.6-sol",
       "reasoning_effort": "high",
       "owns": [
@@ -94,7 +102,7 @@
     },
     {
       "worker_id": "m1_observable_use_ledger",
-      "thread_id": null,
+      "thread_id": "019f90ff-ac97-78a3-92e6-bfa0474a573e",
       "model": "gpt-5.6-sol",
       "reasoning_effort": "medium",
       "owns": [
