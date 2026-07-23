@@ -21,6 +21,33 @@ dependency-audit gates described below. The exact worktree has not yet passed
 the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based
 evidence remains historical and must not be presented as proof of ADR-039.
 
+## AI-memory research direction
+
+ADR-042 establishes a post-beta, benchmark-driven research direction without
+changing the V1 release boundary. The goal is end-to-end memory reliability,
+not novelty or retrieval scores in isolation.
+
+The research charter is
+[`docs/research/ATC_MEMORY_RELIABILITY_ARCHITECTURE.md`](research/ATC_MEMORY_RELIABILITY_ARCHITECTURE.md).
+It defines:
+
+- a governed Memory Plane for evidence, current knowledge, experience,
+  procedures, working state, consolidation, and recall;
+- an optional Intent and Consequence Plane for adequately witnessed
+  event-bound preferences and directives;
+- an ATC Memory Lab that compares long context, simple profiles, ATC, and
+  external systems under the same models, data, budgets, and scoring; and
+- reversible experiential-learning and consequence-closure hypotheses that
+  remain unimplemented research.
+
+The existing
+[`Consequence-Closed Context`](research/CONSEQUENCE_CLOSED_CONTEXT.md) proposal
+is now explicitly scoped as the differentiated second plane, not a complete
+AI-memory product. No external memory engine, graph/vector dependency, new
+production schema, host checkpoint protocol, private learned model, or
+behavioral enforcement claim has been accepted or implemented by this
+documentation work. The beta remains the immediate product milestone.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,

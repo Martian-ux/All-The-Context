@@ -762,3 +762,42 @@ platform, architecture, version, size, and checksum failures continue to fail
 closed. `unpublished` never implies that a release exists and does not replace
 the offline signature, immutable GitHub Release, protected publication, or
 Pages promotion required for real OTA delivery.
+
+## ADR-042: AI-memory research is hybrid, benchmark-driven, and subordinate to Core
+
+**Status:** accepted as a research direction 2026-07-23; does not change the V1
+product boundary or accept a production implementation.
+
+ATC's long-term objective is end-to-end AI-memory reliability. It will use
+proven external implementations and conventional systems mechanisms wherever
+they improve the product, while reserving new research for measured gaps.
+Novelty is not a promotion criterion.
+
+The research program has two product planes and one evaluation surface:
+
+- a Memory Plane for governed evidence, current knowledge, experience,
+  procedures, working state, consolidation, and recall;
+- an optional Intent and Consequence Plane for adequately witnessed
+  preferences and directives compiled at cooperating client checkpoints; and
+- an ATC Memory Lab that compares simple, external, hybrid, and experimental
+  systems with fixed data, model backbones, budgets, and stage-level metrics.
+
+External extractors, graph engines, retrievers, consolidators, and learned
+models may enter through lab adapters or discardable sidecars. They may propose
+observations, IDs, rankings, relations, summaries, and procedures. They do not
+create current context directly, choose origin or disposition, expand
+permission, assign behavioral force, or weaken correction, deletion, and
+purge. Core remains authoritative.
+
+The
+[`Consequence-Closed Context`](research/CONSEQUENCE_CLOSED_CONTEXT.md) protocol
+is a differentiated research plane, not the whole memory product. Its protocol
+must remain useful without learned joint compilation. Learned target envelopes,
+relation models, record-owned packets, private residuals, or parameter memory
+must beat strong deterministic and external baselines, retain exact dependency
+and purge semantics, and satisfy the local cross-platform boundary before a
+separate production decision.
+
+The beta remains the immediate milestone. Research does not block release, add
+a mandatory hosted service, or make unimplemented checkpoint, behavioral,
+graph, vector, neural, or experiential-learning claims.
