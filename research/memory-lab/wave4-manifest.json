@@ -119,7 +119,24 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "expectation_worker_commit": "9bc54f7818c3b84b25d32838a737749a57dafe7b",
+        "expectation_integrated_commit": "9b511da9be5d83b7d9b076237f7e62b4fe171ae3",
+        "worker_commit": "ba615c41970a1a2893fa419a53e0678e64b8080c",
+        "integrated_commit": "2cf0e4a775716b4637b935b17844048d5861276a",
+        "evidence_level": "L2",
+        "classification_counts": {
+          "SUPPORTED_OBSERVED": 0,
+          "CONTRADICTED_OBSERVED": 0,
+          "UNSUPPORTED": 5,
+          "NOT_EXERCISED": 1
+        },
+        "case_expectation_mismatch_count": 0,
+        "probe_expectation_mismatch_count": 0,
+        "evaluation_error_count": 0,
+        "first_safe_implementation_boundary": "optional explicit Core-owned generic epistemic role",
+        "coordinator_reproduced": true
+      }
     },
     {
       "worker_id": "m1_observable_use_ledger",
