@@ -57,6 +57,16 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     promote = (REPOSITORY_ROOT / ".github" / "workflows" / "promote-beta-channel.yml").read_text()
     releases = (REPOSITORY_ROOT / "docs" / "operations" / "RELEASES.md").read_text()
     keys = json.loads((REPOSITORY_ROOT / "release" / "keys.json").read_text())
+    packaged_keys = json.loads(
+        (
+            REPOSITORY_ROOT
+            / "packages"
+            / "allthecontext"
+            / "src"
+            / "allthecontext"
+            / "update_keys.json"
+        ).read_text()
+    )
 
     assert "source_commit" in candidate
     assert "--draft" in candidate
@@ -84,7 +94,22 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "not a community release gate" in releases
     assert "Pages is an explicit operator gate" in releases
     assert "encrypted PKCS8" in releases
-    assert keys == {"schema_version": 1, "keys": []}
+    assert packaged_keys == keys
+    assert keys == {
+        "schema_version": 1,
+        "keys": [
+            {
+                "algorithm": "Ed25519",
+                "channels": ["beta"],
+                "key_id": "release-2026-a",
+                "public_key": "cl9ZWb0x-nxUHaklqdMq2rkEmayCi3nrW4CFOXZEQ5s",
+                "public_key_sha256": (
+                    "sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
+                ),
+                "status": "active",
+            }
+        ],
+    }
 
 
 def test_v1_has_no_hosted_runtime_publication_or_provider_template() -> None:

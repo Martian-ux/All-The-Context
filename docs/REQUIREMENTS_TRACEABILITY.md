@@ -13,6 +13,7 @@ the hosted jobs pass on the exact release commit.
 | Provenance, confidence, sensitivity, validity, version, supersession, hashes, client permissions | typed models/migrations/API round trips | Implemented |
 | Idempotent/resumable ingestion with coverage | `ingestion.py`; retry/resume/coverage tests | Implemented |
 | Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
+| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, streaming ZIP/JSON adapters, dashboard provider flow, raw-source recovery; provider unit/integration/security/UI tests | Implemented locally; real personal export acceptance pending |
 | Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
 | Future embedding boundary | shadow-retriever contract plus disabled, rebuild-only 384d exact-scan experiment outside package discovery | Defined; no production embedding dependency or authority |
 | Required MCP tools | `mcp_adapter.py`; schema and real STDIO handshake/restart tests | Implemented |
@@ -23,7 +24,7 @@ the hosted jobs pass on the exact release commit.
 | OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows local and Windows/macOS/Linux hosted acceptance observed at `05c7638` |
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Release matrices observed at `05c7638`; Retrieval V3 push matrix observed green at `67dd11c` |
 | One-click desktop packaging | Windows installer, macOS app/DMG, Linux portable archive | Platform acceptance observed at `05c7638`; final release SHA pending |
-| Signed community updates | Ed25519 manifests/keyring, checksums, SBOM/provenance, Windows recovery helper | Implemented locally; real N-1 drill pending |
+| Signed community updates | Ed25519 manifests/keyring with active beta key `release-2026-a`, canonical packaged beta endpoint, pinned GitHub release-asset redirect, checksums, SBOM/provenance, Windows recovery helper | Client, public trust root, and release mechanics implemented locally; recovery backups, channel deployment, and real N-1 drill pending |
 | No third-party V1 runtime | no Edge UI/onboarding/status call/background worker; Edge publication workflow and Render templates removed | Implemented |
 | Direct-Core mobile model | integration API/dashboard/architecture state Core-online requirement | Product contract implemented; secure pairing/transport not yet implemented |
 | No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |

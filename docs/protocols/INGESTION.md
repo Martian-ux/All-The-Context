@@ -12,9 +12,28 @@
 5. `report_context_error` records a correction signal as a candidate and audit
    event; it never mutates canonical context directly.
 
-Raw imports travel directly to Core. JSON, JSONL, Markdown, and text importers
-store a content-addressed source locally, then pass obvious structured facts to
-a deterministic extractor. Imported instructions remain inert evidence.
+Raw imports travel directly to Core. ZIP, JSON, JSONL, Markdown, and text
+importers store a content-addressed source locally, then pass normalized data
+to a deterministic extractor. ChatGPT conversation graphs, Claude
+`chat_messages`, flexible Grok conversation envelopes, provider memory/profile
+fields, and Grok-style Markdown transcripts have explicit adapters. Imported
+instructions remain inert evidence.
+
+Provider imports use a versioned archive session keyed by source ID and parser
+version. Batches use the source hash, parser version, and stable batch ordinal
+as idempotency material. A replay of an interrupted batch returns its original
+candidate IDs; changed content under the same key fails closed. Source status
+is `processing`, `failed`, or `complete`. Failed/processing sources can be
+reprocessed from the preserved raw blob, so retry does not require another
+provider download or create duplicate candidates.
+
+Every provider coverage report includes detected provider/format, file and
+conversation counts, user/assistant/other message counts, memory item and
+candidate counts, skipped/unsupported material, warnings, and explicit
+limitations. Assistant, system, tool, and attachment content can be retained in
+the raw archive but cannot produce a candidate. Dedicated provider memory
+summaries can produce lower-confidence, non-explicit candidates. User-authored
+durable statements retain a conversation/message source reference.
 
 Candidates default to review. A future policy hook may auto-approve exact,
 explicit, low-sensitivity statements from a client granted `auto_approve`;

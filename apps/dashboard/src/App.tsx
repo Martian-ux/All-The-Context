@@ -27,6 +27,7 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   AuditEvent,
+  ArchiveProvider,
   Availability,
   ClientRegistration,
   ContextCandidate,
@@ -34,6 +35,7 @@ import type {
   ContextRecordVersion,
   CoreStatus,
   DesktopIntegration,
+  ImportResult,
   IntegrationsStatus,
   SourceRecord,
   UpdateStatus,
@@ -240,6 +242,9 @@ function SourcesView() {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ArchiveProvider>("auto");
+  const [lastImport, setLastImport] = useState<ImportResult | null>(null);
+  const [retryingSource, setRetryingSource] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -251,31 +256,97 @@ function SourcesView() {
 
   async function upload(file?: File) {
     if (!file) return;
-    setUploading(true); setNotice(null); setError(null);
+    setUploading(true); setNotice(null); setLastImport(null); setError(null);
     try {
-      const result = await api.importSource(file);
-      setNotice(result.duplicate ? "This source was already imported; no duplicate was created." : `${result.candidate_count} candidates are ready for review.`);
+      const result = await api.importSource(file, provider);
+      setLastImport(result);
+      const conversationCount = result.stats.conversations ?? 0;
+      const providerName = providerDisplayName(result.provider);
+      setNotice(result.duplicate
+        ? `${providerName} was already imported; the existing extraction was kept.`
+        : `${providerName}: ${conversationCount} conversations scanned and ${result.candidate_count} memories are ready for review.`);
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setUploading(false); }
   }
 
+  async function retry(source: SourceRecord) {
+    setRetryingSource(source.id); setNotice(null); setLastImport(null); setError(null);
+    try {
+      const result = await api.reprocessSource(source.id);
+      setLastImport(result);
+      setNotice(`${providerDisplayName(result.provider)} extraction resumed; ${result.candidate_count} memories are ready for review.`);
+      await load();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setRetryingSource(null); }
+  }
+
   return (
     <div className="content-column">
+      <section className="provider-import-intro" aria-labelledby="provider-import-heading">
+        <span className="eyebrow">One-time history import</span>
+        <div className="provider-import-title">
+          <div>
+            <h2 id="provider-import-heading">Bring your AI history home.</h2>
+            <p>Download each provider's account export, then drop the ZIP here unchanged. The archive is read only by this Core.</p>
+          </div>
+          <label className="provider-select">
+            Archive type
+            <select value={provider} onChange={(event) => setProvider(event.target.value as ArchiveProvider)} disabled={uploading}>
+              <option value="auto">Auto-detect (recommended)</option>
+              <option value="chatgpt">ChatGPT</option>
+              <option value="claude">Claude</option>
+              <option value="grok">Grok</option>
+              <option value="generic">Generic document</option>
+            </select>
+          </label>
+        </div>
+        <div className="provider-guide-grid">
+          <ProviderGuide
+            mark="C"
+            name="ChatGPT"
+            step="Settings > Data controls > Export"
+            href="https://help.openai.com/en/articles/7260999-exporting-your-chatgpt-history-and-data"
+          />
+          <ProviderGuide
+            mark="A"
+            name="Claude"
+            step="Settings > Privacy > Export data"
+            href="https://support.claude.com/en/articles/9450526-export-your-claude-data"
+          />
+          <ProviderGuide
+            mark="G"
+            name="Grok"
+            step="Settings > Data controls > Download data"
+            href="https://x.ai/legal/faq"
+          />
+        </div>
+      </section>
       <label
         className={`drop-zone ${dragging ? "drop-zone--active" : ""}`}
         onDragEnter={() => setDragging(true)} onDragLeave={() => setDragging(false)}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files[0]); }}
       >
-        <input type="file" accept=".json,.jsonl,.md,.markdown,.txt" onChange={(event) => void upload(event.target.files?.[0])} disabled={uploading} />
+        <input type="file" accept=".zip,.json,.jsonl,.md,.markdown,.txt" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; void upload(selected); }} disabled={uploading} />
         <span className="upload-icon"><Upload size={22} /></span>
-        <strong>{uploading ? "Importing locally…" : "Drop an archive or document"}</strong>
-        <span>JSON, JSONL, Markdown, or plain text · source material never goes through MCP</span>
-        <span className="secondary-button">Choose file</span>
+        <strong>{uploading ? "Saving and extracting locally..." : "Drop the provider export here"}</strong>
+        <span>ZIP, JSON, JSONL, Markdown, or text · up to 512 MB · never sent through MCP or to a third party</span>
+        <span className="secondary-button">Choose export</span>
       </label>
       {notice ? <Notice kind="success">{notice}</Notice> : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
+      {lastImport ? (
+        <section className="import-receipt" aria-label="Import coverage">
+          <div><span>Provider</span><strong>{providerDisplayName(lastImport.provider)}</strong></div>
+          <div><span>User messages</span><strong>{lastImport.stats.user_messages ?? 0}</strong></div>
+          <div><span>Review candidates</span><strong>{lastImport.candidate_count}</strong></div>
+          <div><span>Raw archive</span><strong>Saved locally</strong></div>
+          {(lastImport.coverage.unavailable.length > 0 || lastImport.warnings.length > 0) ? (
+            <p>{[...lastImport.coverage.unavailable, ...lastImport.warnings].slice(0, 3).join(" ")}</p>
+          ) : null}
+        </section>
+      ) : null}
       <section className="section-block">
         <div className="section-heading"><div><h2>Imported sources</h2><p>Raw evidence is stored only in Core.</p></div><button className="quiet-button" onClick={() => void load()}><RefreshCw size={14} /> Refresh</button></div>
         {loading ? <LoadingRows /> : sources.length ? (
@@ -283,8 +354,8 @@ function SourcesView() {
             <div className="table-header source-grid"><span>Source</span><span>Candidates</span><span>Size</span><span>Imported</span></div>
             {sources.map((source) => (
               <div className="table-row source-grid" key={source.id}>
-                <div className="primary-cell"><Archive size={16} /><span><strong>{source.filename ?? "Untitled source"}</strong><small>{source.source_service ?? source.media_type}</small></span></div>
-                <span>{source.candidate_count ?? "—"}</span><span>{formatBytes(source.size_bytes)}</span><time>{formatDate(source.created_at)}</time>
+                <div className="primary-cell"><Archive size={16} /><span><strong>{source.filename ?? "Untitled source"}</strong><small>{providerDisplayName(source.metadata?.provider ?? source.source_service)} · {source.metadata?.stats?.conversations ?? 0} conversations · {source.import_status ?? "complete"}</small></span></div>
+                <span>{source.candidate_count ?? "—"}</span><span>{formatBytes(source.size_bytes)}</span>{source.import_status && source.import_status !== "complete" ? <button className="quiet-button source-retry" onClick={() => void retry(source)} disabled={retryingSource === source.id}><RefreshCw size={13} /> {retryingSource === source.id ? "Retrying..." : "Retry extraction"}</button> : <time>{formatDate(source.created_at)}</time>}
               </div>
             ))}
           </div>
@@ -292,6 +363,25 @@ function SourcesView() {
       </section>
     </div>
   );
+}
+
+function ProviderGuide({ mark, name, step, href }: { mark: string; name: string; step: string; href: string }) {
+  return (
+    <article className="provider-guide">
+      <span className="provider-mark" aria-hidden="true">{mark}</span>
+      <div><strong>{name}</strong><small>{step}</small></div>
+      <a href={href} target="_blank" rel="noreferrer" aria-label={`Open ${name} export instructions`}><ExternalLink size={13} /></a>
+    </article>
+  );
+}
+
+function providerDisplayName(value?: string | null): string {
+  if (!value || value === "generic") return "Generic";
+  if (value === "chatgpt") return "ChatGPT";
+  if (value === "claude") return "Claude";
+  if (value === "grok") return "Grok";
+  if (value === "auto") return "Auto-detect";
+  return value;
 }
 
 function ReviewView({ onChanged }: { onChanged: () => Promise<boolean> }) {

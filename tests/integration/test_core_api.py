@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import tomllib
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +22,7 @@ from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
 from allthecontext.core import app as core_app
 from allthecontext.core.app import create_app
+from allthecontext.core.service import CoreService
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.export import restore_export
 from allthecontext.updater import PreparedArtifact, UpdatePhase
@@ -551,3 +554,103 @@ def test_archive_upload_creates_reviewable_candidates(tmp_path: Path) -> None:
         candidates = client.get("/v1/admin/candidates").json()
         assert candidates["total"] == 1
         assert candidates["items"][0]["source_service"] == "test-export"
+
+
+def test_provider_export_upload_reports_coverage_and_preserves_review_boundary(
+    tmp_path: Path,
+) -> None:
+    export = [
+        {
+            "id": "conversation-1",
+            "mapping": {
+                "u": {
+                    "message": {
+                        "id": "message-1",
+                        "author": {"role": "user"},
+                        "content": {
+                            "parts": [
+                                "I prefer direct answers. We decided to keep raw history local."
+                            ]
+                        },
+                    }
+                },
+                "a": {
+                    "message": {
+                        "id": "message-2",
+                        "author": {"role": "assistant"},
+                        "content": {"parts": ["Fact: fabricated assistant memory."]},
+                    }
+                },
+            },
+        }
+    ]
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("conversations.json", json.dumps(export))
+        archive.writestr("attachments/image.png", b"raw attachment")
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            "/v1/admin/import",
+            files={"file": ("chatgpt-export.zip", bundle.getvalue(), "application/zip")},
+            data={"provider": "auto"},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["provider"] == "chatgpt"
+        assert result["stats"]["conversations"] == 1
+        assert result["stats"]["user_messages"] == 1
+        assert result["stats"]["assistant_messages"] == 1
+        assert result["stats"]["unsupported_entries"] == 1
+        assert result["source"]["import_status"] == "complete"
+        assert result["source"]["metadata"]["provider"] == "chatgpt"
+        assert len(result["candidate_ids"]) == 2
+
+        sources = client.get("/v1/admin/sources").json()["items"]
+        assert sources[0]["candidate_count"] == 2
+        assert sources[0]["metadata"]["stats"]["conversations"] == 1
+        candidates = client.get("/v1/admin/candidates").json()["items"]
+        assert {item["content"] for item in candidates} == {
+            "I prefer direct answers.",
+            "We decided to keep raw history local.",
+        }
+        assert all("fabricated" not in item["content"] for item in candidates)
+        assert all(item["approval_status"] == "pending" for item in candidates)
+
+
+def test_provider_export_upload_rejects_unknown_explicit_provider(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            "/v1/admin/import",
+            files={"file": ("context.json", b"{}", "application/json")},
+            data={"provider": "not-a-provider"},
+        )
+
+    assert response.status_code == 422
+    assert "unsupported archive provider" in response.json()["error"]["message"]
+
+
+def test_failed_source_can_be_reprocessed_from_preserved_raw_blob(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    core = CoreService(config)
+    source = core.store.add_source(
+        b'{"goals":["Recover extraction without uploading again"]}',
+        source_service="generic",
+        source_type="json",
+        filename="recovery.json",
+        media_type="application/json",
+        metadata={"provider": "generic", "export_format": "generic_document"},
+        import_status="failed",
+    )
+
+    with TestClient(create_app(config)) as client:
+        response = client.post(f"/v1/admin/sources/{source.id}/reprocess")
+        sources = client.get("/v1/admin/sources").json()["items"]
+
+    assert response.status_code == 200, response.text
+    assert response.json()["session"]["status"] == "finished"
+    assert len(response.json()["candidate_ids"]) == 1
+    assert sources[0]["import_status"] == "complete"
+    assert sources[0]["candidate_count"] == 1

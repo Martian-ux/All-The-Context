@@ -277,12 +277,13 @@ provider transport can carry a client-held proof through to Core.
 
 The Core owns a serialized update transaction and stores only nonsecret
 preferences and recovery state below its platformdirs-derived per-user data
-directory. Stable is the default; beta requires an explicit preference. Launch
-checks run only when a reviewed HTTPS endpoint is configured and at most once
-per 24 hours. Metadata is size/time/redirect bounded, then must pass the strict
-manifest schema, active Ed25519 key, channel, platform, architecture, and
-version policy before its artifact URL is used. Artifacts stream into private
-per-operation staging and must match both signed byte length and SHA-256.
+directory. Stable releases default to stable; ADR-034 defines the reviewed
+prerelease bootstrap behavior. Launch checks run only when a reviewed HTTPS
+endpoint is configured and at most once per 24 hours. Metadata is
+size/time/redirect bounded, then must pass the strict manifest schema, active
+Ed25519 key, channel, platform, architecture, and version policy before its
+artifact URL is used. Artifacts stream into private per-operation staging and
+must match both signed byte length and SHA-256.
 
 Installer, backup, health, transport, and rollback behavior are explicit
 interfaces. Windows automatic installation is enabled only when the frozen
@@ -471,7 +472,81 @@ not start the Edge network worker; deployment workflows/templates are removed
 from V1. Deleting dormant protocol code is a later cleanup after compatibility
 and migration requirements are known.
 
-## ADR-033: Retrieval V3 separates authority, time, relevance, and admissibility
+## ADR-033: Provider history is preserved completely but promoted selectively
+
+**Status:** accepted 2026-07-22.
+
+Initial memory bootstrap uses user-requested account exports, not provider API
+keys, browser scraping, account credentials, or a recurring cloud connection.
+Core stores the accepted ZIP/JSON/JSONL/Markdown/text source byte-for-byte in
+its content-addressed local source store. HTTP uploads and SQLite BLOB writes
+are chunked; ZIP entries are read in place; root conversation arrays are
+decoded one conversation at a time. The default raw archive limit is 512 MiB,
+with an operator-configurable ceiling below SQLite's safe BLOB limit, and
+expanded text/entry/compression/conversation bounds remain mandatory.
+
+Provider adapters normalize documented ChatGPT conversation JSON, common
+Claude `chat_messages`/memory data, flexible Grok JSON, and Grok Build-style
+Markdown transcripts. ChatGPT officially documents `conversations.json` and
+numbered conversation JSON files. Claude and Grok do not publish stable field
+contracts for every export, so their adapters detect bounded envelopes and
+must report unrecognized material rather than guessing silently.
+
+Raw completeness and canonical memory are separate promises. Every recognized
+message contributes to aggregate coverage, but only user-authored durable
+statements and dedicated provider memory/profile fields can create candidates.
+Assistant, system, tool, and attachment content remains inert raw evidence.
+Provider-synthesized memory is lower-confidence and is not marked as an
+explicit user statement. No imported candidate bypasses review.
+
+Each source records provider, format, parser version, statistics, warnings, and
+`processing`/`failed`/`complete` status. The source ID and parser version key the
+ingestion session; source hash, parser version, and batch ordinal key candidate
+batches. A retry reopens the preserved BLOB through a bounded temporary file
+and replays completed batches exactly, allowing one-click crash recovery
+without another upload or duplicate candidates. A future learned extractor can
+use a new parser version against the same raw source without changing this
+authority boundary.
+
+## ADR-034: Packaged beta updates have a trust-gated default channel
+
+**Status:** accepted 2026-07-22.
+
+A frozen Windows x86_64 prerelease whose embedded keyring contains an active
+beta key uses the canonical project Pages manifest endpoint and selects beta on
+first run. A legacy persisted stable selection moves to beta only when stable
+has no configured endpoint and beta does. Source runs, unsupported targets, and
+packages without an active beta key infer no endpoint. Environment variables
+remain explicit overrides for forks and acceptance environments.
+
+GitHub's immutable versioned release download URL responds with a temporary CDN
+redirect. Artifact download may therefore follow exactly one HTTPS redirect,
+and only from a structurally versioned `github.com` release-asset path to the
+exact `release-assets.githubusercontent.com/github-production-release-asset/`
+origin and path prefix with a signed query. Manifest fetches, different
+origins/paths, and further redirects remain refused. Redirect acceptance does
+not confer trust on bytes: the already verified Ed25519 manifest's exact size
+and SHA-256 are still required before staging succeeds.
+
+## ADR-035: The first beta OTA trust root is operator-held and free
+
+**Status:** accepted 2026-07-22.
+
+The first community beta update key is `release-2026-a`, an Ed25519 key
+generated on an operator-controlled Windows system outside the checkout and
+cloud-synchronized workspace. Its encrypted PKCS8 private half remains with
+the release owner. Only the beta-authorized public half is tracked and embedded
+in packages, with fingerprint
+`sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
+
+This free manifest-signing identity authenticates OTA metadata and is separate
+from paid native publisher signing, so it does not remove Windows or macOS
+first-install warnings. Two recoverable encrypted private-key backups must be
+verified before first use. Losing the only trusted private half requires a
+separately authenticated manual recovery release; suspected compromise stops
+all publication and promotion.
+
+## ADR-036: Retrieval V3 separates authority, time, relevance, and admissibility
 
 **Status:** accepted 2026-07-22; advances ADR-018 and ADR-021 without adding a
 hosted or vector authority.
@@ -511,9 +586,9 @@ no deletion/purge resurrection, exercised restart/restore/history paths, and a
 remain experiments until stage diagnostics meet their explicit escalation
 conditions.
 
-## ADR-034: Context assembly is set-level; dense and source evidence stay shadow-only
+## ADR-037: Context assembly is set-level; dense and source evidence stay shadow-only
 
-**Status:** accepted 2026-07-22; extends ADR-033 without granting a new
+**Status:** accepted 2026-07-22; extends ADR-036 without granting a new
 canonical or production ranking authority.
 
 Context assembly is a deterministic set-selection problem rather than a linear

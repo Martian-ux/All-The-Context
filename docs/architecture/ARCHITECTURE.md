@@ -19,7 +19,8 @@ context.
 
 ```mermaid
 flowchart LR
-  Import["Archive or document"] --> Core["Authoritative Core"]
+  Providers["ChatGPT / Claude / Grok export"] --> Import["Local provider importer"]
+  Import --> Core["Authoritative Core"]
   LocalAI["Local AI client"] --> Adapter["MCP HTTP/STDIO adapter"]
   Adapter --> Core
   Mobile["Phone or another computer"] -. "direct; Core must be online" .-> Core
@@ -52,6 +53,13 @@ Only review or an explicit deterministic approval policy creates an approved
 context record. Imported text is data, never instructions. Batches and sessions
 are idempotent and resumable, and every session records available and
 unavailable coverage.
+
+Provider archives are preserved byte-for-byte, while recognized conversation
+arrays are normalized one conversation at a time. Extraction trusts role
+boundaries, not prose: only user-authored messages and dedicated provider
+memory/profile fields can create candidates. Assistant/tool/system content and
+attachments remain raw evidence. Parser versions are part of session and batch
+idempotency, so a failed source can resume locally without duplicate memory.
 
 ## Retrieval
 

@@ -204,13 +204,16 @@ class CoreStore:
         media_type: str = "application/octet-stream",
         metadata: Mapping[str, Any] | None = None,
         parser_warnings: Sequence[str] = (),
+        import_status: Literal["processing", "complete", "failed"] = "complete",
     ) -> SourceOut:
         content_hash = hashlib.sha256(content).hexdigest()
         created_at = utc_now()
         vault_id = self.vault_id()
         with self.transaction() as connection:
             existing = connection.execute(
-                "SELECT sr.*, sb.byte_size, sb.media_type FROM source_records sr "
+                "SELECT sr.*, sb.byte_size, sb.media_type, "
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
                 "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
                 "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
                 "AND sr.source_type=?",
@@ -227,7 +230,7 @@ class CoreStore:
             connection.execute(
                 "INSERT INTO source_records"
                 "(id,vault_id,content_hash,source_service,source_type,filename,metadata_json,"
-                "parser_warnings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                "import_status,parser_warnings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     source_id,
                     vault_id,
@@ -236,7 +239,8 @@ class CoreStore:
                     source_type,
                     filename,
                     _json(dict(metadata or {})),
-                    _json(list(parser_warnings)),
+                    import_status,
+                    _json(list(parser_warnings)[:512]),
                     created_at,
                 ),
             )
@@ -249,9 +253,108 @@ class CoreStore:
                 media_type=media_type,
                 byte_size=len(content),
                 created_at=created_at,
+                import_status=import_status,
+                metadata=dict(metadata or {}),
+                parser_warnings=list(parser_warnings)[:512],
+            )
+
+    def add_source_file(
+        self,
+        path: Path,
+        *,
+        source_service: str,
+        source_type: str,
+        filename: str | None = None,
+        media_type: str = "application/octet-stream",
+        metadata: Mapping[str, Any] | None = None,
+        parser_warnings: Sequence[str] = (),
+        import_status: Literal["processing", "complete", "failed"] = "complete",
+    ) -> SourceOut:
+        """Store a source from disk without materializing the complete file in memory."""
+        resolved = path.expanduser().resolve()
+        digest = hashlib.sha256()
+        byte_size = 0
+        with resolved.open("rb") as source_stream:
+            while chunk := source_stream.read(1024 * 1024):
+                digest.update(chunk)
+                byte_size += len(chunk)
+        content_hash = digest.hexdigest()
+        created_at = utc_now()
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "SELECT sr.*, sb.byte_size, sb.media_type, "
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
+                "AND sr.source_type=?",
+                (vault_id, content_hash, source_service, source_type),
+            ).fetchone()
+            if existing is not None:
+                return self._source_out(existing, duplicate=True)
+
+            inserted = connection.execute(
+                "INSERT OR IGNORE INTO source_blobs"
+                "(content_hash,content,byte_size,media_type,created_at) "
+                "VALUES(?,zeroblob(?),?,?,?)",
+                (content_hash, byte_size, byte_size, media_type, created_at),
+            )
+            if inserted.rowcount == 1:
+                blob_row = connection.execute(
+                    "SELECT rowid FROM source_blobs WHERE content_hash=?", (content_hash,)
+                ).fetchone()
+                if blob_row is None:  # pragma: no cover - protected by the insert above
+                    raise InvalidStateError("source blob could not be allocated")
+                written_digest = hashlib.sha256()
+                written_size = 0
+                with (
+                    resolved.open("rb") as source_stream,
+                    connection.blobopen(
+                        "source_blobs", "content", int(blob_row["rowid"]), readonly=False
+                    ) as blob,
+                ):
+                    while chunk := source_stream.read(1024 * 1024):
+                        blob.write(chunk)
+                        written_digest.update(chunk)
+                        written_size += len(chunk)
+                if written_size != byte_size or written_digest.hexdigest() != content_hash:
+                    raise InvalidStateError("source file changed while it was being imported")
+
+            source_id = new_id()
+            connection.execute(
+                "INSERT INTO source_records"
+                "(id,vault_id,content_hash,source_service,source_type,filename,metadata_json,"
+                "import_status,parser_warnings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    source_id,
+                    vault_id,
+                    content_hash,
+                    source_service,
+                    source_type,
+                    filename,
+                    _json(dict(metadata or {})),
+                    import_status,
+                    _json(list(parser_warnings)[:512]),
+                    created_at,
+                ),
+            )
+            return SourceOut(
+                id=source_id,
+                content_hash=content_hash,
+                source_service=source_service,
+                source_type=source_type,
+                filename=filename,
+                media_type=media_type,
+                byte_size=byte_size,
+                created_at=created_at,
+                import_status=import_status,
+                metadata=dict(metadata or {}),
+                parser_warnings=list(parser_warnings)[:512],
             )
 
     def _source_out(self, row: sqlite3.Row, *, duplicate: bool = False) -> SourceOut:
+        keys = set(row.keys())
         return SourceOut(
             id=str(row["id"]),
             content_hash=str(row["content_hash"]),
@@ -262,7 +365,58 @@ class CoreStore:
             byte_size=int(row["byte_size"]),
             created_at=str(row["created_at"]),
             duplicate=duplicate,
+            import_status=(
+                cast(Literal["processing", "complete", "failed"], row["import_status"])
+                if "import_status" in keys
+                else "complete"
+            ),
+            metadata=(
+                cast(dict[str, Any], _loads(row["metadata_json"], {}))
+                if "metadata_json" in keys
+                else {}
+            ),
+            parser_warnings=(
+                cast(list[str], _loads(row["parser_warnings_json"], []))[:512]
+                if "parser_warnings_json" in keys
+                else []
+            ),
+            candidate_count=(int(row["candidate_count"]) if "candidate_count" in keys else 0),
         )
+
+    def get_source(self, source_id: str, *, duplicate: bool = False) -> SourceOut:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT sr.*,sb.byte_size,sb.media_type,"
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+                (source_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("source not found")
+        return self._source_out(row, duplicate=duplicate)
+
+    def update_source_import(
+        self,
+        source_id: str,
+        *,
+        import_status: Literal["processing", "complete", "failed"],
+        metadata: Mapping[str, Any],
+        parser_warnings: Sequence[str],
+    ) -> None:
+        with self.transaction() as connection:
+            result = connection.execute(
+                "UPDATE source_records SET import_status=?,metadata_json=?,"
+                "parser_warnings_json=? WHERE id=?",
+                (
+                    import_status,
+                    _json(dict(metadata)),
+                    _json(list(parser_warnings)[:512]),
+                    source_id,
+                ),
+            )
+            if result.rowcount != 1:
+                raise NotFoundError("source not found")
 
     def get_source_content(self, source_id: str) -> bytes:
         with self.connect() as connection:
@@ -275,13 +429,41 @@ class CoreStore:
             raise NotFoundError("source not found")
         return bytes(row["content"])
 
+    def copy_source_content_to_path(self, source_id: str, destination: Path) -> int:
+        """Copy a raw source blob to a caller-owned path using bounded memory."""
+        target = destination.expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT sb.rowid,sb.byte_size FROM source_records sr JOIN source_blobs sb "
+                "ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("source not found")
+            written = 0
+            with (
+                connection.blobopen(
+                    "source_blobs", "content", int(row["rowid"]), readonly=True
+                ) as blob,
+                target.open("wb") as output,
+            ):
+                while chunk := blob.read(1024 * 1024):
+                    output.write(chunk)
+                    written += len(chunk)
+        if written != int(row["byte_size"]):
+            raise InvalidStateError("stored source blob was truncated")
+        return written
+
     def list_sources(
         self, *, limit: int = 100, offset: int = 0
     ) -> tuple[list[dict[str, Any]], int]:
         with self.connect() as connection:
             total = int(connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0])
             rows = connection.execute(
-                "SELECT sr.*,sb.byte_size,sb.media_type FROM source_records sr "
+                "SELECT sr.*,sb.byte_size,sb.media_type,"
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
                 "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
                 "ORDER BY sr.created_at DESC LIMIT ? OFFSET ?",
                 (min(max(limit, 1), 500), max(offset, 0)),
@@ -289,9 +471,6 @@ class CoreStore:
         return [
             {
                 **self._source_out(row).model_dump(mode="json"),
-                "import_status": str(row["import_status"]),
-                "parser_warnings": _loads(row["parser_warnings_json"], []),
-                "metadata": _loads(row["metadata_json"], {}),
             }
             for row in rows
         ], total
