@@ -8,6 +8,11 @@ context when your computer is offline.
 
 The AI client is replaceable. Your context is not.
 
+The current integration target is the unsigned community beta
+`0.1.0-beta.1`. Public beta downloads are not available until the exact-SHA
+cross-platform, supply-chain, hosted Edge, privacy, and human-approval gates in
+[`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md) pass.
+
 ## Install
 
 Normal users do not need Python, Docker, a terminal, a token, or a hand-edited
@@ -73,8 +78,9 @@ Windows publisher certificates or Apple notarization for community releases.
 Downloads are explicitly labeled unsigned and use GitHub Releases, SHA-256,
 SBOM/provenance, and the application's offline Ed25519 release manifest for
 integrity. Windows and macOS may therefore show their normal unknown-publisher
-warning on first install. macOS and Linux artifacts still need their first
-observed native runs and packaging work.
+warning on first install. The macOS DMG and Linux portable `tar.gz` packaging
+paths are implemented, but their first observed native acceptance runs are
+still pending.
 
 ## Current release target
 

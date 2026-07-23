@@ -32,11 +32,44 @@ version rather than ambiguous interpretation.
 ## Candidate build
 
 The **Release candidate** workflow requires an exact version, channel, and full
-40-character source commit. It builds and smokes native Windows, macOS, and
-Linux artifacts on their authored operating systems. It creates deterministic
-versioned ZIP files, SHA-256 sidecars, SPDX 2.3 metadata, and GitHub build
-provenance, then uploads them to an unpublished draft release. This workflow
-does not sign an OTA manifest and does not publish the draft.
+40-character source commit. The commit must be the current default-branch head,
+and the Python project/runtime/lock plus dashboard package/lock versions must
+all represent the requested release. Beta tags, asset names, and manifests keep
+the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
+equivalent `x.y.zbN` spelling.
+
+An operator must first enable GitHub's **immutable releases** repository setting
+and commit at least one independently reviewed public key for the selected
+channel. The workflow only reads that setting; it never enables it. It also
+refuses a version whose tag or release already exists. A failed candidate is
+reissued under a new version rather than uploaded with `--clobber`.
+
+The native matrix builds Windows x86_64, Linux x86_64, macOS arm64 on
+`macos-26`, and macOS x86_64 on `macos-26-intel`. Each job compares the actual
+OS, CPU, and 64-bit runtime with its label before it builds or attests anything.
+For each target it produces two deliberately different deliverables:
+
+- a direct unsigned native package (`.exe`, `.dmg`, or `.tar.gz`)
+  with checksum, prominent unsigned notice, package report, and SPDX subject;
+- a deterministic updater ZIP with its own checksum and an SPDX file inventory.
+
+Both subjects receive GitHub/Sigstore SLSA provenance and SPDX attestations.
+The workflow downloads and verifies the attestation bundles against the exact
+source commit and exact release workflow, then writes and attests
+`release-candidate-v1.json`. Only then does it create a single-use unpublished
+draft containing every reviewed byte. It never signs an OTA manifest and never
+publishes the draft.
+
+Direct packages are the human install path: Windows provides one-click setup,
+macOS provides an open-and-launch DMG, and Linux provides a portable archive.
+An updater ZIP is not automatically
+OTA-eligible merely because it exists. Beta 1 promotes only Windows x86_64 into
+the signed OTA manifest set. macOS and Linux ZIP manifests are withheld until
+real native extraction/install, health, interruption, and rollback acceptance
+proves them. In particular, macOS application bundles contain internal symlinks
+covered by the application seal. The archive writer preserves safe relative
+symlinks and rejects escaping links, but that is not a substitute for a native
+extraction and seal-verification test.
 
 Before using a candidate, an operator must confirm all source, dashboard,
 package, native diagnostic, and packaged-smoke jobs passed for the exact commit.
@@ -45,26 +78,40 @@ must be labeled **unsigned community builds** and must never be described as
 Authenticode-signed, Apple-notarized, or publisher-identified. Donated or
 sponsored native signing can be added later as defense in depth.
 
-## Offline signing and promotion
+## Offline public-key ceremony
 
 The release signing private key is generated and retained on an offline or
 operator-controlled system outside GitHub and outside this repository. Do not
 put it in Actions secrets, repository files, fixtures, logs, shell history, or
-cloud build inputs. Only the raw Ed25519 public key is added to
-`release/keys.json` in base64url form after an independently reviewed key
-ceremony. The reviewed public entries in repository `release/keys.json` and
-packaged `allthecontext/update_keys.json` must be byte-for-byte equivalent; the
-release tests reject drift between operator verification and client trust.
+cloud build inputs. The signing command requires an encrypted PKCS8 PEM key and
+reads its password from an interactive no-echo prompt. It has no password
+argument or environment-variable path and rejects a key located inside the
+checkout.
 
-For each platform and architecture:
+Only the Ed25519 public key is imported. `scripts/release_keyring.py` accepts a
+PEM or OpenSSH public-key container, rejects private-key containers and
+ambiguous bare 32-byte values, and requires the operator to supply the exact
+independently reviewed `sha256:<hex>` fingerprint. An import adds the base64url
+public key and fingerprint to both `release/keys.json` and packaged
+`allthecontext/update_keys.json`; validation requires the tracked files to be
+byte-for-byte identical. The full two-person/offline checklist is in
+[Release key ceremony](RELEASE_KEY_CEREMONY.md). No production key has been
+created by this repository.
 
-1. Download the draft asset and its checksum over authenticated HTTPS. Verify
-   the workflow provenance, checksum, expected commit, explicit unsigned-build
-   label, and packaged-smoke result.
-2. On the offline signing system, use a private-key path outside the checkout:
+## Offline manifest signing and draft publication
+
+For Beta 1, perform these steps only for the explicitly eligible Windows
+x86_64 OTA ZIP:
+
+1. Download the draft ZIP, candidate inventory, checksum, SPDX document, and
+   attestation bundles over authenticated HTTPS. Verify the exact workflow,
+   source commit, checksum, explicit unsigned status, and packaged smoke result.
+2. On the offline signing system, run the following from a clean copy of the
+   reviewed source. The encrypted key path must be outside that checkout; the
+   command prompts for its password without echo:
 
    ```text
-   python scripts/release_manifest.py create --artifact <versioned-asset> --version 0.2.0 --channel stable --platform windows --architecture x86_64 --url https://github.com/OWNER/all-the-context/releases/download/v0.2.0/all-the-context-0.2.0-windows-x86_64.zip --minimum-supported-version 0.1.0 --release-notes-url https://github.com/OWNER/all-the-context/releases/tag/v0.2.0 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-windows-x86_64.json
+   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.1-windows-x86_64.zip --version 0.1.0-beta.1 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.1/all-the-context-0.1.0-beta.1-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.1 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.1 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
    ```
 
    Add `--mandatory` only for a documented security or compatibility boundary.
@@ -72,16 +119,48 @@ For each platform and architecture:
    against the reviewed repository keyring and the downloaded artifact:
 
    ```text
-   python scripts/release_manifest.py verify --manifest manifest-windows-x86_64.json --keyring release/keys.json --artifact all-the-context-0.2.0-windows-x86_64.zip --channel stable --current-version 0.1.0
+   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.1-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.1
    ```
-4. Upload the verified manifests to the draft, inspect every immutable asset
-   URL, and obtain the required human approval. Publish the GitHub release only
-   after that approval. Then update each channel pointer atomically to the exact
-   signed bytes and verify it again from the public endpoint.
-5. Record tag, commit, release URL, asset digests, manifest digests, key ID,
+4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
+   macOS or Linux manifests. Record the reviewed candidate-inventory SHA-256.
+5. Configure required reviewers on the `release-promotion` environment. Manually
+   dispatch **Publish verified beta release** with the exact tag, source commit,
+   candidate digest, and confirmation phrase. The protected job repeats package,
+   checksum, SPDX, provenance, source, keyring, signature, URL, and supported
+   manifest-set verification before publishing. It requires the resulting
+   release to be immutable and verifies GitHub's release attestation.
+6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new
    version instead.
+
+## GitHub Pages beta channel
+
+GitHub Pages is an explicit operator gate and is currently not enabled by these
+files. Before the first real promotion, an owner selects **GitHub Actions** as
+the Pages publishing source and adds required reviewers to the `github-pages`
+environment. This can be done on GitHub Free for a public repository and does
+not require a paid signing identity.
+
+The manual **Promote signed beta update channel** workflow accepts only an exact
+immutable published tag, source commit, reviewed candidate digest, and the
+confirmation phrase `PROMOTE SIGNED BETA`. It verifies GitHub's immutable
+release attestation, matches every downloaded asset to that release, rechecks
+the build/SBOM attestations, and accepts exactly the signed manifests identified
+as OTA-eligible by the candidate inventory. It then builds a link-free Pages
+artifact and pauses at the protected `github-pages` deployment environment.
+There is no push-triggered or release-triggered channel promotion.
+
+The Beta 1 pointer is therefore only:
+
+```text
+https://OWNER.github.io/REPOSITORY/beta/windows/x86_64/manifest-v1.json
+```
+
+The human-readable `beta/index-v1.json` is diagnostic only. Clients trust the
+Ed25519 signature inside `manifest-v1.json`, not the mutability of the Pages
+pointer. Re-running promotion replaces the whole Pages artifact atomically; it
+cannot change a versioned GitHub Release asset.
 
 ## Client updater operation
 
@@ -90,7 +169,8 @@ never enter a package. Operators configure immutable channel metadata origins
 with `ATC_UPDATE_STABLE_URL` and, only when beta is supported,
 `ATC_UPDATE_BETA_URL`. Each value must be an exact HTTPS manifest endpoint.
 The application ships with neither endpoint configured and with an empty
-keyring until the release ceremony is complete, so development builds fail
+keyring until the release ceremony and live endpoint acceptance are complete,
+so development builds fail
 closed rather than contacting an inferred repository.
 
 The dashboard **Updates** page supports check now, stable/beta preference,
@@ -127,7 +207,8 @@ database; a pre-cutover failure leaves the current files and vault untouched.
 The packaged Windows smoke injects both a crash after replacement and a failed
 post-migration health check and verifies resume and rollback.
 
-macOS and Linux remain manual-required. The Windows evidence is an unsigned
+macOS and Linux remain direct-package/manual-required and have no Beta 1 OTA
+channel manifest. The Windows evidence is an unsigned
 same-version engineering transaction, not a public promotion. Community
 Windows OTA requires the offline Ed25519 key ceremony, immutable channel
 publication, explicit unsigned-publisher disclosure, and a real signed N-1
@@ -160,8 +241,9 @@ change deferral UI but never bypasses cryptographic, digest, or platform checks.
 
 ## Rotation, revocation, and recovery
 
-Keyring entries have a unique `key_id`, Ed25519 public key, allowed channels,
-and `active` or `revoked` status. Normal rotation is an overlap:
+Keyring entries have a unique `key_id`, Ed25519 public key, matching SHA-256
+public-key fingerprint, allowed channels, and `active` or `revoked` status.
+Normal rotation is an overlap:
 
 1. Generate the successor offline and review only its public key into the
    application keyring.
@@ -180,16 +262,20 @@ compromised manifest key must not authorize its own replacement.
 
 ## Edge image and hosted deployment
 
-Publishing a reviewed release triggers the **Publish Edge image** workflow. A
-manual run accepts only a full commit SHA. The image is pushed to GHCR with an
-immutable `sha-<40-character-commit>` tag and is recorded by digest
-(`ghcr.io/OWNER/all-the-context-edge@sha256:...`). OCI source/revision/license
-labels, BuildKit provenance, an SBOM attestation, and GitHub provenance are
-attached. Deployment configuration must pin the digest, not `latest`.
+The **Publish or verify Edge image** workflow is manual-only and accepts only a
+full commit SHA. It must publish and publicly verify the frozen image source
+commit before the later Blueprint and packaged-Core release commits exist;
+publishing a GitHub Release does not trigger another image build. The image is
+pushed to GHCR with an immutable `sha-<40-character-commit>` tag and recorded by
+digest (`ghcr.io/OWNER/all-the-context-edge@sha256:...`). OCI
+source/revision/license labels, BuildKit provenance, an SBOM attestation, and
+GitHub provenance are attached. Deployment configuration must pin the digest,
+not `latest`.
 
 After the first push, an owner must explicitly make the GHCR package public and
-verify anonymous pull access. `render.yaml` is a public-ready example requiring
-an HTTPS public URL, a generated Edge bundle, and persistent storage. Its
-starter service and disk can incur charges; this repository does not create
-them. Provider OAuth/mobile handshakes and production hosting remain acceptance
-tests for the operator, not claims made by the authored configuration.
+verify anonymous pull access plus startup of that exact digest. The initial
+`render.yaml` is deliberately inert until the reviewed digest-pinned handoff is
+committed and activated. The starter service and disk can incur charges; this
+repository does not create them. Provider OAuth/mobile handshakes and production
+hosting remain acceptance tests for the operator, not claims made by the
+authored configuration.

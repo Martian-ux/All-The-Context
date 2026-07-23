@@ -6,6 +6,7 @@ import atexit
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import socket
@@ -213,6 +214,7 @@ def main() -> int:
     environment = dict(os.environ)
     environment.update(
         {
+            "ATC_PACKAGED_SMOKE": "1",
             "ATC_CORE_DATA_DIR": str(data_dir),
             "ATC_CORE_PORT": str(port),
             "ATC_CORE_HOST": "127.0.0.1",
@@ -224,7 +226,6 @@ def main() -> int:
         environment["ATC_INSTALL_DIR"] = str(work / "installed")
         environment.update(
             {
-                "ATC_PACKAGED_SMOKE": "1",
                 "ATC_SMOKE_PROGRAMS_DIR": str(work / "shell" / "Programs"),
                 "ATC_SMOKE_DESKTOP_DIR": str(work / "shell" / "Desktop"),
                 "ATC_SMOKE_UNINSTALL_KEY": (
@@ -233,8 +234,16 @@ def main() -> int:
                 "ATC_SMOKE_UPDATE_RUNONCE_KEY": (
                     f"Software\\AllTheContext\\Smoke\\packaged-update-{os.getpid()}"
                 ),
+                "ATC_SMOKE_STARTUP_WINDOWS_KEY": (
+                    f"Software\\AllTheContext\\Smoke\\packaged-startup-{os.getpid()}"
+                ),
             }
         )
+    elif system == "Darwin":
+        environment["ATC_INSTALL_DIR"] = str(work / "Applications" / "All The Context.app")
+        environment["ATC_SMOKE_LAUNCH_AGENTS_DIR"] = str(work / "LaunchAgents")
+    else:
+        environment["XDG_CONFIG_HOME"] = str(work / "config")
 
     base_url = f"http://127.0.0.1:{port}"
     cleanup_admin_token = ""
@@ -249,6 +258,7 @@ def main() -> int:
             for key_name in (
                 environment["ATC_SMOKE_UNINSTALL_KEY"],
                 environment["ATC_SMOKE_UPDATE_RUNONCE_KEY"],
+                environment["ATC_SMOKE_STARTUP_WINDOWS_KEY"],
             ):
                 with suppress(OSError):
                     winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
@@ -268,7 +278,6 @@ def main() -> int:
             str(executable),
             "--headless-setup",
             str(report_path),
-            "--no-startup",
             "--no-claude",
             "--vault-name",
             "Packaged smoke vault",
@@ -280,6 +289,13 @@ def main() -> int:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("core_url") != f"http://127.0.0.1:{port}":
         raise SystemExit(f"unexpected setup report: {report}")
+    startup_report = report.get("startup")
+    expected_startup = {
+        "Windows": "HKCU Run",
+        "Darwin": "LaunchAgent",
+    }.get(system, "XDG autostart")
+    if not isinstance(startup_report, dict) or startup_report.get("mechanism") != expected_startup:
+        raise SystemExit(f"packaged startup adapter was not installed: {startup_report}")
 
     config_path = codex_home / "config.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -297,6 +313,23 @@ def main() -> int:
     installed_app = Path(str(core_command[0]))
     if not installed_app.is_file():
         raise SystemExit(f"installed desktop app is not stable: {installed_app}")
+    if system == "Darwin":
+        installed_bundles = [
+            candidate
+            for candidate in installed_app.parents
+            if candidate.suffix.casefold() == ".app"
+        ]
+        if len(installed_bundles) != 1:
+            raise SystemExit("installed macOS executable is not inside one stable app bundle")
+        seal = subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", str(installed_bundles[0])],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if seal.returncode != 0 and "not signed at all" not in seal.stderr.casefold():
+            raise SystemExit("installed macOS app bundle has an invalid structural code seal")
     if not command.is_file():
         raise SystemExit(f"configured MCP command is not stable: {command}")
     token = client_environment.get("ATC_CLIENT_TOKEN", "")
@@ -325,6 +358,24 @@ def main() -> int:
             environment["ATC_SMOKE_UNINSTALL_KEY"],
         ):
             pass
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            environment["ATC_SMOKE_STARTUP_WINDOWS_KEY"],
+        ) as startup_key:
+            startup_command, _kind = winreg.QueryValueEx(startup_key, "All The Context Core")
+        if str(installed_app) not in startup_command or "--core" not in startup_command:
+            raise SystemExit("isolated Windows startup command did not use the installed app")
+    elif system == "Darwin":
+        launch_agent = work / "LaunchAgents" / "com.allthecontext.core.plist"
+        with launch_agent.open("rb") as stream:
+            launch_payload = plistlib.load(stream)
+        if launch_payload.get("ProgramArguments") != [str(installed_app), "--core"]:
+            raise SystemExit("isolated LaunchAgent did not use the installed app bundle")
+    else:
+        startup_entry = work / "config" / "autostart" / "all-the-context.desktop"
+        startup_content = startup_entry.read_text(encoding="utf-8")
+        if str(installed_app) not in startup_content or "--core" not in startup_content:
+            raise SystemExit("isolated XDG startup entry did not use the portable app")
 
     try:
         dashboard_url = str(report.get("dashboard_url", ""))
@@ -608,6 +659,7 @@ def main() -> int:
                 "mcp_handshake": "passed",
                 "mcp_core_restart": "passed",
                 "installed_reopen": "passed",
+                "per_user_startup": "passed",
                 "ota_automatic_install": system == "Windows",
                 "ota_transaction_recovery": packaged_update_result,
                 "core_shutdown": "passed",

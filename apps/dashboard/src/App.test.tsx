@@ -410,7 +410,7 @@ describe("dashboard", () => {
     expect(screen.queryByDisplayValue("private-enrollment-bundle")).not.toBeInTheDocument();
     expect(screen.getByText("Cancel Edge setup")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel local Edge setup" })).toBeDisabled();
-    expect(screen.getByText(/Deployment link unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/reviewed public Edge image is not available/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Edge address"), { target: { value: "https://personal-edge.example" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify and pair" }));
 

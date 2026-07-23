@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -10,6 +11,12 @@ from pathlib import Path
 import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.service import CoreService
+from allthecontext.edge_acceptance import (
+    ACCEPTANCE_CONTENT,
+    HostedEdgeAcceptanceError,
+    prepare_hosted_edge_acceptance,
+    verify_hosted_edge_acceptance,
+)
 from allthecontext.edge_claim import EdgeClaimStore
 from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
 from allthecontext.models import ApprovalRequest, Availability, CandidateInput
@@ -61,6 +68,47 @@ def _edge_host(
     finally:
         oauth_store.close()
         service.close()
+
+
+def test_operator_acceptance_uses_isolated_synthetic_context_and_real_claim_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    nonempty = tmp_path / "personal-core"
+    nonempty.mkdir()
+    (nonempty / "core.sqlite3").write_bytes(b"do not modify")
+    with pytest.raises(HostedEdgeAcceptanceError, match="personal Core was not modified"):
+        prepare_hosted_edge_acceptance(nonempty)
+    assert (nonempty / "core.sqlite3").read_bytes() == b"do not modify"
+
+    workspace = tmp_path / "isolated-acceptance"
+    prepared = prepare_hosted_edge_acceptance(workspace)
+    repeated = prepare_hosted_edge_acceptance(workspace)
+    assert repeated.claim_bundle == prepared.claim_bundle
+    assert repeated.recovery_code == prepared.recovery_code
+    assert prepared.claim_bundle not in repr(prepared)
+    assert prepared.recovery_code not in repr(prepared)
+
+    core = CoreService(CoreConfig.in_directory(workspace))
+    connections = EdgeConnectionStore(core.config)
+    with _edge_host(tmp_path / "hosted-edge.sqlite3", connections) as (edge, client, _):
+        assert client.get("/about").status_code == 423
+        result = verify_hosted_edge_acceptance(workspace, PUBLIC_URL, client=client)
+        material = connections.material()
+        assert material is not None
+        replicated = edge.owner_get(material.bundle.vault_id, prepared.record_id)
+
+    assert result["result"] == "passed"
+    assert result["inert_before_claim"] is True
+    assert result["personal_context_used"] is False
+    assert result["last_sequence"] == 1
+    assert replicated is not None
+    assert replicated["content"] == ACCEPTANCE_CONTENT
+    serialized = json.dumps(result)
+    assert prepared.claim_bundle not in serialized
+    assert prepared.recovery_code not in serialized
+    with pytest.raises(HostedEdgeAcceptanceError, match="already paired"):
+        prepare_hosted_edge_acceptance(workspace)
 
 
 def test_fresh_and_rolled_back_edge_recover_from_core_event_log(

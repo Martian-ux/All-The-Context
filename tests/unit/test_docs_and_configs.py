@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
+
+from scripts.smoke_edge_container import LOCAL_IMAGE_PATTERN
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,19 +56,54 @@ def test_cross_platform_workflow_and_operations_are_present() -> None:
 
 def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> None:
     candidate = (REPOSITORY_ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
+    publish = (REPOSITORY_ROOT / ".github" / "workflows" / "publish-beta-release.yml").read_text()
+    promote = (REPOSITORY_ROOT / ".github" / "workflows" / "promote-beta-channel.yml").read_text()
     image = (REPOSITORY_ROOT / ".github" / "workflows" / "edge-image.yml").read_text()
     releases = (REPOSITORY_ROOT / "docs" / "operations" / "RELEASES.md").read_text()
     keys = json.loads((REPOSITORY_ROOT / "release" / "keys.json").read_text())
 
     assert "source_commit" in candidate
     assert "--draft" in candidate
-    assert "attest-build-provenance" in candidate
+    assert "actions/attest@v4" in candidate
+    assert "package_desktop.py" in candidate
+    assert "macos-26\n" in candidate
+    assert "macos-26-intel" in candidate
+    assert "validate-runner" in candidate
+    assert "direct unsigned native package" in candidate
+    assert "direct unsigned one-click" not in candidate
+    assert "--ota-target windows:x86_64" in candidate
+    assert "--clobber" not in candidate
+    assert "github_release_gate.py" in candidate
+    assert "environment: release-promotion" in publish
+    assert "gh release verify" in publish
+    assert "workflow_dispatch" in promote
+    assert "actions/upload-pages-artifact@v4" in promote
+    assert "actions/deploy-pages@v4" in promote
+    assert "--ota-target windows:x86_64" in promote
+    assert "push:" not in promote
+    assert "release:" not in promote
     assert "type=sha,format=long,prefix=sha-" in image
     assert "subject-digest" in image
+    assert "workflow_dispatch:" in image
+    assert "\n  release:" not in image
+    assert "github.event.release" not in image
+    assert "if: inputs.operation == 'publish'" in image
+    assert "verify-public" in image
+    assert "verify_edge_image.py" in image
+    assert "smoke_edge_container.py" in image
+    assert '--image "${{ inputs.image_reference }}"' in image
+    anonymous_manifest = image.index("Verify raw anonymous registry access")
+    anonymous_pull = image.index("Verify fresh-runner Docker pull")
+    exact_smoke = image.index("Smoke the exact anonymously pulled digest")
+    authenticated = image.index("Authenticate only after anonymous pull evidence")
+    assert anonymous_manifest < anonymous_pull < exact_smoke < authenticated
+    assert "platforms: linux/amd64" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
     assert "unsigned community builds" in releases
     assert "not a community release gate" in releases
+    assert "Pages is an explicit operator gate" in releases
+    assert "encrypted PKCS8" in releases
     assert keys == {"schema_version": 1, "keys": []}
 
 
@@ -78,12 +116,31 @@ def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
     assert "ATC_RELAY_REPLICATION_SECRET" in compose
 
 
+def test_edge_container_smoke_accepts_exact_digest_and_rejects_tags_with_at_signs() -> None:
+    digest_reference = "ghcr.io/martian-ux/all-the-context-edge@sha256:" + "a" * 64
+
+    assert LOCAL_IMAGE_PATTERN.fullmatch(digest_reference)
+    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification")
+    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification@sha256:" + "a" * 64) is None
+
+
 def test_render_blueprint_accepts_only_the_one_time_claim_handoff() -> None:
     blueprint = (REPOSITORY_ROOT / "render.yaml").read_text(encoding="utf-8")
+    permanent_template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
+        encoding="utf-8"
+    )
 
     assert "autoDeploy: false" in blueprint
+    assert "runtime: image" in blueprint
+    assert "runtime: docker" not in blueprint
+    assert "dockerfilePath:" not in blueprint
+    assert "url: __ATC_EDGE_IMAGE_REFERENCE__" in blueprint or re.search(
+        r"url: ghcr\.io/[a-z0-9._-]+/all-the-context-edge@sha256:[0-9a-f]{64}",
+        blueprint,
+    )
     assert "key: ATC_EDGE_BUNDLE" in blueprint
     assert "sync: false" in blueprint
     assert "ATC_RELAY_REPLICATION_SECRET" not in blueprint
     assert "ATC_RELAY_BEARER_TOKEN" not in blueprint
     assert "ATC_RELAY_CLIENTS_JSON" not in blueprint
+    assert permanent_template.count("__ATC_EDGE_IMAGE_REFERENCE__") == 1

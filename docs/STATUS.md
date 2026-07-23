@@ -1,10 +1,20 @@
 # Project status
 
+- Beta milestone: the Wave 1 release/channel, cross-platform packaging, and
+  public Edge workstreams for `0.1.0-beta.1` are integrated locally on
+  `codex/beta1-integration` from the green public-main baseline `a2e50ab`. The
+  final release commit has not been frozen. No beta release or Edge image has
+  been published, no provider has been deployed, and no production private key
+  has been created. The acceptance contract is
+  `docs/operations/BETA_ACCEPTANCE.md`.
+
 - Current phase: first vertical slice, release/CI foundation, release-candidate
   UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
   implemented. The secure Edge/mobile forwarding foundation, signed desktop
   update verification, automatic transactional Windows installation, and
-  irreversible Edge purge parity are integrated.
+  irreversible Edge purge parity are integrated. Direct unsigned Windows,
+  macOS, and Linux package formats, exact release-asset inventory enforcement,
+  and the manual digest-bound Edge deployment handoff are also integrated.
 - Completed: architecture and protocols; authoritative Core; restricted Edge;
   signed event replication; source, candidate, approval, correction,
   supersession, and tombstone lifecycle; nine MCP tools over STDIO and
@@ -34,28 +44,32 @@
   Windows recovery helper, and binary/database rollback; and signed ordered
   Edge purge application with opaque
   replay barriers and resumable physical SQLite compaction.
-- Current combined evidence on Windows 11 and Python 3.12: 253 Python and 19
-  dashboard tests pass. Coverage includes forged-Core refusal, cross-Core browser-session
-  isolation, terminal Edge races, bounded remote registration, permissions
-  before pagination, credential/config cleanup, and real MCP initialize/list/
-  call plus Core crash/restart recovery. Ruff formatting/lint, strict mypy
-  under `win32`, `darwin`, and `linux` targets,
-  dashboard type checks/tests/build, npm audit, wheel/sdist build, Docker
-  Compose parsing, a configured Linux Edge Docker container, and the eight-step
-  offline Edge demonstration pass. A real Windows Credential Manager write,
-  read, and delete round trip also passed. The
-  rebuilt frozen artifact passes resource diagnostics and an isolated real
-  install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/uninstall
-  smoke. The same packaged run injects a crash after binary replacement,
-  resumes the journal, forces a post-migration health failure, restores the
-  prior application, MCP adapter, updater helper, and SQLite database, and
-  restarts Core. Uninstall preserves the vault while removing the app,
-  shortcuts, registration, managed client credential, and temporary data. Signed-manifest
-  tamper/revocation/downgrade tests, deterministic native-archive tests, an
-  isolated wheel/sdist build with resource/private-key diagnostics, release
-  JSON/workflow YAML validation, and Docker Compose parsing also pass. Docker
-  Desktop was not running for a fresh local Edge image build in this release
-  infrastructure validation.
+- Current combined evidence on Windows 11 and Python 3.12: 330 Python and 19
+  dashboard tests pass. Coverage includes forged-Core refusal, cross-Core
+  browser-session isolation, terminal Edge races, bounded remote registration,
+  permissions before pagination, credential/config cleanup, and real MCP
+  initialize/list/call plus Core crash/restart recovery. Ruff formatting/lint,
+  strict mypy, dashboard type checks/tests/build, npm audit, wheel/sdist build,
+  Docker Compose parsing, actionlint 1.7.12, and the eight-step offline Edge
+  demonstration pass. A fresh Linux Edge image builds and its real container
+  smoke proves inert pre-claim behavior, the bounded claim route, Core
+  authority, and non-root UID 10001. A real Windows Credential Manager
+  write/read/delete round trip and HKCU per-user startup install/remove also
+  pass. The rebuilt frozen artifact passes resource diagnostics and an isolated
+  real install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/
+  uninstall smoke. That smoke specifically proves a managed MCP client waits
+  for the prior Core process lock before self-healing after shutdown. It also
+  injects a crash after binary replacement, resumes the journal, forces a
+  post-migration health failure, restores the prior application, MCP adapter,
+  updater helper, and SQLite database, and restarts Core. Uninstall preserves
+  the vault while removing the app, shortcuts, registration, managed client
+  credential, and temporary data. The direct unsigned Windows `.exe` package,
+  SHA-256 sidecar, warning, and package metadata pass their shell-free PE trust
+  smoke. Pytest isolates credential storage from the host backend; the separate
+  native acceptance script performs the real OS credential round trip.
+  Signed-manifest tamper/revocation/downgrade tests, deterministic native-
+  archive tests, an isolated wheel/sdist build with resource/private-key
+  diagnostics, and release JSON/workflow validation also pass.
 - Integrated memory-integrity/purge evidence includes legacy migration, export
   resurrection, locked-file, insufficient-disk, restart, API authority,
   physical-content, replication-contract, Edge propagation, Edge lock/restart,
@@ -88,12 +102,15 @@
   Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
   image/config build; native desktop build, resource diagnostics, bounded
   packaged first-run/MCP smoke, deterministic versioned archives, checksums,
-  and SPDX metadata. Draft-only candidate and digest-addressed GHCR workflows,
-  a strict signed OTA manifest contract, offline signing/verification tooling,
-  and stable/beta operator policy are present. The updater consumes only
-  operator-configured HTTPS channel endpoints and a packaged reviewed public
-  keyring; both production channel URLs and that keyring remain intentionally
-  empty until release approval.
+  and SPDX metadata. Draft-only candidate workflows enforce an exact GitHub
+  asset allowlist before and after publication; digest-addressed GHCR workflows
+  remain manual-only. The Edge handoff binds the digest-pinned Blueprint to the
+  permanent template from the reviewed image source commit and a one-use
+  deployment branch. A strict signed OTA manifest contract, offline signing/
+  verification tooling, and stable/beta operator policy are present. The
+  updater consumes only operator-configured HTTPS channel endpoints and a
+  packaged reviewed public keyring; both production channel URLs and that
+  keyring remain intentionally empty until release approval.
 - Blockers: none for evaluating the vertical slice locally.
 
 ## Core memory-integrity and purge status
@@ -168,8 +185,9 @@
   observed.
 - The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
   hosted-deployment follow-up.
-- Docker Compose parses successfully and a configured Linux Edge container was
-  observed. This is not evidence for a production host or other Linux behavior.
+- Docker Compose parses successfully. A fresh Linux Edge image and container
+  startup/claim-boundary smoke passed locally. This is not evidence for a
+  production host or other Linux desktop behavior.
 - A real Windows Credential Manager round trip was exercised. macOS Keychain
   and Linux secret-service acceptance remain unexercised; persistence
   verification and the explicit local app-data fallback were also exercised in

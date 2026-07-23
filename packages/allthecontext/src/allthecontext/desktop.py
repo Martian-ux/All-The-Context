@@ -33,7 +33,7 @@ from .application_install import (
 )
 from .client_config import apply_managed_client_cleanup, plan_managed_client_cleanup
 from .config import CoreConfig
-from .credentials import FALLBACK_CREDENTIAL_STORAGE
+from .credentials import FALLBACK_CREDENTIAL_STORAGE, verify_isolated_os_credential_round_trip
 from .desktop_runtime import RuntimeCommand
 from .desktop_setup import (
     CLAUDE_CLIENT_NAME,
@@ -52,6 +52,7 @@ from .desktop_setup import (
 )
 from .edge_connection import EdgeConnectionStore, decommission_edge_connection
 from .instance_identity import IDENTITY_FILENAME
+from .macos_bundle import MacOSBundleError, macos_bundle_fingerprint, validate_macos_bundle_links
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
 from .storage import CoreStore, StorageError
@@ -60,6 +61,7 @@ from .user_startup import remove_user_startup
 WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
 WINDOWS_UPDATE_HELPER_NAME = "AllTheContextUpdater.exe"
+MACOS_APP_NAME = "All The Context.app"
 
 
 def _retire_installed_ai_clients(
@@ -169,6 +171,53 @@ def windows_install_directory() -> Path:
     return data_path.parent / "Programs" / "All The Context"
 
 
+def _macos_install_location() -> tuple[Path, Path]:
+    configured = os.environ.get("ATC_INSTALL_DIR")
+    if configured:
+        configured_path = Path(os.path.abspath(Path(configured).expanduser()))
+        configured_is_bundle = configured_path.suffix.casefold() == ".app"
+        base = (configured_path.parent if configured_is_bundle else configured_path).resolve(
+            strict=False
+        )
+        return base / (configured_path.name if configured_is_bundle else MACOS_APP_NAME), base
+    home = Path.home().resolve(strict=True)
+    return home / "Applications" / MACOS_APP_NAME, home
+
+
+def macos_install_bundle() -> Path:
+    return _macos_install_location()[0]
+
+
+def _macos_source_bundle(executable: Path) -> Path:
+    resolved = executable.resolve(strict=True)
+    for candidate in (resolved, *resolved.parents):
+        if candidate.suffix.casefold() == ".app" and candidate.is_dir():
+            return candidate
+    raise RuntimeError("The packaged macOS application bundle is incomplete")
+
+
+def _validate_macos_install_target(target: Path, *, trusted_base: Path) -> None:
+    """Refuse link redirection or non-directory components in the install path."""
+
+    absolute = Path(os.path.abspath(target.expanduser()))
+    base = Path(os.path.abspath(trusted_base.expanduser()))
+    if base.is_symlink():
+        raise RuntimeError("The macOS trusted install base must be resolved")
+    try:
+        relative = absolute.relative_to(base)
+    except ValueError as exc:
+        raise RuntimeError("The macOS install target is outside its trusted base") from exc
+    if base.exists() and not base.is_dir():
+        raise RuntimeError("The macOS install base is not a directory")
+    current = base
+    for component in relative.parts:
+        current /= component
+        if current.is_symlink():
+            raise RuntimeError("The macOS install path contains a symbolic link")
+        if current.exists() and not current.is_dir():
+            raise RuntimeError("The macOS install path contains a non-directory entry")
+
+
 def _same_file(source: Path, target: Path) -> bool:
     if not target.is_file() or source.stat().st_size != target.stat().st_size:
         return False
@@ -195,6 +244,44 @@ def _copy_atomically(source: Path, target: Path) -> None:
         raise
 
 
+def _copy_macos_bundle_atomically(source: Path, target: Path, *, trusted_base: Path) -> None:
+    """Replace a per-user app bundle while preserving the prior copy on failure."""
+
+    source = source.resolve(strict=True)
+    target = Path(os.path.abspath(target.expanduser()))
+    _validate_macos_install_target(target, trusted_base=trusted_base)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _validate_macos_install_target(target, trusted_base=trusted_base)
+    nonce = secrets.token_hex(6)
+    staged = target.with_name(f"{target.name}.{nonce}.atc-new")
+    backup = target.with_name(f"{target.name}.{nonce}.atc-old")
+    try:
+        # Preserve bundle-internal links exactly: changing their representation
+        # can invalidate the structural macOS code seal. This is confined to
+        # the Darwin .app format; Core data and authorization never depend on
+        # link or POSIX permission semantics.
+        validate_macos_bundle_links(source)
+        if target.exists():
+            validate_macos_bundle_links(target)
+        shutil.copytree(source, staged, symlinks=True)
+        validate_macos_bundle_links(staged)
+        if target.exists():
+            target.replace(backup)
+        try:
+            staged.replace(target)
+        except OSError:
+            if backup.exists() and not target.exists():
+                backup.replace(target)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+        if backup.exists() and target.exists():
+            shutil.rmtree(backup)
+
+
 def _install_mcp_helper(source: Path, target: Path) -> Path:
     """Update the stable helper or install a content-addressed copy if an AI app holds it open."""
     try:
@@ -209,7 +296,7 @@ def _install_mcp_helper(source: Path, target: Path) -> Path:
 
 
 def _stop_installed_core_for_upgrade() -> None:
-    """Release a running installed executable before replacing it on Windows."""
+    """Release a running installed Core before replacing platform binaries."""
     config = CoreConfig.default()
     state = probe_core(config)
     if state is CoreProbe.UNREACHABLE:
@@ -256,13 +343,74 @@ def _stop_installed_core_for_upgrade() -> None:
     raise RuntimeError("The existing Core did not stop in time for the update")
 
 
+def _relaunch_installed_runtime(runtime: RuntimeCommand, relaunch_args: tuple[str, ...]) -> None:
+    environment = os.environ.copy()
+    # PyInstaller 6.9+ otherwise treats a same-executable child as a worker
+    # sharing the current extraction. The relaunched app must own an
+    # independent extraction and outlive this installer process.
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    subprocess.Popen(
+        (str(runtime.executable), *relaunch_args),
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=windows_creation_flags("CREATE_NEW_PROCESS_GROUP"),
+    )
+
+
+def _prepare_macos_runtime(
+    runtime: RuntimeCommand, *, relaunch_args: tuple[str, ...] | None
+) -> tuple[RuntimeCommand, bool]:
+    source_bundle = _macos_source_bundle(runtime.executable)
+    target_bundle, trusted_base = _macos_install_location()
+    _validate_macos_install_target(target_bundle, trusted_base=trusted_base)
+    if source_bundle.resolve() == target_bundle.resolve():
+        return runtime, False
+    if runtime.mcp_executable is None or not runtime.mcp_executable.is_file():
+        raise RuntimeError("The packaged MCP helper is missing. Download the app again.")
+    try:
+        executable_relative = runtime.executable.resolve(strict=True).relative_to(source_bundle)
+        helper_relative = runtime.mcp_executable.resolve(strict=True).relative_to(source_bundle)
+    except ValueError as exc:
+        raise RuntimeError("The packaged macOS helper is outside its application bundle") from exc
+
+    target_executable = target_bundle / executable_relative
+    target_helper = target_bundle / helper_relative
+    current = False
+    if target_executable.is_file() and target_helper.is_file():
+        try:
+            current = macos_bundle_fingerprint(source_bundle) == macos_bundle_fingerprint(
+                target_bundle
+            )
+        except (MacOSBundleError, OSError):
+            current = False
+    if not current:
+        if target_executable.is_file():
+            _stop_installed_core_for_upgrade()
+        _copy_macos_bundle_atomically(source_bundle, target_bundle, trusted_base=trusted_base)
+    if not target_executable.is_file() or not target_helper.is_file():
+        raise RuntimeError("The per-user macOS application copy is incomplete")
+    installed = RuntimeCommand(target_executable, mcp_executable=target_helper)
+    if relaunch_args is not None:
+        _relaunch_installed_runtime(installed, relaunch_args)
+        return installed, True
+    return installed, False
+
+
 def prepare_installed_runtime(
     runtime: RuntimeCommand,
     *,
     relaunch_args: tuple[str, ...] | None,
 ) -> tuple[RuntimeCommand, bool]:
-    """Install frozen Windows binaries per-user and optionally relaunch the stable copy."""
-    if not getattr(sys, "frozen", False) or platform.system() != "Windows":
+    """Install frozen platform bundles per-user and optionally relaunch the stable copy."""
+    if not getattr(sys, "frozen", False):
+        return runtime, False
+    system = platform.system()
+    if system == "Darwin":
+        return _prepare_macos_runtime(runtime, relaunch_args=relaunch_args)
+    if system != "Windows":
         return runtime, False
 
     helper_source = runtime.mcp_executable
@@ -291,20 +439,7 @@ def prepare_installed_runtime(
     )
 
     if runtime.executable != app_target and relaunch_args is not None:
-        environment = os.environ.copy()
-        # PyInstaller 6.9+ otherwise treats a same-executable child as a
-        # worker sharing the current one-file extraction. A relaunched app
-        # must outlive this setup process and own an independent extraction.
-        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-        subprocess.Popen(
-            (str(app_target), *relaunch_args),
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            creationflags=windows_creation_flags("CREATE_NEW_PROCESS_GROUP"),
-        )
+        _relaunch_installed_runtime(installed, relaunch_args)
         return installed, True
     return installed, False
 
@@ -318,6 +453,9 @@ def diagnostics() -> dict[str, Any]:
         "application": "All The Context",
         "version": __version__,
         "frozen": bool(getattr(sys, "frozen", False)),
+        "distribution_trust": (
+            "unsigned-community" if getattr(sys, "frozen", False) else "source-development"
+        ),
         "platform": platform.system(),
         "python": platform.python_version(),
         "tk": tkinter.TkVersion,
@@ -406,6 +544,30 @@ def write_diagnostics(path: Path) -> None:
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _packaged_credential_acceptance(report_value: str) -> int:
+    if (
+        os.environ.get("ATC_PACKAGED_SMOKE") != "1"
+        or not getattr(sys, "frozen", False)
+        or platform.system() not in {"Windows", "Darwin"}
+    ):
+        raise RuntimeError("Packaged OS credential acceptance is disabled")
+    verify_isolated_os_credential_round_trip()
+    report = Path(report_value).expanduser().resolve()
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        json.dumps(
+            {
+                "platform": platform.system(),
+                "os_credential": "round-trip-and-delete-passed",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return 0
 
 
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
@@ -656,6 +818,11 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--setup", action="store_true", help=argparse.SUPPRESS)
     mode.add_argument("--diagnostics", type=Path, help=argparse.SUPPRESS)
     mode.add_argument("--headless-setup", metavar="REPORT_PATH", help=argparse.SUPPRESS)
+    mode.add_argument(
+        "--packaged-credential-acceptance",
+        metavar="REPORT_PATH",
+        help=argparse.SUPPRESS,
+    )
     mode.add_argument("--apply-update", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument("--update-health-check", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument(
@@ -712,6 +879,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.headless_setup:
         return _headless_setup(args, RuntimeCommand.current())
+    if args.packaged_credential_acceptance:
+        return _packaged_credential_acceptance(args.packaged_credential_acceptance)
     if args.apply_update:
         return _apply_packaged_update(args.apply_update)
     if args.update_health_check:

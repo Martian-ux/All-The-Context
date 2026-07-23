@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from allthecontext import __version__
 from allthecontext.edge_claim import EdgeClaimBundle, EdgeClaimError, EdgeClaimStore
 from allthecontext.edge_setup import (
     EdgeEnrollmentBundle,
@@ -320,7 +321,7 @@ def create_app(
                 if edge_provider is not None:
                     edge_provider.store.close()
 
-    app = FastAPI(title="All The Context Relay", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="All The Context Relay", version=__version__, lifespan=lifespan)
     oauth_rate_limiter = _SlidingWindowLimiter()
 
     @app.middleware("http")

@@ -12,7 +12,12 @@ from typing import Any, cast
 
 import allthecontext.updater as updater_module
 import pytest
-from allthecontext.release_manifest import canonical_payload, create_manifest, public_key_value
+from allthecontext.release_manifest import (
+    canonical_payload,
+    create_manifest,
+    public_key_fingerprint,
+    public_key_value,
+)
 from allthecontext.updater import (
     MAX_MANIFEST_BYTES,
     HttpsTransport,
@@ -155,6 +160,7 @@ def _fixture(
                         "key_id": "test-release-key",
                         "algorithm": "Ed25519",
                         "public_key": public_key_value(private),
+                        "public_key_sha256": public_key_fingerprint(public_key_value(private)),
                         "channels": ["stable", "beta"],
                         "status": "active",
                     }

@@ -132,7 +132,14 @@ export interface EdgeStatus {
   };
   deployment: {
     provider: "render_blueprint";
+    available?: boolean;
     deploy_url?: string | null;
+    deploy_branch?: string | null;
+    image_reference?: string | null;
+    source_commit?: string | null;
+    blueprint_commit?: string | null;
+    configuration_source?: "environment" | "packaged";
+    configuration_error?: string | null;
     enrollment_environment_variable: "ATC_EDGE_BUNDLE";
     requires_host_account: boolean;
     estimated_monthly_cost_usd: number;

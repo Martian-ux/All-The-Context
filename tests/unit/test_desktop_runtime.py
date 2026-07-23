@@ -9,6 +9,7 @@ from allthecontext.config import CoreConfig
 from allthecontext.credentials import DevelopmentFileCredentialStore
 from allthecontext.desktop import (
     _copy_atomically,
+    _copy_macos_bundle_atomically,
     _install_mcp_helper,
     _schedule_windows_install_removal,
     _stop_installed_core_for_upgrade,
@@ -102,6 +103,182 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert launch_environments[0]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert stopped == [True]
     assert registered == [installed.executable]
+
+
+def test_macos_bundle_copy_replaces_existing_copy_atomically(tmp_path: Path) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_helper = source / "Contents" / "Frameworks" / "all-the-context-mcp"
+    source_app.parent.mkdir(parents=True)
+    source_helper.parent.mkdir(parents=True)
+    source_app.write_bytes(b"new app")
+    source_helper.write_bytes(b"new helper")
+    target = tmp_path / "Applications" / "All The Context.app"
+    target_app = target / "Contents" / "MacOS" / "AllTheContext"
+    target_app.parent.mkdir(parents=True)
+    target_app.write_bytes(b"old app")
+
+    _copy_macos_bundle_atomically(source, target, trusted_base=tmp_path.resolve())
+
+    assert target_app.read_bytes() == b"new app"
+    assert (target / "Contents" / "Frameworks" / "all-the-context-mcp").read_bytes() == (
+        b"new helper"
+    )
+    assert not list(target.parent.glob("*.atc-new"))
+    assert not list(target.parent.glob("*.atc-old"))
+
+
+def test_macos_bundle_copy_restores_prior_copy_when_cutover_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_app.parent.mkdir(parents=True)
+    source_app.write_bytes(b"new app")
+    target = tmp_path / "Applications" / "All The Context.app"
+    target_app = target / "Contents" / "MacOS" / "AllTheContext"
+    target_app.parent.mkdir(parents=True)
+    target_app.write_bytes(b"old app")
+    original_replace = Path.replace
+
+    def fail_staged_cutover(path: Path, destination: Path) -> Path:
+        if path.name.endswith(".atc-new") and destination == target:
+            raise OSError("injected bundle cutover failure")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_staged_cutover)
+
+    with pytest.raises(OSError, match="injected bundle cutover failure"):
+        _copy_macos_bundle_atomically(source, target, trusted_base=tmp_path.resolve())
+
+    assert target_app.read_bytes() == b"old app"
+    assert not list(target.parent.glob("*.atc-new"))
+    assert not list(target.parent.glob("*.atc-old"))
+
+
+def test_macos_bundle_copy_refuses_unvalidated_source(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_app.parent.mkdir(parents=True)
+    source_app.write_bytes(b"desktop")
+    target = tmp_path / "Applications" / "All The Context.app"
+    monkeypatch.setattr(
+        "allthecontext.desktop.validate_macos_bundle_links",
+        lambda _bundle: (_ for _ in ()).throw(RuntimeError("unsafe app link")),
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe app link"):
+        _copy_macos_bundle_atomically(source, target, trusted_base=tmp_path.resolve())
+
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("link_target_itself", [True, False])
+def test_macos_bundle_copy_refuses_symlinked_install_path_without_touching_external_data(
+    tmp_path: Path, link_target_itself: bool
+) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_app.parent.mkdir(parents=True)
+    source_app.write_bytes(b"desktop")
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "keep.txt"
+    sentinel.write_text("do not touch", encoding="utf-8")
+    applications = tmp_path / "Applications"
+    target = applications / "All The Context.app"
+    try:
+        if link_target_itself:
+            applications.mkdir()
+            target.symlink_to(external, target_is_directory=True)
+        else:
+            applications.symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("this test account cannot create a directory symlink")
+
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        _copy_macos_bundle_atomically(source, target, trusted_base=tmp_path.resolve())
+
+    assert sentinel.read_text(encoding="utf-8") == "do not touch"
+    assert sorted(path.name for path in external.iterdir()) == ["keep.txt"]
+
+
+def test_macos_bundle_copy_refuses_existing_non_directory_target(tmp_path: Path) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_app.parent.mkdir(parents=True)
+    source_app.write_bytes(b"desktop")
+    target = tmp_path / "Applications" / "All The Context.app"
+    target.parent.mkdir()
+    target.write_text("unrelated user file", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="non-directory"):
+        _copy_macos_bundle_atomically(source, target, trusted_base=tmp_path.resolve())
+
+    assert target.read_text(encoding="utf-8") == "unrelated user file"
+
+
+def test_macos_bundle_copy_trusts_resolved_base_without_rechecking_alias_ancestors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_app.parent.mkdir(parents=True)
+    source_app.write_bytes(b"desktop")
+    trusted_base = tmp_path / "resolved-prefix" / "user-install-root"
+    target = trusted_base / "All The Context.app"
+    original_is_symlink = Path.is_symlink
+
+    def simulated_var_alias(path: Path) -> bool:
+        if path == trusted_base.parent:
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", simulated_var_alias)
+
+    _copy_macos_bundle_atomically(source, target, trusted_base=trusted_base)
+
+    assert (target / "Contents" / "MacOS" / "AllTheContext").read_bytes() == b"desktop"
+
+
+def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "download" / "AllTheContext.app"
+    source_app = source / "Contents" / "MacOS" / "AllTheContext"
+    source_helper = source / "Contents" / "Frameworks" / "all-the-context-mcp"
+    source_app.parent.mkdir(parents=True)
+    source_helper.parent.mkdir(parents=True)
+    source_app.write_bytes(b"desktop")
+    source_helper.write_bytes(b"mcp")
+    install_root = tmp_path / "Applications"
+    monkeypatch.setenv("ATC_INSTALL_DIR", str(install_root))
+    monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("allthecontext.desktop.sys.frozen", True, raising=False)
+    launched: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    class Process:
+        pass
+
+    def fake_popen(command: tuple[str, ...], **kwargs: object) -> Process:
+        launched.append((command, kwargs))
+        return Process()
+
+    monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", fake_popen)
+
+    installed, relaunched = prepare_installed_runtime(
+        RuntimeCommand(source_app, mcp_executable=source_helper),
+        relaunch_args=("--setup",),
+    )
+
+    expected_bundle = install_root / "All The Context.app"
+    assert installed.executable == expected_bundle / "Contents" / "MacOS" / "AllTheContext"
+    assert installed.executable.read_bytes() == b"desktop"
+    assert installed.mcp_executable == (
+        expected_bundle / "Contents" / "Frameworks" / "all-the-context-mcp"
+    )
+    assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert relaunched is True
+    assert launched[0][0] == (str(installed.executable), "--setup")
+    assert launched[0][1]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"  # type: ignore[index]
 
 
 def test_current_installed_runtime_does_not_reinstall_or_relaunch(

@@ -1,0 +1,160 @@
+name: Publish verified beta release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact beta tag (for example v0.1.0-beta.1)
+        required: true
+        type: string
+      source_commit:
+        description: Reviewed full 40-character release commit
+        required: true
+        type: string
+      candidate_sha256:
+        description: Reviewed SHA-256 of release-candidate-v1.json
+        required: true
+        type: string
+      approval:
+        description: Type PUBLISH UNSIGNED BETA
+        required: true
+        type: string
+
+concurrency:
+  group: publish-beta-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    environment: release-promotion
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      attestations: read
+      contents: write
+    steps:
+      - name: Require deliberate operator phrase
+        shell: bash
+        env:
+          APPROVAL: ${{ inputs.approval }}
+        run: test "$APPROVAL" = "PUBLISH UNSIGNED BETA"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Require repository release immutability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          test "$(gh api -H 'X-GitHub-Api-Version: 2026-03-10'
+          repos/${{ github.repository }}/immutable-releases --jq .enabled)" = "true"
+      - name: Verify unpublished beta release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release view "${{ inputs.tag }}" \
+            --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets \
+            > dist/release-state.json
+          python scripts/release_candidate.py verify-release-state \
+            --input dist/release-state.json \
+            --tag "${{ inputs.tag }}" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --draft true \
+            --immutable false
+      - name: Download candidate without replacing any asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" --dir dist/release
+      - name: Verify candidate inventory, packages, checksums, and SPDX documents
+        run: >-
+          python scripts/release_candidate.py verify
+          --release-dir dist/release
+          --expected-sha256 "${{ inputs.candidate_sha256 }}"
+          --target windows:x86_64
+          --target macos:arm64
+          --target macos:x86_64
+          --target linux:x86_64
+          --ota-target windows:x86_64
+          --asset-stage promotion
+      - name: Verify exact build workflow, commit, provenance, and SBOM attestations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-candidate.yml
+        run: |
+          set -euo pipefail
+          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.dmg dist/release/*-unsigned.tar.gz; do
+            [[ -f "$subject" ]] || continue
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$subject.provenance.sigstore.json" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --bundle "$subject.sbom.sigstore.json" \
+              --predicate-type "https://spdx.dev/Document/v2.3" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-digest "$SOURCE_COMMIT" \
+              --deny-self-hosted-runners
+          done
+          gh attestation verify dist/release/release-candidate-v1.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle dist/release/release-candidate-v1.json.provenance.sigstore.json \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --source-digest "$SOURCE_COMMIT" \
+            --deny-self-hosted-runners
+      - name: Verify every offline-signed manifest and OTA artifact binding
+        run: >-
+          python scripts/release_channel.py prepare
+          --release-dir dist/release
+          --candidate-sha256 "${{ inputs.candidate_sha256 }}"
+          --repository "${{ github.repository }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --output-dir dist/channel-preflight
+      - name: Recheck the exact draft asset set immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" \
+            --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets \
+            > dist/pre-publish-release-state.json
+          python scripts/release_candidate.py verify-release-state \
+            --input dist/pre-publish-release-state.json \
+            --tag "${{ inputs.tag }}" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --draft true \
+            --immutable false \
+            --release-dir dist/release \
+            --asset-stage promotion
+      - name: Publish only after protected-environment approval and all verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ inputs.tag }}" --draft=false --prerelease
+      - name: Require immutable published state and GitHub release attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" \
+            --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets \
+            > dist/published-release-state.json
+          python scripts/release_candidate.py verify-release-state \
+            --input dist/published-release-state.json \
+            --tag "${{ inputs.tag }}" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --draft false \
+            --immutable true \
+            --release-dir dist/release \
+            --asset-stage promotion
+          gh release verify "${{ inputs.tag }}"
