@@ -24,11 +24,16 @@ from allthecontext.relay.service import ClientIdentity, RelayService
 from allthecontext.replication import JsonValue
 
 
-def _annotations(*, read_only: bool, idempotent: bool) -> ToolAnnotations:
+def _annotations(
+    *,
+    read_only: bool,
+    idempotent: bool,
+    destructive: bool = False,
+) -> ToolAnnotations:
     return ToolAnnotations.model_validate(
         {
             "readOnlyHint": read_only,
-            "destructiveHint": False,
+            "destructiveHint": destructive,
             "idempotentHint": idempotent,
             "openWorldHint": False,
         }
@@ -71,7 +76,6 @@ def _public_record(record: dict[str, Any]) -> dict[str, Any]:
         "valid_until",
         "version",
         "supersedes",
-        "approval_status",
         "content_hash",
         "updated_at",
         "score",
@@ -101,11 +105,15 @@ def build_edge_mcp(
             "Use this context service automatically; do not ask the user to manage it. At the "
             "start of every substantive task where preferences, projects, people, constraints, "
             "or prior decisions could matter, call bootstrap_context before answering or acting, "
-            "then search or fetch specific records when needed. Retrieve approved "
-            "always-available context and, while Core is online, approved core-available "
+            "then search or fetch specific records when needed. Retrieve current "
+            "always-available context and, while Core is online, current core-available "
             "context. When the user states or corrects durable context, call "
             "propose_memory before the task ends if the granted scope permits it. Core remains "
-            "authoritative: a proposal is reviewable, not canonical. Never propose secrets, "
+            "authoritative and evaluates observations automatically under the user's configured "
+            "policy. Edge only queues encrypted observations until Core can evaluate them; "
+            "submission does not create a user review task. Call forget_context only when the "
+            "user explicitly asks to forget or delete a specific context record; never infer "
+            "that request. Never propose secrets, "
             "hidden reasoning, provider instructions, or guesses as established facts."
         ),
         website_url=provider.public_url,
@@ -157,7 +165,7 @@ def build_edge_mcp(
         return result.state, None
 
     @server.tool(
-        title="Bootstrap approved context",
+        title="Bootstrap current context",
         annotations=_annotations(read_only=True, idempotent=True),
     )
     def bootstrap_context(
@@ -166,7 +174,7 @@ def build_edge_mcp(
         character_budget: int = 8_000,
         current_project: str | None = None,
     ) -> dict[str, Any]:
-        """Compile approved always-available context for the current task."""
+        """Compile current always-available context for the current task."""
         if len(task_description) > 4_000:
             raise ValueError("task_description must contain at most 4000 characters")
         if current_project is not None and len(current_project) > 512:
@@ -238,7 +246,7 @@ def build_edge_mcp(
         }
 
     @server.tool(
-        title="Search approved context",
+        title="Search current context",
         annotations=_annotations(read_only=True, idempotent=True),
     )
     def search_context(
@@ -309,11 +317,11 @@ def build_edge_mcp(
         }
 
     @server.tool(
-        title="Get approved context item",
+        title="Get current context item",
         annotations=_annotations(read_only=True, idempotent=True),
     )
     def get_context_item(record_id: str) -> dict[str, Any]:
-        """Get one approved always-available context record by its stable ID."""
+        """Get one current always-available context record by its stable ID."""
         identity = _identity(vault_id)
         record = service.get(identity, record_id)
         if record is None:
@@ -367,12 +375,32 @@ def build_edge_mcp(
         sensitivity: str = "normal",
         source_reference: str | None = None,
         evidence: str | None = None,
+        explicit_user_statement: bool = True,
+        entity_key: str | None = None,
+        attribute_key: str | None = None,
+        supersedes: str | None = None,
+        observed_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Call when durable context changes; queues Core review, never canonical memory."""
+        """Queue an encrypted observation for automatic evaluation by authoritative Core."""
         if not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if (entity_key is None) != (attribute_key is None):
+            raise ValueError("entity_key and attribute_key must be supplied together")
         identity = _identity(vault_id, required_scope=PROPOSE_SCOPE)
+        provenance: dict[str, JsonValue] = {
+            "explicit_user_statement": explicit_user_statement,
+        }
+        for key, value in (
+            ("source_reference", source_reference),
+            ("evidence", evidence),
+            ("entity_key", entity_key),
+            ("attribute_key", attribute_key),
+            ("supersedes", supersedes),
+            ("observed_at", observed_at),
+        ):
+            if value is not None:
+                provenance[key] = value
         proposal: dict[str, JsonValue] = {
             "kind": kind,
             "content": content,
@@ -381,10 +409,7 @@ def build_edge_mcp(
             "sensitivity": sensitivity,
             "availability": "core_available",
             "source_service": identity.client_id,
-            "provenance": {
-                "source_reference": source_reference,
-                "evidence": evidence,
-            },
+            "provenance": provenance,
         }
         key = idempotency_key or _automatic_proposal_key(proposal)
         queued, replayed = service.propose(
@@ -396,7 +421,10 @@ def build_edge_mcp(
             "proposal": dict(queued),
             "replayed": replayed,
             "canonical": False,
-            "review_required": True,
+            "authority": "core",
+            "disposition": "staged",
+            "decision_reason": "encrypted_at_edge_until_automatic_core_evaluation",
+            "user_action_required": False,
         }
 
     @server.tool(
@@ -408,7 +436,11 @@ def build_edge_mcp(
         description: str,
         suggested_correction: str | None = None,
     ) -> dict[str, Any]:
-        """Queue a correction signal for authoritative review in Core."""
+        """Queue an error signal; Core automatically evaluates any explicit correction."""
+        if not description.strip():
+            raise ValueError("description must contain non-whitespace text")
+        if suggested_correction is not None and not suggested_correction.strip():
+            raise ValueError("suggested_correction must contain non-whitespace text")
         identity = _identity(vault_id, required_scope=PROPOSE_SCOPE)
         payload: dict[str, JsonValue] = {
             "kind": "context_error",
@@ -420,6 +452,7 @@ def build_edge_mcp(
             "provenance": {
                 "record_id": record_id,
                 "suggested_correction": suggested_correction,
+                "explicit_user_statement": bool(suggested_correction),
             },
         }
         key = hashlib.sha256(json_for_hash(payload).encode()).hexdigest()
@@ -432,7 +465,46 @@ def build_edge_mcp(
             "proposal": dict(queued),
             "replayed": replayed,
             "canonical": False,
-            "review_required": True,
+            "authority": "core",
+            "disposition": "staged",
+            "decision_reason": "encrypted_at_edge_until_automatic_core_evaluation",
+            "user_action_required": False,
+        }
+
+    @server.tool(
+        title="Forget context",
+        annotations=_annotations(read_only=False, idempotent=True, destructive=True),
+    )
+    def forget_context(record_id: str, reason: str) -> dict[str, Any]:
+        """Call only on an explicit user request; stage a reversible forget for Core."""
+        identity = _identity(vault_id, required_scope=PROPOSE_SCOPE)
+        payload: dict[str, JsonValue] = {
+            "kind": "context_forget",
+            "content": reason,
+            "scope": [],
+            "confidence": 1.0,
+            "sensitivity": "sensitive",
+            "availability": "core_available",
+            "source_service": identity.client_id,
+            "provenance": {
+                "record_id": record_id,
+                "explicit_user_statement": True,
+            },
+        }
+        key = hashlib.sha256(json_for_hash(payload).encode()).hexdigest()
+        queued, replayed = service.propose(
+            identity,
+            idempotency_key=f"forget:{key}",
+            proposal=payload,
+        )
+        return {
+            "proposal": dict(queued),
+            "replayed": replayed,
+            "canonical": False,
+            "authority": "core",
+            "disposition": "staged",
+            "decision_reason": "encrypted_at_edge_until_automatic_core_evaluation",
+            "user_action_required": False,
         }
 
     @server.tool(
@@ -441,7 +513,7 @@ def build_edge_mcp(
         annotations=_annotations(read_only=True, idempotent=True),
     )
     def provider_search(query: str) -> dict[str, Any]:
-        """Search approved context using the data-app compatibility schema."""
+        """Search current context using the data-app compatibility schema."""
         identity = _identity(vault_id)
         records = service.search(identity, query=query, limit=20)
         core_state, core_response = forward(
@@ -478,7 +550,7 @@ def build_edge_mcp(
         annotations=_annotations(read_only=True, idempotent=True),
     )
     def provider_fetch(id: str) -> dict[str, Any]:
-        """Fetch one approved context item using the data-app compatibility schema."""
+        """Fetch one current context item using the data-app compatibility schema."""
         identity = _identity(vault_id)
         record = service.get(identity, id)
         core_state = "not_needed"

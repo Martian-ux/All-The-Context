@@ -4,8 +4,8 @@ The intended experience is one-time registration. The desktop wizard creates
 separate least-privilege identities for Codex and Claude Desktop, secures their
 credentials, and adds the installed STDIO adapter to each detected client.
 Existing settings are preserved and backed up. After one client restart,
-normal sessions retrieve context and propose durable changes without repeated
-setup, token handling, or configuration copy/paste.
+normal sessions retrieve context and submit durable observations without
+repeated setup, token handling, configuration copy/paste, or memory review.
 
 Managed entries pin the exact vault, loopback Core URL, installed Core command,
 client ID, and credential. On a tool call the adapter verifies Core; if the
@@ -16,10 +16,15 @@ The dashboard opens through a short-lived one-use loopback ticket exchanged for
 an opaque tab-scoped session. The administrator credential is never put in a
 URL, cookie, or browser storage.
 
-The approval policy remains authoritative. MCP instructions ask compatible
+Core's versioned memory policy is authoritative. MCP instructions ask compatible
 clients to call `bootstrap_context` for relevant work and `propose_memory` when
-durable context changes, but proposals remain candidates. The dashboard is for
-review, import, correction, backup, and administration.
+durable context changes. A proposal is an observation, not a current-context
+write: Core derives its origin and returns an automatic `applied`,
+`reinforced`, `tentative`, or `ignored` decision. The dashboard is optional for
+activity inspection, provenance, correction, undo, import, backup, and
+administration; it is not an inbox. Clients call `forget_context` only for an
+explicit user request naming a particular memory; Core records a reversible
+deletion, never a purge.
 
 Other local MCP clients use the provider-neutral adapter contract and examples
 in [`integrations/`](../../integrations/README.md). The packaged smoke performs

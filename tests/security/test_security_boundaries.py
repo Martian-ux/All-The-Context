@@ -141,10 +141,12 @@ def test_provider_assistant_content_cannot_cross_the_candidate_boundary(tmp_path
         provider="chatgpt",
     )
 
-    candidates, total = core.store.list_candidates(source_id=imported["source"]["id"])
+    observations, total = core.store.list_observations(source_id=imported["source"]["id"])
     assert total == 1
-    assert candidates[0].content == "I prefer evidence-backed answers."
-    assert candidates[0].approval_status.value == "pending"
+    assert observations[0].content == "I prefer evidence-backed answers."
+    assert observations[0].disposition.value == "applied"
+    assert observations[0].record_id is not None
+    assert imported["outcomes"] == {"applied": 1}
     assert core.retrieval.search(SearchRequest(query="Attacker")).total == 0
 
 

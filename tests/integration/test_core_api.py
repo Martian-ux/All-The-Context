@@ -542,7 +542,7 @@ def test_authenticated_shutdown_requests_graceful_server_exit(tmp_path: Path) ->
     assert requested == [True]
 
 
-def test_archive_upload_creates_reviewable_candidates(tmp_path: Path) -> None:
+def test_generic_archive_observation_stays_tentative_without_review(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     with TestClient(create_app(config)) as client:
         response = client.post(
@@ -554,9 +554,11 @@ def test_archive_upload_creates_reviewable_candidates(tmp_path: Path) -> None:
         candidates = client.get("/v1/admin/candidates").json()
         assert candidates["total"] == 1
         assert candidates["items"][0]["source_service"] == "test-export"
+        assert candidates["items"][0]["disposition"] == "tentative"
+        assert response.json()["outcomes"] == {"tentative": 1}
 
 
-def test_provider_export_upload_reports_coverage_and_preserves_review_boundary(
+def test_provider_export_upload_applies_user_statements_automatically(
     tmp_path: Path,
 ) -> None:
     export = [
@@ -610,13 +612,15 @@ def test_provider_export_upload_reports_coverage_and_preserves_review_boundary(
         sources = client.get("/v1/admin/sources").json()["items"]
         assert sources[0]["candidate_count"] == 2
         assert sources[0]["metadata"]["stats"]["conversations"] == 1
-        candidates = client.get("/v1/admin/candidates").json()["items"]
-        assert {item["content"] for item in candidates} == {
+        observations = client.get("/v1/admin/observations").json()["items"]
+        assert {item["content"] for item in observations} == {
             "I prefer direct answers.",
             "We decided to keep raw history local.",
         }
-        assert all("fabricated" not in item["content"] for item in candidates)
-        assert all(item["approval_status"] == "pending" for item in candidates)
+        assert all("fabricated" not in item["content"] for item in observations)
+        assert all(item["disposition"] == "applied" for item in observations)
+        assert result["outcomes"] == {"applied": 2}
+        assert len(result["record_ids"]) == 2
 
 
 def test_provider_export_upload_rejects_unknown_explicit_provider(tmp_path: Path) -> None:
@@ -630,6 +634,65 @@ def test_provider_export_upload_rejects_unknown_explicit_provider(tmp_path: Path
 
     assert response.status_code == 422
     assert "unsupported archive provider" in response.json()["error"]["message"]
+
+
+def test_ongoing_memory_correction_forget_and_restore_need_no_review(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        proposed = client.post(
+            "/v1/ingestion/propose",
+            json={
+                "kind": "interaction_preference",
+                "content": "Prefer concise answers.",
+                "explicit_user_statement": True,
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        observation = proposed.json()
+        assert observation["disposition"] == "applied"
+        record_id = observation["record_id"]
+
+        corrected = client.post(
+            "/v1/ingestion/error",
+            json={
+                "record_id": record_id,
+                "description": "The preference is more specific now.",
+                "suggested_correction": "Prefer concise answers with verification evidence.",
+            },
+        )
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()["disposition"] == "applied"
+        assert corrected.json()["record_id"] == record_id
+
+        forgotten = client.post(
+            "/v1/ingestion/forget",
+            json={"record_id": record_id, "reason": "Forget this preference."},
+        )
+        assert forgotten.status_code == 200, forgotten.text
+        assert forgotten.json()["disposition"] == "applied"
+        assert client.get(f"/v1/context/{record_id}").status_code == 404
+
+        restored = client.post(
+            f"/v1/admin/records/{record_id}/restore",
+            json={"reason": "Undo forget"},
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["content"] == ("Prefer concise answers with verification evidence.")
+
+        error_only = client.post(
+            "/v1/ingestion/error",
+            json={
+                "record_id": record_id,
+                "description": "This might be stale; no replacement was stated.",
+            },
+        )
+        assert error_only.status_code == 200, error_only.text
+        assert error_only.json()["disposition"] == "tentative"
+        assert client.get(f"/v1/context/{record_id}").json()["content"] == (
+            "Prefer concise answers with verification evidence."
+        )
 
 
 def test_failed_source_can_be_reprocessed_from_preserved_raw_blob(tmp_path: Path) -> None:

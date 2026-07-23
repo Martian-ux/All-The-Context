@@ -17,6 +17,8 @@ class CoreService:
         self.config.prepare()
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
+        while self.store.evaluate_staged_observations():
+            pass
         self.store.rebuild_integrity_groups()
         self.ingestion = IngestionService(self.store)
         self.retrieval = RetrievalEngine(self.store)

@@ -18,7 +18,7 @@ from typing import Annotated, Any
 
 from fastapi import Body, Depends, FastAPI, Form, Header, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from allthecontext import __version__
@@ -88,13 +88,20 @@ class ProposalAckRequest(BaseModel):
 
 
 class ContextErrorRequest(BaseModel):
-    """Cloud-safe correction signal queued for authoritative Core review."""
+    """Cloud-safe correction signal queued for authoritative Core policy."""
 
     model_config = ConfigDict(extra="forbid")
 
     record_id: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=64_000)
     evidence: str | None = Field(default=None, max_length=16_000)
+
+    @field_validator("content", "evidence")
+    @classmethod
+    def reject_blank_error_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("context error text must contain non-whitespace text")
+        return value
 
 
 class ForwardResponseRequest(BaseModel):
@@ -1075,6 +1082,7 @@ def create_app(
             "provenance": {
                 "record_id": request.record_id,
                 "suggested_correction": request.evidence,
+                "explicit_user_statement": bool(request.evidence and request.evidence.strip()),
             },
         }
         idempotency_key = hashlib.sha256(canonical_json(proposal).encode("utf-8")).hexdigest()

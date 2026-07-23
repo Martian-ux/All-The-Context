@@ -87,6 +87,73 @@ def test_core_outbox_dispatches_and_marks_only_after_relay_acceptance(tmp_path: 
     relay.close()
 
 
+def test_core_delete_restore_resumes_relay_projection_stream(tmp_path: Path) -> None:
+    core = CoreStore(tmp_path / "restore-core.sqlite3")
+    vault_id = core.initialize_vault()
+    observation = core.add_candidate(
+        CandidateInput(
+            kind="preference",
+            content="Use concise explanations.",
+            scopes=["personal"],
+            explicit_user_statement=True,
+        )
+    )
+    assert observation.record_id is not None
+    record_id = observation.record_id
+    core.change_availability(record_id, Availability.ALWAYS)
+
+    relay = RelayService(SQLiteRelayStore(tmp_path / "restore-relay.sqlite3"), SECRET)
+    identity = ClientIdentity(
+        "client-a",
+        vault_id,
+        frozenset({"context:read"}),
+        frozenset({"personal"}),
+    )
+    app = create_app(
+        relay,
+        replication_bearer_token="replication-token",
+        client_tokens={"client-token": identity},
+        close_service_on_shutdown=False,
+    )
+    try:
+        with TestClient(app) as http_client:
+            dispatcher = ReplicationDispatcher(
+                core,
+                HttpRelayTransport(
+                    "http://127.0.0.1",
+                    "replication-token",
+                    client=http_client,
+                ),
+                SECRET,
+            )
+            assert dispatcher.dispatch_pending().delivered == 1
+            assert relay.get(identity, record_id) is not None
+
+            core.delete_record(record_id, reason="temporary removal")
+            assert dispatcher.dispatch_pending().delivered == 1
+            assert relay.get(identity, record_id) is None
+
+            restored = core.restore_record(record_id, reason="undo temporary removal")
+            assert restored.version == 4
+            assert dispatcher.dispatch_pending().delivered == 1
+            assert relay.get(identity, record_id) is not None
+
+            later = core.add_candidate(
+                CandidateInput(
+                    kind="preference",
+                    content="Use descriptive variable names.",
+                    scopes=["personal"],
+                    explicit_user_statement=True,
+                )
+            )
+            assert later.record_id is not None
+            core.change_availability(later.record_id, Availability.ALWAYS)
+            assert dispatcher.dispatch_pending().delivered == 1
+            assert relay.get(identity, later.record_id) is not None
+    finally:
+        relay.close()
+
+
 def test_largest_legal_record_fits_bounded_edge_replication_request(tmp_path: Path) -> None:
     core = CoreStore(tmp_path / "large-core.sqlite3")
     vault_id = core.initialize_vault()

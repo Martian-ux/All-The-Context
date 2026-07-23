@@ -75,6 +75,14 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class ObservationDisposition(StrEnum):
+    STAGED = "staged"
+    APPLIED = "applied"
+    REINFORCED = "reinforced"
+    TENTATIVE = "tentative"
+    IGNORED = "ignored"
+
+
 class IngestionMode(StrEnum):
     BOOTSTRAP = "model_assisted_bootstrap"
     ARCHIVE = "archive_import"
@@ -92,7 +100,7 @@ class CandidateInput(StrictModel):
     tags: list[RecordListItem] = Field(default_factory=list, max_length=128)
     source_id: str | None = Field(default=None, max_length=200)
     source_reference: str | None = Field(default=None, max_length=2_000)
-    source_service: str | None = Field(default=None, max_length=128)
+    source_service: str | None = Field(default=None, max_length=256)
     source_type: str | None = Field(default=None, max_length=128)
     evidence: str | None = Field(default=None, max_length=MAX_EVIDENCE_CHARS)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -100,6 +108,7 @@ class CandidateInput(StrictModel):
     availability: Availability = Availability.CORE
     allowed_clients: list[RecordListItem] = Field(default_factory=list, max_length=256)
     denied_clients: list[RecordListItem] = Field(default_factory=list, max_length=256)
+    observed_at: str | None = Field(default=None, max_length=100)
     valid_from: str | None = Field(default=None, max_length=100)
     expires_at: str | None = Field(default=None, max_length=100)
     supersedes: str | None = Field(default=None, max_length=200)
@@ -115,12 +124,27 @@ class CandidateInput(StrictModel):
             raise ValueError("control characters are not allowed")
         return value
 
+    @field_validator("kind")
+    @classmethod
+    def normalize_kind(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("kind must contain non-whitespace text")
+        return normalized
+
+    @field_validator("content")
+    @classmethod
+    def reject_blank_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must contain non-whitespace text")
+        return value
+
     @field_validator("structured_value")
     @classmethod
     def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         return _bounded_structured_value(value)
 
-    @field_validator("valid_from", "expires_at")
+    @field_validator("observed_at", "valid_from", "expires_at")
     @classmethod
     def normalize_timestamp(cls, value: str | None) -> str | None:
         return _normalized_timestamp(value)
@@ -208,6 +232,11 @@ class CorrectionRequest(StrictModel):
         return self
 
 
+class RestoreRequest(StrictModel):
+    version: int | None = Field(default=None, ge=1)
+    reason: str = Field(default="restored by user", min_length=1, max_length=2_000)
+
+
 class AvailabilityRequest(StrictModel):
     availability: Availability
     explicit_sensitive_replication: bool = False
@@ -274,6 +303,26 @@ class CandidateOut(CandidateInput):
     created_at: str
     reviewed_at: str | None = None
     review_reason: str | None = None
+    disposition: ObservationDisposition = ObservationDisposition.STAGED
+    record_id: str | None = None
+    decision_reason: str | None = None
+    decided_at: str | None = None
+    observation_origin: str | None = None
+    policy_version: str | None = None
+
+
+class ObservationOut(CandidateInput):
+    id: str
+    session_id: str | None
+    submitted_by_client_id: str | None = None
+    content_hash: str
+    created_at: str
+    disposition: ObservationDisposition
+    record_id: str | None = None
+    decision_reason: str | None = None
+    decided_at: str | None = None
+    observation_origin: str | None = None
+    policy_version: str | None = None
 
 
 class ContextRecordOut(CandidateInput):
@@ -283,6 +332,8 @@ class ContextRecordOut(CandidateInput):
     content_hash: str
     created_at: str
     updated_at: str
+    observation_origin: str | None = None
+    policy_version: str | None = None
 
 
 class SearchResponse(StrictModel):
@@ -301,7 +352,37 @@ class BootstrapResponse(StrictModel):
 
 class ContextErrorRequest(StrictModel):
     record_id: str | None = None
-    content: str = Field(min_length=1, max_length=MAX_CONTEXT_CHARS, alias="suggested_correction")
-    description: str | None = Field(default=None, max_length=MAX_CONTEXT_CHARS)
+    description: str = Field(min_length=1, max_length=MAX_CONTEXT_CHARS)
+    suggested_correction: str | None = Field(
+        default=None, min_length=1, max_length=MAX_CONTEXT_CHARS
+    )
     evidence: str | None = Field(default=None, max_length=MAX_EVIDENCE_CHARS)
     idempotency_key: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        legacy_content = normalized.pop("content", None)
+        if legacy_content is not None and normalized.get("suggested_correction") is None:
+            normalized["suggested_correction"] = legacy_content
+        if normalized.get("description") is None:
+            if legacy_content is not None:
+                normalized["description"] = legacy_content
+            elif normalized.get("suggested_correction") is not None:
+                normalized["description"] = normalized["suggested_correction"]
+        return normalized
+
+    @field_validator("description", "suggested_correction")
+    @classmethod
+    def reject_blank_error_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("context error text must contain non-whitespace text")
+        return value
+
+
+class ForgetContextRequest(StrictModel):
+    record_id: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2_000)

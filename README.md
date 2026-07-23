@@ -1,12 +1,19 @@
 # All The Context
 
 All The Context is a user-owned memory layer for AI tools. A single local
-**Core** is authoritative for complete source material, provenance, review
-state, history, permissions, and search. AI clients connect to that Core
-through MCP; models propose memories, but they never write canonical memory
-directly.
+**Core** is authoritative for complete source material, current context,
+provenance, history, policy decisions, permissions, and search. AI clients
+connect to that Core through MCP and submit observations; Core evaluates them
+automatically, and clients never write current context directly.
 
 The AI client is replaceable. Your context is not.
+
+Set it up once and keep using your AI tools normally. There is no routine
+memory-review inbox. Explicit durable statements and corrections can update
+current context immediately, duplicates reinforce existing context, and
+inferences remain tentative until sufficiently supported. Automatic decisions
+retain their evidence and history so they can be inspected, corrected, undone,
+or deleted later.
 
 ## V1 product boundary
 
@@ -56,14 +63,15 @@ pass.
 ## Implemented slice
 
 - typed Python 3.12+ Core with SQLite migrations and FTS5;
-- source records, candidates, approval/rejection, correction, supersession,
-  tombstones, permissions, history, and provenance;
+- source records, an observation ledger, automatic context-policy outcomes,
+  correction, supersession, reversible deletion/restoration, permissions,
+  history, and provenance;
 - idempotent/resumable model-assisted ingestion plus full local raw-history
-  import and reviewable memory extraction for ChatGPT, Claude, Grok, generic
+  import and automatic memory evaluation for ChatGPT, Claude, Grok, generic
   JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
 - one-click local Codex and Claude Desktop configuration;
-- local review/search/backup/update dashboard;
+- optional local context/activity/search/backup/update dashboard;
 - encrypted portable export and deliberate CLI restore;
 - cross-platform Windows, macOS, and Linux CI/package paths; and
 - deterministic lexical retrieval with a future embedding interface.

@@ -8,7 +8,6 @@ import {
   Download,
   ExternalLink,
   FileClock,
-  FileSearch,
   Fingerprint,
   History,
   Laptop,
@@ -16,21 +15,23 @@ import {
   Menu,
   MonitorSmartphone,
   Plug,
+  Pencil,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
+  Trash2,
   Upload,
   Users,
   X,
 } from "lucide-react";
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
-  AuditEvent,
+  ActivityEvent,
   ArchiveProvider,
   Availability,
   ClientRegistration,
-  ContextCandidate,
   ContextRecord,
   ContextRecordVersion,
   CoreStatus,
@@ -41,31 +42,30 @@ import type {
   UpdateStatus,
 } from "./types";
 
-type PageKey = "sources" | "review" | "context" | "connections" | "audit" | "backup" | "updates";
+type PageKey = "sources" | "context" | "connections" | "activity" | "backup" | "updates";
 
 const navigation: Array<{ key: PageKey; label: string; icon: typeof Archive }> = [
-  { key: "sources", label: "Sources", icon: Archive },
-  { key: "review", label: "Review", icon: FileSearch },
   { key: "context", label: "Context", icon: BookOpenText },
+  { key: "sources", label: "Sources", icon: Archive },
   { key: "connections", label: "Connect apps", icon: Plug },
-  { key: "audit", label: "Audit", icon: FileClock },
+  { key: "activity", label: "Activity", icon: FileClock },
   { key: "backup", label: "Backup", icon: Database },
   { key: "updates", label: "Updates", icon: Download },
 ];
 
 const titles: Record<PageKey, { eyebrow: string; title: string; description: string }> = {
-  sources: { eyebrow: "Ingestion", title: "Sources", description: "Bring archives and documents into your local Core." },
-  review: { eyebrow: "Approval queue", title: "Review", description: "Decide what becomes canonical context. Evidence stays visible." },
-  context: { eyebrow: "Canonical memory", title: "Context", description: "Search approved records, inspect provenance, and manage availability." },
+  sources: { eyebrow: "One-time import", title: "Sources", description: "Bring archives and documents into your local Core. Memories are processed automatically." },
+  context: { eyebrow: "Current memory", title: "Context", description: "Search current context, inspect provenance and history, or make a correction." },
   connections: { eyebrow: "Connections", title: "Connect your AI apps", description: "Connect directly to your authoritative Core. No hosted copy is required." },
-  audit: { eyebrow: "Accountability", title: "Audit", description: "Review administrative decisions and access outcomes." },
+  activity: { eyebrow: "Activity", title: "Activity", description: "See automatic memory decisions, provenance, and access outcomes." },
   backup: { eyebrow: "Portability", title: "Backup", description: "Export a complete encrypted copy of your Core data." },
   updates: { eyebrow: "Desktop", title: "Updates", description: "Check signed release metadata and control when updates are installed." },
 };
 
 function pageFromLocation(): PageKey {
   const requested = new URLSearchParams(window.location.search).get("page");
-  return navigation.some((item) => item.key === requested) ? requested as PageKey : "review";
+  if (requested === "audit") return "activity";
+  return navigation.some((item) => item.key === requested) ? requested as PageKey : "context";
 }
 
 function formatDate(value?: string | null): string {
@@ -85,6 +85,20 @@ function formatBytes(value?: number): string {
     index += 1;
   }
   return `${size < 10 && index > 0 ? size.toFixed(1) : Math.round(size)} ${units[index]}`;
+}
+
+function formatImportOutcomes(outcomes: ImportResult["outcomes"]): string {
+  const labels: Array<[keyof ImportResult["outcomes"], string]> = [
+    ["applied", "applied"],
+    ["reinforced", "reinforced"],
+    ["tentative", "tentative"],
+    ["ignored", "ignored"],
+    ["staged", "staged"],
+  ];
+  return labels
+    .filter(([key]) => (outcomes[key] ?? 0) > 0)
+    .map(([key, label]) => `${outcomes[key]} ${label}`)
+    .join(" · ");
 }
 
 function errorMessage(error: unknown): string {
@@ -171,12 +185,10 @@ function App() {
         <nav>
           {navigation.map((item) => {
             const Icon = item.icon;
-            const count = item.key === "review" ? status?.pending_candidates : undefined;
             return (
               <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => navigate(item.key)}>
                 <Icon size={17} strokeWidth={1.8} />
                 <span>{item.label}</span>
-                {count ? <span className="nav-count">{count}</span> : null}
               </button>
             );
           })}
@@ -200,10 +212,9 @@ function App() {
         <div className="workspace-body" key={page}>
           {statusError && !status ? <DisconnectedView error={statusError} onRetry={refreshStatus} /> : <>
             {page === "sources" && <SourcesView />}
-            {page === "review" && <ReviewView onChanged={refreshStatus} />}
-            {page === "context" && <ContextView />}
+            {page === "context" && <ContextView onChanged={refreshStatus} />}
             {page === "connections" && <ConnectionsView />}
-            {page === "audit" && <AuditView />}
+            {page === "activity" && <ActivityView />}
             {page === "backup" && <BackupView status={status} />}
             {page === "updates" && <UpdatesView />}
           </>}
@@ -263,8 +274,8 @@ function SourcesView() {
       const conversationCount = result.stats.conversations ?? 0;
       const providerName = providerDisplayName(result.provider);
       setNotice(result.duplicate
-        ? `${providerName} was already imported; the existing extraction was kept.`
-        : `${providerName}: ${conversationCount} conversations scanned and ${result.candidate_count} memories are ready for review.`);
+        ? `${providerName} was already imported; its existing memory decisions were kept.`
+        : `${providerName}: ${conversationCount} conversations scanned and ${result.observation_count} observations processed automatically.`);
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setUploading(false); }
@@ -275,7 +286,7 @@ function SourcesView() {
     try {
       const result = await api.reprocessSource(source.id);
       setLastImport(result);
-      setNotice(`${providerDisplayName(result.provider)} extraction resumed; ${result.candidate_count} memories are ready for review.`);
+      setNotice(`${providerDisplayName(result.provider)} extraction resumed; ${result.observation_count} observations processed automatically.`);
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setRetryingSource(null); }
@@ -340,8 +351,11 @@ function SourcesView() {
         <section className="import-receipt" aria-label="Import coverage">
           <div><span>Provider</span><strong>{providerDisplayName(lastImport.provider)}</strong></div>
           <div><span>User messages</span><strong>{lastImport.stats.user_messages ?? 0}</strong></div>
-          <div><span>Review candidates</span><strong>{lastImport.candidate_count}</strong></div>
+          <div><span>Observations processed</span><strong>{lastImport.observation_count}</strong></div>
           <div><span>Raw archive</span><strong>Saved locally</strong></div>
+          {formatImportOutcomes(lastImport.outcomes) ? (
+            <p>Automatic outcomes: {formatImportOutcomes(lastImport.outcomes)}.</p>
+          ) : null}
           {(lastImport.coverage.unavailable.length > 0 || lastImport.warnings.length > 0) ? (
             <p>{[...lastImport.coverage.unavailable, ...lastImport.warnings].slice(0, 3).join(" ")}</p>
           ) : null}
@@ -351,15 +365,15 @@ function SourcesView() {
         <div className="section-heading"><div><h2>Imported sources</h2><p>Raw evidence is stored only in Core.</p></div><button className="quiet-button" onClick={() => void load()}><RefreshCw size={14} /> Refresh</button></div>
         {loading ? <LoadingRows /> : sources.length ? (
           <div className="table-list">
-            <div className="table-header source-grid"><span>Source</span><span>Candidates</span><span>Size</span><span>Imported</span></div>
+            <div className="table-header source-grid"><span>Source</span><span>Observations</span><span>Size</span><span>Imported</span></div>
             {sources.map((source) => (
               <div className="table-row source-grid" key={source.id}>
                 <div className="primary-cell"><Archive size={16} /><span><strong>{source.filename ?? "Untitled source"}</strong><small>{providerDisplayName(source.metadata?.provider ?? source.source_service)} · {source.metadata?.stats?.conversations ?? 0} conversations · {source.import_status ?? "complete"}</small></span></div>
-                <span>{source.candidate_count ?? "—"}</span><span>{formatBytes(source.size_bytes)}</span>{source.import_status && source.import_status !== "complete" ? <button className="quiet-button source-retry" onClick={() => void retry(source)} disabled={retryingSource === source.id}><RefreshCw size={13} /> {retryingSource === source.id ? "Retrying..." : "Retry extraction"}</button> : <time>{formatDate(source.created_at)}</time>}
+                <span>{source.observation_count ?? "—"}</span><span>{formatBytes(source.size_bytes)}</span>{source.import_status && source.import_status !== "complete" ? <button className="quiet-button source-retry" onClick={() => void retry(source)} disabled={retryingSource === source.id}><RefreshCw size={13} /> {retryingSource === source.id ? "Retrying..." : "Retry extraction"}</button> : <time>{formatDate(source.created_at)}</time>}
               </div>
             ))}
           </div>
-        ) : <EmptyState icon={<Archive />} title="No sources yet" body="Import an archive above; extracted memories will wait for your review." />}
+        ) : <EmptyState icon={<Archive />} title="No sources yet" body="Import an archive above. Observations are applied, reinforced, retained, or ignored automatically." />}
       </section>
     </div>
   );
@@ -384,80 +398,20 @@ function providerDisplayName(value?: string | null): string {
   return value;
 }
 
-function ReviewView({ onChanged }: { onChanged: () => Promise<boolean> }) {
-  const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const selected = candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0] ?? null;
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const items = (await api.candidates()).items;
-      setCandidates(items); setSelectedId((current) => current && items.some(({ id }) => id === current) ? current : items[0]?.id ?? null); setError(null);
-    } catch (caught) { setError(errorMessage(caught)); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  async function decide(action: "approve" | "reject", availability: Availability = selected?.availability ?? "core_available", explicitSensitiveReplication = false) {
-    if (!selected) return;
-    setWorking(true); setError(null);
-    try {
-      if (action === "approve") await api.approveCandidate(selected.id, availability, explicitSensitiveReplication);
-      else await api.rejectCandidate(selected.id, "Rejected during review");
-      await Promise.all([load(), onChanged()]);
-    } catch (caught) { setError(errorMessage(caught)); }
-    finally { setWorking(false); }
-  }
-
-  return (
-    <div className="review-layout">
-      <section className="review-list" aria-label="Pending candidates">
-        <div className="queue-heading"><span><strong>{candidates.length}</strong> awaiting review</span><button className="icon-button" onClick={() => void load()} aria-label="Refresh candidates"><RefreshCw size={15} /></button></div>
-        {error ? <Notice kind="error">{error}</Notice> : null}
-        {loading ? <LoadingRows /> : candidates.length ? candidates.map((candidate) => (
-          <button key={candidate.id} className={`candidate-row ${selected?.id === candidate.id ? "candidate-row--selected" : ""}`} onClick={() => setSelectedId(candidate.id)}>
-            <span className="candidate-meta"><KindLabel value={candidate.kind} /><small>{Math.round(candidate.confidence * 100)}% confidence</small></span>
-            <strong>{candidate.content}</strong>
-            <span className="candidate-source">{candidate.source_service ?? "Connected model"}<ChevronRight size={15} /></span>
-          </button>
-        )) : <EmptyState icon={<Check />} title="Review queue is clear" body="New proposals and archive extractions will appear here." />}
-      </section>
-      <aside className="inspector" aria-label="Candidate evidence">
-        {selected ? <EvidenceInspector candidate={selected} working={working} onDecide={decide} /> : <div className="inspector-empty"><FileSearch size={24} /><p>Select a candidate to inspect its evidence.</p></div>}
-      </aside>
-    </div>
-  );
-}
-
-function EvidenceInspector({ candidate, working, onDecide }: { candidate: ContextCandidate; working: boolean; onDecide: (action: "approve" | "reject", availability?: Availability, explicitSensitiveReplication?: boolean) => void }) {
-  const [availability, setAvailability] = useState<Availability>(candidate.availability === "local_only" ? "local_only" : "core_available");
-  useEffect(() => { setAvailability(candidate.availability === "local_only" ? "local_only" : "core_available"); }, [candidate]);
-  return (
-    <div className="inspector-inner" key={candidate.id}>
-      <div className="inspector-title"><span className="eyebrow">Candidate</span><KindLabel value={candidate.kind} /><h2>{candidate.content}</h2></div>
-      <dl className="facts">
-        <div><dt>Scope</dt><dd>{candidate.scope}</dd></div><div><dt>Sensitivity</dt><dd>{candidate.sensitivity}</dd></div>
-        <div><dt>Confidence</dt><dd>{Math.round(candidate.confidence * 100)}%</dd></div><div><dt>Submitted</dt><dd>{formatDate(candidate.created_at)}</dd></div>
-      </dl>
-      <section className="evidence"><span className="eyebrow">Source evidence</span><blockquote>{candidate.source_excerpt || "No excerpt was included. Open the source record for full provenance."}</blockquote><p><Fingerprint size={14} /> {candidate.source_service ?? "Model-assisted ingestion"}</p></section>
-      <label className="field-label">Availability<select value={availability} onChange={(event) => setAvailability(event.target.value as Availability)}><option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
-      <p className="field-help"><MonitorSmartphone size={14} /> Mobile and other computers connect directly to Core; no context copy is sent to a hosted service.</p>
-      <div className="decision-bar"><button className="secondary-button danger" disabled={working} onClick={() => onDecide("reject")}>Reject</button><button className="primary-button" disabled={working} onClick={() => onDecide("approve", availability, false)}><Check size={16} /> Approve</button></div>
-    </div>
-  );
-}
-
-function ContextView() {
+function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability | "">("");
   const [records, setRecords] = useState<ContextRecord[]>([]);
   const [selected, setSelected] = useState<ContextRecord | null>(null);
   const [history, setHistory] = useState<ContextRecordVersion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [correctedContent, setCorrectedContent] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [removedMemory, setRemovedMemory] = useState<{ record: ContextRecord; index: number } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const search = useCallback(async () => {
@@ -468,16 +422,127 @@ function ContextView() {
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setLoading(false); }
   }, [availability, query]);
+  const loadHistory = useCallback(async (recordId: string) => {
+    try { setHistory((await api.contextHistory(recordId)).items); }
+    catch { setHistory([]); }
+  }, []);
   useEffect(() => { void search(); }, []); // initial catalogue; explicit submit handles later searches
   useEffect(() => {
     if (!selected) { setHistory([]); return; }
-    void api.contextHistory(selected.id).then((page) => setHistory(page.items)).catch(() => setHistory([]));
-  }, [selected]);
+    void loadHistory(selected.id);
+  }, [loadHistory, selected]);
 
   async function changeAvailability(value: Availability) {
     if (!selected) return;
-    try { const updated = await api.updateAvailability(selected.id, value, false); setSelected(updated); setRecords((items) => items.map((item) => item.id === updated.id ? updated : item)); }
+    setWorking(true); setError(null);
+    try {
+      const updated = await api.updateAvailability(selected.id, value, false);
+      setSelected(updated);
+      setRecords((items) => items.map((item) => item.id === updated.id ? updated : item));
+      await loadHistory(updated.id);
+    }
     catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
+  }
+
+  function choose(record: ContextRecord) {
+    setSelected(record);
+    setEditing(false);
+    setConfirmingRemoval(false);
+    setError(null);
+  }
+
+  function startCorrection() {
+    if (!selected) return;
+    setCorrectedContent(selected.content);
+    setCorrectionReason("");
+    setConfirmingRemoval(false);
+    setEditing(true);
+    setNotice(null);
+    setError(null);
+  }
+
+  async function saveCorrection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const content = correctedContent.trim();
+    if (!content) {
+      setError("A memory cannot be empty.");
+      return;
+    }
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const updated = await api.correctContext(
+        selected.id,
+        content,
+        correctionReason.trim() || "Corrected by user",
+      );
+      setSelected(updated);
+      setRecords((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setEditing(false);
+      setNotice("Memory corrected. The previous version remains in history.");
+      await loadHistory(updated.id);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
+  }
+
+  async function removeMemory() {
+    if (!selected) return;
+    const removedRecord = selected;
+    const removedId = selected.id;
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      await api.deleteContext(removedId, "Removed by user");
+      const remaining = records.filter((record) => record.id !== removedId);
+      setRemovedMemory({ record: removedRecord, index: records.findIndex((record) => record.id === removedId) });
+      setRecords(remaining);
+      setSelected(remaining[0] ?? null);
+      setEditing(false);
+      setConfirmingRemoval(false);
+      await onChanged();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
+  }
+
+  async function undoRemoval() {
+    if (!removedMemory) return;
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const restored = await api.restoreContext(
+        removedMemory.record.id,
+        undefined,
+        "Undid removal by user",
+      );
+      setRecords((items) => {
+        const next = [...items];
+        next.splice(Math.max(0, removedMemory.index), 0, restored);
+        return next;
+      });
+      setSelected(restored);
+      setRemovedMemory(null);
+      setNotice("Memory restored to current context.");
+      await Promise.all([loadHistory(restored.id), onChanged()]);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
+  }
+
+  async function restoreVersion(version: ContextRecordVersion) {
+    if (!selected || version.version === selected.version) return;
+    setWorking(true); setError(null); setNotice(null);
+    try {
+      const updated = await api.restoreContext(
+        selected.id,
+        version.version,
+        `Restored version ${version.version} by user`,
+      );
+      setSelected(updated);
+      setRecords((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setEditing(false);
+      setConfirmingRemoval(false);
+      setNotice(`Version ${version.version} restored as the current memory.`);
+      await loadHistory(updated.id);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorking(false); }
   }
 
   return (
@@ -488,10 +553,11 @@ function ContextView() {
           <select aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(event.target.value as Availability | "")}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
           <button className="primary-button" type="submit">Search</button>
         </form>
+        {removedMemory ? <Notice kind="success"><span>Memory removed from current context.</span><button className="notice-action" disabled={working} onClick={() => void undoRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
         {error ? <Notice kind="error">{error}</Notice> : null}
-        <div className="result-count">{records.length} approved records</div>
+        <div className="result-count">{records.length} current memories</div>
         {loading ? <LoadingRows /> : records.length ? records.map((record) => (
-          <button className={`context-row ${selected?.id === record.id ? "context-row--selected" : ""}`} key={record.id} onClick={() => setSelected(record)}>
+          <button className={`context-row ${selected?.id === record.id ? "context-row--selected" : ""}`} key={record.id} onClick={() => choose(record)}>
             <span><KindLabel value={record.kind} /><AvailabilityLabel value={record.availability} /></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}</small>
           </button>
         )) : <EmptyState icon={<Search />} title="No matching context" body="Try a broader phrase or import another source." />}
@@ -499,10 +565,31 @@ function ContextView() {
       <aside className="record-detail">
         {selected ? (
           <div className="inspector-inner" key={selected.id}>
-            <span className="eyebrow">Approved record</span><h2>{selected.content}</h2>
+            <span className="eyebrow">Current memory</span><h2>{selected.content}</h2>
             <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Source</dt><dd>{selected.source_service ?? "Unknown"}</dd></div></dl>
-            <label className="field-label">Availability<select value={selected.availability} onChange={(event) => void changeAvailability(event.target.value as Availability)}>{selected.availability === "always_available" ? <option value="always_available">Legacy availability — change to Core online</option> : null}<option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
-            <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p><time>{formatDate(version.updated_at)}</time></div>)}</section>
+            <label className="field-label">Availability<select value={selected.availability} disabled={working} onChange={(event) => void changeAvailability(event.target.value as Availability)}>{selected.availability === "always_available" ? <option value="always_available">Legacy availability — change to Core online</option> : null}<option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
+
+            {editing ? (
+              <form className="record-action-panel" aria-label="Correct memory" onSubmit={(event) => void saveCorrection(event)}>
+                <span className="eyebrow">Correction</span>
+                <label className="field-label">What should this say?<textarea aria-label="Corrected memory" value={correctedContent} onChange={(event) => setCorrectedContent(event.target.value)} required /></label>
+                <label className="field-label">Note for history (optional)<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="What changed?" /></label>
+                <div className="record-action-buttons"><button className="quiet-button" type="button" disabled={working} onClick={() => setEditing(false)}>Cancel</button><button className="primary-button" type="submit" disabled={working || !correctedContent.trim()}>{working ? "Saving…" : "Save correction"}</button></div>
+              </form>
+            ) : confirmingRemoval ? (
+              <section className="record-action-panel record-action-panel--danger" aria-label="Remove memory">
+                <span className="eyebrow">Remove from current context?</span>
+                <p>Core keeps a deletion marker so this memory stays removed from connected copies.</p>
+                <div className="record-action-buttons"><button className="quiet-button" type="button" disabled={working} onClick={() => setConfirmingRemoval(false)}>Cancel</button><button className="secondary-button danger" type="button" disabled={working} onClick={() => void removeMemory()}>{working ? "Removing…" : "Remove memory"}</button></div>
+              </section>
+            ) : (
+              <div className="record-controls">
+                <button className="secondary-button" onClick={startCorrection}><Pencil size={14} /> Correct</button>
+                <button className="quiet-button danger-text" onClick={() => { setEditing(false); setConfirmingRemoval(true); setNotice(null); setError(null); }}><Trash2 size={14} /> Remove</button>
+              </div>
+            )}
+
+            <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p>{version.version !== selected.version ? <button className="history-restore" disabled={working} onClick={() => void restoreVersion(version)} aria-label={`Restore version ${version.version}`}><RotateCcw size={11} /> Restore</button> : <span className="history-current">Current</span>}{version.change_reason ? <small>{version.change_reason}</small> : null}<time>{formatDate(version.updated_at)}</time></div>)}</section>
             <p className="hash">SHA-256 · {selected.content_hash}</p>
           </div>
         ) : <div className="inspector-empty"><BookOpenText size={24} /><p>Select a record to see details and history.</p></div>}
@@ -596,7 +683,7 @@ function ConnectionsView() {
         <div className="section-heading"><div><h2>Phone and tablet</h2><p>Mobile devices connect to Core directly. All The Context does not create or require a hosted copy.</p></div></div>
         <div className="connection-overview">
           <span className="connection-overview-icon"><MonitorSmartphone size={21} /></span>
-          <div><strong>Core must be online and securely reachable.</strong><p>Core remains private on <code>127.0.0.1</code> by default. This beta will never open a public port or upload context automatically; guided secure remote pairing is still pending.</p></div>
+          <div><strong>Core must be online and securely reachable.</strong><p>Core remains private on <code>127.0.0.1</code> by default. This beta will never open a public port or upload context automatically; guided secure remote pairing is not yet available.</p></div>
         </div>
       </section>
 
@@ -630,12 +717,22 @@ function ClientsView({ embedded = false }: { embedded?: boolean }) {
 }
 
 
-function AuditView() {
-  const [events, setEvents] = useState<AuditEvent[]>([]);
+function activityLabel(disposition: ActivityEvent["disposition"]): string {
+  return {
+    staged: "Staged",
+    applied: "Applied to current context",
+    reinforced: "Reinforced current context",
+    tentative: "Retained as tentative evidence",
+    ignored: "Ignored by policy",
+  }[disposition];
+}
+
+function ActivityView() {
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { void api.audit().then((page) => { setEvents(page.items); setError(null); }).catch((caught) => setError(errorMessage(caught))).finally(() => setLoading(false)); }, []);
-  return <div className="content-column">{error ? <Notice kind="error">{error}</Notice> : null}<section className="section-block"><div className="section-heading"><div><h2>Recent activity</h2><p>Administrative and authorization events. Raw context is omitted.</p></div></div>{loading ? <LoadingRows /> : events.length ? <div className="audit-list">{events.map((event) => <div className="audit-row" key={event.id}><span className={`audit-outcome audit-outcome--${event.outcome}`}><span /></span><div><strong>{event.action.replaceAll("_", " ")}</strong><small>{event.actor} · {event.target_type ?? "system"}</small></div><time>{formatDate(event.created_at)}</time></div>)}</div> : <EmptyState icon={<FileClock />} title="No audit events" body="Decisions and access checks will appear here." />}</section></div>;
+  useEffect(() => { void api.activity().then((page) => { setEvents(page.items); setError(null); }).catch((caught) => setError(errorMessage(caught))).finally(() => setLoading(false)); }, []);
+  return <div className="content-column">{error ? <Notice kind="error">{error}</Notice> : null}<section className="section-block" aria-label="Automatic activity"><div className="section-heading"><div><h2>Recent decisions</h2><p>Automatic memory decisions and provenance. This history is read-only.</p></div></div>{loading ? <LoadingRows /> : events.length ? <div className="activity-list">{events.map((event) => <div className="activity-row" key={event.id}><span className={`activity-outcome activity-outcome--${event.disposition}`}><span /></span><div><strong>{activityLabel(event.disposition)} · {event.kind.replaceAll("_", " ")}</strong><p>{event.content}</p><small>{event.observation_origin?.replaceAll("_", " ") ?? "unknown origin"}{event.submitted_by_client_id ? ` · ${event.submitted_by_client_id}` : event.source_service ? ` · ${event.source_service}` : ""}{event.decision_reason ? ` · ${event.decision_reason}` : ""}</small></div><time>{formatDate(event.decided_at ?? event.created_at)}</time></div>)}</div> : <EmptyState icon={<FileClock />} title="No decisions yet" body="Automatic memory decisions will appear here." />}</section></div>;
 }
 
 function BackupView({ status }: { status: CoreStatus | null }) {
@@ -664,7 +761,7 @@ function BackupView({ status }: { status: CoreStatus | null }) {
   }
 
   return (
-    <div className="narrow-column"><section className="backup-intro"><span className="backup-icon"><Download size={24} /></span><span className="eyebrow">Portable by design</span><h2>Your context should never be trapped.</h2><p>Create a complete encrypted export containing canonical records, history, approvals, sources, permissions, and integrity metadata.</p>
+    <div className="narrow-column"><section className="backup-intro"><span className="backup-icon"><Download size={24} /></span><span className="eyebrow">Portable by design</span><h2>Your context should never be trapped.</h2><p>Create a complete encrypted export containing current context, observations, history, sources, permissions, and integrity metadata.</p>
       <form className="backup-form" onSubmit={(event) => void download(event)}>
         <label>Backup passphrase<input type="password" autoComplete="new-password" minLength={10} maxLength={1024} required value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
         <label>Confirm passphrase<input type="password" autoComplete="new-password" minLength={10} maxLength={1024} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
@@ -672,7 +769,7 @@ function BackupView({ status }: { status: CoreStatus | null }) {
       </form>
       {notice ? <Notice kind="success">{notice}</Notice> : null}{error ? <Notice kind="error">{error}</Notice> : null}
       <p className="quiet-copy">The passphrase is used only for this request and is not saved. Restore remains a deliberate CLI operation in this release.</p></section>
-      <dl className="metric-line"><div><dt>Approved records</dt><dd>{status?.approved_records ?? "—"}</dd></div><div><dt>Raw sources</dt><dd>{status?.sources ?? "—"}</dd></div><div><dt>Core database</dt><dd>{formatBytes(status?.database_size_bytes)}</dd></div></dl>
+      <dl className="metric-line"><div><dt>Current memories</dt><dd>{status?.current_context ?? "—"}</dd></div><div><dt>Raw sources</dt><dd>{status?.sources ?? "—"}</dd></div><div><dt>Core database</dt><dd>{formatBytes(status?.database_size_bytes)}</dd></div></dl>
       <Notice kind="info"><CircleHelp size={16} /> Keep exports private. They may contain complete source material, provenance, history, and permissions.</Notice>
     </div>
   );
@@ -746,7 +843,7 @@ function UpdatesView() {
           <button className="secondary-button" disabled={busy || !enabled} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
         </div>
         <p className="quiet-copy">{status?.installer_detail ?? "Loading installer capability…"}</p>
-        {status && !status.configured ? <Notice kind="info">No channel metadata endpoint is configured in this build. Checks fail closed until an operator provides the reviewed HTTPS endpoint and trusted public keyring.</Notice> : null}
+        {status && !status.configured ? <Notice kind="info">No channel metadata endpoint is configured in this build. Checks fail closed until an operator provides a trusted HTTPS endpoint and public keyring.</Notice> : null}
         {status?.release_notes_url ? <a href={status.release_notes_url} target="_blank" rel="noreferrer">Read release notes <ExternalLink size={12} /></a> : null}
       </section>
     </div>

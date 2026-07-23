@@ -1,21 +1,5 @@
 export type Availability = "always_available" | "core_available" | "local_only";
-export type CandidateStatus = "pending" | "approved" | "rejected" | "superseded";
 export type HealthState = "ready" | "degraded" | "offline";
-
-export interface ContextCandidate {
-  id: string;
-  kind: string;
-  content: string;
-  scope: string;
-  source_service?: string | null;
-  source_record_id?: string | null;
-  source_excerpt?: string | null;
-  confidence: number;
-  sensitivity: string;
-  availability: Availability;
-  status: CandidateStatus;
-  created_at: string;
-}
 
 export interface ContextRecord {
   id: string;
@@ -49,7 +33,7 @@ export interface SourceRecord {
   source_type?: string | null;
   size_bytes: number;
   content_hash: string;
-  candidate_count?: number;
+  observation_count?: number;
   import_status?: "processing" | "complete" | "failed";
   metadata?: SourceMetadata;
   parser_warnings?: string[];
@@ -72,7 +56,7 @@ export interface IngestionStats {
   skipped_messages?: number;
   unparsed_messages?: number;
   unsupported_entries?: number;
-  candidates?: number;
+  observations?: number;
   [key: string]: string | number | undefined;
 }
 
@@ -135,21 +119,26 @@ export interface IntegrationConnectResult {
   restart_required: boolean;
 }
 
-export interface AuditEvent {
+export interface ActivityEvent {
   id: string;
-  action: string;
-  actor: string;
-  target_type?: string | null;
-  target_id?: string | null;
-  outcome: "allowed" | "denied" | "error" | string;
+  kind: string;
+  content: string;
+  disposition: "staged" | "applied" | "reinforced" | "tentative" | "ignored";
+  decision_reason?: string | null;
+  observation_origin?: string | null;
+  submitted_by_client_id?: string | null;
+  source_service?: string | null;
+  source_reference?: string | null;
+  record_id?: string | null;
+  decided_at?: string | null;
   created_at: string;
 }
 
 export interface CoreStatus {
   state: HealthState;
   version?: string;
-  pending_candidates: number;
-  approved_records: number;
+  observations: number;
+  current_context: number;
   sources: number;
   database_size_bytes: number;
 }
@@ -182,11 +171,26 @@ export interface Page<T> {
 
 export interface ImportResult {
   source_id: string;
-  candidate_count: number;
+  observation_count: number;
   duplicate: boolean;
   provider: string;
   export_format: string;
   stats: IngestionStats;
+  outcomes: {
+    staged?: number;
+    applied?: number;
+    reinforced?: number;
+    tentative?: number;
+    ignored?: number;
+  };
   warnings: string[];
   coverage: IngestionCoverage;
+}
+
+export interface ContextDeletion {
+  record_id: string;
+  deleted_version: number;
+  reason: string;
+  content_hash: string;
+  deleted_at: string;
 }

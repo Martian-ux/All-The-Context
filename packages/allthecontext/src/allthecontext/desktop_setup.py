@@ -544,12 +544,11 @@ def authenticated_dashboard_url(
 
     dashboard_pages = {
         "sources",
-        "review",
         "context",
         "connections",
-        "relay",
-        "audit",
+        "activity",
         "backup",
+        "updates",
     }
     if landing_page is not None and landing_page not in dashboard_pages:
         raise ValueError("landing_page is not a recognized dashboard page")

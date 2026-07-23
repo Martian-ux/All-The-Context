@@ -95,13 +95,12 @@ def test_chatgpt_claude_and_grok_history_survive_review_and_core_restart(
             1,
         ]
 
-        pending = client.get("/v1/admin/candidates").json()["items"]
-        assert len(pending) == 3
-        assert all(item["approval_status"] == "pending" for item in pending)
-        assert all("fabricated" not in item["content"] for item in pending)
-        for item in pending:
-            approval = client.post(f"/v1/admin/candidates/{item['id']}/approve", json={})
-            assert approval.status_code == 200
+        observations = client.get("/v1/admin/observations").json()["items"]
+        assert len(observations) == 3
+        assert all(item["disposition"] == "applied" for item in observations)
+        assert all(item["record_id"] for item in observations)
+        assert all("fabricated" not in item["content"] for item in observations)
+        assert client.get("/v1/admin/candidates").json()["items"] == []
 
     with TestClient(create_app(config)) as restarted:
         search = restarted.post(

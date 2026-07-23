@@ -1,25 +1,36 @@
 # Requirements traceability
 
-“Implemented” means exercised locally; authored CI is not called observed until
-the hosted jobs pass on the exact release commit.
+"Implemented" means exercised locally; authored CI is not called observed until
+the hosted jobs pass on the exact release commit. Rows marked "current worktree"
+describe visible integrated code that has not yet passed the final required
+suite. Pre-ADR-039 approval evidence does not satisfy automatic-policy rows.
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
 | Cross-platform Core | `config.py`, `lifecycle.py`, `platform_compat.py`; platform and package smoke tests | Observed on Windows/macOS/Linux at `05c7638`; final release SHA pending |
 | Correct per-user data paths | `platformdirs` configuration and setup/package tests | Implemented |
 | Loopback-only default | `CoreConfig`, server CLI, dashboard copy, security tests | Implemented |
-| Source/candidate/approved lifecycle | models, migrations, storage/service APIs; unit/integration/demo tests | Implemented |
-| Approval before canonical memory | ingestion/service/storage and MCP contract tests | Implemented |
-| Provenance, confidence, sensitivity, validity, version, supersession, hashes, client permissions | typed models/migrations/API round trips | Implemented |
-| Idempotent/resumable ingestion with coverage | `ingestion.py`; retry/resume/coverage tests | Implemented |
+| Observation/disposition/current-context lifecycle | `models.py`, `memory_policy.py`, migration 005, storage transactions, evidence links | Implemented; full local suite and focused policy/storage/API regressions pass |
+| One-time setup with no routine memory queue | automatic MCP submission plus dashboard Context default/Review removal | Implemented in current worktree; end-to-end fresh-user proof pending |
+| Core-only `automatic-v1` authority | origin assigned by Core; applied/reinforced/tentative/ignored decisions; Relay staged queue receipts | Implemented; adversarial ACL/Relay integration tests pass locally |
+| Explicit user observation becomes current automatically | `add_candidate` policy transaction and MCP response contract | Implemented; approval-free observe-to-later-retrieve E2E passes locally |
+| Tentative/ignored/staged isolation | current-record-only retrieval, staged ingestion, policy tests | Implemented; restart, pre-v5 restore, FTS rebuild, and retrieval-isolation tests pass locally |
+| Configurable tentative retention/decay | future versioned policy, deterministic replay, and noncurrent-isolation requirements | Deferred; not implemented or claimed by `automatic-v1` |
+| Duplicate reinforcement and deterministic slot conflict | observation links, normalized value matching, explicitness then `observed_at` precedence | Implemented; conflict, replay, and monotonic-security tests pass locally |
+| Provenance, decision reason/time/version, confidence, sensitivity, validity, record versions, hashes, client permissions | typed models, migration 005, policy/storage round trips | Implemented; source-inclusive/source-free and pre-v5 restore regressions pass locally |
+| Optional automatic-decision inspectability | `/v1/admin/observations` exposes disposition, record ID, reason/time/version, source, evidence, and authenticated submitter; Context shows provenance/history; Activity renders the observation stream | Implemented; dashboard/API tests pass locally |
+| Immediate correction with preserved history | explicit targeted correction observation and existing record-version lifecycle | Implemented; new/legacy HTTP, MCP, ACL, history, and idempotency tests pass locally |
+| Reversible ordinary deletion | history-preserving delete; `restore_record` and admin endpoint restore latest deleted state or a selected historical version, rebuild FTS, version, audit, and replication state | Implemented; Core/API/UI, contiguous-history, and ordered Relay restore tests pass locally |
+| Idempotent/resumable ingestion with atomic policy publication and coverage | `ingestion.py`, staged observations, `finish_ingestion`; retry/resume/coverage tests | Implemented; ownership, failure-before-finish, and replay verification pass locally |
 | Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
-| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, streaming ZIP/JSON adapters, dashboard provider flow, raw-source recovery; provider unit/integration/security/UI tests | Implemented locally; real personal export acceptance pending |
+| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, streaming ZIP/JSON adapters, staged policy publication, `outcomes`/`record_ids` import response, dashboard provider flow, raw-source recovery | Automatic import, failure isolation, and dashboard outcome receipt pass locally; real personal export acceptance pending |
 | Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
 | Future embedding boundary | shadow-retriever contract plus disabled, rebuild-only 384d exact-scan experiment outside package discovery | Defined; no production embedding dependency or authority |
-| Required MCP tools | `mcp_adapter.py`; schema and real STDIO handshake/restart tests | Implemented |
+| Required MCP tools | `mcp_adapter.py`; `observed_at` input, automatic disposition/record/reason/time/version output, and explicit reversible `forget_context`; STDIO contract tests | Implemented; contract, handshake, restart, correction, and queued-forget suites pass locally |
 | One-time local app connection | `client_config.py`, setup wizard, dashboard; Codex/Claude config tests | Implemented locally |
-| Minimal administration UI | `apps/dashboard`; component, type, build, and browser-serving tests | Implemented |
-| Portable export/restore | encrypted export/dashboard download and CLI restore tests | Implemented; dashboard restore deferred |
+| Optional administration UI, no memory inbox | `apps/dashboard`; Review route/forms removed, Context default, Activity/provenance, correction/delete/undo/version restore | Local evidence: 24 tests, type check, production build, and zero high-severity audit findings; browser smoke pending |
+| Approval-free reproducible demo | `scripts/demo.py`, `tests/e2e/test_demo.py`; automatic finish-to-retrieve, restart, correction/delete, revocation, encrypted restore | Included in the passing 505-test Windows Python 3.14 suite; hosted Python 3.12 matrix pending |
+| Portable export/restore | encrypted export/dashboard download and CLI restore tests | Implemented; automatic policy/link, pre-v5, source-free FK, FTS, and purge-barrier round trips pass locally |
 | Locking, shutdown, restart | lifecycle locks, managed adapter self-heal, packaged first-run smoke | Implemented locally |
 | OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows local and Windows/macOS/Linux hosted acceptance observed at `05c7638` |
 | Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Release matrices observed at `05c7638`; Retrieval V3 push matrix observed green at `67dd11c` |
@@ -28,12 +39,14 @@ the hosted jobs pass on the exact release commit.
 | No third-party V1 runtime | no Edge UI/onboarding/status call/background worker; Edge publication workflow and Render templates removed | Implemented |
 | Direct-Core mobile model | integration API/dashboard/architecture state Core-online requirement | Product contract implemented; secure pairing/transport not yet implemented |
 | No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |
-| Legacy `always_available` compatibility | schema and old records retained; UI maps new review choices to `core_available` and labels old records legacy | Implemented |
+| Legacy `always_available` compatibility | schema and old records retained; new applied context uses `core_available`/`local_only` and labels old records legacy | Implemented |
+| Legacy review-data migration | migration 005 maps approved/rejected to applied/ignored and startup reevaluates eligible staged rows under `automatic-v1` | Implemented; partial-migration restart, pre-v5 duplicate restore, and idempotency regressions pass locally |
+| Relay remains queue/projection only | Relay MCP returns staged receipts; Core evaluates dequeued observations; signed record events originate at Core | Implemented in current worktree over dormant compatibility code; no hosted runtime |
 | Legacy Edge cleanup without normal operation | dormant manager/admin cleanup APIs; no automatic worker | Compatibility only; not a V1 feature |
 | Frozen Retrieval V2 comparator | `retrieval_contracts.py`, pinned fixture hashes/ranking fingerprints, foundation harness | Implemented; comparator identity `70a4808` |
-| Policy before time/relevance | authorization-only selector, temporal eligibility IDs, candidate-scoped FTS, boundary tests | Implemented; zero forbidden results in bounded gate |
+| Applied/current policy before time/relevance | authorization-only selector, current-record eligibility, temporal IDs, ranker-candidate-scoped FTS, boundary tests | Baseline implemented; new disposition migration/isolation verification pending |
 | Current and `as_of` retrieval | UTC interval sidecar, request/MCP/CLI fields, DST/offset/restart tests | Implemented locally; Python 3.12 three-OS suite observed green at `67dd11c` |
-| Deletion/purge resurrection barrier | canonical terminal facts, purge tombstones, stale-sidecar recovery, pre-removal export restore test | Zero resurrection in local bounded gate; three-OS suite observed green at `67dd11c` |
+| Deletion/purge resurrection barrier | authoritative terminal facts, purge tombstones, stale-sidecar recovery, pre-removal export restore test | Zero resurrection in local bounded gate; three-OS suite observed green at `67dd11c` |
 | Weighted bounded FTS5 | `lexical_v3.py`; weighted columns, exact/OR/prefix caps, Unicode/case/tokenizer and secure-delete tests | Implemented locally |
 | Task admissibility | deterministic numeric factor gate after hard policy/time, fail-open sparse evidence, shadow-only learned interface | Implemented locally; bounded precision improves without exact Recall@5 loss |
 | Safe retrieval diagnostics | closed reason codes and numeric/boolean aggregates; admin-only returned-ID explanations | Implemented; content/unauthorized-ID exclusion tests |

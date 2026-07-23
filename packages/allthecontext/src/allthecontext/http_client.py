@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +21,35 @@ class ContextApiError(RuntimeError):
 
     def as_dict(self) -> dict[str, Any]:
         return {"ok": False, "error": {"code": self.code, "message": self.message}}
+
+
+def _staged_relay_response(result: Any) -> Any:
+    """Expose a queued Relay write as staged Core work, never a user review task."""
+
+    if not isinstance(result, dict):
+        return result
+    normalized = dict(result)
+    normalized.pop("review_required", None)
+    normalized.update(
+        {
+            "canonical": False,
+            "authority": "core",
+            "disposition": "staged",
+            "decision_reason": "encrypted_at_edge_until_automatic_core_evaluation",
+            "user_action_required": False,
+        }
+    )
+    return normalized
+
+
+def _relay_proposal_key(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(slots=True)
@@ -134,6 +165,19 @@ class ContextHttpClient:
             if exc.status_code not in {404, 405}:
                 raise
             scopes = payload.get("scopes", [])
+            provenance = {
+                key: payload.get(key)
+                for key in (
+                    "source_reference",
+                    "evidence",
+                    "explicit_user_statement",
+                    "entity_key",
+                    "attribute_key",
+                    "supersedes",
+                    "observed_at",
+                )
+                if payload.get(key) is not None
+            }
             relay_payload = {
                 "idempotency_key": payload["idempotency_key"],
                 "kind": payload["kind"],
@@ -142,12 +186,11 @@ class ContextHttpClient:
                 "confidence": payload.get("confidence"),
                 "sensitivity": payload.get("sensitivity", "normal"),
                 "availability": "core_available",
-                "provenance": {
-                    "source_reference": payload.get("source_reference"),
-                    "evidence": payload.get("evidence"),
-                },
+                "provenance": provenance,
             }
-            return self._request("POST", "/v1/proposals", json=relay_payload)
+            return _staged_relay_response(
+                self._request("POST", "/v1/proposals", json=relay_payload)
+            )
 
     def report_context_error(self, payload: dict[str, Any]) -> Any:
         status = self.context_status()
@@ -157,5 +200,31 @@ class ContextHttpClient:
                 "content": payload["description"],
                 "evidence": payload.get("suggested_correction"),
             }
-            return self._request("POST", "/v1/ingestion/error", json=relay_payload)
+            return _staged_relay_response(
+                self._request("POST", "/v1/ingestion/error", json=relay_payload)
+            )
         return self._request("POST", "/v1/ingestion/error", json=payload)
+
+    def forget_context(self, payload: dict[str, Any]) -> Any:
+        status = self.context_status()
+        if isinstance(status, dict) and "relay_writable" in status:
+            proposal = {
+                "kind": "context_forget",
+                "content": payload["reason"],
+                "scope": [],
+                "confidence": 1.0,
+                "sensitivity": "sensitive",
+                "availability": "core_available",
+                "provenance": {
+                    "record_id": payload["record_id"],
+                    "explicit_user_statement": True,
+                },
+            }
+            relay_payload = {
+                "idempotency_key": f"forget:{_relay_proposal_key(proposal)}",
+                **proposal,
+            }
+            return _staged_relay_response(
+                self._request("POST", "/v1/proposals", json=relay_payload)
+            )
+        return self._request("POST", "/v1/ingestion/forget", json=payload)

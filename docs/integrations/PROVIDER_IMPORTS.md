@@ -1,8 +1,9 @@
 # Provider history import
 
-All The Context can initialize its local memory from official ChatGPT, Claude,
+All The Context can initialize its local context from official ChatGPT, Claude,
 and Grok exports. This is a local account-history import, not an account login,
-browser scraper, provider API integration, or recurring cloud sync.
+browser scraper, provider API integration, recurring cloud sync, or task the
+user must continually curate.
 
 ## One-time user flow
 
@@ -14,14 +15,19 @@ browser scraper, provider API integration, or recurring cloud sync.
 3. Drop the downloaded ZIP into All The Context without unpacking or editing it.
    Auto-detection is the default; a provider hint is available for unusual
    exports.
-4. Review the extracted candidates. Nothing becomes canonical memory until the
-   normal approval policy accepts it.
+4. Let extraction complete. The dashboard reports truthful source coverage and
+   the total observations processed. Core's import response also returns
+   per-disposition `outcomes` and affected `record_ids`; richer outcome
+   presentation in the dashboard remains pending. There is no extracted-memory
+   review queue.
 
 The same importer accepts JSON, JSONL, Markdown, and text. A copied provider
 memory summary can therefore be saved as a text or Markdown file, its provider
-selected in the dashboard, and imported through the same review boundary.
+selected in the dashboard, and imported through the same automatic policy.
+Provider-generated summaries remain tentative by default rather than being
+treated as direct user statements.
 
-## What “full import” means
+## What "full import" means
 
 - The accepted source file is stored byte-for-byte as a content-addressed raw
   source in the authoritative local Core.
@@ -33,20 +39,32 @@ selected in the dashboard, and imported through the same review boundary.
 - Grok conversation JSON and Grok Build-style Markdown transcripts are
   supported through adaptive field normalization.
 - Non-text attachments remain inside the preserved raw archive. They are
-  counted, but do not become memory candidates in this slice.
+  counted, but are ignored for context maintenance in this slice.
+- The import does not change current context until the extraction session
+  finishes successfully. A failed or interrupted session retains recoverable source
+  state without partially publishing decisions.
 
-“Full” does not mean that every prompt or assistant response is approved as
-memory. The deterministic extractor considers user-authored durable statements
-and dedicated provider memory/profile fields. Assistant, system, tool, and
-attachment content remains untrusted evidence. Provider memory summaries are
-lower-confidence candidates because they may be synthesized. Every extracted
-item remains pending until review.
+"Full" does not mean that every prompt or assistant response becomes current
+context. Imported text is untrusted data, never instructions. The deterministic
+extractor considers explicit user-authored durable statements. Core evaluates
+those observations automatically only after successful session completion,
+even when the truthful coverage report lists unavailable material.
+Assistant, system, tool, and attachment roles are excluded by provider
+adapters. Generic or instruction-bearing text and dedicated provider
+memory/profile summaries are tentative by default, and imported text is never
+executed as instructions. Tentative observations are not retrieved and do not
+wait for user review.
+
+The dashboard's optional Activity and Context views let a user inspect source
+provenance, see why policy made a decision, correct a record, undo an ordinary
+change, or forget something. Those are escape hatches, not required import
+steps.
 
 Grok documents the ability to download account data, but does not publish a
 stable archive schema. Claude's public export documentation also does not
 promise every internal JSON field. Those adapters therefore use bounded,
 provider-neutral envelope/message detection and report unrecognized material
-instead of silently treating it as memory. Raw preservation allows a future
+instead of silently treating it as context. Raw preservation allows a future
 parser version to reprocess the source.
 
 ## Safety, scale, and recovery
@@ -60,9 +78,10 @@ parser version to reprocess the source.
   complete archive into memory.
 - The default raw-source limit is 512 MiB. An operator can lower or raise it up
   to SQLite's safe 900,000,000-byte boundary with `ATC_MAX_IMPORT_BYTES`.
-- Candidate batches use a versioned session and deterministic idempotency keys.
-  If extraction is interrupted, the source is marked failed and the dashboard
-  can retry directly from the preserved raw blob without another upload.
+- Observation batches use a versioned session and deterministic idempotency
+  keys. If extraction is interrupted, the source is marked failed and the
+  dashboard can retry directly from the preserved raw blob without another
+  upload or duplicate decisions.
 - Raw source text and credentials are never logged.
 
 ## Contributor CLI
@@ -76,4 +95,22 @@ atc import "path/to/provider-export.zip" --provider auto
 
 Use `--provider chatgpt`, `--provider claude`, or `--provider grok` only when
 auto-detection needs a hint. The CLI returns provider, format, conversation and
-message counts, candidate IDs, warnings, and the complete coverage report.
+message counts, warnings, and the complete coverage report. Its import result
+includes:
+
+```json
+{
+  "candidate_ids": ["compatibility observation IDs"],
+  "outcomes": {
+    "applied": 0,
+    "reinforced": 0,
+    "tentative": 0,
+    "ignored": 0
+  },
+  "record_ids": ["affected current-record IDs"]
+}
+```
+
+Only dispositions present in that import need appear in `outcomes`.
+`candidate_ids` is the compatibility wire name; product surfaces call them
+observations.

@@ -94,17 +94,37 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             "(2,'002_edge_proposal_receipts.sql','2026-01-01T00:00:00+00:00')"
         )
     store = CoreStore(database)
-    assert store.migrate() == 4
+    assert store.migrate() == 5
     with store.connect() as connection:
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")
         }
-        assert {"entity_key", "attribute_key"} <= candidate_columns
+        assert {
+            "entity_key",
+            "attribute_key",
+            "observed_at",
+            "observation_origin",
+            "disposition",
+            "record_id",
+            "decision_reason",
+            "decided_at",
+            "policy_version",
+        } <= candidate_columns
+        record_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(context_records)")
+        }
+        assert {"observed_at", "observation_origin", "policy_version"} <= record_columns
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='purge_jobs'"
         ).fetchone()
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_edge_clients'"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_policies'"
+        ).fetchone()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_observation_links'"
         ).fetchone()
 
 
@@ -174,6 +194,7 @@ def test_supersession_removes_old_record_from_integrity_group(tmp_path: Path) ->
     members = store.list_integrity_groups()["items"][0]["record_ids"]
     assert old_id not in members
     assert members == sorted([peer_id, replacement_id])
+    assert store.status()["counts"]["active_records"] == 2
     store.purge(
         "record",
         old_id,
