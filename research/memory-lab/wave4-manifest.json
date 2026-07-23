@@ -155,7 +155,22 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commit": "258f725806ce56edd4eca1e6fbb8aebe7ade8976",
+        "integrated_commit": "2420816291675795c50dfe8c3a718b7683b0a960",
+        "evidence_level": "L2",
+        "decision": "RETAIN_M1_OBSERVABLE_LEDGER",
+        "case_coverage_fraction": 1.0,
+        "f02_case_count": 16,
+        "required_zero_metric_sum": 0,
+        "accepted_event_replay_mismatch_count": 0,
+        "aggregate_rebuild_mismatch_count": 0,
+        "purge_compaction_replay_mismatch_count": 0,
+        "paired_vault_difference_count": 0,
+        "paired_episode_count": 200,
+        "controlled_assignment_count": 40,
+        "coordinator_reproduced": true
+      }
     }
   ],
   "promotion_stages": [
