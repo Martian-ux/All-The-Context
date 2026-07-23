@@ -13,9 +13,13 @@ deployment without changing event contracts.
 
 ## ADR-003: Review-first approval with policy hook
 
-Extracted/model-inferred candidates require review by default. The schema and
-client scope model reserve deterministic auto-approval for explicit low-risk
-statements, but it is off until enabled by the user.
+**Status:** superseded by ADR-039 on 2026-07-23.
+
+The original V1 design made extracted and model-proposed context wait for
+routine user review. That boundary proved incompatible with the intended
+configure-once product: it made the user administer a memory database. The
+historical schema and APIs remain migration inputs, not the current product
+contract.
 
 ## ADR-004: One-time MCP forwarding setup
 
@@ -87,13 +91,13 @@ on the Edge owner page. Decommission persists a terminal state, revokes OAuth
 material, purges every vault artifact, and rejects old tickets, tokens, and
 signed replication events.
 
-## ADR-012: Edge proposals are encrypted transport, not canonical context
+## ADR-012: Edge proposals are encrypted transport, not current context
 
 An OAuth client with proposal scope may enqueue a bounded AES-GCM transport
 envelope while Core is unavailable. The queue is capped by count and bytes,
 expires after 30 days, and is scrubbed after Core acknowledges import or
 rejection. This is an explicit transport exception to the readable Edge
-projection: it never becomes approved context at Edge, and it is not
+projection: it never becomes current context at Edge, and it is not
 zero-knowledge against an operator who controls the Edge process and its
 replication secret.
 
@@ -197,7 +201,7 @@ paid hosting remain explicit operator actions.
 
 ## ADR-021: Retrieval V2 remains lexical and policy-first
 
-Phase 1 keeps the Core as the only canonical authority and decomposes retrieval
+Phase 1 keeps Core as the only current-context authority and decomposes retrieval
 behind the existing facade into eligible-record selection, bounded lexical
 channels, reciprocal-rank fusion, context compilation, and internal ranking
 explanations. Authorization and lifecycle predicates produce the eligible ID
@@ -219,14 +223,16 @@ of duplicate records for lower compiled-context redundancy.
 
 ## ADR-022: Memory slots are advisory; purge is an irreversible Core state machine
 
-Entity and attribute keys are optional candidate metadata, normalized only for
-deterministic grouping. They do not create canonical facts. Explicit approval
-copies or edits the pair, after which Core derives duplicate groups for matching
-normalized values and conflict groups for materially different values in the
-same current slot. Both can coexist. Groups are review aids, never automatic
-merge or winner authority.
+Entity and attribute keys are optional observation metadata, normalized for
+deterministic grouping and conflict policy. They do not create current context
+by themselves. An exact matching value reinforces the existing applied record.
+Materially different values in the same current slot are resolved by the
+versioned Core policy using targeted-correction intent, explicitness,
+`observed_at`, and stable tie breakers. The prior value, evidence, and decision
+remain in history. Derived duplicate/conflict groups are optional integrity
+diagnostics, never a user approval queue.
 
-Deletion and purge are distinct. Delete preserves the canonical row, versions,
+Deletion and purge are distinct. Delete preserves the current-context row, versions,
 source provenance, and deletion tombstone for reversible history. Purge requires
 administrator scope plus the exact `PURGE RECORD <id>` or `PURGE SOURCE <id>`
 phrase. Its logical transaction removes attributable content, candidates,
@@ -248,7 +254,7 @@ Edge may queue an authenticated read request only after OAuth identifies a
 logical client. The request payload is sealed to Core's X25519 public key before
 SQLite or its WAL sees it. Core polls Edge over the existing bearer-authenticated
 HTTPS channel, ignores Edge-asserted scopes, resolves the identity from a
-user-approved Core-local remote-client mapping, and re-authorizes canonical
+user-approved Core-local remote-client mapping, and re-authorizes current
 records against that mapping and per-record allow/deny policy. It returns only
 `core_available` records. Edge never exposes loopback Core.
 Random IDs, expiries, one-use claim hashes, leases, cancellation, response
@@ -467,12 +473,12 @@ limitation rather than offering an unsafe shortcut.
 
 The `always_available` schema value and experimental Relay modules remain
 temporarily for import/history compatibility and safe cleanup of engineering
-setups. New UI approvals offer only `local_only` and `core_available`; Core does
-not start the Edge network worker; deployment workflows/templates are removed
-from V1. Deleting dormant protocol code is a later cleanup after compatibility
-and migration requirements are known.
+setups. Newly applied context uses only `local_only` and `core_available`; Core
+does not start the Edge network worker; deployment workflows/templates are
+removed from V1. Deleting dormant protocol code is a later cleanup after
+compatibility and migration requirements are known.
 
-## ADR-033: Provider history is preserved completely but promoted selectively
+## ADR-033: Provider history is preserved completely but evaluated selectively
 
 **Status:** accepted 2026-07-22.
 
@@ -492,21 +498,24 @@ numbered conversation JSON files. Claude and Grok do not publish stable field
 contracts for every export, so their adapters detect bounded envelopes and
 must report unrecognized material rather than guessing silently.
 
-Raw completeness and canonical memory are separate promises. Every recognized
-message contributes to aggregate coverage, but only user-authored durable
-statements and dedicated provider memory/profile fields can create candidates.
-Assistant, system, tool, and attachment content remains inert raw evidence.
-Provider-synthesized memory is lower-confidence and is not marked as an
-explicit user statement. No imported candidate bypasses review.
+Raw completeness and current context are separate promises. Every recognized
+message contributes to aggregate coverage, but only eligible user-authored
+durable statements and dedicated provider memory/profile fields can create
+observations. Assistant, system, tool, attachment, and instruction-like content
+remains inert raw evidence and is ignored for context maintenance.
+Provider-synthesized memory is not marked as an explicit user statement and is
+tentative by default. User-authored observations are evaluated automatically
+only when the ingestion session finishes successfully; a failed or
+unfinished session changes no current context.
 
 Each source records provider, format, parser version, statistics, warnings, and
 `processing`/`failed`/`complete` status. The source ID and parser version key the
-ingestion session; source hash, parser version, and batch ordinal key candidate
-batches. A retry reopens the preserved BLOB through a bounded temporary file
-and replays completed batches exactly, allowing one-click crash recovery
-without another upload or duplicate candidates. A future learned extractor can
-use a new parser version against the same raw source without changing this
-authority boundary.
+ingestion session; source hash, parser version, and batch ordinal key
+observation batches. A retry reopens the preserved BLOB through a bounded
+temporary file and replays completed batches exactly, allowing one-click crash
+recovery without another upload or duplicate observations or decisions. A
+future learned extractor can use a new parser version against the same raw
+source without changing this authority boundary.
 
 ## ADR-034: Packaged beta updates have a trust-gated default channel
 
@@ -560,12 +569,12 @@ be explained, but rejected or unauthorized IDs and raw content are absent.
 
 Temporal state is a separate content-free SQLite sidecar using its own schema
 version. Core records and purge tombstones remain authoritative. The sidecar is
-discardable, migratable, and reconciled after startup, canonical mutations, and
+discardable, migratable, and reconciled after startup, current-context mutations, and
 restore. Intervals are UTC half-open, expiry is exclusive, supersession remains
 effective after a superseder expires, and deletion/purge are terminal even for
 historical queries. Ordinary current records use a deterministic fast path;
 `as_of` resolves the complete authorized set. An in-place correction is the
-latest canonical content for its stable ID; earlier content remains available
+latest current-record content for its stable ID; earlier content remains available
 through record history, while separate superseding records are searchable by
 historical instant.
 
@@ -575,7 +584,7 @@ FTS5 secure-delete is enabled only when the linked SQLite build accepts it.
 Admissibility combines task/query coverage, project/scope fit, requested-kind
 fit, confidence/explicitness, and conflict state with a conservative fail-open
 rule. A learned gate can observe sanitized features in shadow but cannot reject,
-reorder, or create canonical context.
+reorder, or create current context.
 
 The V2 comparator remains a named frozen pipeline, not the current production
 default. The combined gate requires exact Recall@5 and semantic coverage at
@@ -589,7 +598,7 @@ conditions.
 ## ADR-037: Context assembly is set-level; dense and source evidence stay shadow-only
 
 **Status:** accepted 2026-07-22; extends ADR-036 without granting a new
-canonical or production ranking authority.
+current-context or production ranking authority.
 
 Context assembly is a deterministic set-selection problem rather than a linear
 packing loop. `ContextCompiler` derives bounded opaque labels only after policy,
@@ -607,7 +616,7 @@ exact-scan mechanics but cannot establish semantic value. The 10,000-candidate
 measurement missed the explicit `150 ms` p95 target at `400.294955 ms`, so a
 future optional ANN shadow study is latency-justified. It is not approved yet:
 the real local model and semantic comparison were not exercised, and no default
-native dependency, canonical vector state, or production ANN authority is
+native dependency, authoritative vector state, or production ANN authority is
 allowed.
 
 Long imported-chat evidence also remains research-only. Deterministic passage
@@ -639,3 +648,72 @@ and final immutable published state. A missing phrase or failed observable check
 stops the workflow. This boundary keeps admin credentials and the offline
 Ed25519 private key out of GitHub Actions without pretending the Actions token
 can perform an impossible admin API call.
+
+## ADR-039: Context maintenance is automatic, reversible, and Core-owned
+
+**Status:** accepted 2026-07-23; supersedes ADR-003 and refines ADR-022 and
+ADR-033.
+
+All The Context is configured once and then gets out of the user's way. Normal
+operation has no memory review inbox. The dashboard is an optional history,
+provenance, correction, undo, deletion, backup, and administration surface.
+Removing routine review does not transfer authority to a model, importer,
+client, or Relay: Core remains the only component that can create or change
+current context.
+
+Every client- or importer-supplied durable-context input is an observation.
+Core derives the effective origin from authenticated client registration,
+transport, parser, message role, and ingestion session. A submitter may provide
+evidence, confidence, `observed_at`, and the asserted basis
+`explicit_user_statement`, but it cannot choose its Core-derived origin,
+policy result, or current-record ID. The initial deterministic policy version is
+`automatic-v1`.
+
+The observation ledger records one of five dispositions:
+
+- `staged` is internal unpublished work in an unfinished ingestion session or
+  queued at Relay for later Core evaluation;
+- `applied` creates or updates current context;
+- `reinforced` attaches corroborating evidence to an existing applied record
+  without creating a duplicate;
+- `tentative` retains a noncurrent signal for deterministic corroboration; and
+- `ignored` records that hard or source policy rejected the observation for
+  context maintenance.
+
+Explicit durable user statements from eligible authenticated direct clients
+apply immediately. Eligible explicit corrections update the current record
+before the successful operation returns and preserve the earlier version.
+Exact duplicates reinforce. Model inference and provider-synthesized memory are
+tentative unless later eligible evidence corroborates them. Provider adapters
+exclude assistant, system, tool, and attachment roles. Generic or
+instruction-bearing imports remain tentative, secret-like material is ignored,
+and imported text is never executed as instructions. Tentative, ignored, and
+staged observations are never retrieved as current context and never create a
+user task.
+
+`automatic-v1` does not implement tentative expiry or confidence decay.
+Configurable retention/decay is a future versioned-policy extension, not a beta
+claim.
+
+Provider archives remain untrusted inert data. Archive observations stay staged
+until `finish_ingestion` stores truthful coverage and publishes the
+automatic decisions transactionally. Failed or unfinished extraction cannot
+partially change current context. The original source, parser version, policy
+version, disposition, `decision_reason`, `decided_at`, and affected record ID
+make every decision inspectable and replayable.
+
+Ordinary automatic changes remain reversible. Correction, supersession,
+deletion, and restoration retain version history and evidence. Irreversible
+purge remains a separate administrator-only state machine. Model-facing
+`forget_context` is deliberately narrow: it requires an explicit user request,
+record ID, and reason; creates an audited reversible tombstone at Core; and
+never grants restore or purge authority. Legacy approved
+records migrate to applied current context; rejected observations migrate to
+ignored; unresolved legacy candidates are reevaluated idempotently under the
+versioned policy.
+
+Relay may queue observations for later delivery and may accept signed ordered
+projections produced by Core. It never evaluates the policy, changes a
+disposition, or creates current context. This keeps one authority while
+allowing future transport work without reintroducing review as a consistency
+mechanism.

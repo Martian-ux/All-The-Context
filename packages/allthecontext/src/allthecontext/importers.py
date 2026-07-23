@@ -7,6 +7,7 @@ import json
 import re
 import tempfile
 import zipfile
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -745,6 +746,7 @@ class ArchiveImportService:
         source = self.store.get_source(source_id, duplicate=True)
         if source.import_status == "complete":
             candidate_ids = self.store.candidate_ids_for_source(source.id)
+            observations = [self.store.get_candidate(item) for item in candidate_ids]
             coverage = {
                 "available": [source.filename or source.id],
                 "unavailable": [],
@@ -760,6 +762,16 @@ class ArchiveImportService:
                     "coverage": coverage,
                 },
                 "candidate_ids": candidate_ids,
+                "outcomes": dict(
+                    Counter(item.disposition.value for item in observations)
+                ),
+                "record_ids": list(
+                    dict.fromkeys(
+                        item.record_id
+                        for item in observations
+                        if item.record_id is not None
+                    )
+                ),
                 "warnings": [
                     *source.parser_warnings,
                     "source extraction was already complete",
@@ -803,7 +815,7 @@ class ArchiveImportService:
     ) -> dict[str, Any]:
         if source.duplicate and source.import_status == "complete":
             existing_ids = self.store.candidate_ids_for_source(source.id)
-            return _import_result(
+            return self._import_result(
                 source,
                 {
                     "status": "duplicate",
@@ -865,7 +877,7 @@ class ArchiveImportService:
                 parser_warnings=parsed.warnings,
             )
             refreshed = self.store.get_source(source.id, duplicate=source.duplicate)
-            return _import_result(
+            return self._import_result(
                 refreshed,
                 finished,
                 candidate_ids or self.store.candidate_ids_for_source(source.id),
@@ -880,6 +892,35 @@ class ArchiveImportService:
                 parser_warnings=parsed.warnings,
             )
             raise
+
+    def _import_result(
+        self,
+        source: SourceOut,
+        session: dict[str, Any],
+        candidate_ids: list[str],
+        parsed: ParsedArchive,
+        *,
+        duplicate: bool,
+    ) -> dict[str, Any]:
+        result = _import_result(
+            source,
+            session,
+            candidate_ids,
+            parsed,
+            duplicate=duplicate,
+        )
+        observations = [self.store.get_candidate(item) for item in candidate_ids]
+        result["outcomes"] = dict(
+            Counter(observation.disposition.value for observation in observations)
+        )
+        result["record_ids"] = list(
+            dict.fromkeys(
+                observation.record_id
+                for observation in observations
+                if observation.record_id is not None
+            )
+        )
+        return result
 
 
 def _source_metadata(parsed: ParsedArchive) -> dict[str, Any]:

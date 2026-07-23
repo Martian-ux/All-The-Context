@@ -89,6 +89,7 @@ def test_proposal_pull_is_idempotent_after_ack_failure_and_preserves_zero_confid
     core = CoreService.in_directory(tmp_path / "core")
     proposal = {
         "proposal_id": "proposal-1",
+        "client_id": "client-a",
         "proposal": {
             "kind": "preference",
             "content": "Do not infer missing evidence",
@@ -123,6 +124,7 @@ def test_invalid_legacy_proposal_is_rejected_without_blocking_later_items(tmp_pa
         [
             {
                 "proposal_id": "invalid",
+                "client_id": "client-a",
                 "proposal": {
                     "kind": "preference",
                     "content": "Bad sensitivity",
@@ -131,6 +133,7 @@ def test_invalid_legacy_proposal_is_rejected_without_blocking_later_items(tmp_pa
             },
             {
                 "proposal_id": "valid",
+                "client_id": "client-a",
                 "proposal": {
                     "kind": "preference",
                     "content": "Valid proposal",

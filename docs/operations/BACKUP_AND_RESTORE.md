@@ -1,8 +1,9 @@
 # Export, backup, and restore
 
 Exports are application-level packages, not copies of a live SQLite file. They
-include a manifest, schema version, content hashes, canonical history, source
-metadata and blobs, permissions, approval state, and tombstones.
+include a manifest, schema version, content hashes, current-context history,
+observations, automatic dispositions and policy versions, evidence links,
+source metadata and blobs, permissions, and tombstones.
 
 The dashboard **Backup** page creates and downloads a complete encrypted export
 in one operation. It includes source material and audit events. The passphrase

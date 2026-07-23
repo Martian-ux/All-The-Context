@@ -2,24 +2,33 @@
 
 ## Current milestone
 
-The target remains an unsigned `0.1.0-beta.1` community release. The V1
-single-Core boundary is being reviewed on `codex/core-only-v1`; provider archive
-ingestion is stacked on `codex/provider-archive-ingestion`. No beta release has
-been published. The encrypted `release-2026-a` private key now exists outside
-the checkout and cloud-synchronized workspace; only its reviewed public half
-is tracked.
+The target remains an unsigned `0.1.0-beta.1` community release. No beta release
+has been published. The encrypted `release-2026-a` private key exists outside
+the checkout and cloud-synchronized workspace; only its reviewed public half is
+tracked.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
 hosting setup are no longer part of the V1 product or acceptance gate. Mobile
 means connecting directly to Core while Core is online.
 
-## Implemented
+On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
+product contract is now one-time setup plus automatic, reversible,
+provenance-backed context maintenance, with no routine review queue. The
+automatic-policy migration is present in the current shared worktree and has
+passed the local Ruff, mypy, full pytest, dashboard, demo, documentation, and
+dependency-audit gates described below. The exact worktree has not yet passed
+the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based
+evidence remains historical and must not be presented as proof of ADR-039.
+
+## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,
   migrations, portable locking, clean shutdown/restart, and loopback default.
-- Source, candidate, approval/rejection, correction, supersession, tombstone,
-  history, permission, provenance, validity, and audit lifecycles.
+- Source, legacy candidate/approval, correction, supersession, tombstone,
+  history, permission, provenance, validity, and audit lifecycles. The
+  automatic observation/disposition layer below replaces the user-facing
+  approval lifecycle.
 - Idempotent/resumable ingestion sessions, coverage reports, model proposals,
   generic documents, and local full-history adapters for ChatGPT, Claude, and
   Grok exports. Raw archives are streamed into Core, provider messages receive
@@ -27,8 +36,8 @@ means connecting directly to Core while Core is online.
   extraction can retry from the preserved blob.
 - Required MCP tools over HTTP and a managed STDIO adapter; one-click local
   Codex and Claude Desktop configuration bound to the exact vault.
-- Bundled dashboard for import, review, search, local connections, encrypted
-  backup, audit, and signed-update controls.
+- Bundled dashboard infrastructure for import, search, local connections,
+  encrypted backup, audit/activity, and signed-update controls.
 - Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
   app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
 - Deterministic Retrieval V3 with policy-first authorization, rebuildable UTC
@@ -51,12 +60,73 @@ means connecting directly to Core while Core is online.
   source head, unused release slot, artifact evidence, and final immutable
   published state.
 
+## Automatic context maintenance in the current worktree
+
+The following implementation is visible locally; verification is still in
+progress:
+
+- Core migration `005_automatic_context_policy.sql` adds per-vault
+  `automatic-v1` policy, observation origin/time/disposition/decision fields,
+  record policy metadata, and observation-to-record evidence links. Existing
+  approved and rejected rows map to applied and ignored compatibility state.
+- `AutomaticMemoryPolicy` classifies server-originated observations as
+  `applied`, `reinforced`, `tentative`, or `ignored`; ingestion observations are
+  `staged` until session completion. Secret-like and highly sensitive content
+  is ignored, sensitive applied context is forced to `local_only`, and
+  non-explicit/inferred context requires corroboration.
+- Direct observations are evaluated in the same Core transaction. Exact matches
+  reinforce current context; explicitness and `observed_at` resolve same-slot
+  replacement, and explicit targeted corrections apply automatically while
+  retaining record versions.
+- Ordinary deletion is reversible. `restore_record` and the matching
+  administrator endpoint can restore the latest soft-deleted state or a chosen
+  historical version, rebuild retrieval state, add a new version/audit event,
+  and preserve the separate irreversible-purge boundary.
+- Finished ingestion sessions evaluate staged observations atomically.
+  Unfinished sessions remain noncurrent, and startup reevaluates eligible
+  staged legacy/finished-session observations idempotently.
+- Import results expose `outcomes`, a count by actual observation disposition,
+  plus deduplicated affected `record_ids`. The dashboard shows total
+  observations, truthful coverage, and per-disposition outcome counts.
+- MCP/HTTP models now carry `observed_at` and return disposition, optional
+  `record_id`, `decision_reason`, `decided_at`, and `policy_version`. Relay MCP
+  returns staged queue receipts and leaves final evaluation to Core.
+- The administrator observations endpoint exposes disposition, affected record,
+  decision reason/time/version, source reference, and evidence. Context shows
+  record provenance and history. Activity is an optional read-only observation
+  decision stream with origin, submitting client/service, content, and policy
+  reason.
+- Model-facing MCP includes a narrow `forget_context` tool: it requires an
+  explicit user request, record ID, and reason; local Core creates an audited
+  reversible tombstone, while Relay can only stage the request.
+- The dashboard worktree removes Review navigation, pending badges, approval
+  forms, and approval copy; Context is the default, Sources reports observations,
+  Activity passively shows automatic decisions and provenance, and current records expose
+  correction plus delete/undo/historical-version restoration controls. Its
+  local suite passes 24 tests, type checking, the production build, and a
+  high-severity dependency audit with zero reported vulnerabilities.
+- Physical `context_candidates`/`approval_status` names and legacy administrative
+  endpoints remain temporarily for schema, backup, and integration
+  compatibility. They are not the new product language.
+- The reproducible demo and its E2E assertion now use successful ingestion
+  finish to apply explicit observations and retrieve them without any approval
+  call. The demo is included in the passing full local suite.
+
+Still missing or not yet verified:
+
+- the end-to-end browser smoke;
+- cross-platform/package evidence on the integrated automatic-policy commit.
+
+Tentative-observation expiry/decay is intentionally not implemented in
+`automatic-v1`. It is a possible later versioned-policy extension; tentative
+state is already noncurrent and creates no user queue.
+
 ## V1 Edge removal
 
 - Edge navigation and setup were removed from the dashboard.
 - First run no longer offers or opens hosted web/mobile setup.
 - Dashboard status no longer calls the Edge API.
-- New approvals expose only `local_only` and `core_available`.
+- Newly applied context exposes only `local_only` and `core_available`.
 - Core no longer starts the legacy Edge network worker.
 - The GHCR Edge workflow, Render templates, and Relay container CI job were
   removed from the V1 path.
@@ -90,7 +160,7 @@ means connecting directly to Core while Core is online.
   semantic coverage `1.0`, zero set violations, and deterministic input-order
   behavior.
 - The optional 384-dimensional float32 dense shadow remains disabled,
-  in-memory, noncanonical, and outside default packaging. Synthetic exact scan
+  in-memory, nonauthoritative, and outside default packaging. Synthetic exact scan
   is deterministic but misses its 10k target: `400.294955 ms` warm p95 versus
   `150 ms`, with `15,360,000` vector bytes. No real local model or semantic
   comparison was exercised, so dense ranking and ANN were not promoted.
@@ -106,6 +176,9 @@ means connecting directly to Core while Core is online.
 
 ## Remaining beta gates
 
+- Run the exact ADR-039 worktree through the hosted Python 3.12
+  Windows/macOS/Linux and native-package matrices, then complete the fresh-user
+  browser smoke.
 - Create and verify two recoverable encrypted backups of the operator-held
   release private key before its first production signature.
 - Add required reviewers to the release-promotion and `github-pages`
@@ -118,19 +191,34 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python 3.12 suite: 461 passed; four Windows-host symlink tests skipped because
-  this account cannot create the required links.
+- Current ADR-039 worktree on Windows Python 3.14.3: Ruff passes; strict mypy
+  passes across 59 source files; the full suite passes 505 tests with four
+  host-limited symlink skips; documentation links and `git diff --check` pass.
+  This includes automatic policy, ACL/session isolation, migration restart,
+  pre-v5 restore, source-free foreign-key/FTS recovery, purge resurrection
+  barriers, context-error idempotency, delete/restore history, Relay queue
+  identity, ordered projection restoration, and the approval-free E2E demo.
+- Current dashboard on Node 25.6.1: 24 tests, TypeScript checking, and the
+  production build pass; `npm audit --audit-level=high` reports zero
+  vulnerabilities. Packaged dashboard assets match the production build
+  byte-for-byte.
+- The required Python 3.12 hosted cross-platform/package suite and new
+  automatic-policy browser smoke remain pending for this exact worktree.
+- Historical pre-ADR-039 full Python 3.12 suite: 461 passed; four Windows-host
+  symlink tests skipped because this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests
   on the minimum supported Python 3.12 runtime.
-- Dashboard: 19 tests passed; type check, production build, and high-severity
-  dependency audit passed.
-- Ruff format/lint, strict mypy across 58 source files, documentation-link
-  checks, and the seven-step single-Core demonstration passed.
-- A live isolated browser smoke imported a fictional ChatGPT export through the
-  bundled dashboard, reported one conversation/two candidates, retained the raw
-  source, excluded the assistant claim, moved one approved item out of review,
-  emitted no browser warnings/errors, and rendered correctly at desktop and
-  390-pixel mobile widths.
+- Historical pre-ADR-039 dashboard: 19 tests passed; type check, production
+  build, and high-severity dependency audit passed.
+- Historical pre-ADR-039 Ruff format/lint, strict mypy across 58 source files,
+  documentation-link checks, and the approval-based seven-step single-Core
+  demonstration passed.
+- A historical live isolated browser smoke imported a fictional ChatGPT export
+  through the bundled dashboard, reported one conversation/two legacy
+  candidates, retained the raw source, excluded the assistant claim, moved one
+  approved item out of review, emitted no browser warnings/errors, and rendered
+  correctly at desktop and 390-pixel mobile widths. It does not satisfy the
+  new automatic-policy browser gate.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.
 - GitHub release immutability is enabled, and GitHub Pages is configured to

@@ -4,20 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from .ids import new_id, utc_now
 from .models import (
     Availability,
     BeginIngestionRequest,
     CandidateInput,
-    CandidateOut,
     ContextErrorRequest,
     FinishIngestionRequest,
+    ForgetContextRequest,
     IngestionMode,
+    ObservationOut,
     Sensitivity,
     SubmitBatchRequest,
 )
-from .security import ClientPrincipal
-from .storage import CoreStore
+from .security import ClientPrincipal, record_is_allowed
+from .storage import CoreStore, NotFoundError
 
 
 class IngestionService:
@@ -47,45 +47,83 @@ class IngestionService:
             client=principal,
         )
 
-    def finish(self, request: FinishIngestionRequest) -> dict[str, Any]:
-        return self.store.finish_ingestion(request.session_id, request.coverage)
+    def finish(
+        self,
+        request: FinishIngestionRequest,
+        principal: ClientPrincipal | None = None,
+    ) -> dict[str, Any]:
+        return self.store.finish_ingestion(
+            request.session_id,
+            request.coverage,
+            client=principal,
+        )
 
     def propose(
         self, request: CandidateInput, principal: ClientPrincipal | None = None
-    ) -> CandidateOut:
-        return self.store.add_candidate(request, client=principal)
+    ) -> ObservationOut:
+        created = self.store.add_candidate(request, client=principal)
+        return self.store.get_observation(created.id)
 
     def report_error(
         self, request: ContextErrorRequest, principal: ClientPrincipal | None = None
-    ) -> CandidateOut:
+    ) -> ObservationOut:
+        self._require_target_access(request.record_id, principal)
+        has_correction = request.suggested_correction is not None
         candidate = CandidateInput(
-            kind="correction",
-            content=request.content,
+            kind="correction" if has_correction else "context_error",
+            content=request.suggested_correction or request.description,
             evidence=request.evidence or request.description,
             supersedes=request.record_id,
             confidence=1.0,
             sensitivity=Sensitivity.NORMAL,
             availability=Availability.CORE,
-            explicit_user_statement=False,
+            explicit_user_statement=has_correction,
+            idempotency_key=request.idempotency_key,
         )
-        created = self.store.add_candidate(candidate, client=principal)
-        with self.store.transaction() as connection:
-            connection.execute(
-                "INSERT INTO context_errors"
-                "(id,vault_id,client_id,record_id,candidate_id,description,evidence,created_at) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (
-                    new_id(),
-                    self.store.vault_id(),
-                    principal.id if principal else None,
-                    request.record_id,
-                    created.id,
-                    request.description or request.content,
-                    request.evidence,
-                    utc_now(),
-                ),
-            )
-        return created
+        created = self.store.add_context_error_observation(
+            candidate,
+            record_id=request.record_id,
+            description=request.description,
+            evidence=request.evidence,
+            client=principal,
+        )
+        return self.store.get_observation(created.id)
+
+    def forget(
+        self,
+        request: ForgetContextRequest,
+        principal: ClientPrincipal | None = None,
+    ) -> dict[str, Any]:
+        self._require_target_access(request.record_id, principal, include_deleted=True)
+        result = self.store.delete_record(
+            request.record_id,
+            reason="Explicit user forget request",
+            actor=principal.id if principal is not None else "local-core",
+        )
+        return {
+            **result,
+            "disposition": "applied",
+            "decision_reason": "explicit forget request applied as a reversible deletion",
+            "user_action_required": False,
+        }
+
+    def _require_target_access(
+        self,
+        record_id: str | None,
+        principal: ClientPrincipal | None,
+        *,
+        include_deleted: bool = False,
+    ) -> None:
+        if record_id is None or principal is None or "admin" in principal.scopes:
+            return
+        record = self.store.get_record(record_id, include_deleted=include_deleted)
+        if not record_is_allowed(
+            principal,
+            set(record.scopes),
+            set(record.allowed_clients),
+            set(record.denied_clients),
+        ):
+            raise NotFoundError("context record not found")
 
 
 def archive_session_request(

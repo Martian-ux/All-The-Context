@@ -1,9 +1,9 @@
 """Provider-neutral normalization and safe deterministic memory extraction.
 
-Provider exports are untrusted input.  This module never executes archive content and
-never treats assistant messages as user facts.  It normalizes the parts of official
-account exports that are useful for provenance, then emits reviewable candidates from
-user-authored statements and dedicated memory/profile fields.
+Provider exports are untrusted input. This module never executes archive content and
+never treats assistant messages as user facts. It normalizes the parts of official
+account exports that are useful for provenance, then emits observations from
+user-authored statements and dedicated memory/profile fields for Core policy.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any
@@ -802,14 +803,34 @@ def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
                 source_reference=reference,
                 source_service=message.provider.value,
                 source_type="provider_archive",
-                evidence=message.text[:16_000],
+                evidence=segment[:16_000],
                 confidence=confidence,
                 sensitivity=sensitivity,
                 availability=Availability.CORE,
+                observed_at=_provider_observed_at(message.created_at),
                 explicit_user_statement=True,
             )
         )
     return _deduplicate_candidates(result)
+
+
+def _provider_observed_at(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        timestamp = float(value)
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat()
+    try:
+        return datetime.fromtimestamp(timestamp, UTC).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _clean_statement(value: str) -> str:

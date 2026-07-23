@@ -37,12 +37,52 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
         assert {tool.name for tool in listed.tools} >= {
             "context_status",
             "bootstrap_context",
+            "forget_context",
             "propose_memory",
         }
+        propose_tool = next(tool for tool in listed.tools if tool.name == "propose_memory")
+        assert {
+            "explicit_user_statement",
+            "entity_key",
+            "attribute_key",
+            "supersedes",
+            "observed_at",
+        } <= propose_tool.inputSchema["properties"].keys()
         result = await session.call_tool("context_status", {})
         assert result.isError is not True
         assert result.structuredContent is not None
         assert result.structuredContent["core_online"] is True
+        proposed = await session.call_tool(
+            "propose_memory",
+            {
+                "kind": "interaction_preference",
+                "content": "Use direct answers in integration tests.",
+                "scope": "general",
+                "confidence": 1.0,
+                "entity_key": "user",
+                "attribute_key": "answer_style",
+                "observed_at": "2026-07-23T16:00:00+00:00",
+            },
+        )
+        assert proposed.isError is not True
+        assert proposed.structuredContent is not None
+        assert proposed.structuredContent["disposition"] == "applied"
+        assert proposed.structuredContent["record_id"]
+        forgotten = await session.call_tool(
+            "forget_context",
+            {
+                "record_id": proposed.structuredContent["record_id"],
+                "reason": "The integration-test user explicitly requested deletion.",
+            },
+        )
+        assert forgotten.isError is not True
+        assert forgotten.structuredContent is not None
+        assert forgotten.structuredContent["disposition"] == "applied"
+        assert (
+            forgotten.structuredContent["record_id"]
+            == proposed.structuredContent["record_id"]
+        )
+        assert forgotten.structuredContent["deleted_at"]
 
 
 def _request_shutdown(base_url: str, admin_token: str) -> None:

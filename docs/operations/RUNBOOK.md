@@ -51,18 +51,29 @@ lock before process exit. A restart never copies or replaces a live database.
   do not delete a lock file while that process is alive.
 - If an import is interrupted, open **Sources** and choose **Retry extraction**
   on the failed source. Core reuses the preserved raw blob and versioned
-  session/batch idempotency keys; no second upload or duplicate candidate is
-  required.
+  session/batch idempotency keys; no second upload or duplicate observation or
+  decision is required. A failed or unfinished session has not changed current
+  context.
 - Before repair or migration, create a verified export and stop Core cleanly.
 
-## Integrity review and secure purge
+## Optional activity/integrity inspection and secure purge
 
-Use `atc integrity-groups --status open` for the bounded backend review view.
-The follow-up dashboard view must list group type, normalized slot, and member
-record IDs, and link to existing correction/supersession/delete actions without
-adding automatic resolution.
+Normal operation does not require clearing a review queue. Use the dashboard
+Activity view, the administrator observations endpoint, or
+`atc integrity-groups --status open` only when diagnosing an automatic
+decision, legacy conflict, or suspected policy defect. Activity passively
+summarizes audit action, actor, target, outcome, and time. The observations
+endpoint adds disposition, affected record, decision reason/time/version,
+source, and evidence. The bounded integrity command lists group type,
+normalized slot, and member record IDs; Context provides record provenance,
+history, correction, restoration, and delete actions. These are optional
+inspection tools, not unresolved work.
 
 Ordinary `atc delete RECORD --reason ...` preserves history and is reversible.
+Use dashboard **Undo/Restore** or the administrator record-restore endpoint to
+return the latest deleted state or a chosen historical version to current
+context. Explicit corrections preserve the earlier version and should be
+preferred to purge when the content may be useful for audit or undo.
 For irreversible Core purge, first stop other Core processes and close long
 read transactions, then run exactly one of:
 

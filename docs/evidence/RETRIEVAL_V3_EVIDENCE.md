@@ -137,7 +137,7 @@ was skipped except the workflow's intentional platform-inapplicable steps.
 - Source-evidence fixtures are sanitized and synthetic. Neural late interaction,
   representative imported archives, and the opt-in 1024-source profile are
   unexercised.
-- An in-place same-ID correction exposes the latest canonical content across its
+- An in-place same-ID correction exposes the latest current-record content across its
   validity interval; earlier same-ID content remains an audit-history concern.
   Separate superseding records provide historically searchable content.
 - Learned sparse retrieval, a production reranker, production late interaction,

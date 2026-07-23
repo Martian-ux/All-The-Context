@@ -95,6 +95,11 @@ def prepare_hosted_edge_acceptance(workspace: Path) -> HostedEdgePreparation:
             ApprovalRequest(reason="isolated hosted Edge release acceptance"),
             actor="hosted-edge-acceptance",
         )
+        record = core.store.change_availability(
+            record.id,
+            Availability.ALWAYS,
+            actor="hosted-edge-acceptance",
+        )
         _write_state(
             resolved,
             {

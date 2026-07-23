@@ -80,8 +80,11 @@ from ..models import (
     ContextErrorRequest,
     CorrectionRequest,
     FinishIngestionRequest,
+    ForgetContextRequest,
+    ObservationDisposition,
     PurgeRequest,
     RejectRequest,
+    RestoreRequest,
     SearchRequest,
     SubmitBatchRequest,
 )
@@ -98,11 +101,9 @@ from .service import CoreService
 
 DashboardPage = Literal[
     "sources",
-    "review",
     "context",
     "connections",
-    "relay",
-    "audit",
+    "activity",
     "backup",
     "updates",
 ]
@@ -346,7 +347,7 @@ def create_app(
     @app.post("/v1/ingestion/finish")
     def finish_ingestion(request: FinishIngestionRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:ingest")
-        return core.ingestion.finish(request)
+        return core.ingestion.finish(request, principal)
 
     @app.post("/v1/ingestion/propose")
     def propose_memory(request: CandidateInput, principal: Principal) -> dict[str, Any]:
@@ -357,6 +358,13 @@ def create_app(
     def report_context_error(request: ContextErrorRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:propose")
         return core.ingestion.report_error(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/ingestion/forget")
+    def forget_context(request: ForgetContextRequest, principal: Principal) -> dict[str, Any]:
+        require(principal, "context:propose")
+        result = core.ingestion.forget(request, principal)
+        edge_sync.trigger()
+        return result
 
     @app.post("/v1/context/search")
     def search_context(request: SearchRequest, principal: Principal) -> dict[str, Any]:
@@ -420,7 +428,7 @@ def create_app(
                 provider=provider,
             )
 
-    @app.get("/v1/admin/candidates")
+    @app.get("/v1/admin/candidates", deprecated=True, tags=["legacy compatibility"])
     def list_candidates(
         principal: Principal,
         status: ApprovalStatus | None = ApprovalStatus.PENDING,
@@ -431,6 +439,23 @@ def create_app(
         require(principal, "admin")
         items, total = core.store.list_candidates(
             status=status, source_id=source_id, limit=limit, offset=offset
+        )
+        return {"items": [item.model_dump(mode="json") for item in items], "total": total}
+
+    @app.get("/v1/admin/observations")
+    def list_observations(
+        principal: Principal,
+        disposition: ObservationDisposition | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        items, total = core.store.list_observations(
+            disposition=disposition,
+            source_id=source_id,
+            limit=limit,
+            offset=offset,
         )
         return {"items": [item.model_dump(mode="json") for item in items], "total": total}
 
@@ -445,7 +470,11 @@ def create_app(
         require(principal, "admin")
         return await run_in_threadpool(core.imports.reprocess_source, source_id)
 
-    @app.post("/v1/admin/candidates/{candidate_id}/approve")
+    @app.post(
+        "/v1/admin/candidates/{candidate_id}/approve",
+        deprecated=True,
+        tags=["legacy compatibility"],
+    )
     def approve_candidate(
         candidate_id: str, request: ApprovalRequest, principal: Principal
     ) -> dict[str, Any]:
@@ -454,7 +483,11 @@ def create_app(
         edge_sync.trigger()
         return result.model_dump(mode="json")
 
-    @app.post("/v1/admin/candidates/{candidate_id}/reject")
+    @app.post(
+        "/v1/admin/candidates/{candidate_id}/reject",
+        deprecated=True,
+        tags=["legacy compatibility"],
+    )
     def reject_candidate(
         candidate_id: str, request: RejectRequest, principal: Principal
     ) -> dict[str, Any]:
@@ -505,6 +538,20 @@ def create_app(
         )
         edge_sync.trigger()
         return result
+
+    @app.post("/v1/admin/records/{record_id}/restore")
+    def restore_record(
+        record_id: str, request: RestoreRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        result = core.store.restore_record(
+            record_id,
+            version=request.version,
+            reason=request.reason,
+            actor=principal.id,
+        )
+        edge_sync.trigger()
+        return result.model_dump(mode="json")
 
     @app.get("/v1/admin/records/{record_id}/history")
     def record_history(record_id: str, principal: Principal) -> dict[str, Any]:

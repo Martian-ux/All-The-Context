@@ -10,7 +10,26 @@ function json(value: unknown): Response {
 }
 
 function status() {
-  return { core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 2, sources: 1, pending_replication_events: 0 } };
+  return { core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 4, tentative_observations: 0, active_records: 2, sources: 1, pending_replication_events: 0 } };
+}
+
+function contextRecord(id = "record-1", content = "Prefers concise technical explanations.", version = 1) {
+  return {
+    id,
+    kind: "preference",
+    content,
+    scopes: ["personal"],
+    source_service: "archive",
+    source_id: "source-1",
+    confidence: 0.94,
+    sensitivity: "normal",
+    availability: "core_available",
+    allowed_clients: [],
+    version,
+    content_hash: `hash-${version}`,
+    created_at: "2026-07-21T00:00:00Z",
+    updated_at: `2026-07-${20 + version}T00:00:00Z`,
+  };
 }
 
 function matchMedia(matches: boolean): MediaQueryList {
@@ -38,7 +57,7 @@ describe("dashboard", () => {
     window.history.replaceState(null, "", "/?page=connections");
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
-      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       if (url.endsWith("/admin/integrations")) return json({ apps: [], mobile: { mode: "direct_core", requires_core_online: true, secure_remote_pairing_available: false, detail: "Core must be online." } });
       return json({ items: [] });
     }));
@@ -129,28 +148,29 @@ describe("dashboard", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:encrypted-backup");
   });
 
-  it("shows pending review candidates and their evidence", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+  it("opens current context by default without a decision queue", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
-      if (url.includes("/context/status")) {
-        return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 1, approved_records: 0, sources: 1, pending_replication_events: 0 } });
-      }
-      if (url.includes("/admin/candidates")) {
-        return json({ total: 1, items: [{ id: "candidate-1", kind: "preference", content: "Prefers concise technical explanations.", scopes: ["personal"], source_service: "archive", evidence: "Please keep explanations short and technical.", confidence: 0.94, sensitivity: "normal", availability: "core_available", approval_status: "pending", created_at: "2026-07-21T00:00:00Z" }] });
-      }
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
       return json({ items: [] });
-    }));
+    });
+    vi.stubGlobal("fetch", fetch);
 
     render(<App />);
+    expect(await screen.findByRole("heading", { name: "Context" })).toBeInTheDocument();
     expect(await screen.findAllByText("Prefers concise technical explanations.")).toHaveLength(2);
-    expect(screen.getByText("Please keep explanations short and technical.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /approve/i })).toBeEnabled();
+    expect(screen.getByText("1 current memories")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Audit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
   });
 
   it("navigates to source import", async () => {
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
-      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       return json({ items: [] });
     }));
 
@@ -169,16 +189,17 @@ describe("dashboard", () => {
     let submittedProvider: FormDataEntryValue | null = null;
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
-      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       if (url.endsWith("/admin/import")) {
         const body = init?.body as FormData;
         submittedProvider = body.get("provider");
         return json({
           source: { id: "source-1", duplicate: false },
-          candidate_ids: ["candidate-1", "candidate-2", "candidate-3"],
+          observation_ids: ["candidate-1", "candidate-2", "candidate-3"],
           provider: "claude",
           export_format: "claude_conversations",
-          stats: { conversations: 2, user_messages: 7, candidates: 3 },
+          stats: { conversations: 2, user_messages: 7, observations: 3 },
+          outcomes: { applied: 1, tentative: 1, ignored: 1 },
           warnings: [],
           coverage: { available: ["2 conversations"], unavailable: [], limitations: [], warnings: [], complete: true },
         });
@@ -193,9 +214,13 @@ describe("dashboard", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(["archive"], "claude-export.zip", { type: "application/zip" })] } });
 
-    expect(await screen.findByText(/Claude: 2 conversations scanned and 3 memories/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Claude: 2 conversations scanned and 3 observations processed automatically/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("7");
+    expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("Observations processed");
     expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent("Saved locally");
+    expect(screen.getByRole("region", { name: "Import coverage" })).toHaveTextContent(
+      /1 applied.*1 tentative.*1 ignored/,
+    );
     expect(submittedProvider).toBe("claude");
   });
 
@@ -203,7 +228,7 @@ describe("dashboard", () => {
     let retried = false;
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
-      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { pending_candidates: 0, approved_records: 0, sources: 1, pending_replication_events: 0 } });
+      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 1, pending_replication_events: 0 } });
       if (url.endsWith("/admin/sources/source-failed/reprocess")) {
         retried = true;
         return json({
@@ -239,7 +264,7 @@ describe("dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sources" }));
     fireEvent.click(await screen.findByRole("button", { name: "Retry extraction" }));
 
-    expect(await screen.findByText(/extraction resumed; 1 memories are ready/i)).toBeInTheDocument();
+    expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request, init]) => String(request).endsWith("/admin/sources/source-failed/reprocess") && init?.method === "POST")).toBe(true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
   });
@@ -329,7 +354,7 @@ describe("dashboard", () => {
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) {
-        return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+        return json({ core_online: true, schema_version: 1, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       }
       if (url.endsWith("/admin/integrations") && !init?.method) {
         return json({
@@ -362,7 +387,7 @@ describe("dashboard", () => {
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
       if (url.includes("/context/status")) {
-        return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 0, approved_records: 0, sources: 0, pending_replication_events: 0 } });
+        return json({ core_online: true, schema_version: 1, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
       }
       if (url.endsWith("/admin/integrations")) {
         return json({
@@ -389,32 +414,117 @@ describe("dashboard", () => {
     );
   });
 
-  it("safely downgrades legacy always-available candidates to direct-Core availability", async () => {
+  it("corrects current context and preserves the change reason", async () => {
+    let corrected = false;
+    let restored = false;
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
-      if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, counts: { pending_candidates: 1, approved_records: 0, sources: 0, pending_replication_events: 0 } });
-      if (url.includes("/admin/candidates/") && url.endsWith("/approve")) {
-        return json({ id: "candidate-1", kind: "preference", content: "Sensitive preference", scopes: ["personal"], provenance: {}, confidence: 0.9, sensitivity: "sensitive", availability: "core_available", allowed_clients: [], validity: {}, version: 1, approval_status: "approved", content_hash: "hash", created_at: "2026-07-21T00:00:00Z", updated_at: "2026-07-21T00:00:00Z" });
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [restored ? contextRecord("record-1", "Prefers concise technical explanations.", 3) : corrected ? contextRecord("record-1", "Prefers detailed examples.", 2) : contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) {
+        return json({ items: restored ? [
+          { version_id: "v3", record_id: "record-1", version: 3, snapshot: contextRecord("record-1", "Prefers concise technical explanations.", 3), reason: "Restored version 1 by user", created_at: "2026-07-23T00:00:00Z" },
+          { version_id: "v2", record_id: "record-1", version: 2, snapshot: contextRecord("record-1", "Prefers detailed examples.", 2), reason: "Preference changed", created_at: "2026-07-22T00:00:00Z" },
+          { version_id: "v1", record_id: "record-1", version: 1, snapshot: contextRecord(), reason: "Memory created", created_at: "2026-07-21T00:00:00Z" },
+        ] : corrected ? [
+          { version_id: "v2", record_id: "record-1", version: 2, snapshot: contextRecord("record-1", "Prefers detailed examples.", 2), reason: "Preference changed", created_at: "2026-07-22T00:00:00Z" },
+          { version_id: "v1", record_id: "record-1", version: 1, snapshot: contextRecord(), reason: "Memory created", created_at: "2026-07-21T00:00:00Z" },
+        ] : [] });
       }
-      if (url.includes("/admin/candidates")) return json({ total: 1, items: [{ id: "candidate-1", kind: "preference", content: "Sensitive preference", scopes: ["personal"], source_service: "archive", evidence: "Private evidence", confidence: 0.9, sensitivity: "sensitive", availability: "always_available", approval_status: "pending", created_at: "2026-07-21T00:00:00Z" }] });
+      if (url.endsWith("/admin/records/record-1/correct") && init?.method === "POST") {
+        corrected = true;
+        return json(contextRecord("record-1", "Prefers detailed examples.", 2));
+      }
+      if (url.endsWith("/admin/records/record-1/restore") && init?.method === "POST") {
+        restored = true;
+        return json(contextRecord("record-1", "Prefers concise technical explanations.", 3));
+      }
       return json({ items: [] });
     });
     vi.stubGlobal("fetch", fetch);
 
     render(<App />);
-    await screen.findAllByText("Sensitive preference");
-    expect(screen.getByLabelText("Availability")).toHaveValue("core_available");
-    expect(within(screen.getByLabelText("Availability")).queryByRole("option", { name: /Edge/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: /share this sensitive record/i })).not.toBeInTheDocument();
-    const approve = screen.getByRole("button", { name: /approve/i });
-    expect(approve).toBeEnabled();
-    fireEvent.click(approve);
+    fireEvent.click(await screen.findByRole("button", { name: "Correct" }));
+    fireEvent.change(screen.getByLabelText("Corrected memory"), { target: { value: "Prefers detailed examples." } });
+    fireEvent.change(screen.getByLabelText("Note for history (optional)"), { target: { value: "Preference changed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
 
     await waitFor(() => {
-      const call = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/candidates/candidate-1/approve"));
+      const call = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/records/record-1/correct"));
       expect(call).toBeDefined();
-      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ availability: "core_available", explicit_sensitive_replication: false });
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ content: "Prefers detailed examples.", reason: "Preference changed" });
     });
+    expect(await screen.findByText(/previous version remains in history/i)).toBeInTheDocument();
+    expect(await screen.findAllByText("Prefers detailed examples.")).toHaveLength(3);
+    expect(screen.getByText("Preference changed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore version 1" }));
+    expect(await screen.findByText("Version 1 restored as the current memory.")).toBeInTheDocument();
+    const restoreCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/records/record-1/restore"));
+    expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({ version: 1, reason: "Restored version 1 by user" });
+  });
+
+  it("removes a memory from current context through the soft-delete contract", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 2, items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")] });
+      if (url.endsWith("/admin/records/record-1/delete") && init?.method === "POST") {
+        return json({ record_id: "record-1", deleted_version: 2, reason: "Removed by user", content_hash: "deleted-hash", deleted_at: "2026-07-23T00:00:00Z" });
+      }
+      if (url.endsWith("/admin/records/record-1/restore") && init?.method === "POST") {
+        return json(contextRecord("record-1", "Prefers concise technical explanations.", 3));
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("region", { name: "Remove memory" })).toHaveTextContent(/deletion marker/i);
+    fireEvent.click(screen.getByRole("button", { name: "Remove memory" }));
+
+    expect(await screen.findByText("Memory removed from current context.")).toBeInTheDocument();
+    expect(screen.queryByText("Prefers concise technical explanations.")).not.toBeInTheDocument();
+    expect(await screen.findAllByText("Works in Eastern time.")).toHaveLength(2);
+    const call = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/records/record-1/delete"));
+    expect(call?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ reason: "Removed by user" }) });
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Memory restored to current context.")).toBeInTheDocument();
+    expect(await screen.findAllByText("Prefers concise technical explanations.")).toHaveLength(2);
+    const restoreCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/records/record-1/restore"));
+    expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({ reason: "Undid removal by user" });
+  });
+
+  it("shows automatic decisions as passive activity", async () => {
+    window.history.replaceState(null, "", "/?page=activity");
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/observations?limit=100")) return json({ items: [{
+        id: "activity-1",
+        kind: "preference",
+        content: "Use concise explanations",
+        disposition: "applied",
+        decision_reason: "explicit user observation applied automatically",
+        observation_origin: "ongoing_client",
+        submitted_by_client_id: "client-1",
+        record_id: "record-1",
+        decided_at: "2026-07-23T00:00:00Z",
+        created_at: "2026-07-23T00:00:00Z",
+      }] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Activity" })).toBeInTheDocument();
+    const activity = screen.getByRole("region", { name: "Automatic activity" });
+    expect(within(activity).getByText(/Applied to current context.*preference/)).toBeInTheDocument();
+    expect(within(activity).getByText("Use concise explanations")).toBeInTheDocument();
+    expect(within(activity).getByText(/ongoing client.*client-1.*explicit user/)).toBeInTheDocument();
+    expect(within(activity).getByText(/read-only/i)).toBeInTheDocument();
+    expect(within(activity).queryByRole("button")).not.toBeInTheDocument();
   });
 
 });

@@ -4,21 +4,28 @@
 > preserves the experimental event contract for compatibility/research only;
 > Core does not start its worker and no supported deployment consumes it.
 
-Core writes one event sequence per vault in the same transaction as canonical
-state changes. Events use stable IDs, monotonic sequence numbers, canonical
-JSON payload hashes, and HMAC-SHA256 authentication with a Relay-specific
-secret.
+Core writes one event sequence per vault in the same transaction as
+Core-authoritative current-context changes. Events use stable IDs, monotonic
+sequence numbers, canonical JSON payload hashes, and HMAC-SHA256 authentication
+with a Relay-specific secret.
 
 Relay accepts only the next sequence. An already-applied matching event is an
 idempotent success; a gap, changed replay, invalid MAC, invalid payload hash, or
 malformed event is rejected. Relay checkpoints only after applying the event
 transactionally.
 
-`record_upserted` carries the minimum approved `always_available` record and
-access metadata. `record_withdrawn` removes a record whose availability changed.
-`record_deleted` removes it and persists a tombstone. Permission and corrected
-record state propagate through a new upsert. Raw sources and candidates never
-cross this boundary.
+`record_upserted` carries the minimum applied legacy `always_available` record
+and access metadata. `record_withdrawn` removes a record whose availability
+changed. `record_deleted` removes it and persists a tombstone. Permission and
+corrected record state propagate through a new upsert. Raw sources and the
+Core-local observation ledger never cross the projection boundary.
+
+Relay's separate proposal queue carries encrypted observations only. A queued
+item remains `staged` outside Core and cannot select a disposition or produce a
+record at Relay. Core authenticates the delivery, derives the
+`relay_queue` origin, runs `automatic-v1`, and returns the resulting
+applied/reinforced/tentative/ignored receipt. Replayed queue IDs must preserve
+the original payload and decision.
 
 `record_purged` is the irreversible Core-authoritative v1 contract. Its payload
 has exactly `record_id`, `purged_at`, `purge_scope` (`record` or `source`), and
@@ -29,7 +36,7 @@ irreversible marker are invalid. Core rewrites any still-retained historical
 outbox payload for that record to an opaque withdrawal while preserving its
 sequence position, then appends the purge event transactionally.
 
-The purge contract is one-way authority: Edge proposals cannot use this event
+The purge contract is one-way authority: queued observations cannot use this event
 shape and no Edge action can downgrade it into an upsert. Relay applies a valid
 next-sequence purge in one transaction: it removes the live projection, FTS,
 ordinary deletion tombstone, supersession references, and historical
@@ -46,5 +53,6 @@ physical phase remains pending, then ready after a later successful retry.
 Compaction covers the live Relay database/WAL set; provider snapshots, backups,
 media remanence, and user copies remain outside the protocol.
 
-V1 uses push synchronization initiated by Core. The future Core-online bridge
-will also be outbound from Core; no home-network inbound port is required.
+This protocol remains dormant in V1. If a future Core-online bridge is
+introduced, synchronization is initiated outbound by Core; no home-network
+inbound port is required, and ADR-039's sole-authority rule still applies.

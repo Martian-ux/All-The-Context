@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from allthecontext.models import CandidateInput, CandidateOut, Sensitivity
 from allthecontext.replication import ReplicationEvent, sign_event
+from allthecontext.storage import StorageError
 
 
 class ResponseLike(Protocol):
@@ -37,6 +38,8 @@ class CandidateSink(Protocol):
         self,
         proposal_id: str,
         candidate: CandidateInput,
+        *,
+        client_id: str,
     ) -> tuple[CandidateOut, bool]: ...
 
 
@@ -184,6 +187,10 @@ class CoreRelaySync:
                 continue
             proposal_id = str(proposal.get("proposal_id", proposal.get("id", "")))
             try:
+                raw_client_id = proposal.get("client_id")
+                if not isinstance(raw_client_id, str) or not raw_client_id.strip():
+                    raise ValueError("proposal client_id is missing")
+                edge_client_id = raw_client_id.strip()
                 raw_payload = proposal.get(
                     "proposal", proposal.get("payload", proposal.get("payload_json", {}))
                 )
@@ -193,26 +200,77 @@ class CoreRelaySync:
                     raise ValueError("proposal payload is not an object")
                 scope_value = raw_payload.get("scope", [])
                 scopes = [scope_value] if isinstance(scope_value, str) else list(scope_value)
+                reported = raw_payload.get("provenance")
+                reported_provenance = reported if isinstance(reported, Mapping) else {}
                 provenance = {
                     "edge_proposal_id": proposal_id,
-                    "edge_client_id": proposal.get("client_id"),
-                    "reported_provenance": raw_payload.get("provenance"),
+                    "edge_client_id": edge_client_id,
+                    "reported_source_service": raw_payload.get("source_service"),
+                    "reported_provenance": dict(reported_provenance),
                 }
-                evidence = json.dumps(provenance, sort_keys=True)
+                reported_evidence = reported_provenance.get("evidence")
+                evidence = (
+                    str(reported_evidence)
+                    if isinstance(reported_evidence, str)
+                    else json.dumps(provenance, sort_keys=True)
+                )
                 confidence_value = raw_payload.get("confidence")
                 confidence = 1.0 if confidence_value is None else float(confidence_value)
+                raw_kind = str(raw_payload.get("kind", "memory"))
+                suggested_correction = reported_provenance.get("suggested_correction")
+                is_correction = isinstance(suggested_correction, str) and bool(
+                    suggested_correction.strip()
+                )
+                entity_key = reported_provenance.get("entity_key")
+                attribute_key = reported_provenance.get("attribute_key")
                 candidate = CandidateInput(
-                    kind=str(raw_payload.get("kind", "memory")),
-                    content=str(raw_payload["content"]),
-                    scopes=[str(value) for value in scopes],
-                    source_reference=f"edge-proposal:{proposal_id}",
-                    source_service=str(
-                        raw_payload.get("source_service") or proposal.get("client_id") or "edge"
+                    kind=(
+                        "correction"
+                        if is_correction
+                        else raw_kind
                     ),
+                    content=(
+                        str(suggested_correction)
+                        if is_correction
+                        else str(raw_payload["content"])
+                    ),
+                    scopes=[str(value) for value in scopes],
+                    source_reference=str(
+                        reported_provenance.get("source_reference")
+                        or f"edge-proposal:{proposal_id}"
+                    ),
+                    source_service=edge_client_id,
                     source_type="queued_proposal",
                     evidence=evidence,
                     confidence=confidence,
                     sensitivity=Sensitivity(str(raw_payload.get("sensitivity", "normal"))),
+                    entity_key=str(entity_key) if entity_key is not None else None,
+                    attribute_key=(
+                        str(attribute_key) if attribute_key is not None else None
+                    ),
+                    supersedes=(
+                        str(
+                            reported_provenance.get("record_id")
+                            or reported_provenance.get("supersedes")
+                        )
+                        if (
+                            reported_provenance.get("record_id") is not None
+                            or reported_provenance.get("supersedes") is not None
+                        )
+                        else None
+                    ),
+                    observed_at=(
+                        str(reported_provenance["observed_at"])
+                        if reported_provenance.get("observed_at") is not None
+                        else None
+                    ),
+                    explicit_user_statement=is_correction
+                    or (
+                        raw_kind.casefold() != "context_error"
+                        and bool(
+                            reported_provenance.get("explicit_user_statement", False)
+                        )
+                    ),
                     idempotency_key=f"edge-proposal:{proposal_id}",
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError):
@@ -224,7 +282,21 @@ class CoreRelaySync:
                 )
                 rejected.raise_for_status()
                 continue
-            sink.add_edge_candidate(proposal_id, candidate)
+            try:
+                sink.add_edge_candidate(
+                    proposal_id,
+                    candidate,
+                    client_id=edge_client_id,
+                )
+            except StorageError:
+                rejected = self.client.patch(
+                    f"{self.relay_url}/v1/replication/proposals/{proposal_id}",
+                    headers=self.headers,
+                    params={"vault_id": vault_id},
+                    json={"status": "rejected"},
+                )
+                rejected.raise_for_status()
+                continue
             acknowledge = self.client.patch(
                 f"{self.relay_url}/v1/replication/proposals/{proposal_id}",
                 headers=self.headers,

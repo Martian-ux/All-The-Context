@@ -32,6 +32,7 @@ from allthecontext.models import (
     ApprovalStatus,
     Availability,
     ClientCreate,
+    ObservationDisposition,
     SearchRequest,
 )
 from allthecontext.retrieval import RetrievalEngine
@@ -205,6 +206,18 @@ def _cmd_import(args: argparse.Namespace) -> None:
     _dump(service.import_path(path, source_service=args.provider))
 
 
+def _cmd_observations(args: argparse.Namespace) -> None:
+    disposition = (
+        ObservationDisposition(args.disposition) if args.disposition is not None else None
+    )
+    items, total = _store(args).list_observations(
+        disposition=disposition,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    _dump({"items": [item.model_dump(mode="json") for item in items], "total": total})
+
+
 def _cmd_candidates(args: argparse.Namespace) -> None:
     status = None if args.status == "all" else ApprovalStatus(args.status)
     items, total = _store(args).list_candidates(status=status, limit=args.limit, offset=args.offset)
@@ -269,6 +282,16 @@ def _cmd_correct(args: argparse.Namespace) -> None:
 
 def _cmd_delete(args: argparse.Namespace) -> None:
     _dump(_store(args).delete_record(args.record_id, reason=args.reason))
+
+
+def _cmd_restore_record(args: argparse.Namespace) -> None:
+    _dump(
+        _store(args).restore_record(
+            args.record_id,
+            version=args.version,
+            reason=args.reason,
+        )
+    )
 
 
 def _cmd_integrity_groups(args: argparse.Namespace) -> None:
@@ -355,16 +378,29 @@ def _cmd_export(args: argparse.Namespace) -> None:
 
 def _cmd_restore(args: argparse.Namespace) -> None:
     config = _config(args)
-    store = CoreStore(config.database_path)
-    store.initialize_vault()
-    _dump(
-        restore_export(
-            Path(args.source),
-            config.database_path,
-            _passphrase(args),
-            dry_run=args.dry_run,
+    if args.dry_run:
+        _dump(
+            restore_export(
+                Path(args.source),
+                config.database_path,
+                _passphrase(args),
+                dry_run=True,
+            )
         )
+        return
+    store = CoreStore(config.database_path)
+    store.migrate()
+    result = restore_export(
+        Path(args.source),
+        config.database_path,
+        _passphrase(args),
+        dry_run=False,
     )
+    store.initialize_vault()
+    while store.evaluate_staged_observations():
+        pass
+    store.rebuild_integrity_groups()
+    _dump(result)
 
 
 def _cmd_doctor(args: argparse.Namespace) -> None:
@@ -409,7 +445,10 @@ def _common_data(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="atc", description="All The Context administration")
+    parser = argparse.ArgumentParser(
+        prog="atc",
+        description="Inspect and administer the local All The Context Core",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Initialize the local vault and first client")
@@ -446,7 +485,8 @@ def build_parser() -> argparse.ArgumentParser:
     config_mcp.set_defaults(handler=_cmd_config_mcp)
 
     import_command = commands.add_parser(
-        "import", help="Import ChatGPT, Claude, Grok, or generic local archives"
+        "import",
+        help="Import local AI archives for automatic context maintenance",
     )
     _common_data(import_command)
     import_command.add_argument("path")
@@ -465,7 +505,28 @@ def build_parser() -> argparse.ArgumentParser:
     import_command.add_argument("--max-bytes", type=int, default=512 * 1024 * 1024)
     import_command.set_defaults(handler=_cmd_import)
 
-    candidates = commands.add_parser("candidates", help="List review candidates")
+    observations = commands.add_parser(
+        "observations",
+        help="Inspect automatic context-policy observations",
+    )
+    _common_data(observations)
+    observations.add_argument(
+        "--disposition",
+        choices=[item.value for item in ObservationDisposition],
+        help="show only observations with this automatic-policy outcome",
+    )
+    observations.add_argument("--limit", type=int, default=100)
+    observations.add_argument("--offset", type=int, default=0)
+    observations.set_defaults(handler=_cmd_observations)
+
+    candidates = commands.add_parser(
+        "candidates",
+        help="[deprecated compatibility] List legacy approval candidates",
+        description=(
+            "Deprecated compatibility command for inspecting the legacy approval lifecycle. "
+            "Use 'atc observations' for automatic-policy decisions."
+        ),
+    )
     _common_data(candidates)
     candidates.add_argument(
         "--status",
@@ -476,7 +537,14 @@ def build_parser() -> argparse.ArgumentParser:
     candidates.add_argument("--offset", type=int, default=0)
     candidates.set_defaults(handler=_cmd_candidates)
 
-    approve = commands.add_parser("approve", help="Approve one candidate")
+    approve = commands.add_parser(
+        "approve",
+        help="[deprecated compatibility] Approve one legacy candidate",
+        description=(
+            "Deprecated compatibility command for old pending candidates. "
+            "Normal context maintenance is automatic."
+        ),
+    )
     _common_data(approve)
     approve.add_argument("candidate_id")
     approve.add_argument("--content")
@@ -487,13 +555,20 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--confirm-sensitive-replication", action="store_true")
     approve.set_defaults(handler=_cmd_approve)
 
-    reject = commands.add_parser("reject", help="Reject one candidate")
+    reject = commands.add_parser(
+        "reject",
+        help="[deprecated compatibility] Reject one legacy candidate",
+        description=(
+            "Deprecated compatibility command for old pending candidates. "
+            "Normal context maintenance is automatic."
+        ),
+    )
     _common_data(reject)
     reject.add_argument("candidate_id")
     reject.add_argument("--reason")
     reject.set_defaults(handler=_cmd_reject)
 
-    search = commands.add_parser("search", help="Search canonical Core context")
+    search = commands.add_parser("search", help="Search current Core context")
     _common_data(search)
     search.add_argument("query", nargs="?", default="")
     search.add_argument("--scope", action="append", default=[])
@@ -533,8 +608,23 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--reason", required=True)
     delete.set_defaults(handler=_cmd_delete)
 
+    restore_record = commands.add_parser(
+        "restore-record",
+        help="Undo a soft deletion or restore a historical context version",
+    )
+    _common_data(restore_record)
+    restore_record.add_argument("record_id")
+    restore_record.add_argument(
+        "--version",
+        type=int,
+        help="historical version to copy into current context; omit to undo deletion",
+    )
+    restore_record.add_argument("--reason", default="restored by user")
+    restore_record.set_defaults(handler=_cmd_restore_record)
+
     integrity = commands.add_parser(
-        "integrity-groups", help="List duplicate and conflict review groups"
+        "integrity-groups",
+        help="List duplicate and conflict diagnostics",
     )
     _common_data(integrity)
     integrity.add_argument("--status", choices=["open", "resolved", "all"], default="open")
@@ -573,7 +663,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=["context:read", "context:status", "context:propose"],
     )
-    client_add.add_argument("--auto-approve", action="store_true")
+    client_add.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="deprecated compatibility flag; Core's automatic policy owns decisions",
+    )
     client_add.add_argument("--no-keyring", action="store_true")
     client_add.set_defaults(handler=_cmd_client_add)
 
@@ -582,7 +676,10 @@ def build_parser() -> argparse.ArgumentParser:
     client_revoke.add_argument("client_id")
     client_revoke.set_defaults(handler=_cmd_client_revoke)
 
-    status = commands.add_parser("status", help="Show Core and replication counts")
+    status = commands.add_parser(
+        "status",
+        help="Show current-context, observation, and replication health",
+    )
     _common_data(status)
     status.set_defaults(handler=_cmd_status)
 
@@ -602,7 +699,10 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--include-audit", action="store_true")
     export.set_defaults(handler=_cmd_export)
 
-    restore = commands.add_parser("restore", help="Restore an encrypted portable export")
+    restore = commands.add_parser(
+        "restore",
+        help="Restore an encrypted portable vault export",
+    )
     _common_data(restore)
     restore.add_argument("source")
     restore.add_argument("--passphrase-env", default="ATC_EXPORT_PASSPHRASE")

@@ -225,8 +225,28 @@ def test_supersession_withdrawal_and_deletion_propagate(relay: RelayService) -> 
     relay.apply(event(4, EventType.RECORD_DELETED, "old", {"version": 2}))
     assert relay.get(identity, "old") is None
     with pytest.raises(InvalidEventPayloadError):
-        relay.apply(event(5, EventType.RECORD_UPSERTED, "old", record_payload("old", version=3)))
+        relay.apply(event(5, EventType.RECORD_UPSERTED, "old", record_payload("old", version=2)))
     assert relay.store.checkpoint("vault-1") == 4
+
+    restored = event(
+        5,
+        EventType.RECORD_UPSERTED,
+        "old",
+        record_payload("old", content="Restored preference", version=3),
+    )
+    assert not relay.apply(restored).replayed
+    assert relay.get(identity, "old")["content"] == "Restored preference"
+    assert relay.apply(restored).replayed
+    relay.apply(
+        event(
+            6,
+            EventType.RECORD_UPSERTED,
+            "after-restore",
+            record_payload("after-restore", content="Projection continued"),
+        )
+    )
+    assert relay.store.checkpoint("vault-1") == 6
+    assert relay.get(identity, "after-restore")["content"] == "Projection continued"
 
 
 def test_irreversible_purge_scrubs_edge_state_and_blocks_resurrection(tmp_path: Path) -> None:

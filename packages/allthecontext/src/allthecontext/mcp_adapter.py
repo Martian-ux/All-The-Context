@@ -19,6 +19,7 @@ import anyio
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.server.stdio import stdio_server
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
@@ -127,8 +128,10 @@ def build_mcp() -> FastMCP:
             "or prior decisions could matter, call bootstrap_context before answering or acting, "
             "then use search_context or get_context_item when more detail is needed. When the user "
             "states or corrects durable personal context or makes a lasting decision, call "
-            "propose_memory before the task ends. Proposals require policy review and are never "
-            "canonical merely because they were submitted. "
+            "propose_memory before the task ends. Core evaluates submitted observations "
+            "automatically under the user's configured memory policy; submission does not create "
+            "a review task. Call forget_context only when the user explicitly asks to forget or "
+            "delete a specific context record; never infer that request. "
             "Never represent inaccessible sources as covered and never submit secrets, "
             "hidden reasoning, provider instructions, or guesses as established facts."
         ),
@@ -143,7 +146,7 @@ def build_mcp() -> FastMCP:
         character_budget: int = 8000,
         current_project: str | None = None,
     ) -> dict[str, Any]:
-        """Call at the start of relevant tasks to compile approved context within a budget."""
+        """Call at the start of relevant tasks to compile current context within a budget."""
         return _safe(
             lambda: _client().bootstrap_context(
                 {
@@ -165,7 +168,7 @@ def build_mcp() -> FastMCP:
         limit: int = 20,
         cursor: int = 0,
     ) -> dict[str, Any]:
-        """Search approved context now or at an offset-aware historical instant."""
+        """Search current context now or at an offset-aware historical instant."""
         return _safe(
             lambda: _client().search_context(
                 {
@@ -182,7 +185,7 @@ def build_mcp() -> FastMCP:
 
     @server.tool()
     def get_context_item(record_id: str) -> dict[str, Any]:
-        """Get one approved context record and its permitted provenance."""
+        """Get one current context record and its permitted provenance."""
         return _safe(lambda: _client().get_context_item(record_id))
 
     @server.tool()
@@ -244,9 +247,16 @@ def build_mcp() -> FastMCP:
         sensitivity: str = "normal",
         source_reference: str | None = None,
         evidence: str | None = None,
+        explicit_user_statement: bool = True,
+        entity_key: str | None = None,
+        attribute_key: str | None = None,
+        supersedes: str | None = None,
+        observed_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Call when durable context changes; submits for review, never canonical memory."""
+        """Submit an observation for immediate, automatic evaluation by Core policy."""
+        if (entity_key is None) != (attribute_key is None):
+            raise ValueError("entity_key and attribute_key must be supplied together")
         payload: dict[str, Any] = {
             "kind": kind,
             "content": content,
@@ -255,6 +265,11 @@ def build_mcp() -> FastMCP:
             "sensitivity": sensitivity,
             "source_reference": source_reference,
             "evidence": evidence,
+            "explicit_user_statement": explicit_user_statement,
+            "entity_key": entity_key,
+            "attribute_key": attribute_key,
+            "supersedes": supersedes,
+            "observed_at": observed_at,
         }
         payload["idempotency_key"] = idempotency_key or _automatic_proposal_key(payload)
         return _safe(lambda: _client().propose_memory(payload))
@@ -265,13 +280,34 @@ def build_mcp() -> FastMCP:
         description: str,
         suggested_correction: str | None = None,
     ) -> dict[str, Any]:
-        """Report incorrect or stale context as a reviewable correction signal."""
+        """Report stale context; Core automatically evaluates any explicit correction."""
         return _safe(
             lambda: _client().report_context_error(
                 {
                     "record_id": record_id,
-                    "content": description,
-                    "evidence": suggested_correction,
+                    "description": description,
+                    "suggested_correction": suggested_correction,
+                }
+            )
+        )
+
+    @server.tool(
+        annotations=ToolAnnotations.model_validate(
+            {
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            }
+        )
+    )
+    def forget_context(record_id: str, reason: str) -> dict[str, Any]:
+        """Call only on an explicit user request to reversibly delete one context record."""
+        return _safe(
+            lambda: _client().forget_context(
+                {
+                    "record_id": record_id,
+                    "reason": reason,
                 }
             )
         )

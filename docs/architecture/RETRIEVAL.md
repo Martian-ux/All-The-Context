@@ -6,12 +6,12 @@ service, native extension, or production vector dependency is required.
 
 The production pipeline has six ordered boundaries:
 
-1. `EligibleRecordSelector.select_authorized` applies vault, approval, request
-   filters, and client allow/deny policy. Relevance never receives a rejected
-   row. Deleted rows can cross only this metadata boundary so the temporal
+1. `EligibleRecordSelector.select_authorized` applies vault, applied/current
+   state, request filters, and client allow/deny policy. Relevance never receives
+   a staged, tentative, or ignored observation. Deleted rows can cross only this metadata boundary so the temporal
    resolver can enforce their terminal state; they never reach ranking.
-2. `TemporalSidecar` rebuilds content-free UTC interval metadata from canonical
-   Core rows and purge tombstones. It resolves `current` or an offset-aware
+2. `TemporalSidecar` rebuilds content-free UTC interval metadata from
+   authoritative current-record rows and purge tombstones. It resolves `current` or an offset-aware
    `as_of` instant over the already-authorized ID set.
 3. `LexicalV3CandidateRanker` runs weighted BM25 over an ephemeral FTS5 corpus
    containing only temporally eligible IDs. Phrase/all-term channels precede a
@@ -40,7 +40,7 @@ every derived index must remain discardable and rebuildable from Core.
 ## Temporal semantics
 
 All intervals are normalized to UTC and half-open: `[valid_from, valid_to)`;
-expiry is exclusive. With no explicit `valid_from`, canonical creation is the
+expiry is exclusive. With no explicit `valid_from`, current-record creation is the
 start. Already-expired imported records with no asserted start are treated as
 historical rather than making the sidecar invalid. A superseder closes its
 predecessor at the superseder's effective start and the predecessor does not
@@ -49,13 +49,13 @@ remain separate series for later conflict-aware set selection.
 
 Deletion and purge are terminal for both current and historical search. Restore
 never imports the sidecar as authority: startup/restart/search reconciles it
-against current canonical rows and purge tombstones, replacing stale or corrupt
+against current authoritative rows and purge tombstones, replacing stale or corrupt
 derived state. The normal current path resolves only records with meaningful
 temporal state through the sidecar; ordinary active IDs are a deterministic
 fast path. `as_of` always resolves the complete authorized set.
 
 An in-place Core correction retains its stable record ID and advances its
-canonical revision. Retrieval uses that latest approved content across the
+current-record revision. Retrieval uses that latest applied content across the
 record's interval; `record_history` remains the audit API for earlier content
 snapshots. Separate superseding records provide content-addressable historical
 search across revisions.

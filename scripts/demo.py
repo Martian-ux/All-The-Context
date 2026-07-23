@@ -17,7 +17,6 @@ from typing import Any
 from allthecontext.core.service import CoreService
 from allthecontext.export import create_export, restore_export
 from allthecontext.models import (
-    ApprovalRequest,
     Availability,
     BeginIngestionRequest,
     CandidateInput,
@@ -85,14 +84,14 @@ def run_demo(workspace: Path) -> dict[str, Any]:
     candidates, _ = core.store.list_candidates(source_id=source_id)
     _require(core.store.get_source_content(source_id) == untrusted_archive, "raw source changed")
     _require(
-        candidates and all(item.approval_status.value == "pending" for item in candidates),
-        "archive content bypassed review",
+        candidates and all(item.disposition.value == "tentative" for item in candidates),
+        "generic imported text became current context",
     )
     evidence.append(
         {
             "step": "import_untrusted_archive",
             "raw_retained": True,
-            "all_candidates_pending": True,
+            "all_observations_tentative": True,
             "secret_like_fact_extracted": False,
         }
     )
@@ -148,29 +147,29 @@ def run_demo(workspace: Path) -> dict[str, Any]:
                 limitations=["No provider account history was available."],
                 complete=True,
             ),
-        )
+        ),
+        principal,
     )
     _require(finished["status"] == "finished", "coverage report was not recorded")
-    preference = core.store.approve_candidate(
-        str(submitted["candidate_ids"][0]),
-        ApprovalRequest(reason="fictional user approved for direct Core access"),
-        actor=principal.id,
+    preference_observation = core.store.get_candidate(str(submitted["candidate_ids"][0]))
+    decision_observation = core.store.get_candidate(str(submitted["candidate_ids"][1]))
+    _require(
+        preference_observation.record_id is not None
+        and decision_observation.record_id is not None,
+        "automatic policy did not create current context",
     )
-    decision = core.store.approve_candidate(
-        str(submitted["candidate_ids"][1]),
-        ApprovalRequest(reason="fictional user approved project decision"),
-        actor=principal.id,
-    )
+    preference = core.store.get_record(str(preference_observation.record_id))
+    decision = core.store.get_record(str(decision_observation.record_id))
     first_search = core.retrieval.search(
         SearchRequest(query="Lantern", scopes=["project:lantern"]), principal
     )
     _require([item.id for item in first_search.items] == [decision.id], "Core retrieval failed")
     evidence.append(
         {
-            "step": "ingest_approve_retrieve",
+            "step": "ingest_automatic_retrieve",
             "batch_replay_idempotent": True,
             "coverage_reported": True,
-            "approved_records": 2,
+            "applied_records": 2,
             "direct_core_retrieval": True,
         }
     )
