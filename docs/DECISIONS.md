@@ -943,8 +943,8 @@ until it beats simple controls on CAOS and hard lifecycle gates.
 
 ## ADR-046: Wave 3 tests five independent falsification surfaces before further architecture promotion
 
-**Status:** accepted for active research execution 2026-07-23; no Wave 3
-result or production change is accepted.
+**Status:** completed as governed research execution 2026-07-23; final result
+classification is in ADR-047 and no production change is accepted.
 
 Wave 3 starts five fresh visible worktree tasks from immutable coordinator
 commit `950f649d9e3cc106fb8ff4febbe38919f8e00d11`: B01 programmatic
@@ -981,3 +981,71 @@ inspect official metadata, README, license, and tree shape only: cloning,
 payload-row access, third-party execution, and contamination of the frozen P01
 or B01 cells remain forbidden. This intake is evidence preparation, not an
 external benchmark result or production promotion.
+
+## ADR-047: Wave 3 advances evidence-compiled memory while holding automatic durability and static winner selection
+
+**Status:** accepted as bounded research direction 2026-07-23; no production
+schema, external benchmark, or claim of solved AI memory is accepted.
+
+Wave 3 completed all six governed cells and the coordinator reproduced the
+five deterministic experiments. Their mixed results remain visible:
+
+- B01 preserves `KILL_MECHANISM` for its bounded hand-authored DSL under the
+  frozen external-operation gate. Its strong synthetic quality result does not
+  overcome the gate, but non-normalized internal work prevents a general
+  programmatic-memory or compute-efficiency conclusion.
+- O01 is held because tie-aware policy rankings were not stable across
+  off-policy, online, and shifted regimes.
+- P01 holds automatic durability because the governed reference durably
+  retained poison in four of five unique scenarios even though applicability,
+  currentness, and protected-action confirmation prevented observable
+  influence and action.
+- E01b accepts six narrow current-Core conformance facts and records six
+  unsupported or not-exercised semantics. Kind and explicit-scope filtering do
+  not establish generic epistemic roles or a project-and-domain applicability
+  hard gate.
+- M2 advances only as a bounded synthetic contract after exact finite-set
+  sufficiency, one-deletion minimality, current-version reread, disclosure
+  reduction, and full-receipt paired-vault noninterference passed.
+- The MPBench artifact is metadata-qualified for a future quarantined,
+  schema-only cell. No payload or external result entered Wave 3, and the
+  paper-linked PRO-LONG repository remained unavailable.
+
+The resulting research architecture is called **Evidence-Compiled Memory**.
+The name describes a contract, not a new authority or accepted product brand.
+A memory use is treated as a revocable transaction:
+
+1. untrusted observations enter through authority and witness admission;
+2. Core owns the complete versioned canonical evidence substrate;
+3. currentness and task applicability resolve before relevance;
+4. the authorized/current/applicable projection is sealed;
+5. a bounded compiler selects an obligation-complete minimal working set;
+6. selected record versions are reread immediately before issue;
+7. the issue carries disclosure, dependency, and action-force receipts;
+8. observable use and outcomes are recorded without hidden reasoning; and
+9. correction, deletion, permission change, and purge close every derived
+   influence before republication.
+
+Retrievers, coding agents, learned routers, and external systems may propose
+candidates or rankings through bounded adapters. They do not create canonical
+truth, make untrusted content durable automatically, expand scope or force,
+bypass the sealed projection, or retain influence after invalidation. Core
+remains the sole canonical authority.
+
+The next gated order is:
+
+1. M3/E02 dependency-complete influence closure and the six exposed production
+   semantic gaps;
+2. M1 assignment/use/outcome/invalidation receipts;
+3. a separately preregistered MPBench schema-only quarantine cell;
+4. B02 with a genuine bounded code-writing reader and normalized compute,
+   token, and action accounting;
+5. O02 shadow policy routing under online formation and shift; and
+6. M6 three-way working-state repair after closure and use receipts exist.
+
+M3/E02 must compare optimized repair with full rebuild and preserve fail-closed
+purge. A production change requires a separate ADR after integrated tests show
+that role, applicability, lineage, and procedure-precondition semantics can be
+implemented without creating a second authority. M2's unkeyed synthetic
+commitments, logical timing classes, hand-authored obligations, and
+compiler-visible attestations are not production privacy or security designs.

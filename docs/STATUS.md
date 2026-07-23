@@ -164,34 +164,43 @@ Working-State Three-Way Repair.
 
 ## Memory Lab Wave 3
 
-Wave 3 is active under ADR-044/ADR-046 and
-`research/memory-lab/wave3-manifest.json`. Five fresh visible falsification
-tasks start from immutable coordinator commit
-`950f649d9e3cc106fb8ff4febbe38919f8e00d11`; a sixth metadata-only intake
-starts from governance-only coordinator head
-`dd4b880a68842dd0c797741ba2ffe673e768c55d`. All use `gpt-5.6-sol`
-worktrees with new-file-only, non-overlapping ownership:
+Wave 3 is complete under ADR-044/ADR-046/ADR-047 and the
+[integrated result](research/ATC_MEMORY_LAB_WAVE3_RESULTS_2026-07-23.md).
+Six fresh visible `gpt-5.6-sol` worktree tasks remained evidence-only; the
+coordinator reviewed and integrated their scoped commits and reproduced the
+five deterministic cells. The focused integrated gate passed 43 tests.
+On Python 3.12.10, repository-wide Ruff and mypy passed, and pytest completed
+with 603 passed and four expected Windows symlink skips.
 
-- B01 programmatic inspection of a complete structured event log;
-- O01 online/off-policy/distribution-shift triangulation, assigned medium
-  reasoning because it is the smaller bounded protocol cell;
-- P01 write-admission through delayed-retrieval/influence/protected-action
-  poisoning;
-- E01b conformance against a disposable synthetic instance of current
-  production Core;
-- M2 sealed authorized-and-applicable minimal projection with paired-vault
-  noninterference;
-- and a smaller medium-reasoning, metadata-only external-artifact intake for the
-  newly discoverable official MPBench repository and the still-unavailable
-  paper-linked PRO-LONG repository.
+The mixed result is preserved:
 
-Workers cannot edit production behavior, shared harnesses, governance, or each
-other's files, and cannot merge or push. External code, models, providers,
-credentials, personal context, and operator-Core access are forbidden. A
-metadata-only intake may inspect official repository metadata, README, license,
-and tree shape, but cannot clone or read raw adversarial payload rows. A
-failed, unsupported, held, killed, or not-exercised cell remains a result. No
-Wave 3 evidence has been accepted yet.
+- B01's restricted programmatic log scored confirmatory CAOS `0.857143`
+  against stable lexical `0.428571`, and its frozen combination scored `1.0`,
+  but the bounded configuration remains killed under its preregistered
+  external-operation gate. Internal work was not normalized, so this does not
+  falsify general programmatic memory or reproduce PRO-LONG.
+- O01 is held because the static memory-policy ranking was unstable across
+  off-policy, online, and shifted regimes.
+- P01 holds automatic durability: the non-production governed reference
+  durably retained poison in 4/5 unique attacks even though later gates reduced
+  influence and protected action to zero while preserving 5/5 clean utility.
+- E01b passed six narrow production Core paths and recorded six
+  unsupported/not-exercised lifecycle semantics; no complete-conformance claim
+  is accepted.
+- M2 is narrowly retained after 1,000 paired vaults × 20 repeats produced
+  CAOS, sufficiency, and one-deletion minimality `1.0`, zero full-receipt pair
+  differences, and mean disclosure `38.0` versus `70.1` full-authorized.
+- MPBench is metadata-qualified at pinned Apache-2.0 revision
+  `6886880a7c29625e0109e0ad91d0e095029f1577`, but no payload row was opened or
+  executed. The paper-linked PRO-LONG repository remained unavailable.
+
+Wave 3 advances Evidence-Compiled Memory as a research direction: complete
+versioned evidence, conservative admission, pre-relevance sealed
+authorization/currentness/applicability, bounded minimal context compilation,
+current-version reread, action-force ceilings, use/outcome receipts, and
+dependency-complete influence closure. Only the bounded M2 compiler contract
+advanced; no production implementation, external benchmark result, or claim
+that ATC has solved AI memory is accepted.
 
 ## Previously verified baseline
 

@@ -1,8 +1,32 @@
 {
   "schema_version": 1,
   "wave_id": "atc-memory-lab-wave3-2026-07-23",
-  "status": "active",
+  "status": "completed_with_mixed_results",
   "purpose": "Test the simple-log winner under programmatic inspection, online shift, poisoning, production Core conformance, and sealed minimal projection without granting workers integration or production authority.",
+  "completion": {
+    "date": "2026-07-23",
+    "integrated_results": "docs/research/ATC_MEMORY_LAB_WAVE3_RESULTS_2026-07-23.md",
+    "focused_coordinator_tests_passed": 43,
+    "coordinator_reproduction": {
+      "b01": "decisive decision and quality/safety metrics identical; machine-specific latency excluded",
+      "o01": "content-identical report; line-ending difference only",
+      "p01": "byte-identical report",
+      "e01b": "content-identical report; line-ending difference only",
+      "m2": "byte-identical JSON and Markdown reports"
+    },
+    "quality_gates": {
+      "python": "3.12.10",
+      "ruff": "passed",
+      "mypy": "passed across 66 source files",
+      "pytest": {
+        "passed": 603,
+        "skipped": 4,
+        "skip_reason": "Windows host cannot create the symlinks required by four platform-specific tests"
+      }
+    },
+    "production_promotion": false,
+    "external_execution": false
+  },
   "coordinator": {
     "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
     "branch": "codex/memory-lab-wave3-coordinator",
@@ -47,7 +71,29 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "4e706f545f901c817aa0f997a022cf638159f883"
+        ],
+        "integrated_commits": [
+          "b5fbfd448bd5303b60d0b005234f1b642f4057b6"
+        ],
+        "evidence_level": "L2",
+        "coordinator_reproduced": true,
+        "worker_decision": "KILL_MECHANISM",
+        "coordinator_classification": "kill_bounded_hand_authored_dsl_configuration_under_external_operation_accounting_only",
+        "metrics": {
+          "programmatic_confirmatory_caos": 0.857143,
+          "stable_lexical_confirmatory_caos": 0.428571,
+          "frozen_combination_confirmatory_caos": 1.0,
+          "confirmatory_operation_premium": 2.571429
+        },
+        "limitations": [
+          "internal lexical and ATC work was not normalized to counted DSL operations",
+          "the descriptor and fixture were co-designed",
+          "this is not a PRO-LONG reproduction or a falsification of general programmatic memory"
+        ]
+      }
     },
     {
       "worker_id": "o01_online_shift",
@@ -66,7 +112,31 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "cdc9bb81efe01c51fe05b4541d97ce883e7bc44e",
+          "bccf0a3f5ff0e44601b2d62377cb42877da3bb51"
+        ],
+        "integrated_commits": [
+          "e1ffe54c67c0a10758ea830ff1689417b6f1f031",
+          "67fadc7af82cc53164e9281be588b07c206c9ce8"
+        ],
+        "evidence_level": "L2",
+        "coordinator_reproduced": true,
+        "worker_decision": "HOLD",
+        "coordinator_classification": "hold_static_memory_policy_selection",
+        "metrics": {
+          "maximum_tie_aware_rank_move": 1.5,
+          "minimum_tie_aware_spearman": 0.333333,
+          "governed_reference_online_caos": 0.833333,
+          "governed_reference_shifted_caos": 0.75
+        },
+        "limitations": [
+          "small hand-authored binary-action environment",
+          "post-action feedback is a supervised corrective oracle",
+          "no current production Core or model-backed policy was exercised"
+        ]
+      }
     },
     {
       "worker_id": "p01_poisoning",
@@ -85,7 +155,32 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "f3717464c1740665267d208165e24c514c574cb3"
+        ],
+        "integrated_commits": [
+          "89f1976eb60eb6030daef38ab64c78008e889714"
+        ],
+        "evidence_level": "L2",
+        "coordinator_reproduced": true,
+        "worker_decision": "HOLD_AUTOMATIC_DURABILITY",
+        "coordinator_classification": "hold_automatic_durability_retain_later_action_gates_as_hypotheses",
+        "metrics": {
+          "unique_attack_scenarios": 5,
+          "reference_poisoned_durable_write_rate": 0.8,
+          "reference_poisoned_later_retrieval_rate": 0.2,
+          "reference_poisoned_observable_influence_rate": 0.0,
+          "reference_poisoned_protected_action_rate": 0.0,
+          "reference_clean_memory_utility_rate": 1.0,
+          "reference_legitimate_protected_action_permission_rate": 1.0
+        },
+        "limitations": [
+          "admission and persistence are collapsed to the durable-state observation",
+          "controls are channel-paired rather than fully feature-matched",
+          "the fixture and non-production governed reference were co-designed"
+        ]
+      }
     },
     {
       "worker_id": "e01b_production_conformance",
@@ -105,7 +200,32 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "e47084a414a129269cb4da449b77905d71e938ec",
+          "e3ebcdf8ca76b9b486b6647c8616a1623a9311b6"
+        ],
+        "integrated_commits": [
+          "65f863d357c2919bdd8a38a8e68c710a75480d82",
+          "546102994b2222c4c2fcdfbd823220cf4f02eaf6"
+        ],
+        "evidence_level": "L2",
+        "unsupported_evidence_level": "L0_not_exercised",
+        "coordinator_reproduced": true,
+        "worker_decision": "six_conformance_six_unsupported_not_exercised",
+        "coordinator_classification": "accept_narrow_observed_paths_reject_complete_conformance_claim",
+        "metrics": {
+          "case_count": 12,
+          "conformance_pass_count": 6,
+          "unsupported_not_exercised_count": 6,
+          "observed_failure_count": 0
+        },
+        "limitations": [
+          "the mapping and expected classifications were hand-authored against the frozen implementation",
+          "unsupported semantics were not independently executed",
+          "residue inspection covered only the disposable SQLite store and its local side files"
+        ]
+      }
     },
     {
       "worker_id": "m2_sealed_minimal_projection",
@@ -124,7 +244,33 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "b1fe56f22a46fb0bf5747659873b6e5f8c8d46f7"
+        ],
+        "integrated_commits": [
+          "99e9d81c80c3e47e914cb4035840af72363d6d41"
+        ],
+        "evidence_level": "L2",
+        "coordinator_reproduced": true,
+        "worker_decision": "narrow_retain_bounded_m2",
+        "coordinator_classification": "advance_bounded_contract_not_production_implementation",
+        "metrics": {
+          "paired_vaults": 1000,
+          "repeats": 20,
+          "caos_rate": 1.0,
+          "one_deletion_minimality_rate": 1.0,
+          "full_receipt_pair_difference_count": 0,
+          "mean_disclosure_chars": 38.0,
+          "full_authorized_mean_disclosure_chars": 70.1
+        },
+        "limitations": [
+          "five named canaries collapse to three compiler-visible attestations",
+          "timing covers post-seal logical work only",
+          "SHA-256 fields are linkable synthetic commitments rather than production redactions",
+          "obligation, coverage, and role labels were hand-authored and co-designed"
+        ]
+      }
     },
     {
       "worker_id": "external_artifact_intake",
@@ -146,7 +292,29 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commits": [
+          "55574425d37dd49b8816a28f3626e4bd3e21e91c"
+        ],
+        "integrated_commits": [
+          "942b6b0068f3569acfc4cabe52d003ebfc229593"
+        ],
+        "evidence_level": "L0",
+        "coordinator_reproduced": false,
+        "worker_decision": "metadata_qualified_execution_denied_candidate",
+        "coordinator_classification": "separate_quarantined_schema_only_external_cell_may_be_preregistered",
+        "facts": {
+          "mpbench_commit": "6886880a7c29625e0109e0ad91d0e095029f1577",
+          "mpbench_repository_license": "Apache-2.0",
+          "raw_payload_rows_opened": false,
+          "pro_long_repository_available": false
+        },
+        "limitations": [
+          "no MPBench row, row count, payload content, or paper result was reproduced",
+          "PRO-LONG code, logs, revision, and license remain unavailable",
+          "no external execution was authorized"
+        ]
+      }
     }
   ],
   "promotion_order": [

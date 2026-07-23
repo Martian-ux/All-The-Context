@@ -8,7 +8,7 @@
 | Date | July 23, 2026 |
 | Status | Accepted research governance; no production authority |
 | Completed reference wave | `research/memory-lab/wave2-manifest.json` |
-| Active wave | `research/memory-lab/wave3-manifest.json` |
+| Latest completed wave | `research/memory-lab/wave3-manifest.json` |
 
 ATC uses independent visible Codex worker threads to reduce shared-context
 anchoring and to run implementation, supplier, and research challenges in
@@ -113,3 +113,16 @@ disposable synthetic Core; it may not connect to the operator Core or patch a
 failure. No Wave 3 cell may use external code, providers, models, credentials,
 or personal context. The coordinator alone may integrate and classify a
 result.
+
+A sixth medium-reasoning task performed metadata-only intake of the official
+MPBench repository and the paper-linked PRO-LONG URL. It could inspect official
+metadata, README, license, and tree shape but could not clone, open dataset
+payload rows, execute third-party code, or contaminate the frozen P01/B01
+cells.
+
+Wave 3 is complete. The machine-readable manifest preserves its bounded B01
+kill, O01 and P01 holds, E01b unsupported semantics, narrow M2 retain, and
+execution-denied external intake. The
+[integrated Wave 3 result](ATC_MEMORY_LAB_WAVE3_RESULTS_2026-07-23.md) records
+coordinator reproduction and the resulting Evidence-Compiled Memory research
+direction. No result grants production authority.
