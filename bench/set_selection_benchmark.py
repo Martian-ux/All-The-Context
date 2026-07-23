@@ -49,18 +49,14 @@ def _candidate(data: Mapping[str, Any]) -> SetSelectionCandidate:
         redundancy_groups=_labels(data, "redundancy_groups"),
         conflict_groups=_labels(data, "conflict_groups"),
         supports=_labels(data, "supports"),
-        mandatory_interaction_preference=bool(
-            data.get("mandatory_interaction_preference", False)
-        ),
+        mandatory_interaction_preference=bool(data.get("mandatory_interaction_preference", False)),
         policy_authorized=bool(data.get("policy_authorized", True)),
         temporally_eligible=bool(data.get("temporally_eligible", True)),
         task_admissible=bool(data.get("task_admissible", True)),
     )
 
 
-def _pair_violations(
-    selected: Sequence[SetSelectionCandidate], attribute: str
-) -> int:
+def _pair_violations(selected: Sequence[SetSelectionCandidate], attribute: str) -> int:
     violations = 0
     for index, left in enumerate(selected):
         left_values = getattr(left, attribute)
@@ -134,9 +130,7 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         ):
             raise ValueError("set-selection scenario fields are required")
         candidates = [
-            _candidate(candidate)
-            for candidate in raw_candidates
-            if isinstance(candidate, dict)
+            _candidate(candidate) for candidate in raw_candidates if isinstance(candidate, dict)
         ]
         if len(candidates) != len(raw_candidates):
             raise ValueError("set-selection candidates must be objects")
@@ -159,17 +153,12 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
             and raw_candidate.get("integrated_baseline_selected") is True
         ]
         targets = set(raw_targets)
-        baseline_facets = set().union(
-            *(candidate.semantic_facets for candidate in baseline)
-        )
-        selected_facets = set().union(
-            *(candidate.semantic_facets for candidate in selected)
-        )
+        baseline_facets = set().union(*(candidate.semantic_facets for candidate in baseline))
+        selected_facets = set().union(*(candidate.semantic_facets for candidate in selected))
         repeats = [selector.select(candidates, constraints) for _ in range(10)]
         order_variants = [list(reversed(candidates))]
         order_variants.extend(
-            candidates[offset:] + candidates[:offset]
-            for offset in range(1, len(candidates))
+            candidates[offset:] + candidates[:offset] for offset in range(1, len(candidates))
         )
 
         scenario_count += 1
@@ -182,8 +171,7 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         eligible_mandatory = [
             candidate
             for candidate in candidates
-            if candidate.upstream_eligible
-            and candidate.mandatory_interaction_preference
+            if candidate.upstream_eligible and candidate.mandatory_interaction_preference
         ]
         mandatory_count += len(eligible_mandatory)
         selected_mandatory_count += sum(
@@ -197,8 +185,7 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         compatibility_violations += _compatibility_violations(selected)
         selected_key_set = set(keys)
         support_violations += sum(
-            bool(candidate.supports)
-            and candidate.supports.isdisjoint(selected_key_set)
+            bool(candidate.supports) and candidate.supports.isdisjoint(selected_key_set)
             for candidate in selected
         )
         budget_violations += total_budget_cost(selected) > int(raw_constraints["budget"])
@@ -216,14 +203,10 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         "scenario_count": scenario_count,
         "candidate_count": candidate_count,
         "selected_count": selected_count,
-        "expected_selection_recall": _ratio(
-            expected_selected_count, expected_count
-        ),
+        "expected_selection_recall": _ratio(expected_selected_count, expected_count),
         "unexpected_selected_count": unexpected_selected_count,
         "missed_expected_count": missed_expected_count,
-        "mandatory_preference_recall": _ratio(
-            selected_mandatory_count, mandatory_count
-        ),
+        "mandatory_preference_recall": _ratio(selected_mandatory_count, mandatory_count),
         "integrated_baseline_semantic_coverage": baseline_coverage,
         "selected_semantic_coverage": selected_coverage,
         "duplicate_redundancy_count": duplicate_violations,
@@ -236,13 +219,9 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         "input_order_deterministic": input_order_deterministic,
     }
     acceptance = {
-        "expected_selection_exact": (
-            unexpected_selected_count == 0 and missed_expected_count == 0
-        ),
+        "expected_selection_exact": (unexpected_selected_count == 0 and missed_expected_count == 0),
         "mandatory_preferences_preserved": metrics["mandatory_preference_recall"] == 1.0,
-        "semantic_coverage_at_least_integrated_baseline": (
-            selected_coverage >= baseline_coverage
-        ),
+        "semantic_coverage_at_least_integrated_baseline": (selected_coverage >= baseline_coverage),
         "zero_duplicate_redundancy": duplicate_violations == 0,
         "zero_conflict_violations": conflict_violations == 0,
         "zero_compatibility_violations": compatibility_violations == 0,

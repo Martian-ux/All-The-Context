@@ -112,11 +112,7 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         raw_candidates = raw_scenario.get("candidates")
         if not isinstance(raw_context, dict) or not isinstance(raw_candidates, list):
             raise ValueError("scenario context and candidates are required")
-        candidates = [
-            _candidate(item)
-            for item in raw_candidates
-            if isinstance(item, dict)
-        ]
+        candidates = [_candidate(item) for item in raw_candidates if isinstance(item, dict)]
         if len(candidates) != len(raw_candidates):
             raise ValueError("candidate must be an object")
         relevance = {
@@ -128,12 +124,10 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
         context = _context(raw_context)
         batch = gate.evaluate_many(candidates, context)
         repeated_evaluation_deterministic = (
-            repeated_evaluation_deterministic
-            and batch == gate.evaluate_many(candidates, context)
+            repeated_evaluation_deterministic and batch == gate.evaluate_many(candidates, context)
         )
-        input_order_deterministic = (
-            input_order_deterministic
-            and batch == gate.evaluate_many(list(reversed(candidates)), context)
+        input_order_deterministic = input_order_deterministic and batch == gate.evaluate_many(
+            list(reversed(candidates)), context
         )
         admitted = {decision.key for decision in batch.decisions if decision.admitted}
         baseline_top_five = structurally_safe[:5]
@@ -187,9 +181,7 @@ def run(path: Path = FIXTURES) -> dict[str, object]:
             "recall_at_5_delta": round(gated_recall - baseline_recall, 6),
             "baseline_false_positive_count_at_5": baseline_false_positives,
             "gated_false_positive_count_at_5": gated_false_positives,
-            "false_positive_count_at_5_delta": (
-                gated_false_positives - baseline_false_positives
-            ),
+            "false_positive_count_at_5_delta": (gated_false_positives - baseline_false_positives),
         },
         "diagnostics": diagnostics,
         "acceptance": {

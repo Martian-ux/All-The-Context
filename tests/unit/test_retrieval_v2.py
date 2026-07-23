@@ -76,10 +76,7 @@ def test_administrator_explanations_contain_only_authorized_returned_records(
 
     assert explained == returned
     assert explained.isdisjoint(forbidden)
-    assert all(
-        "all_terms" in item["channel_ranks"]
-        for item in diagnostic["ranking_explanations"]
-    )
+    assert all("all_terms" in item["channel_ranks"] for item in diagnostic["ranking_explanations"])
     assert diagnostic["pipeline_diagnostics"]["temporal"]["reason_counts"]
     assert diagnostic["pipeline_diagnostics"]["admissibility"]["rejected_count"] >= 0
     with pytest.raises(PermissionError, match="administrator"):

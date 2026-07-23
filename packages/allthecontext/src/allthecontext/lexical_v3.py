@@ -198,9 +198,9 @@ def _joined_query(tokens: Sequence[str], operator: str) -> str:
 
 
 def _prefix_query(tokens: Sequence[str]) -> str:
-    prefixable = _deduplicated(
-        token for token in tokens if len(token) >= MIN_PREFIX_TOKEN_CHARS
-    )[:MAX_PREFIX_TOKENS]
+    prefixable = _deduplicated(token for token in tokens if len(token) >= MIN_PREFIX_TOKEN_CHARS)[
+        :MAX_PREFIX_TOKENS
+    ]
     return " OR ".join(f"{_quoted_fts_token(token)}*" for token in prefixable)
 
 
@@ -288,9 +288,7 @@ class LexicalV3:
 
         try:
             self._create_candidate_scope(connection, candidates)
-            secure_delete = _attempt_fts5_secure_delete(
-                connection.execute, _CANDIDATE_FTS_TABLE
-            )
+            secure_delete = _attempt_fts5_secure_delete(connection.execute, _CANDIDATE_FTS_TABLE)
             states: dict[str, _HitState] = {}
             high_count = 0
             exact_fallback_count = 0
@@ -304,14 +302,10 @@ class LexicalV3:
             if len(prepared.tokens) > 1:
                 phrase = _phrase_query(prepared.tokens)
                 active_channels.append(("phrase", phrase))
-                high_count += self._select_matching_candidates(
-                    connection, phrase
-                )
+                high_count += self._select_matching_candidates(connection, phrase)
             all_terms = _joined_query(prepared.tokens, "AND")
             active_channels.append(("all_terms", all_terms))
-            high_count += self._select_matching_candidates(
-                connection, all_terms
-            )
+            high_count += self._select_matching_candidates(connection, all_terms)
             matched_count = self._matched_count(connection)
             if matched_count >= threshold:
                 reasons.append(DiagnosticReason.HIGH_PRECISION_SUFFICIENT)
@@ -319,9 +313,7 @@ class LexicalV3:
                 reasons.append(DiagnosticReason.HIGH_PRECISION_INSUFFICIENT)
                 exact_any = _joined_query(_expanded_tokens(prepared.tokens), "OR")
                 active_channels.append(("exact_any", exact_any))
-                exact_fallback_count = self._select_matching_candidates(
-                    connection, exact_any
-                )
+                exact_fallback_count = self._select_matching_candidates(connection, exact_any)
                 matched_count = self._matched_count(connection)
                 if matched_count >= threshold:
                     reasons.append(DiagnosticReason.EXACT_FALLBACK_SUFFICIENT)
@@ -331,9 +323,7 @@ class LexicalV3:
                     if prefix:
                         reasons.append(DiagnosticReason.PREFIX_USED)
                         active_channels.append(("prefix", prefix))
-                        prefix_count = self._select_matching_candidates(
-                            connection, prefix
-                        )
+                        prefix_count = self._select_matching_candidates(connection, prefix)
                     else:
                         reasons.append(DiagnosticReason.PREFIX_UNAVAILABLE)
             indexed_count = self._populate_candidate_fts(connection)
@@ -396,9 +386,7 @@ class LexicalV3:
             "tokenize='unicode61 remove_diacritics 2')"
         )
 
-    def _select_matching_candidates(
-        self, connection: sqlite3.Connection, fts_query: str
-    ) -> int:
+    def _select_matching_candidates(self, connection: sqlite3.Connection, fts_query: str) -> int:
         source = _quoted_identifier(self.source_fts_table)
         eligible = _quoted_identifier(_ELIGIBLE_TABLE)
         matched = _quoted_identifier(_MATCHED_TABLE)
@@ -450,9 +438,7 @@ class LexicalV3:
             record_id = str(row[0])
             state = states.setdefault(record_id, _HitState(record_id))
             bm25_relevance = max(0.0, -float(row[1]))
-            state.channel_scores[channel] = (
-                bm25_relevance * _CHANNEL_SCORE_WEIGHTS[channel]
-            )
+            state.channel_scores[channel] = bm25_relevance * _CHANNEL_SCORE_WEIGHTS[channel]
         return len(rows)
 
     @staticmethod

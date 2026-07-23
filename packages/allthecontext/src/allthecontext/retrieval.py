@@ -457,9 +457,7 @@ class LexicalV3CandidateRanker:
         query: str,
         *,
         limit: int,
-    ) -> tuple[
-        list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None
-    ]:
+    ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         if not query:
             ordered = sorted(
                 candidates,
@@ -556,9 +554,7 @@ class ContextCompiler:
         return f"{domain}:{digest}"
 
     @classmethod
-    def _redundancy_groups(
-        cls, items: Sequence[ContextRecordOut]
-    ) -> dict[str, frozenset[str]]:
+    def _redundancy_groups(cls, items: Sequence[ContextRecordOut]) -> dict[str, frozenset[str]]:
         """Return transitive near-duplicate groups without exposing record text."""
 
         parents = list(range(len(items)))
@@ -598,9 +594,7 @@ class ContextCompiler:
         values.update(f"token:{token}" for token in _dedupe_tokens(item.content))
         values.update(f"tag:{tag.casefold()}" for tag in item.tags)
         if item.entity_key and item.attribute_key:
-            values.add(
-                f"slot:{item.entity_key.casefold()}\0{item.attribute_key.casefold()}"
-            )
+            values.add(f"slot:{item.entity_key.casefold()}\0{item.attribute_key.casefold()}")
         return frozenset(cls._opaque_label("semantic", value) for value in values)
 
     @classmethod
@@ -658,10 +652,7 @@ class ContextCompiler:
                 supports.update(
                     target.id
                     for target in primary
-                    if (
-                        item.source_id is not None
-                        and item.source_id == target.source_id
-                    )
+                    if (item.source_id is not None and item.source_id == target.source_id)
                     or (
                         item.entity_key is not None
                         and item.entity_key == target.entity_key
@@ -704,9 +695,7 @@ def _temporal_sidecar_path(database_path: Path) -> Path:
 
 def _series_roots(rows: Sequence[sqlite3.Row]) -> dict[str, str]:
     parents = {
-        str(row["id"]): str(row["supersedes"])
-        for row in rows
-        if row["supersedes"] is not None
+        str(row["id"]): str(row["supersedes"]) for row in rows if row["supersedes"] is not None
     }
     roots: dict[str, str] = {}
     for record_id in sorted(str(row["id"]) for row in rows):
@@ -744,9 +733,7 @@ def _canonical_temporal_facts(
         # Imported records can already be expired when approved. With no
         # asserted validity start, model those as historical rather than
         # rejecting the entire sidecar because ingestion happened later.
-        if valid_from is None and expires_at is not None and expires_at <= str(
-            row["created_at"]
-        ):
+        if valid_from is None and expires_at is not None and expires_at <= str(row["created_at"]):
             valid_from = "0001-01-01T00:00:00+00:00"
         facts.append(
             TemporalFact.active(
@@ -806,15 +793,11 @@ def _canonical_temporal_marker(
     )
 
 
-def _current_temporal_special_ids(
-    facts: Sequence[TemporalFact], instant: str
-) -> frozenset[str]:
+def _current_temporal_special_ids(facts: Sequence[TemporalFact], instant: str) -> frozenset[str]:
     """Identify records that need sidecar work for current-time resolution."""
 
     superseded = {
-        fact.supersedes_record_id
-        for fact in facts
-        if fact.supersedes_record_id is not None
+        fact.supersedes_record_id for fact in facts if fact.supersedes_record_id is not None
     }
     return frozenset(
         fact.record_id
@@ -856,11 +839,7 @@ def _conflict_states(
         record_id = str(row["record_id"])
         if record_id not in states or str(row["group_type"]) != "conflict":
             continue
-        state = (
-            ConflictState.ACTIVE
-            if str(row["status"]) == "open"
-            else ConflictState.RESOLVED
-        )
+        state = ConflictState.ACTIVE if str(row["status"]) == "open" else ConflictState.RESOLVED
         if state is ConflictState.ACTIVE or states[record_id] is ConflictState.CLEAR:
             states[record_id] = state
     return states
@@ -952,9 +931,7 @@ def _admissibility_inputs(
                     task_query_coverage=(
                         round(min(1.0, coverage), 6) if coverage is not None else None
                     ),
-                    scope_project_fit=(
-                        round(scope_fit, 6) if scope_fit is not None else None
-                    ),
+                    scope_project_fit=(round(scope_fit, 6) if scope_fit is not None else None),
                     kind_compatibility=kind_fit,
                     confidence=float(row["confidence"]),
                     explicitness=float(bool(row["explicit_user_statement"])),
@@ -990,9 +967,7 @@ class _PipelineDiagnostics:
                     if self.temporal_maintenance is not None
                     else None
                 ),
-                "reason_counts": {
-                    item.reason_code.value: item.count for item in self.temporal
-                },
+                "reason_counts": {item.reason_code.value: item.count for item in self.temporal},
             },
             "lexical": (
                 None
@@ -1099,9 +1074,7 @@ class RetrievalEngine:
         if marker != self._temporal_marker:
             facts = _canonical_temporal_facts(connection, vault_id)
             maintenance = self.temporal_sidecar.recover(facts)
-            self._current_temporal_special = _current_temporal_special_ids(
-                facts, current_instant
-            )
+            self._current_temporal_special = _current_temporal_special_ids(facts, current_instant)
             self._temporal_marker = marker
         else:
             maintenance = self.temporal_sidecar.initialize()
@@ -1127,27 +1100,26 @@ class RetrievalEngine:
         )
         selected_ids = set(resolution.selected_record_ids) | set(trivial_ids)
         by_id = {str(row["id"]): row for row in authorized}
-        temporally_eligible = [
-            row for record_id, row in by_id.items() if record_id in selected_ids
-        ]
-        ranked, explanations, lexical = self._rank(
-            connection, temporally_eligible, request
-        )
+        temporally_eligible = [row for record_id, row in by_id.items() if record_id in selected_ids]
+        ranked, explanations, lexical = self._rank(connection, temporally_eligible, request)
         ranked = _hydrate_ranked_rows(connection, ranked)
         conflicts = _conflict_states(connection, (str(row["id"]) for row in ranked))
         gate_inputs, gate_context = _admissibility_inputs(ranked, request, conflicts)
         admissibility = self.admissibility_gate.evaluate_many(gate_inputs, gate_context)
-        admitted = {
-            decision.key for decision in admissibility.decisions if decision.admitted
-        }
+        admitted = {decision.key for decision in admissibility.decisions if decision.admitted}
         gated = [row for row in ranked if str(row["id"]) in admitted]
-        return gated, explanations, denied, _PipelineDiagnostics(
-            temporal_maintenance=maintenance,
-            temporal=_with_trivial_temporal_selections(
-                resolution.diagnostics, len(trivial_ids)
+        return (
+            gated,
+            explanations,
+            denied,
+            _PipelineDiagnostics(
+                temporal_maintenance=maintenance,
+                temporal=_with_trivial_temporal_selections(
+                    resolution.diagnostics, len(trivial_ids)
+                ),
+                lexical=lexical,
+                admissibility=admissibility,
             ),
-            lexical=lexical,
-            admissibility=admissibility,
         )
 
     def _search(

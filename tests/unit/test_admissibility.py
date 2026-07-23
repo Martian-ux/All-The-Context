@@ -148,16 +148,16 @@ def test_sparse_evidence_fails_open_even_when_observed_score_is_low() -> None:
         AdmissibilitySignals(task_query_coverage=0.0, scope_project_fit=0.0),
     )
 
-    decision = DeterministicAdmissibilityGate().evaluate_many(
-        [sparse], AdmissibilityContext(query_specificity=0.9, task_specificity=0.8)
-    ).decisions[0]
+    decision = (
+        DeterministicAdmissibilityGate()
+        .evaluate_many([sparse], AdmissibilityContext(query_specificity=0.9, task_specificity=0.8))
+        .decisions[0]
+    )
 
     assert decision.admitted is True
     assert decision.fail_open is True
     assert decision.score == 0.0
-    assert decision.reason_codes == (
-        AdmissibilityReason.ADMIT_FAIL_OPEN_SPARSE_EVIDENCE,
-    )
+    assert decision.reason_codes == (AdmissibilityReason.ADMIT_FAIL_OPEN_SPARSE_EVIDENCE,)
 
 
 @pytest.mark.parametrize(
@@ -186,9 +186,7 @@ def test_empty_or_underspecified_task_context_fails_open(
 
     assert decision.admitted is True
     assert decision.fail_open is True
-    assert decision.reason_codes == (
-        AdmissibilityReason.ADMIT_FAIL_OPEN_UNDERSPECIFIED_TASK,
-    )
+    assert decision.reason_codes == (AdmissibilityReason.ADMIT_FAIL_OPEN_UNDERSPECIFIED_TASK,)
 
 
 def test_conservative_threshold_admits_equality_and_sparse_evidence() -> None:
@@ -205,15 +203,15 @@ def test_conservative_threshold_admits_equality_and_sparse_evidence() -> None:
     )
     gate = DeterministicAdmissibilityGate(config)
     context = AdmissibilityContext(query_specificity=1.0)
-    boundary = _candidate(
-        "threshold-boundary", AdmissibilitySignals(task_query_coverage=0.6)
-    )
+    boundary = _candidate("threshold-boundary", AdmissibilitySignals(task_query_coverage=0.6))
     sparse_config = replace(config, minimum_evidence_factors=2, rejection_threshold=1.0)
 
     boundary_decision = gate.evaluate_many([boundary], context).decisions[0]
-    sparse_decision = DeterministicAdmissibilityGate(sparse_config).evaluate_many(
-        [boundary], context
-    ).decisions[0]
+    sparse_decision = (
+        DeterministicAdmissibilityGate(sparse_config)
+        .evaluate_many([boundary], context)
+        .decisions[0]
+    )
 
     assert boundary_decision.admitted is True
     assert boundary_decision.fail_open is False
@@ -304,10 +302,7 @@ def test_invalid_shadow_output_is_sanitized_and_has_zero_authority() -> None:
 
     assert _production_projection(shadowed) == _production_projection(production)
     assert shadowed.decisions[0].shadow is not None
-    assert (
-        shadowed.decisions[0].shadow.reason_code
-        == AdmissibilityReason.SHADOW_INVALID_OUTPUT
-    )
+    assert shadowed.decisions[0].shadow.reason_code == AdmissibilityReason.SHADOW_INVALID_OUTPUT
     assert shadowed.decisions[0].shadow.score is None
     assert shadowed.diagnostics.shadow_error_count == 1
 

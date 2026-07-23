@@ -246,8 +246,7 @@ def test_fts5_secure_delete_supported_and_unsupported_paths_are_host_independent
         raise sqlite3.OperationalError("simulated older SQLite")
 
     assert (
-        _attempt_fts5_secure_delete(supported, "bounded_candidates")
-        is SecureDeleteStatus.ENABLED
+        _attempt_fts5_secure_delete(supported, "bounded_candidates") is SecureDeleteStatus.ENABLED
     )
     assert statements == [
         'INSERT INTO temp."bounded_candidates"("bounded_candidates", rank) '
@@ -269,8 +268,11 @@ def test_real_sqlite_secure_delete_detection_is_reported_without_version_assumpt
         SecureDeleteStatus.ENABLED,
         SecureDeleteStatus.UNSUPPORTED,
     }
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sqlite_temp_master "
-        "WHERE name LIKE 'lexical_v3_eligible%' OR name LIKE 'lexical_v3_candidates_fts%'"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sqlite_temp_master "
+            "WHERE name LIKE 'lexical_v3_eligible%' OR name LIKE 'lexical_v3_candidates_fts%'"
+        ).fetchone()[0]
+        == 0
+    )
     connection.close()

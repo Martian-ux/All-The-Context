@@ -29,9 +29,7 @@ def _facts(record_count: int) -> tuple[list[TemporalFact], set[str]]:
             TemporalFact.active(
                 record_id=record_id,
                 series_key=f"series-{ordinal // 2:06d}",
-                created_at=(
-                    "2026-02-01T00:00:00Z" if predecessor else "2026-01-01T00:00:00Z"
-                ),
+                created_at=("2026-02-01T00:00:00Z" if predecessor else "2026-01-01T00:00:00Z"),
                 supersedes_record_id=predecessor,
             )
         )

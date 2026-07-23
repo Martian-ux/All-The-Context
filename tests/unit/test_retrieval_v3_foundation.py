@@ -79,9 +79,7 @@ def test_bounded_foundation_harness_measures_comparator_and_lifecycle() -> None:
     scenarios = {item["scenario_id"]: item["status"] for item in lifecycle["scenarios"]}
 
     assert report["report_kind"] == "frozen_comparator_measurement"
-    assert report["comparator"]["base_commit"] == (
-        "70a4808cc5d9fc35f4a7b9a75bc3cbfbb0e9ce40"
-    )
+    assert report["comparator"]["base_commit"] == ("70a4808cc5d9fc35f4a7b9a75bc3cbfbb0e9ce40")
     assert report["comparator_contract_status"] == GateStatus.PASSED
     assert report["gate_results"] == []
     assert report["gate_results_status"] == GateStatus.NOT_EXERCISED
@@ -108,9 +106,7 @@ def test_bounded_foundation_harness_measures_comparator_and_lifecycle() -> None:
     assert report["comparator"] == contract["comparator"]
     assert report["fixtures"]["base_sha256"] == contract["base_fixture_sha256"]
     assert report["fixtures"]["foundation_sha256"] == contract["foundation_fixture_sha256"]
-    assert metrics["ranking_fingerprint_sha256"] == contract["ranking_fingerprints_sha256"][
-        "100"
-    ]
+    assert metrics["ranking_fingerprint_sha256"] == contract["ranking_fingerprints_sha256"]["100"]
     assert lifecycle["metrics"]["history_version_count"] == 2
     assert lifecycle["metrics"]["restart_ranking_parity"] is True
     assert lifecycle["metrics"]["portable_restore_valid"] is True

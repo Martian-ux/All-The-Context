@@ -121,17 +121,13 @@ def test_redundancy_conflict_and_compatibility_are_hard_set_constraints() -> Non
         compatibility=frozenset({"current"}),
         conflicts=frozenset({"value"}),
     )
-    incompatible_domain = _candidate(
-        "old-domain", utility=10_000, compatibility=frozenset({"old"})
-    )
+    incompatible_domain = _candidate("old-domain", utility=10_000, compatibility=frozenset({"old"}))
     pair_blocked = _candidate(
         "pair-blocked",
         utility=10_000,
         incompatible_with=frozenset({"winner"}),
     )
-    compatible = _candidate(
-        "compatible", utility=100, compatibility=frozenset({"current"})
-    )
+    compatible = _candidate("compatible", utility=100, compatibility=frozenset({"current"}))
 
     selection = DeterministicSetSelector().select(
         [pair_blocked, conflict, duplicate, incompatible_domain, compatible, winner],
@@ -211,12 +207,9 @@ def test_input_order_repeated_runs_and_ties_are_deterministic() -> None:
 
     assert selected_keys(expected) == ("alpha", "bravo")
     assert all(
-        selector.select(list(order), constraints) == expected
-        for order in permutations(candidates)
+        selector.select(list(order), constraints) == expected for order in permutations(candidates)
     )
-    assert [selector.select(candidates, constraints) for _ in range(10)] == [
-        expected
-    ] * 10
+    assert [selector.select(candidates, constraints) for _ in range(10)] == [expected] * 10
 
 
 def test_safe_diagnostics_expose_closed_codes_and_aggregate_scalars_only() -> None:
@@ -239,8 +232,7 @@ def test_safe_diagnostics_expose_closed_codes_and_aggregate_scalars_only() -> No
             {
                 "reason": diagnostic.reason,
                 "values": [
-                    {"metric": value.metric, "value": value.value}
-                    for value in diagnostic.values
+                    {"metric": value.metric, "value": value.value} for value in diagnostic.values
                 ],
             }
             for diagnostic in selection.diagnostics
@@ -277,6 +269,4 @@ def test_safe_diagnostics_expose_closed_codes_and_aggregate_scalars_only() -> No
 )
 def test_invalid_eligible_metadata_fails_closed(candidate: SetSelectionCandidate) -> None:
     with pytest.raises(ValueError):
-        DeterministicSetSelector().select(
-            [candidate], SetSelectionConstraints(limit=1, budget=100)
-        )
+        DeterministicSetSelector().select([candidate], SetSelectionConstraints(limit=1, budget=100))

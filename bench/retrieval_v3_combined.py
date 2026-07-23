@@ -40,9 +40,7 @@ _PASSPHRASE = "synthetic integrated retrieval passphrase"
 def _request(query: dict[str, Any]) -> SearchRequest:
     return SearchRequest(
         query=str(query["query"]),
-        current_project=(
-            str(query["current_project"]) if query.get("current_project") else None
-        ),
+        current_project=(str(query["current_project"]) if query.get("current_project") else None),
         limit=5,
     )
 
@@ -52,9 +50,7 @@ def _sidecar_bytes(database: Path) -> int:
     return durable_sqlite_footprint(path) if path.exists() else 0
 
 
-def run_candidate_profile(
-    size: int, directory: Path, fixture: dict[str, Any]
-) -> dict[str, Any]:
+def run_candidate_profile(size: int, directory: Path, fixture: dict[str, Any]) -> dict[str, Any]:
     database = directory / f"retrieval-v3-candidate-{size}.sqlite3"
     store, indexing_seconds = build_database(database, size, fixture)
     engine = RetrievalEngine(store)
@@ -92,9 +88,7 @@ def run_candidate_profile(
     current = queries["current_history"]
     current_ids = results["current_history"]
     temporal_precision = (
-        len(set(current_ids) & set(current["gold"])) / len(current_ids)
-        if current_ids
-        else 0.0
+        len(set(current_ids) & set(current["gold"])) / len(current_ids) if current_ids else 0.0
     )
     facet_hits = 0
     facet_count = 0
@@ -105,12 +99,10 @@ def run_candidate_profile(
             facet_hits += bool(ids & set(facet))
     semantic_coverage = facet_hits / facet_count if facet_count else 0.0
     conflict_ids = results["deterministic_conflict"]
-    conflict_behavior = deterministic and set(
-        queries["deterministic_conflict"]["gold"]
-    ) <= set(conflict_ids)
-    as_of_case = next(
-        item for item in fixture["temporal_cases"] if item["case_id"] == "as_of"
+    conflict_behavior = deterministic and set(queries["deterministic_conflict"]["gold"]) <= set(
+        conflict_ids
     )
+    as_of_case = next(item for item in fixture["temporal_cases"] if item["case_id"] == "as_of")
     as_of_ids = [
         item.id
         for item in engine.search(
@@ -160,12 +152,8 @@ def run_candidate_lifecycle(directory: Path, fixture: dict[str, Any]) -> dict[st
     package = directory / "retrieval-v3-candidate-lifecycle.atc"
     store, _elapsed = build_database(database, 100, fixture)
     principal = _principal(fixture)
-    current_query = next(
-        query for query in fixture["queries"] if query["id"] == "current_history"
-    )
-    as_of_case = next(
-        item for item in fixture["temporal_cases"] if item["case_id"] == "as_of"
-    )
+    current_query = next(query for query in fixture["queries"] if query["id"] == "current_history")
+    as_of_case = next(item for item in fixture["temporal_cases"] if item["case_id"] == "as_of")
     engine = RetrievalEngine(store)
     current_ids = [
         item.id
@@ -254,8 +242,7 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
     operational = {
         "all_profile_gates_passed": passed,
         "warm_p95_under_150_ms": all(
-            float(item["metrics"]["warm_latency"]["p95_ms"]) < 150.0
-            for item in measured
+            float(item["metrics"]["warm_latency"]["p95_ms"]) < 150.0 for item in measured
         ),
         "as_of_resolution_exercised": all(
             bool(item["metrics"]["as_of_expected_ids_present"]) for item in measured
@@ -268,15 +255,10 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
                 "restore_rebuild_valid",
             )
         ),
-        "zero_resurrection": lifecycle["metrics"][
-            "resurrected_deleted_or_purged_count"
-        ]
-        == 0,
+        "zero_resurrection": lifecycle["metrics"]["resurrected_deleted_or_purged_count"] == 0,
     }
     candidate["gate_results"] = gate_results
-    candidate["gate_results_status"] = (
-        GateStatus.PASSED if passed else GateStatus.FAILED
-    )
+    candidate["gate_results_status"] = GateStatus.PASSED if passed else GateStatus.FAILED
     candidate["operational_acceptance"] = operational
     candidate["passed"] = passed and all(operational.values())
     candidate["comparator"] = comparator

@@ -40,9 +40,7 @@ def test_compiler_resolves_same_slot_conflicts_deterministically() -> None:
         for _ in range(5)
     ]
 
-    assert [[item.id for item in run] for run in runs] == [
-        ["preferred", "neutral"]
-    ] * 5
+    assert [[item.id for item in run] for run in runs] == [["preferred", "neutral"]] * 5
 
 
 def test_compiler_selects_primary_before_linked_supporting_evidence() -> None:
@@ -60,9 +58,7 @@ def test_compiler_selects_primary_before_linked_supporting_evidence() -> None:
         source_id="source-atlas",
     )
 
-    selected, used = ContextCompiler().compile(
-        [], [support, primary], budget_chars=2_000
-    )
+    selected, used = ContextCompiler().compile([], [support, primary], budget_chars=2_000)
 
     assert [item.id for item in selected] == ["primary", "support"]
     assert used == sum(len(item.content) + 64 for item in selected)
@@ -85,9 +81,7 @@ def test_compiler_suppresses_transitive_near_duplicate_redundancy() -> None:
         "Use ISO 8601 timestamp formatting for exports.",
     )
 
-    selected, _used = ContextCompiler().compile(
-        [first, second, third], [], budget_chars=2_000
-    )
+    selected, _used = ContextCompiler().compile([first, second, third], [], budget_chars=2_000)
 
     assert len(selected) == 1
     assert selected[0].id in {"first", "second", "third"}

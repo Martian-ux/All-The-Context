@@ -62,7 +62,7 @@ means connecting directly to Core while Core is online.
   have exact Recall@5 `1.0`, admissibility precision `1.0`, temporal precision
   `1.0`, semantic coverage `1.0`, zero redundancy, zero policy violations, and
   deterministic rankings/conflicts. After set-selection integration, the 10k
-  warm p95 is `68.79868 ms`; total database-plus-sidecar growth from 1k to 10k
+  warm p95 is `89.94938 ms`; total database-plus-sidecar growth from 1k to 10k
   is `1027.185778` bytes per added record. Lifecycle resurrection count is zero.
 - `ContextCompiler` now uses metadata-only deterministic marginal utility,
   mandatory-preference priority, semantic/diversity gains, transitive duplicate

@@ -16,11 +16,7 @@ def test_fixture_is_sanitized_and_covers_required_set_behavior() -> None:
     scenarios = fixture["scenarios"]
     assert isinstance(scenarios, list)
     roles = {str(scenario["fixture_role"]) for scenario in scenarios}
-    candidates = [
-        candidate
-        for scenario in scenarios
-        for candidate in scenario["candidates"]
-    ]
+    candidates = [candidate for scenario in scenarios for candidate in scenario["candidates"]]
 
     assert roles == {
         "mandatory_preferences_with_budget",
@@ -47,9 +43,7 @@ def test_bounded_benchmark_passes_every_set_selection_acceptance_gate() -> None:
     assert metrics["unexpected_selected_count"] == 0
     assert metrics["missed_expected_count"] == 0
     assert metrics["mandatory_preference_recall"] == 1.0
-    assert metrics["selected_semantic_coverage"] >= metrics[
-        "integrated_baseline_semantic_coverage"
-    ]
+    assert metrics["selected_semantic_coverage"] >= metrics["integrated_baseline_semantic_coverage"]
     assert metrics["duplicate_redundancy_count"] == 0
     assert metrics["conflict_violation_count"] == 0
     assert metrics["compatibility_violation_count"] == 0
@@ -67,15 +61,8 @@ def test_benchmark_report_contains_no_candidate_keys_or_set_labels() -> None:
     fixture = _fixture()
     scenarios = fixture["scenarios"]
     assert isinstance(scenarios, list)
-    candidates = [
-        candidate
-        for scenario in scenarios
-        for candidate in scenario["candidates"]
-    ]
-    forbidden = {
-        str(candidate["key"])
-        for candidate in candidates
-    }
+    candidates = [candidate for scenario in scenarios for candidate in scenario["candidates"]]
+    forbidden = {str(candidate["key"]) for candidate in candidates}
     forbidden.update(
         str(label)
         for candidate in candidates

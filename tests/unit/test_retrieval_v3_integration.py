@@ -51,9 +51,7 @@ def test_production_current_and_as_of_resolution_are_deterministic_across_restar
     historical_runs = [
         [item.id for item in engine.search(as_of, principal).items] for _ in range(5)
     ]
-    restarted = [
-        item.id for item in RetrievalEngine(store).search(as_of, principal).items
-    ]
+    restarted = [item.id for item in RetrievalEngine(store).search(as_of, principal).items]
 
     assert current_ids == ["retention-current"]
     assert historical_runs == [["retention-old"]] * 5
@@ -112,9 +110,7 @@ def test_production_admissibility_uses_project_quality_kind_and_conflict_factors
     )
 
     assert [item["id"] for item in diagnostic["items"]] == [relevant]
-    assert {false_one, false_two}.isdisjoint(
-        item["id"] for item in diagnostic["items"]
-    )
+    assert {false_one, false_two}.isdisjoint(item["id"] for item in diagnostic["items"])
     admissibility = diagnostic["pipeline_diagnostics"]["admissibility"]
     assert admissibility["rejected_count"] == 2
     assert admissibility["reason_counts"]["reject.conflict"] == 2

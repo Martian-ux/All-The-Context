@@ -228,14 +228,10 @@ def run_profile(
     admissibility = queries["task_admissibility"]
     admissibility_ids = results["task_admissibility"]
     admissible_hits = len(set(admissibility_ids) & set(admissibility["gold"]))
-    admissibility_precision = (
-        admissible_hits / len(admissibility_ids) if admissibility_ids else 0.0
-    )
+    admissibility_precision = admissible_hits / len(admissibility_ids) if admissibility_ids else 0.0
     current_ids = results["current_history"]
     temporal_precision = (
-        len(set(current_ids) & set(current["gold"])) / len(current_ids)
-        if current_ids
-        else 0.0
+        len(set(current_ids) & set(current["gold"])) / len(current_ids) if current_ids else 0.0
     )
     facet_hits = 0
     facet_count = 0
@@ -248,8 +244,8 @@ def run_profile(
 
     conflict_ids = results["deterministic_conflict"]
     expected_conflicts = set(queries["deterministic_conflict"]["gold"])
-    conflict_behavior_deterministic = (
-        repeated_rankings_deterministic and expected_conflicts <= set(conflict_ids)
+    conflict_behavior_deterministic = repeated_rankings_deterministic and expected_conflicts <= set(
+        conflict_ids
     )
     filter_ids = set(results["validity_expiry_supersession"])
     filter_violation_counts = {
@@ -351,12 +347,10 @@ def run_lifecycle(directory: Path) -> dict[str, Any]:
     first_groups = store.list_integrity_groups()
     second_groups = store.list_integrity_groups()
     first_shape = [
-        (item["id"], item["group_type"], item["record_ids"])
-        for item in first_groups["items"]
+        (item["id"], item["group_type"], item["record_ids"]) for item in first_groups["items"]
     ]
     second_shape = [
-        (item["id"], item["group_type"], item["record_ids"])
-        for item in second_groups["items"]
+        (item["id"], item["group_type"], item["record_ids"]) for item in second_groups["items"]
     ]
     conflict_detection_deterministic = first_shape == second_shape and bool(first_shape)
 
@@ -517,9 +511,8 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
     growth = []
     for previous, current in pairwise(measured):
         added = int(current["record_count"]) - int(previous["record_count"])
-        byte_growth = (
-            int(current["metrics"]["database_bytes"])
-            - int(previous["metrics"]["database_bytes"])
+        byte_growth = int(current["metrics"]["database_bytes"]) - int(
+            previous["metrics"]["database_bytes"]
         )
         growth.append(
             {
@@ -528,9 +521,7 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
                 "bytes_per_added_record": round(byte_growth / added, 6) if added else 0.0,
             }
         )
-    contract_matches = [
-        item["metrics"]["comparator_contract_match"] for item in measured
-    ]
+    contract_matches = [item["metrics"]["comparator_contract_match"] for item in measured]
     if any(value is False for value in contract_matches):
         contract_status = GateStatus.FAILED
     elif contract_matches and all(value is True for value in contract_matches):

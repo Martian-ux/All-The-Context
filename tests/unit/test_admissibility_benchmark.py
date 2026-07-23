@@ -16,11 +16,7 @@ def test_fixture_is_sanitized_and_covers_admissibility_false_positives() -> None
     fixture = _fixture()
     scenarios = fixture["scenarios"]
     assert isinstance(scenarios, list)
-    candidates = [
-        candidate
-        for scenario in scenarios
-        for candidate in scenario["candidates"]
-    ]
+    candidates = [candidate for scenario in scenarios for candidate in scenario["candidates"]]
     roles = {str(candidate["fixture_role"]) for candidate in candidates}
 
     assert {
@@ -75,11 +71,7 @@ def test_benchmark_report_contains_no_candidate_keys_or_raw_terms(tmp_path: Path
     fixture = _fixture()
     scenarios = fixture["scenarios"]
     assert isinstance(scenarios, list)
-    keys = [
-        str(candidate["key"])
-        for scenario in scenarios
-        for candidate in scenario["candidates"]
-    ]
+    keys = [str(candidate["key"]) for scenario in scenarios for candidate in scenario["candidates"]]
 
     assert all(key not in rendered for key in keys)
     diagnostics = report["diagnostics"]

@@ -53,9 +53,7 @@ def _search(
 ) -> list[str]:
     request = SearchRequest(query=query, limit=5)
     with store.connect() as connection:
-        eligible, _denied = selector.select(
-            connection, request, principal, store.vault_id()
-        )
+        eligible, _denied = selector.select(connection, request, principal, store.vault_id())
         result = ranker.search(
             connection,
             [str(row["id"]) for row in eligible],
@@ -180,8 +178,7 @@ def compare(candidate: dict[str, Any], baseline: dict[str, Any]) -> tuple[bool, 
                 current["macro_precision_at_5"],
             ),
             (
-                current["persistent_index_growth_bytes"]
-                <= MAX_PERSISTENT_INDEX_GROWTH_BYTES,
+                current["persistent_index_growth_bytes"] <= MAX_PERSISTENT_INDEX_GROWTH_BYTES,
                 f"persistent index growth <= {MAX_PERSISTENT_INDEX_GROWTH_BYTES} bytes",
                 current["persistent_index_growth_bytes"],
             ),

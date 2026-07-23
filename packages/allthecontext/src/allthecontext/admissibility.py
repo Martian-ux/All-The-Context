@@ -325,9 +325,7 @@ class DeterministicAdmissibilityGate:
         sparse = evidence_factor_count < self.config.minimum_evidence_factors
         fail_open_reasons: list[AdmissibilityReason] = []
         if task_underspecified:
-            fail_open_reasons.append(
-                AdmissibilityReason.ADMIT_FAIL_OPEN_UNDERSPECIFIED_TASK
-            )
+            fail_open_reasons.append(AdmissibilityReason.ADMIT_FAIL_OPEN_UNDERSPECIFIED_TASK)
         if sparse:
             fail_open_reasons.append(AdmissibilityReason.ADMIT_FAIL_OPEN_SPARSE_EVIDENCE)
         fail_open = bool(fail_open_reasons)
@@ -372,9 +370,8 @@ class DeterministicAdmissibilityGate:
         elif signals.explicitness is None:
             quality = signals.confidence
         else:
-            quality = (
-                signals.confidence * self.config.confidence_share
-                + signals.explicitness * (1.0 - self.config.confidence_share)
+            quality = signals.confidence * self.config.confidence_share + signals.explicitness * (
+                1.0 - self.config.confidence_share
             )
         if signals.conflict_state is not None and not isinstance(
             signals.conflict_state, ConflictState

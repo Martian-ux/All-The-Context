@@ -31,6 +31,9 @@ Environment: Windows, Python `3.12.10`. Exact commands and results:
 
 ```text
 $env:PYTHONPATH=(Resolve-Path 'packages/allthecontext/src').Path
+py -3.12 -m ruff format --check .
+# 158 files already formatted.
+
 py -3.12 -m ruff check .
 # All checks passed.
 
@@ -55,7 +58,7 @@ npm audit --audit-level=high
 ## Retrieval acceptance evidence
 
 ```text
-py -3.12 -m bench.retrieval_v3_combined --output tmp/retrieval-v3-final-py312.json
+py -3.12 -m bench.retrieval_v3_combined --output tmp/retrieval-v3-post-format-py312.json
 ```
 
 The combined report passed every enforced gate at 1k and 10k:
@@ -68,7 +71,7 @@ The combined report passed every enforced gate at 1k and 10k:
   rankings/conflict behavior;
 - deleted/purged resurrection count `0`, with current/`as_of`, migration,
   restart, portable restore, and stale-sidecar rebuild scenarios passed;
-- 10k warm p95 `68.79868 ms`, below the `150 ms` gate; and
+- 10k warm p95 `89.94938 ms`, below the `150 ms` gate; and
 - combined database/sidecar growth `1027.185778` bytes per added record from 1k
   to 10k.
 

@@ -296,11 +296,7 @@ def _state(value: object) -> TemporalState:
 def _active_row(fact: TemporalFact) -> _IntervalRow:
     if fact.created_at is None or fact.series_key is None:
         raise TemporalDataError("temporal_active_fact_invalid")
-    if (
-        isinstance(fact.revision, bool)
-        or not isinstance(fact.revision, int)
-        or fact.revision < 1
-    ):
+    if isinstance(fact.revision, bool) or not isinstance(fact.revision, int) or fact.revision < 1:
         raise TemporalDataError("temporal_revision_invalid")
     record_id = _checked_identifier(fact.record_id)
     series_key = _checked_series_key(fact.series_key)
@@ -357,9 +353,7 @@ def _derive_state(facts: Iterable[TemporalFact]) -> _DerivedState:
                 terminal_facts,
                 key=lambda fact: (
                     1 if _state(fact.state) is TemporalState.PURGED else 0,
-                    normalize_utc(fact.terminal_at)
-                    if fact.terminal_at is not None
-                    else "",
+                    normalize_utc(fact.terminal_at) if fact.terminal_at is not None else "",
                 ),
             )
             terminals.append(_terminal_row(strongest, _state(strongest.state)))
@@ -507,9 +501,7 @@ class TemporalSidecar:
         self._replace_state(derived)
         return TemporalMaintenanceResult(TemporalMaintenanceReason.REBUILT)
 
-    def recover(
-        self, authoritative_facts: Iterable[TemporalFact]
-    ) -> TemporalMaintenanceResult:
+    def recover(self, authoritative_facts: Iterable[TemporalFact]) -> TemporalMaintenanceResult:
         """Reconcile stale state or replace a corrupt sidecar from canonical facts."""
 
         expected = _derive_state(authoritative_facts)

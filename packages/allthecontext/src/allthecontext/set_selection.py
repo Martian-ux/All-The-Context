@@ -90,9 +90,7 @@ class SetSelectionConfig:
             or not isinstance(self.maximum_candidates, int)
             or not 1 <= self.maximum_candidates <= MAX_SET_CANDIDATES
         ):
-            raise ValueError(
-                f"maximum_candidates must be between one and {MAX_SET_CANDIDATES}"
-            )
+            raise ValueError(f"maximum_candidates must be between one and {MAX_SET_CANDIDATES}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,9 +151,7 @@ class DeterministicSetSelector:
             if not feasible:
                 break
             mandatory = [
-                candidate
-                for candidate in feasible
-                if candidate.mandatory_interaction_preference
+                candidate for candidate in feasible if candidate.mandatory_interaction_preference
             ]
             pool = mandatory or feasible
             marginals = [self._marginal(candidate, selected) for candidate in pool]
@@ -297,10 +293,7 @@ class DeterministicSetSelector:
             for candidate in omitted
         )
         conflict_count = sum(
-            any(
-                candidate.conflict_groups.intersection(item.conflict_groups)
-                for item in selected
-            )
+            any(candidate.conflict_groups.intersection(item.conflict_groups) for item in selected)
             for candidate in omitted
         )
         filtered_count = len(candidates) - len(eligible)
@@ -322,31 +315,21 @@ class DeterministicSetSelector:
             diagnostics.append(
                 SafeRetrievalDiagnostic(
                     DiagnosticReasonCode.POLICY_FILTERED,
-                    (
-                        DiagnosticValue(
-                            DiagnosticMetricCode.FILTERED_COUNT, filtered_count
-                        ),
-                    ),
+                    (DiagnosticValue(DiagnosticMetricCode.FILTERED_COUNT, filtered_count),),
                 )
             )
         if duplicate_count:
             diagnostics.append(
                 SafeRetrievalDiagnostic(
                     DiagnosticReasonCode.SET_DUPLICATE_SUPPRESSED,
-                    (
-                        DiagnosticValue(
-                            DiagnosticMetricCode.DUPLICATE_COUNT, duplicate_count
-                        ),
-                    ),
+                    (DiagnosticValue(DiagnosticMetricCode.DUPLICATE_COUNT, duplicate_count),),
                 )
             )
         if conflict_count:
             diagnostics.append(
                 SafeRetrievalDiagnostic(
                     DiagnosticReasonCode.SET_CONFLICT_RESOLVED,
-                    (
-                        DiagnosticValue(DiagnosticMetricCode.CONFLICT_COUNT, conflict_count),
-                    ),
+                    (DiagnosticValue(DiagnosticMetricCode.CONFLICT_COUNT, conflict_count),),
                 )
             )
         return tuple(diagnostics)
@@ -356,8 +339,7 @@ def _validate_labels(labels: object) -> None:
     if not isinstance(labels, frozenset) or len(labels) > MAX_SIGNAL_LABELS:
         raise ValueError("set-selection labels must be bounded frozensets")
     if any(
-        not isinstance(label, str) or not label or len(label) > MAX_LABEL_CHARS
-        for label in labels
+        not isinstance(label, str) or not label or len(label) > MAX_LABEL_CHARS for label in labels
     ):
         raise ValueError("set-selection labels must be bounded non-empty strings")
 

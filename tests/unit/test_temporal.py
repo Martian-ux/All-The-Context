@@ -134,9 +134,7 @@ def test_current_and_as_of_apply_half_open_supersession_and_expiry(
     eligibility = _eligible("record-a", "record-b")
 
     before = sidecar.resolve(TemporalQuery.as_of("2026-01-31T23:59:59Z"), eligibility)
-    boundary = sidecar.resolve(
-        TemporalQuery.current(at="2026-02-01T00:00:00Z"), eligibility
-    )
+    boundary = sidecar.resolve(TemporalQuery.current(at="2026-02-01T00:00:00Z"), eligibility)
     expired = sidecar.resolve(TemporalQuery.as_of("2026-03-01T00:00:00Z"), eligibility)
 
     assert before.mode is TemporalMode.AS_OF
@@ -254,9 +252,7 @@ def test_deleted_and_purged_facts_never_resurrect_across_all_sidecar_paths(
 
     authoritative = [
         *stale_active_facts,
-        TemporalFact.deleted(
-            record_id="deleted-record", deleted_at="2026-02-01T00:00:00Z"
-        ),
+        TemporalFact.deleted(record_id="deleted-record", deleted_at="2026-02-01T00:00:00Z"),
         TemporalFact.purged(record_id="purged-record", purged_at="2026-02-02T00:00:00Z"),
     ]
     sidecar.rebuild(authoritative)
@@ -366,12 +362,9 @@ def test_v1_sidecar_migrates_in_place_without_core_migration_registration(
     assert result.reason_code is TemporalMaintenanceReason.MIGRATED
     assert sidecar.schema_version() == SIDECAR_SCHEMA_VERSION
     with closing(sqlite3.connect(database)) as connection:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(temporal_intervals)")
-        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(temporal_intervals)")}
         terminal_table = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='temporal_terminal_records'"
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='temporal_terminal_records'"
         ).fetchone()
     assert "expires_at_utc" in columns
     assert terminal_table is not None
