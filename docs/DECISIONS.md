@@ -446,3 +446,27 @@ branch. Commit C packages the deploy URL and A/B identities into Core only
 after the activation tool proves the template, Blueprint, digest, branch, and
 commits agree. No GitHub Release event automatically performs these steps, and
 no provider resource is created without an operator decision.
+
+## ADR-032: V1 is single-Core and has no hosted runtime
+
+**Status:** accepted 2026-07-22; supersedes the hosted-Edge portions of
+ADR-030 and ADR-031.
+
+V1 exposes one authoritative Core. Desktop, mobile, and other-computer clients
+all connect directly to it, so Core must be online for access away from the
+installation computer. The product does not deploy or require a hosted Edge,
+cloud replica, Render account, GHCR runtime image, provider bill, or other
+third-party context service.
+
+Core continues to bind only to `127.0.0.1` by default. Removing Edge does not
+authorize automatic LAN/public exposure: secure direct-Core mobile access
+requires explicit device pairing, encrypted transport, revocation, discovery,
+and recovery acceptance first. Until that work is complete, the UI states the
+limitation rather than offering an unsafe shortcut.
+
+The `always_available` schema value and experimental Relay modules remain
+temporarily for import/history compatibility and safe cleanup of engineering
+setups. New UI approvals offer only `local_only` and `core_available`; Core does
+not start the Edge network worker; deployment workflows/templates are removed
+from V1. Deleting dormant protocol code is a later cleanup after compatibility
+and migration requirements are known.

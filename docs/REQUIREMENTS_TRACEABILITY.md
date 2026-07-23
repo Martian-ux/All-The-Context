@@ -1,45 +1,41 @@
 # Requirements traceability
 
-This table is updated from executable evidence; "planned" is not a completion
-claim. "Implemented" means the behavior passed locally on Windows 11/Python
-3.12. The authored cross-platform matrix is not marked as observed CI evidence.
+“Implemented” means exercised locally; authored CI is not called observed until
+the hosted jobs pass on the exact release commit.
 
-| Requirement | Implementation | Tests | Status |
-|---|---|---|---|
-| Cross-platform Core | `config.py`, `lifecycle.py`, Core CLI | platform abstraction/smoke tests; CI authored | Implemented locally; OS matrix pending |
-| Source/candidate/record lifecycle | `storage.py`, `core/service.py` | unit/integration/demo | Implemented |
-| Provenance slot metadata and review authority | Core migration 003, `models.py`, `storage.py` | legacy upgrade, candidate-before-approval, API round-trip | Implemented; inferred slots never become canonical without approval |
-| Deterministic duplicate/conflict review | `storage.py`, admin API/CLI | normalization, mixed duplicate/conflict, correction, supersession, deletion | Backend/CLI implemented; dashboard review deferred |
-| Irreversible Core purge | `storage.py`, Core admin API/CLI | delete-vs-purge, exact phrase/admin scope, idempotency, source sharing, physical-content scan, restart resume | Core implemented locally; external-storage erasure is out of scope |
-| Ingestion sessions and idempotency | `ingestion.py` | ingestion/unit/demo | Implemented |
-| Generic import | `importers.py` | importer/security/demo | Implemented |
-| Structured and FTS retrieval | `retrieval.py` | unit/integration/security | Implemented |
-| Retrieval V2 lexical ranking | `retrieval.py` selector, bounded phrase/AND/OR channels, RRF and signals | stable ordering, vocabulary-gap recovery, frozen 1k/10k gates; exact Recall@5 1.0, MRR 0.777778, multi-term empty 0.0 | Phase 1 implemented locally; all enforced gates pass |
-| Retrieval V2 reproducibility | `bench/retrieval_benchmark.py`, synthetic fixtures, frozen V1 JSON | two normal 1k/10k runs with identical rankings/quality; 10k warm p95 73.13693/75.00416 ms | Implemented locally; cross-platform timing pending |
-| Policy before every relevance channel | `retrieval.py` `EligibleRecordSelector` and permitted-ID table | failing ranker spy plus explanation/security tests cover denied, allowlisted-away, deleted, expired, and superseded records; benchmark violations 0 | Implemented |
-| Context compilation V2 | `retrieval.py` `ContextCompiler` | exact/near duplicate, mandatory budget, diversity ordering, support-after-primary; benchmark redundancy 0.0 | Implemented; frozen duplicate-counting coverage is 0.75 |
-| Administrator ranking diagnostics | `atc search --explain`, `RetrievalEngine.diagnose_search` | admin gate and authorized returned-ID-only explanation test | Implemented locally; intentionally absent from MCP |
-| Separate Relay | `relay/` | API/restart/offline/demo | Implemented with SQLite |
-| Signed event replication | `replication.py` | replay/tamper/gap/integration | Implemented |
-| Opaque irreversible purge replication contract | `replication.py`, `storage.py`, `relay/service.py`, Relay migration `0009` | signed exact-shape event; ordering/idempotency; lock/restart resume; resurrection rejection; Core-to-Edge propagation; DB/WAL/SHM raw-content and digest scans | Core production and Relay/Edge transactional apply plus retryable live-storage compaction implemented locally; provider snapshots/backups remain out of scope |
-| Required MCP tools | `mcp_adapter.py` | schema contract, real STDIO handshake, crash/shutdown/verified auto-restart | Implemented |
-| Minimal administration UI | `apps/dashboard/` | component tests, production build, live browser smoke; responsive off-canvas inert/ARIA/focus/Escape regression | Implemented |
-| Correction/deletion propagation | Core/Relay services | integration/demo | Implemented |
-| Portable export/restore | `export.py`, Core dashboard export route, dashboard Backup page | encrypted round-trip; protected POST/passphrase redaction/temp cleanup/resource-bound backend tests; UI download test | Export implemented in CLI and dashboard; deliberate CLI restore implemented; dashboard restore explicitly deferred |
-| Pre-purge import resurrection barrier | `export.py`, `purge_tombstones` | restore older encrypted export after record/source purge | Implemented when destination or incoming export carries the opaque tombstone |
-| Windows/macOS/Linux CI | `.github/workflows/ci.yml`, `platform_compat.py` | strict mypy with `win32`/`darwin`/`linux` targets; source tests plus native package/resource/first-run/MCP smoke jobs; Node 20/22 dashboard tests; actionlint 1.7.12 | Authored and integrated locally; hosted run evidence tracked separately |
-| Desktop client connections | `client_config.py`, dashboard **Connect apps** | exact-vault MCP environment, legacy repair, real STDIO restart, missing-app refusal, reversible Codex/Claude config, UI interaction | Implemented locally; Claude provider UI handshake pending |
-| Cloud/mobile client connection | `edge_setup.py`, `edge_connection.py`, `relay/oauth.py`, `relay/mcp.py`, `relay/forwarding.py`, dashboard use-everywhere wizard | OAuth/PKCE/refresh/revocation; wizard retry/recovery; Core-offline Edge retrieval; outbound poll/forward/timeout/replay/restart/revocation/decommission tests | Provider-neutral path implemented; Claude mobile and ChatGPT web-only limits documented; real provider-hosted handshake and public deploy link pending |
-| Online Core forwarding behind NAT | `relay/forwarding.py`, migration `0007`, Core migration `004`, `CoreRelaySync`, `EdgeSyncManager` | Core-local client approval and scope clamp; unknown/revoked identity and Edge-asserted admin-scope rejection; concurrent/expired/cancelled/replayed requests; restart-to-unavailable; response bounds; no local-only result; raw DB/WAL/SHM sentinel absence after consume/timeout/restart; Windows SQLite-handle release | Implemented locally; a fully compromised live Edge can impersonate another already-approved logical client and observe live response bytes; production reverse proxy/host observation pending |
-| One-time hosted Edge claim | `edge_claim.py`, migration `0008`, Core deployment-file/claim flow | inert preclaim Edge, public-key proof, origin binding, encrypted credential return, retry/restart, replay, wrong signer, expiry, post-ack revocation, durable-credential-absence regression | Implemented locally; Render confirmation/upload and real deployment pending |
-| Internet-facing Edge hardening | `relay/app.py`, `relay/oauth.py`, `relay/service.py`, migrations `0003`-`0006` | global/chunked request bounds, registration limits, token replay/revocation, authority rebinding refusal, transactional/triggered terminal guards, interrupted-purge restart | Implemented locally; reverse-proxy controls remain deployment responsibility |
-| Edge uninstall/recovery safety | `edge_connection.py`, `desktop.py`, `client_config.py` | verified terminal decommission, corrupt/missing Core DB, offline/prepared/orphan Edge, strict credential provenance, managed-backup scrub, concurrent reset/sync tests | Implemented locally; uninstall preserves recovery material rather than claiming unverified remote decommissioning |
-| One-click desktop setup | `desktop.py`, `wizard.py`, `desktop_setup.py`, `browser_session.py`, `application_install.py` | unit tests, opaque browser handoff integration test, launcher/known-folder tests, real Windows startup/credential checks, visual frozen wizard inspection, packaged first-run/MCP shutdown-race/restart/reopen/uninstall smoke | Implemented and exercised on Windows |
-| Native packaging path | `scripts/build_desktop.py`, `scripts/package_desktop.py`, `macos_bundle.py`, `docs/operations/PLATFORMS.md` | frozen Windows build/diagnostics/first-run; direct Windows package trust smoke; macOS bundle safety/seal and deterministic Linux archive tests; hosted native matrix authored | Unsigned Windows `.exe` exercised; macOS `.dmg` and Linux `.tar.gz` implemented with real-OS acceptance pending; paid publisher signing is not required |
-| Immutable release artifacts | `build_release_assets.py`, `release_candidate.py`, release candidate/publish/channel workflows | deterministic package/archive/checksum/SPDX tests; exact candidate and GitHub Release asset allowlist; draft/publish/channel fail-closed tests; native matrix authored | Implemented locally; hosted candidate, attestation, and human publication gates pending |
-| Authenticated OTA manifest | `release_manifest.py`, schema, packaged public keyring | deterministic signature, tamper, revocation, URL, channel, platform, architecture, and downgrade tests | Contract/tooling and updater verification implemented; production key pending |
-| Native OTA transaction | `updater.py`, `windows_update_helper.py`, Core admin routes, frozen desktop/update-helper builds, dashboard Updates page | N-1 manifest/state behavior; partial/oversize/checksum/HTTP/redirect/cancel; strict journal/schema/path and unsafe ZIP tests; serialized mutations; final stopped-Core backup; pre-cutover no-restore; helper lock/restart/startup guard; binary/MCP/updater/database rollback; real loopback health; frozen Windows crash/resume and forced failed-health rollback smoke | Windows automatic transaction implemented and packaged-smoked locally; production Ed25519 key/channel and a real signed N-1 update remain pending; paid native publisher signing is out of scope; macOS/Linux remain manual-required |
-| Beta distribution acceptance | `docs/operations/BETA_ACCEPTANCE.md`, release/native/Edge workflows | exact-SHA local and hosted gates; immutable asset/privacy checks; real-platform install, hosted provider, mobile-offline, and beta1-to-beta2 rollback evidence | Wave 1 integrated and locally gated; final SHA freeze, hosted OS/provider evidence, publication, spending, and private-key creation remain operator gates |
-| Offline promotion and channels | `docs/operations/RELEASES.md` | CLI verification path and policy tests | Authored; no production key or release created |
-| Public Edge image supply chain | `edge-image.yml`, Relay Dockerfile, `render.yaml`, `edge_activation.py` | fresh local image/container smoke; manual anonymous digest verification and provenance/SBOM workflow; exact source-template/Blueprint/one-use-branch binding tests | Local image and fail-closed handoff pass; GHCR publication, anonymous public pull, activation commits, and hosting/provider validation pending |
-| Repeatable source startup | `scripts/bootstrap.py`, CLI initialization | bootstrap unit tests and process start/stop/restart integration | Implemented |
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Cross-platform Core | `config.py`, `lifecycle.py`, `platform_compat.py`; platform and package smoke tests | Observed on Windows/macOS/Linux at `05c7638`; final release SHA pending |
+| Correct per-user data paths | `platformdirs` configuration and setup/package tests | Implemented |
+| Loopback-only default | `CoreConfig`, server CLI, dashboard copy, security tests | Implemented |
+| Source/candidate/approved lifecycle | models, migrations, storage/service APIs; unit/integration/demo tests | Implemented |
+| Approval before canonical memory | ingestion/service/storage and MCP contract tests | Implemented |
+| Provenance, confidence, sensitivity, validity, version, supersession, hashes, client permissions | typed models/migrations/API round trips | Implemented |
+| Idempotent/resumable ingestion with coverage | `ingestion.py`; retry/resume/coverage tests | Implemented |
+| Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
+| Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
+| Future embedding boundary | retrieval interface/selector separation | Defined; embeddings intentionally absent |
+| Required MCP tools | `mcp_adapter.py`; schema and real STDIO handshake/restart tests | Implemented |
+| One-time local app connection | `client_config.py`, setup wizard, dashboard; Codex/Claude config tests | Implemented locally |
+| Minimal administration UI | `apps/dashboard`; component, type, build, and browser-serving tests | Implemented |
+| Portable export/restore | encrypted export/dashboard download and CLI restore tests | Implemented; dashboard restore deferred |
+| Locking, shutdown, restart | lifecycle locks, managed adapter self-heal, packaged first-run smoke | Implemented locally |
+| OS credential abstraction | credential store/keyring abstraction and platform acceptance script | Windows local and Windows/macOS/Linux hosted acceptance observed at `05c7638` |
+| Windows/macOS/Linux CI | `.github/workflows/ci.yml` source, dashboard, and native-package matrices | Push and draft-PR matrices observed green at `05c7638` |
+| One-click desktop packaging | Windows installer, macOS app/DMG, Linux portable archive | Platform acceptance observed at `05c7638`; final release SHA pending |
+| Signed community updates | Ed25519 manifests/keyring, checksums, SBOM/provenance, Windows recovery helper | Implemented locally; real N-1 drill pending |
+| No third-party V1 runtime | no Edge UI/onboarding/status call/background worker; Edge publication workflow and Render templates removed | Implemented |
+| Direct-Core mobile model | integration API/dashboard/architecture state Core-online requirement | Product contract implemented; secure pairing/transport not yet implemented |
+| No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |
+| Legacy `always_available` compatibility | schema and old records retained; UI maps new review choices to `core_available` and labels old records legacy | Implemented |
+| Legacy Edge cleanup without normal operation | dormant manager/admin cleanup APIs; no automatic worker | Compatibility only; not a V1 feature |
+
+## Deferred by the V1 boundary
+
+- hosted Edge/Relay deployment and offline mobile replicas;
+- third-party hosting/provider setup;
+- multi-master synchronization, CRDTs, family accounts, and multi-tenant SaaS;
+- live location, heart rate, wearables, and emergency response;
+- vector embeddings; and
+- automatic secure remote-Core exposure until device pairing and encrypted
+  transport are designed and accepted.

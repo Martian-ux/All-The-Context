@@ -27,12 +27,11 @@ terminal using the same platform-specific executable path.
 ```text
 python -m pytest tests/unit/test_core_storage.py tests/unit/test_core_importers.py
 python -m pytest tests/integration/test_core_api.py
-python -m pytest tests/integration/test_relay_core_outbox.py
 python -m pytest tests/unit/test_export.py
 ```
 
-These commands exercise Core lifecycle/storage, ingestion/retrieval, replication,
-and export behavior. CI runs the complete suite independently on Windows,
+These commands exercise Core lifecycle/storage, ingestion/retrieval, and export
+behavior. CI runs the complete suite independently on Windows,
 macOS, and Linux.
 
 ## Locking, shutdown, and restart
@@ -50,8 +49,6 @@ lock before process exit. A restart never copies or replaces a live database.
   platform bootstrap command from the README; it will rebuild the environment.
 - If startup reports an existing owner, confirm the prior process has exited;
   do not delete a lock file while that process is alive.
-- If Edge is behind, leave Core running and inspect the dashboard Edge page.
-  Ordered events are safe to retry.
 - If an import is interrupted, resume its ingestion session or re-import the
   same content. Content hashes and idempotency keys prevent duplication.
 - Before repair or migration, create a verified export and stop Core cleanly.
@@ -59,10 +56,9 @@ lock before process exit. A restart never copies or replaces a live database.
 ## Integrity review and secure purge
 
 Use `atc integrity-groups --status open` for the bounded backend review view.
-The dashboard review UI is deliberately deferred because the Edge wizard is
-being changed concurrently. The follow-up UI must list group type, normalized
-slot, and member record IDs, and link to existing correction/supersession/delete
-actions without adding automatic resolution.
+The follow-up dashboard view must list group type, normalized slot, and member
+record IDs, and link to existing correction/supersession/delete actions without
+adding automatic resolution.
 
 Ordinary `atc delete RECORD --reason ...` preserves history and is reversible.
 For irreversible Core purge, first stop other Core processes and close long

@@ -1,28 +1,16 @@
-# Active risks
+# Risks and mitigations
 
-| Risk | Response |
+| Risk | V1 mitigation |
 |---|---|
-| MCP Python v2 is imminent | Pin stable v1 below 2; isolate adapter; add contract test |
-| Relay SQLite differs from hosted PostgreSQL | Keep SQL/storage boundary explicit; do not claim PostgreSQL exercised |
-| OS credential backends differ | Use `keyring` abstraction and test file fallback; platform stores need real-OS validation |
-| Community desktop artifacts are unsigned and trigger first-install warnings | Keep claims explicit; publish immutable GitHub Release assets with hashes, SBOM/provenance, and Ed25519 manifests; retain packaged installer/updater/uninstaller smokes. Paid publisher signing is an optional future enhancement, not a release gate. |
-| A managed MCP helper starts or authenticates against the wrong local vault | Bind every generated entry to the exact absolute Core data directory and loopback port; migrate older entries; verify instance identity before sending credentials; report mismatches as repairable degradation. |
-| Large/malicious imports | Enforce byte/record/archive limits and keep source text inert |
-| Deletion/permission replication lag | Durable outbox, checkpoints, status visibility, reconciliation tests |
-| Edge purge is logically applied while physical SQLite compaction is interrupted | Commit absence, checkpoint, and an opaque resurrection barrier together; persist pending compaction; retry at startup/status; report Core sync degraded until completion; byte-scan DB/WAL/SHM in tests. Provider snapshots and backups still follow provider retention. |
-| Full provider capability changes over time | Official-source capability matrix with verification date and unverified labels |
-| A public Edge forwarding queue could amplify requests, forge client authority, replay results, or retain private Core data | Core initiates outbound polling; seal requests to Core before SQLite; require a Core-local approval and ignore Edge-asserted scopes; enforce one-use expiring claims, replay/cancel checks, per-client/global bounds, response limits, sanitized errors, and memory-only responses; byte-scan DB/WAL/SHM sentinels in security tests. A fully compromised live Edge can still select another already-approved logical client and observe live response bytes, so mutually distrusting client domains require separate Edges until end-to-end client proof is available. |
-| Local SQLite content is plaintext to the OS account | Document the boundary; rely on OS disk/account protection until an application-encrypted vault is designed |
-| Cross-platform claims exceed local hardware | Keep CI for all three operating systems and withhold observed-support claims until those jobs run |
-| A reused venv retains compiled modules from another Python version | Bootstrap compares runtime versions and probes compiled imports before reuse; rebuild stale environments |
-| OS keyring silently discards a credential | Read back and compare every setup write; fall back with an explicit warning rather than declaring setup complete |
-| Frozen STDIO wrappers close real process handles | Own and detach UTF-8 wrappers explicitly; reject any packaged MCP stderr traceback in the first-run smoke |
-| Browser setup links expose an administrator credential, another loopback service impersonates Core, or another origin submits an authenticated mutation | Verify a per-installation challenge proof before sending the administrator credential; exchange a random one-use 60-second ticket for an opaque tab session backed only by Core memory; require a custom dashboard header on mutations |
-| A running AI client locks the packaged MCP executable during upgrade | Install a content-addressed replacement and repair existing managed client configurations to select it on the next launch |
-| A frozen Windows Core stops listening but a stale connection/task delays process teardown | Allow a five-second graceful drain, then let Uvicorn cancel remaining tasks; packaged smoke requires process exit and unlocked cleanup |
-| Update metadata or staged executable is attacker-controlled | Fetch only configured HTTPS endpoints without redirects; verify exact Ed25519 policy before using the artifact URL; enforce signed length and SHA-256 before handoff; remove partial files |
-| Update interruption or unhealthy replacement damages the vault | On Windows, use a separately packaged RunOnce helper, strict path-bound journal, final stopped-Core SQLite backup, cross-process lock, startup guard, exact replacement/helper diagnostics, real loopback health, and idempotent restoration of the prior app, MCP adapter, updater, database, WAL, and shared-memory state. Keep macOS/Linux manual-required until equivalent recovery exists. |
-| A platform archive is mistaken for a safe community self-updater | Windows packaged crash/resume and failed-health rollback drills now pass, but the frozen drill is same-version; require the offline Ed25519 key ceremony, immutable public channel, explicit unsigned-publisher disclosure, and a real signed N-1 drill before public OTA claims. Keep macOS/Linux manual-required. |
-| A release key is exposed to GitHub or a build worker | Keep private keys offline and outside the repository; store only reviewed public keys; use overlapping rotation and explicit revocation |
-| A mutable URL serves different update bytes | Require version in the HTTPS path, reject `main`/`latest` and queries, sign digest and size, and never replace a signed release asset |
-| GHCR metadata or a hosted template is treated as production validation | Pin deployed images by digest; verify anonymous access and provider flows separately; do not claim hosting or mobile acceptance from authored configuration |
+| Direct mobile access tempts unsafe public exposure | Keep Core on `127.0.0.1`; never open a port automatically; withhold one-click mobile claims until pairing, TLS, revocation, and recovery pass |
+| A model writes false or malicious durable memory | Store proposals as candidates; keep source text inert; require review/policy before canonical approval |
+| A client reads records outside its authority | Authenticate scoped client identities and apply permissions/validity/deletion before every retrieval channel |
+| A managed client attaches to the wrong Core | Bind generated configuration to the exact data directory, instance proof, port, client ID, and credential |
+| Large or malicious imports exhaust resources | Enforce byte/record/archive bounds, idempotency keys, and resumable batches |
+| Interrupted migration, export, shutdown, or update corrupts state | Use SQLite transactions/backups, portable locks, journals, health checks, and tested rollback paths |
+| Credentials leak through logs, browser state, or configuration | Use OS credential abstractions, opaque one-use browser sessions, redaction, no raw-context logging, and least-privilege tokens |
+| Unsigned community packages are mistaken for publisher-signed software | Prominent unsigned labels plus checksums, SBOM/provenance, immutable assets, and offline Ed25519 update manifests |
+| Cross-platform claims exceed evidence | Keep Windows/macOS/Linux CI and distinguish authored from observed acceptance |
+| Live SQLite is readable to the OS account | Document the boundary; rely on account/disk protection; encrypt portable exports |
+| Dormant experimental Edge code makes network calls | Do not start its worker; remove deployment UI/workflows/templates; retain only explicit compatibility/cleanup paths until deletion is safe |
+| Legacy `always_available` records imply an offline guarantee | Label them legacy, do not offer the value for new approvals, and let users migrate them to `core_available` |

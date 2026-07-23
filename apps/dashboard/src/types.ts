@@ -1,7 +1,6 @@
 export type Availability = "always_available" | "core_available" | "local_only";
 export type CandidateStatus = "pending" | "approved" | "rejected" | "superseded";
 export type HealthState = "ready" | "degraded" | "offline";
-export type EdgeConnectionState = "not_configured" | "prepared" | "paired" | "ready" | "degraded";
 
 export interface ContextCandidate {
   id: string;
@@ -56,7 +55,7 @@ export interface SourceRecord {
 export interface ClientRegistration {
   id: string;
   name: string;
-  transport?: "stdio" | "http" | "relay" | string;
+  transport?: string;
   scopes: string[];
   last_seen_at?: string | null;
   created_at: string;
@@ -78,90 +77,11 @@ export interface DesktopIntegration {
 
 export interface IntegrationsStatus {
   apps: DesktopIntegration[];
-  remote: {
-    configured: boolean;
-    state: EdgeConnectionState;
-    edge_mcp_url?: string | null;
+  mobile: {
+    mode: "direct_core";
+    requires_core_online: true;
+    secure_remote_pairing_available: boolean;
     detail: string;
-  };
-}
-
-export interface EdgeProviderStatus {
-  id: "claude" | "chatgpt";
-  name: string;
-  web_supported: boolean;
-  mobile_supported: boolean;
-  setup_url: string;
-  detail: string;
-  setup_steps: string[];
-}
-
-export interface EdgeAuthorizedClient {
-  id: string;
-  name: string;
-  scopes: string[];
-  authorized_at?: string | null;
-  active_until: number;
-  token_families: number;
-  core_approved: boolean;
-  core_context_scopes: string[];
-}
-
-export interface EdgeStatus {
-  configured: boolean;
-  remote_present: boolean;
-  credential_available: boolean;
-  state: EdgeConnectionState;
-  vault_id: string;
-  edge_url?: string | null;
-  mcp_url?: string | null;
-  prepared_at?: string | null;
-  connected_at?: string | null;
-  credential_storage?: string | null;
-  last_sequence: number;
-  pending_events: number;
-  last_success_at?: string | null;
-  last_error?: string | null;
-  proposals_imported: number;
-  wizard: {
-    state: "preflight" | "deploy" | "enroll" | "pair" | "sync" | "connect" | "verify" | "recover";
-    preflight_ok: boolean;
-    paired: boolean;
-    synchronized: boolean;
-    ordinary_path_requires_terminal: boolean;
-  };
-  deployment: {
-    provider: "render_blueprint";
-    available?: boolean;
-    deploy_url?: string | null;
-    deploy_branch?: string | null;
-    image_reference?: string | null;
-    source_commit?: string | null;
-    blueprint_commit?: string | null;
-    configuration_source?: "environment" | "packaged";
-    configuration_error?: string | null;
-    enrollment_environment_variable: "ATC_EDGE_BUNDLE";
-    requires_host_account: boolean;
-    estimated_monthly_cost_usd: number;
-    cost_note: string;
-  };
-  providers: EdgeProviderStatus[];
-}
-
-export interface EdgePrepareResult extends EdgeStatus {
-  enrollment_bundle: string;
-  recovery_code: string;
-  secret_notice: string;
-}
-
-export interface EdgeActionResult extends EdgeStatus {
-  synchronization: {
-    state: "ready" | "degraded" | "busy" | "not_connected";
-    pushed?: { delivered: number; replayed: number; remaining: number };
-    proposals_imported?: number;
-    last_sequence?: number;
-    last_success_at?: string | null;
-    error?: string;
   };
 }
 
@@ -173,15 +93,6 @@ export interface IntegrationConnectResult {
   config_path: string;
   backup_path?: string | null;
   restart_required: boolean;
-}
-
-export interface ReplicationStatus {
-  state: HealthState;
-  relay_url?: string | null;
-  last_sequence: number;
-  pending_events: number;
-  last_success_at?: string | null;
-  last_error?: string | null;
 }
 
 export interface AuditEvent {
@@ -201,7 +112,6 @@ export interface CoreStatus {
   approved_records: number;
   sources: number;
   database_size_bytes: number;
-  replication: ReplicationStatus;
 }
 
 export type UpdatePhase = "idle" | "disabled" | "checking" | "current" | "available" | "deferred" | "downloading" | "ready" | "installing" | "restart_required" | "installed" | "rolled_back" | "manual_required" | "error" | "cancelled";

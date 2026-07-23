@@ -437,8 +437,16 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         codex_status = next(item for item in degraded["apps"] if item["id"] == "chatgpt_codex")
         assert codex_status["state"] == "degraded"
         assert "different Core" in codex_status["reason"]
-        assert degraded["remote"]["configured"] is False
-        assert degraded["remote"]["state"] == "prepared"
+        assert degraded["mobile"] == {
+            "mode": "direct_core",
+            "requires_core_online": True,
+            "secure_remote_pairing_available": False,
+            "detail": (
+                "Mobile devices connect directly to the authoritative Core while it is "
+                "online. This beta keeps Core on loopback by default and does not "
+                "automatically expose a network port or create a hosted copy."
+            ),
+        }
         assert (
             client.post(
                 "/v1/admin/integrations/chatgpt_codex", headers=dashboard_headers

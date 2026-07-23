@@ -51,26 +51,16 @@ Core data directory is always present so non-default and isolated vaults
 self-start against their own identity. Claude's JSON entry carries the
 equivalent command, arguments, and environment. `atc init`
 and `atc config-mcp` remain contributor/headless alternatives. This local
-`config.toml` path configures Codex, not ChatGPT. Cloud clients use the hosted
-HTTPS Edge endpoint with OAuth rather than the loopback STDIO adapter. Edge
-implements dynamic registration, PKCE, audience binding, consent, rotating
-refresh tokens, revocation, and an encrypted bounded proposal transport queue.
-The existing static-bearer HTTP transport remains an operator/development
-surface, not the provider-facing connection.
+`config.toml` path configures Codex, not ChatGPT.
 
-The Edge keeps the same retrieval tool names and default response shapes.
-`bootstrap_context`, `search_context`, `get_context_item`, `search`, and `fetch`
-serve the durable `always_available` projection immediately. If the outbound
-Core heartbeat is fresh, they also request authorized `core_available` results
-through the sealed in-flight forwarding queue. Core accepts the request only
-for a matching locally approved remote-client mapping and ignores scopes
-asserted by Edge. Responses report `core_available` as
-`available`, `core_offline`, `timeout`, `busy`, or `not_needed`; missing and
-unauthorized record IDs remain indistinguishable. `context_status` reports only
-coarse online/offline state.
+V1 has no hosted MCP endpoint. A phone or another computer uses the same
+provider-neutral tools by connecting directly to Core while Core is online.
+Core remains loopback-only by default; secure guided device pairing and
+encrypted remote transport are required before that path is advertised as
+complete.
 
-Both local and Edge MCP instructions require automatic `bootstrap_context` for
-relevant tasks and automatic `propose_memory` when durable user context changes.
+MCP instructions require automatic `bootstrap_context` for relevant tasks and
+automatic `propose_memory` when durable user context changes.
 Generated proposal idempotency keys hash the entire canonical proposal payload,
 so exact retries replay cleanly while corrected confidence, evidence, or
 sensitivity creates a distinct candidate.

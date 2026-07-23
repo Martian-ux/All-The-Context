@@ -1,20 +1,27 @@
 # Implementation plan
 
-1. Establish versioned contracts, trust boundaries, repository checks, and a
-   cross-platform runtime foundation.
-2. Implement the authoritative Core domain lifecycle, SQLite migrations, FTS5,
-   permissions, audit, import, and export.
-3. Implement the restricted Relay and authenticated, ordered, resumable event
-   replication with tombstones.
-4. Expose the nine typed MCP tools over a lightweight STDIO forwarder and
-   Streamable HTTP, with one-time client configuration generation.
-5. Build the local operational dashboard, onboarding, review, record, client,
-   Relay, audit, and backup surfaces.
-6. Prove offline Relay retrieval, Core restart, correction, deletion, proposal
-   synchronization, export/restore, and client revocation in tests and demo.
-7. Verify Python 3.12 lint, types, unit/integration/security tests, package build,
-   links, and migration behavior; record all unexercised platform claims.
-8. Replace the contributor-oriented startup path with a native first-run wizard,
-   automatic timezone detection, reversible Codex and Claude Desktop
-   configuration, passwordless browser handoff, per-user startup, frozen
-   platform artifacts, and packaged first-run/MCP/shutdown smoke coverage.
+## Completed vertical slice
+
+1. Define Core-authoritative architecture, schemas, ingestion/MCP protocols,
+   threat model, and non-goals.
+2. Implement the typed cross-platform Python Core with SQLite migrations,
+   structured policy, and FTS retrieval.
+3. Implement source, candidate, approval, correction, supersession, tombstone,
+   permission, history, and audit lifecycles.
+4. Implement idempotent model-assisted ingestion and generic archive import.
+5. Implement required MCP tools, HTTP transport, and STDIO adapter.
+6. Implement desktop setup, local client connections, dashboard, encrypted
+   export/restore path, updates, and cross-platform packages/tests.
+
+## Current beta work
+
+1. Keep V1 single-Core: remove hosted Edge from product/release surfaces and
+   prevent its dormant worker from starting.
+2. Rebuild and smoke Windows/macOS/Linux artifacts on one frozen commit.
+3. Complete the offline public-key ceremony and immutable beta release flow.
+4. Exercise a real signed beta1-to-beta2 Windows update and rollback.
+5. Design secure direct-Core mobile pairing and encrypted transport; do not
+   expose Core automatically or claim mobile completion before acceptance.
+
+Embeddings and any new synchronization service remain deferred until the
+install, update, and direct-Core security boundaries are accepted.

@@ -1,103 +1,78 @@
 # All The Context
 
-All The Context is a user-owned memory layer for AI tools. Your local **Core**
-keeps the complete source material, provenance, review state, history,
-permissions, and search index. An optional hosted **Edge** keeps only records
-you approved as `always_available`, so permitted clients still have useful
-context when your computer is offline.
+All The Context is a user-owned memory layer for AI tools. A single local
+**Core** is authoritative for complete source material, provenance, review
+state, history, permissions, and search. AI clients connect to that Core
+through MCP; models propose memories, but they never write canonical memory
+directly.
 
 The AI client is replaceable. Your context is not.
 
-The current integration target is the unsigned community beta
-`0.1.0-beta.1`. Public beta downloads are not available until the exact-SHA
-cross-platform, supply-chain, hosted Edge, privacy, and human-approval gates in
-[`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md) pass.
+## V1 product boundary
+
+V1 has no hosted Edge, cloud replica, hosting provider, or paid runtime
+dependency. Desktop clients connect locally. A phone or another computer must
+connect directly to the same Core, and Core must be online.
+
+Core binds only to `127.0.0.1` by default. The beta does not silently open a
+LAN/public port, upload context, or pretend that plain HTTP is safe remote
+access. Guided secure remote pairing is a remaining acceptance item before the
+project claims one-click mobile access. Until then, the dashboard states that
+boundary plainly.
+
+The repository still contains isolated experimental Relay/Edge protocol code
+from an earlier design. It is not started automatically, exposed in onboarding,
+included in the V1 release gate, or supported as a V1 deployment path.
 
 ## Install
 
-Normal users do not need Python, Docker, a terminal, a token, or a hand-edited
-MCP configuration.
+Normal users should not need Python, Docker, a terminal, a token, or a
+hand-edited MCP configuration.
 
-On Windows 11, download `AllTheContextSetup.exe` and double-click it. The
-first-run wizard:
+On Windows 11, the intended path is to download `AllTheContextSetup.exe` and
+double-click it. The first-run wizard:
 
-1. installs the application for the current user without administrator access;
-2. creates the private vault in the correct per-user application-data folder;
-3. stores credentials in Windows Credential Manager when available;
-4. detects installed AI desktop apps and creates separate least-privilege
-   connections only for the apps the user selects, preserving existing
-   configuration with timestamped backups;
-5. establishes the dashboard automatically with a one-use local link and an
-   opaque, tab-scoped session—no administrator token is placed in a cookie,
-   URL, or browser storage;
-6. enables per-user Core startup if selected;
-7. starts Core and opens the authenticated local dashboard; and
-8. by default, continues directly to guided Edge setup for supported web and
-   mobile access. The wizard discloses the external hosting cost and provider
-   limitations before this optional step.
-
-After restarting a connected desktop client once, context retrieval and
-proposals happen through MCP without repeated setup. The dashboard's **Connect
-apps** page distinguishes installed apps from merely supported apps, offers the
-official download page when an app is absent, and can connect or repair detected
-Codex and Claude Desktop installations with one button. Every managed MCP entry
-is bound to the exact vault it belongs to, so an isolated or non-default Core
-can restart without being mistaken for another installation. Launching All The
-Context again starts Core if needed and opens an
-authenticated dashboard automatically. Core remains bound to `127.0.0.1` by
-default. Running a newer installer upgrades the per-user app and opens the
-existing vault directly; it does not send an established user through setup
-again.
-
-ChatGPT or Claude on the web and mobile cannot reach a private `127.0.0.1`
-service. The dashboard can now prepare, cryptographically pair, synchronize,
-manage, and decommission a personal hosted Edge from the same **Connect apps**
-page. The user deploys the included Edge blueprint under their own hosting
-account, enters the resulting HTTPS address once, and then adds the displayed
-MCP address in an eligible AI provider. Claude custom connectors and ChatGPT
-developer-mode apps have different surfaces: Claude connectors added on
-web/Desktop can be used on mobile, while ChatGPT developer-mode MCP is currently
-web-only; workspace policy may gate setup. These labels were checked on
-2026-07-22 against the official
-[Claude connector guide](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers)
-and [ChatGPT developer-mode guide](https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta).
+1. installs for the current user without administrator access;
+2. creates the vault in the platform-appropriate per-user application-data
+   directory;
+3. stores credentials through the operating-system credential abstraction;
+4. detects Codex and Claude Desktop and connects only the apps the user selects;
+5. enables per-user startup when selected;
+6. starts Core and opens an authenticated local dashboard; and
+7. finishes without asking for timezone, hosting, provider accounts, or Edge
+   setup.
 
 The public source repository is
 [Martian-ux/All-The-Context](https://github.com/Martian-ux/All-The-Context).
-The engineering build still shows the one-click Render deployment link as
-unavailable until a reviewed Edge image and `ATC_EDGE_DEPLOY_URL` are published.
-Based on Render's published
-[Starter pricing](https://render.com/articles/render-vs-railway) and
-[persistent-disk pricing](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses),
-Starter plus a 1 GB disk is estimated at $7.25/month before bandwidth; an
-external hosting account and payment cannot be hidden by the local installer.
+Community packages are unsigned: the project does not require paid Windows
+publisher certificates or Apple notarization. Releases must clearly disclose
+normal operating-system warnings and provide SHA-256 checksums, SBOM,
+provenance, and offline Ed25519 update metadata.
 
-The locally exercised Windows engineering build is
-`dist\desktop\AllTheContextSetup.exe`. This project will not require paid
-Windows publisher certificates or Apple notarization for community releases.
-Downloads are explicitly labeled unsigned and use GitHub Releases, SHA-256,
-SBOM/provenance, and the application's offline Ed25519 release manifest for
-integrity. Windows and macOS may therefore show their normal unknown-publisher
-warning on first install. The macOS DMG and Linux portable `tar.gz` packaging
-paths are implemented, but their first observed native acceptance runs are
-still pending.
+Public beta downloads do not exist until the exact-commit gates in
+[`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md)
+pass.
 
-## Current release target
+## Implemented slice
 
-This repository implements the first end-to-end release-candidate slice: native
-Python Core, separate Edge, typed ingestion and retrieval APIs, approval and
-record history, signed event replication, a STDIO/HTTP MCP bridge, a native
-first-run wizard, a bundled local dashboard, generic archive import, encrypted
-portable export, and a scripted offline-Edge demonstration. No vector database
-is required.
+- typed Python 3.12+ Core with SQLite migrations and FTS5;
+- source records, candidates, approval/rejection, correction, supersession,
+  tombstones, permissions, history, and provenance;
+- idempotent/resumable model-assisted ingestion and generic JSON, JSONL, and
+  Markdown archive import;
+- required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
+- one-click local Codex and Claude Desktop configuration;
+- local review/search/backup/update dashboard;
+- encrypted portable export and deliberate CLI restore;
+- cross-platform Windows, macOS, and Linux CI/package paths; and
+- deterministic lexical retrieval with a future embedding interface.
 
 ## Source development
 
 The bootstrap script creates or repairs `.venv`, installs the application, and
-checks compiled dependencies before reporting success. It safely replaces a
-stale environment left behind when the selected Python version changes.
+checks compiled dependencies. Docker is not required.
 
-PowerShell on Windows (Python launcher recommended):
+PowerShell on Windows:
 
 ```text
 py -3.12 scripts/bootstrap.py
@@ -105,8 +80,8 @@ py -3.12 scripts/bootstrap.py
 .\.venv\Scripts\atc.exe open-dashboard
 ```
 
-If `py` is unavailable but `python --version` reports 3.12 or newer, use
-`python scripts/bootstrap.py` for the first line.
+If `py` is unavailable but `python --version` is 3.12 or newer, run
+`python scripts/bootstrap.py` instead.
 
 macOS or Linux:
 
@@ -116,23 +91,19 @@ python3 scripts/bootstrap.py
 ./.venv/bin/atc open-dashboard
 ```
 
-`open-dashboard` starts Core and opens a one-use authenticated link. Do not open
-the bare loopback URL: it intentionally has no ambient administrator access.
-This terminal-oriented path exists for contributors and automation; it is not
-the intended end-user installation. Use
-`.\.venv\Scripts\atc.exe doctor` in PowerShell or `./.venv/bin/atc doctor` on
-macOS and Linux to verify the database.
+`open-dashboard` starts Core and opens a one-use authenticated link. The bare
+loopback URL intentionally has no ambient administrator access. This
+terminal-oriented path is for contributors and automation, not normal users.
 
-To install the test and lint tools too, add `--dev` to the bootstrap command.
-To deliberately rebuild the environment, add `--reset`. Do not run bootstrap
-with the `.venv` interpreter itself.
+Install development checks with `--dev`, then run:
 
-Run the reproducible demonstration with:
+```text
+python -m ruff check .
+python -m mypy packages/allthecontext/src
+python -m pytest
+```
 
-Use `.\.venv\Scripts\python.exe scripts/demo.py` in PowerShell or
-`./.venv/bin/python scripts/demo.py` on macOS and Linux.
-
-Build the native artifact for the current operating system with:
+Build and smoke the native package for the current operating system with:
 
 ```text
 python -m pip install -e ".[packaging]"
@@ -141,24 +112,13 @@ python scripts/smoke_desktop_artifact.py
 python scripts/smoke_packaged_first_run.py
 ```
 
-## Startup troubleshooting
-
-- `No module named '_cffi_backend'` means a virtual environment contains
-  compiled packages from a different Python version. Rerun the bootstrap
-  command; it detects and rebuilds that environment.
-- If port 7337 is already in use, stop the earlier Core or start with
-  `atc serve-core --port 7338`, then use that URL in the MCP configuration.
-- If Core reports an existing owner, another Core process is using the same
-  vault. Stop that process instead of deleting the lock file.
-
-See [Architecture](docs/architecture/ARCHITECTURE.md),
-[platform support](docs/operations/PLATFORMS.md), and
-[security](SECURITY.md) before exposing an Edge. The exact locally exercised
-boundary and deferred production work are recorded in
-[project status](docs/STATUS.md).
+See [architecture](docs/architecture/ARCHITECTURE.md),
+[platform support](docs/operations/PLATFORMS.md),
+[project status](docs/STATUS.md), and [security](SECURITY.md).
 
 ## Privacy boundary
 
-Core binds to `127.0.0.1` by default. Edge search necessarily decrypts the
-small approved replica it stores, so this project does not claim zero-knowledge
-hosting. Context returned to a cloud AI client is visible to that provider.
+The live SQLite vault is readable to the user's operating-system account and
+relies on account/disk protection in V1. Portable exports are
+passphrase-encrypted. Context returned to any AI client is visible to that
+client/provider. All The Context does not create a second hosted context store.

@@ -6,15 +6,10 @@ import type {
   ContextRecord,
   ContextRecordVersion,
   CoreStatus,
-  EdgeActionResult,
-  EdgeAuthorizedClient,
-  EdgePrepareResult,
-  EdgeStatus,
   ImportResult,
   IntegrationsStatus,
   IntegrationConnectResult,
   Page,
-  ReplicationStatus,
   SourceRecord,
   UpdateStatus,
 } from "./types";
@@ -77,17 +72,6 @@ function recordFromWire(item: RecordWire): ContextRecord {
     scope: item.scopes.join(", ") || "general",
     source_record_id: item.source_id,
     valid_until: item.expires_at,
-  };
-}
-
-function replicationFromEdge(edge: EdgeStatus): ReplicationStatus {
-  return {
-    state: edge.state === "ready" ? "ready" : edge.state === "degraded" ? "degraded" : "offline",
-    relay_url: edge.edge_url,
-    last_sequence: edge.last_sequence,
-    pending_events: edge.pending_events,
-    last_success_at: edge.last_success_at,
-    last_error: edge.last_error,
   };
 }
 
@@ -165,10 +149,7 @@ function queryString(values: Record<string, string | number | undefined>): strin
 
 export const api = {
   status: async (): Promise<CoreStatus> => {
-    const [result, edge] = await Promise.all([
-      request<{ core_online: boolean; schema_version: number; database_size_bytes: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status"),
-      request<EdgeStatus>("/admin/edge"),
-    ]);
+    const result = await request<{ core_online: boolean; schema_version: number; database_size_bytes: number; counts: { sources: number; pending_candidates: number; approved_records: number; pending_replication_events: number } }>("/context/status");
     return {
       state: result.core_online ? "ready" : "offline",
       version: String(result.schema_version),
@@ -176,7 +157,6 @@ export const api = {
       approved_records: result.counts.approved_records,
       sources: result.counts.sources,
       database_size_bytes: result.database_size_bytes,
-      replication: replicationFromEdge(edge),
     };
   },
   sources: async (): Promise<Page<SourceRecord>> => {
@@ -226,36 +206,6 @@ export const api = {
     return { ...result, items: result.items.map((item) => ({ ...item, transport: "MCP", enabled: !item.revoked, last_seen_at: item.last_used_at })) };
   },
   integrations: () => request<IntegrationsStatus>("/admin/integrations"),
-  edgeStatus: () => request<EdgeStatus>("/admin/edge"),
-  prepareEdge: () => request<EdgePrepareResult>("/admin/edge/prepare", { method: "POST" }),
-  downloadEdgeDeploymentEnv: () => requestDownload("/admin/edge/deployment-env", {}),
-  connectEdge: (edgeUrl: string) =>
-    request<EdgeActionResult>("/admin/edge/connect", {
-      method: "POST",
-      body: JSON.stringify({ edge_url: edgeUrl }),
-    }),
-  syncEdge: () => request<EdgeActionResult>("/admin/edge/sync", { method: "POST" }),
-  secureEdgeStorage: () => request<EdgeStatus>("/admin/edge/secure-storage", { method: "POST" }),
-  edgeOwnerLink: () => request<{ url: string }>("/admin/edge/owner-link", { method: "POST" }),
-  edgeClients: () => request<Page<EdgeAuthorizedClient>>("/admin/edge/clients"),
-  approveEdgeClient: (client: EdgeAuthorizedClient) =>
-    request<{ id: string; core_approved: boolean; scopes: string[] }>(
-      `/admin/edge/clients/${encodeURIComponent(client.id)}/approve`,
-      { method: "POST", body: JSON.stringify({ name: client.name, context_scopes: [] }) },
-    ),
-  revokeEdgeClient: (id: string) =>
-    request<{ id: string; revoked: boolean }>(`/admin/edge/clients/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    }),
-  decommissionEdge: () =>
-    request<{ status: string; active_records_remaining: number; remote_access_revoked: boolean }>("/admin/edge/decommission", {
-      method: "POST",
-    }),
-  forgetEdge: () =>
-    request<EdgeStatus>("/admin/edge/forget", {
-      method: "POST",
-      body: JSON.stringify({ confirmation: "DELETE HOSTED EDGE" }),
-    }),
   connectIntegration: (id: "chatgpt_codex" | "claude") =>
     request<IntegrationConnectResult>(`/admin/integrations/${encodeURIComponent(id)}`, {
       method: "POST",
@@ -265,7 +215,6 @@ export const api = {
       method: "DELETE",
     }),
   revokeClient: (id: string) => request<{ revoked: boolean }>(`/admin/clients/${encodeURIComponent(id)}/revoke`, { method: "POST" }),
-  replication: async () => replicationFromEdge(await api.edgeStatus()),
   audit: async (): Promise<Page<AuditEvent>> => {
     const result = await request<Page<AuditWire>>("/admin/audit");
     return { ...result, items: result.items.map((item) => ({ id: item.id, action: item.action, actor: item.client_id ?? "system", target_type: item.record_ids.length ? "context_record" : "system", target_id: item.record_ids[0], outcome: item.denied_record_ids.length ? "denied" : "allowed", created_at: item.created_at })) };

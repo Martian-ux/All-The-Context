@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import re
 import tomllib
 from pathlib import Path
-
-from scripts.smoke_edge_container import LOCAL_IMAGE_PATTERN
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,7 +55,6 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     candidate = (REPOSITORY_ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
     publish = (REPOSITORY_ROOT / ".github" / "workflows" / "publish-beta-release.yml").read_text()
     promote = (REPOSITORY_ROOT / ".github" / "workflows" / "promote-beta-channel.yml").read_text()
-    image = (REPOSITORY_ROOT / ".github" / "workflows" / "edge-image.yml").read_text()
     releases = (REPOSITORY_ROOT / "docs" / "operations" / "RELEASES.md").read_text()
     keys = json.loads((REPOSITORY_ROOT / "release" / "keys.json").read_text())
 
@@ -82,22 +78,6 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--ota-target windows:x86_64" in promote
     assert "push:" not in promote
     assert "release:" not in promote
-    assert "type=sha,format=long,prefix=sha-" in image
-    assert "subject-digest" in image
-    assert "workflow_dispatch:" in image
-    assert "\n  release:" not in image
-    assert "github.event.release" not in image
-    assert "if: inputs.operation == 'publish'" in image
-    assert "verify-public" in image
-    assert "verify_edge_image.py" in image
-    assert "smoke_edge_container.py" in image
-    assert '--image "${{ inputs.image_reference }}"' in image
-    anonymous_manifest = image.index("Verify raw anonymous registry access")
-    anonymous_pull = image.index("Verify fresh-runner Docker pull")
-    exact_smoke = image.index("Smoke the exact anonymously pulled digest")
-    authenticated = image.index("Authenticate only after anonymous pull evidence")
-    assert anonymous_manifest < anonymous_pull < exact_smoke < authenticated
-    assert "platforms: linux/amd64" in image
     assert "private key" in releases
     assert "outside GitHub" in releases
     assert "unsigned community builds" in releases
@@ -107,40 +87,11 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert keys == {"schema_version": 1, "keys": []}
 
 
-def test_relay_container_uses_non_root_user_and_loopback_host_mapping() -> None:
-    dockerfile = (REPOSITORY_ROOT / "apps" / "relay" / "Dockerfile").read_text()
-    compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
-
-    assert "USER 10001:10001" in dockerfile
-    assert "127.0.0.1:${ATC_RELAY_PORT:-8743}:8743" in compose
-    assert "ATC_RELAY_REPLICATION_SECRET" in compose
-
-
-def test_edge_container_smoke_accepts_exact_digest_and_rejects_tags_with_at_signs() -> None:
-    digest_reference = "ghcr.io/martian-ux/all-the-context-edge@sha256:" + "a" * 64
-
-    assert LOCAL_IMAGE_PATTERN.fullmatch(digest_reference)
-    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification")
-    assert LOCAL_IMAGE_PATTERN.fullmatch("atc-edge:verification@sha256:" + "a" * 64) is None
-
-
-def test_render_blueprint_accepts_only_the_one_time_claim_handoff() -> None:
-    blueprint = (REPOSITORY_ROOT / "render.yaml").read_text(encoding="utf-8")
-    permanent_template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
-        encoding="utf-8"
-    )
-
-    assert "autoDeploy: false" in blueprint
-    assert "runtime: image" in blueprint
-    assert "runtime: docker" not in blueprint
-    assert "dockerfilePath:" not in blueprint
-    assert "url: __ATC_EDGE_IMAGE_REFERENCE__" in blueprint or re.search(
-        r"url: ghcr\.io/[a-z0-9._-]+/all-the-context-edge@sha256:[0-9a-f]{64}",
-        blueprint,
-    )
-    assert "key: ATC_EDGE_BUNDLE" in blueprint
-    assert "sync: false" in blueprint
-    assert "ATC_RELAY_REPLICATION_SECRET" not in blueprint
-    assert "ATC_RELAY_BEARER_TOKEN" not in blueprint
-    assert "ATC_RELAY_CLIENTS_JSON" not in blueprint
-    assert permanent_template.count("__ATC_EDGE_IMAGE_REFERENCE__") == 1
+def test_v1_has_no_hosted_runtime_publication_or_provider_template() -> None:
+    assert not (REPOSITORY_ROOT / ".github" / "workflows" / "edge-image.yml").exists()
+    assert not (REPOSITORY_ROOT / "render.yaml").exists()
+    assert not (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").exists()
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    readme = (REPOSITORY_ROOT / "README.md").read_text()
+    assert "relay-container:" not in workflow
+    assert "no hosted Edge" in readme

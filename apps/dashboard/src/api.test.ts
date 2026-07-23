@@ -8,25 +8,23 @@ describe("desktop browser session", () => {
 
   it("uses the tab-scoped opaque session established by Core", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
-    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(
-      String(input).includes("/admin/edge")
-        ? { configured: false, state: "not_configured", last_sequence: 0, pending_events: 0 }
-        : {
-            core_online: true,
-            schema_version: 1,
-            counts: {
-              sources: 0,
-              pending_candidates: 0,
-              approved_records: 0,
-              pending_replication_events: 0,
-            },
-          },
-    ), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      core_online: true,
+      schema_version: 1,
+      counts: {
+        sources: 0,
+        pending_candidates: 0,
+        approved_records: 0,
+        pending_replication_events: 0,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetch);
 
     await api.status();
 
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain("/context/status");
+    expect(String(fetch.mock.calls[0]?.[0])).not.toContain("/admin/edge");
     for (const call of fetch.mock.calls) {
       const headers = call[1]?.headers as Headers;
       expect(headers.get("Authorization")).toBe("Browser browser-session");
@@ -69,10 +67,8 @@ describe("desktop browser session", () => {
 
   it("maps the durable database footprint from Core status", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
-      String(input).includes("/admin/edge")
-        ? { configured: false, state: "not_configured", last_sequence: 0, pending_events: 0 }
-        : { core_online: true, schema_version: 1, database_size_bytes: 12345, counts: { sources: 1, pending_candidates: 2, approved_records: 3, pending_replication_events: 0 } },
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify(
+      { core_online: true, schema_version: 1, database_size_bytes: 12345, counts: { sources: 1, pending_candidates: 2, approved_records: 3, pending_replication_events: 0 } },
     ), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345 });

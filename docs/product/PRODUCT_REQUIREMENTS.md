@@ -4,45 +4,43 @@
 
 All The Context lets one person keep durable preferences, facts, projects,
 decisions, source material, and interaction instructions while changing AI
-clients. Core must stay usable locally without Relay, Docker, or any particular
-model provider.
+clients. One user-owned Core remains the only authority.
+
+## V1 principles
+
+- No hosted Edge, cloud replica, hosting provider, paid runtime, Docker, or
+  provider-specific integration package is required.
+- Models submit candidates; approval policy alone creates canonical memory.
+- Local desktop apps connect once through MCP and then retrieve/propose context
+  without repeated user work.
+- Mobile and other computers connect directly to Core. Core must be online.
+- Core remains loopback-only by default. Remote reachability is never enabled
+  silently and is not claimed secure until authenticated pairing and transport
+  security pass acceptance.
 
 ## Primary journeys
 
 - Double-click one desktop artifact, initialize one protected local vault, and
-  let setup secure the administrator credential without exposing it to the user
-  or asking for a timezone.
-- Open the local dashboard already connected to Core, with no token, terminal,
-  or configuration-file step.
-- Connect Codex and Claude Desktop automatically during first
-  run or with one button in the dashboard, bootstrap only the history each can
-  genuinely see, and let it propose later durable changes.
-- Import archives locally, review candidates in manageable batches, and inspect
-  the evidence for every approved record.
+  reach the dashboard without a timezone, token, command, or configuration
+  file.
+- Connect detected Codex and Claude Desktop installations with one selection or
+  button while preserving unrelated settings.
+- Import archives locally, review candidates, and inspect evidence for every
+  approved record.
 - Search approved context with deterministic permissions and validity rules.
-- Select a small `always_available` subset for Relay and retain it while Core is
-  offline.
-- Prepare, deploy, cryptographically pair, and manage a user-owned hosted Edge
-  from the same computer through the installer's guided continuation, then
-  connect eligible web/mobile AI clients through its stable OAuth-protected MCP
-  address.
-- Correct, supersede, or delete context and observe the restricted replica
-  converge.
-- Revoke a client, audit what it accessed, and export/restore the portable vault.
+- Correct, supersede, delete, export, restore, and audit context.
+- Use a phone or another computer by connecting to the same online Core once a
+  secure direct-Core pairing path is available.
 
 ## Success criteria
 
-- A normal desktop user reaches an authenticated dashboard and connected local
-  AI clients without handling a timezone, credential, command, or config file.
-- Initialization, ingestion, retrieval, shutdown/restart, export/restore, and
-  STDIO MCP work in Windows, macOS, and Linux CI.
+- Fresh Windows installation needs no terminal and survives restart.
+- Initialization, startup, ingestion, retrieval, export, shutdown/restart, and
+  STDIO MCP pass on Windows, macOS, and Linux.
 - Idempotent retries never create duplicate batches or canonical records.
-- Relay cannot accept an unsigned, replayed, changed, or out-of-order event.
-- A persistent Edge database cannot be rebound to a different vault or
-  enrollment bundle, and terminal decommission rejects old credentials while
-  removing active rows from every historical vault stream and compacting the
-  live SQLite/WAL storage. Provider disks and backups still follow the host's
-  deletion and retention controls.
-- A revoked or unauthorized client receives no record content.
-- Core-offline Relay retrieval and clean reduced-context responses are proven by
-  the reproducible demo.
+- Unauthorized or revoked clients receive no record content.
+- No normal V1 path asks for a hosting account, deploys a service, starts an
+  Edge worker, or copies user context to a third-party runtime.
+- Direct-Core mobile acceptance proves authentication, revocation, transport
+  security, restart persistence, and safe failure while Core is offline before
+  the UI calls that path complete.
