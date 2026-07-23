@@ -57,6 +57,27 @@ safety risks for eleven candidates in
 source was cloned, installed, executed, imported, or copied. The intake adds no
 runtime dependency or production claim.
 
+## Executable Memory Lab M0 slice
+
+ADR-043 implements the first bounded Memory Lab comparison without changing the
+V1 runtime authority boundary. `allthecontext.memory_lab` defines versioned,
+provider-neutral memory-object and read-only retrieval-adapter contracts.
+`bench.memory_lab` runs no-memory and deterministic token-overlap controls plus
+current ATC Retrieval V3 against the same sanitized, frozen task fixture and
+reports task-level sufficiency, abstention, forbidden output, disclosure,
+determinism, latency, storage, and adapter-declared model/token/cost usage.
+
+The adapter input is an already-authorized immutable snapshot. Results contain
+aggregate counts, ordinal-derived ranking fingerprints, and accounting—not
+memory content, object IDs, task names, queries, or policy decisions. The ATC
+comparator uses only an isolated synthetic database; no operator Core,
+external memory engine, network service, provider code, or new production
+schema is involved.
+
+The fixture is intentionally diagnostic rather than a promotion gate: the
+no-memory control succeeds only on the abstention task; the simple baseline and
+ATC each succeed on four of five tasks while exposing different failure modes.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,

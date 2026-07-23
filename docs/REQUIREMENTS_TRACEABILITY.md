@@ -58,6 +58,7 @@ suite. Pre-ADR-039 approval evidence does not satisfy automatic-policy rows.
 | Source-evidence retrieval research | sanitized imported-chat fixtures; lexical passage and deterministic token-MaxSim benchmark/report | Implemented as research only; 64/256 recall and coverage `1.0`, diverse redundancy zero; neural path unexercised |
 | Hybrid AI-memory reliability program | ADR-042; `docs/research/ATC_MEMORY_RELIABILITY_ARCHITECTURE.md`; external-baseline, Memory Plane, Intent/Consequence Plane, outcome-closure, and benchmark contracts | Research direction only; no external engine, new schema, working/episodic/procedural runtime, checkpoint ABI, or learned component implemented |
 | Consequence-closed context | `docs/research/CONSEQUENCE_CLOSED_CONTEXT.md`; consequence contracts, capsules, target invalidation, memory-constraint tokens, and ConsequenceBench | Research only; explicitly not the complete memory product and not an enforcement or client-conformance claim |
+| Memory Lab M0 adapter and task-metric ABI | `memory_lab.py`, `bench/memory_lab.py`, frozen sanitized fixture, and `test_memory_lab.py`; read-only authorized snapshot, manifest, ID-only adapter result, identifier-free report, abstention, sufficiency, disclosure, determinism, latency/storage/cost contracts | Implemented as bounded local research; no-memory and simple controls plus current ATC comparator only, with no external provider code or production authority |
 
 ## Deferred by the V1 boundary
 

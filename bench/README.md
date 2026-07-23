@@ -1,5 +1,35 @@
 # Retrieval benchmark
 
+## Memory Lab M0
+
+The first executable Memory Lab slice compares a no-memory control, a
+deterministic token-overlap baseline, and the current ATC Retrieval V3 pipeline
+through `atc.memory-lab.retrieval-adapter.v1`. The checked-in fixture is
+synthetic, sanitized, deterministic, and pinned by SHA-256 in its focused
+tests:
+
+```text
+python -m bench.memory_lab --output tmp/memory-lab.json
+```
+
+The shared ABI accepts an immutable, already-authorized
+`atc.memory-object.v1` snapshot. Adapters declare provider, network, and data
+egress behavior; cannot declare canonical-write authority; and return ranked
+object IDs plus model/token/cost accounting without returning memory content.
+The runner measures task success, evidence-group sufficiency, reciprocal rank,
+abstention, forbidden and out-of-contract outputs, disclosure, repeat
+determinism, latency, storage, and reported usage.
+
+Reusable reports do not emit object IDs, task names, queries, or content. They
+contain aggregate counts plus deterministic ranking fingerprints derived from
+fixture ordinals, so unknown-ID contract violations remain measurable without
+placing identifiers in report files.
+
+The ATC adapter builds only an isolated synthetic database in the supplied
+working directory. It does not connect to or modify an operator's Core. No
+third-party competitor package is installed or executed; future competitors
+implement the same small adapter protocol.
+
 ## Wave 2 source-evidence retrieval research
 
 The Wave 2 harness is isolated research for long sanitized imported chats and

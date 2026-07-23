@@ -806,3 +806,40 @@ separate production decision.
 The beta remains the immediate milestone. Research does not block release, add
 a mandatory hosted service, or make unimplemented checkpoint, behavioral,
 graph, vector, neural, or experiential-learning claims.
+
+## ADR-043: Memory Lab adapters rank authorized snapshots and never own truth
+
+**Status:** accepted for the bounded M0 research harness 2026-07-23; not a
+production adapter or external-system acceptance.
+
+The first executable Memory Lab surface uses two versioned contracts:
+`atc.memory-object.v1` for immutable memory objects and
+`atc.memory-lab.retrieval-adapter.v1` for retrieval adapters. A benchmark run
+supplies the same already-authorized snapshot, frozen tasks, clock, result
+limit, and repeat protocol to every adapter. Adapters return ordered object IDs,
+explicit abstention, and provider-neutral usage accounting. They do not return
+authoritative prose, select disposition, expand permission, or write canonical
+Core state.
+
+Every adapter declares identity, version, model provider, network access, and
+data egress. The contract rejects canonical-write capability and inconsistent
+egress declarations. The reusable report replaces result IDs with counts and a
+deterministic ranking fingerprint derived from corpus ordinals; it also omits
+task names, queries, and memory content. Unknown-ID violations remain counted
+but cannot place the unknown identifier in a report.
+
+M0 includes a no-memory control, a deterministic token-overlap baseline, and an
+adapter over the current ATC Retrieval V3 implementation. The latter builds an
+isolated synthetic Core-shaped database so it can exercise production retrieval
+without connecting to or modifying the operator's authoritative Core. No
+competitor code, hosted service, new default dependency, or production schema is
+added.
+Future competitors implement the same protocol only after separate dependency,
+license, security, data-flow, and provider review.
+
+Task-level evidence groups define sufficiency: a task succeeds only when every
+required group is represented, no forbidden or fabricated result appears, and
+an abstention task returns no memory. Recall, reciprocal rank, disclosure,
+latency, storage, determinism, model calls, tokens, and cost remain separate
+measurements. The initial five-task fixture is a contract regression and
+diagnostic comparison, not evidence of real-user quality or a promotion gate.
