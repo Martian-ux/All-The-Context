@@ -21,4 +21,4 @@ VOLUME ["/var/lib/allthecontext"]
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
   CMD ["python", "-c", "import os,urllib.request; p=os.getenv('ATC_RELAY_PORT') or os.getenv('PORT','8743'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2).read()"]
 
-ENTRYPOINT ["atc-relay"]
+ENTRYPOINT ["python", "-m", "allthecontext.relay.app"]

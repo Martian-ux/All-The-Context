@@ -155,14 +155,3 @@ jobs:
             dist/platform/**
             dist/release/**
           if-no-files-found: error
-
-  relay-container:
-    name: Relay container
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build hosted Relay image
-        run: docker build --file apps/relay/Dockerfile --tag all-the-context-relay:ci .
-      - name: Validate Docker Compose configuration
-        run: docker compose config --quiet

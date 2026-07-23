@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "all-the-context"
 version = "0.1.0-beta.1"
-description = "A user-owned, portable AI context Core and Relay"
+description = "A user-owned, portable AI context Core"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -40,7 +40,6 @@ packaging = [
 [project.scripts]
 atc = "allthecontext.cli:main"
 atc-core = "allthecontext.core.app:main"
-atc-relay = "allthecontext.relay.app:main"
 atc-mcp = "allthecontext.mcp_adapter:main"
 atc-mcp-http = "allthecontext.mcp_adapter:http_main"
 atc-desktop = "allthecontext.desktop:main"

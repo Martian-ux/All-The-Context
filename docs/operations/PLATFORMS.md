@@ -42,9 +42,9 @@ The native wizard detects the local timezone, initializes SQLite and
 migrations, configures Codex and Claude Desktop with separate
 scoped identities, installs per-user startup when selected, starts Core, and
 opens an authenticated dashboard without a token prompt. By default its final
-action continues directly to the guided, optional hosted Edge setup for
-supported web/mobile clients, after disclosing the external hosting cost and
-provider limitations. Subsequent launches
+action opens All The Context; it does not ask for a hosting account or offer an
+Edge deployment. Mobile devices connect directly to Core and therefore require
+Core to be online and securely reachable. Subsequent launches
 recover the desktop credential, start Core if needed, mint a one-use browser
 ticket, and open the dashboard directly. The packaged smoke verifies frozen resources, first-run
 initialization, a stable installed MCP command, a real MCP handshake and Core
@@ -71,13 +71,11 @@ shows that no unknown service owns the port.
 
 On Windows the installed application registers launchers in the user's actual
 Shell-known Programs and Desktop folders (including OneDrive or enterprise
-redirection) plus an Apps & Features uninstall entry. Uninstall first verifies
-and terminally removes active records from a connected hosted Edge, revokes local AI-app
-connections, removes launchers/startup, and keeps the local vault. If Edge is
-offline or its state is corrupt, uninstall stops before claiming verified
-remote decommissioning. A prepared but unpaired Edge is also preserved until
-the user confirms that any possible hosted service, disk, and backups were
-deleted.
+redirection) plus an Apps & Features uninstall entry. Uninstall revokes local
+AI-app connections, removes launchers/startup, and keeps the local vault. An
+older engineering installation that contains explicit experimental Edge state
+uses the retained cleanup guard before uninstall; new V1 installations never
+create that state or contact a hosted runtime.
 
 Local AI connection removal is also fail-safe. Uninstall revokes readable
 Core client rows, verifies authority-bearing credential deletion when a vault

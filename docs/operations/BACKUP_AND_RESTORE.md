@@ -26,10 +26,10 @@ python -m allthecontext.cli restore PATH_TO_EXPORT --dry-run
 Replace `PATH_TO_EXPORT` with an explicit path appropriate to the current
 shell. Stop Core before destructive recovery. Restore into a new empty vault,
 verify the manifest and all hashes, apply migrations transactionally, then run
-retrieval and replication smoke tests before switching the active vault.
+retrieval smoke tests before switching the active vault.
 
-Exports contain more sensitive data than Relay. Store them in an encrypted
-location and test restore procedures regularly.
+Exports may contain the complete vault and raw source material. Store them in
+an encrypted location and test restore procedures regularly.
 
 Opaque purge tombstones are included even when sources/audit are omitted. A
 merge restore consults them before importing content and refuses to recreate a

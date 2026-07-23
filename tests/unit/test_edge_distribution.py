@@ -15,7 +15,6 @@ from allthecontext.edge_distribution import (
     render_blueprint,
     render_packaged_defaults,
     validate_image_reference,
-    validate_pinned_blueprint,
     validate_render_deploy_url,
 )
 from allthecontext.edge_registry import EdgeRegistryError, verify_anonymous_ghcr_pull
@@ -34,6 +33,28 @@ DEPLOY_URL = (
 )
 SAMPLE_BRANCH = f"edge-deploy-{'1' * 64}"
 SAMPLE_REPOSITORY = f"https://github.com/example/project/tree/{SAMPLE_BRANCH}"
+EXPERIMENTAL_TEMPLATE = """services:
+  - type: web
+    name: all-the-context-edge
+    runtime: image
+    plan: starter
+    image:
+      url: __ATC_EDGE_IMAGE_REFERENCE__
+    healthCheckPath: /healthz
+    autoDeploy: false
+    numInstances: 1
+    envVars:
+      - key: ATC_EDGE_BUNDLE
+        sync: false
+      - key: ATC_RELAY_HOST
+        value: 0.0.0.0
+      - key: ATC_RELAY_DATABASE
+        value: /var/lib/allthecontext/edge.sqlite3
+    disk:
+      name: all-the-context-edge-data
+      mountPath: /var/lib/allthecontext
+      sizeGB: 1
+"""
 
 
 class FakeResponse:
@@ -52,9 +73,7 @@ class FakeResponse:
 
 
 def test_distribution_metadata_and_blueprint_are_deterministic_and_digest_pinned() -> None:
-    template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
-        encoding="utf-8"
-    )
+    template = EXPERIMENTAL_TEMPLATE
 
     metadata = edge_image_metadata(IMAGE, SOURCE_COMMIT)
     rendered = render_blueprint(template, IMAGE)
@@ -85,32 +104,24 @@ def test_distribution_metadata_and_blueprint_are_deterministic_and_digest_pinned
     assert repr(BLUEPRINT_COMMIT) in defaults
 
 
-def test_permanent_template_survives_first_activation_for_the_next_edge_image() -> None:
-    template_path = REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml"
-    template = template_path.read_text(encoding="utf-8")
+def test_isolated_experimental_template_can_render_multiple_immutable_images() -> None:
+    template = EXPERIMENTAL_TEMPLATE
     first_root = render_blueprint(template, IMAGE)
     next_digest = f"sha256:{'2' * 64}"
     next_image = f"ghcr.io/martian-ux/all-the-context-edge@{next_digest}"
 
     assert BLUEPRINT_IMAGE_PLACEHOLDER not in first_root
-    assert BLUEPRINT_IMAGE_PLACEHOLDER in template_path.read_text(encoding="utf-8")
-    second_root = render_blueprint(template_path.read_text(encoding="utf-8"), next_image)
+    assert BLUEPRINT_IMAGE_PLACEHOLDER in template
+    second_root = render_blueprint(template, next_image)
     assert f"url: {next_image}" in second_root
 
 
-def test_committed_packaged_default_can_only_enable_an_exact_root_blueprint() -> None:
+def test_v1_has_no_committed_deployment_template_or_enabled_default() -> None:
     config = deployment_config({})
-    root_blueprint = (REPOSITORY_ROOT / "render.yaml").read_text(encoding="utf-8")
-    permanent_template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
-        encoding="utf-8"
-    )
-
-    assert permanent_template.count(BLUEPRINT_IMAGE_PLACEHOLDER) == 1
-    if config.enabled:
-        assert config.image_reference is not None
-        validate_pinned_blueprint(root_blueprint, config.image_reference)
-    else:
-        assert config.deploy_url is None
+    assert not (REPOSITORY_ROOT / "render.yaml").exists()
+    assert not (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").exists()
+    assert config.enabled is False
+    assert config.deploy_url is None
 
 
 @pytest.mark.parametrize(

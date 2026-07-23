@@ -19,7 +19,7 @@ Schemas carry `schema_version`; mutable canonical records also carry a monotonic
 | `purge_tombstone` | Minimum opaque stable-ID replay barrier, with no raw content hash |
 | `purge_job` | Crash-resumable logical-delete/compaction phase metadata |
 | `audit_event` | Client access and administrative decision trace |
-| `pending_memory_proposal` | Non-canonical Relay proposal queue |
+| `pending_memory_proposal` | Legacy non-canonical experimental Relay queue; not used by V1 UI |
 | `export_manifest` | Portable package schema and integrity metadata |
 
 Every record supports stable ID, kind, content and optional structured value,

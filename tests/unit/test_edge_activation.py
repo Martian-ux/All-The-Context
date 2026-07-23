@@ -12,9 +12,30 @@ from allthecontext.edge_distribution import (
     render_blueprint,
 )
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 IMAGE = f"ghcr.io/martian-ux/all-the-context-edge@sha256:{'1' * 64}"
 REPOSITORY_URL = "https://github.com/Martian-ux/All-The-Context"
+EXPERIMENTAL_TEMPLATE = """services:
+  - type: web
+    name: all-the-context-edge
+    runtime: image
+    plan: starter
+    image:
+      url: __ATC_EDGE_IMAGE_REFERENCE__
+    healthCheckPath: /healthz
+    autoDeploy: false
+    numInstances: 1
+    envVars:
+      - key: ATC_EDGE_BUNDLE
+        sync: false
+      - key: ATC_RELAY_HOST
+        value: 0.0.0.0
+      - key: ATC_RELAY_DATABASE
+        value: /var/lib/allthecontext/edge.sqlite3
+    disk:
+      name: all-the-context-edge-data
+      mountPath: /var/lib/allthecontext
+      sizeGB: 1
+"""
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -35,9 +56,7 @@ def _activation_repository(
         check=True,
     )
     subprocess.run(["git", "config", "user.name", "ATC acceptance"], cwd=repository, check=True)
-    template = (REPOSITORY_ROOT / "deploy" / "edge" / "render.template.yaml").read_text(
-        encoding="utf-8"
-    )
+    template = EXPERIMENTAL_TEMPLATE
     template_path = repository / "deploy" / "edge" / "render.template.yaml"
     template_path.parent.mkdir(parents=True)
     template_path.write_text(template, encoding="utf-8")

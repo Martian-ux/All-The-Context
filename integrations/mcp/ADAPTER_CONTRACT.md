@@ -10,7 +10,7 @@ context.
 
 | Environment variable | Required | Meaning |
 |---|---:|---|
-| `ATC_TARGET_URL` | No | Core or Relay endpoint; defaults to `http://127.0.0.1:7337` |
+| `ATC_TARGET_URL` | No | Core endpoint; defaults to `http://127.0.0.1:7337` |
 | `ATC_CLIENT_ID` | Yes | Stable registered client identity |
 | `ATC_CLIENT_TOKEN` | Yes | Scoped bearer credential |
 

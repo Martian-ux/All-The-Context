@@ -3,74 +3,76 @@
 ## Authority and components
 
 Core is the sole canonical writer. It stores raw sources, candidates, approved
-records, versions, permissions, tombstones, audit events, and the complete FTS5
-index in a per-user SQLite database. Core listens on `127.0.0.1` by default.
+records, versions, permissions, tombstones, audit events, ingestion coverage,
+and the complete FTS5 index in a per-user SQLite database.
 
-Relay is separately deployed and separately stored. It applies authenticated,
-ordered events and serves only approved `always_available` records. A Relay may
-queue proposals, but Core must review or policy-approve them before they become
-canonical. Database files are never replicated.
+The dashboard is bundled with Core. Local MCP clients use either Core's HTTP
+transport or the lightweight STDIO adapter. Each managed adapter is bound to an
+exact vault, client identity, scopes, and credential so it can self-heal a
+stopped local Core without attaching to another installation.
 
-MCP clients use a small adapter. For local STDIO clients it forwards JSON-RPC
-tool calls to loopback Core HTTP. Streamable HTTP is available for clients that
-support it. Each adapter is configured once with a client ID and bearer token;
-ordinary retrieval and durable-memory proposals then happen through the nine
-stable tools without repeated user setup.
+V1 has no hosted data plane. Phones and other computers are direct Core clients,
+not clients of a replica. Core must be online for them to retrieve or propose
+context.
 
 ## Data flow
 
 ```mermaid
 flowchart LR
-  AI["AI client"] --> MCP["MCP adapter"]
-  MCP --> Core["Local Core"]
-  Import["Archive or document"] --> Core
-  Core --> CoreDB["Complete SQLite vault"]
-  Core --> Relay["Hosted Relay"]
-  Relay -. "sealed request; outbound poll" .-> Core
-  Relay --> RelayDB["Restricted replica"]
-  Cloud["Cloud or mobile client"] --> Relay
+  Import["Archive or document"] --> Core["Authoritative Core"]
+  LocalAI["Local AI client"] --> Adapter["MCP HTTP/STDIO adapter"]
+  Adapter --> Core
+  Mobile["Phone or another computer"] -. "direct; Core must be online" .-> Core
+  Core --> DB["Complete per-user SQLite vault"]
+  Core --> UI["Bundled local dashboard"]
 ```
 
-The dotted path is application-level online-Core forwarding. Edge persists only
-an encrypted, expiring request envelope. Core initiates every network request,
-decrypts and authorizes against its local approved-client mapping, and returns
-only `core_available` results. The waiting Edge process holds that response in
-bounded memory; it never persists it. `local_only` is excluded at Core.
+The dotted path is a product contract, not a claim that public exposure is
+already safe. Core binds to `127.0.0.1` by default. A future guided direct-Core
+pairing flow must add authenticated device enrollment, encrypted transport,
+revocation, endpoint discovery, and recovery before the product enables remote
+listening automatically.
+
+## Availability
+
+- `local_only`: only same-device clients that pass policy.
+- `core_available`: permitted direct clients while Core is online.
+- `always_available`: legacy experimental replication value retained for
+  schema/import compatibility. The V1 UI does not offer it for new approvals,
+  and the automatic hosted replication worker is disabled.
+
+Existing legacy records remain visible so a user can change them to
+`core_available`; the application does not silently broaden access or discard
+history.
+
+## Ingestion and approval
+
+Raw source material may be stored immediately. Extraction creates candidates.
+Only review or an explicit deterministic approval policy creates an approved
+context record. Imported text is data, never instructions. Batches and sessions
+are idempotent and resumable, and every session records available and
+unavailable coverage.
 
 ## Retrieval
 
-The retrieval interface applies authorization, validity, deletion, and
-supersession filters before scoring. V1 then combines structured filters with
-SQLite FTS5 and recency ordering. Embeddings are an optional future index and
-can never override policy filters.
+Authorization, client allowlists, validity, deletion, and supersession filters
+run before scoring. V1 combines structured filters, SQLite FTS5, bounded lexical
+channels, recency, and deterministic context compilation. Embeddings remain an
+optional future index and can never override policy.
 
-## Memory integrity and irreversible purge
+## Synchronization boundary
 
-Core may attach normalized `entity_key` and `attribute_key` metadata to an
-untrusted candidate. Inferred keys remain proposal metadata until an
-administrator approves the candidate; they never create or rewrite canonical
-memory by themselves. For current approved records in the same slot, Core
-transactionally derives separate duplicate and conflict review groups. A group
-is advisory: Core never elects a winner. Correction, supersession, rejection,
-expiry refresh, deletion, and purge recompute the derived view.
-
-Ordinary deletion remains a reversible, history-preserving tombstone. An
-administrator-only purge is a different state machine: an exact target-bound
-phrase authorizes a single logical transaction, which scrubs attributable Core
-content and commits opaque replay tombstones plus an ordered purge event. A
-resumable compaction phase then checkpoints WAL and runs secure-delete VACUUM.
-Core remains authoritative for purge. Edge/Relay transactionally removes its
-restricted projection, content-derived replication history, and ordinary
-deletion state while advancing the ordered checkpoint and retaining an opaque
-resurrection barrier. Physical Edge compaction is independently retryable; Core
-reports sync as degraded until the live database and WAL have been compacted.
-Neither service claims erasure from snapshots, external backups, storage-media
-remanence, or user copies.
+There is no V1 synchronization service and no database-file replication. The
+repository retains experimental signed ordered event/Relay modules solely as
+dormant compatibility and research code. They are not started by Core,
+published as a container, offered in the dashboard, or included in release
+acceptance. Any future synchronization design requires a new product decision.
 
 ## Cross-platform rules
 
-Shared runtime code uses `pathlib`, `platformdirs`, TCP loopback, `filelock`,
-Python signal/lifespan handling, and SQLite transactions. No runtime path
-depends on Bash, systemd, POSIX permissions, symlinks, case sensitivity, or
-Unix-domain sockets. Docker is optional for Core and intended only for Relay,
-development, and CI.
+Shared runtime code uses Python 3.12+, `pathlib`, `platformdirs`, TCP loopback,
+portable locking, lifespan handling, and SQLite transactions. It does not rely
+on Bash, systemd, POSIX permissions, symlinks, Unix sockets, case-sensitive
+paths, or Docker. Service installation and credential storage remain behind
+platform abstractions for Windows Credential Manager, macOS Keychain, and Linux
+secret storage with an explicit development fallback.

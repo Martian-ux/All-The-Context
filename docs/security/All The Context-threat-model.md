@@ -1,230 +1,89 @@
-# All The Context threat model
-
-## Executive summary
-
-The highest risks are disclosure through an internet-facing Edge or
-over-permissive client, poisoning of canonical memory through untrusted imports
-and proposals, and failure to propagate deletion or permission changes. The
-design keeps Core authoritative, makes imported data inert, filters before
-retrieval, authenticates an ordered application-level event stream, and binds
-each durable Edge disk to one vault, pairing secret, and public origin.
+# All The Context V1 threat model
 
 ## Scope and assumptions
 
-In scope: Python Core and Relay services, SQLite stores, archive import, MCP
-adapters, dashboard/API, replication, credentials, OAuth, remote proposal
-transport, Edge deployment, and portable export. CI and development tooling are
-distinguished from runtime. One trusted OS user owns a vault; Edge is
-single-user and internet-facing behind TLS; OAuth, owner, client, and
-replication credentials have distinct roles. Multi-tenant and hostile
-local-admin or hosting-process attackers are out of scope. A hosting operator
-can read the approved replica while serving it, so zero-knowledge hosting is
-not a security objective. TLS and production host controls remain deployment
-responsibilities. Paid native publisher signing is out of scope; community
-release integrity uses offline Ed25519 manifests, immutable assets, hashes, and
-provenance. Candidate automation refuses reusable tags/assets, verifies both
-SLSA and SPDX attestations against the exact workflow and commit, and embeds
-only independently reviewed public keys. Signing requires an encrypted private
-key outside the checkout and an interactive no-echo password prompt. Mutable
-Pages pointers contain signed manifests only and are promoted manually from an
-immutable verified release.
+V1 has one user and one authoritative local Core. In scope: Core, its SQLite
+vault, dashboard, archive import, MCP HTTP/STDIO transports, desktop setup,
+credentials, export/restore, and updates. There is no supported hosted Edge,
+cloud replica, or third-party runtime.
 
-## System model
+The operating-system user account is trusted to own the vault. AI clients and
+imported content are not trusted to approve memory or expand permissions. The
+live SQLite database is not application-encrypted; OS account/disk protection
+is part of the boundary.
 
-### Primary components
+## Assets
 
-- Core API/domain/storage: authoritative personal data and decisions
-  (`packages/allthecontext/src/allthecontext/core`).
-- Import/export: attacker-controlled files cross into local parsers
-  (`packages/allthecontext/src/allthecontext/importers.py`, `export.py`).
-- MCP/API clients: bearer-authenticated retrieval and proposals
-  (`packages/allthecontext/src/allthecontext/mcp_adapter.py`).
-- Desktop setup: per-user installation, credential persistence, reversible
-  client configuration, and loopback dashboard handoff (`desktop.py`,
-  `desktop_setup.py`, `client_config.py`).
-- Edge (implemented by the Relay package): restricted replica, encrypted
-  proposal transport queue, owner recovery, and OAuth/MCP endpoint
-  (`packages/allthecontext/src/allthecontext/relay`).
+- raw source material and canonical context;
+- provenance, history, permissions, tombstones, and audit state;
+- administrator and scoped client credentials;
+- OS integration/configuration backups;
+- encrypted exports and their passphrases; and
+- release public keys, manifests, packages, and update journals.
 
-### Data flows and trust boundaries
-
-- AI client -> MCP adapter -> Core/Edge: JSON-RPC and HTTP, scoped bearer or
-  OAuth 2.1 credentials,
-  identity, Pydantic size/schema validation, audit events, application limits.
-- Local file -> Core importer: untrusted bytes, allow-listed formats, size and
-  archive limits, no instruction execution or URL fetch.
-- Core -> Edge: HTTPS deployment channel, distinct replication credential,
-  ordered HMAC-authenticated events, hash/schema/authorization checks.
-- Remote AI client -> Edge: dynamic registration only in an owner-opened window,
-  authorization code + PKCE, audience-bound access tokens, rotating refresh
-  families, per-client permissions, and explicit revocation.
-- Remote proposal -> Edge -> Core: AES-GCM sealed, bounded, expiring transport
-  envelope; it is scrubbed after Core acknowledgement and never becomes
-  canonical at Edge.
-- Browser -> loopback Core: local operational API, opaque tab-scoped session
-  backed only by Core memory, bearer validation behind that capability, a
-  required custom header on mutations, and loopback default.
-- Desktop wizard -> OS store/client config/browser: credential writes are read
-  back before trust; existing TOML/JSON is validated and backed up; a random
-  one-use ticket expires after 60 seconds and is exchanged for an opaque tab
-  session; a per-installation challenge proof is verified before any privileged
-  credential is sent to the loopback listener.
-
-#### Diagram
+## Trust boundaries
 
 ```mermaid
 flowchart LR
-  U["Trusted user"] --> B["Local dashboard"]
-  F["Untrusted files"] --> C["Core"]
-  A["AI client"] --> M["MCP adapter"]
-  M --> C
-  C --> D["Complete vault"]
-  C --> R["Hosted Edge"]
-  X["Remote AI client"] --> R
-  R --> E["Restricted replica"]
+  Import["Untrusted archive/model output"] --> Core["Authoritative Core"]
+  Client["AI client"] --> Adapter["Scoped MCP adapter"] --> Core
+  Browser["Local dashboard tab"] --> Core
+  Core --> Vault["Per-user SQLite vault"]
+  Core --> OS["Credential/startup abstractions"]
+  Mobile["Future paired mobile device"] -. "not yet enabled" .-> Core
+  Release["Signed release metadata"] --> Updater["Transactional updater"] --> Core
 ```
 
-## Assets and security objectives
+Core listens on `127.0.0.1` by default. The future mobile boundary is not
+trusted or enabled automatically; it requires device enrollment, encrypted
+transport, revocation, discovery, and recovery acceptance.
 
-| Asset | Why it matters | Security objective |
-|---|---|---|
-| Raw sources and canonical context | Highly personal user data | C/I/A |
-| Approval, versions, tombstones | Defines what is true and what must be absent | I/A |
-| Client and replication credentials | Grant disclosure and synchronization access | C/I |
-| Permission policy and audit trail | Prevents and explains cross-client disclosure | I/A |
-| Portable exports | Concentrated backup of the vault | C/I/A |
+## Attacker capabilities
 
-## Attacker model
+- submit malicious archives or model proposals;
+- operate an authorized or stolen client credential;
+- send cross-origin/browser requests to loopback;
+- place an unrelated service on the expected port;
+- interrupt migrations, writes, export, shutdown, or update;
+- tamper with update metadata or packages; and
+- convince a user to expose Core over an unsafe network interface.
 
-### Capabilities
+An attacker who already controls the user's OS account can read the live V1
+vault and is outside the application-encryption boundary.
 
-A remote attacker may reach a deployed Edge, possess malicious import content,
-or steal one client token. An authorized model may make incorrect or adversarial
-proposals. A hosting operator can inspect process memory and deployment secrets.
-Dependency artifacts and archive structures may be malicious.
+## Principal threats and mitigations
 
-### Non-capabilities
-
-The attacker is not assumed to control the trusted OS account, TLS terminator,
-Core process, or hosting process unless explicitly analyzing privacy at the host.
-V1 has one user and no cross-tenant boundary. Edge compromise
-cannot disclose raw sources or `local_only`/`core_available` content because it
-does not possess them.
-
-## Entry points and attack surfaces
-
-| Surface | How reached | Trust boundary | Notes | Evidence |
+| ID | Threat | Impact | Mitigations | Residual risk |
 |---|---|---|---|---|
-| Core API | Loopback HTTP | client -> Core | bearer scopes and limits | `core/app.py` |
-| Edge API and OAuth/MCP | HTTPS proxy | internet -> Edge | TLS external, owner-gated registration, OAuth/PKCE, global request bounds | `relay/app.py`, `relay/oauth.py`, `relay/mcp.py` |
-| MCP STDIO/HTTP | configured client | AI -> adapter | typed tools, no admin deletes | `mcp_adapter.py` |
-| Import parser | local file/upload | file -> Core | untrusted, bounded, inert | `importers.py` |
-| Replication apply | Core push | Core -> Relay | HMAC, sequence, hash | `replication.py` |
-| Export restore | local file | backup -> Core | AEAD and integrity checks | `export.py` |
-| Desktop setup | user launch | installer -> OS/config/browser | per-user paths, verified credential write, parsed/atomic config replacement | `desktop_setup.py`, `client_config.py` |
-| Native updater | configured HTTPS endpoint | release service -> Core -> installer/helper | bounded no-redirect fetch, Ed25519 policy, streamed size/hash verification, isolated staging, atomic state, authenticated reverified manual save, strict Windows journal/RunOnce helper, stopped-Core backup, diagnostics, health, rollback | `release_manifest.py`, `updater.py`, `windows_update_helper.py` |
+| TM-001 | Imported/model text is treated as instruction | Poisoned canonical memory or code execution | Treat text as inert data; bounded parsers; candidate-only extraction; explicit approval | Reviewer may approve a plausible falsehood |
+| TM-002 | Client exceeds scopes or record allowlist | Personal-context disclosure | Per-client credentials; policy/validity/deletion before every ranker; indistinguishable denied/missing results | Authorized client/provider sees returned content |
+| TM-003 | Model writes canonical memory directly | Integrity loss | MCP exposes proposals, not approval/correction/deletion authority | Misconfigured future auto-policy could be too broad |
+| TM-004 | Browser ticket/token leaks or CSRF mutates Core | Administrative compromise | One-use expiring ticket; opaque memory/tab session; no admin token in URL/cookie/storage; custom dashboard mutation header | Malicious code in the authenticated tab remains powerful |
+| TM-005 | Unknown loopback listener impersonates Core | Credential theft/wrong-vault access | Installation-bound challenge proof; exact vault/port binding; refuse unknown listener | Compromised local account can replace binaries/state |
+| TM-006 | Core is exposed on LAN/Internet without transport security | Full reachable-vault disclosure | Loopback default; no automatic exposure; UI warning; mobile gate requires pairing and encryption | Operator can still deliberately override configuration |
+| TM-007 | Credential backend drops or exposes tokens | Client takeover | Read-after-write verification; OS keyring abstraction; explicit fallback warning; redacted logs | Development fallback is weaker than OS storage |
+| TM-008 | Interrupted migration/export/update corrupts vault | Availability or data loss | SQLite transactions/backups; portable locks; bounded temp files; update journal, health check, and rollback | Hardware/filesystem failure can defeat local recovery |
+| TM-009 | Malicious update or mutable URL executes | Code execution | HTTPS no-redirect fetch; strict Ed25519 manifest; immutable version URL; size/hash/platform/version checks; offline key custody | Community package lacks publisher identity |
+| TM-010 | Deletion/purge leaves recoverable live content | Privacy expectation failure | Tombstones/history semantics; explicit irreversible purge state; secure-delete/checkpoint/VACUUM; resurrection barriers and byte scans | Backups, SSD remanence, and user copies remain outside live-store claims |
+| TM-011 | Large requests/imports cause denial of service | Core unavailable/disk exhaustion | Body, record, query, export, and pagination bounds; resumable ingestion; temporary-file cleanup | Valid large local archives can still consume time |
+| TM-012 | Dormant experimental Edge code contacts a service | Unexpected third-party disclosure | No Edge UI/workflow/template/console entry; background worker disabled; retain only explicit compatibility/cleanup paths | Manual use of internal APIs remains possible to a local administrator |
 
-## Top abuse paths
+## Security invariants
 
-1. Attacker embeds instructions in an archive -> extractor treats them as
-   authority -> poisoned candidate is approved -> AI receives false context.
-2. Stolen broad client token -> attacker searches unrelated scopes -> private
-   records are returned unless record allow/deny policy is applied first.
-3. Attacker replays or edits an old replication event -> Relay restores deleted
-   context -> offline clients receive stale private data.
-4. Malicious archive expands or parses excessively -> Core disk/CPU exhaustion
-   -> user cannot inspect or retrieve the vault.
-5. Relay credential theft -> forged canonical-looking event -> restricted
-   replica integrity is corrupted.
-6. Availability or permission change is not replicated -> Relay retains content
-   after the user believes it was withdrawn.
-7. Logs or an unencrypted backup capture content/token -> local or hosting
-   operator obtains concentrated personal data.
-8. Setup trusts a broken credential backend or corrupts an existing client
-   configuration -> MCP silently loses access or another client stops working.
-9. A local process captures or replays a browser handoff ticket -> it attempts
-   to obtain dashboard authority before the ticket expires or is consumed.
-10. An operator reuses an Edge disk with another vault or pairing secret -> old
-    refresh/access tokens could cross authorities unless startup binds identity.
-11. An unauthenticated internet client streams an oversized or filter-heavy
-    request -> public parsing/search work exhausts memory or CPU.
-12. A user uninstalls after interrupted Edge setup -> orphaned credentials or an
-    undecommissioned remote service survive a false-success uninstall.
-13. A request passes an HTTP terminal-state check, pauses, then commits after
-    decommission -> supposedly removed Edge data or authority is resurrected.
-14. Core crashes after one-time MCP setup -> clients silently stop using context
-    or the user must manually recover the service.
-15. A user requests irreversible removal but history, WAL, source evidence,
-    audit/outbox payloads, or an old import restores the value -> low-entropy
-    private context remains guessable or reappears.
-16. An attacker obtains a deployment claim or races Core -> first-claimer
-    takeover creates credentials for the wrong party.
-17. A remote client floods/replays forwarding or Edge retains a Core-only
-    response -> private canonical context persists outside Core.
-18. A mutable/tampered update, archive traversal, or interrupted cutover executes
-    attacker bytes or damages the local vault.
+1. Core is the only canonical authority.
+2. Imported/model text cannot approve itself.
+3. Permissions and validity run before relevance scoring.
+4. Core binds to loopback unless explicitly configured otherwise.
+5. No V1 startup path contacts or deploys a hosted context service.
+6. Credentials and raw personal context are never logged.
+7. A partial or unhealthy update cannot be committed as successful.
+8. Mobile access is not called complete until its new network boundary has
+   dedicated acceptance evidence.
 
-## Threat model table
+## Deferred experimental code
 
-| Threat ID | Threat source | Prerequisites | Threat action | Impact | Impacted assets | Existing controls (evidence) | Gaps | Recommended mitigations | Detection ideas | Likelihood | Impact severity | Priority |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| TM-001 | Malicious source/model | Import/proposal access | Poison durable memory | Incorrect context and decisions | Records | Candidate separation and review (`INGESTION.md`) | Human approval can err | Evidence view, conflict/duplicate grouping, inference labels | Audit unusual approval bursts | medium | high | high |
-| TM-002 | Remote/token thief | Relay/client token | Query excessive context | Personal-data disclosure | Context, tokens | Scopes plus allow/deny filters (`security.py`) | Bearer theft remains usable until revoke | OS secret store, short rotation, rate limits | Per-client query/denial alerts | medium | high | high |
-| TM-003 | Network attacker | Replication reachability | Replay/tamper events | Restore or alter context | Replica, tombstones | HMAC, hash, strict sequence (`replication.py`) | Shared-secret rotation is manual | Key IDs, rotation overlap, TLS pinning option | Gap/MAC/replay counters | low | high | high |
-| TM-004 | Malicious archive | Import permission | Bomb/traversal/oversize input | Core denial of service | Availability, disk | Format and size bounds (`importers.py`) | Parser complexity varies | Streaming quotas, ZIP ratio/file caps, time budgets | Import byte/warning metrics | medium | medium | medium |
-| TM-005 | Misconfiguration | Non-loopback Core or HTTP Relay | Expose service without TLS/auth | Broad disclosure | All reachable data | Loopback default and startup checks (`config.py`) | Reverse proxy is external | Refuse unsafe bind, deployment doctor | Unsafe-start audit event | low | high | high |
-| TM-006 | Bug/operator failure | Delete/permission update | Relay remains stale | Deleted context persists | Privacy state | Transactional event/outbox and checkpoint (`storage.py`) | Offline Relay delays delivery | Prominent lag status, reconciliation | Alert oldest undelivered event | medium | high | high |
-| TM-007 | Local/hosting attacker | Read files/logs | Exfiltrate backup or content | Concentrated disclosure | Vault/export | Redacted logs, encrypted export (`export.py`) | Database-at-rest depends on OS | Document disk encryption; future vault key | Secret-pattern log tests | low | high | medium |
-| TM-008 | Supply-chain attacker | Compromised dependency/build | Execute in trusted process | Full vault compromise | All assets | Pinned ranges and CI (`pyproject.toml`) | No signed releases yet | lockfile, Dependabot, SBOM, signed artifacts | Dependency audit in release gate | low | high | medium |
-| TM-009 | Local failure/malware | Setup/uninstall access to user config | Drop credential, retain token backup, or alter client config | Silent MCP failure, surviving access, or client disruption | Tokens, availability | Credential read-back and ambiguous-write rollback; TOML/JSON parse; managed markers; atomic replace; strict store-specific deletion for corrupt-vault uninstall; token-bearing backup scrub (`desktop_setup.py`, `client_config.py`) | Fallback file is not OS-protected | Signed installer, recovery UI, eliminate fallback for production | Setup warning, missing-secret-service and packaged smoke tests | low | high | medium |
-| TM-010 | Local process/browser history observer, another loopback service, or another web origin | Access during desktop launch or a browser request | Impersonate Core, capture/replay dashboard handoff, or submit an authenticated mutation | Dashboard administration | Tokens, context | Per-installation HMAC challenge proof before credential send; 256-bit random ticket, 60-second TTL, one-use consume, no administrator credential in URL/cookie/browser storage, opaque tab session backed only by Core memory, custom mutation header (`instance_identity.py`, `browser_session.py`, `core/app.py`) | Hostile trusted OS account can read the installation secret and remains out of scope | Signed release and browser-session revocation UI | Audit rejected proof, ticket, session, and mutation-header failures | low | high | medium |
-| TM-011 | Remote attacker or stolen refresh token | Internet reachability or token theft | Register without consent, replay a rotated token, or retain access after revoke | Replica disclosure/proposal injection | Edge context, OAuth material | Ten-minute persisted registration window, DCR bounds/rate limits, PKCE, audience binding, hashed tokens, rotating family replay revocation, client revoke (`relay/oauth.py`) | Reverse-proxy distributed rate limiting is external | Add host-level rate limiting and alerting | Registration denials, replay-family revocations | medium | high | high |
-| TM-012 | Host operator/misconfiguration | Reuse a durable disk or change enrollment/public origin | Make old tokens valid under a new authority | Cross-vault disclosure | Edge replica, tokens | Persisted vault + pairing fingerprint + origin binding before MCP startup (`0005_edge_identity_binding.sql`, `relay/oauth.py`) | Host process compromise still sees approved data | Separate host accounts and secrets; rotate by explicit redeploy | Startup binding mismatch | low | high | high |
-| TM-013 | Unauthenticated remote client | Public Edge URL | Send oversized/chunked/filter-heavy requests | Edge denial of service | Availability | Global body/query caps before parsing, bounded models, filter cardinality limits, iterative retrieval paging (`relay/app.py`, `relay/service.py`) | In-process limiter is single-instance and not a DDoS service | Provider/WAF request and connection limits | 413/414/422 and rate-limit counters | medium | medium | medium |
-| TM-014 | Crash, offline host, or corrupted local state | Partial setup or uninstall | Skip remote erasure but report successful uninstall | Persistent remote data/access | Edge context, credentials | Uninstall inspects state and credential independently, cryptographically verifies the origin, requires terminal zero-record response, revokes readable local AI identities, strictly removes authority-bearing credentials when SQLite is corrupt, and blocks on orphan/offline Edge state (`desktop.py`, `edge_connection.py`) | Manual hosting deletion may still be required | Guided recovery and provider deletion checklist | Uninstall error with no application-file deletion | low | high | medium |
-| TM-015 | Concurrent request/process | Request began before Edge decommission or Core forget | Commit after terminal purge or recreate local connection state | Deleted context/access returns | Edge context, lifecycle state | Terminal recheck in the same `BEGIN IMMEDIATE` transaction, database write triggers, cross-process Edge file lock, interrupted-purge restart (`relay/service.py`, `relay/oauth.py`, `0006_terminal_write_guards.sql`, `edge_connection.py`) | Host-level database replacement remains operator authority | Keep terminal state in durable backups and never reuse disks across vaults | 410 responses, trigger violations, lifecycle error logs | low | high | high |
-| TM-016 | Core crash or hostile loopback listener | Managed STDIO client invokes a tool | Keep Core offline or trick adapter into starting/sending to another service | Context unavailable or credential disclosure | Availability, client tokens | Managed-only auto-start, exact 127.0.0.1 origin, exact vault data directory, installation-bound proof, unknown-listener refusal, exact Core command, bounded readiness wait (`mcp_adapter.py`, `desktop_setup.py`, `client_config.py`) | Hostile same-account process can read installation material and is out of scope | Verified release provenance and OS account protection | Proof failures and Core restart log | low | high | medium |
-| TM-017 | Storage bug, crash, or stale backup | Administrator requests purge | Retain content in history/index/WAL/audit/outbox or resurrect a stable ID | Irreversible-removal expectation fails | Core and Edge content, sources, exports | Exact admin phrase; one-transaction Core scrub; signed content-free event; opaque hash-free Core/Edge barriers; foreign keys; `secure_delete`; WAL checkpoint; resumable VACUUM; restore barrier; Edge transition rejection and DB/WAL/SHM byte scans (`storage.py`, `export.py`, `relay/service.py`, `0009_record_purge.sql`) | Filesystem/provider snapshots, SSD remanence, external backups, user copies, and unobserved hosted-platform behavior remain outside live-storage erasure | Backup expiry guidance, encrypted-disk policy, hosted-provider purge drill | Pending purge jobs, Edge compaction status/error codes, replication lag | low | high | high |
-| TM-018 | Remote first-claimer or leaked setup file | Public inert Edge and claim reference | Claim Edge, probe identity, replay proof, or wait out abandoned deploy | Edge takeover or durable credential disclosure | Claim authority, replication credentials | Setup file contains only public keys/expiring reference; inert preclaim middleware; Ed25519 possession proof over claim/challenge/origin; one-use challenge; X25519+AES-GCM credential return; acknowledgement revocation; 24-hour expiry (`edge_claim.py`, `0008_edge_claim.sql`) | Host provider controls the process/disk | Provider account MFA; delete setup download; alert stale unclaimed deployment | Claim rejection/expiry counters | low | high | high |
-| TM-019 | Authorized/stolen OAuth client or hostile Edge process | Public Edge MCP and forwarding poll | Flood, replay, forge another client/admin scope, inspect queued queries, race revocation, or retain forwarded results | Core-only disclosure or denial of service | Core-available context, availability | OAuth before enqueue; X25519/AES-GCM request sealing before SQLite; Core-local user-approved client mapping and scope clamp; Core allow/deny authorization; random IDs; expiries; one-use hashed claims; leases; cancellation; rate/concurrency/size bounds; memory-only responses; decommission/revoke purge (`relay/forwarding.py`, `edge_connection.py`, `004_remote_edge_clients.sql`) | A fully compromised live Edge can assert another already-approved logical client and observe response bytes while forwarding them; provider MCP transport supplies no client-held proof to Core | Separate Edge deployments for mutually distrusting clients; future end-to-end client signatures; reverse-proxy rate limits and alerting | Queue depth, timeouts, rejected claims, denied unknown mappings | medium | high | high |
-| TM-020 | Release-service/build attacker or interrupted installer | Configured update check or cutover | Substitute metadata/artifact, move/reuse a tag, exploit archive paths/symlinks, expose a signing key, truncate bytes, or leave a half-applied version | Code execution, vault corruption, availability loss | Application, vault, update trust | Single-use candidate version; GitHub immutable releases; direct-package and updater-payload separation; exact SHA-256/SPDX candidate inventory; workflow/commit-bound SLSA and SBOM attestations; private-key audit; independently fingerprinted public key; encrypted offline key outside checkout with no-echo prompt; exact signed manifest; HTTPS/no redirect/time/size bounds; immutable version URL; streamed signed size/hash; safe ZIP paths and bounded internal symlinks; protected manual release/Pages promotion; Windows-only OTA allowlist and strict path-bound journal, independent RunOnce helper, stopped-Core final backup, health checks, idempotent resume, and full binary/database rollback (`release_candidate.py`, `release_manifest.py`, `updater.py`, `windows_update_helper.py`) | Production public key/channel are absent; artifacts intentionally lack paid publisher identity; GitHub settings/environments still require operator configuration; frozen Windows evidence is same-version; macOS/Linux OTA manifests and automatic rollback are absent | Complete two-person public-key ceremony, explicit unsigned disclosure, real Ed25519-signed N-1 Windows drill, and observed macOS/Linux extraction/seal/rollback before expanding the OTA allowlist | Candidate/attestation/signature/checksum failures, fixed journal error code, persisted recovery phase | low | critical | high |
-
-## Criticality calibration
-
-- Critical: unauthenticated remote Core/Relay code execution; universal auth
-  bypass; release compromise affecting every installation.
-- High: practical context exfiltration, durable memory poisoning, forged
-  replication, or failure to honor deletion for one vault.
-- Medium: bounded denial of service, encrypted-export metadata leak, or attack
-  requiring a stolen scoped token with limited records.
-- Low: low-sensitivity status disclosure or noisy local failure with an obvious
-  recovery path.
-
-## Focus paths for security review
-
-| Path | Why it matters | Related threats |
-|---|---|---|
-| `packages/allthecontext/src/allthecontext/security.py` | Credential and authorization decisions | TM-002, TM-005 |
-| `packages/allthecontext/src/allthecontext/importers.py` | Parses attacker-controlled data | TM-001, TM-004 |
-| `packages/allthecontext/src/allthecontext/replication.py` | Authority boundary and deletion convergence | TM-003, TM-006 |
-| `packages/allthecontext/src/allthecontext/storage.py` | Canonical transactions and parameterized queries | TM-001, TM-006 |
-| `packages/allthecontext/src/allthecontext/export.py` | Concentrated portable backup | TM-007 |
-| `packages/allthecontext/src/allthecontext/core/app.py` | Local HTTP/admin entry point | TM-002, TM-005 |
-| `packages/allthecontext/src/allthecontext/relay/app.py` | Internet-facing surface | TM-002, TM-003, TM-005 |
-| `packages/allthecontext/src/allthecontext/relay/oauth.py` | Owner sessions, registration, token rotation, durable identity binding | TM-011, TM-012 |
-| `packages/allthecontext/src/allthecontext/edge_connection.py` | Core-to-Edge proof, credential/state recovery, terminal decommission | TM-012, TM-014 |
-| `packages/allthecontext/src/allthecontext/edge_claim.py` | First claim, origin-bound proof, and credential rotation | TM-018 |
-| `packages/allthecontext/src/allthecontext/relay/forwarding.py` | Bounded online-Core request broker | TM-019 |
-| `packages/allthecontext/src/allthecontext/migrations/relay/0009_record_purge.sql` | Edge purge replay barrier, compaction state, and terminal write guards | TM-017 |
-| `packages/allthecontext/src/allthecontext/client_config.py` | Reversible client configuration and credential handoff | TM-002, TM-009 |
-| `packages/allthecontext/src/allthecontext/updater.py` | Release trust, staging, backup, native handoff, and recovery | TM-008, TM-020 |
-| `packages/allthecontext/src/allthecontext/windows_update_helper.py` | Windows cutover journal, stopped-Core backup, health, RunOnce recovery, and rollback | TM-020 |
-
-## Quality check
-
-- Covers runtime API, MCP, imports, replication, storage, and export entrypoints.
-- Covers each local, file, client, and remote trust boundary.
-- Separates CI/dependencies from runtime threats.
-- Reflects confirmed single-user, TLS-proxy, and policy-review assumptions.
-- Production deployment, key rotation, and signed packaging remain explicit
-  residual risks.
+The Relay/Edge modules retain their earlier protocol tests as defense against
+regressions while compatibility/cleanup requirements are evaluated. They are
+not part of the V1 runtime threat surface because Core does not start the worker
+and no supported deployment artifact is published. Re-enabling any hosted
+component requires a new threat-model revision and architecture decision.

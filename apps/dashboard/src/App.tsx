@@ -4,8 +4,6 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
-  Cloud,
-  Copy,
   Database,
   Download,
   ExternalLink,
@@ -36,23 +34,18 @@ import type {
   ContextRecordVersion,
   CoreStatus,
   DesktopIntegration,
-  EdgeAuthorizedClient,
-  EdgePrepareResult,
-  EdgeStatus,
   IntegrationsStatus,
-  ReplicationStatus,
   SourceRecord,
   UpdateStatus,
 } from "./types";
 
-type PageKey = "sources" | "review" | "context" | "connections" | "relay" | "audit" | "backup" | "updates";
+type PageKey = "sources" | "review" | "context" | "connections" | "audit" | "backup" | "updates";
 
 const navigation: Array<{ key: PageKey; label: string; icon: typeof Archive }> = [
   { key: "sources", label: "Sources", icon: Archive },
   { key: "review", label: "Review", icon: FileSearch },
   { key: "context", label: "Context", icon: BookOpenText },
   { key: "connections", label: "Connect apps", icon: Plug },
-  { key: "relay", label: "Edge", icon: Cloud },
   { key: "audit", label: "Audit", icon: FileClock },
   { key: "backup", label: "Backup", icon: Database },
   { key: "updates", label: "Updates", icon: Download },
@@ -62,8 +55,7 @@ const titles: Record<PageKey, { eyebrow: string; title: string; description: str
   sources: { eyebrow: "Ingestion", title: "Sources", description: "Bring archives and documents into your local Core." },
   review: { eyebrow: "Approval queue", title: "Review", description: "Decide what becomes canonical context. Evidence stays visible." },
   context: { eyebrow: "Canonical memory", title: "Context", description: "Search approved records, inspect provenance, and manage availability." },
-  connections: { eyebrow: "Connections", title: "Connect your AI apps", description: "Set up desktop, web, and supported mobile access from one place." },
-  relay: { eyebrow: "Availability", title: "Edge", description: "Monitor the small approved replica available away from this device." },
+  connections: { eyebrow: "Connections", title: "Connect your AI apps", description: "Connect directly to your authoritative Core. No hosted copy is required." },
   audit: { eyebrow: "Accountability", title: "Audit", description: "Review administrative decisions and access outcomes." },
   backup: { eyebrow: "Portability", title: "Backup", description: "Export a complete encrypted copy of your Core data." },
   updates: { eyebrow: "Desktop", title: "Updates", description: "Check signed release metadata and control when updates are installed." },
@@ -209,7 +201,6 @@ function App() {
             {page === "review" && <ReviewView onChanged={refreshStatus} />}
             {page === "context" && <ContextView />}
             {page === "connections" && <ConnectionsView />}
-            {page === "relay" && <RelayView fallback={status?.replication} />}
             {page === "audit" && <AuditView />}
             {page === "backup" && <BackupView status={status} />}
             {page === "updates" && <UpdatesView />}
@@ -353,10 +344,8 @@ function ReviewView({ onChanged }: { onChanged: () => Promise<boolean> }) {
 }
 
 function EvidenceInspector({ candidate, working, onDecide }: { candidate: ContextCandidate; working: boolean; onDecide: (action: "approve" | "reject", availability?: Availability, explicitSensitiveReplication?: boolean) => void }) {
-  const [availability, setAvailability] = useState<Availability>(candidate.availability || "core_available");
-  const [sensitiveEdgeConfirmed, setSensitiveEdgeConfirmed] = useState(false);
-  useEffect(() => { setAvailability(candidate.availability || "core_available"); setSensitiveEdgeConfirmed(false); }, [candidate]);
-  const sensitiveEdge = availability === "always_available" && candidate.sensitivity !== "normal";
+  const [availability, setAvailability] = useState<Availability>(candidate.availability === "local_only" ? "local_only" : "core_available");
+  useEffect(() => { setAvailability(candidate.availability === "local_only" ? "local_only" : "core_available"); }, [candidate]);
   return (
     <div className="inspector-inner" key={candidate.id}>
       <div className="inspector-title"><span className="eyebrow">Candidate</span><KindLabel value={candidate.kind} /><h2>{candidate.content}</h2></div>
@@ -365,10 +354,9 @@ function EvidenceInspector({ candidate, working, onDecide }: { candidate: Contex
         <div><dt>Confidence</dt><dd>{Math.round(candidate.confidence * 100)}%</dd></div><div><dt>Submitted</dt><dd>{formatDate(candidate.created_at)}</dd></div>
       </dl>
       <section className="evidence"><span className="eyebrow">Source evidence</span><blockquote>{candidate.source_excerpt || "No excerpt was included. Open the source record for full provenance."}</blockquote><p><Fingerprint size={14} /> {candidate.source_service ?? "Model-assisted ingestion"}</p></section>
-      <label className="field-label">Availability<select value={availability} onChange={(event) => { setAvailability(event.target.value as Availability); setSensitiveEdgeConfirmed(false); }}><option value="local_only">Local only</option><option value="core_available">Core available</option><option value="always_available">Always available via Edge</option></select></label>
-      {availability === "always_available" ? <p className="field-help"><Cloud size={14} /> The full approved context content and limited metadata will be readable by Edge and authorized AI apps.</p> : null}
-      {sensitiveEdge ? <label className="sensitive-consent"><input type="checkbox" checked={sensitiveEdgeConfirmed} onChange={(event) => setSensitiveEdgeConfirmed(event.target.checked)} /><span><strong>Share this sensitive record through Edge</strong><small>I understand the hosted Edge and each AI app I authorize can read its full context content.</small></span></label> : null}
-      <div className="decision-bar"><button className="secondary-button danger" disabled={working} onClick={() => onDecide("reject")}>Reject</button><button className="primary-button" disabled={working || (sensitiveEdge && !sensitiveEdgeConfirmed)} onClick={() => onDecide("approve", availability, sensitiveEdgeConfirmed)}><Check size={16} /> Approve</button></div>
+      <label className="field-label">Availability<select value={availability} onChange={(event) => setAvailability(event.target.value as Availability)}><option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
+      <p className="field-help"><MonitorSmartphone size={14} /> Mobile and other computers connect directly to Core; no context copy is sent to a hosted service.</p>
+      <div className="decision-bar"><button className="secondary-button danger" disabled={working} onClick={() => onDecide("reject")}>Reject</button><button className="primary-button" disabled={working} onClick={() => onDecide("approve", availability, false)}><Check size={16} /> Approve</button></div>
     </div>
   );
 }
@@ -398,9 +386,7 @@ function ContextView() {
 
   async function changeAvailability(value: Availability) {
     if (!selected) return;
-    const sensitiveEdge = value === "always_available" && selected.sensitivity !== "normal";
-    if (sensitiveEdge && !window.confirm("Share this sensitive record through Edge? Its full context content will be readable by the hosted Edge and each AI app you authorize.")) return;
-    try { const updated = await api.updateAvailability(selected.id, value, sensitiveEdge); setSelected(updated); setRecords((items) => items.map((item) => item.id === updated.id ? updated : item)); }
+    try { const updated = await api.updateAvailability(selected.id, value, false); setSelected(updated); setRecords((items) => items.map((item) => item.id === updated.id ? updated : item)); }
     catch (caught) { setError(errorMessage(caught)); }
   }
 
@@ -409,7 +395,7 @@ function ContextView() {
       <section className="context-results">
         <form className="search-row" onSubmit={(event) => { event.preventDefault(); void search(); }}>
           <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search decisions, preferences, people…" /></label>
-          <select aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(event.target.value as Availability | "")}><option value="">All availability</option><option value="always_available">Always available</option><option value="core_available">Core available</option><option value="local_only">Local only</option></select>
+          <select aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(event.target.value as Availability | "")}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
           <button className="primary-button" type="submit">Search</button>
         </form>
         {error ? <Notice kind="error">{error}</Notice> : null}
@@ -425,7 +411,7 @@ function ContextView() {
           <div className="inspector-inner" key={selected.id}>
             <span className="eyebrow">Approved record</span><h2>{selected.content}</h2>
             <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Source</dt><dd>{selected.source_service ?? "Unknown"}</dd></div></dl>
-            <label className="field-label">Availability<select value={selected.availability} onChange={(event) => void changeAvailability(event.target.value as Availability)}><option value="local_only">Local only</option><option value="core_available">Core available</option><option value="always_available">Always available via Edge</option></select></label>
+            <label className="field-label">Availability<select value={selected.availability} onChange={(event) => void changeAvailability(event.target.value as Availability)}>{selected.availability === "always_available" ? <option value="always_available">Legacy availability — change to Core online</option> : null}<option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
             <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p><time>{formatDate(version.updated_at)}</time></div>)}</section>
             <p className="hash">SHA-256 · {selected.content_hash}</p>
           </div>
@@ -516,7 +502,13 @@ function ConnectionsView() {
         </div>}
       </section>
 
-      <EdgeSetupPanel />
+      <section className="section-block connections-section">
+        <div className="section-heading"><div><h2>Phone and tablet</h2><p>Mobile devices connect to Core directly. All The Context does not create or require a hosted copy.</p></div></div>
+        <div className="connection-overview">
+          <span className="connection-overview-icon"><MonitorSmartphone size={21} /></span>
+          <div><strong>Core must be online and securely reachable.</strong><p>Core remains private on <code>127.0.0.1</code> by default. This beta will never open a public port or upload context automatically; guided secure remote pairing is still pending.</p></div>
+        </div>
+      </section>
 
       <details className="advanced-clients">
         <summary>Advanced access and credentials <ChevronRight size={15} /></summary>
@@ -526,327 +518,6 @@ function ConnectionsView() {
   );
 }
 
-function EdgeSetupPanel() {
-  const [edge, setEdge] = useState<EdgeStatus | null>(null);
-  const [prepared, setPrepared] = useState<EdgePrepareResult | null>(null);
-  const [edgeUrl, setEdgeUrl] = useState("");
-  const [ownerUrl, setOwnerUrl] = useState<string | null>(null);
-  const [edgeClients, setEdgeClients] = useState<EdgeAuthorizedClient[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [working, setWorking] = useState<string | null>(null);
-  const [forgetPhrase, setForgetPhrase] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const result = await api.edgeStatus();
-      setEdge(result);
-      setEdgeUrl((current) => current || result.edge_url || "");
-      setError(null);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  const loadEdgeClients = useCallback(async () => {
-    try {
-      setEdgeClients((await api.edgeClients()).items);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    }
-  }, []);
-  useEffect(() => {
-    if (edge?.configured && edge.credential_available && edge.mcp_url) void loadEdgeClients();
-  }, [edge?.configured, edge?.credential_available, edge?.mcp_url, loadEdgeClients]);
-
-  async function prepare() {
-    setWorking("prepare");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.prepareEdge();
-      setPrepared(result);
-      setEdge(result);
-      setNotice("Your expiring, public-key-bound Edge claim is ready.");
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function copy(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setNotice(`${label} copied.`);
-      setError(null);
-    } catch {
-      setError("Copy was blocked by the browser. Select the value and copy it manually.");
-    }
-  }
-
-  async function downloadDeploymentFile() {
-    setWorking("deployment-file");
-    setError(null);
-    try {
-      const blob = await api.downloadEdgeDeploymentEnv();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "setup.env";
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setNotice("One-time Edge claim downloaded. Upload it to Render, then delete the file.");
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  function downloadRecoveryCode() {
-    if (!prepared) return;
-    const blob = new Blob([`${prepared.recovery_code}\n`], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "all-the-context-edge-recovery.txt";
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setNotice("Recovery code downloaded. Store it somewhere private, separate from the hosting account.");
-  }
-
-  async function pair(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWorking("pair");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.connectEdge(edgeUrl);
-      setEdge(result);
-      setNotice(result.synchronization.state === "ready" ? "Edge is paired and current." : "Edge is paired; synchronization will retry automatically.");
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function sync() {
-    setWorking("sync");
-    setError(null);
-    try {
-      const result = await api.syncEdge();
-      setEdge(result);
-      if (result.synchronization.state === "ready") setNotice("Edge is current.");
-      else if (result.synchronization.error) setError(result.synchronization.error);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function secureStorage() {
-    setWorking("secure-storage");
-    setError(null);
-    try {
-      const result = await api.secureEdgeStorage();
-      setEdge(result);
-      setNotice("Edge credentials are now protected by the operating-system credential store.");
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function createOwnerLink() {
-    const ownerWindow = window.open("about:blank", "atc-edge-owner");
-    if (ownerWindow) ownerWindow.opener = null;
-    setWorking("owner");
-    setError(null);
-    try {
-      const result = await api.edgeOwnerLink();
-      setOwnerUrl(result.url);
-      if (ownerWindow) {
-        ownerWindow.location.replace(result.url);
-        setNotice("Secure Edge setup opened in a new window. The fallback link expires in five minutes.");
-      } else {
-        setNotice("Secure sign-in link created. Open the fallback link below within five minutes.");
-      }
-    } catch (caught) {
-      if (ownerWindow) ownerWindow.close();
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function revokeEdgeClient(client: EdgeAuthorizedClient) {
-    if (!window.confirm(`Disconnect ${client.name} from your Edge?`)) return;
-    setWorking(`revoke:${client.id}`);
-    setError(null);
-    try {
-      await api.revokeEdgeClient(client.id);
-      setEdgeClients((items) => items.filter((item) => item.id !== client.id));
-      setNotice(`${client.name} was disconnected.`);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function approveEdgeClient(client: EdgeAuthorizedClient) {
-    if (!window.confirm(`Allow ${client.name} to request core-available context while Core is online? Local-only context remains blocked.`)) return;
-    setWorking(`approve:${client.id}`);
-    setError(null);
-    try {
-      await api.approveEdgeClient(client);
-      setEdgeClients((items) => items.map((item) => item.id === client.id ? { ...item, core_approved: true } : item));
-      setNotice(`${client.name} can now request approved core-available context while Core is online.`);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function decommissionEdge() {
-    if (!window.confirm("Remove active hosted Edge records and disconnect every remote AI app? This does not delete hosting-provider disks or backups. Your local Core is not deleted.")) return;
-    setWorking("decommission");
-    setError(null);
-    try {
-      await api.decommissionEdge();
-      setEdgeClients([]);
-      setOwnerUrl(null);
-      setPrepared(null);
-      setEdgeUrl("");
-      setNotice("Edge removed all active records and revoked remote access. Now delete the hosted service, disk, and provider backups under your host's retention policy.");
-      await load();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  async function forgetLocalEdge() {
-    if (forgetPhrase !== "DELETE HOSTED EDGE") return;
-    setWorking("forget");
-    setError(null);
-    try {
-      const result = await api.forgetEdge();
-      setEdge(result);
-      setPrepared(null);
-      setOwnerUrl(null);
-      setEdgeClients([]);
-      setEdgeUrl("");
-      setForgetPhrase("");
-      setNotice("Local Edge recovery information was forgotten. No remote deletion was claimed.");
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setWorking(null);
-    }
-  }
-
-  const connected = Boolean(edge?.edge_url && edge.mcp_url);
-  const canManage = Boolean(edge?.credential_available);
-  const deployUrl = prepared?.deployment?.deploy_url ?? edge?.deployment?.deploy_url;
-
-  return (
-    <section className={`edge-setup edge-setup--${edge?.state ?? "loading"}`}>
-      <div className="edge-setup-heading">
-        <span className="integration-icon integration-icon--cloud"><Cloud size={21} /></span>
-        <div>
-          <span className="eyebrow">Away from this computer</span>
-          <h2>Use your context everywhere</h2>
-          <p>Always-available context works while Core is off. When Core is online, authorized core-available retrieval travels through an outbound-only channel; local-only context never leaves this computer.</p>
-        </div>
-        <span className={`integration-state ${edge?.state === "ready" ? "integration-state--connected" : edge?.state === "degraded" ? "integration-state--waiting" : ""}`}>
-          <span />{edge?.state === "ready" ? "Current" : edge?.state === "degraded" ? "Needs repair" : connected ? "Paired" : edge?.state === "prepared" ? "Setup started" : "Not set up"}
-        </span>
-      </div>
-
-      {error ? <Notice kind="error">{error}</Notice> : null}
-      {notice ? <Notice kind="success"><Check size={16} /> {notice}</Notice> : null}
-      {edge?.last_error ? <Notice kind="error">{edge.last_error}</Notice> : null}
-      {edge?.credential_storage === "local app-data fallback" ? <div className="edge-credential-warning"><ShieldCheck size={18} /><div><strong>Edge secrets are using the development fallback.</strong><p>The replication secret, token, and recovery code are in your per-user app-data folder because the operating-system credential store was unavailable. Secure the computer before deploying.</p></div><button className="secondary-button" disabled={working !== null} onClick={() => void secureStorage()}>{working === "secure-storage" ? "Retrying..." : "Retry secure storage"}</button></div> : null}
-      {loading ? <LoadingRows /> : null}
-
-      {!loading && !connected && !prepared ? (
-        <div className="edge-intro">
-          <div><strong>Set it up here once.</strong><p>The app creates the credentials, verifies the deployed service, and keeps it synchronized. Always-on hosting is estimated at ${edge?.deployment.estimated_monthly_cost_usd.toFixed(2)}/month before bandwidth.</p></div>
-          <button className="primary-button" onClick={() => void prepare()} disabled={working !== null}>
-            {working === "prepare" ? "Preparing..." : edge?.state === "prepared" ? "Continue setup" : edge?.state === "degraded" ? "Repair Edge setup" : "Set up Edge"}
-          </button>
-        </div>
-      ) : null}
-
-      {!connected && prepared ? (
-        <div className="edge-steps" aria-label="Edge setup steps">
-          <div className="edge-step">
-            <span className="edge-step-number">1</span>
-            <div><strong>Download the one-time Edge claim</strong><p>This file contains only an expiring claim reference and Core public keys—never Core, admin, client, or durable replication credentials. Upload it to Render, then delete the file.</p></div>
-            <button className="secondary-button" disabled={working !== null} onClick={() => void downloadDeploymentFile()}>{working === "deployment-file" ? "Downloading..." : "Download setup file"}</button>
-          </div>
-          <div className="edge-step">
-            <span className="edge-step-number">2</span>
-            <div><strong>Deploy your personal Edge</strong><p>Open Render, approve the Blueprint, and use Add from .env to upload the downloaded file when setting environment variables. Render requires these account clicks. {prepared.deployment.cost_note}</p></div>
-            {deployUrl ? <a className="secondary-button" href={deployUrl} target="_blank" rel="noreferrer">Open Render <ExternalLink size={14} /></a> : <span className="support-label">A reviewed public Edge image is not available in this build</span>}
-          </div>
-          <div className="edge-step edge-step--recovery">
-            <span className="edge-step-number">3</span>
-            <div className="edge-step-main"><strong>Save the recovery code</strong><p>This approves a new AI app if Core is temporarily unavailable.</p><code className="recovery-code">{prepared.recovery_code}</code></div>
-            <button className="secondary-button" onClick={downloadRecoveryCode}>Download recovery code</button>
-          </div>
-          <form className="edge-pair" onSubmit={(event) => void pair(event)}>
-            <label><span>Edge address</span><input type="url" required value={edgeUrl} onChange={(event) => setEdgeUrl(event.target.value)} placeholder="https://your-edge.example" autoComplete="url" /></label>
-            <button className="primary-button" type="submit" disabled={working !== null}>{working === "pair" ? "Verifying..." : "Verify and pair"}</button>
-            <p>Core checks a cryptographic proof before it sends any credential or context.</p>
-          </form>
-        </div>
-      ) : null}
-
-      {connected && edge ? (
-        <div className="edge-connected">
-          <div className="edge-endpoint"><div><span>Remote MCP address</span><code>{edge.mcp_url}</code></div><button className="secondary-button" onClick={() => void copy(edge.mcp_url ?? "", "MCP address")}><Copy size={14} /> 2. Copy address</button></div>
-          <div className="edge-connect-guide"><span className="eyebrow">One-time AI app setup</span><strong>ATC opens approval; your AI provider requires the final account clicks.</strong><ol><li>Open the secure Edge approval window below.</li><li>Enter the Remote MCP address in the provider's web or desktop settings.</li><li>Approve OAuth. Only providers marked Web + mobile can use that connection on mobile.</li></ol></div>
-          <div className="edge-actions">
-            <button className="secondary-button" disabled={working !== null || !canManage} onClick={() => void sync()}><RefreshCw size={14} />{working === "sync" ? "Syncing..." : "Sync now"}</button>
-            <button className="primary-button" disabled={working !== null || !canManage} onClick={() => void createOwnerLink()}>{working === "owner" ? "Creating link..." : "1. Open secure approval"}</button>
-            {ownerUrl ? <a className="owner-link" href={ownerUrl} target="_blank" rel="noreferrer">Open secure Edge sign-in <ExternalLink size={14} /></a> : null}
-          </div>
-          <div className="provider-list">
-            {edge.providers.map((provider) => <div className="provider-row" key={provider.id}>
-              <div><strong>{provider.name}</strong><p>{provider.detail}</p><ol className="provider-steps">{provider.setup_steps.map((step) => <li key={step}>{step}</li>)}</ol></div>
-              <span className={`support-label ${provider.mobile_supported ? "support-label--yes" : ""}`}>{provider.mobile_supported ? "Web + mobile" : "Web only"}</span>
-              <a className="secondary-button" href={provider.setup_url} target="_blank" rel="noreferrer">3. Open {provider.name} <ExternalLink size={14} /></a>
-            </div>)}
-          </div>
-          <div className="edge-authorizations">
-            <div><strong>Authorized remote apps</strong><p>After provider OAuth, approve Core access here. Core ignores identities and scopes asserted by Edge unless they match this local approval. Disconnecting revokes both.</p></div>
-            {edgeClients.length ? edgeClients.map((client) => <div className="provider-row" key={client.id}>
-              <div><strong>{client.name}</strong><p>{client.scopes.join(" · ")} · authorized {formatDate(client.authorized_at)}</p></div>
-              <span className={`support-label ${client.core_approved ? "support-label--yes" : ""}`}>{client.core_approved ? "Core approved" : "Edge only"}</span>
-              {!client.core_approved ? <button className="secondary-button" disabled={working !== null} onClick={() => void approveEdgeClient(client)}>{working === `approve:${client.id}` ? "Approving..." : "Allow online Core"}</button> : null}
-              <button className="secondary-button" disabled={working !== null} onClick={() => void revokeEdgeClient(client)}>{working === `revoke:${client.id}` ? "Disconnecting..." : "Disconnect"}</button>
-            </div>) : <p className="quiet-copy">No remote AI app has been authorized yet.</p>}
-          </div>
-          <dl className="edge-metrics"><div><dt>Last sequence</dt><dd>{edge.last_sequence}</dd></div><div><dt>Waiting to send</dt><dd>{edge.pending_events}</dd></div><div><dt>Last sync</dt><dd>{formatDate(edge.last_success_at)}</dd></div></dl>
-          <details className="edge-danger"><summary>Remove this Edge</summary><p>Remove active records and revoke every remote app first, then delete the service, persistent disk, and backups in your hosting account.</p><button className="secondary-button" disabled={working !== null || !canManage} onClick={() => void decommissionEdge()}>{working === "decommission" ? "Removing..." : "Remove active data and disconnect"}</button></details>
-        </div>
-      ) : null}
-      {edge?.state === "degraded" || edge?.state === "prepared" ? <details className="edge-forget"><summary>{edge.state === "prepared" ? "Cancel Edge setup" : "I already deleted the hosted service"}</summary><p>{edge.state === "prepared" ? "Continue only if you never created the hosted service, or after deleting its service, persistent disk, and provider backups. Core cannot verify a deployment until it is paired." : "This does not contact or remove anything from Edge. Use it only after deleting the hosted service, its persistent disk, and provider backups."} It removes the local recovery credential only after every credential store confirms deletion.</p><label><span>Type DELETE HOSTED EDGE to continue</span><input value={forgetPhrase} onChange={(event) => setForgetPhrase(event.target.value)} /></label><button className="secondary-button danger" disabled={working !== null || forgetPhrase !== "DELETE HOSTED EDGE"} onClick={() => void forgetLocalEdge()}>{working === "forget" ? "Forgetting..." : edge.state === "prepared" ? "Cancel local Edge setup" : "Forget local Edge connection"}</button></details> : null}
-    </section>
-  );
-}
 
 function ClientsView({ embedded = false }: { embedded?: boolean }) {
   const [clients, setClients] = useState<ClientRegistration[]>([]);
@@ -868,18 +539,6 @@ function ClientsView({ embedded = false }: { embedded?: boolean }) {
   );
 }
 
-function RelayView({ fallback }: { fallback?: ReplicationStatus }) {
-  const [status, setStatus] = useState<ReplicationStatus | undefined>(fallback);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => { try { setStatus(await api.replication()); setError(null); } catch (caught) { if (!fallback) setError(errorMessage(caught)); } }, [fallback]);
-  useEffect(() => { void load(); }, [load]);
-  return (
-    <div className="narrow-column">{error ? <Notice kind="error">{error}</Notice> : null}<section className="relay-status"><div className="relay-orbit" aria-hidden="true"><span /><Cloud size={28} /></div><span className="eyebrow">Connection</span><h2>{status?.state === "ready" ? "Edge is current" : status?.state === "degraded" ? "Edge needs attention" : "Edge is not connected"}</h2><p>{status?.relay_url ?? "No hosted endpoint configured"}</p></section>
-      <dl className="metric-line"><div><dt>Last sequence</dt><dd>{status?.last_sequence ?? 0}</dd></div><div><dt>Pending events</dt><dd>{status?.pending_events ?? 0}</dd></div><div><dt>Last successful push</dt><dd>{formatDate(status?.last_success_at)}</dd></div></dl>
-      {status?.last_error ? <Notice kind="error">{status.last_error}</Notice> : null}<p className="quiet-copy">Core pushes queued events automatically while it is running. Only approved <code>always_available</code> records become readable Edge context. Raw sources stay local; remote proposals use the bounded encrypted transport queue until Core imports them.</p>
-    </div>
-  );
-}
 
 function AuditView() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -924,7 +583,7 @@ function BackupView({ status }: { status: CoreStatus | null }) {
       {notice ? <Notice kind="success">{notice}</Notice> : null}{error ? <Notice kind="error">{error}</Notice> : null}
       <p className="quiet-copy">The passphrase is used only for this request and is not saved. Restore remains a deliberate CLI operation in this release.</p></section>
       <dl className="metric-line"><div><dt>Approved records</dt><dd>{status?.approved_records ?? "—"}</dd></div><div><dt>Raw sources</dt><dd>{status?.sources ?? "—"}</dd></div><div><dt>Core database</dt><dd>{formatBytes(status?.database_size_bytes)}</dd></div></dl>
-      <Notice kind="info"><CircleHelp size={16} /> Keep exports private. They may contain the complete source material that Edge intentionally excludes.</Notice>
+      <Notice kind="info"><CircleHelp size={16} /> Keep exports private. They may contain complete source material, provenance, history, and permissions.</Notice>
     </div>
   );
 }
@@ -1005,7 +664,10 @@ function UpdatesView() {
 }
 
 function KindLabel({ value }: { value: string }) { return <span className="kind-label">{value.replaceAll("_", " ")}</span>; }
-function AvailabilityLabel({ value }: { value: Availability }) { return <span className={`availability availability--${value}`}>{value.replaceAll("_", " ")}</span>; }
+function AvailabilityLabel({ value }: { value: Availability }) {
+  const label = value === "local_only" ? "this device only" : value === "core_available" ? "Core online" : "legacy availability";
+  return <span className={`availability availability--${value}`}>{label}</span>;
+}
 function Notice({ kind, children }: { kind: "success" | "error" | "info"; children: ReactNode }) { return <div className={`notice notice--${kind}`} role={kind === "error" ? "alert" : "status"}>{children}</div>; }
 function LoadingRows() { return <div className="loading-rows" aria-label="Loading"><span /><span /><span /></div>; }
 function EmptyState({ icon, title, body }: { icon: ReactNode; title: string; body: string }) { return <div className="empty-state">{icon}<strong>{title}</strong><p>{body}</p></div>; }

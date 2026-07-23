@@ -1,5 +1,9 @@
 # Replication protocol
 
+> **Deferred:** V1 has no replication service or hosted Edge. This document
+> preserves the experimental event contract for compatibility/research only;
+> Core does not start its worker and no supported deployment consumes it.
+
 Core writes one event sequence per vault in the same transaction as canonical
 state changes. Events use stable IDs, monotonic sequence numbers, canonical
 JSON payload hashes, and HMAC-SHA256 authentication with a Relay-specific

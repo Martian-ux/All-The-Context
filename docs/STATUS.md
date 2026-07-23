@@ -1,223 +1,80 @@
 # Project status
 
-- Beta milestone: the Wave 1 release/channel, cross-platform packaging, and
-  public Edge workstreams for `0.1.0-beta.1` are integrated locally on
-  `codex/beta1-integration` from the green public-main baseline `a2e50ab`. The
-  final release commit has not been frozen. No beta release or Edge image has
-  been published, no provider has been deployed, and no production private key
-  has been created. The acceptance contract is
-  `docs/operations/BETA_ACCEPTANCE.md`.
+## Current milestone
 
-- Current phase: first vertical slice, release/CI foundation, release-candidate
-  UX/backup repair, Retrieval V2 Phase 1, and Core memory integrity/purge are
-  implemented. The secure Edge/mobile forwarding foundation, signed desktop
-  update verification, automatic transactional Windows installation, and
-  irreversible Edge purge parity are integrated. Direct unsigned Windows,
-  macOS, and Linux package formats, exact release-asset inventory enforcement,
-  and the manual digest-bound Edge deployment handoff are also integrated.
-- Completed: architecture and protocols; authoritative Core; restricted Edge;
-  signed event replication; source, candidate, approval, correction,
-  supersession, and tombstone lifecycle; nine MCP tools over STDIO and
-  Streamable HTTP; generic import; review dashboard; encrypted export/restore;
-  native first-run wizard with automatic timezone detection; installation-aware,
-  reversible Codex and Claude Desktop configuration bound to the exact Core
-  vault; separate least-privilege AI-client identities; validated connection
-  status and disconnect/revocation;
-  automatic upgrade repair; verified-Core challenge and one-use opaque browser
-  handoff without credential copy/paste or durable browser credentials;
-  managed MCP self-healing after Core stops; per-user startup; Windows Start
-  Menu/Desktop launchers and uninstall registration; owner-gated hosted Edge
-  enrollment, pairing, background synchronization, OAuth/PKCE MCP, recovery,
-  outbound-only encrypted Core retrieval forwarding, remote-app approval and
-  revocation, and terminal decommissioning; self-repairing source
-  bootstrap; accessible responsive navigation; one-click complete encrypted
-  dashboard backup with bounded temporary resources; demonstration and
-  automated tests; Retrieval V2 Phase 1 with an
-  offline deterministic 1k/10k benchmark, frozen V1 baseline, policy-before-
-  ranking invariant, bounded lexical channels/RRF, improved context compiler,
-  administrator diagnostics, bounded opt-in 50k profile, and passing V2 gates;
-  cross-platform release workflows with strict offline-signed OTA metadata;
-  late-bound typed Windows APIs that keep shared modules checkable against all
-  three target platforms;
-  and a fail-closed native updater with stable/beta preferences, bounded signed
-  checks, verified staging, dashboard controls, an independent journaled
-  Windows recovery helper, and binary/database rollback; and signed ordered
-  Edge purge application with opaque
-  replay barriers and resumable physical SQLite compaction.
-- Current combined evidence on Windows 11 and Python 3.12: 330 Python and 19
-  dashboard tests pass. Coverage includes forged-Core refusal, cross-Core
-  browser-session isolation, terminal Edge races, bounded remote registration,
-  permissions before pagination, credential/config cleanup, and real MCP
-  initialize/list/call plus Core crash/restart recovery. Ruff formatting/lint,
-  strict mypy, dashboard type checks/tests/build, npm audit, wheel/sdist build,
-  Docker Compose parsing, actionlint 1.7.12, and the eight-step offline Edge
-  demonstration pass. A fresh Linux Edge image builds and its real container
-  smoke proves inert pre-claim behavior, the bounded claim route, Core
-  authority, and non-root UID 10001. A real Windows Credential Manager
-  write/read/delete round trip and HKCU per-user startup install/remove also
-  pass. The rebuilt frozen artifact passes resource diagnostics and an isolated
-  real install/private-browser-handoff/MCP/Core-restart/reopen/shutdown/
-  uninstall smoke. That smoke specifically proves a managed MCP client waits
-  for the prior Core process lock before self-healing after shutdown. It also
-  injects a crash after binary replacement, resumes the journal, forces a
-  post-migration health failure, restores the prior application, MCP adapter,
-  updater helper, and SQLite database, and restarts Core. Uninstall preserves
-  the vault while removing the app, shortcuts, registration, managed client
-  credential, and temporary data. The direct unsigned Windows `.exe` package,
-  SHA-256 sidecar, warning, and package metadata pass their shell-free PE trust
-  smoke. Pytest isolates credential storage from the host backend; the separate
-  native acceptance script performs the real OS credential round trip.
-  Signed-manifest tamper/revocation/downgrade tests, deterministic native-
-  archive tests, an isolated wheel/sdist build with resource/private-key
-  diagnostics, and release JSON/workflow validation also pass.
-- Integrated memory-integrity/purge evidence includes legacy migration, export
-  resurrection, locked-file, insufficient-disk, restart, API authority,
-  physical-content, replication-contract, Edge propagation, Edge lock/restart,
-  resurrection rejection, and Edge DB/WAL/SHM byte-scan coverage. Ruff
-  formatting/lint, strict mypy, docs checks, and the rebuilt combined dashboard
-  pass.
-- The integrated Edge/mobile slice additionally exercised sealed forwarding-request
-  persistence, memory-only responses with DB/WAL/SHM byte scans, unknown or
-  revoked identity and Edge-asserted admin-scope rejection, claim
-  rotation/replay/restart, outbound-only
-  polling, explicit per-operation SQLite handle release, and local
-  offline/online mobile demonstrations. Real hosting and
-  provider handshakes remain external gaps.
-- OTA integration evidence includes updater unit/API/UI coverage, dashboard
-  type/build/audit checks, wheel/sdist resource diagnostics, and documentation
-  checks. The combined frozen Windows artifact includes the reviewed public-key
-  resource and passes the isolated first-run/browser/MCP/Core-restart/reopen/
-  shutdown/uninstall smoke, including Windows automatic-install capability and
-  the packaged crash/resume/health-failure/database-rollback transaction.
-- OTA hardening serializes every preference/state mutation, rejects unknown or
-  32-bit architectures, sanitizes malformed transport lengths and persisted
-  state, rejects cross-platform ZIP traversal and Windows alternate-data-stream
-  paths, bounds orphan cleanup, and gives manual-required platforms an
-  authenticated no-store package response that is re-verified without exposing
-  private staging paths. On Windows, a separately packaged helper uses a strict
-  per-user journal, cross-process lock, RunOnce recovery, a stopped-Core final
-  backup, replacement diagnostics, a real one-shot loopback Core health check,
-  and idempotent commit/rollback. macOS and Linux remain manual-required.
-- CI authored: Python smoke/test and package/resource diagnostic jobs for
-  Windows, macOS, and Linux; dashboard jobs for Node 20 and 22; hosted Edge
-  image/config build; native desktop build, resource diagnostics, bounded
-  packaged first-run/MCP smoke, deterministic versioned archives, checksums,
-  and SPDX metadata. Draft-only candidate workflows enforce an exact GitHub
-  asset allowlist before and after publication; digest-addressed GHCR workflows
-  remain manual-only. The Edge handoff binds the digest-pinned Blueprint to the
-  permanent template from the reviewed image source commit and a one-use
-  deployment branch. A strict signed OTA manifest contract, offline signing/
-  verification tooling, and stable/beta operator policy are present. The
-  updater consumes only operator-configured HTTPS channel endpoints and a
-  packaged reviewed public keyring; both production channel URLs and that
-  keyring remain intentionally empty until release approval.
-- Blockers: none for evaluating the vertical slice locally.
+The target remains an unsigned `0.1.0-beta.1` community release. The V1
+single-Core boundary is being reviewed on `codex/core-only-v1`. No beta release
+has been published and no production release private key has been created.
 
-## Core memory-integrity and purge status
+V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
+Edge, third-party runtime deployment, offline mobile replicas, and provider
+hosting setup are no longer part of the V1 product or acceptance gate. Mobile
+means connecting directly to Core while Core is online.
 
-- Core migration 003, public models, API, CLI, import/export, and storage now
-  carry optional normalized entity/attribute slot metadata. Model-inferred
-  slots remain candidates until explicit approval. Current approved slot
-  occupants produce deterministic, separate duplicate and conflict groups;
-  no winner is selected automatically.
-- Administrator-only record/source purge uses an exact target-bound phrase,
-  one transactional logical scrub, opaque hash-free replay barriers, an ordered
-  content-free `record_purged` event, and crash-resumable secure-delete/WAL/
-  VACUUM compaction. Ordinary delete remains history-preserving.
-- The bounded review/purge admin API and CLI are implemented. Dashboard group
-  review is deferred to avoid collision with the Edge wizard. Relay migration
-  0009 applies the opaque purge event transactionally, removes live/index/
-  deletion/history-fingerprint state, and retains only an opaque replay barrier.
-  It then records a pending compaction that is retried at startup and status
-  checks. Core advances the replication checkpoint but reports Edge sync as
-  degraded until that physical phase succeeds. Online `core_available`
-  forwarding is implemented and does not change purge semantics.
+## Implemented
 
-## Retrieval V2 status
+- Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,
+  migrations, portable locking, clean shutdown/restart, and loopback default.
+- Source, candidate, approval/rejection, correction, supersession, tombstone,
+  history, permission, provenance, validity, and audit lifecycles.
+- Idempotent/resumable ingestion sessions, coverage reports, model proposals,
+  and generic JSON/JSONL/Markdown import.
+- Required MCP tools over HTTP and a managed STDIO adapter; one-click local
+  Codex and Claude Desktop configuration bound to the exact vault.
+- Bundled dashboard for import, review, search, local connections, encrypted
+  backup, audit, and signed-update controls.
+- Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
+  app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
+- Deterministic policy-first lexical retrieval and context compilation without
+  a vector dependency.
+- Offline-signed Ed25519 update metadata, immutable candidate assets,
+  checksums, SBOM/provenance, and Windows transactional update/rollback code.
 
-- Phase 1 is implemented. Hard policy selection precedes bounded phrase/AND and
-  broad OR/BM25 channels; reciprocal-rank fusion uses bounded lexical and
-  structured boosts with recency limited to tie-breaking. The existing MCP and
-  default API response contracts are unchanged.
-- A failing ranker spy and administrator-diagnostic regression prove denied,
-  allowlisted-away, deleted, expired, and superseded records cannot enter
-  scoring or explanations.
-- Two deterministic 1k/10k runs passed all gates: exact Recall@5 `1.0` (V1
-  `1.0`), MRR `0.777778` (V1 `0.666667`, +16.67%), multi-term empty rate `0.0`
-  (V1 `0.5`), and zero policy violations. 10k warm p95 was `73.13693 ms` and
-  `75.00416 ms`, below the `150 ms` gate.
-- Context redundancy improved from `0.25` to `0.0`; frozen-gold coverage moved
-  from `1.0` to `0.75` because one declared near-duplicate is intentionally
-  suppressed.
+## V1 Edge removal
 
-## Explicitly unexercised or deferred
+- Edge navigation and setup were removed from the dashboard.
+- First run no longer offers or opens hosted web/mobile setup.
+- Dashboard status no longer calls the Edge API.
+- New approvals expose only `local_only` and `core_available`.
+- Core no longer starts the legacy Edge network worker.
+- The GHCR Edge workflow, Render templates, and Relay container CI job were
+  removed from the V1 path.
+- Experimental Relay/Edge modules and explicit cleanup APIs remain dormant so
+  earlier engineering state can be inspected/decommissioned without data loss.
+  They are not a supported V1 feature.
 
-- Semantic retrieval, typo/general paraphrase recovery, and broader lexical
-  vocabulary expansion remain deferred. Phase 1 uses a small inspectable alias
-  table and has no embeddings or graph database. The benchmark is synthetic and
-  timing evidence is local, not a production workload or cross-platform claim.
-- Core and Edge live-database compaction cannot erase filesystem/provider
-  snapshots, SSD remanence, external backups, user-copied exports, or other
-  copies. macOS/Linux locked-file, disk-pressure, checkpoint, and VACUUM
-  behavior is covered by portable design and tests but has not yet been observed
-  on those operating systems.
-- Temporal precision remains `0.5`; diversity and near-duplicate thresholds
-  need evaluation on a larger sanitized judgment set before further tuning.
+## Remaining beta gates
 
-- The public GitHub repository is `Martian-ux/All-The-Context`. Hosted Actions
-  evidence is recorded separately from local evidence; macOS and Linux behavior
-  is not claimed as observed until their jobs complete successfully.
-- Community artifacts intentionally remain unsigned at the native publisher
-  layer. Paid Authenticode and Apple notarization are out of scope; first-install
-  warnings must remain explicit. Ed25519 manifest signing, immutable release
-  assets, hashes, SBOM/provenance, and a real N-1 update drill remain required.
-- No production release key has been created or configured. `release/keys.json`
-  intentionally trusts no keys until an offline key ceremony and public-key
-  review occur. Candidate workflows create drafts only; production promotion
-  remains a human/offline operation.
-- The packaged Windows engineering build exposes automatic install through its
-  independent recovery helper and passed a same-version frozen transaction
-  drill with injected crash and failed-health rollback. No production key,
-  channel endpoint or real Ed25519-signed N-1 release has been
-  exercised, so this is not a public-production OTA claim. macOS and Linux
-  continue to verify and stage downloads but stop in a precise
-  manual-install-required state until their native cutovers are implemented and
-  observed.
-- The Edge uses SQLite in this slice. A PostgreSQL backend is an intentional
-  hosted-deployment follow-up.
-- Docker Compose parses successfully. A fresh Linux Edge image and container
-  startup/claim-boundary smoke passed locally. This is not evidence for a
-  production host or other Linux desktop behavior.
-- A real Windows Credential Manager round trip was exercised. macOS Keychain
-  and Linux secret-service acceptance remain unexercised; persistence
-  verification and the explicit local app-data fallback were also exercised in
-  the packaged smoke.
-- The Codex and Claude Desktop configuration writers, exact-vault binding, and
-  missing-app refusal were exercised locally. A fresh Codex MCP adapter reached
-  the active non-default Testing vault and completed initialize/list/status;
-  Claude Desktop was not installed or launched for an end-to-end handshake.
-  Grok support also remains unimplemented.
-- The provider-neutral hosted Edge OAuth/MCP path is implemented and exercised
-  with SDK/TestClient integrations. No public Edge image or
-  `ATC_EDGE_DEPLOY_URL` is configured, so the dashboard truthfully reports that
-  deployment is unavailable in this development build. Publishing those Edge
-  assets is required before hosted Edge setup can be one-click. Claude custom
-  connectors linked through its current web/Desktop flow can then be used from
-  Claude mobile, subject to plan and workspace-admin policy. ChatGPT
-  developer-mode MCP apps are currently web-only; real ChatGPT and Claude
-  hosted handshakes remain unobserved.
-- Edge provides the offline `always_available` projection and proposal queue.
-  It also forwards authorized `core_available` retrieval through Core-initiated
-  outbound polling, without exposing loopback Core. Real hosted/NAT observation
-  remains pending; local integration tests exercise the same HTTP contracts.
-  Forwarded queries are sealed to Core before Edge persistence, responses are
-  memory-only, and Core requires a locally approved remote-client identity.
-- New Edge deployments use an expiring public-key claim package. The Edge is
-  inert before claim, generates durable replication credentials itself, returns
-  them encrypted to Core, and revokes claim capability after acknowledgement.
-- The local SQLite vault is not application-encrypted at rest; operators rely
-  on operating-system account and disk protection. Portable exports are
-  passphrase-encrypted.
-- Dashboard restore is intentionally deferred: the release candidate keeps the
-  existing deliberate CLI restore until a stopped-Core validation, rollback,
-  verification, and explicit vault-cutover flow is designed and tested.
+- Observe macOS and Linux native credential/startup/package acceptance on their
+  real CI runners.
+- Complete the offline public-key ceremony and publish only the reviewed public
+  key.
+- Freeze one exact commit and pass the full hosted Windows/macOS/Linux and
+  dashboard matrix.
+- Exercise a real signed beta1-to-beta2 Windows update and rollback.
+- Design and test secure direct-Core mobile pairing before claiming one-click
+  mobile access. Core remains `127.0.0.1` by default in the meantime.
+
+## Current local evidence
+
+- Full Python suite: 328 passed; four Windows-host symlink tests skipped because
+  this account cannot create the required links.
+- Dashboard: 17 tests passed; type check, production build, and high-severity
+  dependency audit passed.
+- Ruff format/lint, strict mypy across 52 source files, documentation-link
+  checks, and the seven-step single-Core demonstration passed.
+- The packaged dashboard contains the direct-Core mobile boundary and contains
+  no Edge setup copy or `/admin/edge` request path.
+- The Python 3.12 Windows frozen application passed resource discovery and the
+  isolated first-run/install, browser handoff, MCP handshake, restart, startup,
+  update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
+  package also passed its platform trust smoke.
+
+## Explicitly unclaimed
+
+- No public beta downloads currently exist.
+- No secure automatic mobile endpoint currently exists.
+- No paid/native publisher signing or Apple notarization is planned for the
+  community beta.
+- The live SQLite vault is not application-encrypted at rest; portable exports
+  are passphrase-encrypted.

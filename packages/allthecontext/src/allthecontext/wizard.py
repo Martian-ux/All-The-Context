@@ -81,7 +81,6 @@ class SetupWizard:
         self.claude_detected = claude_is_detected()
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
         self.configure_claude = tk.BooleanVar(value=self.claude_detected)
-        self.continue_to_remote_setup = tk.BooleanVar(value=True)
         self.start_at_login = tk.BooleanVar(value=True)
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
 
@@ -392,14 +391,6 @@ class SetupWizard:
             enabled=self.claude_detected,
         )
         self._check(
-            "Continue with web & mobile setup",
-            "Opens guided Edge setup next. Always-on hosting uses an external paid account "
-            "(~$7.25/month). Claude custom connectors can extend to mobile after web/Desktop "
-            "setup; ChatGPT developer-mode MCP is currently web-only. Workspace policy may "
-            "gate either connector.",
-            self.continue_to_remote_setup,
-        )
-        self._check(
             "Start Core when I sign in",
             "Runs in your user account; no administrator access or Docker.",
             self.start_at_login,
@@ -526,10 +517,7 @@ class SetupWizard:
                 "Startup",
                 "Enabled for this user" if self.result and self.result.startup else "Manual",
             ),
-            (
-                "Web & mobile",
-                "Guided setup is next" if self.continue_to_remote_setup.get() else "Optional",
-            ),
+            ("Mobile", "Connects directly whenever this Core is online"),
         ]
         for label, value in details:
             row = tk.Frame(summary, bg=PAPER)
@@ -551,12 +539,7 @@ class SetupWizard:
                 wraplength=500,
                 font=("Segoe UI", 8),
             ).pack(fill="x", pady=(18, 0))
-        finish_label = (
-            "Set up web & mobile  →"
-            if self.continue_to_remote_setup.get()
-            else "Open All The Context  →"
-        )
-        self._footer(finish_label, self.finish)
+        self._footer("Open All The Context  →", self.finish)
 
     def show_error(self, error: Exception) -> None:
         self._clear()
@@ -595,7 +578,6 @@ class SetupWizard:
             url = authenticated_dashboard_url(
                 config,
                 access.token,
-                landing_page="connections" if self.continue_to_remote_setup.get() else None,
             )
             opened = open_dashboard(url)
         except Exception as exc:

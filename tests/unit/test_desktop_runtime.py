@@ -25,17 +25,19 @@ from allthecontext.models import ClientCreate
 from allthecontext.storage import CoreStore
 
 
-def test_bundled_dashboard_contains_current_edge_setup() -> None:
+def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
     package_root = Path(allthecontext.__file__).resolve().parent
     web_root = package_root / "web"
     javascript = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted((web_root / "assets").glob("*.js"))
     )
 
-    assert "Use your context everywhere" in javascript
-    assert "/admin/edge/prepare" in javascript
-    assert "Cancel Edge setup" in javascript
-    assert "Web + mobile" in javascript
+    assert "Phone and tablet" in javascript
+    assert "Core must be online and securely reachable" in javascript
+    assert "Use your context everywhere" not in javascript
+    assert "Set up Edge" not in javascript
+    assert "Always available via Edge" not in javascript
+    assert "/admin/edge" not in javascript
     assert "Download encrypted backup" in javascript
     assert "/admin/export" in javascript
     assert "Restore remains a deliberate CLI operation" in javascript

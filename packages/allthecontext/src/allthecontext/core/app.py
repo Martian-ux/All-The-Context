@@ -163,7 +163,6 @@ def create_app(
         await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
         update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
         if not update_health_process:
-            edge_sync.start()
             if (
                 updates.preferences.enabled
                 and updates.preferences.channel in updates.config.manifest_urls
@@ -173,11 +172,9 @@ def create_app(
                 recovery = threading.Timer(1.0, updates.recover_after_restart)
                 recovery.daemon = True
                 recovery.start()
-        try:
-            yield
-        finally:
-            if not update_health_process:
-                edge_sync.stop()
+        # Hosted Edge is outside the V1 product boundary. Keep the legacy manager
+        # available for explicit cleanup calls, but never start its network worker.
+        yield
 
     app = FastAPI(
         title="All The Context Core",
@@ -992,7 +989,6 @@ def create_app(
     @app.get("/v1/admin/integrations")
     def list_integrations(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        edge = edge_status_payload()
 
         def desktop_status(integration_id: str) -> dict[str, Any]:
             if integration_id == "chatgpt_codex":
@@ -1103,14 +1099,14 @@ def create_app(
                 desktop_status("chatgpt_codex"),
                 desktop_status("claude"),
             ],
-            "remote": {
-                "configured": edge["configured"],
-                "state": edge["state"],
-                "edge_mcp_url": edge["mcp_url"],
+            "mobile": {
+                "mode": "direct_core",
+                "requires_core_online": True,
+                "secure_remote_pairing_available": False,
                 "detail": (
-                    "Edge keeps approved always-available context reachable when Core is off."
-                    if edge["configured"]
-                    else "Set up Edge once for cloud clients and supported mobile apps."
+                    "Mobile devices connect directly to the authoritative Core while it is "
+                    "online. This beta keeps Core on loopback by default and does not "
+                    "automatically expose a network port or create a hosted copy."
                 ),
             },
         }
