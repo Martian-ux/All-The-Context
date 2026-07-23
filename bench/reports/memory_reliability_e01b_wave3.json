@@ -1,0 +1,263 @@
+{
+  "coordinator_base": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
+  "determinism": {
+    "receipt_fingerprint": "69a15e008e2ee4751e8aa73c7cdf335ea39905c1007ca4692eea7ea3485338cf",
+    "repeat_deterministic": true,
+    "repeats": 20
+  },
+  "execution_scope": {
+    "complete_capability_coverage": false,
+    "condition": "production_core_at_frozen_coordinator_base",
+    "declared_capability_count": 12,
+    "external_systems_exercised": false,
+    "frozen_base": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
+    "model_calls": 0,
+    "network_calls": 0,
+    "not_exercised_capability_count": 6,
+    "operator_core_connected": false,
+    "production_code_changed": false,
+    "production_path_exercised_capability_count": 6,
+    "python": "3.12",
+    "temporary_isolated_store": true
+  },
+  "experiment": "E01b",
+  "fixture_sha256": "7662895957762753e0dcdea5f7ed28678c2dcf06c3102f4e7d7c8e46aec8029e",
+  "limitations": [
+    "kind filtering is narrower than a generic epistemic-role model",
+    "explicit scope filtering does not establish a project-and-domain hard gate",
+    "production has no explicit derived dependency-lineage relation",
+    "automatic-v1 has no eviction, decay, or procedure-retirement semantics",
+    "public observation paths do not accept caller-selected stable record IDs",
+    "production has no procedure-precondition or applies-to field",
+    "residue inspection covers the isolated SQLite store and its local side files only",
+    "no answer model, protected action, Relay, export restore, or external system ran"
+  ],
+  "privacy": {
+    "external_code": false,
+    "marker_scan_after_compacted_purge": true,
+    "network_access": false,
+    "operator_core_access": false,
+    "raw_context_in_report": false,
+    "real_personal_context": false,
+    "record_or_source_ids_in_report": false,
+    "symbolic_values_only": true,
+    "synthetic": true,
+    "temporary_stores_removed": true
+  },
+  "production_paths": [
+    "CoreStore.add_candidate and RetrievalEngine.search",
+    "CoreStore.add_candidate/begin_ingestion/submit_batch/finish_ingestion and RetrievalEngine.search",
+    "CoreStore.delete_record/restore_record and RetrievalEngine.search",
+    "CoreStore.purge/restore_record/search plus isolated store residue inspection",
+    "RetrievalEngine.search with SearchRequest.kinds",
+    "RetrievalEngine.search with SearchRequest.scopes"
+  ],
+  "receipts": [
+    {
+      "capability": "authority_source_admission",
+      "case_index": 0,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "archive_current_result_count": 0,
+        "archive_final_disposition": "tentative",
+        "archive_initial_disposition": "staged",
+        "local_disposition": "applied"
+      },
+      "reason_code": "SOURCE_ADMISSION_CONFORMS",
+      "reference_scenario_count": 1,
+      "stage": "canonicalize",
+      "status": "pass"
+    },
+    {
+      "capability": "correction_currentness",
+      "case_index": 1,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "current_result_count": 1,
+        "older_observation_disposition": "ignored",
+        "preserved_version_count": 3,
+        "stable_record_identity": true,
+        "stale_result_count": 0
+      },
+      "reason_code": "CURRENTNESS_CORRECTION_CONFORMS",
+      "reference_scenario_count": 2,
+      "stage": "correct_forget",
+      "status": "pass"
+    },
+    {
+      "capability": "kind_constrained_retrieval",
+      "case_index": 2,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "matching_result_count": 1,
+        "nonmatching_result_count": 0,
+        "requested_kind_count": 1,
+        "semantic_boundary": "kind_filter_only"
+      },
+      "reason_code": "KIND_FILTER_CONFORMS",
+      "reference_scenario_count": 1,
+      "stage": "applicability",
+      "status": "pass"
+    },
+    {
+      "capability": "generic_epistemic_role",
+      "case_index": 3,
+      "classification": "fixture_mismatch",
+      "expected_classification": "fixture_mismatch",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_GENERIC_EPISTEMIC_ROLE",
+      "reference_scenario_count": 1,
+      "stage": "applicability",
+      "status": "not_exercised"
+    },
+    {
+      "capability": "explicit_scope_applicability",
+      "case_index": 4,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "cross_scope_result_count": 0,
+        "matching_result_count": 1,
+        "requested_scope_count": 1,
+        "semantic_boundary": "explicit_scope_filter"
+      },
+      "reason_code": "SCOPE_FILTER_CONFORMS",
+      "reference_scenario_count": 1,
+      "stage": "applicability",
+      "status": "pass"
+    },
+    {
+      "capability": "project_domain_hard_gate",
+      "case_index": 5,
+      "classification": "fixture_mismatch",
+      "expected_classification": "fixture_mismatch",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_PROJECT_DOMAIN_HARD_GATE",
+      "reference_scenario_count": 1,
+      "stage": "applicability",
+      "status": "not_exercised"
+    },
+    {
+      "capability": "reversible_delete_restore",
+      "case_index": 6,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "stable_record_identity": true,
+        "visible_after_delete": false,
+        "visible_after_restore": true,
+        "visible_before_delete": true
+      },
+      "reason_code": "REVERSIBLE_DELETE_RESTORE_CONFORMS",
+      "reference_scenario_count": 1,
+      "stage": "correct_forget",
+      "status": "pass"
+    },
+    {
+      "capability": "purge_terminality_residue",
+      "case_index": 7,
+      "classification": "conformance",
+      "expected_classification": "conformance",
+      "expected_status": "pass",
+      "observed": {
+        "compaction_phase": "completed",
+        "current_result_count": 0,
+        "logical_marker_residue": false,
+        "opaque_tombstone_count": 1,
+        "physical_marker_residue": false,
+        "restore_after_purge_blocked": true,
+        "secure_delete_enabled": true,
+        "unshared_source_removed": true,
+        "version_history_count": 0
+      },
+      "reason_code": "PURGE_TERMINAL_RESIDUE_FREE",
+      "reference_scenario_count": 1,
+      "stage": "invalidate_rebuild",
+      "status": "pass"
+    },
+    {
+      "capability": "derived_dependency_invalidation",
+      "case_index": 8,
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_DERIVED_DEPENDENCY_LINEAGE",
+      "reference_scenario_count": 2,
+      "stage": "invalidate_rebuild",
+      "status": "not_exercised"
+    },
+    {
+      "capability": "eviction_decay_retirement",
+      "case_index": 9,
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_EVICTION_DECAY_RETIREMENT",
+      "reference_scenario_count": 1,
+      "stage": "correct_forget",
+      "status": "not_exercised"
+    },
+    {
+      "capability": "same_id_recreation_after_purge",
+      "case_index": 10,
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_CALLER_STABLE_ID_RECREATION",
+      "reference_scenario_count": 1,
+      "stage": "invalidate_rebuild",
+      "status": "not_exercised"
+    },
+    {
+      "capability": "procedure_precondition_transfer",
+      "case_index": 11,
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
+      "expected_status": "not_exercised",
+      "observed": {
+        "production_path_available": false
+      },
+      "reason_code": "UNSUPPORTED_PROCEDURE_PRECONDITIONS",
+      "reference_scenario_count": 1,
+      "stage": "applicability",
+      "status": "not_exercised"
+    }
+  ],
+  "reference_e01_fixture_sha256": "19f52ad16b398248866b5bfac930380ee71071a3414a4678a316bd161f762086",
+  "schema": "atc.memory-reliability-lab.e01b-report.v1",
+  "summary": {
+    "case_count": 12,
+    "classification_counts": {
+      "conformance": 6,
+      "fixture_mismatch": 2,
+      "unsupported_semantic": 4
+    },
+    "expectation_mismatch_count": 0,
+    "fail_count": 0,
+    "not_exercised_count": 6,
+    "pass_count": 6
+  }
+}
