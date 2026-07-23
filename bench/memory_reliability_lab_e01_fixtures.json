@@ -1,0 +1,533 @@
+{
+  "schema": "atc.memory-reliability-lab.e01-fixture.v1",
+  "fixture_id": "ATC_E01_LONGITUDINAL_SLICE_V1",
+  "status": "partial_e01_executable_symbolic_fixture",
+  "content_policy": {
+    "synthetic": true,
+    "symbolic_values_only": true,
+    "real_personal_context": false,
+    "imported_content_is_untrusted_data": true
+  },
+  "clock": {
+    "timezone": "UTC",
+    "wall_clock_access": false,
+    "start": "2035-02-01T00:00:00Z"
+  },
+  "budget": {
+    "max_items": 2,
+    "max_token_units": 2
+  },
+  "scenarios": [
+    {
+      "scenario_id": "STATE_AUTHORITY_CURRENTNESS",
+      "capabilities": [
+        "semantic",
+        "authority",
+        "correction"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-01T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_REGION_V1",
+          "topic": "TOKEN_REGION",
+          "role": "CLAIM",
+          "value": "TOKEN_EAST"
+        },
+        {
+          "seq": 2,
+          "at": "2035-02-01T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "untrusted_import",
+          "operation": "set_claim",
+          "object_id": "IMPORT_REGION_FALSE",
+          "topic": "TOKEN_REGION",
+          "role": "CLAIM",
+          "value": "TOKEN_SOUTH"
+        },
+        {
+          "seq": 3,
+          "at": "2035-02-01T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "correct_claim",
+          "object_id": "CLAIM_REGION_V2",
+          "topic": "TOKEN_REGION",
+          "role": "CLAIM",
+          "value": "TOKEN_WEST",
+          "supersedes": "CLAIM_REGION_V1"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_REGION_CURRENT",
+        "after_seq": 3,
+        "at": "2035-02-01T00:04:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_CURRENT_QUERY",
+        "query_terms": [
+          "TOKEN_REGION"
+        ],
+        "allowed_roles": [
+          "CLAIM"
+        ]
+      },
+      "oracle": {
+        "required_values": [
+          "TOKEN_WEST"
+        ],
+        "forbidden": {
+          "CLAIM_REGION_V1": {
+            "stage": "retrieve",
+            "code": "RETRIEVAL_STALE"
+          },
+          "IMPORT_REGION_FALSE": {
+            "stage": "canonicalize",
+            "code": "WITNESS_COLLAPSE"
+          }
+        },
+        "expects_abstention": false,
+        "inventory_states": {},
+        "inventory_absent": {}
+      }
+    },
+    {
+      "scenario_id": "CORRECTION_INVALIDATES_DERIVED",
+      "capabilities": [
+        "correction",
+        "semantic",
+        "outcome_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-02T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_COLOR_V1",
+          "topic": "TOKEN_COLOR",
+          "role": "CLAIM",
+          "value": "TOKEN_COBALT"
+        },
+        {
+          "seq": 2,
+          "at": "2035-02-02T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_artifact",
+          "object_id": "SUMMARY_COLOR_V1",
+          "topic": "TOKEN_COLOR",
+          "role": "DERIVED",
+          "value": "TOKEN_COBALT",
+          "dependency": "CLAIM_COLOR_V1"
+        },
+        {
+          "seq": 3,
+          "at": "2035-02-02T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "correct_claim",
+          "object_id": "CLAIM_COLOR_V2",
+          "topic": "TOKEN_COLOR",
+          "role": "CLAIM",
+          "value": "TOKEN_AMBER",
+          "supersedes": "CLAIM_COLOR_V1"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_COLOR_CORRECTED",
+        "after_seq": 3,
+        "at": "2035-02-02T00:04:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_CURRENT_QUERY",
+        "query_terms": [
+          "TOKEN_COLOR"
+        ],
+        "allowed_roles": [
+          "CLAIM"
+        ]
+      },
+      "oracle": {
+        "required_values": [
+          "TOKEN_AMBER"
+        ],
+        "forbidden": {
+          "CLAIM_COLOR_V1": {
+            "stage": "retrieve",
+            "code": "RETRIEVAL_STALE"
+          },
+          "SUMMARY_COLOR_V1": {
+            "stage": "correct_forget",
+            "code": "CORRECTION_NONCONVERGENCE"
+          }
+        },
+        "expects_abstention": false,
+        "inventory_states": {
+          "SUMMARY_COLOR_V1": "INVALIDATED"
+        },
+        "inventory_absent": {}
+      }
+    },
+    {
+      "scenario_id": "FORGETTING_AND_PURGE",
+      "capabilities": [
+        "forgetting",
+        "privacy",
+        "outcome_closure"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-03T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_KEEP",
+          "topic": "TOKEN_LIFECYCLE_AUDIT",
+          "role": "CLAIM",
+          "value": "TOKEN_KEEP_CURRENT"
+        },
+        {
+          "seq": 2,
+          "at": "2035-02-03T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "evict_working_context",
+          "object_id": "CLAIM_KEEP"
+        },
+        {
+          "seq": 3,
+          "at": "2035-02-03T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "apply_ranking_decay",
+          "object_id": "CLAIM_KEEP"
+        },
+        {
+          "seq": 4,
+          "at": "2035-02-03T00:04:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "set_procedure",
+          "object_id": "PROCEDURE_RETIRED",
+          "topic": "TOKEN_PROCEDURE_AUDIT",
+          "role": "PROCEDURE",
+          "value": "TOKEN_OLD_TACTIC",
+          "applies_to": "TOKEN_OLD_TASK"
+        },
+        {
+          "seq": 5,
+          "at": "2035-02-03T00:05:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "retire_procedure",
+          "object_id": "PROCEDURE_RETIRED"
+        },
+        {
+          "seq": 6,
+          "at": "2035-02-03T00:06:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_RESTORE",
+          "topic": "TOKEN_LIFECYCLE_AUDIT",
+          "role": "CLAIM",
+          "value": "TOKEN_RESTORED_CURRENT"
+        },
+        {
+          "seq": 7,
+          "at": "2035-02-03T00:07:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "soft_delete",
+          "object_id": "CLAIM_RESTORE"
+        },
+        {
+          "seq": 8,
+          "at": "2035-02-03T00:08:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "restore",
+          "object_id": "CLAIM_RESTORE"
+        },
+        {
+          "seq": 9,
+          "at": "2035-02-03T00:09:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_claim",
+          "object_id": "CLAIM_PURGED",
+          "topic": "TOKEN_LIFECYCLE_AUDIT",
+          "role": "CLAIM",
+          "value": "TOKEN_PRIVATE_LINEAGE"
+        },
+        {
+          "seq": 10,
+          "at": "2035-02-03T00:10:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "derive_artifact",
+          "object_id": "SUMMARY_PURGED",
+          "topic": "TOKEN_LIFECYCLE_AUDIT",
+          "role": "DERIVED",
+          "value": "TOKEN_PRIVATE_DERIVED",
+          "dependency": "CLAIM_PURGED"
+        },
+        {
+          "seq": 11,
+          "at": "2035-02-03T00:11:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "purge",
+          "object_id": "CLAIM_PURGED"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_LIFECYCLE_AUDIT",
+        "after_seq": 11,
+        "at": "2035-02-03T00:12:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_LIFECYCLE_QUERY",
+        "query_terms": [
+          "TOKEN_LIFECYCLE_AUDIT"
+        ],
+        "allowed_roles": [
+          "CLAIM"
+        ]
+      },
+      "oracle": {
+        "required_values": [
+          "TOKEN_KEEP_CURRENT",
+          "TOKEN_RESTORED_CURRENT"
+        ],
+        "forbidden": {
+          "CLAIM_PURGED": {
+            "stage": "invalidate_rebuild",
+            "code": "PURGE_RESIDUE"
+          },
+          "SUMMARY_PURGED": {
+            "stage": "invalidate_rebuild",
+            "code": "PURGE_RESIDUE"
+          }
+        },
+        "expects_abstention": false,
+        "inventory_states": {
+          "CLAIM_KEEP": "CURRENT",
+          "PROCEDURE_RETIRED": "RETIRED",
+          "CLAIM_RESTORE": "CURRENT"
+        },
+        "inventory_absent": {
+          "CLAIM_PURGED": {
+            "stage": "invalidate_rebuild",
+            "code": "PURGE_RESIDUE"
+          },
+          "SUMMARY_PURGED": {
+            "stage": "invalidate_rebuild",
+            "code": "PURGE_RESIDUE"
+          }
+        }
+      }
+    },
+    {
+      "scenario_id": "EPISTEMIC_ROLE_APPLICABILITY",
+      "capabilities": [
+        "semantic",
+        "epistemic_role",
+        "task_applicability"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-04T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "environment_observation",
+          "operation": "set_evidence",
+          "object_id": "EVIDENCE_STATUS",
+          "topic": "TOKEN_OBJECTIVE_STATUS",
+          "role": "EVIDENCE",
+          "value": "TOKEN_STATUS_RED",
+          "domain": "DOMAIN_OPERATIONS"
+        },
+        {
+          "seq": 2,
+          "at": "2035-02-04T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "host_attested_user_turn",
+          "operation": "set_preference",
+          "object_id": "PREFERENCE_STATUS",
+          "topic": "TOKEN_OBJECTIVE_STATUS",
+          "role": "PREFERENCE",
+          "value": "TOKEN_STATUS_GREEN",
+          "domain": "DOMAIN_OPERATIONS"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_OBJECTIVE_STATUS",
+        "after_seq": 2,
+        "at": "2035-02-04T00:03:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_OBJECTIVE_QUERY",
+        "query_terms": [
+          "TOKEN_OBJECTIVE_STATUS"
+        ],
+        "allowed_roles": [
+          "EVIDENCE"
+        ],
+        "domain": "DOMAIN_OPERATIONS"
+      },
+      "oracle": {
+        "required_values": [
+          "TOKEN_STATUS_RED"
+        ],
+        "forbidden": {
+          "PREFERENCE_STATUS": {
+            "stage": "applicability",
+            "code": "EPISTEMIC_ROLE_MISUSE"
+          }
+        },
+        "expects_abstention": false,
+        "inventory_states": {},
+        "inventory_absent": {}
+      }
+    },
+    {
+      "scenario_id": "PROJECT_DOMAIN_ISOLATION",
+      "capabilities": [
+        "privacy",
+        "task_applicability",
+        "cross_project_domain"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-05T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "set_procedure",
+          "object_id": "PROCEDURE_ATLAS",
+          "topic": "TOKEN_RELEASE_RECOVERY",
+          "role": "PROCEDURE",
+          "value": "TOKEN_USE_ATLAS_RECOVERY",
+          "project": "PROJECT_ATLAS",
+          "domain": "DOMAIN_CODE",
+          "applies_to": "TOKEN_RELEASE_TASK"
+        },
+        {
+          "seq": 2,
+          "at": "2035-02-05T00:02:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "set_procedure",
+          "object_id": "PROCEDURE_ORCHID",
+          "topic": "TOKEN_RELEASE_RECOVERY",
+          "role": "PROCEDURE",
+          "value": "TOKEN_USE_ORCHID_RECOVERY",
+          "project": "PROJECT_ORCHID",
+          "domain": "DOMAIN_CODE",
+          "applies_to": "TOKEN_RELEASE_TASK"
+        },
+        {
+          "seq": 3,
+          "at": "2035-02-05T00:03:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "set_procedure",
+          "object_id": "PROCEDURE_TRAVEL",
+          "topic": "TOKEN_RELEASE_RECOVERY",
+          "role": "PROCEDURE",
+          "value": "TOKEN_USE_TRAVEL_RECOVERY",
+          "project": "PROJECT_ATLAS",
+          "domain": "DOMAIN_TRAVEL",
+          "applies_to": "TOKEN_RELEASE_TASK"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_ATLAS_RELEASE",
+        "after_seq": 3,
+        "at": "2035-02-05T00:04:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_RELEASE_TASK",
+        "query_terms": [
+          "TOKEN_RELEASE_RECOVERY"
+        ],
+        "allowed_roles": [
+          "PROCEDURE"
+        ],
+        "project": "PROJECT_ATLAS",
+        "domain": "DOMAIN_CODE"
+      },
+      "oracle": {
+        "required_values": [
+          "TOKEN_USE_ATLAS_RECOVERY"
+        ],
+        "forbidden": {
+          "PROCEDURE_ORCHID": {
+            "stage": "applicability",
+            "code": "CROSS_PROJECT_DOMAIN_LEAKAGE"
+          },
+          "PROCEDURE_TRAVEL": {
+            "stage": "applicability",
+            "code": "CROSS_PROJECT_DOMAIN_LEAKAGE"
+          }
+        },
+        "expects_abstention": false,
+        "inventory_states": {},
+        "inventory_absent": {}
+      }
+    },
+    {
+      "scenario_id": "HARMFUL_MEMORY_ABSTENTION",
+      "capabilities": [
+        "procedural",
+        "task_applicability",
+        "harmful_memory"
+      ],
+      "events": [
+        {
+          "seq": 1,
+          "at": "2035-02-06T00:01:00Z",
+          "principal": "P_ALPHA",
+          "source_class": "tool_outcome",
+          "operation": "set_procedure",
+          "object_id": "PROCEDURE_COLD_CACHE",
+          "topic": "TOKEN_CACHE_RECOVERY",
+          "role": "PROCEDURE",
+          "value": "TOKEN_DESTRUCTIVE_RETRY",
+          "project": "PROJECT_ATLAS",
+          "domain": "DOMAIN_CODE",
+          "applies_to": "TOKEN_CACHE_COLD"
+        }
+      ],
+      "checkpoint": {
+        "checkpoint_id": "CP_HOT_CACHE",
+        "after_seq": 1,
+        "at": "2035-02-06T00:02:00Z",
+        "principal": "P_ALPHA",
+        "task_class": "TOKEN_CACHE_HOT",
+        "query_terms": [
+          "TOKEN_CACHE_RECOVERY"
+        ],
+        "allowed_roles": [
+          "PROCEDURE"
+        ],
+        "project": "PROJECT_ATLAS",
+        "domain": "DOMAIN_CODE"
+      },
+      "oracle": {
+        "required_values": [],
+        "forbidden": {
+          "PROCEDURE_COLD_CACHE": {
+            "stage": "applicability",
+            "code": "PROCEDURE_FALSE_TRANSFER"
+          }
+        },
+        "expects_abstention": true,
+        "inventory_states": {},
+        "inventory_absent": {}
+      }
+    }
+  ]
+}
