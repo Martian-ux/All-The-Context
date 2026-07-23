@@ -396,15 +396,29 @@ def create_app(
     async def import_source(
         principal: Principal,
         file: Annotated[UploadFile, File()],
-        source_service: Annotated[str, Form()] = "generic",
+        source_service: Annotated[str, Form()] = "auto",
+        provider: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
         require(principal, "admin")
-        content = await file.read(active_config.max_import_bytes + 1)
-        if len(content) > active_config.max_import_bytes:
-            raise InvalidStateError("import exceeds configured size limit")
-        return core.imports.import_bytes(
-            file.filename or "import.txt", content, source_service=source_service
-        )
+        safe_name = Path(file.filename or "import.txt").name
+        with tempfile.TemporaryDirectory(
+            prefix="atc-import-", dir=active_config.data_dir
+        ) as temporary_directory:
+            upload_path = Path(temporary_directory) / "source-upload"
+            total = 0
+            with upload_path.open("wb") as destination:
+                while chunk := await file.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > active_config.max_import_bytes:
+                        raise InvalidStateError("import exceeds configured size limit")
+                    destination.write(chunk)
+            return await run_in_threadpool(
+                core.imports.import_path,
+                upload_path,
+                filename=safe_name,
+                source_service=source_service,
+                provider=provider,
+            )
 
     @app.get("/v1/admin/candidates")
     def list_candidates(
@@ -425,6 +439,11 @@ def create_app(
         require(principal, "admin")
         items, total = core.store.list_sources(limit=limit, offset=offset)
         return {"items": items, "total": total}
+
+    @app.post("/v1/admin/sources/{source_id}/reprocess")
+    async def reprocess_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return await run_in_threadpool(core.imports.reprocess_source, source_id)
 
     @app.post("/v1/admin/candidates/{candidate_id}/approve")
     def approve_candidate(

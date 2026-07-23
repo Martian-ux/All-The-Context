@@ -13,6 +13,7 @@ the hosted jobs pass on the exact release commit.
 | Provenance, confidence, sensitivity, validity, version, supersession, hashes, client permissions | typed models/migrations/API round trips | Implemented |
 | Idempotent/resumable ingestion with coverage | `ingestion.py`; retry/resume/coverage tests | Implemented |
 | Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
+| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, streaming ZIP/JSON adapters, dashboard provider flow, raw-source recovery; provider unit/integration/security/UI tests | Implemented locally; real personal export acceptance pending |
 | Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
 | Future embedding boundary | retrieval interface/selector separation | Defined; embeddings intentionally absent |
 | Required MCP tools | `mcp_adapter.py`; schema and real STDIO handshake/restart tests | Implemented |

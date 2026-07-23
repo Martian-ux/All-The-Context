@@ -3,8 +3,9 @@
 ## Current milestone
 
 The target remains an unsigned `0.1.0-beta.1` community release. The V1
-single-Core boundary is being reviewed on `codex/core-only-v1`. No beta release
-has been published and no production release private key has been created.
+single-Core boundary is being reviewed on `codex/core-only-v1`; provider archive
+ingestion is stacked on `codex/provider-archive-ingestion`. No beta release has
+been published and no production release private key has been created.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -18,7 +19,10 @@ means connecting directly to Core while Core is online.
 - Source, candidate, approval/rejection, correction, supersession, tombstone,
   history, permission, provenance, validity, and audit lifecycles.
 - Idempotent/resumable ingestion sessions, coverage reports, model proposals,
-  and generic JSON/JSONL/Markdown import.
+  generic documents, and local full-history adapters for ChatGPT, Claude, and
+  Grok exports. Raw archives are streamed into Core, provider messages receive
+  conversation-level provenance, assistant/tool text stays inert, and failed
+  extraction can retry from the preserved blob.
 - Required MCP tools over HTTP and a managed STDIO adapter; one-click local
   Codex and Claude Desktop configuration bound to the exact vault.
 - Bundled dashboard for import, review, search, local connections, encrypted
@@ -55,12 +59,19 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python suite: 328 passed; four Windows-host symlink tests skipped because
+- Full Python suite: 345 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
-- Dashboard: 17 tests passed; type check, production build, and high-severity
+- The provider importer, API, and end-to-end slice also passed 36 focused tests
+  on the minimum supported Python 3.12 runtime.
+- Dashboard: 19 tests passed; type check, production build, and high-severity
   dependency audit passed.
-- Ruff format/lint, strict mypy across 52 source files, documentation-link
+- Ruff lint and formatting, strict mypy across 53 source files, documentation-link
   checks, and the seven-step single-Core demonstration passed.
+- A live isolated browser smoke imported a fictional ChatGPT export through the
+  bundled dashboard, reported one conversation/two candidates, retained the raw
+  source, excluded the assistant claim, moved one approved item out of review,
+  emitted no browser warnings/errors, and rendered correctly at desktop and
+  390-pixel mobile widths.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.
 - The Python 3.12 Windows frozen application passed resource discovery and the

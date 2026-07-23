@@ -6,7 +6,9 @@
 | A model writes false or malicious durable memory | Store proposals as candidates; keep source text inert; require review/policy before canonical approval |
 | A client reads records outside its authority | Authenticate scoped client identities and apply permissions/validity/deletion before every retrieval channel |
 | A managed client attaches to the wrong Core | Bind generated configuration to the exact data directory, instance proof, port, client ID, and credential |
-| Large or malicious imports exhaust resources | Enforce byte/record/archive bounds, idempotency keys, and resumable batches |
+| Large or malicious imports exhaust resources | Chunk HTTP/raw SQLite writes, stream top-level conversation arrays, enforce entry/raw/expanded-size/compression bounds, and use resumable batches |
+| Provider archive prose or assistant output injects false memory | Enforce normalized message roles; only user-authored text and dedicated memory/profile fields can create pending candidates; never auto-approve imported output |
+| Undocumented provider schema changes silently omit history | Preserve the complete raw archive, publish detected counts/warnings/limitations, fail coverage closed on parse errors, and version parsers for later reprocessing |
 | Interrupted migration, export, shutdown, or update corrupts state | Use SQLite transactions/backups, portable locks, journals, health checks, and tested rollback paths |
 | Credentials leak through logs, browser state, or configuration | Use OS credential abstractions, opaque one-use browser sessions, redaction, no raw-context logging, and least-privilege tokens |
 | Unsigned community packages are mistaken for publisher-signed software | Prominent unsigned labels plus checksums, SBOM/provenance, immutable assets, and offline Ed25519 update manifests |

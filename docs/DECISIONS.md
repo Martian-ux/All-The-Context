@@ -470,3 +470,39 @@ setups. New UI approvals offer only `local_only` and `core_available`; Core does
 not start the Edge network worker; deployment workflows/templates are removed
 from V1. Deleting dormant protocol code is a later cleanup after compatibility
 and migration requirements are known.
+
+## ADR-033: Provider history is preserved completely but promoted selectively
+
+**Status:** accepted 2026-07-22.
+
+Initial memory bootstrap uses user-requested account exports, not provider API
+keys, browser scraping, account credentials, or a recurring cloud connection.
+Core stores the accepted ZIP/JSON/JSONL/Markdown/text source byte-for-byte in
+its content-addressed local source store. HTTP uploads and SQLite BLOB writes
+are chunked; ZIP entries are read in place; root conversation arrays are
+decoded one conversation at a time. The default raw archive limit is 512 MiB,
+with an operator-configurable ceiling below SQLite's safe BLOB limit, and
+expanded text/entry/compression/conversation bounds remain mandatory.
+
+Provider adapters normalize documented ChatGPT conversation JSON, common
+Claude `chat_messages`/memory data, flexible Grok JSON, and Grok Build-style
+Markdown transcripts. ChatGPT officially documents `conversations.json` and
+numbered conversation JSON files. Claude and Grok do not publish stable field
+contracts for every export, so their adapters detect bounded envelopes and
+must report unrecognized material rather than guessing silently.
+
+Raw completeness and canonical memory are separate promises. Every recognized
+message contributes to aggregate coverage, but only user-authored durable
+statements and dedicated provider memory/profile fields can create candidates.
+Assistant, system, tool, and attachment content remains inert raw evidence.
+Provider-synthesized memory is lower-confidence and is not marked as an
+explicit user statement. No imported candidate bypasses review.
+
+Each source records provider, format, parser version, statistics, warnings, and
+`processing`/`failed`/`complete` status. The source ID and parser version key the
+ingestion session; source hash, parser version, and batch ordinal key candidate
+batches. A retry reopens the preserved BLOB through a bounded temporary file
+and replays completed batches exactly, allowing one-click crash recovery
+without another upload or duplicate candidates. A future learned extractor can
+use a new parser version against the same raw source without changing this
+authority boundary.

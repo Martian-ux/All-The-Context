@@ -6,7 +6,9 @@
   encrypted transport exist.
 - Multi-master synchronization, CRDTs, family accounts, or multi-tenant SaaS.
 - Live location, heart rate, wearable ingestion, or emergency response.
-- Provider-specific Claude, OpenAI, Grok, or mobile application packages.
+- Live provider-account scraping, provider API keys, recurring provider-cloud
+  synchronization, or provider-specific client packages. Local adapters for
+  user-downloaded ChatGPT, Claude, and Grok archives are in scope.
 - Vector embeddings as a release requirement.
 - Application-level encryption of the live SQLite database.
 - Paid Authenticode, Apple Developer signing, or notarization.
