@@ -29,3 +29,6 @@ id_rsa
 id_dsa
 .DS_Store
 Thumbs.db
+/research/vendor-cache/*
+!/research/vendor-cache/.gitignore
+!/research/vendor-cache/README.md

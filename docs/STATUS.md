@@ -48,6 +48,15 @@ production schema, host checkpoint protocol, private learned model, or
 behavioral enforcement claim has been accepted or implemented by this
 documentation work. The beta remains the immediate product milestone.
 
+## Research supplier intake
+
+The 2026-07-23 AI-memory competitor intake records official repositories,
+immutable revisions, licenses, dependency burden, integration surfaces, and
+safety risks for eleven candidates in
+`research/competitor-intake/memory-systems-intake.v1.json`. No third-party
+source was cloned, installed, executed, imported, or copied. The intake adds no
+runtime dependency or production claim.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,

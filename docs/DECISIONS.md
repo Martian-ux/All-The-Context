@@ -5,6 +5,11 @@
 Relay stores a projection and proposal queue only. Application events, not
 database files, cross the boundary.
 
+External memory systems are research suppliers or discardable projections, not
+additional authorities. Intake requires an official origin, immutable revision,
+license and component caveat review, dependency/data-flow inventory, and an
+isolated benchmark before any code reuse or execution.
+
 ## ADR-002: SQLite-first storage
 
 Core uses SQLite/FTS5. The first Relay slice also supports SQLite for a complete

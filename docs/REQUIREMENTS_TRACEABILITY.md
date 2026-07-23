@@ -10,6 +10,7 @@ suite. Pre-ADR-039 approval evidence does not satisfy automatic-policy rows.
 | Cross-platform Core | `config.py`, `lifecycle.py`, `platform_compat.py`; platform and package smoke tests | Observed on Windows/macOS/Linux at `05c7638`; final release SHA pending |
 | Correct per-user data paths | `platformdirs` configuration and setup/package tests | Implemented |
 | Loopback-only default | `CoreConfig`, server CLI, dashboard copy, security tests | Implemented |
+| Research supplier provenance and isolation | `research/competitor-intake/memory-systems-intake.v1.json`, decision record, ignored `research/vendor-cache`, manifest/packaging guardrail test | Intake evidence only; no third-party code cloned, installed, executed, imported, copied, or packaged |
 | Observation/disposition/current-context lifecycle | `models.py`, `memory_policy.py`, migration 005, storage transactions, evidence links | Implemented; full local suite and focused policy/storage/API regressions pass |
 | One-time setup with no routine memory queue | automatic MCP submission plus dashboard Context default/Review removal | Implemented in current worktree; end-to-end fresh-user proof pending |
 | Core-only `automatic-v1` authority | origin assigned by Core; applied/reinforced/tentative/ignored decisions; Relay staged queue receipts | Implemented; adversarial ACL/Relay integration tests pass locally |
