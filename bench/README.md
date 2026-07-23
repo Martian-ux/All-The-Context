@@ -1,5 +1,32 @@
 # Retrieval benchmark
 
+## Wave 2 source-evidence retrieval research
+
+The Wave 2 harness is isolated research for long sanitized imported chats and
+source evidence. It freezes the current candidate-scoped `LexicalV3` source
+pool at coordinator commit `659c791`, then compares lexical passage selection,
+deterministic exact-token MaxSim, and diversity-aware MaxSim. It does not edit
+or integrate with the default retrieval runtime.
+
+Run the bounded 64-source and 256-source profiles:
+
+```text
+python -m bench.source_evidence_retrieval --output bench/reports/source_evidence_retrieval_wave2.json --markdown bench/reports/source_evidence_retrieval_wave2.md
+```
+
+Profiles above 256 sources require `--include-large` and remain hard-capped at
+1,024 sources. The report measures source-evidence recall, facet coverage,
+redundancy, end-to-end cold/warm latency, ephemeral and persistent storage,
+repeat determinism, ineligible-corpus score invariance, and policy violations.
+The source-pool comparator counts judged evidence available within selected
+sources; passage variants must select exact judged evidence messages. Raw
+queries and imported text are never emitted in reports.
+
+This experiment has no production authority, packaging changes, hosted or paid
+services, native/default dependencies, ANN, learned sparse retrieval, or model
+reranker. Neural model late interaction is explicitly `not_exercised` because
+no optional model or model runtime is declared for this bounded experiment.
+
 ## Retrieval V3 foundation contracts
 
 The V3 foundation harness freezes the production V2 ordering as a named
