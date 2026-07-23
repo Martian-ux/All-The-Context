@@ -60,7 +60,15 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commit": "a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e",
+        "integrated_commit": "8b82bc2bf57cb1888386fef14fe8b93308caa85b",
+        "evidence_level": "L0",
+        "decision": "ORACLE_FROZEN",
+        "m3_case_count": 15,
+        "m1_case_count": 16,
+        "coordinator_reproduced": true
+      }
     },
     {
       "worker_id": "m3_influence_closure",
@@ -79,7 +87,19 @@
       "may_edit_governance": false,
       "may_merge": false,
       "may_push": false,
-      "result": null
+      "result": {
+        "worker_commit": "62ba78f5a762c268503786e6f1325223102d58af",
+        "integrated_commit": "4ad8a697bde8f0cf1cfd2d7657440e0b4bf05640",
+        "evidence_level": "L2",
+        "decision": "RETAIN_M3_CONTRACT_AND_OPTIMIZATION",
+        "case_coverage_fraction": 1.0,
+        "surface_coverage_fraction": 1.0,
+        "required_zero_metric_sum": 0,
+        "evaluated_node_reduction_fraction": 0.99,
+        "exclusive_purge_descendant_ids_checked": 140,
+        "shared_descendant_recipes_validated": 80,
+        "coordinator_reproduced": true
+      }
     },
     {
       "worker_id": "e02_production_semantic_gaps",
