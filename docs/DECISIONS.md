@@ -527,3 +527,21 @@ origin and path prefix with a signed query. Manifest fetches, different
 origins/paths, and further redirects remain refused. Redirect acceptance does
 not confer trust on bytes: the already verified Ed25519 manifest's exact size
 and SHA-256 are still required before staging succeeds.
+
+## ADR-035: The first beta OTA trust root is operator-held and free
+
+**Status:** accepted 2026-07-22.
+
+The first community beta update key is `release-2026-a`, an Ed25519 key
+generated on an operator-controlled Windows system outside the checkout and
+cloud-synchronized workspace. Its encrypted PKCS8 private half remains with
+the release owner. Only the beta-authorized public half is tracked and embedded
+in packages, with fingerprint
+`sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
+
+This free manifest-signing identity authenticates OTA metadata and is separate
+from paid native publisher signing, so it does not remove Windows or macOS
+first-install warnings. Two recoverable encrypted private-key backups must be
+verified before first use. Losing the only trusted private half requires a
+separately authenticated manual recovery release; suspected compromise stops
+all publication and promotion.

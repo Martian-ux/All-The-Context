@@ -5,7 +5,9 @@
 The target remains an unsigned `0.1.0-beta.1` community release. The V1
 single-Core boundary is being reviewed on `codex/core-only-v1`; provider archive
 ingestion is stacked on `codex/provider-archive-ingestion`. No beta release has
-been published and no production release private key has been created.
+been published. The encrypted `release-2026-a` private key now exists outside
+the checkout and cloud-synchronized workspace; only its reviewed public half
+is tracked.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -33,6 +35,10 @@ means connecting directly to Core while Core is online.
   a vector dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
+- The active beta-only `release-2026-a` public key is embedded in the package
+  keyring. Its SHA-256 fingerprint is
+  `fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`;
+  the encrypted private half remains operator-controlled outside the checkout.
 - Frozen Windows x86_64 beta packages with an active reviewed key now select
   the canonical Pages channel automatically. The artifact transport follows
   GitHub's single pinned release-CDN redirect while retaining signed size and
@@ -53,8 +59,8 @@ means connecting directly to Core while Core is online.
 
 ## Remaining beta gates
 
-- Complete the offline public-key ceremony and publish only the reviewed public
-  key.
+- Create and verify two recoverable encrypted backups of the operator-held
+  release private key before its first production signature.
 - Add required reviewers to the release-promotion and `github-pages`
   environments; no live channel or public release exists yet.
 - Freeze the final release commit after review and repeat the full hosted
@@ -65,7 +71,7 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python suite: 345 passed; four Windows-host symlink tests skipped because
+- Full Python suite: 354 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests
   on the minimum supported Python 3.12 runtime.

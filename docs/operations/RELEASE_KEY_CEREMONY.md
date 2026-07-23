@@ -70,6 +70,27 @@ python -m pytest tests/unit/test_release_manifest.py tests/unit/test_release_key
 Do not commit unless the two keyring files are byte-for-byte identical and the
 audit finds no tracked private-key marker or private-key filename.
 
+## Ceremony record: release-2026-a
+
+On 2026-07-22, the release owner generated an Ed25519 key on an
+operator-controlled Windows system outside the source checkout and
+cloud-synchronized workspace. The private half is encrypted PKCS8 PEM. Only the
+standard PEM public half was passed to the repository importer.
+
+The repository inspection utility and an independent raw-key calculation
+agreed on:
+
+```text
+key_id: release-2026-a
+channels: beta
+fingerprint: sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4
+```
+
+`release/keys.json` and the packaged `update_keys.json` contain the same active
+public entry. The encrypted private key remains outside the checkout. Creating
+and verifying two recoverable encrypted backups remains required before the
+first production signature.
+
 ## Signing day
 
 The custodian downloads and verifies the exact draft artifact set, moves only

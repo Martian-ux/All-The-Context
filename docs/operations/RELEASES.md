@@ -96,8 +96,13 @@ independently reviewed `sha256:<hex>` fingerprint. An import adds the base64url
 public key and fingerprint to both `release/keys.json` and packaged
 `allthecontext/update_keys.json`; validation requires the tracked files to be
 byte-for-byte identical. The full two-person/offline checklist is in
-[Release key ceremony](RELEASE_KEY_CEREMONY.md). No production key has been
-created by this repository.
+[Release key ceremony](RELEASE_KEY_CEREMONY.md). The operator generated the
+encrypted `release-2026-a` private key outside the checkout on 2026-07-22 and
+imported only its beta-authorized public half. The reviewed public-key
+fingerprint is
+`sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
+The private key has not entered the repository or GitHub; two recoverable
+encrypted backups must be verified before its first production signature.
 
 ## Offline manifest signing and draft publication
 
