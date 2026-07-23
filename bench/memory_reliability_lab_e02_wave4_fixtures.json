@@ -1,0 +1,123 @@
+{
+  "schema": "atc.memory-reliability-lab.e02-wave4-fixture.v1",
+  "fixture_id": "ATC_E02_FROZEN_PRODUCTION_SEMANTIC_GAPS_V1",
+  "governance_base": "f545c37157845f0bd402215719cb8c747b7fc21d",
+  "expectations_frozen_before_execution": true,
+  "expectation_authorship": {
+    "method": "hand-authored against the known frozen production codebase",
+    "blind_independent_suite": false,
+    "frozen_before_e02_execution": true
+  },
+  "content_policy": {
+    "synthetic": true,
+    "symbolic_values_only": true,
+    "real_personal_context": false,
+    "external_code": false,
+    "network_access": false,
+    "operator_core_access": false,
+    "provider_or_model_access": false
+  },
+  "classification_values": [
+    "SUPPORTED_OBSERVED",
+    "CONTRADICTED_OBSERVED",
+    "UNSUPPORTED",
+    "NOT_EXERCISED"
+  ],
+  "cases": [
+    {
+      "case_id": "generic_epistemic_role",
+      "required_semantic": "generic epistemic role distinct from kind",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "role_fields": "UNSUPPORTED",
+        "kind_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.kind",
+        "ContextRecordOut.kind",
+        "SearchRequest.kinds",
+        "EligibleRecordSelector.select"
+      ]
+    },
+    {
+      "case_id": "project_and_domain_applicability",
+      "required_semantic": "project AND domain applicability distinct from explicit scope filtering",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "project_domain_fields": "UNSUPPORTED",
+        "scope_label_and_substitution": "CONTRADICTED_OBSERVED",
+        "current_project_hard_gate_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.scopes",
+        "SearchRequest.scopes",
+        "SearchRequest.current_project",
+        "EligibleRecordSelector.select",
+        "_admissibility_inputs"
+      ]
+    },
+    {
+      "case_id": "dependency_lineage_and_invalidation",
+      "required_semantic": "dependency lineage and invalidation",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "dependency_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.structured_value",
+        "CoreStore.correct_record",
+        "CoreStore.delete_record",
+        "CoreStore.purge"
+      ]
+    },
+    {
+      "case_id": "eviction_decay_and_procedure_retirement",
+      "required_semantic": "eviction, decay, and procedure retirement",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "explicit_expiry_boundary": "SUPPORTED_OBSERVED",
+        "decay_fields": "UNSUPPORTED",
+        "procedure_retirement_fields": "UNSUPPORTED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.expires_at",
+        "CandidateInput.confidence",
+        "EligibleRecordSelector.select",
+        "CoreStore.get_record"
+      ]
+    },
+    {
+      "case_id": "same_identifier_after_terminal_purge",
+      "required_semantic": "same-identifier behavior after terminal purge",
+      "expected_classification": "NOT_EXERCISED",
+      "expected_probe_classifications": {
+        "caller_selected_record_id": "NOT_EXERCISED",
+        "fresh_identity_and_tombstone_boundary": "SUPPORTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput",
+        "CoreStore.add_candidate",
+        "CoreStore.purge",
+        "purge_tombstones"
+      ]
+    },
+    {
+      "case_id": "procedure_preconditions_and_transfer",
+      "required_semantic": "procedure preconditions and transfer applicability",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "procedure_semantic_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED",
+        "explicit_scope_boundary": "SUPPORTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.kind",
+        "CandidateInput.structured_value",
+        "CandidateInput.scopes",
+        "SearchRequest.current_project",
+        "SearchRequest.scopes"
+      ]
+    }
+  ]
+}
