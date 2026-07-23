@@ -204,9 +204,10 @@ that ATC has solved AI memory is accepted.
 
 ## Memory Lab Wave 4
 
-Wave 4 is active under ADR-048 and
-`research/memory-lab/wave4-manifest.json`. Four fresh visible
-`gpt-5.6-sol` worktree tasks started from immutable governance-only commit
+Wave 4 is complete under ADR-048/ADR-049 and the
+[integrated result](research/ATC_MEMORY_LAB_WAVE4_RESULTS_2026-07-23.md).
+Four fresh visible `gpt-5.6-sol` worktree tasks started from immutable
+governance-only commit
 `f545c37157845f0bd402215719cb8c747b7fc21d`:
 
 - F02 independent falsification and primary-source prior-art review, medium;
@@ -216,13 +217,37 @@ Wave 4 is active under ADR-048 and
 
 The independent F02 oracle was committed at
 `a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e` before M3 or M1 was
-dispatched. Workers own only
-new research files, cannot edit production or governance, and cannot access
-the operator Core, personal context, credentials, external code, models, or
-providers. M3 fails on any stale publication, rebuild mismatch, purge residue,
-or fail-open partial repair. M1 cannot store hidden reasoning or raw supplied
-context. Worker evidence remains untrusted pending coordinator review and
-reproduction; no production promotion is accepted.
+dispatched. The coordinator reviewed each scoped diff in the frozen promotion
+order and reproduced 49 focused tests plus all three decisive reports.
+
+The result is deliberately mixed:
+
+- M3 is retained as a research contract and bounded optimization. All 15
+  frozen attacks pass; every hard-safety count is zero; optimized and full
+  rebuild agree; and the synthetic work control evaluates 120 descendants
+  instead of 12,000 nodes.
+- E02 records five `UNSUPPORTED` production semantics: generic epistemic
+  role, project-and-domain applicability, dependency lineage, decay or
+  retirement, and procedure preconditions or transfer. Exact same-identifier
+  reuse after purge is `NOT_EXERCISED`.
+- M1 is retained as a research contract. All 16 frozen attacks pass; every
+  hard-safety count is zero; replay and aggregate reconstruction are exact;
+  and unauthorized/inapplicable paired-vault differences are zero.
+- Terminal purge is explicitly destructive privacy compaction, not ordinary
+  append-only event admission. All affected identifiers leave declared
+  inspectable ledger surfaces.
+
+The next research direction is Evidence-Compiled Prospective Memory: a typed
+event-contingent transaction that decides when a dormant intention is due
+before disclosing minimal current evidence, then caps its permitted action and
+records only observable use and outcome. It must beat a simple deterministic
+scheduler and retain zero-tolerance authority, stale-influence, purge,
+duplicate-action, and confirmation gates.
+
+No worker changed production, accessed the operator Core or personal context,
+downloaded competitor code, called an external model or provider, merged, or
+pushed. No production promotion or claim that ATC has solved AI memory is
+accepted.
 
 ## Previously verified baseline
 
@@ -413,6 +438,11 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
+- Current Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
+  strict mypy passes across 68 source files; 49 focused Wave 4 tests pass;
+  decisive M3/M1 reports reproduce byte-for-byte and E02 reproduces
+  semantically; documentation links and `git diff --check` pass; and the full
+  suite passes 652 tests with four host-limited symlink skips.
 - Current Wave 2 integration worktree on Windows Python 3.12.10: Ruff passes;
   strict mypy passes across 62 source files; the full suite passes 560 tests
   with four host-limited symlink skips; 35 focused

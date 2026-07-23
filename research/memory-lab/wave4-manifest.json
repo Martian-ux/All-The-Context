@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "wave_id": "atc-memory-lab-wave4-2026-07-23",
-  "status": "active",
+  "status": "completed_with_mixed_results",
   "purpose": "Falsify dependency-complete influence closure, current-Core semantic readiness, and observable memory-use receipts before any Evidence-Compiled Memory production promotion.",
   "coordinator": {
     "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
@@ -67,7 +67,26 @@
         "decision": "ORACLE_FROZEN",
         "m3_case_count": 15,
         "m1_case_count": 16,
-        "coordinator_reproduced": true
+        "coordinator_reproduced": true,
+        "post_result_review": {
+          "reviewed_integrated_commit": "f2065a8d026a4928327d73eb9b1282bade91f7a3",
+          "worker_commit": "fe4e5dce3db1a70e41f75faad5fca38b34e14f77",
+          "integrated_commit": "5086222116a606b5ae483150747695d0a05e7275",
+          "evidence_level": "L2",
+          "m3_grading": {
+            "PASS": 15,
+            "HOLD": 0,
+            "FAIL": 0
+          },
+          "m3_verdict": "RETAIN_M3_CONTRACT_AND_OPTIMIZATION",
+          "m1_grading": {
+            "PASS": 16,
+            "HOLD": 0,
+            "FAIL": 0
+          },
+          "m1_verdict": "RETAIN_M1_OBSERVABLE_LEDGER",
+          "production_promotion": false
+        }
       }
     },
     {
@@ -96,8 +115,11 @@
         "surface_coverage_fraction": 1.0,
         "required_zero_metric_sum": 0,
         "evaluated_node_reduction_fraction": 0.99,
+        "repeats_per_case": 20,
         "exclusive_purge_descendant_ids_checked": 140,
+        "exclusive_purge_descendant_slots_per_repeat": 7,
         "shared_descendant_recipes_validated": 80,
+        "shared_descendant_recipes_per_repeat": 4,
         "coordinator_reproduced": true
       }
     },
@@ -180,6 +202,32 @@
     "m1_observable_use_ledger",
     "f02_post_result_review"
   ],
+  "coordinator_validation": {
+    "platform": "Windows",
+    "python_version": "3.14.3",
+    "worktree_import_origin_enforced": true,
+    "focused_wave4_test_count": 49,
+    "ruff": "PASS",
+    "mypy": {
+      "status": "PASS",
+      "source_file_count": 68
+    },
+    "full_pytest": {
+      "status": "PASS",
+      "passed": 652,
+      "skipped": 4
+    },
+    "decisive_report_reproduction": {
+      "m3_json_byte_equal": true,
+      "m3_markdown_byte_equal": true,
+      "e02_json_semantically_equal": true,
+      "m1_json_byte_equal": true,
+      "m1_markdown_byte_equal": true
+    },
+    "documentation_links": "PASS",
+    "diff_check": "PASS",
+    "cross_platform_wave4_evidence": false
+  },
   "frozen_contracts": {
     "m3": {
       "mutations": [

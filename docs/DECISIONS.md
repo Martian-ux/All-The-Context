@@ -1052,8 +1052,8 @@ compiler-visible attestations are not production privacy or security designs.
 
 ## ADR-048: Wave 4 tests influence closure and observable use before product promotion
 
-**Status:** accepted for active research execution 2026-07-23; no Wave 4
-result or production change is accepted.
+**Status:** completed as governed research execution 2026-07-23; final
+classifications are recorded in ADR-049 and no production change is accepted.
 
 Wave 4 starts four fresh visible worktree tasks from one immutable
 governance-only base. M3 tests incremental dependency-complete repair against
@@ -1080,3 +1080,65 @@ cannot access the operator Core, cannot use personal context, credentials,
 external code, models, or providers, and cannot merge, push, edit governance,
 or change production behavior. A separate decision is required before any
 schema or runtime promotion.
+
+## ADR-049: Retain closure and observable-use contracts, fill Core semantics, then test prospective memory
+
+**Status:** accepted as bounded research direction 2026-07-23; no production
+schema, runtime mechanism, competitor dependency, or solved-memory claim is
+accepted.
+
+Wave 4 completed its four governed cells and the coordinator reproduced the
+three executable results. M3 passes all 15 independently frozen cases with
+zero hard-safety failures, exact agreement with an independently coded full
+rebuild, and a `0.99` evaluated-node reduction in its synthetic work control.
+M1 passes all 16 independently frozen cases with zero hard-safety failures,
+exact replay and aggregate reconstruction, and zero paired-vault differences.
+E02 classifies five required production semantics as `UNSUPPORTED` and exact
+same-identifier recreation after terminal purge as `NOT_EXERCISED`.
+
+Retain the M3 dependency-complete closure contract and its bounded
+optimization. Retain the M1 observable-use ledger contract. Neither research
+prototype enters production. Barrier-first cascade repair is not claimed as
+novel because MemoRepair already establishes that mechanism class. The
+candidate ATC differentiation remains the exact composition of Core-owned
+authority, scope, applicability, currentness, policy generation, delete/purge
+semantics, minimal sealed projection, complete influence closure, action
+ceilings, and privacy-bounded observable-use and outcome receipts.
+
+M1's storage contract has one explicit exception: ordinary accepted events
+are append-only, while terminal purge is destructive privacy compaction.
+Affected event, record, and index identifiers leave all declared inspectable
+surfaces; replay resumes from an aggregate identity-generation barrier and
+purge count. A future implementation must preserve that boundary rather than
+claim both physical append-only storage and terminal erasure.
+
+Production work, if separately authorized, proceeds in small Core-owned
+slices:
+
+1. optional explicit generic epistemic role with unknown legacy values;
+2. project-and-domain applicability with fail-closed unknowns;
+3. version-bound dependency and influence inventory;
+4. optimized closure dual-run against a full-rebuild shadow oracle;
+5. the observable ledger and privacy-compaction boundary; and
+6. only then a notification-only prospective-memory kernel.
+
+The next research hypothesis is Evidence-Compiled Prospective Memory. A
+canonical event-contingent memory transaction binds exact evidence versions,
+a typed cue, positive witnesses, negative guards, expiry/rearm behavior,
+principal/project/domain/policy generations, a maximum action force, closure
+dependencies, and observable outcome receipts. Typed cue evaluation occurs
+before content disclosure. Only a due, current, authorized, applicable
+transaction may compile minimal context and cross a cooperating host
+checkpoint.
+
+This proposal must first beat a simple explicit task table and deterministic
+scheduler. Prospective precision, recall, false alarms, action success,
+disclosure, outcome benefit, and lifecycle failures remain separate metrics.
+Unauthorized, stale, deleted, purged, wrong-domain, duplicate, or
+unconfirmed-protected action is a non-compensable failure.
+
+External memory systems may enter later through dedicated supplier cells with
+pinned revision, license confirmation, static inventory, isolated execution,
+and an adapter that cannot canonize records or bypass Core. Wave 4's
+external-code prohibition remains truthful: it downloaded or executed no
+competitor system.
