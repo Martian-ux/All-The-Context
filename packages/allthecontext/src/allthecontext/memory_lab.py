@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import platform
 import re
 import statistics
 import time
@@ -19,7 +20,7 @@ from typing import Any, Protocol, runtime_checkable
 
 MEMORY_OBJECT_SCHEMA = "atc.memory-object.v1"
 ADAPTER_ABI = "atc.memory-lab.retrieval-adapter.v1"
-REPORT_SCHEMA = "atc.memory-lab.report.v1"
+REPORT_SCHEMA = "atc.memory-lab.report.v2"
 _WORD_RE = re.compile(r"\w+", flags=re.UNICODE)
 
 
@@ -88,12 +89,15 @@ class RetrievalTask:
     forbidden_ids: frozenset[str] = frozenset()
     scopes: tuple[str, ...] = ()
     current_project: str | None = None
+    context_budget_chars: int | None = None
 
     def __post_init__(self) -> None:
         if not self.task_id.strip():
             raise ValueError("task id must be non-blank")
         if self.limit < 1:
             raise ValueError("task limit must be positive")
+        if self.context_budget_chars is not None and self.context_budget_chars < 1:
+            raise ValueError("context character budget must be positive")
         _instant(self.evaluated_at)
         if any(not group for group in self.evidence_groups):
             raise ValueError("evidence groups must be non-empty")
@@ -186,6 +190,31 @@ class RetrievalReceipt:
             raise ValueError("abstained must be true exactly when no items are returned")
 
 
+@dataclass(frozen=True, slots=True)
+class BenchmarkMetadata:
+    """Identifier-safe configuration and validity notes for one lab condition."""
+
+    source_representation: str
+    selection_mode: str
+    context_budget_chars: int | None = None
+    max_files_scanned: int | None = None
+    max_bytes_scanned: int | None = None
+    validity_limitations: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.source_representation.strip() or not self.selection_mode.strip():
+            raise ValueError("benchmark metadata modes must be non-blank")
+        for value in (
+            self.context_budget_chars,
+            self.max_files_scanned,
+            self.max_bytes_scanned,
+        ):
+            if value is not None and value < 1:
+                raise ValueError("benchmark metadata limits must be positive")
+        if any(not item.strip() for item in self.validity_limitations):
+            raise ValueError("validity limitation codes must be non-blank")
+
+
 @runtime_checkable
 class MemoryLabAdapter(Protocol):
     """Read-only adapter seam for simple, ATC, and future competitor systems."""
@@ -200,6 +229,14 @@ class MemoryLabAdapter(Protocol):
     def close(self) -> None: ...
 
 
+@runtime_checkable
+class DescribedMemoryLabAdapter(Protocol):
+    """Optional identifier-safe benchmark description implemented by lab controls."""
+
+    @property
+    def benchmark_metadata(self) -> BenchmarkMetadata: ...
+
+
 class DeterministicLexicalBaseline:
     """Small token-overlap baseline with deterministic temporal/scope filtering."""
 
@@ -207,6 +244,11 @@ class DeterministicLexicalBaseline:
         adapter_id="deterministic-token-overlap",
         name="Deterministic token-overlap baseline",
         version="1",
+    )
+    benchmark_metadata = BenchmarkMetadata(
+        source_representation="current_memory_objects",
+        selection_mode="token_overlap_with_scope_time_and_supersession",
+        validity_limitations=("lexical_only", "retrieval_only_no_reader"),
     )
 
     def __init__(self) -> None:
@@ -261,6 +303,11 @@ class NoMemoryBaseline:
         adapter_id="no-memory",
         name="No durable memory control",
         version="1",
+    )
+    benchmark_metadata = BenchmarkMetadata(
+        source_representation="none",
+        selection_mode="always_abstain",
+        validity_limitations=("control_only", "retrieval_only_no_reader"),
     )
 
     def prepare(self, objects: Sequence[MemoryObject]) -> PreparationReceipt:
@@ -319,16 +366,22 @@ def _task_report(
     )
     reciprocal_rank = 0.0 if first_relevant is None else 1.0 / first_relevant
     abstention_correct = first.abstained if task.expects_abstention else None
-    task_success = (
-        (first.abstained if task.expects_abstention else group_recall == 1.0)
-        and forbidden_count == 0
-        and contract_violations == 0
-    )
     disclosure_chars = sum(len(objects_by_id[item].content) for item in known_ids)
     irrelevant_disclosure_chars = sum(
         len(objects_by_id[item].content) for item in known_ids - task.relevant_ids
     )
+    budget_violation_count = int(
+        task.context_budget_chars is not None
+        and disclosure_chars > task.context_budget_chars
+    )
     deterministic = all(receipt.items == first.items for receipt in receipts[1:])
+    task_success = (
+        (first.abstained if task.expects_abstention else group_recall == 1.0)
+        and forbidden_count == 0
+        and contract_violations == 0
+        and budget_violation_count == 0
+        and deterministic
+    )
     safe_ordinals = {
         object_id: f"object-{ordinal:06d}"
         for ordinal, object_id in enumerate(objects_by_id)
@@ -338,6 +391,19 @@ def _task_report(
     total_usage = AdapterUsage()
     for receipt in receipts:
         total_usage = _add_usage(total_usage, receipt.usage)
+    failure_reason_codes: list[str] = []
+    if task.expects_abstention and not first.abstained:
+        failure_reason_codes.append("abstention_mismatch")
+    if not task.expects_abstention and group_recall < 1.0:
+        failure_reason_codes.append("required_evidence_missing")
+    if forbidden_count:
+        failure_reason_codes.append("forbidden_output")
+    if contract_violations:
+        failure_reason_codes.append("adapter_contract_violation")
+    if budget_violation_count:
+        failure_reason_codes.append("context_budget_exceeded")
+    if not deterministic:
+        failure_reason_codes.append("nondeterministic_ranking")
     return {
         "task_index": task_index,
         "returned_count": len(ids),
@@ -349,9 +415,11 @@ def _task_report(
         "abstention_correct": abstention_correct,
         "forbidden_output_count": forbidden_count,
         "contract_violation_count": contract_violations,
+        "budget_violation_count": budget_violation_count,
         "disclosure_chars": disclosure_chars,
         "irrelevant_disclosure_chars": irrelevant_disclosure_chars,
         "repeat_deterministic": deterministic,
+        "failure_reason_codes": failure_reason_codes,
         "latency": {
             "p50_ms": round(_percentile(latencies_ms, 0.50), 6),
             "p95_ms": round(_percentile(latencies_ms, 0.95), 6),
@@ -383,6 +451,7 @@ def evaluate_adapter(
     preparation = adapter.prepare(tuple(objects))
     preparation_ms = (time.perf_counter() - preparation_started) * 1_000
     task_reports: list[dict[str, Any]] = []
+    all_latencies_ms: list[float] = []
     total_usage = preparation.usage
     try:
         for task_index, task in enumerate(tasks):
@@ -391,7 +460,9 @@ def evaluate_adapter(
             for _ in range(repeats):
                 started = time.perf_counter()
                 receipt = adapter.retrieve(task)
-                latencies.append((time.perf_counter() - started) * 1_000)
+                latency_ms = (time.perf_counter() - started) * 1_000
+                latencies.append(latency_ms)
+                all_latencies_ms.append(latency_ms)
                 receipts.append(receipt)
                 total_usage = _add_usage(total_usage, receipt.usage)
             task_reports.append(
@@ -405,8 +476,28 @@ def evaluate_adapter(
         for report in task_reports
         if report["abstention_correct"] is not None
     ]
+    benchmark_metadata = (
+        asdict(adapter.benchmark_metadata)
+        if isinstance(adapter, DescribedMemoryLabAdapter)
+        else asdict(
+            BenchmarkMetadata(
+                source_representation="adapter_declared_snapshot",
+                selection_mode="adapter_defined",
+                validity_limitations=("retrieval_only_no_reader",),
+            )
+        )
+    )
+    failure_cases = [
+        {
+            "task_index": int(item["task_index"]),
+            "reason_codes": list(item["failure_reason_codes"]),
+        }
+        for item in task_reports
+        if item["failure_reason_codes"]
+    ]
     return {
         "manifest": asdict(adapter.manifest),
+        "benchmark": benchmark_metadata,
         "preparation": {
             "latency_ms": round(preparation_ms, 6),
             "storage_bytes": preparation.storage_bytes,
@@ -422,12 +513,18 @@ def evaluate_adapter(
             "mean_reciprocal_rank": round(
                 _mean([float(item["reciprocal_rank"]) for item in task_reports]), 6
             ),
+            "mean_precision": round(
+                _mean([float(item["precision"]) for item in task_reports]), 6
+            ),
             "abstention_accuracy": round(_mean([float(item) for item in abstention]), 6),
             "forbidden_output_count": sum(
                 int(item["forbidden_output_count"]) for item in task_reports
             ),
             "contract_violation_count": sum(
                 int(item["contract_violation_count"]) for item in task_reports
+            ),
+            "budget_violation_count": sum(
+                int(item["budget_violation_count"]) for item in task_reports
             ),
             "mean_disclosure_chars": round(
                 _mean([float(item["disclosure_chars"]) for item in task_reports]), 6
@@ -442,8 +539,14 @@ def evaluate_adapter(
                 _mean([float(bool(item["repeat_deterministic"])) for item in task_reports]),
                 6,
             ),
+            "retrieval_latency": {
+                "p50_ms": round(_percentile(all_latencies_ms, 0.50), 6),
+                "p95_ms": round(_percentile(all_latencies_ms, 0.95), 6),
+                "p99_ms": round(_percentile(all_latencies_ms, 0.99), 6),
+            },
             "usage": _usage_dict(total_usage),
         },
+        "failure_cases": failure_cases,
         "tasks": task_reports,
     }
 
@@ -469,6 +572,25 @@ def run_memory_lab(
         "object_count": len(objects),
         "task_count": len(tasks),
         "repeats": repeats,
+        "environment": {
+            "python": platform.python_version(),
+            "python_implementation": platform.python_implementation(),
+            "operating_system": platform.system(),
+            "operating_system_release": platform.release(),
+            "machine": platform.machine(),
+            "clock": "time.perf_counter",
+            "concurrency": 1,
+            "cache_state": "process_warm_os_cache_uncontrolled",
+        },
+        "validity_limitations": [
+            "sanitized_deterministic_fixture",
+            "retrieval_only_no_answer_model",
+            "no_action_or_caos_endpoint",
+            "small_nonrepresentative_corpus",
+            "simple_reference_conditions_not_implementation_acceptance",
+            "wall_clock_latency_is_machine_specific",
+            "storage_excludes_common_source_corpus",
+        ],
         "adapters": {
             adapter.manifest.adapter_id: evaluate_adapter(
                 adapter,

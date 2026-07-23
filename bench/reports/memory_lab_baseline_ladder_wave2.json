@@ -1,0 +1,1594 @@
+{
+  "adapter_abi": "atc.memory-lab.retrieval-adapter.v1",
+  "adapters": {
+    "atc-retrieval-v3": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "production_retrieval_v3_then_fixed_character_budget",
+        "source_representation": "isolated_synthetic_core_snapshot",
+        "validity_limitations": [
+          "direct_synthetic_table_load",
+          "retrieval_only_no_reader",
+          "no_operator_core_connection"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "atc-retrieval-v3",
+        "data_egress": [],
+        "name": "ATC Retrieval V3",
+        "network_access": false,
+        "provider": null,
+        "version": "current-worktree",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 1.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 0,
+        "mean_disclosure_chars": 48.6,
+        "mean_evidence_group_recall": 0.9,
+        "mean_irrelevant_disclosure_chars": 0.0,
+        "mean_precision": 0.8,
+        "mean_reciprocal_rank": 0.8,
+        "retrieval_latency": {
+          "p50_ms": 16.45865,
+          "p95_ms": 17.74122,
+          "p99_ms": 43.169005
+        },
+        "task_success_rate": 0.8,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 46.5256,
+        "storage_bytes": 335872,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 0.5,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 16.5776,
+            "p95_ms": 19.19158
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 0,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 49,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 16.4045,
+            "p95_ms": 19.96191
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "21bd42a1f089e8f8f3995b9a859f76a0b54ad6049fb8b9e6f770b4ed61b9953f",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 1,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 36,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 16.11285,
+            "p95_ms": 17.616415
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "0ae527f0cc2d2079a8853621c25c0603bf47144e487ea3113cbb90c2b218b5a3",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 16.87945,
+            "p95_ms": 19.46591
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": true,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 15.86555,
+            "p95_ms": 16.78778
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 4,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "bounded-local-file-search": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": 2048,
+        "max_files_scanned": 7,
+        "selection_mode": "bounded_file_scan_exact_phrase_and_token_overlap",
+        "source_representation": "local_event_files",
+        "validity_limitations": [
+          "infrastructure_control_only",
+          "deterministic_file_ranker_not_action_model",
+          "programmatic_log_search_not_exercised",
+          "no_supersession_or_expiry_resolution"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "forbidden_output"
+          ],
+          "task_index": 1
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "bounded-local-file-search",
+        "data_egress": [],
+        "name": "Bounded local file-search control",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 1.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 1,
+        "mean_disclosure_chars": 69.8,
+        "mean_evidence_group_recall": 1.0,
+        "mean_irrelevant_disclosure_chars": 10.0,
+        "mean_precision": 0.7,
+        "mean_reciprocal_rank": 0.8,
+        "retrieval_latency": {
+          "p50_ms": 1.02785,
+          "p95_ms": 1.13217,
+          "p99_ms": 1.377223
+        },
+        "task_success_rate": 0.8,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 3.4636,
+        "storage_bytes": 980,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 135,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 1.1121,
+            "p95_ms": 1.531315
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "20648e04138b85d8e8be6c55e9665213a9aa0fb77cbc768399957cdfafc0d7f2",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 0,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 99,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [
+            "forbidden_output"
+          ],
+          "forbidden_output_count": 1,
+          "irrelevant_disclosure_chars": 50,
+          "latency": {
+            "p50_ms": 1.0313,
+            "p95_ms": 1.059485
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "00e6b831cde5e552a930ab83931a731dc11378a1a072146e0fb5cb5fe50788fc",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 1,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 36,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 1.0135,
+            "p95_ms": 1.04751
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "0ae527f0cc2d2079a8853621c25c0603bf47144e487ea3113cbb90c2b218b5a3",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 1.0059,
+            "p95_ms": 1.04447
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": true,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 1.0219,
+            "p95_ms": 1.053265
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 4,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "fixed-budget-long-history": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "recent_first_fixed_character_window",
+        "source_representation": "authorized_append_history",
+        "validity_limitations": [
+          "retrieval_abi_proxies_reader_context",
+          "fixture_sequence_is_history_order",
+          "no_answer_model_or_prompt_cache"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 0
+        },
+        {
+          "reason_codes": [
+            "forbidden_output"
+          ],
+          "task_index": 1
+        },
+        {
+          "reason_codes": [
+            "abstention_mismatch"
+          ],
+          "task_index": 4
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "fixed-budget-long-history",
+        "data_egress": [],
+        "name": "Fixed-budget authorized history",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 0.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 1,
+        "mean_disclosure_chars": 120.0,
+        "mean_evidence_group_recall": 0.8,
+        "mean_irrelevant_disclosure_chars": 87.2,
+        "mean_precision": 0.4,
+        "mean_reciprocal_rank": 0.6,
+        "retrieval_latency": {
+          "p50_ms": 0.0049,
+          "p95_ms": 0.009435,
+          "p99_ms": 0.013586
+        },
+        "task_success_rate": 0.4,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 0.0064,
+        "storage_bytes": 382,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 182,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 182,
+          "latency": {
+            "p50_ms": 0.00825,
+            "p95_ms": 0.01433
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "3f10ad076e26fc8449a1aa27b64eabde32707927798c236efa463269d24b0f2f",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 4,
+          "task_index": 0,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 99,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [
+            "forbidden_output"
+          ],
+          "forbidden_output_count": 1,
+          "irrelevant_disclosure_chars": 50,
+          "latency": {
+            "p50_ms": 0.005,
+            "p95_ms": 0.00801
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "00e6b831cde5e552a930ab83931a731dc11378a1a072146e0fb5cb5fe50788fc",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 1,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 92,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 56,
+          "latency": {
+            "p50_ms": 0.00425,
+            "p95_ms": 0.005385
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "16b70f8c188add4864c136b8247d7d0961269b29d586a89c27d5b5891618cc8d",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0044,
+            "p95_ms": 0.0056
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": false,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 148,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [
+            "abstention_mismatch"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 148,
+          "latency": {
+            "p50_ms": 0.0048,
+            "p95_ms": 0.006175
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "ae9be2e3b5ba4e31752b346d48b345ef2d0b212508a30a76687c346d46204546",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 3,
+          "task_index": 4,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "no-memory": {
+      "benchmark": {
+        "context_budget_chars": null,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "always_abstain",
+        "source_representation": "none",
+        "validity_limitations": [
+          "control_only",
+          "retrieval_only_no_reader"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 0
+        },
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 1
+        },
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 2
+        },
+        {
+          "reason_codes": [
+            "required_evidence_missing"
+          ],
+          "task_index": 3
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "no-memory",
+        "data_egress": [],
+        "name": "No durable memory control",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 1.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 0,
+        "mean_disclosure_chars": 0.0,
+        "mean_evidence_group_recall": 0.2,
+        "mean_irrelevant_disclosure_chars": 0.0,
+        "mean_precision": 0.0,
+        "mean_reciprocal_rank": 0.0,
+        "retrieval_latency": {
+          "p50_ms": 0.0006,
+          "p95_ms": 0.001,
+          "p99_ms": 0.001933
+        },
+        "task_success_rate": 0.2,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 0.0059,
+        "storage_bytes": 0,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0006,
+            "p95_ms": 0.002065
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 0,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0006,
+            "p95_ms": 0.000835
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 1,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0006,
+            "p95_ms": 0.000815
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 2,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0006,
+            "p95_ms": 0.000715
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 3,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": true,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0006,
+            "p95_ms": 0.00062
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 4,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "raw-append-log-search": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "exact_phrase_and_token_overlap",
+        "source_representation": "raw_authorized_append_log",
+        "validity_limitations": [
+          "no_supersession_or_expiry_resolution",
+          "lexical_only",
+          "retrieval_only_no_reader"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "forbidden_output"
+          ],
+          "task_index": 1
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "raw-append-log-search",
+        "data_egress": [],
+        "name": "Raw append-log exact and lexical search",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 1.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 1,
+        "mean_disclosure_chars": 69.8,
+        "mean_evidence_group_recall": 1.0,
+        "mean_irrelevant_disclosure_chars": 10.0,
+        "mean_precision": 0.7,
+        "mean_reciprocal_rank": 0.8,
+        "retrieval_latency": {
+          "p50_ms": 0.0279,
+          "p95_ms": 0.067785,
+          "p99_ms": 0.094756
+        },
+        "task_success_rate": 0.8,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 0.0038,
+        "storage_bytes": 382,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 135,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.06565,
+            "p95_ms": 0.09538
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "20648e04138b85d8e8be6c55e9665213a9aa0fb77cbc768399957cdfafc0d7f2",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 0,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 99,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [
+            "forbidden_output"
+          ],
+          "forbidden_output_count": 1,
+          "irrelevant_disclosure_chars": 50,
+          "latency": {
+            "p50_ms": 0.02785,
+            "p95_ms": 0.030635
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "00e6b831cde5e552a930ab83931a731dc11378a1a072146e0fb5cb5fe50788fc",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 1,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 36,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0216,
+            "p95_ms": 0.023905
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "0ae527f0cc2d2079a8853621c25c0603bf47144e487ea3113cbb90c2b218b5a3",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.01725,
+            "p95_ms": 0.01981
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": true,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0547,
+            "p95_ms": 0.061245
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 4,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "stable-observation-current-state": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "current_state_then_exact_phrase_and_token_overlap",
+        "source_representation": "stable_observation_log",
+        "validity_limitations": [
+          "deterministic_fixture_order",
+          "may_be_fixture_aligned",
+          "simple_reference_not_implementation_acceptance",
+          "lexical_only",
+          "no_reflection_or_reader"
+        ]
+      },
+      "failure_cases": [],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "stable-observation-current-state",
+        "data_egress": [],
+        "name": "Stable observation log with current-state resolution",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 1.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 0,
+        "mean_disclosure_chars": 59.8,
+        "mean_evidence_group_recall": 1.0,
+        "mean_irrelevant_disclosure_chars": 0.0,
+        "mean_precision": 0.8,
+        "mean_reciprocal_rank": 0.8,
+        "retrieval_latency": {
+          "p50_ms": 0.0241,
+          "p95_ms": 0.058995,
+          "p99_ms": 0.06321
+        },
+        "task_success_rate": 1.0,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 0.0036,
+        "storage_bytes": 382,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 135,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0573,
+            "p95_ms": 0.06365
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "20648e04138b85d8e8be6c55e9665213a9aa0fb77cbc768399957cdfafc0d7f2",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 0,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 49,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.01795,
+            "p95_ms": 0.020935
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "21bd42a1f089e8f8f3995b9a859f76a0b54ad6049fb8b9e6f770b4ed61b9953f",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 1,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 36,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.02385,
+            "p95_ms": 0.026765
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "0ae527f0cc2d2079a8853621c25c0603bf47144e487ea3113cbb90c2b218b5a3",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0196,
+            "p95_ms": 0.025435
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": true,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 0,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0485,
+            "p95_ms": 0.05435
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 0,
+          "task_index": 4,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    "static-profile": {
+      "benchmark": {
+        "context_budget_chars": 260,
+        "max_bytes_scanned": null,
+        "max_files_scanned": null,
+        "selection_mode": "profile_order_fixed_character_window",
+        "source_representation": "frozen_curated_profile",
+        "validity_limitations": [
+          "manual_profile_membership",
+          "no_profile_update_resolution",
+          "retrieval_abi_proxies_reader_context"
+        ]
+      },
+      "failure_cases": [
+        {
+          "reason_codes": [
+            "required_evidence_missing",
+            "forbidden_output"
+          ],
+          "task_index": 1
+        },
+        {
+          "reason_codes": [
+            "abstention_mismatch"
+          ],
+          "task_index": 4
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-lab.retrieval-adapter.v1",
+        "adapter_id": "static-profile",
+        "data_egress": [],
+        "name": "Frozen compact static profile",
+        "network_access": false,
+        "provider": null,
+        "version": "1",
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "abstention_accuracy": 0.0,
+        "budget_violation_count": 0,
+        "contract_violation_count": 0,
+        "deterministic_task_rate": 1.0,
+        "forbidden_output_count": 1,
+        "mean_disclosure_chars": 125.4,
+        "mean_evidence_group_recall": 0.8,
+        "mean_irrelevant_disclosure_chars": 75.4,
+        "mean_precision": 0.4,
+        "mean_reciprocal_rank": 0.5,
+        "retrieval_latency": {
+          "p50_ms": 0.0032,
+          "p95_ms": 0.005305,
+          "p99_ms": 0.007329
+        },
+        "task_success_rate": 0.6,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "preparation": {
+        "latency_ms": 0.0069,
+        "storage_bytes": 221,
+        "usage": {
+          "input_tokens": 0,
+          "model_calls": 0,
+          "monetary_cost_usd": 0.0,
+          "output_tokens": 0
+        }
+      },
+      "tasks": [
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 221,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 86,
+          "latency": {
+            "p50_ms": 0.0051,
+            "p95_ms": 0.007445
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "eb9d6e62c63ae34cca5f7e33714db4f1166e3fc84e5ccfde1a5668ebf24e9361",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 4,
+          "task_index": 0,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 50,
+          "evidence_group_recall": 0.0,
+          "failure_reason_codes": [
+            "required_evidence_missing",
+            "forbidden_output"
+          ],
+          "forbidden_output_count": 1,
+          "irrelevant_disclosure_chars": 50,
+          "latency": {
+            "p50_ms": 0.0025,
+            "p95_ms": 0.00345
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "6042a08d062c347e2b1ab8ac1c90e4c98d176ca94b16d6cff5267fcee5686476",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 1,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 92,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 56,
+          "latency": {
+            "p50_ms": 0.0031,
+            "p95_ms": 0.003565
+          },
+          "precision": 0.5,
+          "ranking_fingerprint": "0a1c15a8ead28997d588bda1e67445fe23255629891bbae5d8f1c9ae94fdc5e8",
+          "reciprocal_rank": 0.5,
+          "repeat_deterministic": true,
+          "returned_count": 2,
+          "task_index": 2,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": null,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 79,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 0,
+          "latency": {
+            "p50_ms": 0.0032,
+            "p95_ms": 0.003975
+          },
+          "precision": 1.0,
+          "ranking_fingerprint": "05797efebf806d8b96210851cf68e36b5eee048cc5941177eb9565db7058fa69",
+          "reciprocal_rank": 1.0,
+          "repeat_deterministic": true,
+          "returned_count": 1,
+          "task_index": 3,
+          "task_success": true,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "abstention_correct": false,
+          "budget_violation_count": 0,
+          "contract_violation_count": 0,
+          "disclosure_chars": 185,
+          "evidence_group_recall": 1.0,
+          "failure_reason_codes": [
+            "abstention_mismatch"
+          ],
+          "forbidden_output_count": 0,
+          "irrelevant_disclosure_chars": 185,
+          "latency": {
+            "p50_ms": 0.0031,
+            "p95_ms": 0.004805
+          },
+          "precision": 0.0,
+          "ranking_fingerprint": "e0a584fab98dec96be4e50087d7e07b11a4068f6785b27f4e08a8d350d6d11e4",
+          "reciprocal_rank": 0.0,
+          "repeat_deterministic": true,
+          "returned_count": 3,
+          "task_index": 4,
+          "task_success": false,
+          "usage": {
+            "input_tokens": 0,
+            "model_calls": 0,
+            "monetary_cost_usd": 0.0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    }
+  },
+  "baseline_config_sha256": "6dbf75db008b1be2d3db643b8dd19fe45f1a45c88121ac1ac3af16a0a0cd3c98",
+  "baseline_ladder": {
+    "policy": {
+      "hard_gates": [
+        "zero_forbidden_output",
+        "zero_adapter_contract_violation",
+        "zero_context_budget_violation",
+        "full_repeat_determinism"
+      ],
+      "incremental_criteria_order": [
+        "task_success_rate",
+        "mean_evidence_group_recall",
+        "mean_irrelevant_disclosure_chars"
+      ],
+      "required_next_tests": [
+        "current_state_mutation",
+        "poisoning_and_harmful_memory",
+        "scale_and_budget",
+        "action_grounding",
+        "caos"
+      ],
+      "scope": "fixture_bounded_evidence_not_implementation_acceptance"
+    },
+    "rungs": {
+      "atc-retrieval-v3": {
+        "comparator_adapter_id": "stable-observation-current-state",
+        "decision": "not_earned_on_this_fixture",
+        "reason_codes": [
+          "no_incremental_gain_over_strongest_lower_rung"
+        ],
+        "rung_index": 6
+      },
+      "bounded-local-file-search": {
+        "comparator_adapter_id": "stable-observation-current-state",
+        "decision": "not_earned_on_this_fixture",
+        "reason_codes": [
+          "hard_gate_failure",
+          "forbidden_output"
+        ],
+        "rung_index": 5
+      },
+      "fixed-budget-long-history": {
+        "comparator_adapter_id": "no-memory",
+        "decision": "not_earned_on_this_fixture",
+        "reason_codes": [
+          "hard_gate_failure",
+          "forbidden_output"
+        ],
+        "rung_index": 1
+      },
+      "no-memory": {
+        "comparator_adapter_id": null,
+        "decision": "retain_control",
+        "reason_codes": [
+          "negative_control"
+        ],
+        "rung_index": 0
+      },
+      "raw-append-log-search": {
+        "comparator_adapter_id": "no-memory",
+        "decision": "not_earned_on_this_fixture",
+        "reason_codes": [
+          "hard_gate_failure",
+          "forbidden_output"
+        ],
+        "rung_index": 3
+      },
+      "stable-observation-current-state": {
+        "comparator_adapter_id": "no-memory",
+        "decision": "advance_to_next_fixture",
+        "reason_codes": [
+          "improves_task_success_rate"
+        ],
+        "rung_index": 4
+      },
+      "static-profile": {
+        "comparator_adapter_id": "no-memory",
+        "decision": "not_earned_on_this_fixture",
+        "reason_codes": [
+          "hard_gate_failure",
+          "forbidden_output"
+        ],
+        "rung_index": 2
+      }
+    }
+  },
+  "environment": {
+    "cache_state": "process_warm_os_cache_uncontrolled",
+    "clock": "time.perf_counter",
+    "concurrency": 1,
+    "machine": "AMD64",
+    "operating_system": "Windows",
+    "operating_system_release": "11",
+    "python": "3.12.10",
+    "python_implementation": "CPython"
+  },
+  "fixture_sha256": "5601692ea305448f6b299c32725a93c73ca83ccee66f325e22cbcbedfa0cc68f",
+  "memory_object_schema": "atc.memory-object.v1",
+  "object_count": 7,
+  "repeats": 20,
+  "schema": "atc.memory-lab.report.v2",
+  "task_count": 5,
+  "validity_limitations": [
+    "sanitized_deterministic_fixture",
+    "retrieval_only_no_answer_model",
+    "no_action_or_caos_endpoint",
+    "small_nonrepresentative_corpus",
+    "simple_reference_conditions_not_implementation_acceptance",
+    "wall_clock_latency_is_machine_specific",
+    "storage_excludes_common_source_corpus"
+  ]
+}
