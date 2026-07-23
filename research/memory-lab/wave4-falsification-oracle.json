@@ -1,0 +1,951 @@
+{
+  "schema_version": 1,
+  "oracle_id": "atc-memory-lab-wave4-f02-2026-07-23",
+  "status": "frozen_preimplementation",
+  "frozen_at_date": "2026-07-23",
+  "worker_id": "f02_independent_falsification",
+  "governance_base_commit": "f545c37157845f0bd402215719cb8c747b7fc21d",
+  "evidence_level": "L0",
+  "purpose": "An implementation-independent, executable/checkable falsification oracle for M3 dependency-complete influence closure and M1 observable-use receipts.",
+  "scope_guards": {
+    "core_is_sole_authority": true,
+    "synthetic_data_only": true,
+    "operator_core_access": false,
+    "personal_context_access": false,
+    "external_code_or_model_execution": false,
+    "imported_text_is_untrusted_data": true
+  },
+  "canonical_terms": {
+    "published": "Eligible for retrieval, issue, execution, reuse, statistics, or rehydration by any principal.",
+    "withdrawn": "Fail-closed and ineligible on every published surface while repair is incomplete.",
+    "full_rebuild": "Discard every derived artifact and deterministically recompute from the current canonical Core records, grants, scopes, policy generation, and accepted ordered events.",
+    "optimized_repair": "Any mechanism that reuses prior derived state or evaluates fewer nodes than full rebuild.",
+    "observable_use": "A client- or action-bound event that directly identifies an issued receipt and selected record versions; it is not inferred from acknowledgement, outcome, semantic similarity, or hidden reasoning.",
+    "terminal_purge": "Irreversible removal whose tombstone prevents the purged identity, version lineage, or descendants from becoming eligible again, including after replay or same-text recreation.",
+    "ordinary_delete": "Reversible ineligibility that preserves an inspectable lifecycle distinction and may be restored under policy.",
+    "privacy_safe_failure_receipt": "A bounded diagnostic containing case and invariant identifiers, enum states, counts, and per-run opaque references, but no raw context, prompts, hidden reasoning, credentials, semantic labels, user text, or stable cross-run content hashes."
+  },
+  "m3": {
+    "graph_direction": "source_to_derived_influence",
+    "derived_surfaces": [
+      "retrieval_selection",
+      "issued_context",
+      "procedure",
+      "selection_cache",
+      "working_state",
+      "use_statistics"
+    ],
+    "mutations": [
+      "correction",
+      "scope_narrowing",
+      "permission_revocation",
+      "ordinary_delete",
+      "terminal_purge",
+      "policy_generation_change"
+    ],
+    "topologies": [
+      {
+        "topology_id": "M3-T01-CHAIN",
+        "kind": "chain",
+        "nodes": [
+          "r_a:record@v1",
+          "sel_a:retrieval_selection",
+          "iss_a:issued_context",
+          "proc_a:procedure",
+          "cache_a:selection_cache",
+          "work_a:working_state",
+          "stats_a:use_statistics"
+        ],
+        "edges": [
+          "r_a->sel_a",
+          "sel_a->iss_a",
+          "iss_a->proc_a",
+          "proc_a->cache_a",
+          "cache_a->work_a",
+          "work_a->stats_a"
+        ]
+      },
+      {
+        "topology_id": "M3-T02-FAN-OUT",
+        "kind": "fan_out",
+        "nodes": [
+          "r_b:record@v1",
+          "sel_b:retrieval_selection",
+          "iss_b:issued_context",
+          "proc_b:procedure",
+          "cache_b:selection_cache",
+          "work_b:working_state",
+          "stats_b:use_statistics"
+        ],
+        "edges": [
+          "r_b->sel_b",
+          "r_b->iss_b",
+          "r_b->proc_b",
+          "r_b->cache_b",
+          "r_b->work_b",
+          "r_b->stats_b"
+        ]
+      },
+      {
+        "topology_id": "M3-T03-FAN-IN",
+        "kind": "fan_in",
+        "nodes": [
+          "r_c1:record@v1",
+          "r_c2:record@v1",
+          "iss_c:issued_context",
+          "proc_c:procedure"
+        ],
+        "edges": [
+          "r_c1->iss_c",
+          "r_c2->iss_c",
+          "r_c1->proc_c",
+          "r_c2->proc_c"
+        ]
+      },
+      {
+        "topology_id": "M3-T04-SHARED-DESCENDANT",
+        "kind": "shared_descendant",
+        "nodes": [
+          "r_d1:record@v1",
+          "r_d2:record@v1",
+          "iss_d1:issued_context",
+          "iss_d2:issued_context",
+          "proc_d:procedure",
+          "cache_d:selection_cache",
+          "work_d:working_state",
+          "stats_d:use_statistics"
+        ],
+        "edges": [
+          "r_d1->iss_d1",
+          "r_d2->iss_d2",
+          "iss_d1->proc_d",
+          "iss_d2->proc_d",
+          "proc_d->cache_d",
+          "proc_d->work_d",
+          "work_d->stats_d"
+        ]
+      },
+      {
+        "topology_id": "M3-T05-CYCLE-ATTEMPT",
+        "kind": "cycle_attempt",
+        "nodes": [
+          "r_e:record@v1",
+          "proc_e:procedure",
+          "cache_e:selection_cache"
+        ],
+        "accepted_edges": [
+          "r_e->proc_e",
+          "proc_e->cache_e"
+        ],
+        "attempted_edge": "cache_e->r_e"
+      },
+      {
+        "topology_id": "M3-T06-CROSS-SCOPE-ATTEMPT",
+        "kind": "cross_scope_edge_attempt",
+        "nodes": [
+          "r_f:record@v1#scope-alpha",
+          "proc_f:procedure#scope-beta"
+        ],
+        "attempted_edge": "r_f->proc_f"
+      }
+    ],
+    "global_invariants": [
+      {
+        "invariant_id": "M3-I01",
+        "statement": "At every publication observation point after a canonical mutation is accepted, no affected pre-mutation descendant is published."
+      },
+      {
+        "invariant_id": "M3-I02",
+        "statement": "After quiescence, optimized repair and full rebuild have identical eligible artifact identities, source versions, scopes, grants, policy generation, and semantic payload commitments."
+      },
+      {
+        "invariant_id": "M3-I03",
+        "statement": "After terminal purge, zero source or descendant residue exists in any inspectable derived surface, replay queue, snapshot, statistics table, cache, working-state image, or failure receipt."
+      },
+      {
+        "invariant_id": "M3-I04",
+        "statement": "Publication remains fail-closed during partial repair, stale-writer attempts, duplicate replay, conflicting replay, and out-of-order delivery."
+      },
+      {
+        "invariant_id": "M3-I05",
+        "statement": "Ordinary delete remains reversible and distinguishable from terminal purge; purge identity lineage cannot be revived by restore, replay, or identifier reuse."
+      },
+      {
+        "invariant_id": "M3-I06",
+        "statement": "Cycles and cross-scope influence edges are rejected atomically and create no graph or derived-state residue."
+      },
+      {
+        "invariant_id": "M3-I07",
+        "statement": "A policy-generation change invalidates every artifact compiled under an older generation before republication."
+      },
+      {
+        "invariant_id": "M3-I08",
+        "statement": "A failure receipt is privacy-safe and cannot itself preserve purged source or descendant identifiers."
+      }
+    ],
+    "cases": [
+      {
+        "case_id": "M3-C01-CORRECTION-CHAIN",
+        "topology_id": "M3-T01-CHAIN",
+        "schedule": [
+          "E01 publish all descendants of r_a@v1",
+          "E02 accept correction r_a@v1->r_a@v2",
+          "O01 observe every surface before any repair step",
+          "E03 repair nodes in source-to-descendant order",
+          "O02 observe after each repair step",
+          "E04 quiesce and run full rebuild"
+        ],
+        "expected": [
+          "At O01 and O02 every affected v1 descendant is withdrawn.",
+          "At E04 optimized and rebuilt eligible sets are identical and bind r_a@v2.",
+          "No v1 payload commitment appears in published state or failure receipts."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I04", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C02-SCOPE-NARROWING-FANOUT",
+        "topology_id": "M3-T02-FAN-OUT",
+        "schedule": [
+          "E01 publish all six derived surfaces to principals alpha and beta",
+          "E02 narrow r_b scope to alpha",
+          "O01 query and issue concurrently as beta",
+          "E03 repair in adversarial reverse order",
+          "E04 quiesce and full rebuild"
+        ],
+        "expected": [
+          "Beta sees zero r_b influence from E02 onward on all six surfaces.",
+          "Alpha state after E04 exactly matches full rebuild.",
+          "Statistics and caches do not leak beta-ineligible source identity."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I04", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C03-PERMISSION-REVOCATION-FANIN",
+        "topology_id": "M3-T03-FAN-IN",
+        "schedule": [
+          "E01 grant principal p access to r_c1 and r_c2 and publish fan-in descendants",
+          "E02 revoke p access to r_c1 only",
+          "O01 request iss_c and proc_c as p",
+          "E03 repair with r_c2 retained",
+          "E04 quiesce and full rebuild"
+        ],
+        "expected": [
+          "Shared fan-in descendants are withdrawn until recomputed without r_c1.",
+          "A successor may publish only if valid using retained r_c2 support alone.",
+          "Final eligibility and commitments exactly match full rebuild."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I04"]
+      },
+      {
+        "case_id": "M3-C04-ORDINARY-DELETE-RESTORE",
+        "topology_id": "M3-T02-FAN-OUT",
+        "schedule": [
+          "E01 publish descendants of r_b@v1",
+          "E02 ordinary-delete r_b",
+          "O01 inspect and attempt publication",
+          "E03 restore r_b@v1 under unchanged policy",
+          "E04 repair, quiesce, and full rebuild"
+        ],
+        "expected": [
+          "No descendant is published while r_b is deleted.",
+          "Lifecycle state records reversible ordinary deletion without raw payload.",
+          "Restore can produce eligible successors and exactly matches full rebuild."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I05"]
+      },
+      {
+        "case_id": "M3-C05-TERMINAL-PURGE-IDENTIFIER-REUSE",
+        "topology_id": "M3-T04-SHARED-DESCENDANT",
+        "schedule": [
+          "E01 publish descendants of r_d1@v1 and r_d2@v1",
+          "E02 terminal-purge r_d1",
+          "O01 inspect every derived and replay surface",
+          "E03 attempt restore r_d1@v1",
+          "E04 create new content requesting identifier r_d1",
+          "E05 replay pre-purge events and stale snapshots",
+          "E06 quiesce and full rebuild"
+        ],
+        "expected": [
+          "Restore and pre-purge replay are rejected.",
+          "A recreated record receives a fresh non-aliasing identity lineage.",
+          "Shared descendants may publish only after reconstruction solely from retained or new valid support.",
+          "Zero purged identity, version, payload commitment, descendant residue, or stable failure-receipt reference remains."
+        ],
+        "invariants": ["M3-I02", "M3-I03", "M3-I04", "M3-I05", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C06-POLICY-GENERATION-CHANGE",
+        "topology_id": "M3-T02-FAN-OUT",
+        "schedule": [
+          "E01 publish all surfaces under policy generation g7",
+          "E02 atomically advance policy to g8",
+          "O01 race retrieval, issue, procedure execution, and working-state rehydrate",
+          "E03 repair under g8",
+          "E04 quiesce and full rebuild"
+        ],
+        "expected": [
+          "No g7 artifact publishes after E02.",
+          "Every successor binds g8.",
+          "Optimized state exactly matches g8 full rebuild."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I04", "M3-I07"]
+      },
+      {
+        "case_id": "M3-C07-PARTIAL-REPAIR-BARRIER",
+        "topology_id": "M3-T01-CHAIN",
+        "schedule": [
+          "E01 correct r_a and begin repair",
+          "E02 repair sel_a and iss_a only",
+          "O01 crash or pause worker before proc_a",
+          "E03 attempt publication of every repaired and unrepaired descendant",
+          "E04 resume remaining repair",
+          "E05 quiesce and full rebuild"
+        ],
+        "expected": [
+          "No affected node publishes until its complete predecessor-closed successor path validates.",
+          "Crash recovery preserves withdrawal.",
+          "Final state exactly matches full rebuild."
+        ],
+        "invariants": ["M3-I01", "M3-I02", "M3-I04"]
+      },
+      {
+        "case_id": "M3-C08-STALE-WRITER",
+        "topology_id": "M3-T04-SHARED-DESCENDANT",
+        "schedule": [
+          "E01 writer w1 reads graph epoch 10 and begins proc_d successor",
+          "E02 correction advances graph epoch to 11 and withdraws cascade",
+          "E03 writer w2 publishes valid epoch-11 predecessors",
+          "E04 w1 attempts commit using epoch 10",
+          "E05 quiesce and full rebuild"
+        ],
+        "expected": [
+          "The epoch-10 commit is rejected atomically.",
+          "No stale artifact or dependency edge is installed.",
+          "Final state matches full rebuild."
+        ],
+        "invariants": ["M3-I02", "M3-I04"]
+      },
+      {
+        "case_id": "M3-C09-CYCLE-EDGE-ATTEMPT",
+        "topology_id": "M3-T05-CYCLE-ATTEMPT",
+        "schedule": [
+          "E01 install accepted acyclic edges",
+          "E02 attempt cache_e->r_e in one transaction",
+          "O01 inspect graph and every surface",
+          "E03 rebuild from canonical inputs"
+        ],
+        "expected": [
+          "Cycle-forming edge is rejected before publication.",
+          "Graph and derived state are byte-equivalent to pre-attempt state.",
+          "No error receipt contains source payload."
+        ],
+        "invariants": ["M3-I06", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C10-CROSS-SCOPE-EDGE-ATTEMPT",
+        "topology_id": "M3-T06-CROSS-SCOPE-ATTEMPT",
+        "schedule": [
+          "E01 create r_f in scope alpha and proc_f in scope beta",
+          "E02 attempt r_f->proc_f without an explicit authorized scope bridge",
+          "O01 inspect graph, caches, statistics, and receipts"
+        ],
+        "expected": [
+          "Edge is rejected atomically.",
+          "No cross-scope identity or semantic payload appears in beta state.",
+          "Failure receipt identifies only case, invariant, and per-run opaque references."
+        ],
+        "invariants": ["M3-I06", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C11-DUPLICATE-AND-CONFLICTING-REPLAY",
+        "topology_id": "M3-T03-FAN-IN",
+        "schedule": [
+          "E01 apply event evt-11 with canonical body digest d1",
+          "E02 replay evt-11 with identical digest d1 twice",
+          "E03 replay evt-11 with conflicting digest d2",
+          "O01 inspect graph and publications",
+          "E04 quiesce and full rebuild"
+        ],
+        "expected": [
+          "Identical duplicates are idempotent and do not double-count use statistics.",
+          "Conflicting replay fails closed and does not alter canonical or derived state.",
+          "Final state matches full rebuild."
+        ],
+        "invariants": ["M3-I02", "M3-I04"]
+      },
+      {
+        "case_id": "M3-C12-OUT-OF-ORDER-MUTATION",
+        "topology_id": "M3-T01-CHAIN",
+        "schedule": [
+          "E01 receive repair-complete for canonical sequence 22 before mutation sequence 21",
+          "O01 attempt publication",
+          "E02 receive mutation sequence 21",
+          "E03 redeliver repair-complete sequence 22 with correct causal predecessor",
+          "E04 quiesce and full rebuild"
+        ],
+        "expected": [
+          "Premature repair-complete is rejected or quarantined and cannot publish.",
+          "Publication begins only after ordered causal validation.",
+          "Final state matches full rebuild."
+        ],
+        "invariants": ["M3-I02", "M3-I04"]
+      },
+      {
+        "case_id": "M3-C13-SHARED-DESCENDANT-CORRECTION",
+        "topology_id": "M3-T04-SHARED-DESCENDANT",
+        "schedule": [
+          "E01 publish shared descendants",
+          "E02 correct r_d1 while r_d2 remains unchanged",
+          "O01 attempt to preserve proc_d by change pruning",
+          "E03 validate successor support and rebuild control"
+        ],
+        "expected": [
+          "Change pruning is allowed only if the complete predecessor-version commitment equals full rebuild.",
+          "A semantic equality shortcut cannot retain a stale r_d1 version binding.",
+          "Final state exactly matches full rebuild."
+        ],
+        "invariants": ["M3-I01", "M3-I02"]
+      },
+      {
+        "case_id": "M3-C14-PURGE-DURING-ISSUE",
+        "topology_id": "M3-T02-FAN-OUT",
+        "schedule": [
+          "E01 issue context and pause before client acknowledgement",
+          "E02 terminal-purge source",
+          "E03 client attempts acknowledgement, observed-use, action, and working-state save against old issue",
+          "E04 inspect use statistics and failure receipts",
+          "E05 full rebuild"
+        ],
+        "expected": [
+          "The outstanding issue is explicitly invalidated.",
+          "Later acknowledgement, use, action, and save cannot make purged influence eligible.",
+          "Use statistics retain only bounded invalidation counts, not purged identifiers.",
+          "Full rebuild contains zero purge residue."
+        ],
+        "invariants": ["M3-I02", "M3-I03", "M3-I04", "M3-I08"]
+      },
+      {
+        "case_id": "M3-C15-OPTIMIZATION-WORK-CONTROL",
+        "topology_id": "M3-T02-FAN-OUT",
+        "schedule": [
+          "E01 create 100 independent records with six surfaces each",
+          "E02 correct exactly one record",
+          "E03 run optimized repair and instrument evaluated nodes",
+          "E04 discard all derived state and full rebuild with the same deterministic evaluator"
+        ],
+        "expected": [
+          "Eligibility and commitments are identical.",
+          "Work counts exclude logging, oracle comparison, and test harness overhead.",
+          "Optimization is held unless evaluated-node reduction is at least 25 percent across this control and no safety gate fails."
+        ],
+        "invariants": ["M3-I02"]
+      }
+    ],
+    "decisive_metrics": {
+      "published_stale_descendant_count": {"required": 0},
+      "optimized_full_rebuild_mismatch_count": {"required": 0},
+      "terminal_purge_residue_count": {"required": 0},
+      "fail_open_publication_count": {"required": 0},
+      "illegal_edge_accept_count": {"required": 0},
+      "conflicting_replay_accept_count": {"required": 0},
+      "duplicate_side_effect_count": {"required": 0},
+      "privacy_receipt_violation_count": {"required": 0},
+      "case_coverage_fraction": {"required": 1.0},
+      "surface_coverage_fraction": {"required": 1.0},
+      "optimization_evaluated_node_reduction_fraction": {
+        "retain_optimization_minimum": 0.25,
+        "note": "Performance cannot compensate for any safety or equivalence failure."
+      }
+    },
+    "decision_rules": [
+      {
+        "decision": "KILL_M3_MECHANISM",
+        "when": "Any required-zero metric is nonzero, ordinary delete and purge are conflated, a purged lineage is revived, or full-rebuild equivalence fails after quiescence."
+      },
+      {
+        "decision": "HOLD_M3_CLOSURE",
+        "when": "Any case or surface is unexecuted, the full-rebuild control is nondeterministic or not independent of optimized state, instrumentation cannot observe a required surface, or privacy-safe failure receipts are absent."
+      },
+      {
+        "decision": "RETAIN_M3_CONTRACT_HOLD_OPTIMIZATION",
+        "when": "Every hard safety, coverage, privacy, and equivalence gate passes but evaluated-node reduction is below 25 percent."
+      },
+      {
+        "decision": "RETAIN_M3_CONTRACT_AND_OPTIMIZATION",
+        "when": "Every hard gate passes and evaluated-node reduction is at least 25 percent on M3-C15."
+      }
+    ]
+  },
+  "m1": {
+    "event_key": [
+      "event_id",
+      "transaction_id",
+      "stage",
+      "canonical_record_id",
+      "canonical_record_version",
+      "issue_receipt_id",
+      "policy_generation",
+      "principal_capability_view_id",
+      "causal_predecessor_event_ids"
+    ],
+    "allowed_stages": [
+      "assigned",
+      "supplied",
+      "acknowledged",
+      "observed_use",
+      "action",
+      "outcome",
+      "invalidated"
+    ],
+    "receipt_allowlist": [
+      "schema_version",
+      "per_run_receipt_id",
+      "event_id",
+      "transaction_id",
+      "stage",
+      "canonical_record_id",
+      "canonical_record_version",
+      "issue_receipt_id",
+      "policy_generation",
+      "principal_capability_view_id",
+      "causal_predecessor_event_ids",
+      "event_time_bucket",
+      "observable_source_type",
+      "action_type_enum",
+      "outcome_status_enum",
+      "invalidation_reason_enum"
+    ],
+    "receipt_forbidden_fields": [
+      "raw_context",
+      "raw_prompt",
+      "raw_response",
+      "hidden_reasoning",
+      "chain_of_thought",
+      "credential",
+      "secret",
+      "user_text",
+      "semantic_summary",
+      "stable_content_hash",
+      "exact_high_resolution_timestamp",
+      "device_fingerprint",
+      "cross_transaction_tracking_id"
+    ],
+    "global_invariants": [
+      {
+        "invariant_id": "M1-I01",
+        "statement": "Every accepted downstream event binds exact canonical record identity and version, issue receipt, policy generation, principal capability view, and causal predecessors."
+      },
+      {
+        "invariant_id": "M1-I02",
+        "statement": "Identical duplicates are idempotent; reuse of an event ID with different canonical content fails closed."
+      },
+      {
+        "invariant_id": "M1-I03",
+        "statement": "Out-of-order or causally impossible transitions are rejected or quarantined without changing ledger truth."
+      },
+      {
+        "invariant_id": "M1-I04",
+        "statement": "Correction, scope narrowing, permission revocation, ordinary delete, terminal purge, and policy-generation change create explicit invalidation for every affected open transaction."
+      },
+      {
+        "invariant_id": "M1-I05",
+        "statement": "Acknowledgement, observed use, action, and outcome are distinct observable facts; absence of any one is never inferred as absence of another."
+      },
+      {
+        "invariant_id": "M1-I06",
+        "statement": "Outcomes require an accepted action and an independently observable correlation; a model or client assertion alone cannot fabricate success."
+      },
+      {
+        "invariant_id": "M1-I07",
+        "statement": "Receipts contain only allowlisted bounded metadata and do not permit raw-content recovery or stable cross-transaction correlation."
+      },
+      {
+        "invariant_id": "M1-I08",
+        "statement": "Terminal purge removes or irreversibly de-links affected receipt identifiers while retaining only aggregate, non-linkable purge accounting."
+      }
+    ],
+    "cases": [
+      {
+        "case_id": "M1-C01-HAPPY-OBSERVABLE-CHAIN",
+        "schedule": [
+          "E01 assigned exact record versions to transaction",
+          "E02 supplied issue receipt to client",
+          "E03 client acknowledges receipt",
+          "E04 client emits direct observed-use bound to issue receipt",
+          "E05 tool gateway records action bound to observed-use",
+          "E06 outcome adapter records independently observable outcome bound to action"
+        ],
+        "expected": [
+          "All keys required by M1-I01 are present on downstream events.",
+          "Each stage remains separately queryable.",
+          "No raw context or hidden reasoning is stored."
+        ],
+        "invariants": ["M1-I01", "M1-I05", "M1-I06", "M1-I07"]
+      },
+      {
+        "case_id": "M1-C02-NONACKNOWLEDGEMENT-IS-UNKNOWN",
+        "schedule": [
+          "E01 assign and supply",
+          "E02 receive no acknowledgement and no other event",
+          "E03 close observation window"
+        ],
+        "expected": [
+          "Ledger reports acknowledgement=not_observed and use=not_observed.",
+          "Ledger never reports not_used.",
+          "No synthetic invalidation or outcome is created."
+        ],
+        "invariants": ["M1-I05"]
+      },
+      {
+        "case_id": "M1-C03-USE-WITHOUT-ACKNOWLEDGEMENT",
+        "schedule": [
+          "E01 assign and supply",
+          "E02 omit acknowledgement",
+          "E03 receive valid direct observed-use bound to supplied issue receipt",
+          "E04 record action"
+        ],
+        "expected": [
+          "Observed use and action are accepted despite acknowledgement remaining not_observed.",
+          "Acknowledgement is not backfilled or inferred."
+        ],
+        "invariants": ["M1-I01", "M1-I05"]
+      },
+      {
+        "case_id": "M1-C04-ACKNOWLEDGED-BUT-NOT-OBSERVED-USED",
+        "schedule": [
+          "E01 assign, supply, and acknowledge",
+          "E02 receive no observed-use or action event",
+          "E03 close observation window"
+        ],
+        "expected": [
+          "Ledger reports acknowledged and use=not_observed.",
+          "Acknowledgement is never counted as use.",
+          "No not_used claim is made."
+        ],
+        "invariants": ["M1-I05"]
+      },
+      {
+        "case_id": "M1-C05-DUPLICATE-REPLAY",
+        "schedule": [
+          "E01 accept observed-use event evt-use-5",
+          "E02 replay identical evt-use-5 twice",
+          "E03 query transaction and aggregate statistics"
+        ],
+        "expected": [
+          "One logical observed-use event exists.",
+          "Use statistics increment exactly once."
+        ],
+        "invariants": ["M1-I02"]
+      },
+      {
+        "case_id": "M1-C06-CONFLICTING-REPLAY",
+        "schedule": [
+          "E01 accept action event evt-action-6 bound to record v3",
+          "E02 replay evt-action-6 bound to record v4",
+          "E03 inspect transaction"
+        ],
+        "expected": [
+          "Conflicting event is rejected atomically.",
+          "Original event remains unchanged and no v4 correlation is installed."
+        ],
+        "invariants": ["M1-I01", "M1-I02"]
+      },
+      {
+        "case_id": "M1-C07-OUT-OF-ORDER-AND-IMPOSSIBLE",
+        "schedule": [
+          "E01 submit outcome before action",
+          "E02 submit action before observed-use",
+          "E03 submit observed-use for unknown issue receipt",
+          "E04 inspect ledger"
+        ],
+        "expected": [
+          "All three events are rejected or quarantined.",
+          "No stage, count, or causal edge becomes canonical."
+        ],
+        "invariants": ["M1-I01", "M1-I03", "M1-I06"]
+      },
+      {
+        "case_id": "M1-C08-FABRICATED-OUTCOME",
+        "schedule": [
+          "E01 record valid chain through action",
+          "E02 client asserts success without outcome-adapter evidence",
+          "E03 client reuses a real outcome correlation from another action",
+          "E04 outcome adapter records failure for the correct action"
+        ],
+        "expected": [
+          "Both fabricated successes are rejected.",
+          "Only independently observed failure is accepted.",
+          "Outcome status does not reveal raw tool output."
+        ],
+        "invariants": ["M1-I01", "M1-I06", "M1-I07"]
+      },
+      {
+        "case_id": "M1-C09-CORRECTION-INVALIDATION",
+        "schedule": [
+          "E01 supply record q@v1",
+          "E02 accept correction q@v2 before observed use",
+          "E03 attempt observed-use and action against q@v1",
+          "E04 supply q@v2 in a fresh transaction"
+        ],
+        "expected": [
+          "Original transaction receives correction invalidation.",
+          "v1 use and action are rejected.",
+          "Fresh v2 transaction is non-aliasing and valid."
+        ],
+        "invariants": ["M1-I01", "M1-I04"]
+      },
+      {
+        "case_id": "M1-C10-SCOPE-AND-PERMISSION-INVALIDATION",
+        "schedule": [
+          "E01 open two transactions for principals alpha and beta",
+          "E02 narrow record scope to alpha",
+          "E03 revoke alpha permission before action",
+          "E04 attempt use and action from both transactions"
+        ],
+        "expected": [
+          "Beta transaction is explicitly invalidated for scope narrowing.",
+          "Alpha transaction is explicitly invalidated for permission revocation.",
+          "Neither transaction can record later use or action."
+        ],
+        "invariants": ["M1-I04", "M1-I07"]
+      },
+      {
+        "case_id": "M1-C11-DELETE-VERSUS-PURGE",
+        "schedule": [
+          "E01 ordinary-delete record with open transaction t1",
+          "E02 restore record and create transaction t2",
+          "E03 terminal-purge record",
+          "E04 attempt restore, replay, and events for t1 and t2"
+        ],
+        "expected": [
+          "t1 records reversible delete invalidation and never silently resumes.",
+          "Restored record can be newly supplied in t2.",
+          "Purge irreversibly invalidates and de-links both transactions.",
+          "Only aggregate non-linkable purge accounting remains."
+        ],
+        "invariants": ["M1-I04", "M1-I08"]
+      },
+      {
+        "case_id": "M1-C12-PURGED-IDENTIFIER-REUSE",
+        "schedule": [
+          "E01 purge record id old-12 and affected receipts",
+          "E02 create unrelated record requesting id old-12",
+          "E03 submit old issue and use receipts against new record"
+        ],
+        "expected": [
+          "New record receives a fresh identity lineage.",
+          "Old receipts cannot correlate to the new record.",
+          "Failure diagnostics contain no purged stable identifier."
+        ],
+        "invariants": ["M1-I01", "M1-I07", "M1-I08"]
+      },
+      {
+        "case_id": "M1-C13-POLICY-GENERATION-INVALIDATION",
+        "schedule": [
+          "E01 supply under policy generation g2",
+          "E02 advance to g3",
+          "E03 submit acknowledgement, use, action, and outcome under g2",
+          "E04 resupply under g3"
+        ],
+        "expected": [
+          "Open g2 transaction is explicitly invalidated.",
+          "All late g2 downstream events are rejected.",
+          "g3 transaction uses fresh receipt identifiers."
+        ],
+        "invariants": ["M1-I01", "M1-I04"]
+      },
+      {
+        "case_id": "M1-C14-RAW-TRACE-AND-HIDDEN-REASONING-REJECTION",
+        "schedule": [
+          "E01 submit otherwise valid event with raw_context",
+          "E02 submit otherwise valid event with chain_of_thought",
+          "E03 submit otherwise valid event with stable_content_hash",
+          "E04 submit allowlisted bounded event"
+        ],
+        "expected": [
+          "First three events fail schema admission without echoing forbidden values.",
+          "Allowlisted event is accepted.",
+          "Failure receipts contain field-name enums only."
+        ],
+        "invariants": ["M1-I07"]
+      },
+      {
+        "case_id": "M1-C15-RECEIPT-CORRELATION-NONINTERFERENCE",
+        "schedule": [
+          "E01 create paired synthetic vaults differing only in an unauthorized canary record",
+          "E02 execute identical assigned-through-invalidated schedules",
+          "E03 serialize externally visible receipts and aggregate reports",
+          "E04 repeat in a new run with the same authorized facts"
+        ],
+        "expected": [
+          "Paired receipts are identical after replacing per-run random IDs with positional placeholders.",
+          "Unauthorized canary never affects counts, ordering, timing bucket, identifiers, or failure shape.",
+          "A new run uses unlinkable receipt identifiers and exposes no stable content hash."
+        ],
+        "invariants": ["M1-I07", "M1-I08"]
+      },
+      {
+        "case_id": "M1-C16-PURGE-RACE-WITH-OBSERVED-USE",
+        "schedule": [
+          "E01 client prepares observed-use against a valid issue",
+          "E02 Core commits terminal purge",
+          "E03 delayed observed-use reaches ledger",
+          "E04 inspect transaction, aggregates, and failure receipt"
+        ],
+        "expected": [
+          "Delayed use fails closed against the purge barrier.",
+          "Transaction is invalidated, not counted as used or not_used.",
+          "Receipt retains no purged stable identifier."
+        ],
+        "invariants": ["M1-I04", "M1-I05", "M1-I08"]
+      }
+    ],
+    "decisive_metrics": {
+      "accepted_forbidden_field_count": {"required": 0},
+      "unbound_downstream_event_count": {"required": 0},
+      "duplicate_side_effect_count": {"required": 0},
+      "conflicting_replay_accept_count": {"required": 0},
+      "impossible_transition_accept_count": {"required": 0},
+      "fabricated_outcome_accept_count": {"required": 0},
+      "missing_required_invalidation_count": {"required": 0},
+      "nonacknowledgement_inferred_nonuse_count": {"required": 0},
+      "receipt_pair_difference_count_after_placeholder_normalization": {"required": 0},
+      "stable_cross_run_identifier_count": {"required": 0},
+      "purge_receipt_residue_count": {"required": 0},
+      "case_coverage_fraction": {"required": 1.0}
+    },
+    "decision_rules": [
+      {
+        "decision": "KILL_M1_MECHANISM",
+        "when": "Any required-zero metric is nonzero, raw context or hidden reasoning is stored, fabricated outcomes become canonical, non-acknowledgement is inferred as non-use, or purged receipts remain linkable."
+      },
+      {
+        "decision": "HOLD_M1_LEDGER",
+        "when": "Any case is unexecuted, a required stage is unobservable, outcome evidence is not independent of the claimant, receipt privacy cannot be inspected, or failure receipts are absent."
+      },
+      {
+        "decision": "RETAIN_M1_OBSERVABLE_LEDGER",
+        "when": "All cases execute and every binding, causality, invalidation, idempotency, outcome-integrity, privacy, and purge gate passes."
+      }
+    ]
+  },
+  "failure_receipt_contract": {
+    "required_fields": [
+      "schema_version",
+      "oracle_id",
+      "case_id",
+      "invariant_id",
+      "phase_enum",
+      "failure_class_enum",
+      "expected_state_enum",
+      "actual_state_enum",
+      "per_run_artifact_ref",
+      "count"
+    ],
+    "forbidden_fields": [
+      "raw_record_id_after_purge",
+      "raw_context",
+      "raw_prompt",
+      "raw_response",
+      "hidden_reasoning",
+      "credential",
+      "user_text",
+      "semantic_summary",
+      "stable_content_hash",
+      "exact_timestamp"
+    ],
+    "serialization": "Canonical UTF-8 JSON with sorted keys; enum vocabulary is frozen by the harness before execution.",
+    "redaction_failure_rule": "If safe serialization is impossible, emit only oracle_id, case_id, invariant_id, failure_class_enum=RECEIPT_REDACTION_FAILED, and count=1; never echo rejected content."
+  },
+  "prior_art_boundary": [
+    {
+      "source_id": "PA-01-MEMOREPAIR",
+      "title": "MemoRepair: Barrier-First Cascade Repair in Agentic Memory",
+      "url": "https://arxiv.org/abs/2605.07242",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Barrier-first withdrawal, provenance-derived affected cascades, predecessor-closed validated republication, and repair across summaries, cached outputs, procedures, and skills.",
+      "not_established_for_atc": "Current-Core authority, permission and scope invalidation, ordinary delete versus terminal purge, identifier reuse, policy generations, ATC's six surfaces, exact full-rebuild equality, or privacy-safe observable-use receipts."
+    },
+    {
+      "source_id": "PA-02-SKYFRAME",
+      "title": "Bazel Skyframe documentation",
+      "url": "https://bazel.build/reference/skyframe",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Explicit dependency capture, reverse-transitive invalidation, change pruning, and correctness comparison with clean builds.",
+      "not_established_for_atc": "Memory lifecycle authority, purge semantics, scopes, permissions, use receipts, or personal-context privacy."
+    },
+    {
+      "source_id": "PA-03-DBTOASTER",
+      "title": "DBToaster: Higher-order Delta Processing for Dynamic, Frequently Fresh Views",
+      "url": "https://www.vldb.org/pvldb/vol5/p968_yanifahmad_vldb2012.pdf",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Recursive delta queries and auxiliary materialized views for lower-cost incremental view maintenance.",
+      "not_established_for_atc": "Fail-closed withdrawal, security-scope eligibility, terminal purge residue, or observable memory use."
+    },
+    {
+      "source_id": "PA-04-W3C-PROV",
+      "title": "W3C PROV Model Primer",
+      "url": "https://www.w3.org/TR/prov-primer/",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Entities, activities, agents, usage, generation, derivation, and version-aware provenance descriptions.",
+      "not_established_for_atc": "An ordered use ledger, causal transition rejection, outcome integrity, purge de-linking, or receipt minimization."
+    },
+    {
+      "source_id": "PA-05-OPENLINEAGE",
+      "title": "OpenLineage API specification",
+      "url": "https://openlineage.io/apidocs/openapi/",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Identified run events, producer and schema binding, input/output lineage, and explicit terminal run states.",
+      "not_established_for_atc": "Canonical record-version use semantics, non-acknowledgement versus non-use, hidden-reasoning exclusion, or terminal memory purge."
+    },
+    {
+      "source_id": "PA-06-EVENT-SOURCING",
+      "title": "Microsoft Event Sourcing pattern",
+      "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/event-sourcing",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Append-only event reconstruction, optimistic concurrency, compensating events, snapshots, and idempotent handling of at-least-once delivery.",
+      "not_established_for_atc": "The exact observable memory-use stages or privacy-bounded invalidation receipts."
+    },
+    {
+      "source_id": "PA-07-MEMOPS",
+      "title": "MemOps: Benchmarking Lifecycle Memory Operations in Long-Horizon Conversations",
+      "url": "https://arxiv.org/abs/2607.12893",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Structured traces for memory-operation trigger, target, scope, state transition, evidence, correction, and forgetting diagnostics.",
+      "not_established_for_atc": "System event receipts proving assignment, supply, acknowledgement, direct observed use, action, outcome, and invalidation without raw context."
+    },
+    {
+      "source_id": "PA-08-MEMORA",
+      "title": "From Recall to Forgetting: Benchmarking Long-Term Memory for Personalized Agents",
+      "url": "https://arxiv.org/abs/2604.20006",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Forgetting-aware accuracy that penalizes reliance on obsolete or invalidated memory across evolving conversations.",
+      "not_established_for_atc": "Dependency-complete residue inspection, full-rebuild equivalence, or event-level observable-use proof."
+    },
+    {
+      "source_id": "PA-09-MEM2ACT",
+      "title": "Mem2ActBench: A Benchmark for Evaluating Long-Term Memory Utilization in Task-Oriented Autonomous Agents",
+      "url": "https://arxiv.org/abs/2601.19935",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Evaluation of memory utilization through memory-grounded tool selection and argument construction.",
+      "not_established_for_atc": "A privacy-safe causal receipt ledger or invalidation of use after correction and purge."
+    },
+    {
+      "source_id": "PA-10-MEMORYAGENTBENCH",
+      "title": "Evaluating Memory in LLM Agents via Incremental Multi-Turn Interactions",
+      "url": "https://arxiv.org/abs/2507.05257",
+      "accessed": "2026-07-23",
+      "established_prior_art": "Incremental evaluation of retrieval, test-time learning, long-range understanding, and conflict resolution or selective forgetting.",
+      "not_established_for_atc": "Core-authoritative lifecycle closure or observable event receipts."
+    }
+  ],
+  "atc_narrow_composition_claim": "No component is claimed as novel alone. The falsifiable ATC composition is a Core-authoritative, scope/permission/policy-aware influence graph whose optimized repair must equal full rebuild, fail closed during repair, distinguish reversible delete from terminal purge and identifier reuse, remove residue across six memory surfaces, and connect issued record versions to privacy-bounded observable-use, action, outcome, and invalidation receipts without hidden reasoning or raw context.",
+  "limitations": [
+    "This is an L0 preregistration, not executed evidence.",
+    "Synthetic graph and event schedules cannot establish completeness for unknown production surfaces or hidden client/model state.",
+    "Full-rebuild equality is only as strong as the independently implemented canonical evaluator and its observable state inventory.",
+    "Zero receipt differences do not prove resistance to all timing, traffic-analysis, or auxiliary-information attacks.",
+    "A 25 percent evaluated-node reduction threshold is a frozen research convention, not a product latency or cost requirement.",
+    "Primary-source research was bounded to the cited papers and official documentation available on 2026-07-23; it is not an exhaustive patent or literature search."
+  ]
+}
