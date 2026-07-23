@@ -1,0 +1,76 @@
+{
+  "schema": "atc.memory-lab.o01-fixture.v1",
+  "frozen_protocol": {
+    "repeats": 20,
+    "equal_budget": {
+      "max_writes_per_step": 2,
+      "max_reads_per_step": 1,
+      "max_selected_items": 1,
+      "max_memory_items": 4
+    },
+    "recovery_consecutive": 2,
+    "rank_move_hold_threshold": 2,
+    "spearman_hold_threshold": 0.7,
+    "shifted_caos_gap_hold_threshold": 0.05
+  },
+  "regimes": [
+    {
+      "name": "off_policy",
+      "shift_clock": null,
+      "preloaded": [
+        {"state": "S0", "action": "A0", "epoch": "E0", "trusted": true, "applies": true, "source": "neutral_replay"},
+        {"state": "S1", "action": "A1", "epoch": "E0", "trusted": true, "applies": true, "source": "neutral_replay"}
+      ],
+      "steps": [
+        {"clock": 1, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 2, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}},
+        {"clock": 3, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 4, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}},
+        {"clock": 5, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 6, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}}
+      ]
+    },
+    {
+      "name": "online",
+      "shift_clock": null,
+      "steps": [
+        {"clock": 1, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 2, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}},
+        {
+          "clock": 3,
+          "state": "S0",
+          "epoch": "E0",
+          "write_candidates": [
+            {"state": "S0", "action": "A1", "epoch": "E0", "trusted": false, "applies": true, "source": "opaque_pollution"}
+          ],
+          "oracle": {"expected_action": "A0"}
+        },
+        {
+          "clock": 4,
+          "state": "S1",
+          "epoch": "E0",
+          "write_candidates": [
+            {"state": "S1", "action": "A0", "epoch": "E0", "trusted": true, "applies": false, "source": "mismatched_observation"}
+          ],
+          "oracle": {"expected_action": "A1"}
+        },
+        {"clock": 5, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 6, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}}
+      ]
+    },
+    {
+      "name": "shifted",
+      "shift_clock": 5,
+      "steps": [
+        {"clock": 1, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 2, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}},
+        {"clock": 3, "state": "S0", "epoch": "E0", "oracle": {"expected_action": "A0"}},
+        {"clock": 4, "state": "S1", "epoch": "E0", "oracle": {"expected_action": "A1"}},
+        {"clock": 5, "state": "S0", "epoch": "E1", "oracle": {"expected_action": "A1"}},
+        {"clock": 6, "state": "S1", "epoch": "E1", "oracle": {"expected_action": "A0"}},
+        {"clock": 7, "state": "S0", "epoch": "E1", "oracle": {"expected_action": "A1"}},
+        {"clock": 8, "state": "S1", "epoch": "E1", "oracle": {"expected_action": "A0"}}
+      ]
+    }
+  ]
+}
