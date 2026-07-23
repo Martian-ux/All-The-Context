@@ -679,9 +679,7 @@ def test_ongoing_memory_correction_forget_and_restore_need_no_review(
             json={"reason": "Undo forget"},
         )
         assert restored.status_code == 200, restored.text
-        assert restored.json()["content"] == (
-            "Prefer concise answers with verification evidence."
-        )
+        assert restored.json()["content"] == ("Prefer concise answers with verification evidence.")
 
         error_only = client.post(
             "/v1/ingestion/error",

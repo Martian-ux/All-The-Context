@@ -78,10 +78,7 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
         assert forgotten.isError is not True
         assert forgotten.structuredContent is not None
         assert forgotten.structuredContent["disposition"] == "applied"
-        assert (
-            forgotten.structuredContent["record_id"]
-            == proposed.structuredContent["record_id"]
-        )
+        assert forgotten.structuredContent["record_id"] == proposed.structuredContent["record_id"]
         assert forgotten.structuredContent["deleted_at"]
 
 

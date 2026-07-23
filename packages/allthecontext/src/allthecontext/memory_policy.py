@@ -59,8 +59,7 @@ def _contains_secret_like_material(candidate: CandidateInput) -> bool:
     def structured_contains(value: object) -> bool:
         if isinstance(value, dict):
             return any(
-                _SECRET_HINT.search(f"{key}:") is not None
-                or structured_contains(item)
+                _SECRET_HINT.search(f"{key}:") is not None or structured_contains(item)
                 for key, item in value.items()
             )
         if isinstance(value, list):

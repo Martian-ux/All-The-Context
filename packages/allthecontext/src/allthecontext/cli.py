@@ -207,9 +207,7 @@ def _cmd_import(args: argparse.Namespace) -> None:
 
 
 def _cmd_observations(args: argparse.Namespace) -> None:
-    disposition = (
-        ObservationDisposition(args.disposition) if args.disposition is not None else None
-    )
+    disposition = ObservationDisposition(args.disposition) if args.disposition is not None else None
     items, total = _store(args).list_observations(
         disposition=disposition,
         limit=args.limit,

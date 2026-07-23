@@ -224,15 +224,9 @@ class CoreRelaySync:
                 entity_key = reported_provenance.get("entity_key")
                 attribute_key = reported_provenance.get("attribute_key")
                 candidate = CandidateInput(
-                    kind=(
-                        "correction"
-                        if is_correction
-                        else raw_kind
-                    ),
+                    kind=("correction" if is_correction else raw_kind),
                     content=(
-                        str(suggested_correction)
-                        if is_correction
-                        else str(raw_payload["content"])
+                        str(suggested_correction) if is_correction else str(raw_payload["content"])
                     ),
                     scopes=[str(value) for value in scopes],
                     source_reference=str(
@@ -245,9 +239,7 @@ class CoreRelaySync:
                     confidence=confidence,
                     sensitivity=Sensitivity(str(raw_payload.get("sensitivity", "normal"))),
                     entity_key=str(entity_key) if entity_key is not None else None,
-                    attribute_key=(
-                        str(attribute_key) if attribute_key is not None else None
-                    ),
+                    attribute_key=(str(attribute_key) if attribute_key is not None else None),
                     supersedes=(
                         str(
                             reported_provenance.get("record_id")
@@ -267,9 +259,7 @@ class CoreRelaySync:
                     explicit_user_statement=is_correction
                     or (
                         raw_kind.casefold() != "context_error"
-                        and bool(
-                            reported_provenance.get("explicit_user_statement", False)
-                        )
+                        and bool(reported_provenance.get("explicit_user_statement", False))
                     ),
                     idempotency_key=f"edge-proposal:{proposal_id}",
                 )

@@ -250,24 +250,19 @@ class CoreStore:
                     continue
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    for statement in _migration_statements(
-                        migration.read_text(encoding="utf-8")
-                    ):
+                    for statement in _migration_statements(migration.read_text(encoding="utf-8")):
                         added_column = _added_column(statement)
                         if added_column is not None:
                             table, column = added_column
                             columns = {
                                 str(row["name"])
-                                for row in connection.execute(
-                                    f'PRAGMA table_info("{table}")'
-                                )
+                                for row in connection.execute(f'PRAGMA table_info("{table}")')
                             }
                             if column in columns:
                                 continue
                         connection.execute(statement)
                     connection.execute(
-                        "INSERT INTO schema_migrations(version, name, applied_at) "
-                        "VALUES (?, ?, ?)",
+                        "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                         (version, migration.name, utc_now()),
                     )
                 except BaseException:
@@ -1749,13 +1744,9 @@ class CoreStore:
         self._insert_version(connection, updated, reason)
         self._replace_fts(connection, updated)
         if effective_availability == Availability.ALWAYS:
-            self._emit_event(
-                connection, updated, "record_upserted", self._relay_payload(updated)
-            )
+            self._emit_event(connection, updated, "record_upserted", self._relay_payload(updated))
         elif previous_availability == Availability.ALWAYS:
-            self._emit_event(
-                connection, updated, "record_withdrawn", {"record_id": record_id}
-            )
+            self._emit_event(connection, updated, "record_withdrawn", {"record_id": record_id})
         self._audit(connection, actor, "observation_updated", [record_id])
         return cast(sqlite3.Row, updated)
 
@@ -1829,17 +1820,11 @@ class CoreStore:
             record_id=record_id,
             actor=actor,
         )
-        self._link_observation_tx(
-            connection, str(observation["id"]), record_id, "reinforced"
-        )
+        self._link_observation_tx(connection, str(observation["id"]), record_id, "reinforced")
         if target_availability == Availability.ALWAYS:
-            self._emit_event(
-                connection, updated, "record_upserted", self._relay_payload(updated)
-            )
+            self._emit_event(connection, updated, "record_upserted", self._relay_payload(updated))
         elif previous_availability == Availability.ALWAYS:
-            self._emit_event(
-                connection, updated, "record_withdrawn", {"record_id": record_id}
-            )
+            self._emit_event(connection, updated, "record_withdrawn", {"record_id": record_id})
         self._audit(connection, actor, "observation_reinforced", [record_id])
         return cast(sqlite3.Row, updated)
 
@@ -1918,9 +1903,7 @@ class CoreStore:
                     record_id=record_id,
                     actor=actor,
                 )
-                self._link_observation_tx(
-                    connection, observation_id, record_id, "forgotten"
-                )
+                self._link_observation_tx(connection, observation_id, record_id, "forgotten")
                 self._delete_record_tx(
                     connection,
                     record_id,
@@ -1959,8 +1942,7 @@ class CoreStore:
                     and str(observation["kind"]).casefold() != "context_error"
                     and not (
                         origin == ObservationOrigin.ARCHIVE_IMPORT
-                        and str(observation["source_type"] or "")
-                        != "provider_archive"
+                        and str(observation["source_type"] or "") != "provider_archive"
                     )
                     else []
                 )
@@ -1977,13 +1959,9 @@ class CoreStore:
                     self._audit(connection, actor, "observation_tentative", [])
                 else:
                     target = self._target_record_tx(connection, observation, principal)
-                    if (
-                        target is not None
-                        and not self._observation_wins(observation, target)
-                    ):
+                    if target is not None and not self._observation_wins(observation, target):
                         reason = (
-                            "older or lower-authority observation did not replace "
-                            "current context"
+                            "older or lower-authority observation did not replace current context"
                         )
                         self._set_observation_decision_tx(
                             connection,
@@ -2001,9 +1979,7 @@ class CoreStore:
                             str(target["id"]),
                             "contradicted",
                         )
-                        self._audit(
-                            connection, actor, "observation_ignored", [str(target["id"])]
-                        )
+                        self._audit(connection, actor, "observation_ignored", [str(target["id"])])
                     elif observation["supersedes"] is not None and target is None:
                         self._set_observation_decision_tx(
                             connection,
@@ -2050,9 +2026,7 @@ class CoreStore:
                                 disposition=ObservationDisposition.REINFORCED,
                                 reason="observation helped corroborate current context",
                                 policy_version=policy.policy_version,
-                                origin=ObservationOrigin(
-                                    str(prior["observation_origin"])
-                                )
+                                origin=ObservationOrigin(str(prior["observation_origin"]))
                                 if prior["observation_origin"]
                                 else origin,
                                 record_id=str(current["id"]),
@@ -2589,14 +2563,10 @@ class CoreStore:
                     snapshot.get("sensitivity", current["sensitivity"]),
                     target_availability.value,
                     _json(
-                        snapshot.get(
-                            "allowed_clients", _loads(current["allowed_clients_json"], [])
-                        )
+                        snapshot.get("allowed_clients", _loads(current["allowed_clients_json"], []))
                     ),
                     _json(
-                        snapshot.get(
-                            "denied_clients", _loads(current["denied_clients_json"], [])
-                        )
+                        snapshot.get("denied_clients", _loads(current["denied_clients_json"], []))
                     ),
                     snapshot.get("valid_from", current["valid_from"]),
                     snapshot.get("expires_at", current["expires_at"]),
@@ -2620,9 +2590,7 @@ class CoreStore:
                     record_id,
                 ),
             )
-            connection.execute(
-                "DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,)
-            )
+            connection.execute("DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,))
             restored = connection.execute(
                 "SELECT * FROM context_records WHERE id=?", (record_id,)
             ).fetchone()
@@ -2634,9 +2602,7 @@ class CoreStore:
                     connection, restored, "record_upserted", self._relay_payload(restored)
                 )
             elif previous_availability == Availability.ALWAYS:
-                self._emit_event(
-                    connection, restored, "record_withdrawn", {"record_id": record_id}
-                )
+                self._emit_event(connection, restored, "record_withdrawn", {"record_id": record_id})
             self._recompute_integrity(connection)
             self._audit(
                 connection,
@@ -2791,9 +2757,7 @@ class CoreStore:
                 connection.execute(
                     "DELETE FROM context_errors WHERE candidate_id=?", (observation_id,)
                 )
-                connection.execute(
-                    "DELETE FROM context_candidates WHERE id=?", (observation_id,)
-                )
+                connection.execute("DELETE FROM context_candidates WHERE id=?", (observation_id,))
         self._remove_related_audits(connection, record_id)
         connection.execute(
             "INSERT INTO purge_tombstones"
@@ -2860,9 +2824,7 @@ class CoreStore:
             connection.execute(
                 "DELETE FROM edge_proposal_receipts WHERE candidate_id=?", (candidate_id,)
             )
-            connection.execute(
-                "DELETE FROM context_errors WHERE candidate_id=?", (candidate_id,)
-            )
+            connection.execute("DELETE FROM context_errors WHERE candidate_id=?", (candidate_id,))
             connection.execute(
                 "DELETE FROM context_observation_links WHERE observation_id=?",
                 (candidate_id,),
@@ -3296,14 +3258,11 @@ class CoreStore:
                     ).fetchone()[0]
                 ),
                 "observations": int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM context_candidates"
-                    ).fetchone()[0]
+                    connection.execute("SELECT COUNT(*) FROM context_candidates").fetchone()[0]
                 ),
                 "tentative_observations": int(
                     connection.execute(
-                        "SELECT COUNT(*) FROM context_candidates "
-                        "WHERE disposition='tentative'"
+                        "SELECT COUNT(*) FROM context_candidates WHERE disposition='tentative'"
                     ).fetchone()[0]
                 ),
                 "approved_records": int(

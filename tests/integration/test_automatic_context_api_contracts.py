@@ -59,8 +59,8 @@ def test_authenticated_clients_cannot_submit_or_finish_each_others_session(
 ) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
     with TestClient(create_app(config)) as client:
-        _owner, (_first_id, first_headers), (_second_id, second_headers) = (
-            _setup_two_clients(client)
+        _owner, (_first_id, first_headers), (_second_id, second_headers) = _setup_two_clients(
+            client
         )
         begun = client.post(
             "/v1/ingestion/begin",
@@ -278,10 +278,13 @@ def test_context_error_retry_reuses_observation_and_provenance_row(
         assert second.json()["id"] == first.json()["id"]
 
     with sqlite3.connect(config.database_path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_errors WHERE candidate_id=?",
-            (first.json()["id"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_errors WHERE candidate_id=?",
+                (first.json()["id"],),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_relay_queued_writes_preserve_client_acl_at_core(tmp_path: Path) -> None:
@@ -321,10 +324,6 @@ def test_relay_queued_writes_preserve_client_acl_at_core(tmp_path: Path) -> None
     assert forget_replayed is False
     assert correction.disposition == "ignored"
     assert forgotten.disposition == "ignored"
-    assert core.store.get_observation(correction.id).submitted_by_client_id == (
-        "denied-client"
-    )
-    assert core.store.get_observation(forgotten.id).submitted_by_client_id == (
-        "denied-client"
-    )
+    assert core.store.get_observation(correction.id).submitted_by_client_id == ("denied-client")
+    assert core.store.get_observation(forgotten.id).submitted_by_client_id == ("denied-client")
     assert core.store.get_record(created.record_id).content == "Prefer concise answers."

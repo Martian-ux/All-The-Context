@@ -1082,9 +1082,7 @@ def create_app(
             "provenance": {
                 "record_id": request.record_id,
                 "suggested_correction": request.evidence,
-                "explicit_user_statement": bool(
-                    request.evidence and request.evidence.strip()
-                ),
+                "explicit_user_statement": bool(request.evidence and request.evidence.strip()),
             },
         }
         idempotency_key = hashlib.sha256(canonical_json(proposal).encode("utf-8")).hexdigest()

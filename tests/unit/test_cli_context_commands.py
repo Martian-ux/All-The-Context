@@ -85,9 +85,7 @@ def test_observations_command_omits_optional_disposition(
     store = _Store()
     monkeypatch.setattr(cli, "_store", lambda _args: store)
 
-    cli._cmd_observations(
-        argparse.Namespace(data_dir=None, disposition=None, limit=100, offset=0)
-    )
+    cli._cmd_observations(argparse.Namespace(data_dir=None, disposition=None, limit=100, offset=0))
 
     assert store.list_call is not None
     assert store.list_call["disposition"] is None
@@ -130,15 +128,17 @@ def test_restore_dry_run_validates_without_initializing_destination(
     monkeypatch.setattr(
         cli,
         "restore_export",
-        lambda source, database, passphrase, *, dry_run: calls.append(
-            {
-                "source": source,
-                "database": database,
-                "passphrase": passphrase,
-                "dry_run": dry_run,
-            }
-        )
-        or {"valid": True, "dry_run": True},
+        lambda source, database, passphrase, *, dry_run: (
+            calls.append(
+                {
+                    "source": source,
+                    "database": database,
+                    "passphrase": passphrase,
+                    "dry_run": dry_run,
+                }
+            )
+            or {"valid": True, "dry_run": True}
+        ),
     )
     monkeypatch.setattr(
         cli,

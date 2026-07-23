@@ -33,8 +33,7 @@ def _create_v4_database(path: Path, *, seed_legacy_rows: bool = False) -> None:
             "(version INTEGER PRIMARY KEY,name TEXT NOT NULL,applied_at TEXT NOT NULL)"
         )
         connection.execute(
-            "INSERT INTO schema_migrations VALUES"
-            "(1,'001_initial.sql','2026-01-01T00:00:00+00:00')"
+            "INSERT INTO schema_migrations VALUES(1,'001_initial.sql','2026-01-01T00:00:00+00:00')"
         )
         for version, filename in (
             (2, "002_edge_proposal_receipts.sql"),
@@ -158,8 +157,7 @@ def test_migration_005_recovers_after_partial_application_and_restart(
         connection.execute("ALTER TABLE context_candidates ADD COLUMN observed_at TEXT")
         connection.execute("ALTER TABLE context_candidates ADD COLUMN observation_origin TEXT")
         connection.execute(
-            "ALTER TABLE context_candidates "
-            "ADD COLUMN disposition TEXT NOT NULL DEFAULT 'staged'"
+            "ALTER TABLE context_candidates ADD COLUMN disposition TEXT NOT NULL DEFAULT 'staged'"
         )
 
     store = CoreStore(database)
@@ -167,12 +165,14 @@ def test_migration_005_recovers_after_partial_application_and_restart(
     assert store.migrate() == 5
 
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version=5"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version=5").fetchone()[
+                0
+            ]
+            == 1
+        )
         candidate_columns = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA table_info(context_candidates)")
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
         }
         assert {
             "observed_at",
@@ -273,17 +273,26 @@ def test_source_free_export_restore_has_valid_foreign_keys_and_rebuilt_search(
 
     with destination.store.connect() as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute(
-            "SELECT source_id FROM context_records WHERE id=?", (record_id,)
-        ).fetchone()["source_id"] is None
-        assert connection.execute(
-            "SELECT source_id FROM context_candidates "
-            "WHERE id=(SELECT candidate_id FROM context_records WHERE id=?)",
-            (record_id,),
-        ).fetchone()["source_id"] is None
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_fts WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT source_id FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()["source_id"]
+            is None
+        )
+        assert (
+            connection.execute(
+                "SELECT source_id FROM context_candidates "
+                "WHERE id=(SELECT candidate_id FROM context_records WHERE id=?)",
+                (record_id,),
+            ).fetchone()["source_id"]
+            is None
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_fts WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 1
+        )
     result = destination.retrieval.search(SearchRequest(query="zephyr marker"))
     assert [item.id for item in result.items] == [record_id]
 
@@ -328,9 +337,12 @@ def test_pre_v5_decisions_restore_without_reopening_rejected_observations(
                 "legacy-review-v1",
             ),
         ]
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_records WHERE id='legacy-record'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_records WHERE id='legacy-record'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_purge_then_restore_cannot_resurrect_unlinked_target_observations(
@@ -376,11 +388,14 @@ def test_purge_then_restore_cannot_resurrect_unlinked_target_observations(
             f"WHERE observation_id IN ({','.join('?' for _ in observation_ids)})",
             sorted(observation_ids),
         )
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_observation_links "
-            f"WHERE observation_id IN ({','.join('?' for _ in observation_ids)})",
-            sorted(observation_ids),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_observation_links "
+                f"WHERE observation_id IN ({','.join('?' for _ in observation_ids)})",
+                sorted(observation_ids),
+            ).fetchone()[0]
+            == 0
+        )
 
     package = tmp_path / "before-purge.atcexp"
     create_export(database, package, PASSPHRASE, include_audit=True)
@@ -396,12 +411,18 @@ def test_purge_then_restore_cannot_resurrect_unlinked_target_observations(
         store.get_record(record_id, include_deleted=True)
     with store.connect() as connection:
         placeholders = ",".join("?" for _ in observation_ids)
-        assert connection.execute(
-            f"SELECT COUNT(*) FROM context_candidates WHERE id IN ({placeholders})",
-            sorted(observation_ids),
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_errors WHERE record_id=? OR candidate_id IN "
-            f"({placeholders})",
-            (record_id, *sorted(observation_ids)),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                f"SELECT COUNT(*) FROM context_candidates WHERE id IN ({placeholders})",
+                sorted(observation_ids),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_errors WHERE record_id=? OR candidate_id IN "
+                f"({placeholders})",
+                (record_id, *sorted(observation_ids)),
+            ).fetchone()[0]
+            == 0
+        )

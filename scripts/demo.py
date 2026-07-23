@@ -154,8 +154,7 @@ def run_demo(workspace: Path) -> dict[str, Any]:
     preference_observation = core.store.get_candidate(str(submitted["candidate_ids"][0]))
     decision_observation = core.store.get_candidate(str(submitted["candidate_ids"][1]))
     _require(
-        preference_observation.record_id is not None
-        and decision_observation.record_id is not None,
+        preference_observation.record_id is not None and decision_observation.record_id is not None,
         "automatic policy did not create current context",
     )
     preference = core.store.get_record(str(preference_observation.record_id))

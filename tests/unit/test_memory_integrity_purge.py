@@ -124,8 +124,7 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_policies'"
         ).fetchone()
         assert connection.execute(
-            "SELECT 1 FROM sqlite_master "
-            "WHERE type='table' AND name='context_observation_links'"
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_observation_links'"
         ).fetchone()
 
 

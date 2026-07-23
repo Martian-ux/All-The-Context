@@ -366,10 +366,7 @@ class ContextErrorRequest(StrictModel):
             return value
         normalized = dict(value)
         legacy_content = normalized.pop("content", None)
-        if (
-            legacy_content is not None
-            and normalized.get("suggested_correction") is None
-        ):
+        if legacy_content is not None and normalized.get("suggested_correction") is None:
             normalized["suggested_correction"] = legacy_content
         if normalized.get("description") is None:
             if legacy_content is not None:

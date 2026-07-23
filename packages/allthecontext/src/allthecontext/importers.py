@@ -762,14 +762,10 @@ class ArchiveImportService:
                     "coverage": coverage,
                 },
                 "candidate_ids": candidate_ids,
-                "outcomes": dict(
-                    Counter(item.disposition.value for item in observations)
-                ),
+                "outcomes": dict(Counter(item.disposition.value for item in observations)),
                 "record_ids": list(
                     dict.fromkeys(
-                        item.record_id
-                        for item in observations
-                        if item.record_id is not None
+                        item.record_id for item in observations if item.record_id is not None
                     )
                 ),
                 "warnings": [

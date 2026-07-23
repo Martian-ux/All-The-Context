@@ -340,7 +340,7 @@ def test_http_client_forgets_directly_when_core_supports_it(monkeypatch) -> None
             "POST",
             "/v1/ingestion/forget",
             {"record_id": "record-1", "reason": "The user asked to forget this."},
-        )
+        ),
     ]
 
 
@@ -421,9 +421,7 @@ def test_http_client_does_not_turn_a_missing_core_record_into_a_relay_proposal(
     client = ContextHttpClient("http://127.0.0.1:7337", "client-1", "token")
 
     with pytest.raises(ContextApiError, match="context record not found"):
-        client.forget_context(
-            {"record_id": "missing", "reason": "The user asked to forget this."}
-        )
+        client.forget_context({"record_id": "missing", "reason": "The user asked to forget this."})
 
     assert calls == [
         ("GET", "/v1/context/status"),

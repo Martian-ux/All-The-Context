@@ -483,8 +483,7 @@ class SQLiteRelayStore:
         self._reject_transition_after_purge(connection, event)
         record = _normalize_upsert(event)
         tombstone = connection.execute(
-            "SELECT version FROM relay_deletion_tombstones "
-            "WHERE vault_id = ? AND record_id = ?",
+            "SELECT version FROM relay_deletion_tombstones WHERE vault_id = ? AND record_id = ?",
             (event.vault_id, event.record_id),
         ).fetchone()
         if tombstone is not None:
@@ -494,8 +493,7 @@ class SQLiteRelayStore:
                     "a deleted record requires a newer authoritative version to restore"
                 )
             connection.execute(
-                "DELETE FROM relay_deletion_tombstones "
-                "WHERE vault_id = ? AND record_id = ?",
+                "DELETE FROM relay_deletion_tombstones WHERE vault_id = ? AND record_id = ?",
                 (event.vault_id, event.record_id),
             )
         existing = connection.execute(

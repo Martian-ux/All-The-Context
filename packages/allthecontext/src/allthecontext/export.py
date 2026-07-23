@@ -48,8 +48,7 @@ def _table_names(connection: sqlite3.Connection) -> list[str]:
     return sorted(
         name
         for row in rows
-        if (name := str(row[0])) not in EXCLUDED_TABLES
-        and not name.startswith("context_fts_")
+        if (name := str(row[0])) not in EXCLUDED_TABLES and not name.startswith("context_fts_")
     )
 
 
@@ -72,9 +71,7 @@ def _source_schema_version(connection: sqlite3.Connection) -> int:
         ).fetchone()
         return int(row[0]) if row is not None else 0
     if "vaults" in tables:
-        columns = {
-            str(row[1]) for row in connection.execute('PRAGMA table_info("vaults")')
-        }
+        columns = {str(row[1]) for row in connection.execute('PRAGMA table_info("vaults")')}
         if "schema_version" in columns:
             row = connection.execute(
                 "SELECT COALESCE(MAX(schema_version),0) FROM vaults"
@@ -302,8 +299,7 @@ def _rebuild_context_fts(connection: sqlite3.Connection, tables: set[str]) -> No
         tags = json.loads(str(tags_json))
         scopes = json.loads(str(scopes_json))
         connection.execute(
-            "INSERT INTO context_fts(record_id,content,kind,tags,scopes) "
-            "VALUES(?,?,?,?,?)",
+            "INSERT INTO context_fts(record_id,content,kind,tags,scopes) VALUES(?,?,?,?,?)",
             (
                 record_id,
                 content,
@@ -339,9 +335,8 @@ def _post_restore_upgrade(
                 "WHERE r.candidate_id=context_candidates.id LIMIT 1"
                 ") WHERE disposition IN ('applied','reinforced') AND record_id IS NULL"
             )
-        if (
-            "context_observation_links" in tables
-            and {"record_id", "disposition"}.issubset(candidate_columns)
+        if "context_observation_links" in tables and {"record_id", "disposition"}.issubset(
+            candidate_columns
         ):
             connection.execute(
                 "INSERT OR IGNORE INTO context_observation_links"
@@ -357,17 +352,11 @@ def _post_restore_upgrade(
         if "observed_at" in record_columns:
             assignments.append("observed_at=COALESCE(observed_at,valid_from,created_at)")
         if "observation_origin" in record_columns:
-            assignments.append(
-                "observation_origin=COALESCE(observation_origin,'legacy_migration')"
-            )
+            assignments.append("observation_origin=COALESCE(observation_origin,'legacy_migration')")
         if "policy_version" in record_columns:
-            assignments.append(
-                "policy_version=COALESCE(policy_version,'legacy-review-v1')"
-            )
+            assignments.append("policy_version=COALESCE(policy_version,'legacy-review-v1')")
         if assignments:
-            connection.execute(
-                f"UPDATE context_records SET {','.join(assignments)}"
-            )
+            connection.execute(f"UPDATE context_records SET {','.join(assignments)}")
 
     if "vaults" in tables and destination_schema:
         connection.execute(
@@ -429,8 +418,7 @@ def restore_export(
                 existing = set(_table_names(connection))
                 columns_by_table = {
                     table: {
-                        str(row[1])
-                        for row in connection.execute(f'PRAGMA table_info("{table}")')
+                        str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')
                     }
                     for table in existing
                 }
@@ -461,10 +449,7 @@ def restore_export(
                             )
                             target.add(str(row["stable_id"]))
                 blocked_candidates: set[str] = set()
-                if (
-                    (blocked_records or blocked_sources)
-                    and "context_records" in manifest_tables
-                ):
+                if (blocked_records or blocked_sources) and "context_records" in manifest_tables:
                     with archive.open("tables/context_records.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             record_id = str(row.get("id"))
@@ -475,10 +460,7 @@ def restore_export(
                                 blocked_records.add(record_id)
                                 if row.get("candidate_id"):
                                     blocked_candidates.add(str(row["candidate_id"]))
-                if (
-                    (blocked_records or blocked_sources)
-                    and "context_candidates" in manifest_tables
-                ):
+                if (blocked_records or blocked_sources) and "context_candidates" in manifest_tables:
                     with archive.open("tables/context_candidates.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             if (
@@ -487,10 +469,7 @@ def restore_export(
                                 or str(row.get("record_id")) in blocked_records
                             ):
                                 blocked_candidates.add(str(row["id"]))
-                if (
-                    blocked_records
-                    and "context_observation_links" in manifest_tables
-                ):
+                if blocked_records and "context_observation_links" in manifest_tables:
                     with archive.open("tables/context_observation_links.jsonl") as stream:
                         for row in _iter_jsonl(stream):
                             if str(row.get("record_id")) in blocked_records:
