@@ -61,8 +61,7 @@ MAX_REDIRECTS = 1
 CHECK_INTERVAL = timedelta(hours=24)
 MAX_CLEANUP_ENTRIES = 32
 DEFAULT_BETA_MANIFEST_URL = (
-    "https://martian-ux.github.io/All-The-Context/"
-    "beta/windows/x86_64/manifest-v1.json"
+    "https://martian-ux.github.io/All-The-Context/beta/windows/x86_64/manifest-v1.json"
 )
 
 Channel = Literal["stable", "beta"]
@@ -253,9 +252,7 @@ class HttpsTransport:
         self._opener = urllib.request.build_opener(_NoRedirect())
 
     @staticmethod
-    def _request(
-        url: str, *, redirected_release_asset: bool = False
-    ) -> urllib.request.Request:
+    def _request(url: str, *, redirected_release_asset: bool = False) -> urllib.request.Request:
         parsed = urlsplit(url)
         try:
             port = parsed.port
@@ -272,9 +269,7 @@ class HttpsTransport:
                 or parsed.fragment
             ):
                 raise UpdateError("Release download redirect was refused")
-            return urllib.request.Request(
-                url, headers={"User-Agent": "AllTheContext-Updater/1"}
-            )
+            return urllib.request.Request(url, headers={"User-Agent": "AllTheContext-Updater/1"})
         lowered_path = parsed.path.casefold()
         if (
             parsed.query
@@ -390,9 +385,10 @@ class HttpsTransport:
         digest = hashlib.sha256()
         received = 0
         try:
-            with self._open(url, allow_release_redirect=True) as response, target.open(
-                "xb"
-            ) as output:
+            with (
+                self._open(url, allow_release_redirect=True) as response,
+                target.open("xb") as output,
+            ):
                 declared = self._content_length(response.headers)
                 if declared is not None and declared != expected_bytes:
                     raise UpdateError("Release download length differs from signed metadata")

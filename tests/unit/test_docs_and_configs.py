@@ -104,8 +104,7 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
                 "key_id": "release-2026-a",
                 "public_key": "cl9ZWb0x-nxUHaklqdMq2rkEmayCi3nrW4CFOXZEQ5s",
                 "public_key_sha256": (
-                    "sha256:"
-                    "fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
+                    "sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
                 ),
                 "status": "active",
             }
