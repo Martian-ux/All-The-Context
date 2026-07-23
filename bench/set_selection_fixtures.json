@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "fixture_role": "mandatory_preferences_with_budget",
+      "constraints": {"limit": 3, "budget": 230},
+      "target_semantic_facets": ["preference_style", "preference_zone", "workflow"],
+      "candidates": [
+        {
+          "key": "preference-alpha",
+          "budget_cost": 80,
+          "base_utility": 1,
+          "semantic_facets": ["preference_style"],
+          "diversity_dimensions": ["kind_preference"],
+          "redundancy_groups": ["preference_style_revision"],
+          "mandatory_interaction_preference": true,
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "preference-beta",
+          "budget_cost": 90,
+          "base_utility": 1,
+          "semantic_facets": ["preference_zone"],
+          "diversity_dimensions": ["source_local"],
+          "mandatory_interaction_preference": true,
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "optional-workflow",
+          "budget_cost": 60,
+          "base_utility": 10000,
+          "semantic_facets": ["workflow"],
+          "diversity_dimensions": ["kind_workflow"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "duplicate-preference",
+          "budget_cost": 10,
+          "base_utility": 10000,
+          "semantic_facets": ["preference_style"],
+          "redundancy_groups": ["preference_style_revision"],
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        }
+      ]
+    },
+    {
+      "fixture_role": "semantic_diversity_and_support",
+      "constraints": {"limit": 3, "budget": 260},
+      "target_semantic_facets": ["decision", "evidence", "workflow"],
+      "candidates": [
+        {
+          "key": "primary-decision",
+          "budget_cost": 100,
+          "base_utility": 2000,
+          "semantic_facets": ["decision"],
+          "diversity_dimensions": ["kind_fact"],
+          "compatibility_groups": ["revision_current"],
+          "redundancy_groups": ["decision_revision"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "supporting-source",
+          "budget_cost": 70,
+          "base_utility": 100,
+          "semantic_facets": ["evidence"],
+          "diversity_dimensions": ["kind_source"],
+          "compatibility_groups": ["revision_current"],
+          "supports": ["primary-decision"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "related-workflow",
+          "budget_cost": 90,
+          "base_utility": 400,
+          "semantic_facets": ["workflow"],
+          "diversity_dimensions": ["kind_workflow"],
+          "compatibility_groups": ["revision_current"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "duplicate-decision",
+          "budget_cost": 40,
+          "base_utility": 100,
+          "semantic_facets": ["decision"],
+          "diversity_dimensions": ["kind_fact"],
+          "compatibility_groups": ["revision_current"],
+          "redundancy_groups": ["decision_revision"],
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        }
+      ]
+    },
+    {
+      "fixture_role": "deterministic_conflict_resolution",
+      "constraints": {"limit": 2, "budget": 100},
+      "target_semantic_facets": ["region", "audit"],
+      "candidates": [
+        {
+          "key": "conflict-alpha",
+          "budget_cost": 50,
+          "base_utility": 500,
+          "semantic_facets": ["region"],
+          "diversity_dimensions": ["source_alpha"],
+          "conflict_groups": ["region_value"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "conflict-beta",
+          "budget_cost": 50,
+          "base_utility": 400,
+          "semantic_facets": ["region"],
+          "diversity_dimensions": ["source_beta"],
+          "conflict_groups": ["region_value"],
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        },
+        {
+          "key": "neutral-audit",
+          "budget_cost": 50,
+          "base_utility": 100,
+          "semantic_facets": ["audit"],
+          "diversity_dimensions": ["kind_audit"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        }
+      ]
+    },
+    {
+      "fixture_role": "explicit_compatibility",
+      "constraints": {"limit": 3, "budget": 140},
+      "target_semantic_facets": ["plan", "source"],
+      "candidates": [
+        {
+          "key": "compatible-target",
+          "budget_cost": 70,
+          "base_utility": 700,
+          "semantic_facets": ["plan"],
+          "compatibility_groups": ["revision_two"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "compatible-support",
+          "budget_cost": 50,
+          "base_utility": 100,
+          "semantic_facets": ["source"],
+          "compatibility_groups": ["revision_two"],
+          "supports": ["compatible-target"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "incompatible-support",
+          "budget_cost": 10,
+          "base_utility": 10000,
+          "semantic_facets": ["source"],
+          "compatibility_groups": ["revision_one"],
+          "supports": ["compatible-target"],
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        }
+      ]
+    },
+    {
+      "fixture_role": "upstream_attestation_boundary",
+      "constraints": {"limit": 4, "budget": 160},
+      "target_semantic_facets": ["eligible"],
+      "candidates": [
+        {
+          "key": "eligible-control",
+          "budget_cost": 40,
+          "base_utility": 100,
+          "semantic_facets": ["eligible"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "policy-control",
+          "budget_cost": 1,
+          "base_utility": 10000,
+          "semantic_facets": ["forbidden_policy"],
+          "policy_authorized": false,
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        },
+        {
+          "key": "temporal-control",
+          "budget_cost": 1,
+          "base_utility": 10000,
+          "semantic_facets": ["forbidden_temporal"],
+          "temporally_eligible": false,
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        },
+        {
+          "key": "admissibility-control",
+          "budget_cost": 1,
+          "base_utility": 10000,
+          "semantic_facets": ["forbidden_admissibility"],
+          "task_admissible": false,
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        }
+      ]
+    },
+    {
+      "fixture_role": "marginal_budget_utility",
+      "constraints": {"limit": 2, "budget": 120},
+      "target_semantic_facets": ["compact_alpha", "compact_beta"],
+      "candidates": [
+        {
+          "key": "expensive-single",
+          "budget_cost": 200,
+          "base_utility": 1000,
+          "semantic_facets": ["expensive"],
+          "integrated_baseline_selected": false,
+          "expected_selected": false
+        },
+        {
+          "key": "compact-alpha",
+          "budget_cost": 60,
+          "base_utility": 350,
+          "semantic_facets": ["compact_alpha"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        },
+        {
+          "key": "compact-beta",
+          "budget_cost": 60,
+          "base_utility": 350,
+          "semantic_facets": ["compact_beta"],
+          "integrated_baseline_selected": true,
+          "expected_selected": true
+        }
+      ]
+    }
+  ]
+}
