@@ -29,6 +29,19 @@ python -m bench.retrieval_v3_foundation compare tmp/retrieval-v3-candidate.json 
 Normal comparator runs intentionally contain definitions but no gate results;
 only the `compare` command evaluates a candidate.
 
+Run the integrated Retrieval V3 candidate and frozen comparator together:
+
+```text
+python -m bench.retrieval_v3_combined --output tmp/retrieval-v3-combined.json
+```
+
+The command exits nonzero unless both 1k and 10k profiles pass exact recall,
+admissibility precision, temporal precision, semantic coverage, redundancy,
+conflict determinism, policy, resurrection, `as_of`, restart/restore, and warm
+latency gates. Its output embeds the comparator report so the evidence remains
+self-contained. The 50k candidate remains explicitly opt-in and capped by the
+same `--include-50k` rule.
+
 ## Retrieval V1/V2 benchmark
 
 This directory freezes the Retrieval V1 evaluation corpus and measurements used

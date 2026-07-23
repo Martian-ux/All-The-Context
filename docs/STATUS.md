@@ -25,8 +25,10 @@ means connecting directly to Core while Core is online.
   backup, audit, and signed-update controls.
 - Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
   app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
-- Deterministic policy-first lexical retrieval and context compilation without
-  a vector dependency.
+- Deterministic Retrieval V3 with policy-first authorization, rebuildable UTC
+  interval sidecars, weighted candidate-scoped FTS5, conservative task
+  admissibility, safe diagnostics, and context compilation without a vector
+  dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
 
@@ -43,6 +45,30 @@ means connecting directly to Core while Core is online.
   earlier engineering state can be inspected/decommissioned without data loss.
   They are not a supported V1 feature.
 
+## Retrieval V3 integration
+
+- The frozen V2 comparator is pinned to `70a4808` with checked fixture hashes
+  and ranking fingerprints; production V3 cannot silently move it.
+- Core, MCP, and CLI accept offset-aware `as_of` search. Current and historical
+  resolution is UTC-normalized, deterministic across restart, and treats
+  deletion/purge as terminal across restore.
+- Weighted BM25 runs only over authorized and temporally eligible candidate
+  IDs. Prefix fallback, candidate count, tokens, channel results, query length,
+  and result count are hard bounded; FTS5 secure-delete is feature-detected.
+- Task admissibility uses only upstream numeric factors after hard policy and
+  time filtering. Sparse/underspecified evidence fails open; learned authority
+  remains shadow-only.
+- The integrated 1k/10k comparator gate passes locally on Windows. Both profiles
+  have exact Recall@5 `1.0`, admissibility precision `1.0`, temporal precision
+  `1.0`, semantic coverage `1.0`, zero redundancy, zero policy violations, and
+  deterministic rankings/conflicts. The final 10k warm p95 is `122.32761 ms`; total
+  database-plus-sidecar growth from 1k to 10k is `1027.185778` bytes per added
+  record. Lifecycle resurrection count is zero.
+- Deterministic marginal set selection, optional local dense shadow, and
+  source-evidence late-interaction research remain in progress. Three-OS CI for
+  the integrated commit is still pending, so the local result is not yet a
+  cross-platform or release claim.
+
 ## Remaining beta gates
 
 - Complete the offline public-key ceremony and publish only the reviewed public
@@ -55,11 +81,11 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python suite: 328 passed; four Windows-host symlink tests skipped because
+- Full Python suite: 393 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
 - Dashboard: 17 tests passed; type check, production build, and high-severity
   dependency audit passed.
-- Ruff format/lint, strict mypy across 52 source files, documentation-link
+- Ruff format/lint, strict mypy across 56 source files, documentation-link
   checks, and the seven-step single-Core demonstration passed.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.

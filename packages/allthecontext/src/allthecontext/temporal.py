@@ -619,52 +619,62 @@ class TemporalSidecar:
                     "INSERT INTO policy_eligible_temporal_records(record_id) VALUES(?)",
                     ((record_id,) for record_id in sorted(eligibility.record_ids)),
                 )
-                rows = connection.execute(
+                connection.execute("DROP TABLE IF EXISTS temp.temporal_resolution_work")
+                connection.execute(
+                    "CREATE TEMP TABLE temporal_resolution_work AS "
+                    "WITH eligible_intervals AS ("
                     "SELECT i.* FROM temporal_intervals i "
                     "JOIN policy_eligible_temporal_records e ON e.record_id=i.record_id "
                     "WHERE NOT EXISTS (SELECT 1 FROM temporal_terminal_records t "
-                    "WHERE t.record_id=i.record_id) ORDER BY i.record_id"
+                    "WHERE t.record_id=i.record_id)), "
+                    "classified AS ("
+                    "SELECT base.*,CASE "
+                    "WHEN ?<base.valid_from_utc THEN 'not_yet_valid' "
+                    "WHEN base.valid_to_utc IS NOT NULL AND ?>=base.valid_to_utc "
+                    "THEN 'validity_ended' "
+                    "WHEN base.expires_at_utc IS NOT NULL AND ?>=base.expires_at_utc "
+                    "THEN 'expired' "
+                    "WHEN EXISTS (SELECT 1 FROM eligible_intervals newer "
+                    "WHERE newer.supersedes_record_id=base.record_id "
+                    "AND newer.series_key=base.series_key AND newer.valid_from_utc<=?) "
+                    "THEN 'superseded' ELSE 'candidate' END AS reason "
+                    "FROM eligible_intervals base) "
+                    "SELECT record_id,series_key,reason,"
+                    "ROW_NUMBER() OVER (PARTITION BY series_key,reason "
+                    "ORDER BY valid_from_utc DESC,revision DESC,updated_at_utc DESC,"
+                    "record_id ASC) AS selection_rank FROM classified",
+                    (instant, instant, instant, instant),
+                )
+                selected_rows = connection.execute(
+                    "SELECT record_id FROM temporal_resolution_work "
+                    "WHERE reason='candidate' AND selection_rank=1 "
+                    "ORDER BY series_key"
                 ).fetchall()
+                reason_rows = connection.execute(
+                    "SELECT reason,COUNT(*) FROM temporal_resolution_work "
+                    "GROUP BY reason ORDER BY reason"
+                ).fetchall()
+                shadowed_row = connection.execute(
+                    "SELECT COUNT(*) FROM temporal_resolution_work "
+                    "WHERE reason='candidate' AND selection_rank>1"
+                ).fetchone()
         except sqlite3.DatabaseError as exc:
             raise TemporalDataError("temporal_sidecar_unavailable") from exc
 
-        intervals = tuple(self._validated_interval(row) for row in rows)
-        by_id = {row.record_id: row for row in intervals}
-        superseded = {
-            target
-            for row in intervals
-            if row.valid_from_utc <= instant
-            and (target := row.supersedes_record_id) is not None
-            and target in by_id
-            and by_id[target].series_key == row.series_key
+        selected_ids = tuple(_checked_identifier(row["record_id"]) for row in selected_rows)
+        reason_map = {
+            "not_yet_valid": TemporalReason.NOT_YET_VALID,
+            "validity_ended": TemporalReason.VALIDITY_ENDED,
+            "expired": TemporalReason.EXPIRED,
+            "superseded": TemporalReason.SUPERSEDED,
         }
-
         counts = dict.fromkeys(TemporalReason, 0)
-        candidates: dict[str, list[_IntervalRow]] = {}
-        for row in intervals:
-            reason: TemporalReason | None = None
-            if instant < row.valid_from_utc:
-                reason = TemporalReason.NOT_YET_VALID
-            elif row.valid_to_utc is not None and instant >= row.valid_to_utc:
-                reason = TemporalReason.VALIDITY_ENDED
-            elif row.expires_at_utc is not None and instant >= row.expires_at_utc:
-                reason = TemporalReason.EXPIRED
-            elif row.record_id in superseded:
-                reason = TemporalReason.SUPERSEDED
+        counts[TemporalReason.SELECTED] = len(selected_ids)
+        counts[TemporalReason.SHADOWED] = int(shadowed_row[0]) if shadowed_row else 0
+        for row in reason_rows:
+            reason = reason_map.get(str(row["reason"]))
             if reason is not None:
-                counts[reason] += 1
-                continue
-            candidates.setdefault(row.series_key, []).append(row)
-
-        selected: list[_IntervalRow] = []
-        for series_key in sorted(candidates):
-            ordered = sorted(candidates[series_key], key=lambda row: row.record_id)
-            ordered.sort(key=lambda row: row.updated_at_utc, reverse=True)
-            ordered.sort(key=lambda row: row.revision, reverse=True)
-            ordered.sort(key=lambda row: row.valid_from_utc, reverse=True)
-            selected.append(ordered[0])
-            counts[TemporalReason.SELECTED] += 1
-            counts[TemporalReason.SHADOWED] += len(ordered) - 1
+                counts[reason] = int(row[1])
 
         diagnostics = tuple(
             TemporalDiagnostic(reason_code=reason, count=counts[reason])
@@ -674,7 +684,7 @@ class TemporalSidecar:
         return TemporalResolution(
             mode=query.mode,
             evaluated_at_utc=instant,
-            selected_record_ids=tuple(row.record_id for row in selected),
+            selected_record_ids=selected_ids,
             diagnostics=diagnostics,
         )
 

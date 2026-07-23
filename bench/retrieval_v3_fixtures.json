@@ -28,7 +28,8 @@
       "kind": "historical_note",
       "content": "A training example mentions production deployment rollback without granting task authority.",
       "scopes": ["training"],
-      "tags": ["deployment", "rollback"]
+      "tags": ["deployment", "rollback"],
+      "confidence": 0.0
     },
     {
       "id": "conflict-east",
@@ -70,6 +71,7 @@
       "id": "task_admissibility",
       "category": "admissibility",
       "query": "production deployment rollback",
+      "current_project": "release",
       "gold": {"admissible-deploy": 3},
       "false_positives": ["admissibility-false-positive"]
     },

@@ -7,7 +7,7 @@
   },
   "profile_record_counts": [100, 1000, 10000],
   "base_fixture_sha256": "a3805231d2bb33cc5fe15fb59c3d15d71588b561b5fb6f49d97e9ed1666353a4",
-  "foundation_fixture_sha256": "8279786252a483b58ee3c97d8dba04e9b8bfc650993e38111eb1451eb0e503e7",
+  "foundation_fixture_sha256": "d51a7bc5c471bbbd0b234a6ff545a63c111da6d2684708fa2b01b4a087db96e2",
   "ranking_fingerprints_sha256": {
     "100": "2ac3242090e4917f00c31aef9d14b0cfb6896e26d808772a1d192b565e4d87de",
     "1000": "9e4921a8fbff4cee3d0612f8c64e1b71481e23caf4da55688b40441c9843e9a5",

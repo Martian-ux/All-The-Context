@@ -470,3 +470,43 @@ setups. New UI approvals offer only `local_only` and `core_available`; Core does
 not start the Edge network worker; deployment workflows/templates are removed
 from V1. Deleting dormant protocol code is a later cleanup after compatibility
 and migration requirements are known.
+
+## ADR-033: Retrieval V3 separates authority, time, relevance, and admissibility
+
+**Status:** accepted 2026-07-22; advances ADR-018 and ADR-021 without adding a
+hosted or vector authority.
+
+Authorization is the first retrieval boundary. The temporal resolver receives
+only authorized opaque IDs; lexical ranking receives only IDs selected by that
+resolver; admissibility receives only authorized, temporally eligible rows and
+passes numeric factors rather than raw context to its gate. Administrator
+diagnostics use closed reason codes and aggregates. Returned authorized IDs may
+be explained, but rejected or unauthorized IDs and raw content are absent.
+
+Temporal state is a separate content-free SQLite sidecar using its own schema
+version. Core records and purge tombstones remain authoritative. The sidecar is
+discardable, migratable, and reconciled after startup, canonical mutations, and
+restore. Intervals are UTC half-open, expiry is exclusive, supersession remains
+effective after a superseder expires, and deletion/purge are terminal even for
+historical queries. Ordinary current records use a deterministic fast path;
+`as_of` resolves the complete authorized set. An in-place correction is the
+latest canonical content for its stable ID; earlier content remains available
+through record history, while separate superseding records are searchable by
+historical instant.
+
+Production lexical retrieval uses weighted BM25 over a temporary candidate-only
+FTS5 corpus. Exact channels precede carefully bounded OR/prefix fallback, and
+FTS5 secure-delete is enabled only when the linked SQLite build accepts it.
+Admissibility combines task/query coverage, project/scope fit, requested-kind
+fit, confidence/explicitness, and conflict state with a conservative fail-open
+rule. A learned gate can observe sanitized features in shadow but cannot reject,
+reorder, or create canonical context.
+
+The V2 comparator remains a named frozen pipeline, not the current production
+default. The combined gate requires exact Recall@5 and semantic coverage at
+least that comparator, improved temporal and admissibility precision, zero
+policy violations and duplicate redundancy, deterministic rankings/conflicts,
+no deletion/purge resurrection, exercised restart/restore/history paths, and a
+10k warm p95 below 150 ms. Dense retrieval, late interaction, rerankers, and ANN
+remain experiments until stage diagnostics meet their explicit escalation
+conditions.

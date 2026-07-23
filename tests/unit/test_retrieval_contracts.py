@@ -68,7 +68,7 @@ def test_safe_diagnostics_have_only_closed_codes_and_numeric_or_boolean_values()
         )
 
 
-def test_frozen_v2_comparator_is_deterministic_and_matches_production_default(
+def test_frozen_v2_comparator_is_deterministic_after_production_advances(
     tmp_path: Path,
 ) -> None:
     fixture = _fixture()
@@ -80,17 +80,15 @@ def test_frozen_v2_comparator_is_deterministic_and_matches_production_default(
     principal = ClientPrincipal(
         "benchmark-reader", "Synthetic benchmark reader", frozenset({"context:read"})
     )
-    production = RetrievalEngine(store)
     comparator = RetrievalEngine(store, ranker=FrozenV2Comparator())
 
     for query in queries:
         assert isinstance(query, dict)
         request = SearchRequest(query=str(query["query"]), limit=100)
-        expected = [item.id for item in production.search(request, principal).items]
         repeated = [
             [item.id for item in comparator.search(request, principal).items] for _ in range(5)
         ]
-        assert repeated == [expected] * 5
+        assert repeated == [repeated[0]] * 5
 
     assert FROZEN_V2_COMPARATOR.name == "retrieval_v2_lexical_rrf"
     assert FROZEN_V2_COMPARATOR.revision == 1

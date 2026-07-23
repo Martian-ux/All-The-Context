@@ -957,6 +957,8 @@ class EdgeSyncManager:
                 scopes=payload.get("scopes", []),
                 kinds=payload.get("kinds", []),
                 availability=[Availability.CORE],
+                as_of=payload.get("as_of"),
+                current_project=payload.get("current_project"),
                 limit=min(int(payload.get("limit", 20)), 100),
                 offset=min(int(payload.get("cursor", 0)), 10_000),
             )

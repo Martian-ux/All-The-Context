@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from allthecontext.retrieval import RetrievalEngine, V2LexicalRanker
+from allthecontext.retrieval import LexicalV3CandidateRanker, RetrievalEngine
 
 from bench.lexical_v3_benchmark import _macro_precision_at_5, compare, run_profile
 from bench.retrieval_benchmark import DEFAULT_BASELINE, FIXTURES, build_database
@@ -54,10 +54,10 @@ def test_comparator_evidences_precision_mrr_recall_and_growth_gates(tmp_path: Pa
     )
 
 
-def test_lexical_v3_remains_unwired_from_production_retrieval(tmp_path: Path) -> None:
+def test_lexical_v3_is_the_production_candidate_ranker(tmp_path: Path) -> None:
     fixture = _fixture()
     store, _elapsed = build_database(tmp_path / "production.sqlite3", 100, fixture)
 
     engine = RetrievalEngine(store)
 
-    assert isinstance(engine.ranker, V2LexicalRanker)
+    assert isinstance(engine.ranker, LexicalV3CandidateRanker)

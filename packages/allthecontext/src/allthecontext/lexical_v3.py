@@ -286,8 +286,8 @@ class LexicalV3:
                 ),
             )
 
-        self._create_candidate_scope(connection, candidates)
         try:
+            self._create_candidate_scope(connection, candidates)
             secure_delete = _attempt_fts5_secure_delete(
                 connection.execute, _CANDIDATE_FTS_TABLE
             )
@@ -492,11 +492,13 @@ class LexicalV3:
         eligible = _quoted_identifier(_ELIGIBLE_TABLE)
         try:
             connection.execute(f"DELETE FROM temp.{target}")
+        except sqlite3.OperationalError:
+            pass
         finally:
             try:
-                connection.execute(f"DROP TABLE temp.{target}")
+                connection.execute(f"DROP TABLE IF EXISTS temp.{target}")
             finally:
                 try:
-                    connection.execute(f"DROP TABLE temp.{matched}")
+                    connection.execute(f"DROP TABLE IF EXISTS temp.{matched}")
                 finally:
-                    connection.execute(f"DROP TABLE temp.{eligible}")
+                    connection.execute(f"DROP TABLE IF EXISTS temp.{eligible}")

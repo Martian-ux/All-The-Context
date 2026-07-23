@@ -229,7 +229,14 @@ def _cmd_reject(args: argparse.Namespace) -> None:
 
 def _cmd_search(args: argparse.Namespace) -> None:
     engine = RetrievalEngine(_store(args))
-    request = SearchRequest(query=args.query, scopes=args.scope, kinds=args.kind, limit=args.limit)
+    request = SearchRequest(
+        query=args.query,
+        scopes=args.scope,
+        kinds=args.kind,
+        as_of=args.as_of,
+        current_project=args.current_project,
+        limit=args.limit,
+    )
     result = (
         engine.diagnose_search(request, local_administrator=True)
         if args.explain
@@ -478,6 +485,11 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query", nargs="?", default="")
     search.add_argument("--scope", action="append", default=[])
     search.add_argument("--kind", action="append", default=[])
+    search.add_argument(
+        "--as-of",
+        help="offset-aware ISO 8601 instant for deterministic historical search",
+    )
+    search.add_argument("--current-project", help="project hint for task admissibility")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument(
         "--explain",

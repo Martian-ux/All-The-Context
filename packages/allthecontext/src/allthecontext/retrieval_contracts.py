@@ -216,6 +216,7 @@ class FrozenV2Comparator:
     """
 
     identity: Final = FROZEN_V2_COMPARATOR
+    frozen_pipeline: Final = True
 
     def __init__(self) -> None:
         self._delegate = V2LexicalRanker()

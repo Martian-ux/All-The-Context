@@ -225,9 +225,16 @@ class SearchRequest(StrictModel):
     scopes: list[str] = Field(default_factory=list, max_length=64)
     kinds: list[str] = Field(default_factory=list, max_length=64)
     availability: list[Availability] = Field(default_factory=list, max_length=3)
+    as_of: str | None = Field(default=None, max_length=100)
+    current_project: str | None = Field(default=None, max_length=512)
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0, le=100_000)
     cursor: str | None = None
+
+    @field_validator("as_of")
+    @classmethod
+    def normalize_as_of(cls, value: str | None) -> str | None:
+        return _normalized_timestamp(value)
 
 
 class BootstrapRequest(StrictModel):

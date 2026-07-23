@@ -160,16 +160,20 @@ def build_mcp() -> FastMCP:
         query: str,
         scopes: list[str] | None = None,
         kinds: list[str] | None = None,
+        as_of: str | None = None,
+        current_project: str | None = None,
         limit: int = 20,
         cursor: int = 0,
     ) -> dict[str, Any]:
-        """Search approved, currently valid context using structured filters and FTS."""
+        """Search approved context now or at an offset-aware historical instant."""
         return _safe(
             lambda: _client().search_context(
                 {
                     "query": query,
                     "scopes": scopes or [],
                     "kinds": kinds or [],
+                    "as_of": as_of,
+                    "current_project": current_project,
                     "limit": limit,
                     "offset": cursor,
                 }

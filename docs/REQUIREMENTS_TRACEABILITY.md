@@ -29,6 +29,16 @@ the hosted jobs pass on the exact release commit.
 | No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |
 | Legacy `always_available` compatibility | schema and old records retained; UI maps new review choices to `core_available` and labels old records legacy | Implemented |
 | Legacy Edge cleanup without normal operation | dormant manager/admin cleanup APIs; no automatic worker | Compatibility only; not a V1 feature |
+| Frozen Retrieval V2 comparator | `retrieval_contracts.py`, pinned fixture hashes/ranking fingerprints, foundation harness | Implemented; comparator identity `70a4808` |
+| Policy before time/relevance | authorization-only selector, temporal eligibility IDs, candidate-scoped FTS, boundary tests | Implemented; zero forbidden results in bounded gate |
+| Current and `as_of` retrieval | UTC interval sidecar, request/MCP/CLI fields, DST/offset/restart tests | Implemented locally; three-OS observation pending |
+| Deletion/purge resurrection barrier | canonical terminal facts, purge tombstones, stale-sidecar recovery, pre-removal export restore test | Implemented locally; zero resurrection in bounded gate |
+| Weighted bounded FTS5 | `lexical_v3.py`; weighted columns, exact/OR/prefix caps, Unicode/case/tokenizer and secure-delete tests | Implemented locally |
+| Task admissibility | deterministic numeric factor gate after hard policy/time, fail-open sparse evidence, shadow-only learned interface | Implemented locally; bounded precision improves without exact Recall@5 loss |
+| Safe retrieval diagnostics | closed reason codes and numeric/boolean aggregates; admin-only returned-ID explanations | Implemented; content/unauthorized-ID exclusion tests |
+| Retrieval V3 benchmark gate | foundation fixtures plus integrated 1k/10k quality, latency, storage, migration/restart/restore checks | Full local Windows gate passed; three-OS observation pending |
+| Set-level marginal context selection | set-selector contract; compatibility/diversity/conflict/support/budget fixtures | Wave 2 pending |
+| Optional local dense/source-evidence experiments | disabled shadow contracts; no default dependency or packaging authority | Wave 2 pending; no production claim |
 
 ## Deferred by the V1 boundary
 

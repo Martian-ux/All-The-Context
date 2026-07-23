@@ -76,6 +76,7 @@ def _record_tuple(vault_id: str, record: dict[str, Any], ordinal: int) -> tuple[
         timestamp,
         timestamp,
         record.get("deleted_at"),
+        float(record.get("confidence", 1.0)),
     )
 
 
@@ -107,8 +108,8 @@ def build_database(path: Path, size: int, fixture: dict[str, Any]) -> tuple[Core
         "id,vault_id,kind,content,scopes_json,tags_json,allowed_clients_json,"
         "denied_clients_json,valid_from,expires_at,supersedes,content_hash,created_at,"
         "updated_at,deleted_at,confidence,sensitivity,availability,approval_status,version,"
-        "schema_version,explicit_user_statement) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
-        "1.0,'normal','core_available','approved',1,1,0)"
+        "schema_version,explicit_user_statement) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+        "'normal','core_available','approved',1,1,0)"
     )
     started = time.perf_counter()
     with store.transaction() as connection:
