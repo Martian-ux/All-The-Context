@@ -8,6 +8,7 @@
 | Date | July 23, 2026 |
 | Status | Accepted research governance; no production authority |
 | Completed reference wave | `research/memory-lab/wave2-manifest.json` |
+| Active wave | `research/memory-lab/wave3-manifest.json` |
 
 ATC uses independent visible Codex worker threads to reduce shared-context
 anchoring and to run implementation, supplier, and research challenges in
@@ -92,3 +93,23 @@ commit, worker settings, allowed actions, and final receipts. The
 [integrated result](ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md) records the
 coordinator's reproduction, accepted limitations, research decision, and next
 experiment order.
+
+## Wave 3 ownership
+
+Wave 3 applies the same governance to five new-file-only cells from immutable
+coordinator commit `950f649d9e3cc106fb8ff4febbe38919f8e00d11`:
+
+| Cell | Scope | Reasoning |
+|---|---|---|
+| B01 | Bounded programmatic inspection of a complete structured log | `gpt-5.6-sol` high |
+| O01 | Online/off-policy/shift triangulation | `gpt-5.6-sol` medium |
+| P01 | Write-admission through delayed-action poisoning | `gpt-5.6-sol` high |
+| E01b | Isolated production Core lifecycle conformance | `gpt-5.6-sol` high |
+| M2 | Sealed one-deletion-minimal projection and paired-vault noninterference | `gpt-5.6-sol` high |
+
+All five workers are forbidden from editing production code, existing shared
+harnesses, governance, or another cell's files. E01b may exercise only a
+disposable synthetic Core; it may not connect to the operator Core or patch a
+failure. No Wave 3 cell may use external code, providers, models, credentials,
+or personal context. The coordinator alone may integrate and classify a
+result.

@@ -940,3 +940,34 @@ Immediate ATC-native hypotheses are the Sealed Projection Minimal Compiler,
 the authority/purge-aware Record-Influence Barrier Closure composition, and
 Portable Working-State Three-Way Repair. Each remains specification-level
 until it beats simple controls on CAOS and hard lifecycle gates.
+
+## ADR-046: Wave 3 tests five independent falsification surfaces before further architecture promotion
+
+**Status:** accepted for active research execution 2026-07-23; no Wave 3
+result or production change is accepted.
+
+Wave 3 starts five fresh visible worktree tasks from immutable coordinator
+commit `950f649d9e3cc106fb8ff4febbe38919f8e00d11`: B01 programmatic
+lossless-log inspection, O01 online/off-policy/shift triangulation, P01
+admission-to-delayed-action poisoning, E01b isolated production-Core
+conformance, and M2 sealed minimal projection. Each owns new experiment files
+only. Workers do not edit shared harnesses, production behavior, governance,
+or another cell's files; they never merge or push.
+
+Core remains authoritative. E01b may exercise public or stable production paths
+only through a disposable synthetic store and records unsupported or failing
+semantics rather than fixing them. P01 uses opaque synthetic poison and a
+simulated protected action. B01 cannot call a deterministic one-shot file
+ranker "programmatic memory" and cannot claim PRO-LONG reproduction without an
+equivalent action model. M2 must test paired-vault noninterference across every
+declared observable channel, not output content alone.
+
+The smaller bounded O01 protocol cell uses `gpt-5.6-sol` medium reasoning; the
+four core implementation/falsification cells use high reasoning. Model effort
+does not change evidence level. Every result remains `L1` until coordinator
+diff review and deterministic reproduction raise it to `L2`.
+
+No external code, model, provider, credential, real personal context, operator
+Core, or production schema is allowed. Negative, unsupported, held, killed,
+and not-exercised outcomes are preserved. Promotion order remains B01, O01,
+P01, E01b, then M2 even though implementation proceeds in parallel.

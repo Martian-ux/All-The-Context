@@ -162,6 +162,30 @@ novelty claims are retired. The next ATC-native experiments are the Sealed
 Projection Minimal Compiler, Record-Influence Barrier Closure, and Portable
 Working-State Three-Way Repair.
 
+## Memory Lab Wave 3
+
+Wave 3 is active under ADR-044/ADR-046 and
+`research/memory-lab/wave3-manifest.json`. Five fresh visible
+`gpt-5.6-sol` worktree tasks start from immutable coordinator commit
+`950f649d9e3cc106fb8ff4febbe38919f8e00d11` with new-file-only,
+non-overlapping ownership:
+
+- B01 programmatic inspection of a complete structured event log;
+- O01 online/off-policy/distribution-shift triangulation, assigned medium
+  reasoning because it is the smaller bounded protocol cell;
+- P01 write-admission through delayed-retrieval/influence/protected-action
+  poisoning;
+- E01b conformance against a disposable synthetic instance of current
+  production Core; and
+- M2 sealed authorized-and-applicable minimal projection with paired-vault
+  noninterference.
+
+Workers cannot edit production behavior, shared harnesses, governance, or each
+other's files, and cannot merge or push. External code, models, providers,
+credentials, personal context, and operator-Core access are forbidden. A
+failed, unsupported, held, killed, or not-exercised cell remains a result. No
+Wave 3 evidence has been accepted yet.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,
