@@ -39,11 +39,20 @@ the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
 equivalent `x.y.zbN` spelling.
 
 GitHub's **immutable releases** repository setting was enabled on 2026-07-22.
-The workflow only reads that setting; it never changes it. An operator must
-still commit at least one independently reviewed public key for the selected
-channel. The workflow also refuses a version whose tag or release already
-exists. A failed candidate is reissued under a new version rather than uploaded
-with `--clobber`.
+GitHub's check-setting endpoint requires repository `Administration: read`,
+which the automatic Actions `GITHUB_TOKEN` cannot receive. Immediately before
+candidate dispatch, a repository owner therefore runs:
+
+```text
+gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/OWNER/REPOSITORY/immutable-releases --jq .enabled
+```
+
+The command must return `true`. The owner then dispatches **Release candidate**
+with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The workflow never receives
+the owner's admin credential; it checks that deliberate phrase, the exact
+default-branch head, the unused tag/release slot, version metadata, and the
+reviewed public key. A failed candidate is reissued under a new version rather
+than uploaded with `--clobber`.
 
 The native matrix builds Windows x86_64, Linux x86_64, macOS arm64 on
 `macos-26`, and macOS x86_64 on `macos-26-intel`. Each job compares the actual
@@ -129,12 +138,15 @@ x86_64 OTA ZIP:
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
    macOS or Linux manifests. Record the reviewed candidate-inventory SHA-256.
-5. Configure required reviewers on the `release-promotion` environment. Manually
-   dispatch **Publish verified beta release** with the exact tag, source commit,
-   candidate digest, and confirmation phrase. The protected job repeats package,
-   checksum, SPDX, provenance, source, keyring, signature, URL, and supported
-   manifest-set verification before publishing. It requires the resulting
-   release to be immutable and verifies GitHub's release attestation.
+5. Configure required reviewers on the `release-promotion` environment. The
+   repository owner repeats the admin-authenticated immutable-setting command
+   above immediately before manually dispatching **Publish verified beta
+   release** with the exact tag, source commit, candidate digest, and phrase
+   `PUBLISH UNSIGNED BETA`. The protected job never receives the admin token. It
+   repeats package, checksum, SPDX, provenance, source, keyring, signature, URL,
+   and supported manifest-set verification before publishing, then requires
+   the resulting release to report immutable and verifies GitHub's release
+   attestation.
 6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new

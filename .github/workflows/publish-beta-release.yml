@@ -36,7 +36,7 @@ jobs:
       attestations: read
       contents: write
     steps:
-      - name: Require deliberate operator phrase
+      - name: Require deliberate operator preflight phrase
         shell: bash
         env:
           APPROVAL: ${{ inputs.approval }}
@@ -50,12 +50,6 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -e .
-      - name: Require repository release immutability
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          test "$(gh api -H 'X-GitHub-Api-Version: 2026-03-10'
-          repos/${{ github.repository }}/immutable-releases --jq .enabled)" = "true"
       - name: Verify unpublished beta release state
         env:
           GH_TOKEN: ${{ github.token }}

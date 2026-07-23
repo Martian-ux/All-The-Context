@@ -618,3 +618,24 @@ redundancy to zero. Neural late interaction, learned sparse retrieval, and
 reranking remain unexercised. Promotion requires representative evidence,
 cross-platform measurements, explicit packaging review, and the same
 policy-first and rebuildable-state guarantees as production retrieval.
+
+## ADR-038: Repository-admin release checks stay outside GitHub Actions
+
+**Status:** accepted 2026-07-23.
+
+GitHub's immutable-release settings endpoint requires repository
+`Administration: read`, a permission unavailable to the automatic Actions
+`GITHUB_TOKEN`. Candidate and publish workflows must not receive a personal
+access token or other repository-admin credential merely to inspect that
+setting.
+
+Immediately before each candidate or publish dispatch, a repository owner uses
+their existing authenticated `gh` session to verify that immutable releases are
+enabled. The manual workflow requires an exact, nonsecret confirmation phrase.
+Actions then independently verifies every property its least-privilege token
+can observe: the source commit, default-branch head where applicable, unused
+tag/release slot, draft state, artifacts, digests, attestations, signed manifest,
+and final immutable published state. A missing phrase or failed observable check
+stops the workflow. This boundary keeps admin credentials and the offline
+Ed25519 private key out of GitHub Actions without pretending the Actions token
+can perform an impossible admin API call.
