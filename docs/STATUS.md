@@ -80,8 +80,10 @@ means connecting directly to Core while Core is online.
   token MaxSim reduces measured redundancy from `0.083334` to zero; the final
   256-source warm p95 is `18.9572 ms`. Neural late interaction remains
   unexercised and there is no runtime integration.
-- Three-OS CI for the final integrated commit is still pending, so these local
-  results are not yet a cross-platform or release claim.
+- Integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
+  macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
+  Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
+  measurements rather than cross-platform performance claims.
 
 ## Remaining beta gates
 
@@ -111,6 +113,11 @@ means connecting directly to Core while Core is online.
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29969999250)
   and
   [draft-PR matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29970013608):
+  Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
+  on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
+  20 and 22.
+- Retrieval V3 integration commit `67dd11c` passed its
+  [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29976224653):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
   20 and 22.

@@ -110,10 +110,21 @@ into the application.
 
 ## Hosted cross-platform evidence
 
-Pending the final branch push. The required workflow is `.github/workflows/ci.yml`:
-Python 3.12 on Windows, macOS, and Ubuntu; dashboard Node 20/22; and native
-desktop/package jobs on Windows, Ubuntu, macOS ARM, and macOS Intel. This section
-must be updated with the exact run and result before the work is called complete.
+Integrated commit `67dd11c36659aae10369b0e391c5a6926c673614` passed
+[CI run 29976224653](https://github.com/Martian-ux/All-The-Context/actions/runs/29976224653).
+All nine jobs completed successfully:
+
+- Python 3.12 format, lint, mypy, documentation, full tests, package build, and
+  resource diagnostics on Windows, macOS, and Ubuntu;
+- dashboard install, type check, tests, and production build on Node 20 and 22;
+  and
+- native desktop build, bundled-resource/credential smoke, clean install,
+  startup, MCP, restart, cleanup, platform package, trust disclosure, and
+  candidate-archive checks on Windows, Ubuntu, macOS ARM, and macOS Intel.
+
+GitHub emitted non-failing notices that older JavaScript actions are executed on
+the runner's Node 24 compatibility runtime. No retrieval, test, or package job
+was skipped except the workflow's intentional platform-inapplicable steps.
 
 ## Remaining risks and unexercised claims
 
