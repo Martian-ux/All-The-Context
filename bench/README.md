@@ -1,5 +1,36 @@
 # Retrieval benchmark
 
+## Retrieval V3 foundation contracts
+
+The V3 foundation harness freezes the production V2 ordering as a named
+comparator and adds sanitized lifecycle scenarios plus machine-readable gates.
+It does not wire or claim any future temporal, admissibility, compatible-set,
+semantic, or shadow implementation.
+
+Run the bounded 1k and 10k comparator profiles:
+
+```text
+python -m bench.retrieval_v3_foundation run --output tmp/retrieval-v3-comparator.json
+```
+
+The 50k profile remains explicitly opt-in:
+
+```text
+python -m bench.retrieval_v3_foundation run --profiles 50000 --include-50k --output tmp/retrieval-v3-50k.json
+```
+
+Evaluate a future candidate report against an explicitly supplied comparator
+report. Missing metrics produce `not_exercised`, never a pass:
+
+```text
+python -m bench.retrieval_v3_foundation compare tmp/retrieval-v3-candidate.json tmp/retrieval-v3-comparator.json
+```
+
+Normal comparator runs intentionally contain definitions but no gate results;
+only the `compare` command evaluates a candidate.
+
+## Retrieval V1/V2 benchmark
+
 This directory freezes the Retrieval V1 evaluation corpus and measurements used
 to assess Retrieval V2. All records are deterministic, synthetic, sanitized,
 offline, and independent of models, embeddings, network services, and native

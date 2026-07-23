@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "base_fixture": "retrieval_fixtures.json",
+  "records": [
+    {
+      "id": "future-sentinel",
+      "kind": "policy",
+      "content": "Sentinel archive retention changes to 120 days in a future validity window.",
+      "scopes": ["policy"],
+      "valid_from": "2999-01-01T00:00:00+00:00"
+    },
+    {
+      "id": "semantic-evidence",
+      "kind": "supporting_evidence",
+      "content": "Atlas launch brief evidence confirms the cobalt color decision.",
+      "scopes": ["project:atlas"],
+      "tags": ["launch", "evidence"]
+    },
+    {
+      "id": "admissible-deploy",
+      "kind": "workflow",
+      "content": "Production deployment rollback uses the approved release runbook.",
+      "scopes": ["project:release"],
+      "tags": ["deployment", "rollback"]
+    },
+    {
+      "id": "admissibility-false-positive",
+      "kind": "historical_note",
+      "content": "A training example mentions production deployment rollback without granting task authority.",
+      "scopes": ["training"],
+      "tags": ["deployment", "rollback"]
+    },
+    {
+      "id": "conflict-east",
+      "kind": "project_fact",
+      "content": "Synthetic service region is east for the conflict fixture.",
+      "scopes": ["project:synthetic"],
+      "tags": ["region", "conflict"]
+    },
+    {
+      "id": "conflict-west",
+      "kind": "project_fact",
+      "content": "Synthetic service region is west for the conflict fixture.",
+      "scopes": ["project:synthetic"],
+      "tags": ["region", "conflict"]
+    }
+  ],
+  "queries": [
+    {
+      "id": "current_history",
+      "category": "current_history",
+      "query": "Sentinel archive retention",
+      "gold": {"retention-current": 3},
+      "forbidden": ["retention-old", "expired-sentinel", "future-sentinel", "deleted-sentinel"]
+    },
+    {
+      "id": "validity_expiry_supersession",
+      "category": "temporal_filter",
+      "query": "Sentinel",
+      "gold": {"allowed-sentinel": 3, "retention-current": 2},
+      "forbidden": ["retention-old", "expired-sentinel", "future-sentinel", "deleted-sentinel"]
+    },
+    {
+      "id": "semantic_evidence",
+      "category": "semantic_coverage",
+      "query": "Atlas launch cobalt evidence",
+      "gold": {"exact-cobalt": 3, "semantic-evidence": 3}
+    },
+    {
+      "id": "task_admissibility",
+      "category": "admissibility",
+      "query": "production deployment rollback",
+      "gold": {"admissible-deploy": 3},
+      "false_positives": ["admissibility-false-positive"]
+    },
+    {
+      "id": "deterministic_conflict",
+      "category": "conflict",
+      "query": "synthetic service region conflict",
+      "gold": {"conflict-east": 3, "conflict-west": 3}
+    }
+  ],
+  "semantic_facets": [
+    {
+      "query_id": "semantic_evidence",
+      "facets": [
+        ["exact-cobalt"],
+        ["semantic-evidence"]
+      ]
+    }
+  ],
+  "temporal_cases": [
+    {
+      "case_id": "current",
+      "query_id": "current_history",
+      "status": "exercised"
+    },
+    {
+      "case_id": "as_of",
+      "as_of": "2025-01-01T00:00:05.500000+00:00",
+      "expected": ["retention-old"],
+      "status": "not_exercised"
+    }
+  ],
+  "compatible_evidence_sets": [
+    {
+      "query_id": "semantic_evidence",
+      "candidate_ids": ["exact-cobalt", "semantic-evidence"],
+      "status": "not_exercised"
+    }
+  ],
+  "declared_not_exercised": [
+    "as_of_history_resolution",
+    "task_admissibility_evaluator",
+    "compatible_evidence_set_policy",
+    "retrieval_index_rebuild_after_restore"
+  ]
+}
