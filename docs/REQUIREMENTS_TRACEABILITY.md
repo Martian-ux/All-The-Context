@@ -14,7 +14,7 @@ the hosted jobs pass on the exact release commit.
 | Idempotent/resumable ingestion with coverage | `ingestion.py`; retry/resume/coverage tests | Implemented |
 | Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
 | Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
-| Future embedding boundary | retrieval interface/selector separation | Defined; embeddings intentionally absent |
+| Future embedding boundary | shadow-retriever contract plus disabled, rebuild-only 384d exact-scan experiment outside package discovery | Defined; no production embedding dependency or authority |
 | Required MCP tools | `mcp_adapter.py`; schema and real STDIO handshake/restart tests | Implemented |
 | One-time local app connection | `client_config.py`, setup wizard, dashboard; Codex/Claude config tests | Implemented locally |
 | Minimal administration UI | `apps/dashboard`; component, type, build, and browser-serving tests | Implemented |
@@ -37,8 +37,9 @@ the hosted jobs pass on the exact release commit.
 | Task admissibility | deterministic numeric factor gate after hard policy/time, fail-open sparse evidence, shadow-only learned interface | Implemented locally; bounded precision improves without exact Recall@5 loss |
 | Safe retrieval diagnostics | closed reason codes and numeric/boolean aggregates; admin-only returned-ID explanations | Implemented; content/unauthorized-ID exclusion tests |
 | Retrieval V3 benchmark gate | foundation fixtures plus integrated 1k/10k quality, latency, storage, migration/restart/restore checks | Full local Windows gate passed; three-OS observation pending |
-| Set-level marginal context selection | set-selector contract; compatibility/diversity/conflict/support/budget fixtures | Wave 2 pending |
-| Optional local dense/source-evidence experiments | disabled shadow contracts; no default dependency or packaging authority | Wave 2 pending; no production claim |
+| Set-level marginal context selection | `set_selection.py`, `ContextCompiler` wiring, compatibility/diversity/conflict/support/mandatory/budget fixtures | Implemented locally; 11/11 standalone gates and combined semantic coverage `1.0` |
+| Optional local dense shadow | disabled in-memory 384d exact-scan experiment, bounded tests, authorization-first filtering | Implemented as research only; 10k p95 `400.294955 ms` misses `150 ms`; real model/semantics unexercised |
+| Source-evidence retrieval research | sanitized imported-chat fixtures; lexical passage and deterministic token-MaxSim benchmark/report | Implemented as research only; 64/256 recall and coverage `1.0`, diverse redundancy zero; neural path unexercised |
 
 ## Deferred by the V1 boundary
 
@@ -46,6 +47,6 @@ the hosted jobs pass on the exact release commit.
 - third-party hosting/provider setup;
 - multi-master synchronization, CRDTs, family accounts, and multi-tenant SaaS;
 - live location, heart rate, wearables, and emergency response;
-- vector embeddings; and
+- production vector embeddings; and
 - automatic secure remote-Core exposure until device pairing and encrypted
   transport are designed and accepted.

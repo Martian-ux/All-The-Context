@@ -9,10 +9,10 @@ The comparator's recall and coverage measure evidence available inside selected 
 
 | Variant | Evidence recall | Facet coverage | Redundancy | Warm p95 ms | Incremental bytes | Deterministic | Policy violations |
 | --- | ---: | ---: | ---: | ---: | ---: | :---: | ---: |
-| `current_lexical_candidate_pool` | 1.000 | 1.000 | 0.083 | 6.053 | 0 | yes | 0 |
-| `lexical_passages` | 1.000 | 1.000 | 0.050 | 8.647 | 114688 | yes | 0 |
-| `deterministic_passage_maxsim` | 1.000 | 1.000 | 0.050 | 6.415 | 86168 | yes | 0 |
-| `deterministic_diverse_maxsim` | 1.000 | 1.000 | 0.000 | 7.264 | 86168 | yes | 0 |
+| `current_lexical_candidate_pool` | 1.000 | 1.000 | 0.083 | 6.276 | 0 | yes | 0 |
+| `lexical_passages` | 1.000 | 1.000 | 0.050 | 9.035 | 114688 | yes | 0 |
+| `deterministic_passage_maxsim` | 1.000 | 1.000 | 0.050 | 6.317 | 86168 | yes | 0 |
+| `deterministic_diverse_maxsim` | 1.000 | 1.000 | 0.000 | 6.826 | 86168 | yes | 0 |
 
 Safety result: **passed**. This requires deterministic repeats, invariant rankings when forbidden sources are removed, and zero policy violations for every variant.
 
@@ -20,10 +20,10 @@ Safety result: **passed**. This requires deterministic repeats, invariant rankin
 
 | Variant | Evidence recall | Facet coverage | Redundancy | Warm p95 ms | Incremental bytes | Deterministic | Policy violations |
 | --- | ---: | ---: | ---: | ---: | ---: | :---: | ---: |
-| `current_lexical_candidate_pool` | 1.000 | 1.000 | 0.083 | 19.650 | 0 | yes | 0 |
-| `lexical_passages` | 1.000 | 1.000 | 0.050 | 21.797 | 397312 | yes | 0 |
-| `deterministic_passage_maxsim` | 1.000 | 1.000 | 0.050 | 17.451 | 356136 | yes | 0 |
-| `deterministic_diverse_maxsim` | 1.000 | 1.000 | 0.000 | 19.377 | 356136 | yes | 0 |
+| `current_lexical_candidate_pool` | 1.000 | 1.000 | 0.083 | 18.650 | 0 | yes | 0 |
+| `lexical_passages` | 1.000 | 1.000 | 0.050 | 22.612 | 397312 | yes | 0 |
+| `deterministic_passage_maxsim` | 1.000 | 1.000 | 0.050 | 23.836 | 356136 | yes | 0 |
+| `deterministic_diverse_maxsim` | 1.000 | 1.000 | 0.000 | 18.957 | 356136 | yes | 0 |
 
 Safety result: **passed**. This requires deterministic repeats, invariant rankings when forbidden sources are removed, and zero policy violations for every variant.
 

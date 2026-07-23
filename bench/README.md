@@ -27,6 +27,38 @@ services, native/default dependencies, ANN, learned sparse retrieval, or model
 reranker. Neural model late interaction is explicitly `not_exercised` because
 no optional model or model runtime is declared for this bounded experiment.
 
+## Wave 2 set selection
+
+The metadata-only set selector has a deterministic sanitized fixture covering
+mandatory preferences, marginal semantic/diversity utility, supporting
+evidence, compatibility, conflicts, duplicate suppression, upstream
+attestations, and character budgets:
+
+```text
+python -m bench.set_selection_benchmark
+```
+
+The command exits nonzero unless all 11 acceptance gates pass. Candidate keys
+and signal labels are opaque; emitted diagnostics contain only closed reason
+codes and aggregate numeric/boolean values.
+
+## Optional dense shadow
+
+The dense shadow is disabled by default and emits `not_exercised` unless an
+experiment mode is explicit. Measure deterministic non-semantic 384d float32
+storage and exact-scan mechanics, including the opt-in 10k latency target, with:
+
+```text
+python -m bench.dense_shadow_benchmark --exact-scan-only --profiles 128 1024 10000 --include-10k --output tmp/dense-shadow.json
+```
+
+The synthetic runtime does not support semantic claims. A genuine comparison
+requires `--enable-local-model --model-path <local-directory>` and a separately
+installed Sentence Transformers runtime; loading is CPU-only and
+`local_files_only`, so the benchmark never downloads a model. The experiment
+is in-memory, noncanonical, outside default packaging, and has no production
+ranking authority.
+
 ## Retrieval V3 foundation contracts
 
 The V3 foundation harness freezes the production V2 ordering as a named

@@ -27,8 +27,8 @@ means connecting directly to Core while Core is online.
   app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
 - Deterministic Retrieval V3 with policy-first authorization, rebuildable UTC
   interval sidecars, weighted candidate-scoped FTS5, conservative task
-  admissibility, safe diagnostics, and context compilation without a vector
-  dependency.
+  admissibility, safe diagnostics, and deterministic marginal context-set
+  selection without a vector dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
 
@@ -61,13 +61,27 @@ means connecting directly to Core while Core is online.
 - The integrated 1k/10k comparator gate passes locally on Windows. Both profiles
   have exact Recall@5 `1.0`, admissibility precision `1.0`, temporal precision
   `1.0`, semantic coverage `1.0`, zero redundancy, zero policy violations, and
-  deterministic rankings/conflicts. The final 10k warm p95 is `122.32761 ms`; total
-  database-plus-sidecar growth from 1k to 10k is `1027.185778` bytes per added
-  record. Lifecycle resurrection count is zero.
-- Deterministic marginal set selection, optional local dense shadow, and
-  source-evidence late-interaction research remain in progress. Three-OS CI for
-  the integrated commit is still pending, so the local result is not yet a
-  cross-platform or release claim.
+  deterministic rankings/conflicts. After set-selection integration, the 10k
+  warm p95 is `68.79868 ms`; total database-plus-sidecar growth from 1k to 10k
+  is `1027.185778` bytes per added record. Lifecycle resurrection count is zero.
+- `ContextCompiler` now uses metadata-only deterministic marginal utility,
+  mandatory-preference priority, semantic/diversity gains, transitive duplicate
+  groups, same-slot conflict exclusion, supporting-evidence relationships, and
+  exact character budgets. Its standalone benchmark passes all 11 gates with
+  semantic coverage `1.0`, zero set violations, and deterministic input-order
+  behavior.
+- The optional 384-dimensional float32 dense shadow remains disabled,
+  in-memory, noncanonical, and outside default packaging. Synthetic exact scan
+  is deterministic but misses its 10k target: `400.294955 ms` warm p95 versus
+  `150 ms`, with `15,360,000` vector bytes. No real local model or semantic
+  comparison was exercised, so dense ranking and ANN were not promoted.
+- Research-only source-evidence selection preserves `1.0` recall and facet
+  coverage with zero policy violations at 64/256 sources. Diversity-aware
+  token MaxSim reduces measured redundancy from `0.083334` to zero; the final
+  256-source warm p95 is `18.9572 ms`. Neural late interaction remains
+  unexercised and there is no runtime integration.
+- Three-OS CI for the final integrated commit is still pending, so these local
+  results are not yet a cross-platform or release claim.
 
 ## Remaining beta gates
 
@@ -81,11 +95,11 @@ means connecting directly to Core while Core is online.
 
 ## Current evidence
 
-- Full Python suite: 393 passed; four Windows-host symlink tests skipped because
+- Full Python 3.12 suite: 433 passed; four Windows-host symlink tests skipped because
   this account cannot create the required links.
 - Dashboard: 17 tests passed; type check, production build, and high-severity
   dependency audit passed.
-- Ruff format/lint, strict mypy across 56 source files, documentation-link
+- Ruff format/lint, strict mypy across 57 source files, documentation-link
   checks, and the seven-step single-Core demonstration passed.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.

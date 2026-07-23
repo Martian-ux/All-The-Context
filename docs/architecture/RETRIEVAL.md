@@ -21,10 +21,12 @@ The production pipeline has six ordered boundaries:
    scope/project fit, requested-kind compatibility, confidence/explicitness,
    and conflict state. Sparse or underspecified evidence fails open. An optional
    learned gate can run only in shadow and has no production authority.
-5. `ContextCompiler` reserves mandatory-preference budget, suppresses exact and
-   conservative near duplicates, diversifies kinds/projects/sources, and places
-   supporting evidence after primary context. Deterministic marginal set
-   selection is the next integration stage.
+5. `ContextCompiler` maps only the already-authorized, temporally eligible, and
+   task-admitted result set into opaque hashed semantic/diversity labels. A
+   `DeterministicSetSelector` then maximizes exact rational marginal utility per
+   character while prioritizing mandatory preferences and enforcing transitive
+   duplicate groups, same-slot conflict exclusion, supporting-evidence
+   relationships, and the exact budget. It cannot weaken an upstream gate.
 6. Administrator-only diagnostics expose authorized returned record IDs plus
    numeric values, aggregate counts, and closed reason codes. They never include
    raw query/context text, denied IDs, or unauthorized-derived vocabulary.
@@ -114,7 +116,34 @@ is deterministic, deleted/purged records do not resurrect, historical and
 restore paths are exercised, and 10k warm p95 stays below 150 ms.
 
 The standalone lexical, temporal, and admissibility harnesses remain useful for
-stage diagnosis. Learned sparse retrieval, production late interaction,
-rerankers, and ANN remain unscheduled. A reranker requires evidence that the
-candidate pool has strong recall but final ordering is poor; ANN requires exact
-scan to miss an explicit latency target.
+stage diagnosis. The set-selection harness adds compatibility, semantic
+coverage, diversity, supporting-evidence, mandatory-preference, conflict,
+redundancy, and budget scenarios; all 11 local gates pass.
+
+## Optional shadow research
+
+The repository contains two research-only paths under `bench/`; neither is
+imported by the application package or has ranking authority:
+
+- `dense_shadow` is explicitly disabled by default, rebuild-only, in-memory,
+  CPU-only, and fixed at 384 float32 dimensions. A deterministic synthetic
+  runtime measures storage and exact-scan mechanics but makes no semantic
+  claim. At 10,000 candidates, exact scan used 15,360,000 vector bytes and
+  measured `400.294955 ms` warm p95 against a `150 ms` target. This satisfies the
+  latency precondition for a later ANN shadow study, but the real local-model
+  and semantic-coverage paths remain `not_exercised`; no ANN or production
+  dense retrieval is implemented.
+- `source_evidence_retrieval` freezes the candidate-scoped lexical source pool
+  and compares lexical passages, deterministic token MaxSim, and
+  diversity-aware token MaxSim on sanitized imported-chat evidence. At the
+  normal 64/256-source profiles, every variant preserves `1.0` evidence recall
+  and facet coverage with zero policy violations; diversity-aware MaxSim
+  reduces measured redundancy to zero. Neural late interaction remains
+  `not_exercised`, and no source-evidence variant is wired into runtime.
+
+Learned sparse retrieval and production late interaction remain unscheduled.
+A reranker still requires evidence that candidate-pool recall is strong while
+final ordering is measurably poor. ANN may now be researched only as an
+optional local shadow because exact scan missed its explicit target; production
+use still requires a genuine model, semantic benefit, recall parity, and a
+default dependency strategy consistent with the local cross-platform boundary.

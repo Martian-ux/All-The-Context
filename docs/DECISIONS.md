@@ -510,3 +510,36 @@ no deletion/purge resurrection, exercised restart/restore/history paths, and a
 10k warm p95 below 150 ms. Dense retrieval, late interaction, rerankers, and ANN
 remain experiments until stage diagnostics meet their explicit escalation
 conditions.
+
+## ADR-034: Context assembly is set-level; dense and source evidence stay shadow-only
+
+**Status:** accepted 2026-07-22; extends ADR-033 without granting a new
+canonical or production ranking authority.
+
+Context assembly is a deterministic set-selection problem rather than a linear
+packing loop. `ContextCompiler` derives bounded opaque labels only after policy,
+temporal, lexical, and task-admissibility stages have completed. The selector
+uses integer utilities and exact rational benefit-per-character comparisons,
+prioritizes feasible interaction preferences, and enforces character budget,
+duplicate, conflict, compatibility, and supporting-evidence constraints. The
+selector's diagnostics remain closed aggregate codes. Raw content, query text,
+unauthorized identifiers, and arbitrary metadata are not diagnostic fields.
+
+Dense retrieval is not a production dependency. The checked-in 384-dimensional
+CPU experiment is disabled by default, rebuild-only, nonpersistent, and outside
+application package discovery. Its deterministic synthetic runtime can measure
+exact-scan mechanics but cannot establish semantic value. The 10,000-candidate
+measurement missed the explicit `150 ms` p95 target at `400.294955 ms`, so a
+future optional ANN shadow study is latency-justified. It is not approved yet:
+the real local model and semantic comparison were not exercised, and no default
+native dependency, canonical vector state, or production ANN authority is
+allowed.
+
+Long imported-chat evidence also remains research-only. Deterministic passage
+MaxSim variants are benchmarked after the frozen authorized lexical source
+pool; they do not alter runtime results. The diversity-aware variant preserved
+the bounded fixture's `1.0` evidence recall and coverage while reducing measured
+redundancy to zero. Neural late interaction, learned sparse retrieval, and
+reranking remain unexercised. Promotion requires representative evidence,
+cross-platform measurements, explicit packaging review, and the same
+policy-first and rebuildable-state guarantees as production retrieval.
