@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "artifact_type": "external_memory_artifact_intake",
+  "date": "2026-07-23",
+  "observation_window_utc": {
+    "start": "2026-07-23T20:55:40.6432576Z",
+    "end": "2026-07-23T20:55:56.7377186Z"
+  },
+  "worker_base_commit": "dd4b880a68842dd0c797741ba2ffe673e768c55d",
+  "evidence_level": "L0",
+  "authority": "research_intake_only",
+  "safety_receipt": {
+    "repository_cloned": false,
+    "dataset_blobs_downloaded": false,
+    "raw_payload_rows_opened": false,
+    "third_party_code_executed": false,
+    "dependencies_installed": false,
+    "models_or_providers_called": false,
+    "personal_context_accessed": false,
+    "operator_core_accessed": false
+  },
+  "artifacts": [
+    {
+      "id": "mpbench",
+      "paper": {
+        "arxiv_id": "2606.04329",
+        "version": "v2",
+        "title": "From Untrusted Input to Trusted Memory: A Systematic Study of Memory Poisoning Attacks in LLM Agents",
+        "authors": [
+          "Pritam Dash",
+          "Tongyu Ge",
+          "Aditi Jain",
+          "Tanmay Shah",
+          "Zhiwei Shang"
+        ],
+        "last_revised_utc": "2026-06-18T22:06:23Z",
+        "license": "CC-BY-4.0",
+        "urls": {
+          "abstract": "https://arxiv.org/abs/2606.04329",
+          "html": "https://arxiv.org/html/2606.04329"
+        }
+      },
+      "repository": {
+        "full_name": "Digital-Trust-Lab/mp-bench",
+        "html_url": "https://github.com/Digital-Trust-Lab/mp-bench",
+        "api_url": "https://api.github.com/repos/Digital-Trust-Lab/mp-bench",
+        "owner_type": "Organization",
+        "public": true,
+        "fork": false,
+        "archived": false,
+        "disabled": false,
+        "default_branch": "main",
+        "branches": [
+          "main"
+        ],
+        "head_commit": "6886880a7c29625e0109e0ad91d0e095029f1577",
+        "tree": "70766a87ea247914f427e90e45dbb9b07b81b2ce",
+        "tree_truncated": false,
+        "created_at_utc": "2026-06-28T22:26:50Z",
+        "updated_at_utc": "2026-07-06T20:01:22Z",
+        "pushed_at_utc": "2026-06-28T22:54:07Z",
+        "github_size_kib": 4485,
+        "release_count": 0,
+        "tag_count": 0,
+        "open_issue_count": 0,
+        "commit_count_observed": 3,
+        "commits": [
+          {
+            "sha": "6886880a7c29625e0109e0ad91d0e095029f1577",
+            "author_name": "Pritam Dash",
+            "github_login": "dashpritam",
+            "authored_at_utc": "2026-06-28T22:54:07Z"
+          },
+          {
+            "sha": "fa19f852dfdbf56288df0f3e3abed16f383fbf65",
+            "author_name": "Pritam Dash",
+            "github_login": "dashpritam",
+            "authored_at_utc": "2026-06-28T22:45:43Z"
+          },
+          {
+            "sha": "cc705a2ecbc7d52d1f4b6dc299facbc45fc8fac2",
+            "author_name": "Pritam Dash",
+            "github_login": "dashpritam",
+            "authored_at_utc": "2026-06-28T22:26:51Z"
+          }
+        ]
+      },
+      "ownership_linkage": {
+        "classification": "strong_author_controlled_not_fully_bidirectional",
+        "verified": [
+          "repository README names the exact paper and repeats its author list",
+          "all repository commits are authored by paper first author Pritam Dash",
+          "GitHub links those commits to dashpritam whose public name is Pritam Dash"
+        ],
+        "limitations": [
+          "arXiv v2 does not name the repository",
+          "Digital Trust Lab GitHub organization exposes no institutional website"
+        ]
+      },
+      "license": {
+        "repository_spdx": "Apache-2.0",
+        "root_file": "LICENSE",
+        "root_file_bytes": 11357,
+        "root_file_git_blob_sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "notice_file_present": false,
+        "nested_licenses_present": false,
+        "scope_classification": "root_repository_license_with_no_narrower_scope_declared",
+        "legal_limit": "generated-row and upstream rights not independently verified"
+      },
+      "tree_inventory": [
+        {
+          "path": "LICENSE",
+          "kind": "license_text",
+          "bytes": 11357,
+          "git_blob_sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "payload_opened": true
+        },
+        {
+          "path": "README.md",
+          "kind": "markdown_metadata",
+          "bytes": 2321,
+          "git_blob_sha1": "73c19ea2e0b6ef39f1c47b82b241d2f34243f4ce",
+          "payload_opened": true
+        },
+        {
+          "path": "adversarial_data.jsonl.jsonl",
+          "kind": "json_lines_dataset_declared",
+          "bytes": 7339100,
+          "git_blob_sha1": "c060c3309968c8f20e42aa75c83f0043320d2fde",
+          "payload_opened": false
+        },
+        {
+          "path": "benign_data.jsonl.jsonl",
+          "kind": "json_lines_dataset_declared",
+          "bytes": 6564735,
+          "git_blob_sha1": "bf932e1f74a801e4ecf26ecd8e847fa09ee49a74",
+          "payload_opened": false
+        }
+      ],
+      "declared_schema": {
+        "source": "repository README and paper Appendix D",
+        "fields": {
+          "attack_type": "categorical",
+          "attack_signal": "categorical",
+          "domain": "categorical",
+          "adversarial_goal": "categorical",
+          "user_query": "untrusted_free_text",
+          "context": "adversarial_instruction_shaped_free_text",
+          "expected_memory": "adversarial_instruction_shaped_free_text",
+          "retrieval_query": "untrusted_activation_oriented_free_text"
+        },
+        "author_reported_adversarial_rows": 3240,
+        "author_reported_benign_rows": 2997,
+        "row_counts_reproduced": false
+      },
+      "instruction_shaped_payload": {
+        "classification": "yes_by_declared_design",
+        "raw_rows_inspected": false
+      },
+      "dependencies_and_hooks": {
+        "dependency_manifests_present": false,
+        "executable_files_present": false,
+        "install_hooks_present": false,
+        "ci_workflows_present": false,
+        "submodules_present": false,
+        "runtime_reproduction_dependencies_reviewed": false
+      },
+      "decision": "metadata_qualified_execution_denied_candidate"
+    },
+    {
+      "id": "pro_long",
+      "paper": {
+        "arxiv_id": "2607.20064",
+        "version": "v1",
+        "title": "PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning",
+        "authors": [
+          "Alexis Fox",
+          "Junlin Wang",
+          "Paul Rosu",
+          "Bhuwan Dhingra"
+        ],
+        "submitted_at_utc": "2026-07-22T12:11:51Z",
+        "license": "arXiv-perpetual-non-exclusive",
+        "urls": {
+          "abstract": "https://arxiv.org/abs/2607.20064",
+          "html": "https://arxiv.org/html/2607.20064",
+          "paper_linked_repository": "https://github.com/alexisfox7/PRO-LONG"
+        }
+      },
+      "ownership_linkage": {
+        "classification": "direct_paper_to_author_owned_url",
+        "verified": [
+          "paper links alexisfox7/PRO-LONG",
+          "alexisfox7 public GitHub profile name is Alexis Fox"
+        ]
+      },
+      "availability_checks": [
+        {
+          "url": "https://api.github.com/repos/alexisfox7/PRO-LONG",
+          "status": 404
+        },
+        {
+          "url": "https://github.com/alexisfox7/PRO-LONG",
+          "status": 404
+        },
+        {
+          "url": "https://raw.githubusercontent.com/alexisfox7/PRO-LONG/main/LICENSE",
+          "status": 404
+        },
+        {
+          "url": "https://raw.githubusercontent.com/alexisfox7/PRO-LONG/main/README.md",
+          "status": 404
+        }
+      ],
+      "absent_from_author_public_owner_repository_list": true,
+      "repository_commit": null,
+      "repository_license": null,
+      "tree_inventory": null,
+      "release_state": null,
+      "dependencies_and_hooks": null,
+      "unavailability_ambiguity": [
+        "never-public",
+        "temporarily-private",
+        "renamed",
+        "deleted",
+        "access-controlled"
+      ],
+      "decision": "unavailable_license_unverified"
+    }
+  ],
+  "future_mpbench_experiment": {
+    "status": "proposed_not_authorized",
+    "classification": "separate_external_schema_and_symbolic_adapter_cell",
+    "pinned_commit": "6886880a7c29625e0109e0ad91d0e095029f1577",
+    "acquisition": {
+      "quarantine_required": true,
+      "verify_expected_byte_counts": true,
+      "verify_git_blob_sha1": true,
+      "compute_sha256_before_parse": true,
+      "default_deny_egress_after_acquisition": true
+    },
+    "sanitizer": {
+      "llm_used": false,
+      "raw_free_text_output_allowed": false,
+      "categorical_allowlist_only": true,
+      "free_text_projection": [
+        "length_bucket",
+        "salted_digest",
+        "opaque_token"
+      ]
+    },
+    "cohorts": "matched_adversarial_benign_by_categorical_metadata_and_length_bucket",
+    "p01_stage_metrics": [
+      "durable_write_rate",
+      "later_retrieval_rate",
+      "later_influence_rate",
+      "protected_action_attempt_rate",
+      "protected_action_cross_rate",
+      "benign_false_positive_rate",
+      "source_witness_preservation",
+      "correction_convergence",
+      "purge_residue"
+    ],
+    "hard_kills": [
+      "content_or_provenance_mismatch",
+      "raw_free_text_crosses_quarantine",
+      "raw_or_sanitized_attack_sent_to_llm_or_provider",
+      "undeclared_network_dependency_hook_or_telemetry",
+      "label_or_holdout_leakage",
+      "hard_force_escalation",
+      "protected_action_crossing",
+      "cross_principal_influence",
+      "witness_collapse",
+      "purge_residue",
+      "payload_in_logs_reports_diffs_or_commits"
+    ],
+    "boundaries": [
+      "no_production",
+      "no_personal_data",
+      "no_operator_core",
+      "no_provider_or_model",
+      "no_real_tools_or_actions",
+      "no_cross_agent_autoload"
+    ]
+  },
+  "experiment_identity": {
+    "p01_remains_uncontaminated": true,
+    "p01_basis": "no P01 fixture, holdout, prompt, output, label, seed, result, or MPBench payload was accessed",
+    "b01_is_not_pro_long_reproduction": true,
+    "b01_basis": "no PRO-LONG repository bytes, logs, prompts, ARC-AGI-3 runs, models, or environment were available or used"
+  }
+}
