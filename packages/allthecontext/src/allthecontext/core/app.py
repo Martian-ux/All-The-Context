@@ -470,6 +470,32 @@ def create_app(
         require(principal, "admin")
         return await run_in_threadpool(core.imports.reprocess_source, source_id)
 
+    @app.post("/v1/admin/sources/{source_id}/delete")
+    def delete_source(
+        source_id: str, request: RejectRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        result = core.store.delete_source(
+            source_id,
+            reason=request.reason or "deleted by user",
+            actor=principal.id,
+        )
+        edge_sync.trigger()
+        return result
+
+    @app.post("/v1/admin/sources/{source_id}/restore")
+    def restore_source(
+        source_id: str, request: RejectRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        result = core.store.restore_source(
+            source_id,
+            reason=request.reason or "restored by user",
+            actor=principal.id,
+        )
+        edge_sync.trigger()
+        return result
+
     @app.post(
         "/v1/admin/candidates/{candidate_id}/approve",
         deprecated=True,

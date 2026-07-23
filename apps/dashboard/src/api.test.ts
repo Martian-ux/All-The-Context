@@ -114,6 +114,54 @@ describe("desktop browser session", () => {
     expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toEqual({ version: 1, reason: "Restored version 1 by user" });
   });
 
+  it("uses reversible source deletion and maps the restored source", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      const body = url.endsWith("/delete")
+        ? {
+            source_id: "source-1",
+            deleted_at: "2026-07-23T00:00:00Z",
+            reason: "Removed by user",
+            deleted_record_ids: ["record-1"],
+          }
+        : {
+            source: {
+              id: "source-1",
+              filename: "provider.zip",
+              media_type: "application/zip",
+              source_service: "claude",
+              source_type: "archive",
+              byte_size: 2048,
+              content_hash: "hash",
+              candidate_count: 4,
+              created_at: "2026-07-22T00:00:00Z",
+            },
+            restored_record_ids: ["record-1"],
+          };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await api.deleteSource("source-1", "Removed by user");
+    await expect(
+      api.restoreSource("source-1", "Undid source removal by user"),
+    ).resolves.toMatchObject({
+      source: { size_bytes: 2048, observation_count: 4 },
+      restored_record_ids: ["record-1"],
+    });
+
+    expect(fetch.mock.calls.map(([request]) => String(request))).toEqual([
+      "/v1/admin/sources/source-1/delete",
+      "/v1/admin/sources/source-1/restore",
+    ]);
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ reason: "Removed by user" });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toEqual({ reason: "Undid source removal by user" });
+  });
+
   it("sends export passphrases only in the protected request body", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
     const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("encrypted", { status: 200 }));

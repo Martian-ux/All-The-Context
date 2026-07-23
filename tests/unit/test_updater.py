@@ -246,6 +246,31 @@ def test_packaged_windows_beta_uses_the_project_channel_when_a_key_is_trusted(
     assert config.architecture == "x86_64"
 
 
+def test_installed_windows_runtime_recovers_packaged_channel_without_frozen_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "AllTheContext.exe"
+    executable.write_bytes(b"app")
+    executable.with_name("AllTheContextUpdater.exe").write_bytes(b"helper")
+    monkeypatch.delattr(updater_module.sys, "frozen", raising=False)
+    monkeypatch.setattr(updater_module.sys, "executable", str(executable))
+    monkeypatch.setattr(updater_module, "current_platform", lambda: ("windows", "x86_64"))
+    monkeypatch.setattr(
+        updater_module,
+        "load_keyring",
+        lambda _path: {
+            "keys": [{"channels": ["beta"], "status": "active"}],
+        },
+    )
+    monkeypatch.delenv("ATC_UPDATE_STABLE_URL", raising=False)
+    monkeypatch.delenv("ATC_UPDATE_BETA_URL", raising=False)
+
+    config = UpdateConfig.default()
+
+    assert config.manifest_urls == {"beta": DEFAULT_BETA_MANIFEST_URL}
+
+
 def test_source_build_and_packaged_build_without_a_trusted_key_have_no_default_channel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

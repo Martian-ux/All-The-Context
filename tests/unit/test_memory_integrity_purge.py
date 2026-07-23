@@ -94,7 +94,7 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             "(2,'002_edge_proposal_receipts.sql','2026-01-01T00:00:00+00:00')"
         )
     store = CoreStore(database)
-    assert store.migrate() == 5
+    assert store.migrate() == 6
     with store.connect() as connection:
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")

@@ -521,12 +521,16 @@ source without changing this authority boundary.
 
 **Status:** accepted 2026-07-22.
 
-A frozen Windows x86_64 prerelease whose embedded keyring contains an active
+A packaged Windows x86_64 prerelease whose embedded keyring contains an active
 beta key uses the canonical project Pages manifest endpoint and selects beta on
-first run. A legacy persisted stable selection moves to beta only when stable
-has no configured endpoint and beta does. Source runs, unsupported targets, and
-packages without an active beta key infer no endpoint. Environment variables
-remain explicit overrides for forks and acceptance environments.
+first run. Packaging is normally proved by the frozen-runtime marker. An
+installed `AllTheContext.exe` may also prove it with its exact executable name
+and adjacent `AllTheContextUpdater.exe`; this covers a frozen child process that
+loses the marker without enabling source Python runs. A legacy persisted stable
+selection moves to beta only when stable has no configured endpoint and beta
+does. Source runs, unsupported targets, and packages without an active beta key
+infer no endpoint. Environment variables remain explicit overrides for forks
+and acceptance environments.
 
 GitHub's immutable versioned release download URL responds with a temporary CDN
 redirect. Artifact download may therefore follow exactly one HTTPS redirect,
@@ -717,3 +721,23 @@ projections produced by Core. It never evaluates the policy, changes a
 disposition, or creates current context. This keeps one authority while
 allowing future transport work without reintroducing review as a consistency
 mechanism.
+
+## ADR-040: Imported-source deletion is reversible and provenance-bounded
+
+**Status:** accepted 2026-07-23.
+
+Ordinary deletion of an imported source is a Core-owned soft deletion. The
+source disappears from normal listing, status counts, raw-content access, and
+reprocessing. In the same transaction, Core soft-deletes current records whose
+canonical `source_id` is that source and records each resulting deletion
+version. Observations and the raw BLOB remain preserved for immediate Undo,
+history, and a later irreversible administrator purge.
+
+Restoring the source restores only a member whose current deletion tombstone
+still has the exact version created by that source deletion. A record deleted
+before the source, restored and deleted again independently, or purged is never
+resurrected by source Undo. Reimporting the exact soft-deleted source is treated
+as a duplicate and restores it under the same rule. Irreversible source purge
+continues to remove the source, raw BLOB when unshared, observations, derived
+records, and ordinary audit material through the existing confirmed purge state
+machine.

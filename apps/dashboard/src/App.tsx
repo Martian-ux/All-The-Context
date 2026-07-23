@@ -211,7 +211,7 @@ function App() {
         </header>
         <div className="workspace-body" key={page}>
           {statusError && !status ? <DisconnectedView error={statusError} onRetry={refreshStatus} /> : <>
-            {page === "sources" && <SourcesView />}
+            {page === "sources" && <SourcesView onChanged={refreshStatus} />}
             {page === "context" && <ContextView onChanged={refreshStatus} />}
             {page === "connections" && <ConnectionsView />}
             {page === "activity" && <ActivityView />}
@@ -246,7 +246,7 @@ function DisconnectedView({ error, onRetry }: { error: unknown; onRetry: () => P
   );
 }
 
-function SourcesView() {
+function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [sources, setSources] = useState<SourceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +256,12 @@ function SourcesView() {
   const [provider, setProvider] = useState<ArchiveProvider>("auto");
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
   const [retryingSource, setRetryingSource] = useState<string | null>(null);
+  const [confirmingSource, setConfirmingSource] = useState<SourceRecord | null>(null);
+  const [workingSource, setWorkingSource] = useState<string | null>(null);
+  const [removedSource, setRemovedSource] = useState<{
+    source: SourceRecord;
+    index: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -267,7 +273,7 @@ function SourcesView() {
 
   async function upload(file?: File) {
     if (!file) return;
-    setUploading(true); setNotice(null); setLastImport(null); setError(null);
+    setUploading(true); setNotice(null); setLastImport(null); setRemovedSource(null); setError(null);
     try {
       const result = await api.importSource(file, provider);
       setLastImport(result);
@@ -290,6 +296,39 @@ function SourcesView() {
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setRetryingSource(null); }
+  }
+
+  async function removeSource(source: SourceRecord) {
+    setWorkingSource(source.id); setNotice(null); setRemovedSource(null); setError(null);
+    try {
+      await api.deleteSource(source.id, "Removed by user");
+      const index = sources.findIndex((item) => item.id === source.id);
+      setSources((items) => items.filter((item) => item.id !== source.id));
+      setRemovedSource({ source, index });
+      setConfirmingSource(null);
+      await onChanged();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorkingSource(null); }
+  }
+
+  async function undoSourceRemoval() {
+    if (!removedSource) return;
+    setWorkingSource(removedSource.source.id); setError(null); setNotice(null);
+    try {
+      const restored = await api.restoreSource(
+        removedSource.source.id,
+        "Undid source removal by user",
+      );
+      setSources((items) => {
+        const next = [...items];
+        next.splice(Math.max(0, removedSource.index), 0, restored.source);
+        return next;
+      });
+      setRemovedSource(null);
+      setNotice("Source and its derived current memories were restored.");
+      await onChanged();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setWorkingSource(null); }
   }
 
   return (
@@ -345,7 +384,8 @@ function SourcesView() {
         <span>ZIP, JSON, JSONL, Markdown, or text · up to 512 MB · never sent through MCP or to a third party</span>
         <span className="secondary-button">Choose export</span>
       </label>
-      {notice ? <Notice kind="success">{notice}</Notice> : null}
+      {removedSource ? <Notice kind="success"><span>Source and its derived current memories were removed.</span><button className="notice-action" disabled={workingSource !== null} onClick={() => void undoSourceRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
+      {confirmingSource ? <Notice kind="info">Remove {confirmingSource.filename ?? "this source"} and current memories derived from it? You can undo immediately.</Notice> : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
       {lastImport ? (
         <section className="import-receipt" aria-label="Import coverage">
@@ -365,11 +405,21 @@ function SourcesView() {
         <div className="section-heading"><div><h2>Imported sources</h2><p>Raw evidence is stored only in Core.</p></div><button className="quiet-button" onClick={() => void load()}><RefreshCw size={14} /> Refresh</button></div>
         {loading ? <LoadingRows /> : sources.length ? (
           <div className="table-list">
-            <div className="table-header source-grid"><span>Source</span><span>Observations</span><span>Size</span><span>Imported</span></div>
+            <div className="table-header source-grid"><span>Source</span><span>Observations</span><span>Size</span><span>Imported</span><span>Actions</span></div>
             {sources.map((source) => (
               <div className="table-row source-grid" key={source.id}>
                 <div className="primary-cell"><Archive size={16} /><span><strong>{source.filename ?? "Untitled source"}</strong><small>{providerDisplayName(source.metadata?.provider ?? source.source_service)} · {source.metadata?.stats?.conversations ?? 0} conversations · {source.import_status ?? "complete"}</small></span></div>
                 <span>{source.observation_count ?? "—"}</span><span>{formatBytes(source.size_bytes)}</span>{source.import_status && source.import_status !== "complete" ? <button className="quiet-button source-retry" onClick={() => void retry(source)} disabled={retryingSource === source.id}><RefreshCw size={13} /> {retryingSource === source.id ? "Retrying..." : "Retry extraction"}</button> : <time>{formatDate(source.created_at)}</time>}
+                <div className="source-actions">
+                  {confirmingSource?.id === source.id ? (
+                    <>
+                      <button className="quiet-button" disabled={workingSource !== null} onClick={() => setConfirmingSource(null)}>Cancel</button>
+                      <button className="quiet-button danger-text" disabled={workingSource !== null} onClick={() => void removeSource(source)}>{workingSource === source.id ? "Removing…" : "Remove"}</button>
+                    </>
+                  ) : (
+                    <button className="quiet-button danger-text" disabled={workingSource !== null} aria-label={`Remove ${source.filename ?? "source"}`} onClick={() => { setConfirmingSource(source); setRemovedSource(null); setNotice(null); }}><Trash2 size={13} /> Remove</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -814,6 +864,8 @@ function UpdatesView() {
 
   const busy = working !== null || status?.phase === "checking" || status?.phase === "downloading" || status?.phase === "installing";
   const phaseLabel = status?.phase.replaceAll("_", " ") ?? "loading";
+  const availableChannels = status?.available_channels ?? (status?.configured ? [status.channel] : []);
+  const selectedChannelAvailable = availableChannels.includes(channel);
   return (
     <div className="narrow-column">
       <section className="backup-intro">
@@ -828,11 +880,11 @@ function UpdatesView() {
         {status?.deferred_version ? <Notice kind="info">Version {status.deferred_version} is deferred. A manual check can offer it again.</Notice> : null}
       </section>
       <section className="section-block update-controls">
-        <div className="section-heading"><div><h2>Preferences</h2><p>Stable is the default. Beta releases require an explicit choice.</p></div></div>
+        <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>
         <div className="update-preferences">
-          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable">Stable</option><option value="beta">Beta</option></select></label>
+          <label className="field-label">Channel<select aria-label="Update channel" value={channel} disabled={busy} onChange={(event) => setChannel(event.target.value as "stable" | "beta")}><option value="stable" disabled={!availableChannels.includes("stable")}>Stable</option><option value="beta" disabled={!availableChannels.includes("beta")}>Beta</option></select></label>
           <label className="update-checkbox"><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => setEnabled(event.target.checked)} /> Check automatically at launch, at most daily</label>
-          <button className="secondary-button" disabled={busy || (status?.enabled === enabled && status?.channel === channel)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel))}>Save preferences</button>
+          <button className="secondary-button" disabled={busy || !selectedChannelAvailable || (status?.enabled === enabled && status?.channel === channel)} onClick={() => void act("save", () => api.updatePreferences(enabled, channel))}>Save preferences</button>
         </div>
         <div className="decision-bar update-actions">
           {status?.last_error ? <button className="quiet-button" disabled={busy} onClick={() => void act("clear", api.clearUpdateError)}>Clear error</button> : null}
@@ -840,7 +892,7 @@ function UpdatesView() {
           {status?.phase === "available" ? <button className="primary-button" disabled={busy} onClick={() => void act("download", api.downloadUpdate)}><Download size={15} /> Download &amp; verify</button> : null}
           {status?.verified_artifact_available ? <button className="primary-button" disabled={busy} onClick={() => void saveVerifiedArtifact()}><Download size={15} /> Save verified package</button> : null}
           {status?.phase === "ready" && status.automatic_install_supported ? <button className="primary-button" disabled={busy} onClick={() => void act("install", api.installUpdate)}>Install &amp; restart</button> : null}
-          <button className="secondary-button" disabled={busy || !enabled} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
+          <button className="secondary-button" disabled={busy || !enabled || !status?.configured} onClick={() => void act("check", api.checkForUpdates)}><RefreshCw size={15} /> {working === "check" ? "Checking…" : "Check now"}</button>
         </div>
         <p className="quiet-copy">{status?.installer_detail ?? "Loading installer capability…"}</p>
         {status && !status.configured ? <Notice kind="info">No channel metadata endpoint is configured in this build. Checks fail closed until an operator provides a trusted HTTPS endpoint and public keyring.</Notice> : null}

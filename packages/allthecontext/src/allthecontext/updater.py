@@ -154,7 +154,7 @@ class UpdateConfig:
         platform_name, architecture = current_platform()
         urls: dict[Channel, str] = {}
         if (
-            bool(getattr(sys, "frozen", False))
+            _packaged_update_runtime(platform_name)
             and platform_name == "windows"
             and architecture == "x86_64"
         ):
@@ -184,6 +184,23 @@ class UpdateConfig:
             platform_name=platform_name,
             architecture=architecture,
         )
+
+
+def _packaged_update_runtime(platform_name: str) -> bool:
+    if bool(getattr(sys, "frozen", False)):
+        return True
+    if platform_name != "windows":
+        return False
+    try:
+        executable = Path(sys.executable).resolve()
+        helper = executable.with_name("AllTheContextUpdater.exe")
+        return (
+            executable.name.casefold() == "allthecontext.exe"
+            and executable.is_file()
+            and helper.is_file()
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def current_platform() -> tuple[str, str]:
@@ -1017,6 +1034,7 @@ class UpdateManager:
                         else self.installer.unsupported_reason
                     ),
                     "configured": self.preferences.channel in self.config.manifest_urls,
+                    "available_channels": sorted(self.config.manifest_urls),
                 }
             )
             # Private staging and backup paths are intentionally not exposed.

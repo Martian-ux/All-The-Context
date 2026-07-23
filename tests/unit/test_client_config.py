@@ -8,6 +8,7 @@ import pytest
 from allthecontext.client_config import (
     MANAGED_BEGIN,
     apply_managed_client_cleanup,
+    claude_config_path,
     claude_is_configured,
     claude_is_detected,
     codex_is_configured,
@@ -238,6 +239,86 @@ def test_claude_detection_does_not_treat_a_config_folder_as_an_install(
     executable.write_bytes(b"test application marker")
     monkeypatch.setenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", str(executable))
     assert claude_is_detected() is True
+
+
+def test_claude_detection_and_config_support_the_microsoft_store_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_id = "Claude_1.24012.1.0_x64__publisher"
+    package_root = tmp_path / "WindowsApps" / package_id
+    executable = package_root / "app" / "Claude.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"test application marker")
+    local_app_data = tmp_path / "Local"
+    config = (
+        local_app_data
+        / "Packages"
+        / "Claude_publisher"
+        / "LocalCache"
+        / "Roaming"
+        / "Claude"
+        / "claude_desktop_config.json"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("{}", encoding="utf-8")
+
+    class FakeKey:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __enter__(self) -> FakeKey:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class FakeRegistry:
+        HKEY_CURRENT_USER = "HKCU"
+        HKEY_LOCAL_MACHINE = "HKLM"
+        KEY_READ = 1
+        KEY_WOW64_64KEY = 2
+        KEY_WOW64_32KEY = 4
+
+        def OpenKey(
+            self, root: object, path: str, _reserved: int, _access: int
+        ) -> FakeKey:
+            if root == self.HKEY_CURRENT_USER and path.endswith(r"Repository\Packages"):
+                return FakeKey("packages")
+            if isinstance(root, FakeKey) and root.name == "packages" and path == package_id:
+                return FakeKey("claude")
+            raise OSError
+
+        def EnumKey(self, key: FakeKey, index: int) -> str:
+            if key.name == "packages" and index == 0:
+                return package_id
+            raise OSError
+
+        def QueryValueEx(self, key: FakeKey, name: str) -> tuple[str, int]:
+            if key.name != "claude":
+                raise OSError
+            values = {
+                "PackageID": package_id,
+                "PackageRootFolder": str(package_root),
+                "DisplayName": "Claude",
+            }
+            try:
+                return values[name], 1
+            except KeyError as error:
+                raise OSError from error
+
+    monkeypatch.setattr("allthecontext.client_config.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "allthecontext.client_config.windows_registry", lambda: FakeRegistry()
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "ProgramFiles"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFilesX86"))
+    monkeypatch.delenv("ATC_CLAUDE_CONFIG", raising=False)
+    monkeypatch.delenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", raising=False)
+
+    assert claude_is_detected() is True
+    assert claude_config_path() == config
 
 
 def test_lightweight_launch_repair_binds_existing_entries_to_the_active_vault(

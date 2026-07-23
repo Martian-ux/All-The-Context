@@ -269,6 +269,63 @@ describe("dashboard", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
   });
 
+  it("removes an imported source and restores it through Undo", async () => {
+    let deleted = false;
+    const source = {
+      id: "source-1",
+      filename: "provider-export.zip",
+      media_type: "application/zip",
+      source_service: "claude",
+      source_type: "archive",
+      byte_size: 4096,
+      content_hash: "source-hash",
+      candidate_count: 3,
+      import_status: "complete",
+      metadata: { provider: "claude", stats: { conversations: 2 } },
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      if (url.endsWith("/admin/sources/source-1/delete") && init?.method === "POST") {
+        deleted = true;
+        return json({
+          source_id: "source-1",
+          deleted_at: "2026-07-23T00:00:00Z",
+          reason: "Removed by user",
+          deleted_record_ids: ["record-1"],
+        });
+      }
+      if (url.endsWith("/admin/sources/source-1/restore") && init?.method === "POST") {
+        deleted = false;
+        return json({ source, restored_record_ids: ["record-1"] });
+      }
+      if (url.endsWith("/admin/sources")) {
+        return json({ total: deleted ? 0 : 1, items: deleted ? [] : [source] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove provider-export.zip" }));
+    expect(screen.getByText(/current memories derived from it/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText(/source and its derived current memories were removed/i)).toBeInTheDocument();
+    expect(screen.queryByText("provider-export.zip")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(await screen.findByText("Source and its derived current memories were restored.")).toBeInTheDocument();
+    expect(screen.getByText("provider-export.zip")).toBeInTheDocument();
+    const deleteCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/sources/source-1/delete"));
+    const restoreCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/sources/source-1/restore"));
+    expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({ reason: "Removed by user" });
+    expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({ reason: "Undid source removal by user" });
+  });
+
   it("checks and downloads a verified desktop update", async () => {
     const update = {
       phase: "idle",

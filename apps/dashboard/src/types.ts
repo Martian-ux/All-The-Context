@@ -38,6 +38,8 @@ export interface SourceRecord {
   metadata?: SourceMetadata;
   parser_warnings?: string[];
   created_at: string;
+  deleted_at?: string | null;
+  deleted_reason?: string | null;
 }
 
 export type ArchiveProvider = "auto" | "chatgpt" | "claude" | "grok" | "generic";
@@ -161,6 +163,7 @@ export interface UpdateStatus {
   verified_artifact_available: boolean;
   installer_detail: string;
   configured: boolean;
+  available_channels: Array<"stable" | "beta">;
 }
 
 export interface Page<T> {
@@ -193,4 +196,16 @@ export interface ContextDeletion {
   reason: string;
   content_hash: string;
   deleted_at: string;
+}
+
+export interface SourceDeletion {
+  source_id: string;
+  deleted_at: string;
+  reason: string;
+  deleted_record_ids: string[];
+}
+
+export interface SourceRestoration {
+  source: SourceRecord;
+  restored_record_ids: string[];
 }
