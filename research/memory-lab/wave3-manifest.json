@@ -5,7 +5,7 @@
   "purpose": "Test the simple-log winner under programmatic inspection, online shift, poisoning, production Core conformance, and sealed minimal projection without granting workers integration or production authority.",
   "coordinator": {
     "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
-    "branch": "codex/memory-lab-wave3",
+    "branch": "codex/memory-lab-wave3-coordinator",
     "base_commit": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
     "sole_integration_authority": true
   },
