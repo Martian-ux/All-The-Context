@@ -84,8 +84,7 @@ def test_e01b_frozen_base_production_result_and_unsupported_boundaries_are_exact
         "not_exercised_count": 6,
         "classification_counts": {
             "conformance": 6,
-            "fixture_mismatch": 2,
-            "unsupported_semantic": 4,
+            "unsupported_semantic": 6,
         },
         "expectation_mismatch_count": 0,
     }
@@ -107,7 +106,7 @@ def test_e01b_frozen_base_production_result_and_unsupported_boundaries_are_exact
         ),
         "generic_epistemic_role": (
             "not_exercised",
-            "fixture_mismatch",
+            "unsupported_semantic",
             "UNSUPPORTED_GENERIC_EPISTEMIC_ROLE",
         ),
         "explicit_scope_applicability": (
@@ -117,7 +116,7 @@ def test_e01b_frozen_base_production_result_and_unsupported_boundaries_are_exact
         ),
         "project_domain_hard_gate": (
             "not_exercised",
-            "fixture_mismatch",
+            "unsupported_semantic",
             "UNSUPPORTED_PROJECT_DOMAIN_HARD_GATE",
         ),
         "reversible_delete_restore": (

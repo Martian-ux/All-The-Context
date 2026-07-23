@@ -588,6 +588,9 @@ def run_fixture(*, repeats: int = 2) -> dict[str, Any]:
             "marker_scan_after_compacted_purge": True,
         },
         "limitations": [
+            "the E01b mapping and expected classifications were hand-authored against "
+            "the frozen implementation; unlike the parent E01 scenarios, this 12-case "
+            "mapping was not a blind independent conformance suite",
             "kind filtering is narrower than a generic epistemic-role model",
             "explicit scope filtering does not establish a project-and-domain hard gate",
             "production has no explicit derived dependency-lineage relation",

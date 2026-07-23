@@ -1,7 +1,7 @@
 {
   "coordinator_base": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
   "determinism": {
-    "receipt_fingerprint": "69a15e008e2ee4751e8aa73c7cdf335ea39905c1007ca4692eea7ea3485338cf",
+    "receipt_fingerprint": "9a07bfbf951761173866da5ce89064dbd19c8281d18cd17c0f5860f1f4f588ea",
     "repeat_deterministic": true,
     "repeats": 20
   },
@@ -21,8 +21,9 @@
     "temporary_isolated_store": true
   },
   "experiment": "E01b",
-  "fixture_sha256": "7662895957762753e0dcdea5f7ed28678c2dcf06c3102f4e7d7c8e46aec8029e",
+  "fixture_sha256": "a914c35feb1a54432b65a4c1f03c627e516c02c423febaecf63b37fe2e9f4f5e",
   "limitations": [
+    "the E01b mapping and expected classifications were hand-authored against the frozen implementation; unlike the parent E01 scenarios, this 12-case mapping was not a blind independent conformance suite",
     "kind filtering is narrower than a generic epistemic-role model",
     "explicit scope filtering does not establish a project-and-domain hard gate",
     "production has no explicit derived dependency-lineage relation",
@@ -108,8 +109,8 @@
     {
       "capability": "generic_epistemic_role",
       "case_index": 3,
-      "classification": "fixture_mismatch",
-      "expected_classification": "fixture_mismatch",
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
       "expected_status": "not_exercised",
       "observed": {
         "production_path_available": false
@@ -139,8 +140,8 @@
     {
       "capability": "project_domain_hard_gate",
       "case_index": 5,
-      "classification": "fixture_mismatch",
-      "expected_classification": "fixture_mismatch",
+      "classification": "unsupported_semantic",
+      "expected_classification": "unsupported_semantic",
       "expected_status": "not_exercised",
       "observed": {
         "production_path_available": false
@@ -252,8 +253,7 @@
     "case_count": 12,
     "classification_counts": {
       "conformance": 6,
-      "fixture_mismatch": 2,
-      "unsupported_semantic": 4
+      "unsupported_semantic": 6
     },
     "expectation_mismatch_count": 0,
     "fail_count": 0,

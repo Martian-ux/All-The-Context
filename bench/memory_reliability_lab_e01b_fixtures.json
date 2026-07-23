@@ -117,7 +117,7 @@
       "capability": "generic_epistemic_role",
       "stage": "applicability",
       "expected_status": "not_exercised",
-      "expected_classification": "fixture_mismatch",
+      "expected_classification": "unsupported_semantic",
       "pass_reason_code": "UNSUPPORTED_GENERIC_EPISTEMIC_ROLE",
       "failure_reason_codes": [],
       "production_path": "not available: records expose kind but no generic epistemic-role field"
@@ -145,7 +145,7 @@
       "capability": "project_domain_hard_gate",
       "stage": "applicability",
       "expected_status": "not_exercised",
-      "expected_classification": "fixture_mismatch",
+      "expected_classification": "unsupported_semantic",
       "pass_reason_code": "UNSUPPORTED_PROJECT_DOMAIN_HARD_GATE",
       "failure_reason_codes": [],
       "production_path": "not available: current_project is a ranking signal and domain is not a first-class hard predicate"
