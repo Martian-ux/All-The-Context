@@ -13,10 +13,11 @@
   "frozen_oracle": {
     "worker_id": "f02_independent_falsification",
     "commit": "a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e",
+    "integrated_commit": "8b82bc2bf57cb1888386fef14fe8b93308caa85b",
     "committed_before_m3_and_m1_dispatch": true,
     "m3_case_count": 15,
     "m1_case_count": 16,
-    "integrated": false
+    "integrated": true
   },
   "global_invariants": [
     "Core remains the sole canonical authority.",
