@@ -27,6 +27,7 @@ from allthecontext.updater import (
     PlatformInstaller,
     UpdateBusyError,
     UpdateConfig,
+    UpdateEndpointHttpError,
     UpdateError,
     UpdateManager,
     UpdatePhase,
@@ -305,6 +306,105 @@ def test_prerelease_defaults_and_migrates_to_the_available_beta_channel(
     migrated = _beta_manager(tmp_path, keyring)
     assert migrated.preferences.channel == "beta"
     assert migrated.preferences.deferred_version is None
+
+
+def test_canonical_beta_404_is_a_truthful_unpublished_channel_state(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(
+        tmp_path,
+        version="0.2.0-beta.1",
+        channel="beta",
+        minimum="0.1.0-beta.1",
+    )
+    database = tmp_path / "core.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE records (id INTEGER PRIMARY KEY)")
+    transport = FakeTransport(manifest, artifact)
+    transport.metadata_error = UpdateEndpointHttpError(404)
+    config = UpdateConfig(
+        tmp_path / "updates",
+        keyring,
+        {"beta": DEFAULT_BETA_MANIFEST_URL},
+        current_version="0.1.0-beta.1",
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    manager = UpdateManager(
+        config,
+        database_path=database,
+        transport=transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+    )
+
+    status = manager.check()
+
+    assert status["phase"] == "unpublished"
+    assert status["last_error"] is None
+    assert status["last_checked_at"] is not None
+    assert status["configured"] is True
+    assert status["available_channels"] == ["beta"]
+    assert manager.scheduled_check()["phase"] == "unpublished"
+
+
+def test_legacy_canonical_beta_404_state_migrates_without_another_network_check(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(
+        tmp_path,
+        version="0.2.0-beta.1",
+        channel="beta",
+        minimum="0.1.0-beta.1",
+    )
+    database = tmp_path / "core.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE records (id INTEGER PRIMARY KEY)")
+    config = UpdateConfig(
+        tmp_path / "updates",
+        keyring,
+        {"beta": DEFAULT_BETA_MANIFEST_URL},
+        current_version="0.1.0-beta.1",
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    config.data_dir.mkdir(parents=True)
+    (config.data_dir / "preferences.json").write_text(
+        json.dumps({"enabled": True, "channel": "beta", "deferred_version": None}),
+        encoding="utf-8",
+    )
+    (config.data_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "error",
+                "current_version": "0.1.0-beta.1",
+                "last_checked_at": "2026-07-23T07:14:47+00:00",
+                "last_error": "Update endpoint returned HTTP 404",
+            }
+        ),
+        encoding="utf-8",
+    )
+    transport = FakeTransport(manifest, artifact)
+
+    manager = UpdateManager(
+        config,
+        database_path=database,
+        transport=transport,
+        installer=FakeInstaller(),
+        health_probe=FakeHealth(True),
+    )
+
+    assert manager.public_status()["phase"] == "unpublished"
+    assert manager.public_status()["last_error"] is None
+
+
+def test_custom_channel_404_remains_a_visible_error(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path)
+    manager, transport, _ = _manager(tmp_path, manifest, artifact, keyring)
+    transport.metadata_error = UpdateEndpointHttpError(404)
+
+    status = manager.check()
+
+    assert status["phase"] == "error"
+    assert status["last_error"] == "Update endpoint returned HTTP 404"
 
 
 def test_valid_n_minus_one_update_download_backup_and_handoff(tmp_path: Path) -> None:
@@ -930,6 +1030,25 @@ def test_metadata_fetch_still_refuses_the_release_asset_redirect() -> None:
     transport._opener = cast(Any, RedirectingOpener())
     with pytest.raises(UpdateError, match="redirect"):
         transport.get_bytes(source, maximum_bytes=MAX_MANIFEST_BYTES)
+
+
+def test_metadata_transport_preserves_the_http_status_code() -> None:
+    source = "https://updates.example.test/beta/manifest-v1.json"
+
+    class NotFoundOpener:
+        @staticmethod
+        def open(_request: Any, *, timeout: float) -> Any:
+            assert timeout == updater_module.CONNECT_TIMEOUT_SECONDS
+            raise urllib.error.HTTPError(source, 404, "Not Found", {}, None)
+
+    transport = HttpsTransport()
+    transport._opener = cast(Any, NotFoundOpener())
+
+    with pytest.raises(UpdateEndpointHttpError) as error:
+        transport.get_bytes(source, maximum_bytes=MAX_MANIFEST_BYTES)
+
+    assert error.value.status_code == 404
+    assert str(error.value) == "Update endpoint returned HTTP 404"
 
 
 def test_defer_is_persisted_and_mandatory_update_cannot_be_deferred(tmp_path: Path) -> None:

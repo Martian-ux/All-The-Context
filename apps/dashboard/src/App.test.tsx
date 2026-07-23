@@ -363,6 +363,41 @@ describe("dashboard", () => {
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
   });
 
+  it("shows an unpublished trusted channel without a raw HTTP error", async () => {
+    const update = {
+      phase: "unpublished",
+      current_version: "0.1.0-beta.1",
+      offered_version: null,
+      mandatory: false,
+      last_checked_at: "2026-07-23T07:14:47Z",
+      last_error: null,
+      recovery_attempts: 0,
+      enabled: true,
+      channel: "beta",
+      deferred_version: null,
+      automatic_install_supported: true,
+      verified_artifact_available: false,
+      installer_detail: "Packaged update can restart into the verified installer",
+      configured: true,
+      available_channels: ["beta"],
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/updates")) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(await screen.findByText("waiting for first release")).toBeInTheDocument();
+    expect(screen.getByText(/No signed beta release has been published yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 404/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("saves a reverified package when automatic installation is unavailable", async () => {
     const update = {
       phase: "idle",

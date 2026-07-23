@@ -741,3 +741,24 @@ as a duplicate and restores it under the same rule. Irreversible source purge
 continues to remove the source, raw BLOB when unshared, observations, derived
 records, and ordinary audit material through the existing confirmed purge state
 machine.
+
+## ADR-041: An empty canonical update channel is explicit state, not a transport error
+
+**Status:** accepted 2026-07-23; refines ADR-034 without weakening manifest
+verification or release gates.
+
+Before the first protected beta promotion, the exact built-in GitHub Pages
+manifest URL legitimately returns HTTP 404 because no signed channel pointer
+exists yet. A packaged beta client maps only that exact URL and status to the
+`unpublished` phase, clears stale offer data, records the completed check, and
+shows that it is waiting for the first signed release. The persisted legacy
+`Update endpoint returned HTTP 404` state is normalized on startup so an
+already-installed client does not retain a false failure.
+
+This exception is deliberately narrow. A 404 from an environment override,
+fork, custom endpoint, artifact URL, or any noncanonical channel remains an
+operator-visible error. Other HTTP, transport, signature, schema, channel,
+platform, architecture, version, size, and checksum failures continue to fail
+closed. `unpublished` never implies that a release exists and does not replace
+the offline signature, immutable GitHub Release, protected publication, or
+Pages promotion required for real OTA delivery.

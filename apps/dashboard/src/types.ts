@@ -145,7 +145,7 @@ export interface CoreStatus {
   database_size_bytes: number;
 }
 
-export type UpdatePhase = "idle" | "disabled" | "checking" | "current" | "available" | "deferred" | "downloading" | "ready" | "installing" | "restart_required" | "installed" | "rolled_back" | "manual_required" | "error" | "cancelled";
+export type UpdatePhase = "idle" | "disabled" | "checking" | "current" | "unpublished" | "available" | "deferred" | "downloading" | "ready" | "installing" | "restart_required" | "installed" | "rolled_back" | "manual_required" | "error" | "cancelled";
 
 export interface UpdateStatus {
   phase: UpdatePhase;

@@ -863,7 +863,9 @@ function UpdatesView() {
   }
 
   const busy = working !== null || status?.phase === "checking" || status?.phase === "downloading" || status?.phase === "installing";
-  const phaseLabel = status?.phase.replaceAll("_", " ") ?? "loading";
+  const phaseLabel = status?.phase === "unpublished"
+    ? "waiting for first release"
+    : status?.phase.replaceAll("_", " ") ?? "loading";
   const availableChannels = status?.available_channels ?? (status?.configured ? [status.channel] : []);
   const selectedChannelAvailable = availableChannels.includes(channel);
   return (
@@ -878,6 +880,7 @@ function UpdatesView() {
         {error ? <Notice kind="error">{error}</Notice> : null}
         {notice ? <Notice kind="success">{notice}</Notice> : null}
         {status?.deferred_version ? <Notice kind="info">Version {status.deferred_version} is deferred. A manual check can offer it again.</Notice> : null}
+        {status?.phase === "unpublished" ? <Notice kind="info">No signed {status.channel} release has been published yet. Automatic checks remain enabled and will detect the first release after protected channel promotion.</Notice> : null}
       </section>
       <section className="section-block update-controls">
         <div className="section-heading"><div><h2>Preferences</h2><p>Only channels backed by bundled trust metadata are selectable.</p></div></div>

@@ -61,6 +61,10 @@ evidence remains historical and must not be presented as proof of ADR-039.
   process lacks its normal marker. Update status exposes the trust-backed
   available channels so the dashboard cannot invite selection of an
   unconfigured channel.
+- Before the first protected promotion, an HTTP 404 from only the exact
+  built-in beta manifest URL is represented as `unpublished` rather than a
+  transport failure. The dashboard says it is waiting for the first signed
+  release; custom endpoints and all other update failures still fail closed.
 - Manual candidate and publish workflows keep repository-admin credentials out
   of Actions. An owner verifies the immutable-release setting locally, enters
   an exact nonsecret dispatch phrase, and Actions independently enforces the
@@ -118,7 +122,7 @@ progress:
   Activity passively shows automatic decisions and provenance, and current records expose
   correction plus delete/undo/historical-version restoration controls. Sources
   now exposes a confirmed Remove action and immediate Undo for the source and
-  derived current memories. Its local suite passes 26 tests, type checking, the production build, and a
+  derived current memories. Its local suite passes 27 tests, type checking, the production build, and a
   high-severity dependency audit with zero reported vulnerabilities.
 - Physical `context_candidates`/`approval_status` names and legacy administrative
   endpoints remain temporarily for schema, backup, and integration
@@ -207,13 +211,13 @@ state is already noncurrent and creates no user queue.
 ## Current evidence
 
 - Current ADR-039 worktree on Windows Python 3.14.3: Ruff passes; strict mypy
-  passes across 59 source files; the full suite passes 509 tests with four
+  passes across 59 source files; the full suite passes 513 tests with four
   host-limited symlink skips; documentation links and `git diff --check` pass.
   This includes automatic policy, ACL/session isolation, migration restart,
   pre-v5 restore, source-free foreign-key/FTS recovery, purge resurrection
   barriers, context-error idempotency, delete/restore history, Relay queue
   identity, ordered projection restoration, and the approval-free E2E demo.
-- Current dashboard on Node 25.6.1: 26 tests, TypeScript checking, and the
+- Current dashboard on Node 25.6.1: 27 tests, TypeScript checking, and the
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build
   byte-for-byte.
@@ -238,9 +242,9 @@ state is already noncurrent and creates no user queue.
   no Edge setup copy or `/admin/edge` request path.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
   deploy only from Actions. The canonical beta metadata URL currently returns
-  HTTP 404 because no channel artifact or beta release has been deployed; the
-  client-side channel fix does not replace the required offline-signed release
-  and protected promotion.
+  HTTP 404 because no channel artifact or beta release has been deployed. The
+  exact built-in client now reports that state as `unpublished`, but this does
+  not replace the required offline-signed release and protected promotion.
 - The Python 3.12 Windows frozen application passed resource discovery and the
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
