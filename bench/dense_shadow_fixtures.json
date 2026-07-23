@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "id": "vehicle-fuel",
+      "content": "The automobile requires gasoline before the synthetic road trial.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "canine-rest",
+      "content": "The young canine sleeps beside the blue practice mat.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "physician-advice",
+      "content": "The physician recommended hydration after the training session.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "purchase-record",
+      "content": "The customer purchased a notebook at the simulated market.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "weather-record",
+      "content": "A short rain shower crossed the fictional eastern field.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "music-record",
+      "content": "The rehearsal ensemble tuned its instruments before noon.",
+      "authorized": true,
+      "eligible": true
+    },
+    {
+      "id": "denied-semantic-control",
+      "content": "The car needs fuel, the puppy is resting, and the doctor recommends water.",
+      "authorized": false,
+      "eligible": true
+    },
+    {
+      "id": "expired-semantic-control",
+      "content": "The buyer got a notebook from the market.",
+      "authorized": true,
+      "eligible": false
+    }
+  ],
+  "queries": [
+    {
+      "id": "vehicle-synonym",
+      "query": "Which car needs fuel for the road test?",
+      "facets": [["vehicle-fuel"]]
+    },
+    {
+      "id": "canine-synonym",
+      "query": "Where is the puppy resting?",
+      "facets": [["canine-rest"]]
+    },
+    {
+      "id": "physician-synonym",
+      "query": "What did the doctor recommend after practice?",
+      "facets": [["physician-advice"]]
+    },
+    {
+      "id": "purchase-synonym",
+      "query": "What did the buyer get from the store?",
+      "facets": [["purchase-record"]]
+    }
+  ]
+}
