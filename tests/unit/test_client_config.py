@@ -279,9 +279,7 @@ def test_claude_detection_and_config_support_the_microsoft_store_package(
         KEY_WOW64_64KEY = 2
         KEY_WOW64_32KEY = 4
 
-        def OpenKey(
-            self, root: object, path: str, _reserved: int, _access: int
-        ) -> FakeKey:
+        def OpenKey(self, root: object, path: str, _reserved: int, _access: int) -> FakeKey:
             if root == self.HKEY_CURRENT_USER and path.endswith(r"Repository\Packages"):
                 return FakeKey("packages")
             if isinstance(root, FakeKey) and root.name == "packages" and path == package_id:
@@ -307,9 +305,7 @@ def test_claude_detection_and_config_support_the_microsoft_store_package(
                 raise OSError from error
 
     monkeypatch.setattr("allthecontext.client_config.platform.system", lambda: "Windows")
-    monkeypatch.setattr(
-        "allthecontext.client_config.windows_registry", lambda: FakeRegistry()
-    )
+    monkeypatch.setattr("allthecontext.client_config.windows_registry", lambda: FakeRegistry())
     monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     monkeypatch.setenv("ProgramFiles", str(tmp_path / "ProgramFiles"))

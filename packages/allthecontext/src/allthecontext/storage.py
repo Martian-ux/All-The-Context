@@ -520,9 +520,7 @@ class CoreStore:
                 else []
             ),
             candidate_count=(int(row["candidate_count"]) if "candidate_count" in keys else 0),
-            deleted_at=(
-                cast(str | None, row["deleted_at"]) if "deleted_at" in keys else None
-            ),
+            deleted_at=(cast(str | None, row["deleted_at"]) if "deleted_at" in keys else None),
             deleted_reason=(
                 cast(str | None, row["deleted_reason"]) if "deleted_reason" in keys else None
             ),
@@ -556,9 +554,7 @@ class CoreStore:
         include_deleted: bool = False,
     ) -> SourceOut:
         with self.connect() as connection:
-            row = self._source_row_tx(
-                connection, source_id, include_deleted=include_deleted
-            )
+            row = self._source_row_tx(connection, source_id, include_deleted=include_deleted)
         if row is None:
             raise NotFoundError("source not found")
         return self._source_out(row, duplicate=duplicate)
@@ -679,8 +675,7 @@ class CoreStore:
 
             now = utc_now()
             connection.execute(
-                "UPDATE source_records SET deleted_at=?,deleted_reason=?,deleted_by=? "
-                "WHERE id=?",
+                "UPDATE source_records SET deleted_at=?,deleted_reason=?,deleted_by=? WHERE id=?",
                 (now, reason, actor, source_id),
             )
             record_ids = [
@@ -798,9 +793,7 @@ class CoreStore:
                 metadata={"restored_record_count": len(restored_record_ids)},
             )
 
-        restored_source = self._source_row_tx(
-            connection, source_id, include_deleted=False
-        )
+        restored_source = self._source_row_tx(connection, source_id, include_deleted=False)
         assert restored_source is not None
         return {
             "source": self._source_out(restored_source).model_dump(mode="json"),
