@@ -1,0 +1,239 @@
+{
+  "schema": "atc.memory-reliability-lab.e01b-fixture.v1",
+  "fixture_id": "ATC_E01B_PRODUCTION_CONFORMANCE_V1",
+  "coordinator_base": "950f649d9e3cc106fb8ff4febbe38919f8e00d11",
+  "reference_e01_fixture": {
+    "path": "bench/memory_reliability_lab_e01_fixtures.json",
+    "sha256": "19f52ad16b398248866b5bfac930380ee71071a3414a4678a316bd161f762086",
+    "scenario_count": 6
+  },
+  "content_policy": {
+    "synthetic": true,
+    "symbolic_values_only": true,
+    "real_personal_context": false,
+    "external_code": false,
+    "network_access": false,
+    "operator_core_access": false
+  },
+  "status_values": [
+    "pass",
+    "fail",
+    "not_exercised"
+  ],
+  "classification_values": [
+    "conformance",
+    "defect",
+    "unsupported_semantic",
+    "fixture_mismatch",
+    "evaluation_error"
+  ],
+  "stage_values": [
+    "capture",
+    "canonicalize",
+    "retrieve",
+    "applicability",
+    "correct_forget",
+    "invalidate_rebuild"
+  ],
+  "reason_codes": [
+    "SOURCE_ADMISSION_CONFORMS",
+    "CURRENTNESS_CORRECTION_CONFORMS",
+    "KIND_FILTER_CONFORMS",
+    "SCOPE_FILTER_CONFORMS",
+    "REVERSIBLE_DELETE_RESTORE_CONFORMS",
+    "PURGE_TERMINAL_RESIDUE_FREE",
+    "CAPTURE_MISS",
+    "WITNESS_COLLAPSE",
+    "CANONICAL_WRONG_CURRENT",
+    "CORRECTION_NONCONVERGENCE",
+    "EPISTEMIC_ROLE_MISUSE",
+    "CROSS_PROJECT_DOMAIN_LEAKAGE",
+    "RETRIEVAL_MISS",
+    "RETRIEVAL_STALE",
+    "FORGETTING_SEMANTIC_COLLAPSE",
+    "PURGE_RESIDUE",
+    "UNSUPPORTED_GENERIC_EPISTEMIC_ROLE",
+    "UNSUPPORTED_PROJECT_DOMAIN_HARD_GATE",
+    "UNSUPPORTED_DERIVED_DEPENDENCY_LINEAGE",
+    "UNSUPPORTED_EVICTION_DECAY_RETIREMENT",
+    "UNSUPPORTED_CALLER_STABLE_ID_RECREATION",
+    "UNSUPPORTED_PROCEDURE_PRECONDITIONS",
+    "EVALUATOR_ERROR"
+  ],
+  "cases": [
+    {
+      "case_id": "authority_source_admission",
+      "reference_scenarios": [
+        "STATE_AUTHORITY_CURRENTNESS"
+      ],
+      "capability": "authority_source_admission",
+      "stage": "canonicalize",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "SOURCE_ADMISSION_CONFORMS",
+      "failure_reason_codes": [
+        "CAPTURE_MISS",
+        "WITNESS_COLLAPSE"
+      ],
+      "production_path": "CoreStore.add_candidate/begin_ingestion/submit_batch/finish_ingestion and RetrievalEngine.search"
+    },
+    {
+      "case_id": "correction_currentness",
+      "reference_scenarios": [
+        "STATE_AUTHORITY_CURRENTNESS",
+        "CORRECTION_INVALIDATES_DERIVED"
+      ],
+      "capability": "correction_currentness",
+      "stage": "correct_forget",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "CURRENTNESS_CORRECTION_CONFORMS",
+      "failure_reason_codes": [
+        "CANONICAL_WRONG_CURRENT",
+        "CORRECTION_NONCONVERGENCE"
+      ],
+      "production_path": "CoreStore.add_candidate and RetrievalEngine.search"
+    },
+    {
+      "case_id": "kind_constrained_retrieval",
+      "reference_scenarios": [
+        "EPISTEMIC_ROLE_APPLICABILITY"
+      ],
+      "capability": "kind_constrained_retrieval",
+      "stage": "applicability",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "KIND_FILTER_CONFORMS",
+      "failure_reason_codes": [
+        "EPISTEMIC_ROLE_MISUSE"
+      ],
+      "production_path": "RetrievalEngine.search with SearchRequest.kinds"
+    },
+    {
+      "case_id": "generic_epistemic_role",
+      "reference_scenarios": [
+        "EPISTEMIC_ROLE_APPLICABILITY"
+      ],
+      "capability": "generic_epistemic_role",
+      "stage": "applicability",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_GENERIC_EPISTEMIC_ROLE",
+      "failure_reason_codes": [],
+      "production_path": "not available: records expose kind but no generic epistemic-role field"
+    },
+    {
+      "case_id": "explicit_scope_applicability",
+      "reference_scenarios": [
+        "PROJECT_DOMAIN_ISOLATION"
+      ],
+      "capability": "explicit_scope_applicability",
+      "stage": "applicability",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "SCOPE_FILTER_CONFORMS",
+      "failure_reason_codes": [
+        "CROSS_PROJECT_DOMAIN_LEAKAGE"
+      ],
+      "production_path": "RetrievalEngine.search with SearchRequest.scopes"
+    },
+    {
+      "case_id": "project_domain_hard_gate",
+      "reference_scenarios": [
+        "PROJECT_DOMAIN_ISOLATION"
+      ],
+      "capability": "project_domain_hard_gate",
+      "stage": "applicability",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_PROJECT_DOMAIN_HARD_GATE",
+      "failure_reason_codes": [],
+      "production_path": "not available: current_project is a ranking signal and domain is not a first-class hard predicate"
+    },
+    {
+      "case_id": "reversible_delete_restore",
+      "reference_scenarios": [
+        "FORGETTING_AND_PURGE"
+      ],
+      "capability": "reversible_delete_restore",
+      "stage": "correct_forget",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "REVERSIBLE_DELETE_RESTORE_CONFORMS",
+      "failure_reason_codes": [
+        "RETRIEVAL_MISS",
+        "RETRIEVAL_STALE",
+        "FORGETTING_SEMANTIC_COLLAPSE"
+      ],
+      "production_path": "CoreStore.delete_record/restore_record and RetrievalEngine.search"
+    },
+    {
+      "case_id": "purge_terminality_residue",
+      "reference_scenarios": [
+        "FORGETTING_AND_PURGE"
+      ],
+      "capability": "purge_terminality_residue",
+      "stage": "invalidate_rebuild",
+      "expected_status": "pass",
+      "expected_classification": "conformance",
+      "pass_reason_code": "PURGE_TERMINAL_RESIDUE_FREE",
+      "failure_reason_codes": [
+        "PURGE_RESIDUE"
+      ],
+      "production_path": "CoreStore.purge/restore_record/search plus isolated store residue inspection"
+    },
+    {
+      "case_id": "derived_dependency_invalidation",
+      "reference_scenarios": [
+        "CORRECTION_INVALIDATES_DERIVED",
+        "FORGETTING_AND_PURGE"
+      ],
+      "capability": "derived_dependency_invalidation",
+      "stage": "invalidate_rebuild",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_DERIVED_DEPENDENCY_LINEAGE",
+      "failure_reason_codes": [],
+      "production_path": "not available: CandidateInput has no dependency-lineage relation"
+    },
+    {
+      "case_id": "eviction_decay_retirement",
+      "reference_scenarios": [
+        "FORGETTING_AND_PURGE"
+      ],
+      "capability": "eviction_decay_retirement",
+      "stage": "correct_forget",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_EVICTION_DECAY_RETIREMENT",
+      "failure_reason_codes": [],
+      "production_path": "not available: automatic-v1 does not implement eviction, confidence decay, or procedure retirement"
+    },
+    {
+      "case_id": "same_id_recreation_after_purge",
+      "reference_scenarios": [
+        "FORGETTING_AND_PURGE"
+      ],
+      "capability": "same_id_recreation_after_purge",
+      "stage": "invalidate_rebuild",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_CALLER_STABLE_ID_RECREATION",
+      "failure_reason_codes": [],
+      "production_path": "not available: public observation paths do not accept a caller-selected record ID"
+    },
+    {
+      "case_id": "procedure_precondition_transfer",
+      "reference_scenarios": [
+        "HARMFUL_MEMORY_ABSTENTION"
+      ],
+      "capability": "procedure_precondition_transfer",
+      "stage": "applicability",
+      "expected_status": "not_exercised",
+      "expected_classification": "unsupported_semantic",
+      "pass_reason_code": "UNSUPPORTED_PROCEDURE_PRECONDITIONS",
+      "failure_reason_codes": [],
+      "production_path": "not available: production records have no applies_to/precondition field"
+    }
+  ]
+}

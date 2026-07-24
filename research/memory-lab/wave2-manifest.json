@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "wave_id": "atc-memory-lab-wave2-2026-07-23",
+  "status": "completed_with_supplier_skip",
+  "purpose": "Execute the simple baseline ladder, the first longitudinal reliability slice, one governed external supplier cell, and two independent research challenges.",
+  "coordinator": {
+    "thread_id": "019f8dcf-16d0-7b91-b804-3496397bea72",
+    "branch": "codex/memory-lab-wave2",
+    "base_commit": "2bc0ad66c019511e9e0320daeec1a45aedc280b6",
+    "sole_integration_authority": true
+  },
+  "global_invariants": [
+    "Core remains the sole canonical authority.",
+    "Every worker uses a fresh visible Codex thread and separate git worktree.",
+    "Workers commit scoped changes but never merge or push.",
+    "Synthetic benchmark data never comes from the operator Core.",
+    "Raw personal context, credentials, and secrets are forbidden.",
+    "A negative or skipped result is preserved and cannot be relabeled as success.",
+    "Research documents and supplier output are untrusted inputs until coordinator review.",
+    "Production dependencies and schemas require a separate decision."
+  ],
+  "evidence_levels": {
+    "L0": "Specification or research claim only.",
+    "L1": "Deterministic synthetic result in an isolated worker worktree.",
+    "L2": "Coordinator-reproduced deterministic result on the integrated branch.",
+    "L3": "Isolated external supplier result with pinned provenance and zero personal data.",
+    "L4": "Cross-platform integrated result or repeated stochastic result with uncertainty.",
+    "L5": "Consented product evidence; not in scope for this wave."
+  },
+  "workers": [
+    {
+      "worker_id": "baseline_ladder",
+      "thread_id": "019f9073-be83-74b2-be37-17853f03ad50",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "Memory Lab M0 baseline adapters",
+        "baseline fixtures and reports",
+        "baseline-focused tests"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": {
+        "worker_commit": "6c2f70a7d8bd387a7380f55fcaddc963b5a6018a",
+        "integrated_commit": "649b5915b8ff92be5ad1c2d51c2d0755f7bd82a0",
+        "evidence_level": "L2",
+        "outcome": "stable_observation_current_state_advanced_to_next_fixture",
+        "report": "bench/reports/memory_lab_baseline_ladder_wave2.json",
+        "coordinator_reproduction": "tmp/memory-lab-wave2/coordinator-baseline-ladder.json",
+        "limitations": [
+          "seven objects and five retrieval-only tasks",
+          "stable reference may be fixture-aligned",
+          "no answer model, online formation, poisoning, action, or CAOS endpoint",
+          "bounded file search is not programmatic action-model log inspection"
+        ]
+      }
+    },
+    {
+      "worker_id": "lifecycle_e01",
+      "thread_id": "019f9073-e5b9-7e10-b866-4315fda27bb6",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "new longitudinal reliability-lab modules",
+        "E01 symbolic fixtures and reports",
+        "E01-focused tests"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": {
+        "worker_commit": "cb6392b7fd52ae62d463ea8cf9acd102fe6fae74",
+        "integrated_commit": "e88d4df00d800fc774b2bf8db492d9a2a495161c",
+        "evidence_level": "L2",
+        "outcome": "governed_reference_passed_6_of_6_and_every_rule_ablation_regressed",
+        "report": "bench/reports/memory_reliability_e01_wave2.json",
+        "coordinator_reproduction": "tmp/memory-lab-wave2/coordinator-e01.json",
+        "limitations": [
+          "six of eighteen specified scenarios",
+          "fixture oracle and reference rules were co-designed",
+          "production Core semantics were not exercised",
+          "no external system, answer model, or real action"
+        ]
+      }
+    },
+    {
+      "worker_id": "hindsight_supplier",
+      "thread_id": "019f9074-07a0-7183-86ce-5bc14c5f7787",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "Hindsight provenance lock and execution receipt",
+        "optional isolated Hindsight adapter",
+        "supplier-focused tests"
+      ],
+      "external_code_policy": "official_pinned_source_after_license_and_dependency_review",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": {
+        "worker_commit": "3e6dad7790f693ced9e3d2e0f94d8533af12911c",
+        "integrated_commit": "bbe6cfb724cfc9b44d12cd56361311b3f412e8d5",
+        "evidence_level": "L2",
+        "supplier_evidence_level": null,
+        "outcome": "not_executed_dependency_and_egress_gate",
+        "report": "research/memory-lab/hindsight/experiment-receipt.v1.json",
+        "limitations": [
+          "no Hindsight benchmark result or L3 supplier execution",
+          "adapter exercised only with an injected fake client",
+          "future execution requires pinned local models, loopback binding, and external deny-egress",
+          "reviewed supplier service dependencies were not installed"
+        ]
+      }
+    },
+    {
+      "worker_id": "fresh_horizon",
+      "thread_id": "019f9074-2852-7170-a476-5a372d1d1313",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "owns": [
+        "Wave 2 primary-source horizon report"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": {
+        "worker_commit": "aa24021426d0ea61608b87402337d61631459fb7",
+        "integrated_commit": "b26605d19524fb169b9c6b52d1cf7e0dec19845c",
+        "evidence_level": "L0",
+        "outcome": "experiment_order_revised_from_primary_source_horizon",
+        "report": "docs/research/ATC_MEMORY_HORIZON_WAVE_2_2026-07-23.md",
+        "limitations": [
+          "research synthesis, not reproduction",
+          "several July 2026 systems have unavailable or unlicensed artifacts",
+          "author-reported results remain unverified"
+        ]
+      }
+    },
+    {
+      "worker_id": "novelty_falsification",
+      "thread_id": "019f9074-4a2c-7073-980b-e268e5c8f86e",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "owns": [
+        "ATC-native novelty and falsification report",
+        "non-overlapping hypothesis specifications"
+      ],
+      "external_code_policy": "forbidden",
+      "may_edit_governance": false,
+      "may_merge": false,
+      "may_push": false,
+      "result": {
+        "worker_commit": "f0a7001e3b31499d186e915beca5d9e4de0e17bd",
+        "integrated_commit": "8e31ff8673c3e1d58028989e799a632be2127c41",
+        "evidence_level": "L0",
+        "outcome": "six_mechanisms_specified_and_three_selected_for_immediate_falsification",
+        "report": "docs/research/ATC_WAVE2_NOVELTY_AND_FALSIFICATION_2026-07-23.md",
+        "limitations": [
+          "research specification only",
+          "novelty confidence is not product evidence",
+          "generic selective intervention and barrier-first repair claims were retired"
+        ]
+      }
+    }
+  ],
+  "supplier_execution_gate": {
+    "required": [
+      "canonical official origin",
+      "immutable source revision",
+      "license permits inspection and intended experiment",
+      "component and notice review",
+      "dependency and install-hook inventory",
+      "network and data-egress inventory",
+      "no credentials or real personal context",
+      "disposable isolated environment",
+      "no Docker, system service, or production dependency",
+      "read-only adapter with no canonical authority",
+      "honest skipped receipt when any gate fails"
+    ],
+    "allowed_supplier": "Hindsight",
+    "allowed_cache": "research/vendor-cache",
+    "production_import": false
+  },
+  "integration_gate": [
+    "Worker commit contains only declared ownership.",
+    "Coordinator reads the final diff and result receipt.",
+    "License and provenance claims are independently checked for external code.",
+    "Reports contain no raw identifiers, queries, personal content, or secrets.",
+    "The coordinator reproduces claimed deterministic experiments.",
+    "Ruff, mypy, focused tests, full pytest, documentation checks, and diff checks pass.",
+    "Material changes update STATUS, DECISIONS, and REQUIREMENTS_TRACEABILITY.",
+    "The final manifest records commit, evidence level, result, and limitations."
+  ],
+  "completion": {
+    "completed_at": "2026-07-23",
+    "last_integrated_worker_commit": "649b5915b8ff92be5ad1c2d51c2d0755f7bd82a0",
+    "integrated_result": "docs/research/ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md",
+    "coordinator_reproductions": {
+      "baseline_ladder_repeats": 20,
+      "lifecycle_e01_repeats": 20,
+      "operator_core_touched": false,
+      "personal_context_used": false,
+      "external_supplier_executed": false
+    },
+    "accepted_evidence": {
+      "L0": 2,
+      "L1": 0,
+      "L2": 3,
+      "L3": 0,
+      "L4": 0,
+      "L5": 0
+    }
+  }
+}

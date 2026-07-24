@@ -1,5 +1,94 @@
 # Retrieval benchmark
 
+## Memory Lab M0 and Wave 2 baseline ladder
+
+The executable Memory Lab now compares no memory, fixed-budget authorized
+history, a frozen static profile, raw append-log exact/lexical search, a stable
+observation log with deterministic current-state resolution, a bounded local
+file-search control, and current ATC Retrieval V3. Every condition uses the
+same sanitized fixture, task limits, character budget, frozen clock, and
+provider-neutral `atc.memory-lab.retrieval-adapter.v1` ID-only result contract.
+The optional task budget is backward-compatible with M0 adapters; identifier-safe
+diagnostics and retention assessments use `atc.memory-lab.report.v2`.
+The original M0 fixture remains byte-for-byte frozen under its historical
+SHA-256. Wave 2 budgets and static-profile/file-scan controls live in the
+separately versioned and separately hashed
+`memory_lab_baseline_ladder_config.json`.
+
+```text
+python -m bench.memory_lab --repeats 20 --output tmp/memory-lab.json --markdown tmp/memory-lab.md
+```
+
+The shared ABI accepts an immutable, already-authorized
+`atc.memory-object.v1` snapshot. Adapters declare provider, network, and data
+egress behavior; cannot declare canonical-write authority; and return ranked
+object IDs plus model/token/cost accounting without returning memory content.
+The runner measures task success, evidence-group sufficiency, precision,
+reciprocal rank, abstention, forbidden, over-budget, and out-of-contract
+outputs, disclosure, repeat determinism, p50/p95/p99 latency, storage, and
+reported model/token/monetary usage. Failure cases use task ordinals and closed
+reason codes. The frozen evidence rule rejects hard-boundary failures, then
+requires an incremental success, recall, or minimum-disclosure gain over the
+strongest lower rung before `advance_to_next_fixture`. The labels are bounded
+to this retrieval fixture and are not implementation acceptance, CAOS, or
+production-promotion decisions.
+
+Reusable reports do not emit object IDs, task names, queries, or content. They
+contain aggregate counts plus deterministic ranking fingerprints derived from
+fixture ordinals, so unknown-ID contract violations remain measurable without
+placing identifiers in report files.
+
+The ATC adapter builds only an isolated synthetic database in the supplied
+working directory. The file-search condition builds only an isolated temporary
+file corpus under that directory and exercises bounded deterministic scanning;
+it is an infrastructure/control baseline, not programmatic action-model or
+coding-agent search. Neither condition connects to or modifies an operator's
+Core. No external provider, model, service, or competitor package is installed
+or executed; future competitors implement the same small adapter protocol.
+
+## Memory reliability evaluation specification
+
+The memory reliability program is specified in
+`docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md`, with machine-readable
+experiment and promotion contracts in `memory_reliability_spec.json` and
+sanitized symbolic event fixtures in `memory_reliability_fixtures.json`.
+
+The specification freezes the broader scientific matrix, experiment order,
+stage-level failure taxonomy, contamination controls, statistical plan,
+latency/cost budgets, and deterministic oracles. The retrieval-only M0 ABI
+above remains the first general comparison surface. Its structural tests run
+with:
+
+```text
+python -m pytest tests/unit/test_memory_reliability_spec.py
+```
+
+Passing those tests proves specification consistency only. It is not evidence
+that ATC or any external memory system passes an experiment.
+
+### Bounded E01 longitudinal reference slice
+
+`memory_reliability_lab_e01.py` adds a separate research-only
+`atc.memory-reliability-lab.longitudinal-adapter.v1` reset/present/checkpoint
+ABI and executes six of the specification's eighteen scenarios:
+
+```text
+python -m bench.memory_reliability_lab_e01 --repeats 20 --output tmp/e01.json
+```
+
+The conditions are no memory, append-only log search, an in-memory governed
+reference, and four one-rule removals covering authority,
+currentness/invalidation, applicability, and purge closure. Adapters see
+ordered opaque events and task descriptors but never harness oracles. Reusable
+reports omit scenario, checkpoint, object, value, topic, project, domain, and
+query symbols.
+
+The governed condition is not production ATC. It opens no Core database,
+defines no production schema, and exercises no external system or real action.
+The fixture and reference rules were co-designed, so its 6/6 result is a
+bounded conformance hypothesis. The checked-in 20-repeat aggregate is
+`reports/memory_reliability_e01_wave2.json`.
+
 ## Wave 2 source-evidence retrieval research
 
 The Wave 2 harness is isolated research for long sanitized imported chats and

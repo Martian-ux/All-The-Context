@@ -1,0 +1,1206 @@
+{
+  "adapter_abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+  "bounded_hypotheses": {
+    "append_log_equivalent_to_governed_reference": "falsified_in_bounded_slice",
+    "append_log_matches_governed_harmful_abstention": "falsified_in_bounded_slice",
+    "no_memory_equivalent_to_governed_reference": "falsified_in_bounded_slice"
+  },
+  "conditions": {
+    "ablation_without_applicability": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 0,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 1,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "560d527ba6e0cba9871ccd3277a13c12dbe30574092f325809cca974226921b9",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "EPISTEMIC_ROLE_MISUSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "EPISTEMIC_ROLE_MISUSE",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 3,
+          "selected_count": 2,
+          "selection_fingerprint": "bd96681a7eba62aaabf1f9489fac715d243f893af500e515ae846cb40581e497",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "CROSS_PROJECT_DOMAIN_LEAKAGE",
+            "RETRIEVAL_MISS"
+          ],
+          "forbidden_influence_count": 2,
+          "primary_failure_code": "CROSS_PROJECT_DOMAIN_LEAKAGE",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 4,
+          "selected_count": 2,
+          "selection_fingerprint": "8d64efb41e24a8d0dcf97caf4f95bb5401253d2b14c65be6144048c74f566db6",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": true,
+          "failure_codes": [
+            "HARMFUL_MEMORY_NON_ABSTENTION",
+            "PROCEDURE_FALSE_TRANSFER"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "HARMFUL_MEMORY_NON_ABSTENTION",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 5,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "ablation_without_applicability",
+        "lifecycle_model": "generic_authority_currentness_applicability_and_purge_rules",
+        "name": "ATC-governed symbolic reference model",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 3,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 1.0,
+        "cross_project_domain_leakage_count": 1,
+        "exact_current_authorized_state_success_count": 3,
+        "exact_current_authorized_state_success_rate": 0.5,
+        "failure_code_counts": {
+          "CROSS_PROJECT_DOMAIN_LEAKAGE": 1,
+          "EPISTEMIC_ROLE_MISUSE": 1,
+          "HARMFUL_MEMORY_NON_ABSTENTION": 1,
+          "PROCEDURE_FALSE_TRANSFER": 1,
+          "RETRIEVAL_MISS": 1
+        },
+        "first_failure_stage_counts": {
+          "applicability": 3
+        },
+        "forbidden_influence_count": 4,
+        "forgetting_semantics_rate": 1.0,
+        "harmful_abstention_accuracy": 0.0,
+        "harmful_memory_non_abstention_count": 1,
+        "purge_residue_count": 0,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "ablation_without_authority": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "WITNESS_COLLAPSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "WITNESS_COLLAPSE",
+          "primary_failure_stage": "canonicalize",
+          "scenario_index": 0,
+          "selected_count": 2,
+          "selection_fingerprint": "8d64efb41e24a8d0dcf97caf4f95bb5401253d2b14c65be6144048c74f566db6",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 1,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "560d527ba6e0cba9871ccd3277a13c12dbe30574092f325809cca974226921b9",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 3,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 4,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": true,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 5,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "ablation_without_authority",
+        "lifecycle_model": "generic_authority_currentness_applicability_and_purge_rules",
+        "name": "ATC-governed symbolic reference model",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 0,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 0.5,
+        "cross_project_domain_leakage_count": 0,
+        "exact_current_authorized_state_success_count": 5,
+        "exact_current_authorized_state_success_rate": 0.833333,
+        "failure_code_counts": {
+          "WITNESS_COLLAPSE": 1
+        },
+        "first_failure_stage_counts": {
+          "canonicalize": 1
+        },
+        "forbidden_influence_count": 1,
+        "forgetting_semantics_rate": 1.0,
+        "harmful_abstention_accuracy": 1.0,
+        "harmful_memory_non_abstention_count": 0,
+        "purge_residue_count": 0,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "ablation_without_currentness_invalidation": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_STALE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "RETRIEVAL_STALE",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 0,
+          "selected_count": 2,
+          "selection_fingerprint": "bf658fb4ac25e1af84800017a9cd10fd125301dad6366c8c9a3f023e4781f847",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_STALE",
+            "FORGETTING_SEMANTIC_COLLAPSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "RETRIEVAL_STALE",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 1,
+          "selected_count": 2,
+          "selection_fingerprint": "bf658fb4ac25e1af84800017a9cd10fd125301dad6366c8c9a3f023e4781f847",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "560d527ba6e0cba9871ccd3277a13c12dbe30574092f325809cca974226921b9",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 3,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 4,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": true,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 5,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "ablation_without_currentness_invalidation",
+        "lifecycle_model": "generic_authority_currentness_applicability_and_purge_rules",
+        "name": "ATC-governed symbolic reference model",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 0,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 0.0,
+        "cross_project_domain_leakage_count": 0,
+        "exact_current_authorized_state_success_count": 4,
+        "exact_current_authorized_state_success_rate": 0.666667,
+        "failure_code_counts": {
+          "FORGETTING_SEMANTIC_COLLAPSE": 1,
+          "RETRIEVAL_STALE": 2
+        },
+        "first_failure_stage_counts": {
+          "retrieve": 2
+        },
+        "forbidden_influence_count": 2,
+        "forgetting_semantics_rate": 1.0,
+        "harmful_abstention_accuracy": 1.0,
+        "harmful_memory_non_abstention_count": 0,
+        "purge_residue_count": 0,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "ablation_without_purge_closure": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 0,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 1,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "PURGE_RESIDUE"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "PURGE_RESIDUE",
+          "primary_failure_stage": "invalidate_rebuild",
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "560d527ba6e0cba9871ccd3277a13c12dbe30574092f325809cca974226921b9",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 3,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 4,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": true,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 5,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "ablation_without_purge_closure",
+        "lifecycle_model": "generic_authority_currentness_applicability_and_purge_rules",
+        "name": "ATC-governed symbolic reference model",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 0,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 1.0,
+        "cross_project_domain_leakage_count": 0,
+        "exact_current_authorized_state_success_count": 5,
+        "exact_current_authorized_state_success_rate": 0.833333,
+        "failure_code_counts": {
+          "PURGE_RESIDUE": 1
+        },
+        "first_failure_stage_counts": {
+          "invalidate_rebuild": 1
+        },
+        "forbidden_influence_count": 0,
+        "forgetting_semantics_rate": 0.0,
+        "harmful_abstention_accuracy": 1.0,
+        "harmful_memory_non_abstention_count": 0,
+        "purge_residue_count": 1,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "atc_governed_reference": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 0,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 1,
+          "selected_count": 1,
+          "selection_fingerprint": "c3eb6b6ae9ae489c0a1d9831d6da2f214873bf690c59c2b2475939df8f65a5c7",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "560d527ba6e0cba9871ccd3277a13c12dbe30574092f325809cca974226921b9",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 3,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": false,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 4,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": true,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 5,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "atc_governed_reference",
+        "lifecycle_model": "generic_authority_currentness_applicability_and_purge_rules",
+        "name": "ATC-governed symbolic reference model",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 0,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 1.0,
+        "cross_project_domain_leakage_count": 0,
+        "exact_current_authorized_state_success_count": 6,
+        "exact_current_authorized_state_success_rate": 1.0,
+        "failure_code_counts": {},
+        "first_failure_stage_counts": {},
+        "forbidden_influence_count": 0,
+        "forgetting_semantics_rate": 1.0,
+        "harmful_abstention_accuracy": 1.0,
+        "harmful_memory_non_abstention_count": 0,
+        "purge_residue_count": 0,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "simple_append_log_search": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": false,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "WITNESS_COLLAPSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "WITNESS_COLLAPSE",
+          "primary_failure_stage": "canonicalize",
+          "scenario_index": 0,
+          "selected_count": 2,
+          "selection_fingerprint": "8d64efb41e24a8d0dcf97caf4f95bb5401253d2b14c65be6144048c74f566db6",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "CORRECTION_NONCONVERGENCE",
+            "FORGETTING_SEMANTIC_COLLAPSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "CORRECTION_NONCONVERGENCE",
+          "primary_failure_stage": "correct_forget",
+          "scenario_index": 1,
+          "selected_count": 2,
+          "selection_fingerprint": "8d64efb41e24a8d0dcf97caf4f95bb5401253d2b14c65be6144048c74f566db6",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS",
+            "FORGETTING_SEMANTIC_COLLAPSE",
+            "PURGE_RESIDUE"
+          ],
+          "forbidden_influence_count": 2,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 2,
+          "selected_count": 2,
+          "selection_fingerprint": "c9a26c8f5502f425175a2a67438618245bfe4dc19e762b2a84a56597f30f736e",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "EPISTEMIC_ROLE_MISUSE"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "EPISTEMIC_ROLE_MISUSE",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 3,
+          "selected_count": 2,
+          "selection_fingerprint": "bd96681a7eba62aaabf1f9489fac715d243f893af500e515ae846cb40581e497",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "CROSS_PROJECT_DOMAIN_LEAKAGE",
+            "RETRIEVAL_MISS"
+          ],
+          "forbidden_influence_count": 2,
+          "primary_failure_code": "CROSS_PROJECT_DOMAIN_LEAKAGE",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 4,
+          "selected_count": 2,
+          "selection_fingerprint": "8d64efb41e24a8d0dcf97caf4f95bb5401253d2b14c65be6144048c74f566db6",
+          "token_units": 2
+        },
+        {
+          "abstained": false,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": true,
+          "failure_codes": [
+            "HARMFUL_MEMORY_NON_ABSTENTION",
+            "PROCEDURE_FALSE_TRANSFER"
+          ],
+          "forbidden_influence_count": 1,
+          "primary_failure_code": "HARMFUL_MEMORY_NON_ABSTENTION",
+          "primary_failure_stage": "applicability",
+          "scenario_index": 5,
+          "selected_count": 1,
+          "selection_fingerprint": "f44bff3f992e75c78ac1e51a5ee91d09a9c200b20706a3ab1e282705e3a6efd9",
+          "token_units": 1
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "simple_append_log_search",
+        "lifecycle_model": "append_only_no_canonical_current_state",
+        "name": "Append-only event log search",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 3,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 0.0,
+        "cross_project_domain_leakage_count": 1,
+        "exact_current_authorized_state_success_count": 0,
+        "exact_current_authorized_state_success_rate": 0.0,
+        "failure_code_counts": {
+          "CORRECTION_NONCONVERGENCE": 1,
+          "CROSS_PROJECT_DOMAIN_LEAKAGE": 1,
+          "EPISTEMIC_ROLE_MISUSE": 1,
+          "FORGETTING_SEMANTIC_COLLAPSE": 2,
+          "HARMFUL_MEMORY_NON_ABSTENTION": 1,
+          "PROCEDURE_FALSE_TRANSFER": 1,
+          "PURGE_RESIDUE": 1,
+          "RETRIEVAL_MISS": 2,
+          "WITNESS_COLLAPSE": 1
+        },
+        "first_failure_stage_counts": {
+          "applicability": 3,
+          "canonicalize": 1,
+          "correct_forget": 1,
+          "retrieve": 1
+        },
+        "forbidden_influence_count": 8,
+        "forgetting_semantics_rate": 0.0,
+        "harmful_abstention_accuracy": 0.0,
+        "harmful_memory_non_abstention_count": 1,
+        "purge_residue_count": 1,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    },
+    "simple_no_memory": {
+      "accounting": {
+        "checkpoint_count": 120,
+        "model_calls": 0,
+        "monetary_cost_usd": 0.0,
+        "network_calls": 0,
+        "presented_event_count": 460
+      },
+      "budget": {
+        "max_items": 2,
+        "max_token_units": 2
+      },
+      "episodes": [
+        {
+          "abstained": true,
+          "capabilities": [
+            "authority",
+            "correction",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 0,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "correction",
+            "outcome_closure",
+            "semantic"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS",
+            "FORGETTING_SEMANTIC_COLLAPSE"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 1,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "forgetting",
+            "outcome_closure",
+            "privacy"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS",
+            "FORGETTING_SEMANTIC_COLLAPSE"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 2,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "epistemic_role",
+            "semantic",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 3,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "cross_project_domain",
+            "privacy",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": false,
+          "expected_abstention": false,
+          "failure_codes": [
+            "RETRIEVAL_MISS"
+          ],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": "RETRIEVAL_MISS",
+          "primary_failure_stage": "retrieve",
+          "scenario_index": 4,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        },
+        {
+          "abstained": true,
+          "capabilities": [
+            "harmful_memory",
+            "procedural",
+            "task_applicability"
+          ],
+          "exact_current_authorized_state_success": true,
+          "expected_abstention": true,
+          "failure_codes": [],
+          "forbidden_influence_count": 0,
+          "primary_failure_code": null,
+          "primary_failure_stage": null,
+          "scenario_index": 5,
+          "selected_count": 0,
+          "selection_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "token_units": 0
+        }
+      ],
+      "manifest": {
+        "abi": "atc.memory-reliability-lab.longitudinal-adapter.v1",
+        "condition_id": "simple_no_memory",
+        "lifecycle_model": "none",
+        "name": "No durable memory",
+        "network_access": false,
+        "touches_production_core": false,
+        "writes_canonical_state": false
+      },
+      "metrics": {
+        "authorized_but_inapplicable_count": 0,
+        "budget_escape_count": 0,
+        "correction_convergence_rate": 0.0,
+        "cross_project_domain_leakage_count": 0,
+        "exact_current_authorized_state_success_count": 1,
+        "exact_current_authorized_state_success_rate": 0.166667,
+        "failure_code_counts": {
+          "FORGETTING_SEMANTIC_COLLAPSE": 2,
+          "RETRIEVAL_MISS": 5
+        },
+        "first_failure_stage_counts": {
+          "retrieve": 5
+        },
+        "forbidden_influence_count": 0,
+        "forgetting_semantics_rate": 0.0,
+        "harmful_abstention_accuracy": 1.0,
+        "harmful_memory_non_abstention_count": 0,
+        "purge_residue_count": 0,
+        "repeat_deterministic": true,
+        "unauthorized_influence_count": 0
+      }
+    }
+  },
+  "equal_budget": {
+    "max_items": 2,
+    "max_token_units": 2
+  },
+  "execution_scope": {
+    "executed_scenario_count": 6,
+    "external_systems_exercised": false,
+    "full_spec_executed": false,
+    "full_spec_scenario_count": 18,
+    "governed_condition_identity": "new_in_memory_reference_model_not_current_atc",
+    "kind": "smallest_executable_longitudinal_slice",
+    "production_core_semantics": "production_core_semantics_not_exercised",
+    "production_core_touched": false,
+    "production_schema_added": false,
+    "wall_clock_timing_measured": false
+  },
+  "experiment": "E01",
+  "fixture_sha256": "19f52ad16b398248866b5bfac930380ee71071a3414a4678a316bd161f762086",
+  "frozen_clock": {
+    "source": "event_supplied_utc_timestamps",
+    "wall_clock_access": false
+  },
+  "privacy": {
+    "object_identifiers_in_report": false,
+    "raw_context_in_report": false,
+    "selection_values_in_report": false,
+    "task_identifiers_in_report": false
+  },
+  "repeats": 20,
+  "rule_ablation_results": {
+    "ablation_without_applicability": {
+      "exact_success_rate_delta_from_reference": 0.5,
+      "forbidden_influence_delta_from_reference": 4,
+      "harmful_non_abstention_delta_from_reference": 1,
+      "purge_residue_delta_from_reference": 0,
+      "removed_rule": "applicability"
+    },
+    "ablation_without_authority": {
+      "exact_success_rate_delta_from_reference": 0.166667,
+      "forbidden_influence_delta_from_reference": 1,
+      "harmful_non_abstention_delta_from_reference": 0,
+      "purge_residue_delta_from_reference": 0,
+      "removed_rule": "authority"
+    },
+    "ablation_without_currentness_invalidation": {
+      "exact_success_rate_delta_from_reference": 0.333333,
+      "forbidden_influence_delta_from_reference": 2,
+      "harmful_non_abstention_delta_from_reference": 0,
+      "purge_residue_delta_from_reference": 0,
+      "removed_rule": "currentness_invalidation"
+    },
+    "ablation_without_purge_closure": {
+      "exact_success_rate_delta_from_reference": 0.166667,
+      "forbidden_influence_delta_from_reference": 0,
+      "harmful_non_abstention_delta_from_reference": 0,
+      "purge_residue_delta_from_reference": 1,
+      "removed_rule": "purge_closure"
+    }
+  },
+  "schema": "atc.memory-reliability-lab.e01-report.v1",
+  "validity_risks": [
+    "fixture_oracle_and_reference_rule_codesign",
+    "small_hand_authored_symbolic_slice",
+    "no_production_core_execution",
+    "no_external_system_execution"
+  ]
+}

@@ -1,0 +1,749 @@
+{
+  "schema_version": 1,
+  "intake_id": "atc-memory-systems-2026-07-23",
+  "observed_at": "2026-07-23T18:56:44Z",
+  "repository_baseline": "e5cb50a518aff571af46238682d8f7a082ca19f0",
+  "scope": "Competitor, licensing, provenance, architecture, and supply-chain intake. No implementation acceptance.",
+  "policy": {
+    "official_sources_only": true,
+    "license_confirmed_before_source_inspection": true,
+    "third_party_code_executed": false,
+    "third_party_dependencies_installed": false,
+    "third_party_code_imported": false,
+    "third_party_implementation_copied": false,
+    "repositories_cloned": false,
+    "clone_policy": "Clone only after canonical origin and reuse-compatible license are confirmed; pin a commit; keep the clone in research/vendor-cache; never package or execute it.",
+    "common_clone_decision": "not_cloned",
+    "common_clone_reason": "Official GitHub metadata plus pinned license, README, and dependency files and canonical papers were sufficient; cloning added supply-chain and packaging risk without adding decision evidence."
+  },
+  "disposition_definitions": {
+    "adopt": "Schedule the mechanism or external baseline for a future Memory Lab intake; no code import is authorized.",
+    "adapt": "Reproduce a bounded pattern behind Core-authoritative interfaces after benchmark, legal, and security review.",
+    "observe": "Track evidence and maintenance; do not schedule integration.",
+    "reject": "Do not pursue as an ATC dependency under current product and supply-chain constraints."
+  },
+  "candidates": [
+    {
+      "id": "hindsight",
+      "name": "Hindsight",
+      "rank": 1,
+      "disposition": "adopt",
+      "official_repositories": [
+        {
+          "role": "canonical implementation",
+          "url": "https://github.com/vectorize-io/hindsight",
+          "clone_url": "https://github.com/vectorize-io/hindsight.git",
+          "metadata_api_url": "https://api.github.com/repos/vectorize-io/hindsight",
+          "default_branch": "main",
+          "pinned_revision": "fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+          "commit_url": "https://github.com/vectorize-io/hindsight/commit/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+          "committed_at": "2026-07-23T18:47:55Z",
+          "pushed_at": "2026-07-23T18:47:55Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/vectorize-io/hindsight/blob/fa69b5b73b3b50bf5dcbae5bccbc7197de03692f/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "Hindsight: Structured Agent Memory that Retains, Recalls, and Reflects",
+          "url": "https://aclanthology.org/2026.acl-demo.27/",
+          "venue": "ACL 2026 System Demonstrations"
+        }
+      ],
+      "official_documentation": [
+        "https://hindsight.vectorize.io/"
+      ],
+      "maintenance": {
+        "status": "very_active",
+        "evidence": "Pinned main commit and push occurred on the evidence date; the official repository and releases show continuing feature, security, migration, and integration work."
+      },
+      "architecture_to_borrow": [
+        "Separate world facts, experiences, observations, and opinions.",
+        "Retain, recall, and reflect operations with inspectable intermediate memory.",
+        "Parallel vector, keyword, graph, and temporal retrieval with fusion and reranking."
+      ],
+      "integration_surface": [
+        "HTTP API",
+        "Python and TypeScript clients",
+        "embedded Python server",
+        "Docker deployment",
+        "MCP and agent-framework integrations"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "high",
+        "details": "Python 3.11+, PostgreSQL/pgvector-centered service, LLM and embedding providers, reranking, optional database/search extensions, control plane, and multiple language clients."
+      },
+      "license_caveats": [
+        "The root implementation is MIT; hosted Hindsight services, trademarks, container bases, database extensions, models, and integrations retain separate terms.",
+        "Nested integration LICENSE files were present; every selected component and transitive dependency still needs an SBOM-level review."
+      ],
+      "safety_risks": [
+        "The ACL paper says extraction and opinion errors can propagate through the graph.",
+        "The ACL paper says built-in PII detection and automatic redaction are not currently provided.",
+        "Persistent opinions can amplify bias or resist correction; memory-bank authorization and purge must remain Core-controlled."
+      ],
+      "decision_rationale": "Best current full-system baseline and strongest epistemic separation, but too stateful and heavy to become a second authority."
+    },
+    {
+      "id": "mem0",
+      "name": "Mem0",
+      "rank": 2,
+      "disposition": "adopt",
+      "official_repositories": [
+        {
+          "role": "canonical OSS implementation",
+          "url": "https://github.com/mem0ai/mem0",
+          "clone_url": "https://github.com/mem0ai/mem0.git",
+          "metadata_api_url": "https://api.github.com/repos/mem0ai/mem0",
+          "default_branch": "main",
+          "pinned_revision": "d6d89c987bddf580870db14c69db974edfc5263c",
+          "commit_url": "https://github.com/mem0ai/mem0/commit/d6d89c987bddf580870db14c69db974edfc5263c",
+          "committed_at": "2026-07-23T16:00:01Z",
+          "pushed_at": "2026-07-23T16:24:15Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/mem0ai/mem0/blob/d6d89c987bddf580870db14c69db974edfc5263c/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory",
+          "url": "https://arxiv.org/abs/2504.19413",
+          "venue": "arXiv 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://docs.mem0.ai/",
+        "https://docs.mem0.ai/changelog/highlights"
+      ],
+      "maintenance": {
+        "status": "very_active",
+        "evidence": "Pinned main commit and push occurred on the evidence date; repository metadata showed ongoing activity and a large active issue surface."
+      },
+      "architecture_to_borrow": [
+        "Additive salient-fact extraction rather than model-directed mutation of source evidence.",
+        "Deduplication and scoped memory CRUD.",
+        "Hybrid semantic, keyword, temporal, and graph-oriented retrieval patterns."
+      ],
+      "integration_surface": [
+        "Python and TypeScript SDKs",
+        "self-hosted OSS library",
+        "hosted Platform API",
+        "OpenMemory UI/API",
+        "framework and agent plugins"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "medium_to_high",
+        "details": "Python 3.10+; OpenAI and Qdrant are base dependencies, with optional Chroma, MongoDB, Redis, Elasticsearch, Milvus, many LLM providers, local embedding/reranking models, server, and UI surfaces."
+      },
+      "license_caveats": [
+        "Apache-2.0 covers the pinned repository; the hosted Mem0 Platform and its data terms are separate.",
+        "Vector/graph databases, model providers, model weights, plugins, and container images have independent licenses and terms.",
+        "The archived mem0-mcp repository is not the maintenance target and was excluded."
+      ],
+      "safety_risks": [
+        "LLM extraction can turn untrusted conversation text into false durable memory.",
+        "Provider and vector-store choices can create personal-data egress, tenant-isolation, and deletion-completeness risks.",
+        "Graph and platform state could become a competing authority unless outputs remain proposals or shadow results."
+      ],
+      "decision_rationale": "Use as the first production-oriented extraction/retrieval competitor; adapt additive extraction only behind Core policy."
+    },
+    {
+      "id": "graphiti-zep",
+      "name": "Graphiti / Zep",
+      "rank": 3,
+      "disposition": "adopt",
+      "official_repositories": [
+        {
+          "role": "canonical open-source temporal graph engine",
+          "url": "https://github.com/getzep/graphiti",
+          "clone_url": "https://github.com/getzep/graphiti.git",
+          "metadata_api_url": "https://api.github.com/repos/getzep/graphiti",
+          "default_branch": "main",
+          "pinned_revision": "533ec53d9564e6aca0cf4d6edc1b87b2a7c231b2",
+          "commit_url": "https://github.com/getzep/graphiti/commit/533ec53d9564e6aca0cf4d6edc1b87b2a7c231b2",
+          "committed_at": "2026-07-23T18:45:57Z",
+          "pushed_at": "2026-07-23T18:46:01Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/getzep/graphiti/blob/533ec53d9564e6aca0cf4d6edc1b87b2a7c231b2/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+          "url": "https://arxiv.org/abs/2501.13956",
+          "venue": "arXiv 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://help.getzep.com/graphiti/getting-started/welcome",
+        "https://www.getzep.com/platform/graphiti/"
+      ],
+      "maintenance": {
+        "status": "very_active",
+        "evidence": "Pinned main commit and push occurred on the evidence date."
+      },
+      "architecture_to_borrow": [
+        "Episode provenance separated from entity and relationship projections.",
+        "Bitemporal facts that distinguish event-valid time from system-known time.",
+        "Incremental invalidation and hybrid semantic, full-text, and graph retrieval."
+      ],
+      "integration_surface": [
+        "Python library",
+        "Graphiti server",
+        "MCP server",
+        "Neo4j, FalkorDB, Neptune/OpenSearch, and deprecated Kuzu backends",
+        "LLM, embedding, and reranker providers"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "high",
+        "details": "Python 3.10+, Neo4j base dependency, OpenAI base dependency, optional graph backends and local embeddings, plus server/MCP and container deployment surfaces. The pinned project marks Kuzu deprecated because upstream is unmaintained."
+      },
+      "license_caveats": [
+        "Apache-2.0 covers Graphiti at the pinned revision, not the hosted Zep product or service terms.",
+        "Graph databases, cloud services, model providers, and embedding/reranking models require separate review."
+      ],
+      "safety_risks": [
+        "Entity resolution and fact invalidation are LLM-influenced derived claims and can create false relationships.",
+        "Graph traversal can widen disclosure unless Core authorizes IDs before every retrieval channel.",
+        "Multi-tenant group identifiers are not a substitute for ATC permissions or purge verification."
+      ],
+      "decision_rationale": "Best temporal-graph reference; adopt the baseline and data-model lessons, not its graph database as canonical truth."
+    },
+    {
+      "id": "langmem-langgraph",
+      "name": "LangMem / LangGraph",
+      "rank": 4,
+      "disposition": "adopt",
+      "official_repositories": [
+        {
+          "role": "memory utilities",
+          "url": "https://github.com/langchain-ai/langmem",
+          "clone_url": "https://github.com/langchain-ai/langmem.git",
+          "metadata_api_url": "https://api.github.com/repos/langchain-ai/langmem",
+          "default_branch": "main",
+          "pinned_revision": "a2d580946465137c89162e67dc0b18108bd4850c",
+          "commit_url": "https://github.com/langchain-ai/langmem/commit/a2d580946465137c89162e67dc0b18108bd4850c",
+          "committed_at": "2026-07-15T06:06:35Z",
+          "pushed_at": "2026-07-15T06:06:43Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/langchain-ai/langmem/blob/a2d580946465137c89162e67dc0b18108bd4850c/LICENSE"
+        },
+        {
+          "role": "stateful orchestration and checkpoints",
+          "url": "https://github.com/langchain-ai/langgraph",
+          "clone_url": "https://github.com/langchain-ai/langgraph.git",
+          "metadata_api_url": "https://api.github.com/repos/langchain-ai/langgraph",
+          "default_branch": "main",
+          "pinned_revision": "31f90df3e6b0268fa77fd2d118a917d420b84a68",
+          "commit_url": "https://github.com/langchain-ai/langgraph/commit/31f90df3e6b0268fa77fd2d118a917d420b84a68",
+          "committed_at": "2026-07-21T21:09:16Z",
+          "pushed_at": "2026-07-22T16:18:07Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/langchain-ai/langgraph/blob/31f90df3e6b0268fa77fd2d118a917d420b84a68/LICENSE"
+        }
+      ],
+      "canonical_publications": [],
+      "official_documentation": [
+        "https://docs.langchain.com/oss/python/concepts/memory",
+        "https://docs.langchain.com/oss/python/langgraph/"
+      ],
+      "maintenance": {
+        "status": "active",
+        "evidence": "Both pinned repositories had July 2026 main-branch commits; LangGraph has frequent releases while LangMem remains active without GitHub releases."
+      },
+      "architecture_to_borrow": [
+        "Thread-scoped checkpoints distinct from cross-thread long-term stores.",
+        "Namespace-based memory isolation.",
+        "Explicit hot-path memory tools and background extraction/consolidation."
+      ],
+      "integration_surface": [
+        "Python libraries",
+        "LangGraph BaseStore and checkpointers",
+        "SQLite, PostgreSQL, and Redis checkpoint packages",
+        "LangGraph Platform and LangSmith services"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "medium",
+        "details": "Python 3.10+. LangGraph core is modest, but LangMem requires LangChain, LangGraph, OpenAI and Anthropic integrations; durable production stores add database packages and services."
+      },
+      "license_caveats": [
+        "The pinned LangMem and LangGraph repositories are MIT.",
+        "LangGraph Platform, LangSmith, hosted deployments, provider APIs, and separate JavaScript packages are not licensed by these repository licenses.",
+        "The archived langgraph-memory example repository was excluded as a maintenance target."
+      ],
+      "safety_risks": [
+        "Agent-invoked hot-path writes can persist prompt injection or model inference without a Core observation gate.",
+        "Checkpoint state can silently preserve stale or corrected memory unless dependencies and invalidation are explicit.",
+        "Namespace discipline alone does not enforce ATC authorization or minimum disclosure."
+      ],
+      "decision_rationale": "Adopt checkpoint/store contracts and a future host adapter; keep every durable write subordinate to Core."
+    },
+    {
+      "id": "letta-memgpt",
+      "name": "Letta / MemGPT",
+      "rank": 5,
+      "disposition": "adapt",
+      "official_repositories": [
+        {
+          "role": "legacy Letta server and MemGPT lineage",
+          "url": "https://github.com/letta-ai/letta",
+          "clone_url": "https://github.com/letta-ai/letta.git",
+          "metadata_api_url": "https://api.github.com/repos/letta-ai/letta",
+          "default_branch": "main",
+          "pinned_revision": "b76da9092518cbaa2d09042e52fdcbde69243e18",
+          "commit_url": "https://github.com/letta-ai/letta/commit/b76da9092518cbaa2d09042e52fdcbde69243e18",
+          "committed_at": "2026-07-03T18:53:39Z",
+          "pushed_at": "2026-07-22T00:32:52Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/letta-ai/letta/blob/b76da9092518cbaa2d09042e52fdcbde69243e18/LICENSE"
+        },
+        {
+          "role": "active memory-first agent",
+          "url": "https://github.com/letta-ai/letta-code",
+          "clone_url": "https://github.com/letta-ai/letta-code.git",
+          "metadata_api_url": "https://api.github.com/repos/letta-ai/letta-code",
+          "default_branch": "main",
+          "pinned_revision": "658978a41f787a767709bc6b8a71bb937922e4f4",
+          "commit_url": "https://github.com/letta-ai/letta-code/commit/658978a41f787a767709bc6b8a71bb937922e4f4",
+          "committed_at": "2026-07-23T06:14:47Z",
+          "pushed_at": "2026-07-23T06:14:50Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/letta-ai/letta-code/blob/658978a41f787a767709bc6b8a71bb937922e4f4/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "MemGPT: Towards LLMs as Operating Systems",
+          "url": "https://arxiv.org/abs/2310.08560",
+          "venue": "arXiv 2023"
+        }
+      ],
+      "official_documentation": [
+        "https://docs.letta.com/",
+        "https://docs.letta.com/guides/core-concepts/agent-file"
+      ],
+      "maintenance": {
+        "status": "active_with_transition",
+        "evidence": "The canonical Letta README labels that Python server legacy and directs users to Letta Agent/App Server; Letta Code had a same-day pinned commit."
+      },
+      "architecture_to_borrow": [
+        "Virtual-context hierarchy with explicit movement between active and archival memory.",
+        "Agent-visible memory blocks, interrupts, and progressive disclosure.",
+        "Portable/versionable agent state and background curation."
+      ],
+      "integration_surface": [
+        "Legacy Python API server and SDKs",
+        "Letta Code CLI and SDK",
+        "App Server/self-hosting",
+        "Letta Cloud",
+        "AgentFile serialization"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "high",
+        "details": "Legacy server requires Python 3.11-3.13, many LLM/provider packages, optional PostgreSQL/Redis/SQLite, tool sandbox and Docker surfaces. Active Letta Code requires Node.js 22.19+."
+      },
+      "license_caveats": [
+        "Both pinned repositories report Apache-2.0; Letta Cloud, hosted models, channels, skills, and third-party tools retain separate terms.",
+        "The repository transition means reuse review must target the actual active component rather than assuming the legacy server represents the current product."
+      ],
+      "safety_risks": [
+        "Allowing an agent to edit its own memory blocks can conflate working state with canonical user truth.",
+        "AgentFile may serialize prompts, memory, and tool source; imports must be treated as untrusted code/data.",
+        "Tool execution and sandbox surfaces materially expand the supply-chain and exfiltration boundary."
+      ],
+      "decision_rationale": "Adapt the working-set and checkpoint ideas; do not adopt the agent-owned truth model or broad runtime."
+    },
+    {
+      "id": "reasoningbank",
+      "name": "ReasoningBank",
+      "rank": 6,
+      "disposition": "adapt",
+      "official_repositories": [
+        {
+          "role": "canonical research implementation",
+          "url": "https://github.com/google-research/reasoning-bank",
+          "clone_url": "https://github.com/google-research/reasoning-bank.git",
+          "metadata_api_url": "https://api.github.com/repos/google-research/reasoning-bank",
+          "default_branch": "main",
+          "pinned_revision": "ed80611788292ea739f1effd31f16c53823b8a0d",
+          "commit_url": "https://github.com/google-research/reasoning-bank/commit/ed80611788292ea739f1effd31f16c53823b8a0d",
+          "committed_at": "2026-05-19T03:59:15Z",
+          "pushed_at": "2026-07-21T10:39:22Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/google-research/reasoning-bank/blob/ed80611788292ea739f1effd31f16c53823b8a0d/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "Scaling Agent Self-Evolving with Reasoning Memory",
+          "url": "https://arxiv.org/abs/2509.25140",
+          "venue": "ICLR 2026"
+        },
+        {
+          "title": "ReasoningBank: Enabling agents to learn from experience",
+          "url": "https://research.google/blog/reasoningbank-enabling-agents-to-learn-from-experience/",
+          "venue": "Google Research Blog 2026"
+        }
+      ],
+      "official_documentation": [
+        "https://github.com/google-research/reasoning-bank/blob/ed80611788292ea739f1effd31f16c53823b8a0d/README.md"
+      ],
+      "maintenance": {
+        "status": "moderate",
+        "evidence": "Pinned main commit is from May 2026 while repository pushes continued in July; head activity is lower than the leading product systems."
+      },
+      "architecture_to_borrow": [
+        "Distill reusable strategies from both successful and failed trajectories.",
+        "Retrieve compact strategy memory before related tasks.",
+        "Use memory-aware test-time scaling to focus exploration."
+      ],
+      "integration_surface": [
+        "Python 3.13 research harness",
+        "WebArena/BrowserGym browser benchmark",
+        "mini-swe-agent software-engineering benchmark",
+        "Anthropic, OpenAI, Gemini/Vertex providers",
+        "Docker-backed evaluation environments"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "very_high",
+        "details": "Python 3.13, Playwright/BrowserGym/WebArena, Torch, several model-provider clients, cloud credentials, Docker benchmark environments, and vendored patched harnesses."
+      },
+      "license_caveats": [
+        "The repository root is Apache-2.0.",
+        "The pinned tree vendors patched mini-swe-agent and WebArena source under third_party without nested LICENSE or NOTICE files. Their exact upstream revisions and carried obligations were not declared in-tree and require legal review before reuse.",
+        "Benchmark sites, datasets, cloud models, and containers retain separate terms."
+      ],
+      "safety_risks": [
+        "Self-judged success can reinforce false or unsafe tactics.",
+        "Reasoning memories risk retaining hidden chain-of-thought, secrets, or task-specific personal data unless distilled to observable procedures.",
+        "Browser and software-agent harnesses execute effects and untrusted content and must remain outside this intake."
+      ],
+      "decision_rationale": "Adapt only the outcome-linked procedure pattern; reject reuse of the bundled evaluation harness until third-party provenance is complete."
+    },
+    {
+      "id": "mirix",
+      "name": "MIRIX",
+      "rank": 7,
+      "disposition": "adapt",
+      "official_repositories": [
+        {
+          "role": "canonical implementation",
+          "url": "https://github.com/Mirix-AI/MIRIX",
+          "clone_url": "https://github.com/Mirix-AI/MIRIX.git",
+          "metadata_api_url": "https://api.github.com/repos/Mirix-AI/MIRIX",
+          "default_branch": "main",
+          "pinned_revision": "51f3342d5366b0e215439581f92e0323227146af",
+          "commit_url": "https://github.com/Mirix-AI/MIRIX/commit/51f3342d5366b0e215439581f92e0323227146af",
+          "committed_at": "2026-06-20T12:40:51Z",
+          "pushed_at": "2026-07-15T08:42:12Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/Mirix-AI/MIRIX/blob/51f3342d5366b0e215439581f92e0323227146af/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "MIRIX: Multi-Agent Memory System for LLM-Based Agents",
+          "url": "https://arxiv.org/abs/2507.07957",
+          "venue": "arXiv 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://github.com/Mirix-AI/MIRIX/blob/51f3342d5366b0e215439581f92e0323227146af/README.md"
+      ],
+      "maintenance": {
+        "status": "active",
+        "evidence": "Pinned main commit is from June 2026 and repository pushes continued in July; the official release history describes a shift from desktop assistant to a memory-system API."
+      },
+      "architecture_to_borrow": [
+        "Explicit Core, Episodic, Semantic, Procedural, Resource, and Knowledge Vault memory types.",
+        "Meta-agent coordination of typed writes and retrieval.",
+        "Multimodal and resource memory separated from ordinary semantic claims."
+      ],
+      "integration_surface": [
+        "Python memory API",
+        "hosted cloud memory service",
+        "dashboard",
+        "legacy desktop-agent branch",
+        "Redis and SQL-backed components"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "high",
+        "details": "Python 3.10+, multiple model providers, image processing, async SQL, Redis, dashboard, Docker, and multi-agent orchestration."
+      },
+      "license_caveats": [
+        "The pinned repository is Apache-2.0; MIRIX Cloud and provider terms are separate.",
+        "The README credits Letta as a foundation. The absence of an obvious root NOTICE file makes exact derivative attribution a legal-review item rather than a finding of noncompliance.",
+        "Model weights, visual inputs, datasets, and container dependencies retain separate licenses."
+      ],
+      "safety_risks": [
+        "Continuous screen capture can collect credentials, private communications, and bystander data.",
+        "Multiple memory-writing agents multiply prompt-injection and confused-deputy paths.",
+        "Local storage claims do not by themselves prove secret filtering, tenant isolation, or purge of derived multimodal artifacts."
+      ],
+      "decision_rationale": "Strong additional candidate for typed and multimodal memory; adapt taxonomy only until privacy and authority controls are independently demonstrated."
+    },
+    {
+      "id": "hipporag2",
+      "name": "HippoRAG 2",
+      "rank": 8,
+      "disposition": "observe",
+      "official_repositories": [
+        {
+          "role": "canonical implementation",
+          "url": "https://github.com/OSU-NLP-Group/HippoRAG",
+          "clone_url": "https://github.com/OSU-NLP-Group/HippoRAG.git",
+          "metadata_api_url": "https://api.github.com/repos/OSU-NLP-Group/HippoRAG",
+          "default_branch": "main",
+          "pinned_revision": "1e8f60981bf760b64003aa5bf5668126d0c106b3",
+          "commit_url": "https://github.com/OSU-NLP-Group/HippoRAG/commit/1e8f60981bf760b64003aa5bf5668126d0c106b3",
+          "committed_at": "2026-07-13T00:10:50Z",
+          "pushed_at": "2026-07-13T00:10:52Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/OSU-NLP-Group/HippoRAG/blob/1e8f60981bf760b64003aa5bf5668126d0c106b3/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "From RAG to Memory: Non-Parametric Continual Learning for Large Language Models",
+          "url": "https://arxiv.org/abs/2502.14802",
+          "venue": "arXiv 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://github.com/OSU-NLP-Group/HippoRAG/blob/1e8f60981bf760b64003aa5bf5668126d0c106b3/README.md"
+      ],
+      "maintenance": {
+        "status": "active_research",
+        "evidence": "Pinned main commit is from July 2026 and the repository is not archived."
+      },
+      "architecture_to_borrow": [
+        "Entity/passage graph for associative retrieval.",
+        "Personalized PageRank over linked knowledge.",
+        "Deeper passage integration that balances factual and multi-hop recall."
+      ],
+      "integration_surface": [
+        "Python research library",
+        "LLM-based OpenIE",
+        "embedding and generation providers",
+        "local graph/index artifacts"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "high",
+        "details": "Pinned requirements include OpenAI 1.91, Torch 2.5.1, Transformers 4.45.2 and a broad research stack; model downloads and optional GPU use are material."
+      },
+      "license_caveats": [
+        "The repository is MIT; model weights, datasets, API providers, and downloaded artifacts retain separate licenses and use terms."
+      ],
+      "safety_risks": [
+        "OpenIE can hallucinate graph edges.",
+        "Graph propagation can retrieve indirectly related private records and amplify disclosure.",
+        "It does not supply canonicalization, permission, correction, or purge semantics."
+      ],
+      "decision_rationale": "Observe as an authorization-filtered retrieval channel; benchmark only after lighter deterministic and hybrid fusion baselines."
+    },
+    {
+      "id": "a-mem",
+      "name": "A-MEM",
+      "rank": 9,
+      "disposition": "observe",
+      "official_repositories": [
+        {
+          "role": "canonical reusable library",
+          "url": "https://github.com/agiresearch/A-mem",
+          "clone_url": "https://github.com/agiresearch/A-mem.git",
+          "metadata_api_url": "https://api.github.com/repos/agiresearch/A-mem",
+          "default_branch": "main",
+          "pinned_revision": "ceffb860f0712bbae97b184d440df62bc910ca8d",
+          "commit_url": "https://github.com/agiresearch/A-mem/commit/ceffb860f0712bbae97b184d440df62bc910ca8d",
+          "committed_at": "2025-12-12T21:15:29Z",
+          "pushed_at": "2025-12-12T21:15:29Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/LICENSE"
+        },
+        {
+          "role": "official paper evaluation implementation, renamed from WujiangXu/AgenticMemory",
+          "url": "https://github.com/WujiangXu/A-mem",
+          "clone_url": "https://github.com/WujiangXu/A-mem.git",
+          "metadata_api_url": "https://api.github.com/repos/WujiangXu/A-mem",
+          "default_branch": "main",
+          "pinned_revision": "0c8039f28fdcc08189a23c07a3437d9d2482f9c2",
+          "commit_url": "https://github.com/WujiangXu/A-mem/commit/0c8039f28fdcc08189a23c07a3437d9d2482f9c2",
+          "committed_at": "2026-03-05T11:33:11Z",
+          "pushed_at": "2026-03-05T11:44:03Z",
+          "archived": false,
+          "license_spdx": "MIT",
+          "license_url": "https://github.com/WujiangXu/A-mem/blob/0c8039f28fdcc08189a23c07a3437d9d2482f9c2/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "A-MEM: Agentic Memory for LLM Agents",
+          "url": "https://arxiv.org/abs/2502.12110",
+          "venue": "NeurIPS 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://github.com/agiresearch/A-mem/blob/ceffb860f0712bbae97b184d440df62bc910ca8d/README.md"
+      ],
+      "maintenance": {
+        "status": "low_to_moderate",
+        "evidence": "The reusable library's pinned main commit is from December 2025; the official evaluation repository's renamed target had a March 2026 commit."
+      },
+      "architecture_to_borrow": [
+        "Zettelkasten-style contextual notes.",
+        "Dynamic tags, keywords, and links.",
+        "Relation discovery and memory evolution triggered by new notes."
+      ],
+      "integration_surface": [
+        "Python library",
+        "ChromaDB",
+        "sentence-transformers",
+        "OpenAI and Ollama backends"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "medium",
+        "details": "Python 3.8+, ChromaDB, sentence-transformers, NumPy, scikit-learn, and model-provider clients. Local embeddings can download model artifacts."
+      },
+      "license_caveats": [
+        "Both official repository targets report MIT.",
+        "The paper distinguishes reusable system code from evaluation code; provenance must preserve that split and the upstream rename.",
+        "Embedding models and Chroma/model-provider dependencies retain separate licenses."
+      ],
+      "safety_risks": [
+        "Agent-driven evolution can rewrite older derived context and obscure the original evidence.",
+        "Generated links and tags can propagate hallucinated associations.",
+        "Deletion and correction fan-out are not demonstrated as authority-preserving or purge-complete."
+      ],
+      "decision_rationale": "Observe the relation-discovery baseline; do not let its in-place evolution semantics touch canonical evidence."
+    },
+    {
+      "id": "agemem",
+      "name": "AgeMem",
+      "rank": 10,
+      "disposition": "observe",
+      "official_repositories": [],
+      "canonical_publications": [
+        {
+          "title": "Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for Large Language Model Agents",
+          "url": "https://aclanthology.org/2026.acl-long.981/",
+          "venue": "ACL 2026"
+        },
+        {
+          "title": "Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for Large Language Model Agents",
+          "url": "https://arxiv.org/abs/2601.01885",
+          "venue": "arXiv 2026"
+        }
+      ],
+      "official_documentation": [],
+      "maintenance": {
+        "status": "paper_only",
+        "evidence": "Fresh peer-reviewed ACL 2026 paper; no official implementation repository was identified from the paper, ACL entry, arXiv entry, or targeted official-repository search."
+      },
+      "architecture_to_borrow": [
+        "Expose ADD, UPDATE, DELETE, RETRIEVE, SUMMARY, and FILTER as explicit memory actions.",
+        "Jointly optimize short-term and long-term memory behavior.",
+        "Use step-wise reward attribution for memory actions."
+      ],
+      "integration_surface": [
+        "No reusable official software surface verified.",
+        "Paper describes a three-stage progressive RL and step-wise GRPO training pipeline."
+      ],
+      "runtime_dependency_burden": {
+        "rating": "very_high",
+        "details": "Training requires multiple rollout trajectories, reinforcement-learning infrastructure, memory-operation rewards, model weights, and benchmark environments; inference requires a compatible trained policy."
+      },
+      "license_caveats": [
+        "ACL publication text is available under the Anthology's publication terms, but that is not a software license.",
+        "No official code repository, commit, or software reuse license was located; implementation reuse is not authorized by this intake."
+      ],
+      "safety_risks": [
+        "A learned agent policy directly choosing durable add/update/delete actions conflicts with Core authority.",
+        "Reward models can optimize benchmark behavior while learning unsafe retention or deletion policies.",
+        "Private-gradient attribution and purge would be opaque without record-owned or rebuildable learned state."
+      ],
+      "decision_rationale": "Genuinely stronger current research candidate, but observe only until official code, licensing, reproducibility, and authority-preserving adaptation exist.",
+      "repository_gap": "No official implementation repository found; exact commit pin is not applicable."
+    },
+    {
+      "id": "memos",
+      "name": "MemOS",
+      "rank": 11,
+      "disposition": "reject",
+      "official_repositories": [
+        {
+          "role": "canonical implementation",
+          "url": "https://github.com/MemTensor/MemOS",
+          "clone_url": "https://github.com/MemTensor/MemOS.git",
+          "metadata_api_url": "https://api.github.com/repos/MemTensor/MemOS",
+          "default_branch": "main",
+          "pinned_revision": "6734a0ea8d01293b4dae3611fae0ab3834366e1b",
+          "commit_url": "https://github.com/MemTensor/MemOS/commit/6734a0ea8d01293b4dae3611fae0ab3834366e1b",
+          "committed_at": "2026-07-23T09:50:48Z",
+          "pushed_at": "2026-07-23T13:54:06Z",
+          "archived": false,
+          "license_spdx": "Apache-2.0",
+          "license_url": "https://github.com/MemTensor/MemOS/blob/6734a0ea8d01293b4dae3611fae0ab3834366e1b/LICENSE"
+        }
+      ],
+      "canonical_publications": [
+        {
+          "title": "MemOS: A Memory OS for AI System",
+          "url": "https://arxiv.org/abs/2507.03724",
+          "venue": "arXiv 2025"
+        }
+      ],
+      "official_documentation": [
+        "https://memos-docs.openmem.net/"
+      ],
+      "maintenance": {
+        "status": "very_active",
+        "evidence": "Pinned main commit and push occurred on the evidence date."
+      },
+      "architecture_to_borrow": [
+        "Versioned MemCube memory units with provenance metadata.",
+        "Explicit memory lifecycle, scheduling, migration, and composition vocabulary.",
+        "Separation of plaintext, activation, and parameter memory."
+      ],
+      "integration_surface": [
+        "Python framework and APIs",
+        "plugins and cloud integrations",
+        "Neo4j, Redis, Milvus, Qdrant, and other optional stores",
+        "local and hosted model providers",
+        "Docker and UI/application surfaces"
+      ],
+      "runtime_dependency_burden": {
+        "rating": "very_high",
+        "details": "Python 3.10+, OpenAI/Ollama/Transformers base dependencies and a broad optional matrix including graph/vector databases, Torch, sentence-transformers, parsers, services, plugins, and applications."
+      },
+      "license_caveats": [
+        "The pinned repository is Apache-2.0; nested cloud plugins/apps, hosted services, models, datasets, databases, and parameter-memory artifacts require component-level review.",
+        "An Apache software license does not establish rights to redistribute separately downloaded weights or data."
+      ],
+      "safety_risks": [
+        "Activation and parameter memory can retain private influence without record-level inspection or deterministic purge.",
+        "Unified scheduling can create a second memory authority and broad invalidation fan-out.",
+        "The backend/plugin matrix expands network egress, telemetry, secret, and transitive dependency risk."
+      ],
+      "decision_rationale": "Reject as a product dependency; its scope and learned-memory forms conflict with ATC's local, cross-platform, inspectable, purgeable boundary."
+    }
+  ],
+  "cross_cutting_unresolved_questions": [
+    "ReasoningBank third_party trees need exact upstream revisions and license/notice reconciliation.",
+    "MIRIX's Letta-derived code needs component attribution and NOTICE review.",
+    "Every future model, reranker, database extension, image, dataset, container, and hosted API needs a separate license and data-processing review.",
+    "Trademark policies for candidate names were not legal-reviewed.",
+    "No candidate has yet demonstrated ATC's authorization-before-retrieval, correction closure, purge closure, secret refusal, or no-egress requirements under an ATC-controlled test.",
+    "AgeMem has no verified official implementation repository or software license."
+  ]
+}

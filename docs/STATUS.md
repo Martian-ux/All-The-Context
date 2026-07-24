@@ -21,6 +21,234 @@ dependency-audit gates described below. The exact worktree has not yet passed
 the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based
 evidence remains historical and must not be presented as proof of ADR-039.
 
+## AI-memory research direction
+
+ADR-042 establishes a post-beta, benchmark-driven research direction without
+changing the V1 release boundary. The goal is end-to-end memory reliability,
+not novelty or retrieval scores in isolation.
+
+The research charter is
+[`docs/research/ATC_MEMORY_RELIABILITY_ARCHITECTURE.md`](research/ATC_MEMORY_RELIABILITY_ARCHITECTURE.md).
+It defines:
+
+- a governed Memory Plane for evidence, current knowledge, experience,
+  procedures, working state, consolidation, and recall;
+- an optional Intent and Consequence Plane for adequately witnessed
+  event-bound preferences and directives;
+- an ATC Memory Lab that compares long context, simple profiles, ATC, and
+  external systems under the same models, data, budgets, and scoring; and
+- reversible experiential-learning and consequence-closure hypotheses that
+  remain unimplemented research.
+
+The existing
+[`Consequence-Closed Context`](research/CONSEQUENCE_CLOSED_CONTEXT.md) proposal
+is now explicitly scoped as the differentiated second plane, not a complete
+AI-memory product. No external memory engine, graph/vector dependency, new
+production schema, host checkpoint protocol, private learned model, or
+behavioral enforcement claim has been accepted or implemented by this
+documentation work. The beta remains the immediate product milestone.
+
+The July 2026 fresh-horizon review amended the execution order: simple
+long-context, append-log, stable-observation, and file-search baselines precede
+framework adapters; typed relations must earn a graph; applicability follows
+authorization before relevance; derived-state closure is foundational; and
+procedural learning waits for trustworthy outcome and repair evidence. The
+updated charter uses CAOS—correct current authorized outcome within budget—as
+the primary endpoint rather than retrieval quality alone.
+
+## Research supplier intake
+
+The 2026-07-23 AI-memory competitor intake records official repositories,
+immutable revisions, licenses, dependency burden, integration surfaces, and
+safety risks for eleven candidates in
+`research/competitor-intake/memory-systems-intake.v1.json`. During that intake,
+no third-party source was cloned, installed, executed, imported, or copied.
+Wave 2 later performed the separately governed temporary Hindsight static
+clone described below. Neither activity adds a runtime dependency or
+production claim.
+
+## Executable Memory Lab M0 slice
+
+ADR-043 implements the first bounded Memory Lab comparison without changing the
+V1 runtime authority boundary. `allthecontext.memory_lab` defines versioned,
+provider-neutral memory-object and read-only retrieval-adapter contracts.
+`bench.memory_lab` runs no-memory and deterministic token-overlap controls plus
+current ATC Retrieval V3 against the same sanitized, frozen task fixture and
+reports task-level sufficiency, abstention, forbidden output, disclosure,
+determinism, latency, storage, and adapter-declared model/token/cost usage.
+
+The adapter input is an already-authorized immutable snapshot. Results contain
+aggregate counts, ordinal-derived ranking fingerprints, and accounting—not
+memory content, object IDs, task names, queries, or policy decisions. The ATC
+comparator uses only an isolated synthetic database; no operator Core,
+external memory engine, network service, provider code, or new production
+schema is involved.
+
+The fixture is intentionally diagnostic rather than a promotion gate: the
+no-memory control succeeds only on the abstention task; the simple baseline and
+ATC each succeed on four of five tasks. The simple baseline retrieves one
+forbidden cross-project distractor; ATC retrieves none, but ATC reaches only
+`0.90` mean evidence-group recall because it misses one required item in the
+multi-memory task.
+
+## Falsifiable memory evaluation program
+
+The Memory Lab now also has a longitudinal evaluation specification in
+`docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md`, a machine-readable experiment
+and promotion contract, and 18 deterministic symbolic scenarios validated by
+11 structural tests. They cover 13 capabilities from working continuity
+through correction, privacy, recall-to-action, and closure. The specification
+itself freezes evidence requirements; the separate Wave 2 section below
+records a bounded longitudinal reference adapter and six-scenario result. No
+external competitor result or production memory mechanism is implemented.
+
+The completed Wave 2 integration passes documentation validation, Ruff, mypy
+over 62 source files, 35 focused Memory Lab/governance/documentation tests, and
+the full Python 3.12.10 suite with 560 passes and 4 host-limited symlink skips.
+The complete suite passed from the coordinator worktree without a retry.
+
+## Memory Lab Wave 2
+
+ADR-044 and
+`research/memory-lab/wave2-manifest.json` govern five fresh visible
+GPT-5.6-sol worktree cells from coordinator commit `2bc0ad6`: the simple
+baseline ladder, lifecycle E01, an optional isolated Hindsight supplier cell,
+a fresh primary-source horizon review, and an independent novelty/falsification
+review. Workers own non-overlapping scopes, cannot merge or push, and return
+committed evidence to the coordinator for review and reproduction.
+
+The wave is complete. Its integrated report is
+[`docs/research/ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md`](research/ATC_MEMORY_LAB_WAVE2_RESULTS_2026-07-23.md).
+The coordinator reviewed every worker diff, sent lifecycle, scope,
+fixture-freeze, and evidence-boundary defects back for amendment, and
+reproduced both deterministic experiments with 20 repeats. No worker used
+credentials, real personal context, the operator Core, a production
+dependency, Docker, or a system service.
+
+The baseline ladder preserves the original M0 fixture hash
+`5601692ea305448f6b299c32725a93c73ca83ccee66f325e22cbcbedfa0cc68f`
+and freezes separate Wave 2 controls at
+`6dbf75db008b1be2d3db643b8dd19fe45f1a45c88121ac1ac3af16a0a0cd3c98`.
+On seven objects and five retrieval tasks, the stable current-state log is the
+only condition with success `1.0`, evidence-group recall `1.0`, and zero
+forbidden output. Current ATC Retrieval V3 has success `0.8`, recall `0.9`, and
+zero forbidden output. The stable log advances only to mutation, poisoning,
+scale, action, and CAOS fixtures; the result is not production acceptance and
+may be fixture-aligned. The local file ranker is explicitly not a reproduction
+of programmatic action-model log inspection.
+
+The bounded E01 slice executes 6 of the 18 specified longitudinal scenarios.
+The in-memory governed reference passes 6/6, append-only search passes 0/6, and
+no-memory passes 1/6. Removing authority, currentness/invalidation,
+applicability, or purge closure produces a distinct failure. Coordinator review
+added authoritative control-operation checks and terminal purge behavior
+before integration. The report explicitly states that the fixture and
+reference were co-designed and production Core semantics were not exercised.
+
+The Hindsight result is
+`not_executed_dependency_and_egress_gate`, not a benchmark score. Its official
+MIT source was temporarily cloned at
+`fa69b5b73b3b50bf5dcbae5bccbc7197de03692f`, statically reviewed, and removed.
+No supplier package, model, container, provider, credential, service, or
+upstream script ran. The dependency-free injected-client seam and fake tests
+remain; a future real cell requires loopback-only binding, immutable local
+model artifacts, and externally enforced default-deny egress.
+
+The fresh horizon and novelty reviews move lossless programmatic logs,
+online/off-policy/shift evaluation, write-admission poisoning, correction and
+residue repair, and secure portability ahead of framework tournaments and
+learned consolidation. Generic selective reminder and barrier-first repair
+novelty claims are retired. The next ATC-native experiments are the Sealed
+Projection Minimal Compiler, Record-Influence Barrier Closure, and Portable
+Working-State Three-Way Repair.
+
+## Memory Lab Wave 3
+
+Wave 3 is complete under ADR-044/ADR-046/ADR-047 and the
+[integrated result](research/ATC_MEMORY_LAB_WAVE3_RESULTS_2026-07-23.md).
+Six fresh visible `gpt-5.6-sol` worktree tasks remained evidence-only; the
+coordinator reviewed and integrated their scoped commits and reproduced the
+five deterministic cells. The focused integrated gate passed 43 tests.
+On Python 3.12.10, repository-wide Ruff and mypy passed, and pytest completed
+with 603 passed and four expected Windows symlink skips.
+
+The mixed result is preserved:
+
+- B01's restricted programmatic log scored confirmatory CAOS `0.857143`
+  against stable lexical `0.428571`, and its frozen combination scored `1.0`,
+  but the bounded configuration remains killed under its preregistered
+  external-operation gate. Internal work was not normalized, so this does not
+  falsify general programmatic memory or reproduce PRO-LONG.
+- O01 is held because the static memory-policy ranking was unstable across
+  off-policy, online, and shifted regimes.
+- P01 holds automatic durability: the non-production governed reference
+  durably retained poison in 4/5 unique attacks even though later gates reduced
+  influence and protected action to zero while preserving 5/5 clean utility.
+- E01b passed six narrow production Core paths and recorded six
+  unsupported/not-exercised lifecycle semantics; no complete-conformance claim
+  is accepted.
+- M2 is narrowly retained after 1,000 paired vaults × 20 repeats produced
+  CAOS, sufficiency, and one-deletion minimality `1.0`, zero full-receipt pair
+  differences, and mean disclosure `38.0` versus `70.1` full-authorized.
+- MPBench is metadata-qualified at pinned Apache-2.0 revision
+  `6886880a7c29625e0109e0ad91d0e095029f1577`, but no payload row was opened or
+  executed. The paper-linked PRO-LONG repository remained unavailable.
+
+Wave 3 advances Evidence-Compiled Memory as a research direction: complete
+versioned evidence, conservative admission, pre-relevance sealed
+authorization/currentness/applicability, bounded minimal context compilation,
+current-version reread, action-force ceilings, use/outcome receipts, and
+dependency-complete influence closure. Only the bounded M2 compiler contract
+advanced; no production implementation, external benchmark result, or claim
+that ATC has solved AI memory is accepted.
+
+## Memory Lab Wave 4
+
+Wave 4 is complete under ADR-048/ADR-049 and the
+[integrated result](research/ATC_MEMORY_LAB_WAVE4_RESULTS_2026-07-23.md).
+Four fresh visible `gpt-5.6-sol` worktree tasks started from immutable
+governance-only commit
+`f545c37157845f0bd402215719cb8c747b7fc21d`:
+
+- F02 independent falsification and primary-source prior-art review, medium;
+- M3 dependency-complete influence closure versus a full rebuild, high;
+- E02 frozen production-Core semantic-gap conformance, high; and
+- M1 observable assignment/use/outcome/invalidation receipts, medium.
+
+The independent F02 oracle was committed at
+`a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e` before M3 or M1 was
+dispatched. The coordinator reviewed each scoped diff in the frozen promotion
+order and reproduced 49 focused tests plus all three decisive reports.
+
+The result is deliberately mixed:
+
+- M3 is retained as a research contract and bounded optimization. All 15
+  frozen attacks pass; every hard-safety count is zero; optimized and full
+  rebuild agree; and the synthetic work control evaluates 120 descendants
+  instead of 12,000 nodes.
+- E02 records five `UNSUPPORTED` production semantics: generic epistemic
+  role, project-and-domain applicability, dependency lineage, decay or
+  retirement, and procedure preconditions or transfer. Exact same-identifier
+  reuse after purge is `NOT_EXERCISED`.
+- M1 is retained as a research contract. All 16 frozen attacks pass; every
+  hard-safety count is zero; replay and aggregate reconstruction are exact;
+  and unauthorized/inapplicable paired-vault differences are zero.
+- Terminal purge is explicitly destructive privacy compaction, not ordinary
+  append-only event admission. All affected identifiers leave declared
+  inspectable ledger surfaces.
+
+The next research direction is Evidence-Compiled Prospective Memory: a typed
+event-contingent transaction that decides when a dormant intention is due
+before disclosing minimal current evidence, then caps its permitted action and
+records only observable use and outcome. It must beat a simple deterministic
+scheduler and retain zero-tolerance authority, stale-influence, purge,
+duplicate-action, and confirmation gates.
+
+No worker changed production, accessed the operator Core or personal context,
+downloaded competitor code, called an external model or provider, merged, or
+pushed. No production promotion or claim that ATC has solved AI memory is
+accepted.
+
 ## Previously verified baseline
 
 - Python 3.12+ cross-platform Core with per-user SQLite/FTS5 storage,
@@ -210,13 +438,18 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
-- Current ADR-039 worktree on Windows Python 3.14.3: Ruff passes; strict mypy
-  passes across 59 source files; the full suite passes 513 tests with four
-  host-limited symlink skips; documentation links and `git diff --check` pass.
-  This includes automatic policy, ACL/session isolation, migration restart,
-  pre-v5 restore, source-free foreign-key/FTS recovery, purge resurrection
-  barriers, context-error idempotency, delete/restore history, Relay queue
-  identity, ordered projection restoration, and the approval-free E2E demo.
+- Current Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
+  strict mypy passes across 68 source files; 49 focused Wave 4 tests pass;
+  decisive M3/M1 reports reproduce byte-for-byte and E02 reproduces
+  semantically; documentation links and `git diff --check` pass; and the full
+  suite passes 652 tests with four host-limited symlink skips.
+- Current Wave 2 integration worktree on Windows Python 3.12.10: Ruff passes;
+  strict mypy passes across 62 source files; the full suite passes 560 tests
+  with four host-limited symlink skips; 35 focused
+  Memory Lab/governance/documentation tests pass; documentation links and
+  `git diff --check` pass. This includes the earlier automatic-policy,
+  ACL/session, migration/restore, purge, Relay, and approval-free demo
+  evidence plus the governed Wave 2 research harnesses.
 - Current dashboard on Node 25.6.1: 27 tests, TypeScript checking, and the
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build

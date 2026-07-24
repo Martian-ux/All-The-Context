@@ -1,0 +1,267 @@
+{
+  "ablations": {
+    "aggregates_without_dependencies": {
+      "failure": "deterministic_rebuild_cannot_remove_contribution",
+      "stale_aggregate_after_invalidation_count": 1
+    },
+    "client_self_report": {
+      "fabricated_causal_credit_accept_count": 1,
+      "failure": "claimant_can_fabricate_use_or_success"
+    },
+    "collapse_all_grades_to_used": {
+      "distinguishable_ablation_states": 1,
+      "distinguishable_required_states": 2,
+      "failure": "acknowledgement_and_observed_use_conflated"
+    },
+    "success_only_logging": {
+      "failure": "selection_bias_erases_harm_and_failure",
+      "preserved_failure_outcomes": 0
+    },
+    "unversioned_records": {
+      "failure": "correction_aliases_old_and_new_evidence",
+      "stale_version_binding_reject_count": 0
+    }
+  },
+  "decision": {
+    "scope": "isolated_deterministic_research_contract_only",
+    "state": "RETAIN_M1_OBSERVABLE_LEDGER"
+  },
+  "decisive_metrics": {
+    "accepted_forbidden_field_count": 0,
+    "case_coverage_fraction": 1.0,
+    "conflicting_replay_accept_count": 0,
+    "duplicate_side_effect_count": 0,
+    "fabricated_outcome_accept_count": 0,
+    "impossible_transition_accept_count": 0,
+    "missing_required_invalidation_count": 0,
+    "nonacknowledgement_inferred_nonuse_count": 0,
+    "purge_inspectable_identifier_residue_count": 0,
+    "purge_receipt_residue_count": 0,
+    "receipt_pair_difference_count_after_placeholder_normalization": 0,
+    "stable_cross_run_identifier_count": 0,
+    "unbound_downstream_event_count": 0
+  },
+  "evidence_level": "L1",
+  "execution_origin": {
+    "governance_base_sha": "f545c37157845f0bd402215719cb8c747b7fc21d",
+    "import_origin_verified_to_worker_worktree": true,
+    "repository_relative_imported_module_paths": [
+      "packages/allthecontext/src/allthecontext/memory_lab_m1.py"
+    ]
+  },
+  "f02_case_coverage_fraction": 1.0,
+  "f02_case_verdicts": {
+    "M1-C01-HAPPY-OBSERVABLE-CHAIN": {
+      "evidence": "exact_chain_replayed",
+      "invariants": [
+        "M1-I01",
+        "M1-I05",
+        "M1-I06",
+        "M1-I07"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C02-NONACKNOWLEDGEMENT-IS-UNKNOWN": {
+      "evidence": "absence_remains_unknown",
+      "invariants": [
+        "M1-I05"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C03-USE-WITHOUT-ACKNOWLEDGEMENT": {
+      "evidence": "direct_use_without_acknowledgement",
+      "invariants": [
+        "M1-I01",
+        "M1-I05"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C04-ACKNOWLEDGED-BUT-NOT-OBSERVED-USED": {
+      "evidence": "acknowledgement_not_promoted",
+      "invariants": [
+        "M1-I05"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C05-DUPLICATE-REPLAY": {
+      "evidence": "identical_retry_no_side_effect",
+      "invariants": [
+        "M1-I02"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C06-CONFLICTING-REPLAY": {
+      "evidence": "conflicting_retry_rejected",
+      "invariants": [
+        "M1-I01",
+        "M1-I02"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C07-OUT-OF-ORDER-AND-IMPOSSIBLE": {
+      "evidence": "three_impossible_transitions_rejected",
+      "invariants": [
+        "M1-I01",
+        "M1-I03",
+        "M1-I06"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C08-FABRICATED-OUTCOME": {
+      "evidence": "only_independent_outcome_accepted",
+      "invariants": [
+        "M1-I01",
+        "M1-I06",
+        "M1-I07"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C09-CORRECTION-INVALIDATION": {
+      "evidence": "correction_invalidates_old_version",
+      "invariants": [
+        "M1-I01",
+        "M1-I04"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C10-SCOPE-AND-PERMISSION-INVALIDATION": {
+      "evidence": "principals_receive_exact_invalidation_reasons",
+      "invariants": [
+        "M1-I04",
+        "M1-I07"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C11-DELETE-VERSUS-PURGE": {
+      "evidence": "delete_reversible_purge_delinks",
+      "invariants": [
+        "M1-I04",
+        "M1-I08"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C12-PURGED-IDENTIFIER-REUSE": {
+      "evidence": "fresh_lineage_cannot_accept_old_receipts",
+      "invariants": [
+        "M1-I01",
+        "M1-I07",
+        "M1-I08"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C13-POLICY-GENERATION-INVALIDATION": {
+      "evidence": "old_policy_events_rejected",
+      "invariants": [
+        "M1-I01",
+        "M1-I04"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C14-RAW-TRACE-AND-HIDDEN-REASONING-REJECTION": {
+      "evidence": "forbidden_values_rejected_without_echo",
+      "invariants": [
+        "M1-I07"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C15-RECEIPT-CORRELATION-NONINTERFERENCE": {
+      "evidence": "unauthorized_canary_has_zero_observable_effect",
+      "invariants": [
+        "M1-I07",
+        "M1-I08"
+      ],
+      "verdict": "PASS"
+    },
+    "M1-C16-PURGE-RACE-WITH-OBSERVED-USE": {
+      "evidence": "purge_barrier_rejects_delayed_use",
+      "invariants": [
+        "M1-I04",
+        "M1-I05",
+        "M1-I08"
+      ],
+      "verdict": "PASS"
+    }
+  },
+  "f02_oracle_commit": "a866ad5b9d17a72d73d2dca4de4dd8be1e71ca9e",
+  "fixture": "memory_lab_m1_fixtures.json",
+  "leak_scan": {
+    "forbidden_token_hits": [],
+    "passed": true
+  },
+  "ledger_contract": {
+    "ordinary_event_admission": "append_only",
+    "post_purge_replay": "deterministic_from_compacted_state",
+    "terminal_purge": "explicit_irreversible_privacy_compaction_to_an_aggregate_identity_generation_barrier_and_purge_count"
+  },
+  "limitations": [
+    "synthetic_deterministic_L1_only",
+    "no_model_client_provider_operator_core_or_real_action",
+    "host_observed_dependency_does_not_establish_hidden_model_use",
+    "controlled_omission_effect_is_fixture_specific",
+    "logical_timing_classes_do_not_establish_wall_clock_side_channel_resistance",
+    "exact_record_ids_are_present_only_while_their_lineage_is_active",
+    "terminal_purge_is_a_destructive_compaction_exception_to_physical_append_only_storage",
+    "the_global_identity_generation_barrier_is_a_conservative_research_contract"
+  ],
+  "paired_episode_experiment": {
+    "episode_count": 200,
+    "grades": {
+      "acknowledged": 40,
+      "controlled_intervention": 40,
+      "none": 40,
+      "observed_use": 40,
+      "supplied": 40
+    },
+    "intervention_claim": "paired_controlled_omission_assignment_only",
+    "observational_association_sum": 0,
+    "observational_claim": "association_only_not_causal",
+    "paired_assignments": 40,
+    "per_kind": {
+      "applicable_required_memory": {
+        "episode_pairs": 10,
+        "observational_association_sum": 10,
+        "randomized_effect_sum": 10
+      },
+      "authorized_inapplicable_distractor": {
+        "episode_pairs": 10,
+        "observational_association_sum": 0,
+        "randomized_effect_sum": 0
+      },
+      "harmful_memory": {
+        "episode_pairs": 10,
+        "observational_association_sum": -10,
+        "randomized_effect_sum": -10
+      },
+      "redundant_with_task_input": {
+        "episode_pairs": 10,
+        "observational_association_sum": 0,
+        "randomized_effect_sum": 0
+      }
+    },
+    "randomized_effect_sum": 0,
+    "self_upgrading_event_count": 0
+  },
+  "paired_vault_noninterference": {
+    "candidate_count_difference_count": 0,
+    "full_receipt_difference_count": 0,
+    "learned_aggregate_difference_count": 0,
+    "page_cursor_shape_difference_count": 0,
+    "pair_count": 2,
+    "reason_code_difference_count": 0,
+    "timing_class_difference_count": 0
+  },
+  "privacy": {
+    "declared_inspectable_state_scanned_after_purge": true,
+    "failure_receipts_echo_rejected_values": false,
+    "hidden_reasoning_fields": 0,
+    "model_self_report_causal_proof_count": 0,
+    "raw_task_or_content_fields": 0,
+    "receipt_allowlist_enforced": true
+  },
+  "schema": "atc.memory-lab.m1-report.v1",
+  "state_reconstruction": {
+    "accepted_event_replay_mismatch_count": 0,
+    "aggregate_rebuild_mismatch_count": 0,
+    "purge_compaction_replay_mismatch_count": 0
+  }
+}

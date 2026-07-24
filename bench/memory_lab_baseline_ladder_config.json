@@ -1,0 +1,12 @@
+{
+  "schema": "atc.memory-lab.baseline-ladder-config.v1",
+  "context_budget_chars": 260,
+  "static_profile_object_ids": [
+    "atlas-runbook",
+    "concise-status",
+    "summit-hotel-old",
+    "meal-safety"
+  ],
+  "file_search_max_files": 7,
+  "file_search_max_bytes": 2048
+}

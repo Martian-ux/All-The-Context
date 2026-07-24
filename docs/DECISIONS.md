@@ -5,6 +5,11 @@
 Relay stores a projection and proposal queue only. Application events, not
 database files, cross the boundary.
 
+External memory systems are research suppliers or discardable projections, not
+additional authorities. Intake requires an official origin, immutable revision,
+license and component caveat review, dependency/data-flow inventory, and an
+isolated benchmark before any code reuse or execution.
+
 ## ADR-002: SQLite-first storage
 
 Core uses SQLite/FTS5. The first Relay slice also supports SQLite for a complete
@@ -762,3 +767,378 @@ platform, architecture, version, size, and checksum failures continue to fail
 closed. `unpublished` never implies that a release exists and does not replace
 the offline signature, immutable GitHub Release, protected publication, or
 Pages promotion required for real OTA delivery.
+
+## ADR-042: AI-memory research is hybrid, benchmark-driven, and subordinate to Core
+
+**Status:** accepted as a research direction 2026-07-23; does not change the V1
+product boundary or accept a production implementation.
+
+ATC's long-term objective is end-to-end AI-memory reliability. It will use
+proven external implementations and conventional systems mechanisms wherever
+they improve the product, while reserving new research for measured gaps.
+Novelty is not a promotion criterion.
+
+The research program has two product planes and one evaluation surface:
+
+- a Memory Plane for governed evidence, current knowledge, experience,
+  procedures, working state, consolidation, and recall;
+- an optional Intent and Consequence Plane for adequately witnessed
+  preferences and directives compiled at cooperating client checkpoints; and
+- an ATC Memory Lab that compares simple, external, hybrid, and experimental
+  systems with fixed data, model backbones, budgets, and stage-level metrics.
+
+External extractors, graph engines, retrievers, consolidators, and learned
+models may enter through lab adapters or discardable sidecars. They may propose
+observations, IDs, rankings, relations, summaries, and procedures. They do not
+create current context directly, choose origin or disposition, expand
+permission, assign behavioral force, or weaken correction, deletion, and
+purge. Core remains authoritative.
+
+The
+[`Consequence-Closed Context`](research/CONSEQUENCE_CLOSED_CONTEXT.md) protocol
+is a differentiated research plane, not the whole memory product. Its protocol
+must remain useful without learned joint compilation. Learned target envelopes,
+relation models, record-owned packets, private residuals, or parameter memory
+must beat strong deterministic and external baselines, retain exact dependency
+and purge semantics, and satisfy the local cross-platform boundary before a
+separate production decision.
+
+The beta remains the immediate milestone. Research does not block release, add
+a mandatory hosted service, or make unimplemented checkpoint, behavioral,
+graph, vector, neural, or experiential-learning claims.
+
+The 2026-07-23 horizon amendment narrows the execution order. The Memory Lab
+must climb a simple baseline ladder before external framework adapters. A
+versioned event stream is the foundation; a general graph, retrieval council,
+or learned procedure must earn its complexity against a simpler rung.
+Authorization is followed by a separate epistemic-role and task-applicability
+gate before relevance. Derived-state lineage, invalidation, rebuild, and purge
+move into the authority foundation, while host behavioral closure remains
+research.
+
+Memory research promotion uses Current Authorized Outcome Success (CAOS) and
+separately reported stage metrics. Applicable evaluations compare simple
+baselines, each individual competitor, frozen hybrids, and ATC ablations under
+equal reader, context, cost, and clock conditions. Official benchmark metrics
+remain comparability measures, not sole promotion criteria. Authorization,
+correction, forgetting, harmful-memory, consequence-closure, outcome-closure,
+and purge gates cannot be offset by aggregate quality.
+
+## ADR-043: Memory Lab adapters rank authorized snapshots and never own truth
+
+**Status:** accepted for the bounded M0 research harness 2026-07-23; not a
+production adapter or external-system acceptance.
+
+The first executable Memory Lab surface uses two versioned contracts:
+`atc.memory-object.v1` for immutable memory objects and
+`atc.memory-lab.retrieval-adapter.v1` for retrieval adapters. A benchmark run
+supplies the same already-authorized snapshot, frozen tasks, clock, result
+limit, and repeat protocol to every adapter. Adapters return ordered object IDs,
+explicit abstention, and provider-neutral usage accounting. They do not return
+authoritative prose, select disposition, expand permission, or write canonical
+Core state.
+
+Every adapter declares identity, version, model provider, network access, and
+data egress. The contract rejects canonical-write capability and inconsistent
+egress declarations. The reusable report replaces result IDs with counts and a
+deterministic ranking fingerprint derived from corpus ordinals; it also omits
+task names, queries, and memory content. Unknown-ID violations remain counted
+but cannot place the unknown identifier in a report.
+
+M0 includes a no-memory control, a deterministic token-overlap baseline, and an
+adapter over the current ATC Retrieval V3 implementation. The latter builds an
+isolated synthetic Core-shaped database so it can exercise production retrieval
+without connecting to or modifying the operator's authoritative Core. No
+competitor code, hosted service, new default dependency, or production schema is
+added.
+Future competitors implement the same protocol only after separate dependency,
+license, security, data-flow, and provider review.
+
+Task-level evidence groups define sufficiency: a task succeeds only when every
+required group is represented, no forbidden or fabricated result appears, and
+an abstention task returns no memory. Recall, reciprocal rank, disclosure,
+latency, storage, determinism, model calls, tokens, and cost remain separate
+measurements. The initial five-task fixture is a contract regression and
+diagnostic comparison, not evidence of real-user quality or a promotion gate.
+
+## ADR-044: Independent Memory Lab workers produce evidence, not integration authority
+
+**Status:** accepted for governed research waves 2026-07-23; does not grant
+workers, external systems, or research results production authority.
+
+Each parallel Memory Lab cell runs in a fresh visible Codex thread and separate
+git worktree from one immutable coordinator commit. Its prompt freezes scope,
+file ownership, allowed external actions, validation duties, and completion
+receipt. Workers may commit scoped results but do not merge, push, edit wave
+governance, connect to the operator Core, or describe their result as an
+integrated ATC result.
+
+The coordinator is the sole integrator. Worker output is untrusted until its
+diff, provenance, privacy boundary, and result are reviewed and reproduced on
+the integration branch. Evidence levels distinguish specification, isolated
+synthetic, coordinator-reproduced, external-supplier, cross-platform, and
+consented-product results. Negative, unsafe, blocked, and skipped cells remain
+visible and cannot be promoted by aggregate scores from other cells.
+
+External code is denied by default. A wave may name a bounded supplier cell
+only after recording canonical origin, immutable revision, licenses and
+notices, dependencies and install hooks, vulnerabilities, network and data
+flows, disposable isolation, and zero personal data or credentials. A clone is
+not permission to install, execute, copy, or make the supplier a production
+dependency. The machine-readable wave manifest records the exact workers,
+authority boundaries, gates, commits, results, and limitations.
+
+## ADR-045: Wave 2 advances the simple current-state log and gates complexity behind longitudinal evidence
+
+**Status:** accepted as bounded research evidence 2026-07-23; no production
+memory implementation or external supplier is accepted.
+
+The first governed Memory Lab wave completed five independent cells and the
+coordinator reproduced both executable synthetic experiments. On the unchanged
+seven-object/five-task M0 retrieval fixture, a stable observation log with
+deterministic current-state resolution achieved task success `1.0`, evidence
+group recall `1.0`, and zero forbidden output. Current ATC Retrieval V3
+achieved `0.8`, `0.9`, and zero respectively. The stable condition advances to
+mutation, poisoning, scale, action, and CAOS fixtures; it is not an
+implementation-acceptance or production-replacement decision.
+
+The retrieval adapter ABI remains `atc.memory-lab.retrieval-adapter.v1`.
+Optional task budgets and identifier-safe failure diagnostics are additive, and
+the aggregate report is versioned separately as v2. The original M0 fixture
+remains byte-for-byte frozen; Wave 2 baseline controls have their own
+schema-versioned configuration and digest. Current-state resolution occurs
+over the complete authorized temporal snapshot before task scope and project
+applicability so a narrower or inapplicable superseder cannot resurrect an
+older broad record.
+
+The bounded E01 reference slice executed six of eighteen specified lifecycle
+scenarios. The in-memory governed reference passed 6/6, append-only search
+passed 0/6, and no-memory passed 1/6. Removing authority,
+currentness/invalidation, applicability, or purge closure caused a distinct
+regression. This accepts those four rule families as required conformance
+hypotheses, not as evidence that current production Core implements the
+reference. The fixture, oracle, and rules were co-designed; an isolated
+production-semantics E01b cell is required.
+
+The Hindsight supplier execution was skipped with
+`not_executed_dependency_and_egress_gate`. Only its official MIT source at
+`fa69b5b73b3b50bf5dcbae5bccbc7197de03692f` was temporarily cloned for static
+review and then removed. No supplier package, model, container, provider,
+credential, service, or benchmark ran, and no Hindsight score exists.
+Checked-in code is a dependency-free injected-client boundary tested with a
+fake. A future real cell requires immutable local model artifacts,
+loopback-only binding, and an externally enforced default-deny egress boundary.
+
+Wave 2 also changes the experiment order. Lossless structured-log inspection,
+online/off-policy/shift testing, and admission-to-delayed-action poisoning
+precede framework tournaments. Raw fidelity and localized maintenance precede
+lossy consolidation. External systems remain valued competitors and suppliers,
+but a skipped or failed gate is preserved rather than bypassed.
+
+ATC does not claim generic selective reminder or barrier-first repair novelty.
+Immediate ATC-native hypotheses are the Sealed Projection Minimal Compiler,
+the authority/purge-aware Record-Influence Barrier Closure composition, and
+Portable Working-State Three-Way Repair. Each remains specification-level
+until it beats simple controls on CAOS and hard lifecycle gates.
+
+## ADR-046: Wave 3 tests five independent falsification surfaces before further architecture promotion
+
+**Status:** completed as governed research execution 2026-07-23; final result
+classification is in ADR-047 and no production change is accepted.
+
+Wave 3 starts five fresh visible worktree tasks from immutable coordinator
+commit `950f649d9e3cc106fb8ff4febbe38919f8e00d11`: B01 programmatic
+lossless-log inspection, O01 online/off-policy/shift triangulation, P01
+admission-to-delayed-action poisoning, E01b isolated production-Core
+conformance, and M2 sealed minimal projection. Each owns new experiment files
+only. Workers do not edit shared harnesses, production behavior, governance,
+or another cell's files; they never merge or push.
+
+Core remains authoritative. E01b may exercise public or stable production paths
+only through a disposable synthetic store and records unsupported or failing
+semantics rather than fixing them. P01 uses opaque synthetic poison and a
+simulated protected action. B01 cannot call a deterministic one-shot file
+ranker "programmatic memory" and cannot claim PRO-LONG reproduction without an
+equivalent action model. M2 must test paired-vault noninterference across every
+declared observable channel, not output content alone.
+
+The smaller bounded O01 protocol cell uses `gpt-5.6-sol` medium reasoning; the
+four core implementation/falsification cells use high reasoning. Model effort
+does not change evidence level. Every result remains `L1` until coordinator
+diff review and deterministic reproduction raise it to `L2`.
+
+No external code, model, provider, credential, real personal context, operator
+Core, or production schema is allowed. Negative, unsupported, held, killed,
+and not-exercised outcomes are preserved. Promotion order remains B01, O01,
+P01, E01b, then M2 even though implementation proceeds in parallel.
+
+During active execution, the authors' official page exposed an Apache-2.0
+MPBench repository that the prior horizon had not located, while PRO-LONG's
+paper-linked repository still returned 404. A sixth, smaller
+`gpt-5.6-sol` medium task is therefore appended after the five falsification
+surfaces for metadata-only provenance, license, and safe-cell design. It may
+inspect official metadata, README, license, and tree shape only: cloning,
+payload-row access, third-party execution, and contamination of the frozen P01
+or B01 cells remain forbidden. This intake is evidence preparation, not an
+external benchmark result or production promotion.
+
+## ADR-047: Wave 3 advances evidence-compiled memory while holding automatic durability and static winner selection
+
+**Status:** accepted as bounded research direction 2026-07-23; no production
+schema, external benchmark, or claim of solved AI memory is accepted.
+
+Wave 3 completed all six governed cells and the coordinator reproduced the
+five deterministic experiments. Their mixed results remain visible:
+
+- B01 preserves `KILL_MECHANISM` for its bounded hand-authored DSL under the
+  frozen external-operation gate. Its strong synthetic quality result does not
+  overcome the gate, but non-normalized internal work prevents a general
+  programmatic-memory or compute-efficiency conclusion.
+- O01 is held because tie-aware policy rankings were not stable across
+  off-policy, online, and shifted regimes.
+- P01 holds automatic durability because the governed reference durably
+  retained poison in four of five unique scenarios even though applicability,
+  currentness, and protected-action confirmation prevented observable
+  influence and action.
+- E01b accepts six narrow current-Core conformance facts and records six
+  unsupported or not-exercised semantics. Kind and explicit-scope filtering do
+  not establish generic epistemic roles or a project-and-domain applicability
+  hard gate.
+- M2 advances only as a bounded synthetic contract after exact finite-set
+  sufficiency, one-deletion minimality, current-version reread, disclosure
+  reduction, and full-receipt paired-vault noninterference passed.
+- The MPBench artifact is metadata-qualified for a future quarantined,
+  schema-only cell. No payload or external result entered Wave 3, and the
+  paper-linked PRO-LONG repository remained unavailable.
+
+The resulting research architecture is called **Evidence-Compiled Memory**.
+The name describes a contract, not a new authority or accepted product brand.
+A memory use is treated as a revocable transaction:
+
+1. untrusted observations enter through authority and witness admission;
+2. Core owns the complete versioned canonical evidence substrate;
+3. currentness and task applicability resolve before relevance;
+4. the authorized/current/applicable projection is sealed;
+5. a bounded compiler selects an obligation-complete minimal working set;
+6. selected record versions are reread immediately before issue;
+7. the issue carries disclosure, dependency, and action-force receipts;
+8. observable use and outcomes are recorded without hidden reasoning; and
+9. correction, deletion, permission change, and purge close every derived
+   influence before republication.
+
+Retrievers, coding agents, learned routers, and external systems may propose
+candidates or rankings through bounded adapters. They do not create canonical
+truth, make untrusted content durable automatically, expand scope or force,
+bypass the sealed projection, or retain influence after invalidation. Core
+remains the sole canonical authority.
+
+The next gated order is:
+
+1. M3/E02 dependency-complete influence closure and the six exposed production
+   semantic gaps;
+2. M1 assignment/use/outcome/invalidation receipts;
+3. a separately preregistered MPBench schema-only quarantine cell;
+4. B02 with a genuine bounded code-writing reader and normalized compute,
+   token, and action accounting;
+5. O02 shadow policy routing under online formation and shift; and
+6. M6 three-way working-state repair after closure and use receipts exist.
+
+M3/E02 must compare optimized repair with full rebuild and preserve fail-closed
+purge. A production change requires a separate ADR after integrated tests show
+that role, applicability, lineage, and procedure-precondition semantics can be
+implemented without creating a second authority. M2's unkeyed synthetic
+commitments, logical timing classes, hand-authored obligations, and
+compiler-visible attestations are not production privacy or security designs.
+
+## ADR-048: Wave 4 tests influence closure and observable use before product promotion
+
+**Status:** completed as governed research execution 2026-07-23; final
+classifications are recorded in ADR-049 and no production change is accepted.
+
+Wave 4 starts four fresh visible worktree tasks from one immutable
+governance-only base. M3 tests incremental dependency-complete repair against
+a full-rebuild oracle across correction, scope narrowing, permission
+revocation, delete, purge, and policy-generation change. E02 exercises the six
+semantic gaps recorded by Wave 3 against disposable synthetic instances of
+the frozen production Core. M1 tests an observable assignment/use/outcome
+ledger that is forbidden from storing hidden reasoning or raw context. F02
+commits an independent falsification oracle before mechanism implementation
+and performs the final result review.
+
+M3 can advance only with zero published stale descendants, zero optimized
+versus full-rebuild eligibility mismatches, zero purge residue in inspectable
+derived state, and fail-closed behavior across partial repair and stale-writer
+attempts. Correct closure without a work reduction may retain the contract
+while holding the optimization. E02 must preserve `UNSUPPORTED` and
+`NOT_EXERCISED` as distinct outcomes and cannot patch a failed path. M1 events
+must bind canonical record identifiers and versions, reject impossible causal
+transitions and conflicting replay, and distinguish non-acknowledgement from
+non-use.
+
+Core remains the sole authority. Workers may add only research-specific files,
+cannot access the operator Core, cannot use personal context, credentials,
+external code, models, or providers, and cannot merge, push, edit governance,
+or change production behavior. A separate decision is required before any
+schema or runtime promotion.
+
+## ADR-049: Retain closure and observable-use contracts, fill Core semantics, then test prospective memory
+
+**Status:** accepted as bounded research direction 2026-07-23; no production
+schema, runtime mechanism, competitor dependency, or solved-memory claim is
+accepted.
+
+Wave 4 completed its four governed cells and the coordinator reproduced the
+three executable results. M3 passes all 15 independently frozen cases with
+zero hard-safety failures, exact agreement with an independently coded full
+rebuild, and a `0.99` evaluated-node reduction in its synthetic work control.
+M1 passes all 16 independently frozen cases with zero hard-safety failures,
+exact replay and aggregate reconstruction, and zero paired-vault differences.
+E02 classifies five required production semantics as `UNSUPPORTED` and exact
+same-identifier recreation after terminal purge as `NOT_EXERCISED`.
+
+Retain the M3 dependency-complete closure contract and its bounded
+optimization. Retain the M1 observable-use ledger contract. Neither research
+prototype enters production. Barrier-first cascade repair is not claimed as
+novel because MemoRepair already establishes that mechanism class. The
+candidate ATC differentiation remains the exact composition of Core-owned
+authority, scope, applicability, currentness, policy generation, delete/purge
+semantics, minimal sealed projection, complete influence closure, action
+ceilings, and privacy-bounded observable-use and outcome receipts.
+
+M1's storage contract has one explicit exception: ordinary accepted events
+are append-only, while terminal purge is destructive privacy compaction.
+Affected event, record, and index identifiers leave all declared inspectable
+surfaces; replay resumes from an aggregate identity-generation barrier and
+purge count. A future implementation must preserve that boundary rather than
+claim both physical append-only storage and terminal erasure.
+
+Production work, if separately authorized, proceeds in small Core-owned
+slices:
+
+1. optional explicit generic epistemic role with unknown legacy values;
+2. project-and-domain applicability with fail-closed unknowns;
+3. version-bound dependency and influence inventory;
+4. optimized closure dual-run against a full-rebuild shadow oracle;
+5. the observable ledger and privacy-compaction boundary; and
+6. only then a notification-only prospective-memory kernel.
+
+The next research hypothesis is Evidence-Compiled Prospective Memory. A
+canonical event-contingent memory transaction binds exact evidence versions,
+a typed cue, positive witnesses, negative guards, expiry/rearm behavior,
+principal/project/domain/policy generations, a maximum action force, closure
+dependencies, and observable outcome receipts. Typed cue evaluation occurs
+before content disclosure. Only a due, current, authorized, applicable
+transaction may compile minimal context and cross a cooperating host
+checkpoint.
+
+This proposal must first beat a simple explicit task table and deterministic
+scheduler. Prospective precision, recall, false alarms, action success,
+disclosure, outcome benefit, and lifecycle failures remain separate metrics.
+Unauthorized, stale, deleted, purged, wrong-domain, duplicate, or
+unconfirmed-protected action is a non-compensable failure.
+
+External memory systems may enter later through dedicated supplier cells with
+pinned revision, license confirmation, static inventory, isolated execution,
+and an adapter that cannot canonize records or bypass Core. Wave 4's
+external-code prohibition remains truthful: it downloaded or executed no
+competitor system.

@@ -1,0 +1,113 @@
+{
+  "schema": "atc.memory-lab.fixture.v1",
+  "objects": [
+    {
+      "object_id": "atlas-runbook",
+      "kind": "workflow",
+      "content": "Project Atlas release rollback requires the recovery runbook before deployment.",
+      "scopes": ["project:atlas"],
+      "tags": ["release", "rollback"]
+    },
+    {
+      "object_id": "concise-status",
+      "kind": "interaction_preference",
+      "content": "Use concise status summaries with exact command results.",
+      "scopes": ["preferences"],
+      "tags": ["status", "concise"],
+      "explicit_user_statement": true
+    },
+    {
+      "object_id": "summit-hotel-old",
+      "kind": "travel_fact",
+      "content": "The Summit lodging reservation is at Harbor Hotel.",
+      "scopes": ["travel"],
+      "tags": ["summit", "lodging"],
+      "valid_from": "2025-01-01T00:00:00+00:00"
+    },
+    {
+      "object_id": "summit-hotel-current",
+      "kind": "travel_fact",
+      "content": "The Summit lodging reservation is at Cedar Hotel.",
+      "scopes": ["travel"],
+      "tags": ["summit", "lodging"],
+      "valid_from": "2026-02-01T00:00:00+00:00",
+      "supersedes": "summit-hotel-old"
+    },
+    {
+      "object_id": "meal-safety",
+      "kind": "preference",
+      "content": "When arranging meals, avoid walnuts.",
+      "scopes": ["preferences"],
+      "tags": ["meals", "safety"],
+      "explicit_user_statement": true
+    },
+    {
+      "object_id": "orchid-runbook",
+      "kind": "workflow",
+      "content": "Project Orchid release rollback uses the blue recovery procedure.",
+      "scopes": ["project:orchid"],
+      "tags": ["release", "rollback"]
+    },
+    {
+      "object_id": "unrelated-garden",
+      "kind": "fact",
+      "content": "The community garden opens on Saturday morning.",
+      "scopes": ["community"],
+      "tags": ["garden"]
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "release-brief",
+      "query": "Atlas release rollback concise status",
+      "evaluated_at": "2026-06-01T12:00:00+00:00",
+      "current_project": "atlas",
+      "limit": 4,
+      "evidence_groups": [
+        ["atlas-runbook"],
+        ["concise-status"]
+      ],
+      "forbidden_ids": ["orchid-runbook"]
+    },
+    {
+      "task_id": "current-lodging",
+      "query": "Summit lodging reservation hotel",
+      "evaluated_at": "2026-06-01T12:00:00+00:00",
+      "scopes": ["travel"],
+      "limit": 3,
+      "evidence_groups": [
+        ["summit-hotel-current"]
+      ],
+      "forbidden_ids": ["summit-hotel-old"]
+    },
+    {
+      "task_id": "meal-plan",
+      "query": "meal safety walnuts",
+      "evaluated_at": "2026-06-01T12:00:00+00:00",
+      "scopes": ["preferences"],
+      "limit": 3,
+      "evidence_groups": [
+        ["meal-safety"]
+      ]
+    },
+    {
+      "task_id": "project-scope",
+      "query": "release rollback recovery",
+      "evaluated_at": "2026-06-01T12:00:00+00:00",
+      "scopes": ["project:atlas"],
+      "current_project": "atlas",
+      "limit": 3,
+      "evidence_groups": [
+        ["atlas-runbook"]
+      ],
+      "forbidden_ids": ["orchid-runbook"]
+    },
+    {
+      "task_id": "unknown-topic",
+      "query": "quantum orchard calibration",
+      "evaluated_at": "2026-06-01T12:00:00+00:00",
+      "limit": 3,
+      "evidence_groups": []
+    }
+  ]
+}

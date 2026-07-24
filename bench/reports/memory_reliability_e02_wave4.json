@@ -1,0 +1,289 @@
+{
+  "determinism": {
+    "receipt_fingerprint": "5e497efe8392f10a36895cbeacd1ee00525005a3140c6ebe9c498bd2d52af7ef",
+    "repeat_deterministic": true,
+    "repeats": 10
+  },
+  "execution_origin_receipt": {
+    "absolute_paths_recorded": false,
+    "governance_commit_sha": "f545c37157845f0bd402215719cb8c747b7fc21d",
+    "import_origin_verified_to_worker_worktree": true,
+    "pre_verification_receipts_invalidated": true,
+    "relative_imported_module_paths": {
+      "allthecontext": "packages/allthecontext/src/allthecontext/__init__.py",
+      "allthecontext.core.service": "packages/allthecontext/src/allthecontext/core/service.py",
+      "allthecontext.models": "packages/allthecontext/src/allthecontext/models.py",
+      "allthecontext.storage": "packages/allthecontext/src/allthecontext/storage.py"
+    }
+  },
+  "execution_scope": {
+    "condition": "frozen_production_core_disposable_synthetic_stores",
+    "declared_gap_count": 6,
+    "executed_boundary_probe_count": 15,
+    "external_code_or_systems_exercised": false,
+    "model_calls": 0,
+    "network_calls": 0,
+    "operator_core_connected": false,
+    "production_code_changed": false,
+    "provider_calls": 0,
+    "raw_personal_context": false,
+    "temporary_isolated_store": true
+  },
+  "expectations": {
+    "blind_independent_suite": false,
+    "frozen_before_e02_execution": true,
+    "method": "hand-authored against the known frozen production codebase"
+  },
+  "experiment": "E02",
+  "fixture_sha256": "7c5f3483307d3c1ea8409f3700cbdf416e173aded4b54275a65ef0eee48d7299",
+  "governance_base": "f545c37157845f0bd402215719cb8c747b7fc21d",
+  "implementation_boundary_receipt": {
+    "authority_boundaries": [
+      "Core remains the sole canonical authority for roles, applicability, lineage, and lifecycle state.",
+      "Callers and Relay may propose explicit metadata but cannot canonize it or create an independent dependency graph.",
+      "Applicability and role gates must resolve in Core before relevance scoring; kind, free-form structured_value, tags, and scope labels are not substitute authorities.",
+      "Derived artifacts may reference Core record IDs and versions but cannot own canonical currentness or purge truth."
+    ],
+    "current_schema_api_touchpoints": {
+      "canonical_input_output": [
+        "CandidateInput",
+        "ContextRecordOut",
+        "context_candidates",
+        "context_records",
+        "context_record_versions snapshot_json"
+      ],
+      "eligibility_and_retrieval": [
+        "SearchRequest",
+        "EligibleRecordSelector.select/select_authorized",
+        "_admissibility_inputs",
+        "context_fts"
+      ],
+      "lifecycle_and_distribution": [
+        "CoreStore.correct_record/delete_record/restore_record/purge",
+        "purge_tombstones",
+        "replication_events",
+        "export/import migration paths"
+      ]
+    },
+    "first_capability": {
+      "capability": "generic_epistemic_role",
+      "promotion_guard": "Do not claim complete applicability or lifecycle readiness from this field alone; project/domain gates, lineage closure, and procedure preconditions remain separate gated work.",
+      "reason": "It is the smallest additive semantic needed before role-aware applicability or procedure policy, and it does not require a parallel authority or derived-state graph.",
+      "smallest_safe_boundary": "Add an optional explicit Core-owned role field end-to-end across canonical input, record versions, retrieval eligibility, replication, and export; preserve unknown for legacy rows and never infer role from kind."
+    },
+    "migration_risks": [
+      "New fields must round-trip through candidate, record, version snapshot, replication, export/import, and public transport schemas without inferring values for legacy rows.",
+      "A role backfill from kind would silently encode the rejected substitution; legacy role must remain unknown until explicitly classified.",
+      "Project and domain applicability require AND-capable normalized predicates; reusing current any-label scope filtering would preserve cross-boundary leakage.",
+      "Lineage must be Core-owned, version-bound, cycle checked, scope checked, and purge closed; a sidecar graph would create a second authority.",
+      "Procedure preconditions require versioned evaluation semantics and fail-closed unknown handling before any automatic transfer.",
+      "Decay or retirement must not rewrite evidence history or weaken terminal tombstones; initial migrations should separate eligibility state from destructive collection."
+    ],
+    "receipt_type": "design_proposal_separate_from_observed_case_facts"
+  },
+  "limitations": [
+    "The expectations and mappings were hand-authored against a known frozen codebase, not supplied by a blind independent oracle.",
+    "UNSUPPORTED is a positive absence finding, not a passed conformance test or an evaluator failure.",
+    "Same-identifier post-purge behavior was not exercised because public production inputs reject caller-selected record IDs; only the adjacent fresh-identity and tombstone boundary ran.",
+    "Structured-value probes show that free-form data is inert; they do not claim that production documents those keys as semantic fields.",
+    "Expiry observations cover retrieval eligibility, not storage eviction, confidence decay, or procedure retirement.",
+    "Only isolated SQLite Core stores and public/stable Python paths ran; no operator Core, Relay, export restore, external system, provider, model, or protected action ran."
+  ],
+  "receipts": [
+    {
+      "case_id": "generic_epistemic_role",
+      "classification": "UNSUPPORTED",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "kind_substitution": "CONTRADICTED_OBSERVED",
+        "role_fields": "UNSUPPORTED"
+      },
+      "observed": {
+        "candidate_role_field_available": false,
+        "direct_role_query_rejected": true,
+        "direct_role_write_rejected": true,
+        "evaluation_completed": true,
+        "kind_substitution_result_count": 1,
+        "search_role_field_available": false,
+        "semantic_role_peer_count": 2
+      },
+      "probe_classifications": {
+        "kind_substitution": "CONTRADICTED_OBSERVED",
+        "role_fields": "UNSUPPORTED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.kind",
+        "ContextRecordOut.kind",
+        "SearchRequest.kinds",
+        "EligibleRecordSelector.select"
+      ],
+      "required_semantic": "generic epistemic role distinct from kind"
+    },
+    {
+      "case_id": "project_and_domain_applicability",
+      "classification": "UNSUPPORTED",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "current_project_hard_gate_substitution": "CONTRADICTED_OBSERVED",
+        "project_domain_fields": "UNSUPPORTED",
+        "scope_label_and_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "observed": {
+        "current_project_only_result_count": 1,
+        "current_project_semantic": "ranking_signal_not_hard_gate",
+        "direct_domain_query_rejected": true,
+        "direct_project_domain_write_rejected": true,
+        "evaluation_completed": true,
+        "expected_and_match_count": 1,
+        "project_label_without_domain_result_count": 2,
+        "scope_filter_operator": "any_requested_label"
+      },
+      "probe_classifications": {
+        "current_project_hard_gate_substitution": "CONTRADICTED_OBSERVED",
+        "project_domain_fields": "UNSUPPORTED",
+        "scope_label_and_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.scopes",
+        "SearchRequest.scopes",
+        "SearchRequest.current_project",
+        "EligibleRecordSelector.select",
+        "_admissibility_inputs"
+      ],
+      "required_semantic": "project AND domain applicability distinct from explicit scope filtering"
+    },
+    {
+      "case_id": "dependency_lineage_and_invalidation",
+      "classification": "UNSUPPORTED",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "dependency_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "observed": {
+        "automatic_invalidation_observed": false,
+        "derived_retrievable_after_source_correction": true,
+        "derived_version_after_source_correction": 1,
+        "derived_version_before_source_correction": 1,
+        "direct_dependency_write_rejected": true,
+        "evaluation_completed": true,
+        "structured_dependency_metadata_accepted": true
+      },
+      "probe_classifications": {
+        "dependency_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.structured_value",
+        "CoreStore.correct_record",
+        "CoreStore.delete_record",
+        "CoreStore.purge"
+      ],
+      "required_semantic": "dependency lineage and invalidation"
+    },
+    {
+      "case_id": "eviction_decay_and_procedure_retirement",
+      "classification": "UNSUPPORTED",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "decay_fields": "UNSUPPORTED",
+        "explicit_expiry_boundary": "SUPPORTED_OBSERVED",
+        "procedure_retirement_fields": "UNSUPPORTED"
+      },
+      "observed": {
+        "active_record_retrievable": true,
+        "confidence_after_search": 0.9,
+        "confidence_before_search": 0.9,
+        "direct_decay_write_rejected": true,
+        "direct_retirement_write_rejected": true,
+        "evaluation_completed": true,
+        "expired_record_remains_canonical": true,
+        "expired_record_retrievable": false
+      },
+      "probe_classifications": {
+        "decay_fields": "UNSUPPORTED",
+        "explicit_expiry_boundary": "SUPPORTED_OBSERVED",
+        "procedure_retirement_fields": "UNSUPPORTED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.expires_at",
+        "CandidateInput.confidence",
+        "EligibleRecordSelector.select",
+        "CoreStore.get_record"
+      ],
+      "required_semantic": "eviction, decay, and procedure retirement"
+    },
+    {
+      "case_id": "same_identifier_after_terminal_purge",
+      "classification": "NOT_EXERCISED",
+      "expected_classification": "NOT_EXERCISED",
+      "expected_probe_classifications": {
+        "caller_selected_record_id": "NOT_EXERCISED",
+        "fresh_identity_and_tombstone_boundary": "SUPPORTED_OBSERVED"
+      },
+      "observed": {
+        "caller_selected_record_id_rejected": true,
+        "evaluation_completed": true,
+        "exact_same_identifier_attempted": false,
+        "fresh_record_result_count": 1,
+        "fresh_recreation_uses_distinct_identifier": true,
+        "old_identifier_tombstone_count": 1
+      },
+      "probe_classifications": {
+        "caller_selected_record_id": "NOT_EXERCISED",
+        "fresh_identity_and_tombstone_boundary": "SUPPORTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput",
+        "CoreStore.add_candidate",
+        "CoreStore.purge",
+        "purge_tombstones"
+      ],
+      "required_semantic": "same-identifier behavior after terminal purge"
+    },
+    {
+      "case_id": "procedure_preconditions_and_transfer",
+      "classification": "UNSUPPORTED",
+      "expected_classification": "UNSUPPORTED",
+      "expected_probe_classifications": {
+        "explicit_scope_boundary": "SUPPORTED_OBSERVED",
+        "procedure_semantic_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "observed": {
+        "direct_procedure_semantic_write_rejected": true,
+        "evaluation_completed": true,
+        "procedure_kind_creates_special_gate": false,
+        "structured_preconditions_accepted_as_inert_data": true,
+        "wrong_current_project_result_count": 1,
+        "wrong_explicit_scope_result_count": 0
+      },
+      "probe_classifications": {
+        "explicit_scope_boundary": "SUPPORTED_OBSERVED",
+        "procedure_semantic_fields": "UNSUPPORTED",
+        "structured_metadata_substitution": "CONTRADICTED_OBSERVED"
+      },
+      "production_touchpoints": [
+        "CandidateInput.kind",
+        "CandidateInput.structured_value",
+        "CandidateInput.scopes",
+        "SearchRequest.current_project",
+        "SearchRequest.scopes"
+      ],
+      "required_semantic": "procedure preconditions and transfer applicability"
+    }
+  ],
+  "schema": "atc.memory-reliability-lab.e02-wave4-report.v1",
+  "summary": {
+    "case_expectation_mismatch_count": 0,
+    "classification_counts": {
+      "CONTRADICTED_OBSERVED": 0,
+      "NOT_EXERCISED": 1,
+      "SUPPORTED_OBSERVED": 0,
+      "UNSUPPORTED": 5
+    },
+    "evaluation_error_count": 0,
+    "gap_count": 6,
+    "probe_expectation_mismatch_count": 0
+  }
+}

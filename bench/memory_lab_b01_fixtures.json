@@ -1,0 +1,555 @@
+{
+  "schema": "atc.memory-lab.b01-fixture.v1",
+  "corpus_kind": "sanitized_symbolic_structured_event_log",
+  "events": [
+    {
+      "event_id": "evt-a01",
+      "sequence": 1,
+      "occurred_at": "2026-06-01T00:00:01+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "outcome": "queued"}
+    },
+    {
+      "event_id": "evt-a02",
+      "sequence": 2,
+      "occurred_at": "2026-06-01T00:00:02+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "outcome": "stalled"}
+    },
+    {
+      "event_id": "evt-a03",
+      "sequence": 3,
+      "occurred_at": "2026-06-01T00:00:03+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "outcome": "blocked"}
+    },
+    {
+      "event_id": "evt-a04",
+      "sequence": 4,
+      "occurred_at": "2026-06-01T00:00:04+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "when_outcome": "queued", "action": "act-apricot"}
+    },
+    {
+      "event_id": "evt-a05",
+      "sequence": 5,
+      "occurred_at": "2026-06-01T00:00:05+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "when_outcome": "stalled", "action": "act-birch"}
+    },
+    {
+      "event_id": "evt-a06-old",
+      "sequence": 6,
+      "occurred_at": "2026-06-01T00:00:06+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-amber"],
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "when_outcome": "blocked", "action": "act-cinder"}
+    },
+    {
+      "event_id": "evt-a07",
+      "sequence": 7,
+      "occurred_at": "2026-06-01T00:00:07+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-amber"],
+      "supersedes": "evt-a06-old",
+      "payload": {"project": "p-amber", "subject": "unit-cedar", "stage": "gate", "when_outcome": "blocked", "action": "act-delta"}
+    },
+
+    {
+      "event_id": "evt-b01",
+      "sequence": 8,
+      "occurred_at": "2026-06-01T00:00:08+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "outcome": "queued"}
+    },
+    {
+      "event_id": "evt-b02",
+      "sequence": 9,
+      "occurred_at": "2026-06-01T00:00:09+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "outcome": "cleared"}
+    },
+    {
+      "event_id": "evt-b03",
+      "sequence": 10,
+      "occurred_at": "2026-06-01T00:00:10+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "outcome": "stalled"}
+    },
+    {
+      "event_id": "evt-b04",
+      "sequence": 11,
+      "occurred_at": "2026-06-01T00:00:11+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "when_outcome": "queued", "action": "act-ember"}
+    },
+    {
+      "event_id": "evt-b05",
+      "sequence": 12,
+      "occurred_at": "2026-06-01T00:00:12+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "when_outcome": "cleared", "action": "act-flint"}
+    },
+    {
+      "event_id": "evt-b06-old",
+      "sequence": 13,
+      "occurred_at": "2026-06-01T00:00:13+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-indigo"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "when_outcome": "stalled", "action": "act-grove"}
+    },
+    {
+      "event_id": "evt-b07",
+      "sequence": 14,
+      "occurred_at": "2026-06-01T00:00:14+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-indigo"],
+      "supersedes": "evt-b06-old",
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "when_outcome": "stalled", "action": "act-harbor"}
+    },
+
+    {
+      "event_id": "evt-c01",
+      "sequence": 15,
+      "occurred_at": "2026-06-01T00:00:15+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "outcome": "blocked"}
+    },
+    {
+      "event_id": "evt-c02",
+      "sequence": 16,
+      "occurred_at": "2026-06-01T00:00:16+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "outcome": "stalled"}
+    },
+    {
+      "event_id": "evt-c03",
+      "sequence": 17,
+      "occurred_at": "2026-06-01T00:00:17+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "outcome": "cleared"}
+    },
+    {
+      "event_id": "evt-c04",
+      "sequence": 18,
+      "occurred_at": "2026-06-01T00:00:18+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "when_outcome": "blocked", "action": "act-iris"}
+    },
+    {
+      "event_id": "evt-c05",
+      "sequence": 19,
+      "occurred_at": "2026-06-01T00:00:19+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "when_outcome": "stalled", "action": "act-juniper"}
+    },
+    {
+      "event_id": "evt-c06-old",
+      "sequence": 20,
+      "occurred_at": "2026-06-01T00:00:20+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-violet"],
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "when_outcome": "cleared", "action": "act-kestrel"}
+    },
+    {
+      "event_id": "evt-c07",
+      "sequence": 21,
+      "occurred_at": "2026-06-01T00:00:21+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-violet"],
+      "supersedes": "evt-c06-old",
+      "payload": {"project": "p-violet", "subject": "unit-pine", "stage": "gate", "when_outcome": "cleared", "action": "act-lilac"}
+    },
+
+    {
+      "event_id": "evt-d01",
+      "sequence": 22,
+      "occurred_at": "2026-06-01T00:00:22+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-d02",
+      "sequence": 23,
+      "occurred_at": "2026-06-01T00:00:23+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "outcome": "clear"}
+    },
+    {
+      "event_id": "evt-d03",
+      "sequence": 24,
+      "occurred_at": "2026-06-01T00:00:24+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-d04",
+      "sequence": 25,
+      "occurred_at": "2026-06-01T00:00:25+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-d05",
+      "sequence": 26,
+      "occurred_at": "2026-06-01T00:00:26+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "when_outcome": "fault", "min_count": "1", "action": "act-moss"}
+    },
+    {
+      "event_id": "evt-d06",
+      "sequence": 27,
+      "occurred_at": "2026-06-01T00:00:27+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-coral"],
+      "payload": {"project": "p-coral", "subject": "unit-spruce", "stage": "watch", "when_outcome": "fault", "min_count": "2", "action": "act-nickel"}
+    },
+
+    {
+      "event_id": "evt-e01",
+      "sequence": 28,
+      "occurred_at": "2026-06-01T00:00:28+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-e02",
+      "sequence": 29,
+      "occurred_at": "2026-06-01T00:00:29+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "outcome": "clear"}
+    },
+    {
+      "event_id": "evt-e03",
+      "sequence": 30,
+      "occurred_at": "2026-06-01T00:00:30+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-e04",
+      "sequence": 31,
+      "occurred_at": "2026-06-01T00:00:31+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "outcome": "clear"}
+    },
+    {
+      "event_id": "evt-e05",
+      "sequence": 32,
+      "occurred_at": "2026-06-01T00:00:32+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "when_outcome": "fault", "min_count": "1", "action": "act-oak"}
+    },
+    {
+      "event_id": "evt-e06",
+      "sequence": 33,
+      "occurred_at": "2026-06-01T00:00:33+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-silver"],
+      "payload": {"project": "p-silver", "subject": "unit-willow", "stage": "watch", "when_outcome": "fault", "min_count": "2", "action": "act-pearl"}
+    },
+
+    {
+      "event_id": "evt-f01",
+      "sequence": 34,
+      "occurred_at": "2026-06-01T00:00:34+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "outcome": "clear"}
+    },
+    {
+      "event_id": "evt-f02",
+      "sequence": 35,
+      "occurred_at": "2026-06-01T00:00:35+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-f03",
+      "sequence": 36,
+      "occurred_at": "2026-06-01T00:00:36+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-f04",
+      "sequence": 37,
+      "occurred_at": "2026-06-01T00:00:37+00:00",
+      "event_type": "signal",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "outcome": "fault"}
+    },
+    {
+      "event_id": "evt-f05",
+      "sequence": 38,
+      "occurred_at": "2026-06-01T00:00:38+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "when_outcome": "fault", "min_count": "1", "action": "act-quartz"}
+    },
+    {
+      "event_id": "evt-f06",
+      "sequence": 39,
+      "occurred_at": "2026-06-01T00:00:39+00:00",
+      "event_type": "threshold_policy",
+      "scopes": ["project:p-umber"],
+      "payload": {"project": "p-umber", "subject": "unit-ash", "stage": "watch", "when_outcome": "fault", "min_count": "2", "action": "act-river"}
+    },
+
+    {
+      "event_id": "evt-g01",
+      "sequence": 40,
+      "occurred_at": "2026-06-01T00:00:40+00:00",
+      "event_type": "fact",
+      "scopes": ["project:p-gold"],
+      "payload": {"project": "p-gold", "subject": "unit-hazel", "stage": "lookup", "action": "act-slate"}
+    },
+    {
+      "event_id": "evt-g02",
+      "sequence": 41,
+      "occurred_at": "2026-06-01T00:00:41+00:00",
+      "event_type": "fact",
+      "scopes": ["project:p-gold"],
+      "supersedes": "evt-g01",
+      "payload": {"project": "p-gold", "subject": "unit-hazel", "stage": "lookup", "action": "act-timber"}
+    },
+    {
+      "event_id": "evt-x01",
+      "sequence": 42,
+      "occurred_at": "2026-06-01T00:00:42+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-foreign"],
+      "payload": {"project": "p-foreign", "subject": "unit-foreign", "stage": "gate", "outcome": "blocked"}
+    },
+    {
+      "event_id": "evt-x02",
+      "sequence": 43,
+      "occurred_at": "2026-06-01T00:00:43+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-foreign"],
+      "payload": {"project": "p-foreign", "subject": "unit-foreign", "stage": "gate", "when_outcome": "blocked", "action": "act-foreign"}
+    },
+    {
+      "event_id": "evt-n01",
+      "sequence": 44,
+      "occurred_at": "2026-06-01T00:00:44+00:00",
+      "event_type": "attempt",
+      "scopes": ["project:p-teal"],
+      "payload": {"project": "p-teal", "subject": "unit-elm", "stage": "gate", "outcome": "blocked"}
+    },
+    {
+      "event_id": "evt-b-scope-decoy",
+      "sequence": 45,
+      "occurred_at": "2026-06-01T00:00:45+00:00",
+      "event_type": "route_policy",
+      "scopes": ["project:p-restricted"],
+      "payload": {"project": "p-indigo", "subject": "unit-maple", "stage": "gate", "when_outcome": "stalled", "action": "act-plausible-decoy"}
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "task-dev-a",
+      "partition": "development",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-amber"],
+      "current_project": "p-amber",
+      "descriptor": {
+        "strategy": "latest_route",
+        "selectors": {"project": "p-amber", "subject": "unit-cedar"},
+        "observation_event_type": "attempt",
+        "policy_event_type": "route_policy",
+        "stage": "gate"
+      },
+      "oracle": {
+        "expected_action": "act-delta",
+        "evidence_groups": [["evt-a03"], ["evt-a07"]],
+        "forbidden_ids": ["evt-a06-old", "evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-b",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-indigo"],
+      "current_project": "p-indigo",
+      "descriptor": {
+        "strategy": "latest_route",
+        "selectors": {"project": "p-indigo", "subject": "unit-maple"},
+        "observation_event_type": "attempt",
+        "policy_event_type": "route_policy",
+        "stage": "gate"
+      },
+      "oracle": {
+        "expected_action": "act-harbor",
+        "evidence_groups": [["evt-b03"], ["evt-b07"]],
+        "forbidden_ids": ["evt-b06-old", "evt-b-scope-decoy", "evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-c",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-violet"],
+      "current_project": "p-violet",
+      "descriptor": {
+        "strategy": "latest_route",
+        "selectors": {"project": "p-violet", "subject": "unit-pine"},
+        "observation_event_type": "attempt",
+        "policy_event_type": "route_policy",
+        "stage": "gate"
+      },
+      "oracle": {
+        "expected_action": "act-lilac",
+        "evidence_groups": [["evt-c03"], ["evt-c07"]],
+        "forbidden_ids": ["evt-c06-old", "evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-dev-d",
+      "partition": "development",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-coral"],
+      "current_project": "p-coral",
+      "descriptor": {
+        "strategy": "threshold_route",
+        "selectors": {"project": "p-coral", "subject": "unit-spruce"},
+        "observation_event_type": "signal",
+        "policy_event_type": "threshold_policy",
+        "stage": "watch",
+        "trigger_value": "fault",
+        "window": 3
+      },
+      "oracle": {
+        "expected_action": "act-nickel",
+        "evidence_groups": [["evt-d03"], ["evt-d04"], ["evt-d06"]],
+        "forbidden_ids": ["evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-e",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-silver"],
+      "current_project": "p-silver",
+      "descriptor": {
+        "strategy": "threshold_route",
+        "selectors": {"project": "p-silver", "subject": "unit-willow"},
+        "observation_event_type": "signal",
+        "policy_event_type": "threshold_policy",
+        "stage": "watch",
+        "trigger_value": "fault",
+        "window": 4
+      },
+      "oracle": {
+        "expected_action": "act-pearl",
+        "evidence_groups": [["evt-e01"], ["evt-e03"], ["evt-e06"]],
+        "forbidden_ids": ["evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-f",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-umber"],
+      "current_project": "p-umber",
+      "descriptor": {
+        "strategy": "threshold_route",
+        "selectors": {"project": "p-umber", "subject": "unit-ash"},
+        "observation_event_type": "signal",
+        "policy_event_type": "threshold_policy",
+        "stage": "watch",
+        "trigger_value": "fault",
+        "window": 3
+      },
+      "oracle": {
+        "expected_action": "act-river",
+        "evidence_groups": [["evt-f03"], ["evt-f04"], ["evt-f06"]],
+        "forbidden_ids": ["evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-g",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-gold"],
+      "current_project": "p-gold",
+      "descriptor": {
+        "strategy": "lexical_lookup",
+        "selectors": {"project": "p-gold", "subject": "unit-hazel"},
+        "observation_event_type": "fact",
+        "policy_event_type": "fact",
+        "stage": "lookup"
+      },
+      "oracle": {
+        "expected_action": "act-timber",
+        "evidence_groups": [["evt-g02"]],
+        "forbidden_ids": ["evt-g01", "evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-z",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": [],
+      "current_project": null,
+      "descriptor": {
+        "strategy": "latest_route",
+        "selectors": {"project": "p-void", "subject": "unit-null"},
+        "observation_event_type": "attempt",
+        "policy_event_type": "route_policy",
+        "stage": "gate"
+      },
+      "oracle": {
+        "expected_action": null,
+        "evidence_groups": [],
+        "forbidden_ids": ["evt-a03", "evt-b03", "evt-c03", "evt-x01", "evt-x02"]
+      }
+    },
+    {
+      "task_id": "task-confirm-n",
+      "partition": "confirmatory",
+      "evaluated_at": "2026-07-01T12:00:00+00:00",
+      "scopes": ["project:p-teal"],
+      "current_project": "p-teal",
+      "descriptor": {
+        "strategy": "latest_route",
+        "selectors": {"project": "p-teal", "subject": "unit-elm"},
+        "observation_event_type": "attempt",
+        "policy_event_type": "route_policy",
+        "stage": "gate"
+      },
+      "oracle": {
+        "expected_action": null,
+        "evidence_groups": [],
+        "forbidden_ids": ["evt-n01", "evt-x01", "evt-x02"]
+      }
+    }
+  ]
+}

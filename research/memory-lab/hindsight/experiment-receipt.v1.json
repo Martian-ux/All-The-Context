@@ -1,0 +1,79 @@
+{
+  "schema": "atc.memory-lab.supplier-experiment-receipt.v1",
+  "supplier": "Hindsight",
+  "supplier_revision": "fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+  "fixture": {
+    "path": "bench/memory_lab_fixtures.json",
+    "sha256": "5601692ea305448f6b299c32725a93c73ca83ccee66f325e22cbcbedfa0cc68f",
+    "classification": "synthetic_sanitized_local"
+  },
+  "status": "not_executed_dependency_and_egress_gate",
+  "benchmark_result": null,
+  "reason": "No reviewed official execution path simultaneously used the exact supplier pin, installed only fully pinned artifacts, kept fixture content at zero provider egress, avoided unpinned model downloads, and cleared the dependency/vulnerability gate. Hindsight none-LLM mode is genuine but still requires an embeddings provider; the local and ONNX paths require separately downloaded model/native artifacts, while slim remote providers would create data egress.",
+  "decision": "Preserve the negative result; do not substitute a fake score for a Hindsight run.",
+  "attempted_execution": false,
+  "provider_calls": 0,
+  "fixture_egress": 0,
+  "credentials_used": false,
+  "future_runtime_prerequisites": {
+    "loopback_only": "Every supplier listener must bind to 127.0.0.1.",
+    "external_deny_egress": true,
+    "immutable_local_models": true,
+    "runtime_downloads": false,
+    "remote_providers_webhooks_telemetry_and_storage": false
+  },
+  "downloads": {
+    "official_source_clone": {
+      "url": "https://github.com/vectorize-io/hindsight.git",
+      "revision": "fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+      "destination": "ignored research/vendor-cache/hindsight-fa69b5b",
+      "filter": "blob:none",
+      "retained_after_static_audit": false
+    },
+    "python_packages": [],
+    "models": [],
+    "containers": [],
+    "datasets": []
+  },
+  "prohibited_actions": {
+    "install_hooks_run": false,
+    "upstream_scripts_run": false,
+    "docker_run": false,
+    "system_service_started": false,
+    "provider_backed_cell_run": false,
+    "credentials_requested": false,
+    "vendor_source_copied_into_atc": false,
+    "production_dependency_added": false,
+    "canonical_authority_granted": false
+  },
+  "static_commands": [
+    "git ls-remote https://github.com/vectorize-io/hindsight.git refs/heads/main",
+    "git clone --no-checkout --filter=blob:none https://github.com/vectorize-io/hindsight.git research/vendor-cache/hindsight-fa69b5b",
+    "git -C research/vendor-cache/hindsight-fa69b5b checkout --detach fa69b5b73b3b50bf5dcbae5bccbc7197de03692f",
+    "static parsing of uv.lock with Python tomllib",
+    "OSV querybatch for exact registry package versions",
+    "PyPI JSON metadata queries for exact dependency versions",
+    "uv tree --offline --locked --package hindsight-api-slim"
+  ],
+  "command_notes": [
+    "The uv tree command did not resolve or install anything; it stopped because the supplier .python-version requests Python 3.11 and no managed 3.11 interpreter was locally available.",
+    "All source, lock, license, configuration, and client inspection was static.",
+    "The disposable audit clone was removed after review; no other vendor-cache path was removed.",
+    "The fake-client test exercises ATC translation and cleanup only; it is not supplier execution and produces no benchmark score."
+  ],
+  "adapter_boundary": {
+    "path": "bench/hindsight_supplier_adapter.py",
+    "source_pin_enforced": true,
+    "api_pin_enforced": "0.8.5",
+    "llm_provider_enforced": "none",
+    "embedding_source_revision_required": true,
+    "reranker_enforced": "rrf",
+    "data_egress_declared": [],
+    "transport_isolation_enforced_by_adapter": false,
+    "external_deny_egress_required": true,
+    "loopback_only_required": true,
+    "canonical_writes": false,
+    "result_payload": "ordered_atc_object_ids_and_optional_scores_only",
+    "cleanup": "delete isolated bank and close injected client"
+  }
+}
