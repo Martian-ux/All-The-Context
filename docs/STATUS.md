@@ -434,9 +434,10 @@ state is already noncurrent and creates no user queue.
 
 ## Remaining beta gates
 
-- Run the exact ADR-039 worktree through the hosted Python 3.12
-  Windows/macOS/Linux and native-package matrices, then complete the fresh-user
-  browser smoke.
+- Complete the fresh-user browser smoke on the exact release candidate. Main
+  commit `8f6e92e` has passed the hosted Python 3.12
+  Windows/macOS/Linux and native-package matrices, but that does not substitute
+  for validation of the final frozen release identity.
 - Create and verify two recoverable encrypted backups of the operator-held
   release private key before its first production signature.
 - Add required reviewers to the release-promotion and `github-pages`
