@@ -29,8 +29,10 @@ jobs, Windows and Linux packaging, and macOS ARM and Intel packaging. The prior
 main run at `a348ad7` had three independent, non-reproduced failures whose
 messages omitted decisive evidence. The current release-CI hardening work adds
 bounded diagnostics for the retrieval gate, Windows rollback journal phase and
-error code, and `hdiutil` process outcome. It does not relax a gate, retry a
-failure, or change updater/release behavior.
+error code, and `hdiutil` process outcome. It also gives the one-file Windows
+MCP adapter one bounded 30-second managed-Core readiness window after a hosted
+10-second timeout occurred before the first Core log line. It does not relax a
+gate, retry a failed launch, or change updater/release behavior.
 
 ## AI-memory research direction
 
