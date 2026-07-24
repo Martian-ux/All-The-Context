@@ -127,10 +127,7 @@ def _claude_msix_installations() -> list[tuple[str, Path]]:
                 not isinstance(package_id, str)
                 or not package_id.casefold().startswith("claude_")
                 or not isinstance(package_root, str)
-                or (
-                    isinstance(display_name, str)
-                    and display_name.casefold() != "claude"
-                )
+                or (isinstance(display_name, str) and display_name.casefold() != "claude")
             ):
                 continue
             executable = Path(package_root).expanduser() / "app" / "Claude.exe"

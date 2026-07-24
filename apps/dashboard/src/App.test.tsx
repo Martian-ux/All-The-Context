@@ -355,8 +355,12 @@ describe("dashboard", () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Updates" }));
-    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+    const checkNow = await screen.findByRole("button", { name: /check now/i });
+    await waitFor(() => expect(checkNow).toBeEnabled());
+    fireEvent.click(checkNow);
+    const download = await screen.findByRole("button", { name: /download & verify/i });
+    await waitFor(() => expect(download).toBeEnabled());
+    fireEvent.click(download);
 
     expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
@@ -431,8 +435,12 @@ describe("dashboard", () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Updates" }));
-    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+    const checkNow = await screen.findByRole("button", { name: /check now/i });
+    await waitFor(() => expect(checkNow).toBeEnabled());
+    fireEvent.click(checkNow);
+    const download = await screen.findByRole("button", { name: /download & verify/i });
+    await waitFor(() => expect(download).toBeEnabled());
+    fireEvent.click(download);
     click.mockClear();
     fireEvent.click(await screen.findByRole("button", { name: /save verified package/i }));
 
