@@ -15,11 +15,24 @@ means connecting directly to Core while Core is online.
 On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
 product contract is now one-time setup plus automatic, reversible,
 provenance-backed context maintenance, with no routine review queue. The
-automatic-policy migration is present in the current shared worktree and has
-passed the local Ruff, mypy, full pytest, dashboard, demo, documentation, and
-dependency-audit gates described below. The exact worktree has not yet passed
-the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based
-evidence remains historical and must not be presented as proof of ADR-039.
+automatic-policy migration has passed the local Ruff, mypy, full pytest,
+dashboard, demo, documentation, and dependency-audit gates described below,
+plus the hosted Python 3.12 cross-platform/package matrix on main. The current
+diagnostic-hardening worktree has not yet passed its hosted matrix. Earlier
+approval-based evidence remains historical and must not be presented as proof
+of ADR-039.
+
+Main merge `8f6e92e` passed all nine jobs in the exact
+[hosted CI run](https://github.com/Martian-ux/All-The-Context/actions/runs/30060227257)
+on 2026-07-24, including Python 3.12 on three operating systems, both dashboard
+jobs, Windows and Linux packaging, and macOS ARM and Intel packaging. The prior
+main run at `a348ad7` had three independent, non-reproduced failures whose
+messages omitted decisive evidence. The current release-CI hardening work adds
+bounded diagnostics for the retrieval gate, Windows rollback journal phase and
+error code, and `hdiutil` process outcome. It also gives the one-file Windows
+MCP adapter one bounded 30-second managed-Core readiness window after a hosted
+10-second timeout occurred before the first Core log line. It does not relax a
+gate, retry a failed launch, or change updater/release behavior.
 
 ## AI-memory research direction
 
@@ -423,9 +436,10 @@ state is already noncurrent and creates no user queue.
 
 ## Remaining beta gates
 
-- Run the exact ADR-039 worktree through the hosted Python 3.12
-  Windows/macOS/Linux and native-package matrices, then complete the fresh-user
-  browser smoke.
+- Complete the fresh-user browser smoke on the exact release candidate. Main
+  commit `8f6e92e` has passed the hosted Python 3.12
+  Windows/macOS/Linux and native-package matrices, but that does not substitute
+  for validation of the final frozen release identity.
 - Create and verify two recoverable encrypted backups of the operator-held
   release private key before its first production signature.
 - Add required reviewers to the release-promotion and `github-pages`
@@ -454,8 +468,10 @@ state is already noncurrent and creates no user queue.
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build
   byte-for-byte.
-- The required Python 3.12 hosted cross-platform/package suite and new
-  automatic-policy browser smoke remain pending for this exact worktree.
+- Main commit `8f6e92e` passed the required Python 3.12
+  cross-platform/package and Node 20/22 matrix in hosted run `30060227257`.
+  The fresh-user browser smoke and final frozen release identity remain
+  pending.
 - Historical pre-ADR-039 full Python 3.12 suite: 461 passed; four Windows-host
   symlink tests skipped because this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests

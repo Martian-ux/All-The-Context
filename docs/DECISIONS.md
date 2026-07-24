@@ -1142,3 +1142,26 @@ pinned revision, license confirmation, static inventory, isolated execution,
 and an adapter that cannot canonize records or bypass Core. Wave 4's
 external-code prohibition remains truthful: it downloaded or executed no
 competitor system.
+
+## ADR-050: Release acceptance failures emit bounded evidence without changing gates
+
+**Status:** accepted 2026-07-24; release, updater, and retrieval acceptance
+semantics are unchanged.
+
+Hosted release acceptance must preserve enough evidence to diagnose a failure
+without logging credentials, personal context, or unbounded local state. The
+integrated retrieval assertion therefore emits its bounded gate, lifecycle,
+operational, and profile report when it fails. The macOS package wrapper emits
+the `hdiutil` return code, output-file existence, and bounded stdout/stderr
+tails. The packaged Windows rollback smoke emits only the helper journal phase,
+fixed error code, and schema version; paths, operation identifiers, and the
+rest of the journal remain excluded.
+
+These diagnostics do not convert a failure to success. No threshold is relaxed
+and no automatic retry is added. The one-file Windows MCP adapter gets one
+bounded 30-second managed-Core readiness window so native extraction and
+startup are not misclassified by the earlier 10-second boundary; it still
+launches once and fails hard at the deadline. A repeated failure still stops
+the matrix, but the next investigation can distinguish a gate regression,
+helper rollback state, native-tool error, missing native output, and a managed
+Core startup timeout from runner noise.

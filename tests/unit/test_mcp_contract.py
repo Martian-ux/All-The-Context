@@ -593,6 +593,32 @@ def test_managed_adapter_never_replaces_an_unverified_loopback_service(
     assert not launched
 
 
+def test_managed_adapter_uses_a_bounded_native_startup_window(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ATC_AUTO_START_CORE", "1")
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.CoreConfig.default",
+        lambda: CoreConfig.in_directory(tmp_path),
+    )
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.probe_core",
+        lambda _config: CoreProbe.UNREACHABLE,
+    )
+    runtime = SimpleNamespace()
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter._configured_core_runtime",
+        lambda: runtime,
+    )
+    launches: list[tuple[object, float]] = []
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.launch_core",
+        lambda selected, _config, *, wait_seconds: launches.append((selected, wait_seconds)),
+    )
+
+    _ensure_local_core("http://127.0.0.1:7337")
+
+    assert launches == [(runtime, 30.0)]
+
+
 def test_managed_adapter_will_not_auto_start_for_a_remote_target(monkeypatch) -> None:
     monkeypatch.setenv("ATC_AUTO_START_CORE", "1")
     probed: list[bool] = []

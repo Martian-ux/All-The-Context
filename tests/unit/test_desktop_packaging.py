@@ -132,6 +132,31 @@ def test_macos_dmg_refuses_unvalidated_bundle_before_native_tool(
         _write_macos_dmg(bundle, tmp_path / "output.dmg", version="0.1.0")
 
 
+def test_macos_dmg_failure_reports_process_evidence(tmp_path: Path, monkeypatch) -> None:
+    bundle = tmp_path / "AllTheContext.app"
+    bundle.mkdir()
+    output = tmp_path / "output.dmg"
+    monkeypatch.setattr("scripts.package_desktop.shutil.which", lambda _name: "hdiutil")
+    monkeypatch.setattr(
+        "scripts.package_desktop.subprocess.run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            7,
+            "native stdout",
+            "native stderr",
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        _write_macos_dmg(bundle, output, version="0.1.0")
+
+    message = str(captured.value)
+    assert "returncode=7" in message
+    assert "output_exists=False" in message
+    assert "stdout_tail='native stdout'" in message
+    assert "stderr_tail='native stderr'" in message
+
+
 def test_linux_portable_package_is_reproducible_and_self_describing(tmp_path: Path) -> None:
     executable = tmp_path / "build" / "all-the-context"
     executable.parent.mkdir()

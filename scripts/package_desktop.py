@@ -109,8 +109,15 @@ def _write_macos_dmg(source: Path, output: Path, *, version: str) -> None:
             timeout=180,
         )
         if completed.returncode != 0 or not output.is_file():
-            detail = completed.stderr.strip()[-500:]
-            raise RuntimeError(f"hdiutil did not produce the package. {detail}".strip())
+            stdout_tail = completed.stdout.strip()[-500:]
+            stderr_tail = completed.stderr.strip()[-500:]
+            raise RuntimeError(
+                "hdiutil did not produce the package: "
+                f"returncode={completed.returncode}; "
+                f"output_exists={output.is_file()}; "
+                f"stdout_tail={stdout_tail!r}; "
+                f"stderr_tail={stderr_tail!r}"
+            )
 
 
 def build_platform_package(

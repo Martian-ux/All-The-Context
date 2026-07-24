@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import json
+
 from bench.retrieval_v3_combined import run
 from bench.retrieval_v3_foundation import GateStatus
+
+
+def failure_diagnostic(report: dict[str, object]) -> str:
+    """Render the bounded gate evidence needed to diagnose a hosted failure."""
+    return json.dumps(
+        {
+            "gate_results": report["gate_results"],
+            "lifecycle": report["lifecycle"],
+            "operational_acceptance": report["operational_acceptance"],
+            "profiles": report["profiles"],
+        },
+        indent=2,
+        sort_keys=True,
+    )
 
 
 def test_integrated_candidate_passes_bounded_frozen_comparator_gate() -> None:
     report = run([100])
     metrics = report["profiles"]["100"]["metrics"]
 
-    assert report["passed"] is True
+    assert report["passed"] is True, failure_diagnostic(report)
     assert report["gate_results_status"] == GateStatus.PASSED
     assert {result["status"] for result in report["gate_results"]} == {GateStatus.PASSED}
     assert metrics["exact_recall_at_5"] == 1.0
