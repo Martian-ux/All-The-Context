@@ -652,15 +652,11 @@ def compile_consequence(snapshot, principal, event, target, budgets):
                 if hard_feasible(intervention) and disclosure_feasible(
                     intervention, principal, budgets
                 ):
-                    feasible.append(
-                        robustly_score_soft_obligations(intervention, target)
-                    )
+                    feasible.append(robustly_score_soft_obligations(intervention, target))
 
     selected = lexicographic_min(feasible)
     minimal = deterministic_local_delete_and_recompile(selected)
-    certificate = build_conservative_dependency_certificate(
-        minimal, snapshot, event, target
-    )
+    certificate = build_conservative_dependency_certificate(minimal, snapshot, event, target)
     return register_if_all_dependencies_current(
         minimal,
         certificate,
