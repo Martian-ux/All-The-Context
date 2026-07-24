@@ -620,7 +620,7 @@ describe("dashboard", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Activity" })).toBeInTheDocument();
     const activity = screen.getByRole("region", { name: "Automatic activity" });
-    expect(within(activity).getByText(/Applied to current context.*preference/)).toBeInTheDocument();
+    expect(await within(activity).findByText(/Applied to current context.*preference/)).toBeInTheDocument();
     expect(within(activity).getByText("Use concise explanations")).toBeInTheDocument();
     expect(within(activity).getByText(/ongoing client.*client-1.*explicit user/)).toBeInTheDocument();
     expect(within(activity).getByText(/read-only/i)).toBeInTheDocument();
