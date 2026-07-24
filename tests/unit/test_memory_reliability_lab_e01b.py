@@ -15,10 +15,7 @@ from bench.memory_reliability_lab_e01b import (
 )
 
 FROZEN_REPORT = (
-    Path(__file__).parents[2]
-    / "bench"
-    / "reports"
-    / "memory_reliability_e01b_wave3.json"
+    Path(__file__).parents[2] / "bench" / "reports" / "memory_reliability_e01b_wave3.json"
 )
 
 
@@ -26,9 +23,10 @@ def test_e01b_fixture_is_bounded_to_frozen_e01_and_coordinator_base() -> None:
     fixture, cases = load_fixture()
 
     assert fixture["coordinator_base"] == COORDINATOR_BASE
-    assert fixture["reference_e01_fixture"]["sha256"] == hashlib.sha256(
-        REFERENCE_FIXTURES.read_bytes()
-    ).hexdigest()
+    assert (
+        fixture["reference_e01_fixture"]["sha256"]
+        == hashlib.sha256(REFERENCE_FIXTURES.read_bytes()).hexdigest()
+    )
     assert fixture["content_policy"] == {
         "synthetic": True,
         "symbolic_values_only": True,
@@ -60,8 +58,7 @@ def test_e01b_uses_closed_status_stage_classification_and_reason_codes() -> None
     assert all(receipt["status"] in allowed_statuses for receipt in report["receipts"])
     assert all(receipt["stage"] in allowed_stages for receipt in report["receipts"])
     assert all(
-        receipt["classification"] in allowed_classifications
-        for receipt in report["receipts"]
+        receipt["classification"] in allowed_classifications for receipt in report["receipts"]
     )
     assert all(receipt["reason_code"] in allowed_codes for receipt in report["receipts"])
 
@@ -181,12 +178,15 @@ def test_e01b_report_omits_raw_values_and_runtime_identifiers() -> None:
     reference = json.loads(REFERENCE_FIXTURES.read_text(encoding="utf-8"))
 
     assert "E01B_SYNTHETIC_" not in rendered
-    assert re.search(
-        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-        r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
-        rendered,
-        flags=re.IGNORECASE,
-    ) is None
+    assert (
+        re.search(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            rendered,
+            flags=re.IGNORECASE,
+        )
+        is None
+    )
     for scenario in reference["scenarios"]:
         for event in scenario["events"]:
             if event.get("value"):

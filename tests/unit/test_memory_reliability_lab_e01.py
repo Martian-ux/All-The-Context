@@ -21,19 +21,14 @@ from bench.memory_reliability_lab_e01 import FIXTURES, load_fixture, run_fixture
 
 FIXTURE_SHA256 = "19f52ad16b398248866b5bfac930380ee71071a3414a4678a316bd161f762086"
 FROZEN_REPORT = (
-    Path(__file__).parents[2]
-    / "bench"
-    / "reports"
-    / "memory_reliability_e01_wave2.json"
+    Path(__file__).parents[2] / "bench" / "reports" / "memory_reliability_e01_wave2.json"
 )
 
 
 def test_fixture_is_frozen_symbolic_partial_e01_with_required_coverage() -> None:
     scenarios, budget = load_fixture()
     fixture = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    capabilities = {
-        capability for scenario in scenarios for capability in scenario.capabilities
-    }
+    capabilities = {capability for scenario in scenarios for capability in scenario.capabilities}
 
     assert hashlib.sha256(FIXTURES.read_bytes()).hexdigest() == FIXTURE_SHA256
     assert fixture["content_policy"] == {
@@ -59,12 +54,7 @@ def test_fixture_is_frozen_symbolic_partial_e01_with_required_coverage() -> None
         "harmful_memory",
     } <= capabilities
     assert {"text", "prompt", "message", "response"}.isdisjoint(
-        {
-            key
-            for scenario in fixture["scenarios"]
-            for event in scenario["events"]
-            for key in event
-        }
+        {key for scenario in fixture["scenarios"] for event in scenario["events"] for key in event}
     )
 
 
@@ -273,9 +263,7 @@ def test_authority_rule_rejects_foreign_and_untrusted_control_operations() -> No
     adapter = AtcGovernedReferenceAdapter()
     adapter.reset("RUN_CONTROL_AUTHORITY", "P_ALPHA", "2035-03-01T00:00:00Z")
     adapter.present(_event(1, "set_claim", "CLAIM_CONTROL", role="CLAIM"))
-    adapter.present(
-        _event(2, "soft_delete", "CLAIM_CONTROL", principal="P_BETA")
-    )
+    adapter.present(_event(2, "soft_delete", "CLAIM_CONTROL", principal="P_BETA"))
     adapter.present(
         _event(
             3,
@@ -298,12 +286,8 @@ def test_authority_rule_rejects_foreign_and_untrusted_control_operations() -> No
     )
     assert adapter.inventory()["CLAIM_CONTROL"] == "DELETED"
 
-    adapter.present(
-        _event(7, "set_procedure", "PROCEDURE_CONTROL", role="PROCEDURE")
-    )
-    adapter.present(
-        _event(8, "retire_procedure", "PROCEDURE_CONTROL", principal="P_BETA")
-    )
+    adapter.present(_event(7, "set_procedure", "PROCEDURE_CONTROL", role="PROCEDURE"))
+    adapter.present(_event(8, "retire_procedure", "PROCEDURE_CONTROL", principal="P_BETA"))
     adapter.present(
         _event(
             9,

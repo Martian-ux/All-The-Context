@@ -92,18 +92,14 @@ def load_fixture(path: Path = FIXTURES) -> tuple[dict[str, Any], tuple[CaseSpec,
             expected_status=str(raw["expected_status"]),
             expected_classification=str(raw["expected_classification"]),
             pass_reason_code=str(raw["pass_reason_code"]),
-            failure_reason_codes=_strings(
-                raw["failure_reason_codes"], "failure_reason_codes"
-            ),
+            failure_reason_codes=_strings(raw["failure_reason_codes"], "failure_reason_codes"),
             production_path=str(raw["production_path"]),
         )
         for item in raw_cases
         for raw in (_mapping(item, "case"),)
     )
     allowed_statuses = set(_strings(root["status_values"], "status_values"))
-    allowed_classifications = set(
-        _strings(root["classification_values"], "classification_values")
-    )
+    allowed_classifications = set(_strings(root["classification_values"], "classification_values"))
     allowed_stages = set(_strings(root["stage_values"], "stage_values"))
     allowed_codes = set(_strings(root["reason_codes"], "reason_codes"))
     if len({case.case_id for case in cases}) != len(cases):
@@ -543,9 +539,7 @@ def run_fixture(*, repeats: int = 2) -> dict[str, Any]:
         "experiment": "E01b",
         "coordinator_base": COORDINATOR_BASE,
         "fixture_sha256": hashlib.sha256(FIXTURES.read_bytes()).hexdigest(),
-        "reference_e01_fixture_sha256": hashlib.sha256(
-            REFERENCE_FIXTURES.read_bytes()
-        ).hexdigest(),
+        "reference_e01_fixture_sha256": hashlib.sha256(REFERENCE_FIXTURES.read_bytes()).hexdigest(),
         "execution_scope": {
             "condition": "production_core_at_frozen_coordinator_base",
             "frozen_base": COORDINATOR_BASE,
@@ -562,9 +556,7 @@ def run_fixture(*, repeats: int = 2) -> dict[str, Any]:
             "python": "3.12",
         },
         "production_paths": sorted(
-            case.production_path
-            for case in cases
-            if case.case_id in _EXECUTORS
+            case.production_path for case in cases if case.case_id in _EXECUTORS
         ),
         "receipts": receipts,
         "summary": {

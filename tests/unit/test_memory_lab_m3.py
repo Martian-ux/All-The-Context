@@ -61,10 +61,7 @@ def test_execution_origin_attestation_is_verified_and_repository_relative() -> N
             "bench/memory_lab_m3.py",
         ],
     }
-    assert all(
-        not Path(item).is_absolute()
-        for item in attestation["imported_module_paths"]
-    )
+    assert all(not Path(item).is_absolute() for item in attestation["imported_module_paths"])
 
 
 def test_barrier_withdraws_complete_chain_before_partial_repair() -> None:
@@ -96,9 +93,7 @@ def test_barrier_withdraws_complete_chain_before_partial_repair() -> None:
 
 
 def test_incremental_and_clean_build_implementations_are_separate() -> None:
-    incremental_source = inspect.getsource(
-        IncrementalInfluenceClosure._evaluate_incremental
-    )
+    incremental_source = inspect.getsource(IncrementalInfluenceClosure._evaluate_incremental)
     oracle_source = inspect.getsource(FullRebuildOracle._evaluate_clean)
 
     assert "_evaluate_clean" not in incremental_source
@@ -162,10 +157,7 @@ def test_missing_edge_and_ablations_are_observably_decisive() -> None:
     assert report["ablations_decisive"] is True
     assert all(report["ablations"].values())
     assert (
-        report["injected_faults"]["missing_inventory_edge"][
-            "published_stale_descendant_count"
-        ]
-        > 0
+        report["injected_faults"]["missing_inventory_edge"]["published_stale_descendant_count"] > 0
     )
     assert report["work_control"]["evaluated_node_reduction_fraction"] >= 0.25
     assert report["purge_boundary"] == {
@@ -193,9 +185,9 @@ def test_checked_report_preserves_complete_f02_result() -> None:
         "exclusive_descendant_ids_checked": 140,
         "shared_descendant_recipes_validated": 80,
     }
-    assert report["execution_origin_attestation"][
-        "import_origin_verified_to_worker_worktree"
-    ] is True
+    assert (
+        report["execution_origin_attestation"]["import_origin_verified_to_worker_worktree"] is True
+    )
     assert all(
         not Path(item).is_absolute()
         for item in report["execution_origin_attestation"]["imported_module_paths"]

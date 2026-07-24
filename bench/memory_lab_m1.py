@@ -265,12 +265,8 @@ def _case_verdicts() -> dict[str, dict[str, Any]]:
                 outcome=OutcomeStatus.SUCCEEDED,
             )
         ),
-        ledger.append(
-            _event(Stage.ACTION, "early-action", parents=("supplied",), action="read")
-        ),
-        ledger.append(
-            _event(Stage.OBSERVED_USE, "unknown-parent", parents=("missing",))
-        ),
+        ledger.append(_event(Stage.ACTION, "early-action", parents=("supplied",), action="read")),
+        ledger.append(_event(Stage.OBSERVED_USE, "unknown-parent", parents=("missing",))),
     )
     verdicts[F02_CASE_IDS[6]] = _verdict(
         assigned.status is supplied.status is AdmissionStatus.ACCEPTED
@@ -410,10 +406,7 @@ def _case_verdicts() -> dict[str, dict[str, Any]]:
                 InvalidationReason.PERMISSION_REVOCATION,
             }
         )
-        and all(
-            attempt.status is AdmissionStatus.REJECTED
-            for attempt in late_attempts
-        ),
+        and all(attempt.status is AdmissionStatus.REJECTED for attempt in late_attempts),
         ("M1-I04", "M1-I07"),
         "principals_receive_exact_invalidation_reasons",
     )
@@ -531,9 +524,7 @@ def _case_verdicts() -> dict[str, dict[str, Any]]:
         failures.append(ledger.append(attempt, case_id=F02_CASE_IDS[13]))
     accepted = ledger.append(base, case_id=F02_CASE_IDS[13])
     rendered_failures = "".join(
-        serialize_failure(item.failure)
-        for item in failures
-        if item.failure is not None
+        serialize_failure(item.failure) for item in failures if item.failure is not None
     )
     verdicts[F02_CASE_IDS[13]] = _verdict(
         all(item.status is AdmissionStatus.REJECTED for item in failures)
@@ -561,9 +552,7 @@ def _case_verdicts() -> dict[str, dict[str, Any]]:
         reason=InvalidationReason.TERMINAL_PURGE,
         event_time_bucket="logical-2",
     )
-    delayed = ledger.append(
-        _event(Stage.OBSERVED_USE, "delayed-use", parents=(ids[-1],))
-    )
+    delayed = ledger.append(_event(Stage.OBSERVED_USE, "delayed-use", parents=(ids[-1],)))
     verdicts[F02_CASE_IDS[15]] = _verdict(
         delayed.status is AdmissionStatus.REJECTED
         and ledger.rebuild_aggregates().observed_use == 0
@@ -593,9 +582,7 @@ def _paired_noninterference(
                 "applicable": canary_kind == "unauthorized",
             }
         )
-    admitted = [
-        item for item in candidates if item["authorized"] and item["applicable"]
-    ]
+    admitted = [item for item in candidates if item["authorized"] and item["applicable"]]
     ledger = _ledger(run_id)
     _append_chain(ledger, through=Stage.OUTCOME)
     normalized = list(ledger.normalized_receipts())
@@ -635,18 +622,14 @@ def _episode_matrix(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 elif arm == "controlled_omission":
                     grade = "controlled_intervention"
                 else:
-                    episode_ledger = _ledger(
-                        f"episode-{kind_spec['kind']}-{ordinal:02d}-{arm}"
-                    )
+                    episode_ledger = _ledger(f"episode-{kind_spec['kind']}-{ordinal:02d}-{arm}")
                     through = {
                         "supplied": Stage.SUPPLIED,
                         "acknowledged_only": Stage.ACKNOWLEDGED,
                         "host_observed": Stage.OBSERVED_USE,
                     }[arm]
                     _append_chain(episode_ledger, through=through)
-                    grade = episode_ledger.transaction_view(
-                        "transaction-a"
-                    ).evidence_grade
+                    grade = episode_ledger.transaction_view("transaction-a").evidence_grade
                 success = host if arm == "host_observed" else baseline
                 if arm == "controlled_omission":
                     success = omission
@@ -840,9 +823,7 @@ def _execution_origin_attestation() -> dict[str, Any]:
     }
 
 
-def _verdict(
-    passed: bool, invariants: Sequence[str], evidence: str
-) -> dict[str, Any]:
+def _verdict(passed: bool, invariants: Sequence[str], evidence: str) -> dict[str, Any]:
     return {
         "verdict": "PASS" if passed else "FAIL",
         "invariants": list(invariants),
@@ -877,9 +858,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     ]
     for case_id in F02_CASE_IDS:
         verdict = report["f02_case_verdicts"][case_id]
-        lines.append(
-            f"| `{case_id}` | `{verdict['verdict']}` | `{verdict['evidence']}` |"
-        )
+        lines.append(f"| `{case_id}` | `{verdict['verdict']}` | `{verdict['evidence']}` |")
     lines.extend(
         [
             "",
@@ -916,10 +895,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "",
             "## Decision",
             "",
-            (
-                f"`{report['decision']['state']}` for "
-                f"`{report['decision']['scope']}`."
-            ),
+            (f"`{report['decision']['state']}` for `{report['decision']['scope']}`."),
             "",
             "## Limitations",
             "",

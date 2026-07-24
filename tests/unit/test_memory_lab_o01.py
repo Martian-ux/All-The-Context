@@ -18,9 +18,7 @@ FIXTURE = ROOT / "bench" / "memory_lab_o01_fixture.json"
 
 def test_pre_action_input_separates_post_action_corrective_oracle() -> None:
     protocol = load_protocol(FIXTURE)
-    hidden = next(
-        regime.steps[1] for regime in protocol.regimes if regime.name == "online"
-    )
+    hidden = next(regime.steps[1] for regime in protocol.regimes if regime.name == "online")
     reference_spec = next(
         condition
         for condition in PRIMARY_CONDITIONS
@@ -42,10 +40,7 @@ def test_o01_is_deterministic_identifier_safe_and_equal_budget() -> None:
     assert first == second
     assert first["schema"] == O01_REPORT_SCHEMA
     assert first["repeats"] == 20
-    assert all(
-        condition["repeat_deterministic"]
-        for condition in first["conditions"].values()
-    )
+    assert all(condition["repeat_deterministic"] for condition in first["conditions"].values())
     assert first["execution_scope"] == {
         "synthetic_opaque_data_only": True,
         "production_core_touched": False,
@@ -97,9 +92,7 @@ def test_o01_separates_write_read_utilization_action_and_recovery() -> None:
 def test_o01_frozen_ranking_instability_forces_hold() -> None:
     report = run_o01_file(FIXTURE)
 
-    assert set(report["conditions"]) == {
-        condition.condition_id for condition in PRIMARY_CONDITIONS
-    }
+    assert set(report["conditions"]) == {condition.condition_id for condition in PRIMARY_CONDITIONS}
     assert report["decision"]["state"] == "HOLD"
     assert "spearman_below_frozen_threshold" in report["decision"]["hold_reasons"]
     assert "rank_move_exceeds_frozen_threshold" not in report["decision"]["hold_reasons"]
@@ -167,14 +160,7 @@ def test_stable_control_resolves_epoch_and_feedback_ablation_is_reported() -> No
     stable = report["conditions"]["stable_current_state"]["regimes"]["shifted"]
 
     assert stable["post_shift_stale_activation_count"] == 0
-    no_feedback = report["condition_ablations"][
-        "reference_without_post_action_feedback"
-    ]
-    assert no_feedback["removed_condition"] == (
-        "supervised_post_action_corrective_oracle_feedback"
-    )
+    no_feedback = report["condition_ablations"]["reference_without_post_action_feedback"]
+    assert no_feedback["removed_condition"] == ("supervised_post_action_corrective_oracle_feedback")
     assert no_feedback["repeat_deterministic"] is True
-    assert any(
-        delta > 0
-        for delta in no_feedback["regime_caos_delta_from_full_reference"].values()
-    )
+    assert any(delta > 0 for delta in no_feedback["regime_caos_delta_from_full_reference"].values())

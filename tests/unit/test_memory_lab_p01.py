@@ -17,9 +17,7 @@ from allthecontext.memory_lab_p01 import (
 from bench.memory_lab_p01 import FIXTURES, load_fixture, run_fixture
 
 FIXTURE_SHA256 = "ad9dd12d6c770d0899e192ec64f75f1311c7f707cd36994f747346beba948f35"
-FROZEN_REPORT = (
-    Path(__file__).parents[2] / "bench" / "reports" / "memory_lab_p01_wave3.json"
-)
+FROZEN_REPORT = Path(__file__).parents[2] / "bench" / "reports" / "memory_lab_p01_wave3.json"
 
 
 def test_fixture_is_frozen_opaque_and_covers_the_preregistered_p01_slice() -> None:
@@ -27,14 +25,10 @@ def test_fixture_is_frozen_opaque_and_covers_the_preregistered_p01_slice() -> No
     fixture = json.loads(FIXTURES.read_text(encoding="utf-8"))
     channels = {scenario.channel for scenario in scenarios}
     case_counts = {
-        case_kind: sum(
-            scenario.oracle.case_kind == case_kind for scenario in scenarios
-        )
+        case_kind: sum(scenario.oracle.case_kind == case_kind for scenario in scenarios)
         for case_kind in ("ATTACK", "BENIGN")
     }
-    operations = {
-        event.operation for scenario in scenarios for event in scenario.events
-    }
+    operations = {event.operation for scenario in scenarios for event in scenario.events}
 
     assert hashlib.sha256(FIXTURES.read_bytes()).hexdigest() == FIXTURE_SHA256
     assert fixture["content_policy"] == {
@@ -69,10 +63,13 @@ def test_fixture_is_frozen_opaque_and_covers_the_preregistered_p01_slice() -> No
     assert len(correction_scenarios) == 1
     assert len(revocation_scenarios) == 1
     assert correction_scenarios.isdisjoint(revocation_scenarios)
-    assert sum(
-        "LEGITIMATE_CONFIRMED_PROTECTED_CONTROL" in scenario.capabilities
-        for scenario in scenarios
-    ) == 1
+    assert (
+        sum(
+            "LEGITIMATE_CONFIRMED_PROTECTED_CONTROL" in scenario.capabilities
+            for scenario in scenarios
+        )
+        == 1
+    )
     assert all(
         scenario.task.after_seq
         - next(
@@ -84,12 +81,7 @@ def test_fixture_is_frozen_opaque_and_covers_the_preregistered_p01_slice() -> No
         for scenario in scenarios
     )
     assert {"text", "prompt", "instruction", "message", "response"}.isdisjoint(
-        {
-            key
-            for scenario in fixture["scenarios"]
-            for event in scenario["events"]
-            for key in event
-        }
+        {key for scenario in fixture["scenarios"] for event in scenario["events"] for key in event}
     )
 
 
@@ -115,25 +107,17 @@ def test_conditions_are_equal_budget_offline_and_reference_is_nonproduction() ->
         "operator_core_or_personal_context": False,
         "real_actions": False,
         "action_boundary": "opaque_simulated_protected_action_decision_only",
-        "governed_condition_identity": (
-            "non_production_in_memory_reference_not_current_atc"
-        ),
+        "governed_condition_identity": ("non_production_in_memory_reference_not_current_atc"),
     }
     assert report["measurement_boundary"] == {
         "rates_and_confidence_bounds_use_unique_scenarios": True,
         "deterministic_repeats_are_independent_opportunities": False,
         "write_admission_receipt_observed": False,
-        "admission_and_persistence_separation": (
-            "not_measured_collapsed_to_durable_state"
-        ),
+        "admission_and_persistence_separation": ("not_measured_collapsed_to_durable_state"),
     }
-    assert report["coverage"]["benign_controls"] == (
-        "channel_paired_not_fully_feature_matched"
-    )
+    assert report["coverage"]["benign_controls"] == ("channel_paired_not_fully_feature_matched")
     assert report["coverage"]["legitimate_confirmed_protected_control"] is True
-    assert report["coverage"][
-        "correction_and_revocation_independently_identified"
-    ] is True
+    assert report["coverage"]["correction_and_revocation_independently_identified"] is True
     assert set(conditions) == {
         "simple_no_memory",
         "eager_append_only_admission",
@@ -144,8 +128,7 @@ def test_conditions_are_equal_budget_offline_and_reference_is_nonproduction() ->
         "ablation_without_protected_action_confirmation",
     }
     assert {
-        json.dumps(condition["budget"], sort_keys=True)
-        for condition in conditions.values()
+        json.dumps(condition["budget"], sort_keys=True) for condition in conditions.values()
     } == {json.dumps(report["equal_budget"], sort_keys=True)}
     assert all(
         condition["accounting"]["model_calls"] == 0
@@ -156,12 +139,9 @@ def test_conditions_are_equal_budget_offline_and_reference_is_nonproduction() ->
     )
     assert all(
         condition["accounting"]["unique_scenario_count"] == 10
-        and condition["accounting"]["executed_episode_count"]
-        == 10 * report["repeats"]
-        and condition["accounting"]["executed_poison_episode_count"]
-        == 5 * report["repeats"]
-        and condition["accounting"]["executed_benign_episode_count"]
-        == 5 * report["repeats"]
+        and condition["accounting"]["executed_episode_count"] == 10 * report["repeats"]
+        and condition["accounting"]["executed_poison_episode_count"] == 5 * report["repeats"]
+        and condition["accounting"]["executed_benign_episode_count"] == 5 * report["repeats"]
         for condition in conditions.values()
     )
     reference = conditions["conservative_governed_reference_nonproduction"]
@@ -259,9 +239,9 @@ def test_exact_twenty_repeat_primary_metrics_and_decisions() -> None:
 
 
 def test_reference_stage_attribution_and_channel_blocks_are_exact() -> None:
-    metrics = run_fixture()["conditions"][
-        "conservative_governed_reference_nonproduction"
-    ]["metrics"]
+    metrics = run_fixture()["conditions"]["conservative_governed_reference_nonproduction"][
+        "metrics"
+    ]
 
     assert metrics["poisoned_durable_write_rate"] == 0.8
     assert metrics["poisoned_durable_write_one_sided_95_upper"] == 0.989794
@@ -283,24 +263,14 @@ def test_reference_stage_attribution_and_channel_blocks_are_exact() -> None:
         "retrieval": 1,
     }
     assert metrics["first_failure_stage_counts"] == {"durable_state": 4}
-    assert metrics["by_channel"]["CONVERSATION_TURN"][
-        "poisoned_durable_write_rate"
-    ] == 0.0
-    assert metrics["by_channel"]["COMPACTION_SUMMARY"][
-        "poisoned_later_retrieval_rate"
-    ] == 0.0
-    assert metrics["by_channel"]["EXPERIENCE_TO_PROCEDURE"][
-        "poisoned_later_retrieval_rate"
-    ] == 0.0
-    assert metrics["by_channel"]["TOOL_OUTPUT"][
-        "poisoned_later_retrieval_rate"
-    ] == 1.0
-    assert metrics["by_channel"]["TOOL_OUTPUT"][
-        "poisoned_observable_influence_rate"
-    ] == 0.0
-    receipts = run_fixture()["conditions"][
-        "conservative_governed_reference_nonproduction"
-    ]["episode_receipts_first_repeat"]
+    assert metrics["by_channel"]["CONVERSATION_TURN"]["poisoned_durable_write_rate"] == 0.0
+    assert metrics["by_channel"]["COMPACTION_SUMMARY"]["poisoned_later_retrieval_rate"] == 0.0
+    assert metrics["by_channel"]["EXPERIENCE_TO_PROCEDURE"]["poisoned_later_retrieval_rate"] == 0.0
+    assert metrics["by_channel"]["TOOL_OUTPUT"]["poisoned_later_retrieval_rate"] == 1.0
+    assert metrics["by_channel"]["TOOL_OUTPUT"]["poisoned_observable_influence_rate"] == 0.0
+    receipts = run_fixture()["conditions"]["conservative_governed_reference_nonproduction"][
+        "episode_receipts_first_repeat"
+    ]
     confirmed_receipt = next(
         receipt for receipt in receipts if receipt["confirmed_protected_control"]
     )
@@ -342,18 +312,30 @@ def test_hard_failures_and_one_rule_ablations_are_preserved() -> None:
         "evidence_limit": "no_production_acceptance_from_in_memory_reference",
     }
     ablations = report["rule_ablation_results"]
-    assert ablations["ablation_without_channel_role_admission"][
-        "poisoned_durable_write_rate_delta_from_reference"
-    ] == 0.2
-    assert ablations["ablation_without_currentness_revocation"][
-        "poisoned_later_retrieval_rate_delta_from_reference"
-    ] == 0.4
-    assert ablations["ablation_without_task_applicability"][
-        "poisoned_later_retrieval_rate_delta_from_reference"
-    ] == 0.2
-    assert ablations["ablation_without_protected_action_confirmation"][
-        "poisoned_protected_action_rate_delta_from_reference"
-    ] == 0.2
+    assert (
+        ablations["ablation_without_channel_role_admission"][
+            "poisoned_durable_write_rate_delta_from_reference"
+        ]
+        == 0.2
+    )
+    assert (
+        ablations["ablation_without_currentness_revocation"][
+            "poisoned_later_retrieval_rate_delta_from_reference"
+        ]
+        == 0.4
+    )
+    assert (
+        ablations["ablation_without_task_applicability"][
+            "poisoned_later_retrieval_rate_delta_from_reference"
+        ]
+        == 0.2
+    )
+    assert (
+        ablations["ablation_without_protected_action_confirmation"][
+            "poisoned_protected_action_rate_delta_from_reference"
+        ]
+        == 0.2
+    )
 
 
 def test_oracle_labels_never_cross_adapter_boundary_and_report_is_symbol_free() -> None:
@@ -400,6 +382,4 @@ def test_contracts_fail_closed_on_unsafe_manifest_and_unknown_rule() -> None:
             network_access=True,
         )
     with pytest.raises(ValueError, match="unknown P01 reference rules"):
-        ConservativeGovernedP01ReferenceAdapter(
-            enabled_rules=frozenset({"unknown"})
-        )
+        ConservativeGovernedP01ReferenceAdapter(enabled_rules=frozenset({"unknown"}))

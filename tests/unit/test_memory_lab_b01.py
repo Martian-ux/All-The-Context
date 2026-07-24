@@ -43,19 +43,13 @@ def test_b01_fixture_and_config_are_frozen_sanitized_and_do_not_modify_m0() -> N
     assert len(events) == 45
     assert len(scenarios) == 9
     assert config.repeats == 20
-    assert {scenario.task.evaluated_at for scenario in scenarios} == {
-        config.frozen_clock
-    }
+    assert {scenario.task.evaluated_at for scenario in scenarios} == {config.frozen_clock}
     assert {scenario.task.context_budget_chars for scenario in scenarios} == {
         config.context_budget_chars
     }
-    assert {scenario.task.limit for scenario in scenarios} == {
-        config.max_selected_events
-    }
+    assert {scenario.task.limit for scenario in scenarios} == {config.max_selected_events}
     assert 2 * len(events) <= config.max_events_scanned_per_operation
-    assert all(
-        not event.content_document().startswith(event.event_id) for event in events
-    )
+    assert all(not event.content_document().startswith(event.event_id) for event in events)
 
 
 def test_adapter_facing_task_contains_no_oracle_or_forbidden_labels() -> None:
@@ -67,9 +61,7 @@ def test_adapter_facing_task_contains_no_oracle_or_forbidden_labels() -> None:
         assert adapter_task.forbidden_ids == frozenset()
         if scenario.oracle.expected_action is not None:
             assert scenario.oracle.expected_action not in adapter_task.query
-        assert not scenario.oracle.forbidden_ids.intersection(
-            set(adapter_task.query.split())
-        )
+        assert not scenario.oracle.forbidden_ids.intersection(set(adapter_task.query.split()))
 
 
 def test_confirmatory_values_reuse_the_frozen_supported_dsl_grammar() -> None:
@@ -87,12 +79,11 @@ def test_confirmatory_values_reuse_the_frozen_supported_dsl_grammar() -> None:
                 scenario.task.descriptor.policy_match_field,
                 scenario.task.descriptor.action_field,
                 scenario.task.descriptor.threshold_field,
-                    scenario.task.descriptor.window is not None,
+                scenario.task.descriptor.window is not None,
                 scenario.task.descriptor.trigger_value is not None,
             )
             for scenario in scenarios
-            if scenario.partition == partition
-            and scenario.task.descriptor.strategy == strategy
+            if scenario.partition == partition and scenario.task.descriptor.strategy == strategy
         }
 
     assert grammar_signature("latest_route", "development") == grammar_signature(
@@ -132,11 +123,14 @@ def test_programmatic_reader_issues_multiple_bounded_read_only_operations() -> N
         for operation in receipt.operations
     )
     selected_ids = tuple(item.object_id for item in receipt.items)
-    assert _execute_selected_context(
-        {event.event_id: event for event in events},
-        scenario.task,
-        selected_ids,
-    ) == scenario.oracle.expected_action
+    assert (
+        _execute_selected_context(
+            {event.event_id: event for event in events},
+            scenario.task,
+            selected_ids,
+        )
+        == scenario.oracle.expected_action
+    )
     assert adapter.manifest.network_access is False
     assert adapter.manifest.writes_canonical_state is False
 
@@ -269,9 +263,7 @@ def test_b01_twenty_repeat_result_is_deterministic_identifier_safe_and_bounded(
     }
     for condition_id, expected_caos in expected_confirmatory_caos.items():
         condition = report["conditions"][condition_id]
-        assert (
-            condition["partitions"]["confirmatory"]["caos_rate"] == expected_caos
-        )
+        assert condition["partitions"]["confirmatory"]["caos_rate"] == expected_caos
         assert condition["metrics"]["deterministic_task_rate"] == 1.0
         assert condition["metrics"]["contract_violation_count"] == 0
         assert condition["metrics"]["context_budget_violation_count"] == 0
@@ -310,15 +302,12 @@ def test_b01_twenty_repeat_result_is_deterministic_identifier_safe_and_bounded(
         "general_programmatic_inspection_falsified": False,
         "pro_long_falsified": False,
         "combination_confirmatory_caos": 1.0,
-        "combination_disposition": (
-            "NOT_PROMOTED_UNDER_SAME_B01_EXTERNAL_OPERATION_GATE"
-        ),
+        "combination_disposition": ("NOT_PROMOTED_UNDER_SAME_B01_EXTERNAL_OPERATION_GATE"),
         "scope": "isolated_synthetic_evidence_only_no_production_promotion",
     }
     assert report["identifier_leak_scan"]["passed"] is True
     assert (
-        "frozen_hand_authored_dsl_not_arbitrary_program_synthesis"
-        in report["validity_limitations"]
+        "frozen_hand_authored_dsl_not_arbitrary_program_synthesis" in report["validity_limitations"]
     )
     assert (
         "not_a_pro_long_reproduction_no_equivalent_agent_action_model"

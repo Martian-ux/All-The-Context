@@ -51,9 +51,10 @@ def test_only_declared_supplier_worker_can_use_external_code() -> None:
     assert external_workers == {"hindsight_supplier"}
     assert manifest["supplier_execution_gate"]["allowed_supplier"] == "Hindsight"
     assert manifest["supplier_execution_gate"]["production_import"] is False
-    assert "honest skipped receipt when any gate fails" in manifest[
-        "supplier_execution_gate"
-    ]["required"]
+    assert (
+        "honest skipped receipt when any gate fails"
+        in manifest["supplier_execution_gate"]["required"]
+    )
 
 
 def test_governance_documents_evidence_and_integration_gates() -> None:

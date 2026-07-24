@@ -357,10 +357,7 @@ class ObservableUseLedger:
             raise ValueError("cannot invalidate an unknown record version")
         open_transactions: dict[str, LedgerEvent] = {}
         for event in self._events:
-            if (
-                event.canonical_record_id == record_id
-                and event.canonical_record_version == version
-            ):
+            if event.canonical_record_id == record_id and event.canonical_record_version == version:
                 open_transactions[event.transaction_id] = event
         results: list[Admission] = []
         for transaction_id in sorted(open_transactions):
@@ -370,8 +367,7 @@ class ObservableUseLedger:
             binding = transaction[0]
             if (
                 principal_capability_view_ids is not None
-                and binding.principal_capability_view_id
-                not in principal_capability_view_ids
+                and binding.principal_capability_view_id not in principal_capability_view_ids
             ):
                 continue
             parent = transaction[-1]
@@ -398,25 +394,19 @@ class ObservableUseLedger:
             }
             self._minimum_identity_generation = max(
                 self._minimum_identity_generation,
-                *(
-                    self._records[item].identity_generation + 1
-                    for item in affected_keys
-                ),
+                *(self._records[item].identity_generation + 1 for item in affected_keys),
             )
             retained_events = [
                 event
                 for event in self._events
-                if (event.canonical_record_id, event.canonical_record_version)
-                not in affected_keys
+                if (event.canonical_record_id, event.canonical_record_version) not in affected_keys
             ]
             self._events = retained_events
             self._by_event_id = {event.event_id: event for event in retained_events}
             for affected_key in affected_keys:
                 self._records.pop(affected_key, None)
             self._purge_count += 1
-            return tuple(
-                Admission(item.status, failure=item.failure) for item in results
-            )
+            return tuple(Admission(item.status, failure=item.failure) for item in results)
         return tuple(results)
 
     def advance_policy_generation(
@@ -481,16 +471,14 @@ class ObservableUseLedger:
 
         active_events: list[LedgerEvent] = []
         invalidated_transactions = {
-            event.transaction_id
-            for event in self._events
-            if event.stage is Stage.INVALIDATED
+            event.transaction_id for event in self._events if event.stage is Stage.INVALIDATED
         }
         for event in self._events:
-            if (
-                event.transaction_id in invalidated_transactions
-                and event.stage
-                in {Stage.OBSERVED_USE, Stage.ACTION, Stage.OUTCOME}
-            ):
+            if event.transaction_id in invalidated_transactions and event.stage in {
+                Stage.OBSERVED_USE,
+                Stage.ACTION,
+                Stage.OUTCOME,
+            }:
                 continue
             active_events.append(event)
         counts = Counter(event.stage for event in active_events)
@@ -517,9 +505,7 @@ class ObservableUseLedger:
                 event.transaction_id, f"transaction-{len(transaction_positions) + 1}"
             )
             event_positions.setdefault(event.event_id, f"event-{len(event_positions) + 1}")
-            issue_positions.setdefault(
-                event.issue_receipt_id, f"issue-{len(issue_positions) + 1}"
-            )
+            issue_positions.setdefault(event.issue_receipt_id, f"issue-{len(issue_positions) + 1}")
             receipts.append(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -533,8 +519,7 @@ class ObservableUseLedger:
                     "policy_generation": event.policy_generation,
                     "principal_capability_view_id": event.principal_capability_view_id,
                     "causal_predecessor_event_ids": [
-                        event_positions[parent]
-                        for parent in event.causal_predecessor_event_ids
+                        event_positions[parent] for parent in event.causal_predecessor_event_ids
                     ],
                     "event_time_bucket": event.event_time_bucket,
                     "observable_source_type": event.observable_source_type.value,
@@ -569,10 +554,7 @@ class ObservableUseLedger:
         """Return every declared internal state surface for privacy assertions."""
 
         return {
-            "active_records": [
-                asdict(record)
-                for _, record in sorted(self._records.items())
-            ],
+            "active_records": [asdict(record) for _, record in sorted(self._records.items())],
             "active_events": [asdict(event) for event in self._events],
             "minimum_identity_generation": self._minimum_identity_generation,
             "purge_count": self._purge_count,
@@ -664,9 +646,7 @@ class ObservableUseLedger:
         return None
 
     def _transaction_events(self, transaction_id: str) -> tuple[LedgerEvent, ...]:
-        return tuple(
-            event for event in self._events if event.transaction_id == transaction_id
-        )
+        return tuple(event for event in self._events if event.transaction_id == transaction_id)
 
     def _reject(
         self,
@@ -687,11 +667,10 @@ class ObservableUseLedger:
                 failure_class_enum=failure,
                 expected_state_enum=expected,
                 actual_state_enum=actual,
-                per_run_artifact_ref=(
-                    f"{self._run_id}-failure-{self._failure_ordinal}"
-                ),
+                per_run_artifact_ref=(f"{self._run_id}-failure-{self._failure_ordinal}"),
             ),
         )
+
 
 def serialize_receipts(receipts: Sequence[Mapping[str, Any]]) -> str:
     return json.dumps(receipts, sort_keys=True, separators=(",", ":"))
@@ -703,9 +682,7 @@ def serialize_failure(receipt: FailureReceipt) -> str:
 
 def _parse_event(raw: Mapping[str, Any]) -> LedgerEvent:
     parents = raw["causal_predecessor_event_ids"]
-    if not isinstance(parents, (list, tuple)) or any(
-        not isinstance(item, str) for item in parents
-    ):
+    if not isinstance(parents, (list, tuple)) or any(not isinstance(item, str) for item in parents):
         raise TypeError("parents must be a string sequence")
     event = LedgerEvent(
         event_id=str(raw["event_id"]),

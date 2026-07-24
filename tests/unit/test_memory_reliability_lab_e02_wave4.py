@@ -15,10 +15,7 @@ from bench.memory_reliability_lab_e02_wave4 import (
 )
 
 FROZEN_REPORT = (
-    Path(__file__).parents[2]
-    / "bench"
-    / "reports"
-    / "memory_reliability_e02_wave4.json"
+    Path(__file__).parents[2] / "bench" / "reports" / "memory_reliability_e02_wave4.json"
 )
 
 
@@ -69,9 +66,7 @@ def test_e02_wave4_gap_and_boundary_classifications_are_exact() -> None:
         "probe_expectation_mismatch_count": 0,
         "evaluation_error_count": 0,
     }
-    assert {
-        case_id: receipt["classification"] for case_id, receipt in cases.items()
-    } == {
+    assert {case_id: receipt["classification"] for case_id, receipt in cases.items()} == {
         "generic_epistemic_role": "UNSUPPORTED",
         "project_and_domain_applicability": "UNSUPPORTED",
         "dependency_lineage_and_invalidation": "UNSUPPORTED",
@@ -84,16 +79,14 @@ def test_e02_wave4_gap_and_boundary_classifications_are_exact() -> None:
         for receipt in cases.values()
     )
     assert all(
-        receipt["probe_classifications"]
-        == receipt["expected_probe_classifications"]
+        receipt["probe_classifications"] == receipt["expected_probe_classifications"]
         for receipt in cases.values()
     )
 
 
 def test_e02_wave4_adversarial_substitutions_remain_visible() -> None:
     cases = {
-        receipt["case_id"]: receipt["observed"]
-        for receipt in run_fixture(repeats=1)["receipts"]
+        receipt["case_id"]: receipt["observed"] for receipt in run_fixture(repeats=1)["receipts"]
     }
 
     role = cases["generic_epistemic_role"]
@@ -114,8 +107,7 @@ def test_e02_wave4_adversarial_substitutions_remain_visible() -> None:
 
 def test_e02_wave4_adjacent_lifecycle_boundaries_are_not_overclaimed() -> None:
     cases = {
-        receipt["case_id"]: receipt["observed"]
-        for receipt in run_fixture(repeats=1)["receipts"]
+        receipt["case_id"]: receipt["observed"] for receipt in run_fixture(repeats=1)["receipts"]
     }
 
     lifecycle = cases["eviction_decay_and_procedure_retirement"]
@@ -149,12 +141,15 @@ def test_e02_wave4_is_deterministic_private_and_disposable() -> None:
         "raw_personal_context": False,
     }
     assert "E02_SYNTHETIC_" not in rendered
-    assert re.search(
-        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-        r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
-        rendered,
-        flags=re.IGNORECASE,
-    ) is None
+    assert (
+        re.search(
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            rendered,
+            flags=re.IGNORECASE,
+        )
+        is None
+    )
 
 
 def test_e02_wave4_verifies_privacy_safe_import_origin() -> None:
@@ -180,9 +175,7 @@ def test_e02_wave4_boundary_receipt_keeps_core_authoritative() -> None:
     receipt = run_fixture(repeats=1)["implementation_boundary_receipt"]
 
     assert receipt["first_capability"]["capability"] == "generic_epistemic_role"
-    assert "never infer role from kind" in receipt["first_capability"][
-        "smallest_safe_boundary"
-    ]
+    assert "never infer role from kind" in receipt["first_capability"]["smallest_safe_boundary"]
     assert any(
         "Core remains the sole canonical authority" in boundary
         for boundary in receipt["authority_boundaries"]

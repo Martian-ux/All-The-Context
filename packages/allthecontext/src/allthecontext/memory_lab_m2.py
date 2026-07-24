@@ -132,10 +132,7 @@ class ContextNeed:
             raise ValueError("page size must be positive")
         if self.prior_disclosure_chars < 0:
             raise ValueError("prior disclosure must be non-negative")
-        if (
-            self.cumulative_disclosure_limit is not None
-            and self.cumulative_disclosure_limit < 0
-        ):
+        if self.cumulative_disclosure_limit is not None and self.cumulative_disclosure_limit < 0:
             raise ValueError("cumulative disclosure limit must be non-negative")
 
 
@@ -211,10 +208,7 @@ def seal_projection(records: Sequence[ContextRecord]) -> SealedProjection:
     )
     commitment = _digest(
         "projection",
-        *(
-            f"{item.key}:{item.version}:{_digest('content', item.content)}"
-            for item in admitted
-        ),
+        *(f"{item.key}:{item.version}:{_digest('content', item.content)}" for item in admitted),
     )
     return SealedProjection(admitted, commitment)
 
@@ -278,9 +272,7 @@ class SealedProjectionMinimalCompiler:
                 if failure == "dependency"
                 else CompilationReason.DELETION_REJECTED_OBLIGATION
             )
-            deletion_tests.append(
-                DeletionTestReceipt(_item_commitment(candidate), reason)
-            )
+            deletion_tests.append(DeletionTestReceipt(_item_commitment(candidate), reason))
             reasons.append(reason)
         reasons.append(CompilationReason.MINIMALITY_CONFIRMED)
 
@@ -290,8 +282,7 @@ class SealedProjectionMinimalCompiler:
             raise AssertionError("budget-feasible selection exceeded its character budget")
         if (
             need.cumulative_disclosure_limit is not None
-            and need.prior_disclosure_chars + disclosure_chars
-            > need.cumulative_disclosure_limit
+            and need.prior_disclosure_chars + disclosure_chars > need.cumulative_disclosure_limit
         ):
             return self._terminal(
                 projection,
@@ -397,9 +388,7 @@ class SealedProjectionMinimalCompiler:
         )
         sealed_count = len(projection.items)
         subset_checks = (2**sealed_count) - 1
-        timing_class = _logical_timing_class(
-            sealed_count + (2 * subset_checks) + len(ordered)
-        )
+        timing_class = _logical_timing_class(sealed_count + (2 * subset_checks) + len(ordered))
         selected_commitments = tuple(_item_commitment(item) for item in ordered)
         semantic_digest = _digest(
             "semantic-output",
@@ -408,9 +397,10 @@ class SealedProjectionMinimalCompiler:
         learning_digest = _digest(
             "learning-state",
             need.request_commitment,
-            *(f"{item.version}:{commitment}" for item, commitment in zip(
-                ordered, selected_commitments, strict=True
-            )),
+            *(
+                f"{item.version}:{commitment}"
+                for item, commitment in zip(ordered, selected_commitments, strict=True)
+            ),
         )
         return CompilationResult(
             ordered,
@@ -467,8 +457,7 @@ def _sufficiency_failure(
         return "dependency"
     for obligation in obligations:
         if not any(
-            obligation.obligation_id in item.coverage_ids
-            and item.role in obligation.accepted_roles
+            obligation.obligation_id in item.coverage_ids and item.role in obligation.accepted_roles
             for item in selected
         ):
             return "obligation"

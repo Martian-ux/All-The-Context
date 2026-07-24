@@ -56,9 +56,7 @@ def test_wave4_workers_cannot_patch_or_promote_production() -> None:
     assert all(worker["may_merge"] is False for worker in workers)
     assert all(worker["may_push"] is False for worker in workers)
     e02 = next(
-        worker
-        for worker in workers
-        if worker["worker_id"] == "e02_production_semantic_gaps"
+        worker for worker in workers if worker["worker_id"] == "e02_production_semantic_gaps"
     )
     assert e02["operator_core_access"] is False
 
@@ -101,6 +99,7 @@ def test_wave4_freezes_independent_oracles_and_hard_safety_gates() -> None:
         "invalidated",
     ]
     assert len(manifest["integration_gate"]) >= 12
-    assert "No mechanism may grade itself against an oracle authored after its implementation." in (
-        manifest["global_invariants"]
+    assert (
+        "No mechanism may grade itself against an oracle authored after its implementation."
+        in (manifest["global_invariants"])
     )

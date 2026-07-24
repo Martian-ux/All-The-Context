@@ -113,9 +113,7 @@ def test_unknown_parents_and_impossible_transitions_have_no_side_effect() -> Non
     ledger = _ledger()
     assert ledger.append(_event(Stage.ASSIGNED, "assigned")).status is AdmissionStatus.ACCEPTED
     assert (
-        ledger.append(
-            _event(Stage.SUPPLIED, "supplied", parents=("assigned",))
-        ).status
+        ledger.append(_event(Stage.SUPPLIED, "supplied", parents=("assigned",))).status
         is AdmissionStatus.ACCEPTED
     )
     before = ledger.events
@@ -131,10 +129,7 @@ def test_unknown_parents_and_impossible_transitions_have_no_side_effect() -> Non
         _event(Stage.OBSERVED_USE, "use", parents=("unknown",)),
     )
 
-    assert all(
-        ledger.append(attempt).status is AdmissionStatus.REJECTED
-        for attempt in attempts
-    )
+    assert all(ledger.append(attempt).status is AdmissionStatus.REJECTED for attempt in attempts)
     assert ledger.events == before
 
 
@@ -228,9 +223,7 @@ def test_terminal_purge_delinks_all_old_receipts_and_aggregate_influence() -> No
     assert aggregate.observed_use == 0
     assert aggregate.action == 0
     assert aggregate.purge_count == 1
-    inspectable = json.dumps(
-        ledger.inspectable_state(), sort_keys=True, default=str
-    )
+    inspectable = json.dumps(ledger.inspectable_state(), sort_keys=True, default=str)
     assert record_id not in inspectable
     assert lineage_id not in inspectable
     assert all(identifier not in inspectable for identifier in transaction_ids)
@@ -317,10 +310,7 @@ def test_all_f02_cases_and_required_zero_metrics_pass() -> None:
         ],
     }
     assert set(report["f02_case_verdicts"]) == set(F02_CASE_IDS)
-    assert all(
-        item["verdict"] == "PASS"
-        for item in report["f02_case_verdicts"].values()
-    )
+    assert all(item["verdict"] == "PASS" for item in report["f02_case_verdicts"].values())
     assert report["f02_case_coverage_fraction"] == 1.0
     for name, value in report["decisive_metrics"].items():
         if name.endswith("_count"):
@@ -334,20 +324,13 @@ def test_paired_episodes_separate_association_from_randomized_effect() -> None:
     assert experiment["episode_count"] == 200
     assert experiment["paired_assignments"] == 40
     assert experiment["observational_claim"] == "association_only_not_causal"
-    assert experiment["intervention_claim"] == (
-        "paired_controlled_omission_assignment_only"
-    )
+    assert experiment["intervention_claim"] == ("paired_controlled_omission_assignment_only")
     assert experiment["self_upgrading_event_count"] == 0
     assert experiment["randomized_effect_sum"] == 0
 
 
 def test_checked_in_report_is_private_complete_and_preserves_ablations() -> None:
-    report_path = (
-        Path(__file__).parents[2]
-        / "bench"
-        / "reports"
-        / "memory_lab_m1_wave4.json"
-    )
+    report_path = Path(__file__).parents[2] / "bench" / "reports" / "memory_lab_m1_wave4.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
 
     assert report["schema"] == "atc.memory-lab.m1-report.v1"

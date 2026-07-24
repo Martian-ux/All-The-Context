@@ -82,10 +82,7 @@ def _symbol(value: str, field_name: str) -> str:
 
 def _terms(*values: str | None) -> frozenset[str]:
     return frozenset(
-        token
-        for value in values
-        if value is not None
-        for token in _TOKEN_RE.findall(value.upper())
+        token for value in values if value is not None for token in _TOKEN_RE.findall(value.upper())
     )
 
 
@@ -149,9 +146,8 @@ class LogicalEvent:
             value = getattr(self, name)
             if value is not None:
                 _symbol(value, name)
-        if (
-            self.operation in _MEMORY_OPERATIONS
-            and (self.topic is None or self.role is None or self.value is None)
+        if self.operation in _MEMORY_OPERATIONS and (
+            self.topic is None or self.role is None or self.value is None
         ):
             raise ValueError("memory events require topic, role, and value")
 
@@ -497,10 +493,7 @@ class AtcGovernedReferenceAdapter:
 
         if event.principal != self._principal:
             return
-        if (
-            "authority" in self.enabled_rules
-            and event.source_class not in _AUTHORITATIVE_SOURCES
-        ):
+        if "authority" in self.enabled_rules and event.source_class not in _AUTHORITATIVE_SOURCES:
             return
         if event.object_id in self._purged_ids and event.operation != "purge":
             return
@@ -615,9 +608,7 @@ def _evaluate_checkpoint(
 
     for object_id, expected_state in scenario.oracle.inventory_states.items():
         if inventory.get(object_id) != expected_state:
-            failures.append(
-                FailureAttribution("correct_forget", "FORGETTING_SEMANTIC_COLLAPSE")
-            )
+            failures.append(FailureAttribution("correct_forget", "FORGETTING_SEMANTIC_COLLAPSE"))
     for object_id, attribution in scenario.oracle.inventory_absent.items():
         if object_id in inventory:
             failures.append(attribution)
@@ -626,17 +617,13 @@ def _evaluate_checkpoint(
 
     unique_failures = sorted(set(failures), key=_failure_sort_key)
     primary = unique_failures[0] if unique_failures else None
-    exact_success = (
-        not unique_failures
-        and (
-            receipt.abstained
-            if scenario.oracle.expects_abstention
-            else selected_values == scenario.oracle.required_values
-        )
+    exact_success = not unique_failures and (
+        receipt.abstained
+        if scenario.oracle.expects_abstention
+        else selected_values == scenario.oracle.required_values
     )
     safe_ordinals_by_id = {
-        event.object_id: f"object-{ordinal:04d}"
-        for ordinal, event in enumerate(scenario.events)
+        event.object_id: f"object-{ordinal:04d}" for ordinal, event in enumerate(scenario.events)
     }
     safe_ordinals = [
         safe_ordinals_by_id.get(object_id, "unknown-object") for object_id in selected_ids
@@ -715,18 +702,14 @@ def evaluate_longitudinal_adapter(
     successes = sum(
         bool(report["exact_current_authorized_state_success"]) for report in first_reports
     )
-    abstention_reports = [
-        report for report in first_reports if bool(report["expected_abstention"])
-    ]
+    abstention_reports = [report for report in first_reports if bool(report["expected_abstention"])]
     correction_reports = [
         report for report in first_reports if "correction" in report["capabilities"]
     ]
     forgetting_reports = [
         report for report in first_reports if "forgetting" in report["capabilities"]
     ]
-    failure_codes = [
-        str(code) for report in first_reports for code in report["failure_codes"]
-    ]
+    failure_codes = [str(code) for report in first_reports for code in report["failure_codes"]]
     first_failure_stages = [
         str(report["primary_failure_stage"])
         for report in first_reports
@@ -894,9 +877,7 @@ def run_e01_slice(
             "external_systems_exercised": False,
             "wall_clock_timing_measured": False,
             "production_core_semantics": "production_core_semantics_not_exercised",
-            "governed_condition_identity": (
-                "new_in_memory_reference_model_not_current_atc"
-            ),
+            "governed_condition_identity": ("new_in_memory_reference_model_not_current_atc"),
         },
         "frozen_clock": {
             "wall_clock_access": False,
@@ -929,27 +910,23 @@ def report_contains_fixture_symbols(
     """Return whether a reusable report leaked an event/checkpoint symbol."""
 
     rendered = json.dumps(report, sort_keys=True)
-    forbidden = {
-        scenario.scenario_id
-        for scenario in scenarios
-    } | {
-        value
-        for scenario in scenarios
-        for event in scenario.events
-        for value in (
-            event.object_id,
-            event.value,
-            event.topic,
-            event.project,
-            event.domain,
-            event.applies_to,
-        )
-        if value is not None
-    } | {
-        scenario.checkpoint.checkpoint_id for scenario in scenarios
-    } | {
-        term
-        for scenario in scenarios
-        for term in scenario.checkpoint.query_terms
-    }
+    forbidden = (
+        {scenario.scenario_id for scenario in scenarios}
+        | {
+            value
+            for scenario in scenarios
+            for event in scenario.events
+            for value in (
+                event.object_id,
+                event.value,
+                event.topic,
+                event.project,
+                event.domain,
+                event.applies_to,
+            )
+            if value is not None
+        }
+        | {scenario.checkpoint.checkpoint_id for scenario in scenarios}
+        | {term for scenario in scenarios for term in scenario.checkpoint.query_terms}
+    )
     return any(symbol in rendered for symbol in forbidden)

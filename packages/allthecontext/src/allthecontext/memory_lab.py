@@ -268,9 +268,7 @@ class DeterministicLexicalBaseline:
         for item in active:
             if item.object_id in superseded:
                 continue
-            document_tokens = _tokens(
-                " ".join((item.content, item.kind, *item.tags, *item.scopes))
-            )
+            document_tokens = _tokens(" ".join((item.content, item.kind, *item.tags, *item.scopes)))
             overlap = len(query_tokens & document_tokens)
             if overlap:
                 score = overlap / max(1, len(query_tokens))
@@ -371,8 +369,7 @@ def _task_report(
         len(objects_by_id[item].content) for item in known_ids - task.relevant_ids
     )
     budget_violation_count = int(
-        task.context_budget_chars is not None
-        and disclosure_chars > task.context_budget_chars
+        task.context_budget_chars is not None and disclosure_chars > task.context_budget_chars
     )
     deterministic = all(receipt.items == first.items for receipt in receipts[1:])
     task_success = (
@@ -383,8 +380,7 @@ def _task_report(
         and deterministic
     )
     safe_ordinals = {
-        object_id: f"object-{ordinal:06d}"
-        for ordinal, object_id in enumerate(objects_by_id)
+        object_id: f"object-{ordinal:06d}" for ordinal, object_id in enumerate(objects_by_id)
     }
     ranking_shape = "\n".join(safe_ordinals.get(object_id, "unknown-object") for object_id in ids)
     ranking_fingerprint = hashlib.sha256(ranking_shape.encode("utf-8")).hexdigest()
@@ -465,9 +461,7 @@ def evaluate_adapter(
                 all_latencies_ms.append(latency_ms)
                 receipts.append(receipt)
                 total_usage = _add_usage(total_usage, receipt.usage)
-            task_reports.append(
-                _task_report(task_index, task, objects_by_id, receipts, latencies)
-            )
+            task_reports.append(_task_report(task_index, task, objects_by_id, receipts, latencies))
     finally:
         adapter.close()
 
@@ -513,9 +507,7 @@ def evaluate_adapter(
             "mean_reciprocal_rank": round(
                 _mean([float(item["reciprocal_rank"]) for item in task_reports]), 6
             ),
-            "mean_precision": round(
-                _mean([float(item["precision"]) for item in task_reports]), 6
-            ),
+            "mean_precision": round(_mean([float(item["precision"]) for item in task_reports]), 6),
             "abstention_accuracy": round(_mean([float(item) for item in abstention]), 6),
             "forbidden_output_count": sum(
                 int(item["forbidden_output_count"]) for item in task_reports
@@ -530,9 +522,7 @@ def evaluate_adapter(
                 _mean([float(item["disclosure_chars"]) for item in task_reports]), 6
             ),
             "mean_irrelevant_disclosure_chars": round(
-                _mean(
-                    [float(item["irrelevant_disclosure_chars"]) for item in task_reports]
-                ),
+                _mean([float(item["irrelevant_disclosure_chars"]) for item in task_reports]),
                 6,
             ),
             "deterministic_task_rate": round(

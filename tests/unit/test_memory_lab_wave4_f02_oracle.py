@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-ORACLE_PATH = (
-    REPOSITORY_ROOT / "research" / "memory-lab" / "wave4-falsification-oracle.json"
-)
+ORACLE_PATH = REPOSITORY_ROOT / "research" / "memory-lab" / "wave4-falsification-oracle.json"
 
 
 def _oracle() -> dict[str, object]:
@@ -17,10 +15,7 @@ def test_f02_oracle_is_frozen_from_governance_base() -> None:
     oracle = _oracle()
 
     assert oracle["status"] == "frozen_preimplementation"
-    assert (
-        oracle["governance_base_commit"]
-        == "f545c37157845f0bd402215719cb8c747b7fc21d"
-    )
+    assert oracle["governance_base_commit"] == "f545c37157845f0bd402215719cb8c747b7fc21d"
     assert oracle["evidence_level"] == "L0"
 
 
@@ -165,9 +160,7 @@ def test_every_case_references_declared_oracle_objects() -> None:
     for mechanism_name in ("m3", "m1"):
         mechanism = oracle[mechanism_name]
         assert isinstance(mechanism, dict)
-        invariants = {
-            invariant["invariant_id"] for invariant in mechanism["global_invariants"]
-        }
+        invariants = {invariant["invariant_id"] for invariant in mechanism["global_invariants"]}
         cases = mechanism["cases"]
         assert len({case["case_id"] for case in cases}) == len(cases)
         assert all(case["schedule"] and case["expected"] for case in cases)

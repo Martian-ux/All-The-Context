@@ -47,16 +47,13 @@ def test_wave3_workers_have_disjoint_authority_and_no_external_code() -> None:
     assert all(worker["may_edit_governance"] is False for worker in workers)
     assert all(worker["may_merge"] is False for worker in workers)
     assert all(worker["may_push"] is False for worker in workers)
-    assert next(
-        worker
-        for worker in workers
-        if worker["worker_id"] == "e01b_production_conformance"
-    )["operator_core_access"] is False
-    intake = next(
-        worker
-        for worker in workers
-        if worker["worker_id"] == "external_artifact_intake"
+    assert (
+        next(worker for worker in workers if worker["worker_id"] == "e01b_production_conformance")[
+            "operator_core_access"
+        ]
+        is False
     )
+    intake = next(worker for worker in workers if worker["worker_id"] == "external_artifact_intake")
     assert intake["official_metadata_only"] is True
     assert intake["raw_adversarial_payload_access"] is False
     assert re.fullmatch(r"[0-9a-f]{40}", intake["base_commit"])
@@ -65,9 +62,7 @@ def test_wave3_workers_have_disjoint_authority_and_no_external_code() -> None:
 def test_wave3_preserves_questions_results_and_integration_gates() -> None:
     manifest = _manifest()
     worker_ids = [worker["worker_id"] for worker in manifest["workers"]]
-    results = {
-        worker["worker_id"]: worker["result"] for worker in manifest["workers"]
-    }
+    results = {worker["worker_id"]: worker["result"] for worker in manifest["workers"]}
 
     assert manifest["promotion_order"] == worker_ids
     assert all(worker["question"] for worker in manifest["workers"])
@@ -112,8 +107,7 @@ def test_wave3_preserves_questions_results_and_integration_gates() -> None:
             "passed": 603,
             "skipped": 4,
             "skip_reason": (
-                "Windows host cannot create the symlinks required by four "
-                "platform-specific tests"
+                "Windows host cannot create the symlinks required by four platform-specific tests"
             ),
         },
     }
@@ -121,6 +115,7 @@ def test_wave3_preserves_questions_results_and_integration_gates() -> None:
     assert manifest["completion"]["external_execution"] is False
     assert set(manifest["evidence_levels"]) == {"L0", "L1", "L2", "L3", "L4", "L5"}
     assert len(manifest["integration_gate"]) >= 10
-    assert "Negative, unsupported, not-exercised, held, and killed results remain visible." in (
-        manifest["global_invariants"]
+    assert (
+        "Negative, unsupported, not-exercised, held, and killed results remain visible."
+        in (manifest["global_invariants"])
     )

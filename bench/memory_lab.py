@@ -62,11 +62,14 @@ class BaselineLadderConfig:
     file_search_max_bytes: int
 
     def __post_init__(self) -> None:
-        if min(
-            self.context_budget_chars,
-            self.file_search_max_files,
-            self.file_search_max_bytes,
-        ) < 1:
+        if (
+            min(
+                self.context_budget_chars,
+                self.file_search_max_files,
+                self.file_search_max_bytes,
+            )
+            < 1
+        ):
             raise ValueError("baseline ladder limits must be positive")
         if not self.static_profile_object_ids:
             raise ValueError("the static profile must contain at least one object")
@@ -81,15 +84,9 @@ def _load_object(value: Any) -> MemoryObject:
         content=str(value["content"]),
         scopes=tuple(str(item) for item in value.get("scopes", ())),
         tags=tuple(str(item) for item in value.get("tags", ())),
-        valid_from=(
-            str(value["valid_from"]) if value.get("valid_from") is not None else None
-        ),
-        expires_at=(
-            str(value["expires_at"]) if value.get("expires_at") is not None else None
-        ),
-        supersedes=(
-            str(value["supersedes"]) if value.get("supersedes") is not None else None
-        ),
+        valid_from=(str(value["valid_from"]) if value.get("valid_from") is not None else None),
+        expires_at=(str(value["expires_at"]) if value.get("expires_at") is not None else None),
+        supersedes=(str(value["supersedes"]) if value.get("supersedes") is not None else None),
         explicit_user_statement=bool(value.get("explicit_user_statement", False)),
         schema=str(value.get("schema", "atc.memory-object.v1")),
     )
@@ -113,13 +110,9 @@ def _load_task(value: Any, *, context_budget_chars: int | None) -> RetrievalTask
         forbidden_ids=frozenset(str(item) for item in value.get("forbidden_ids", ())),
         scopes=tuple(str(item) for item in value.get("scopes", ())),
         current_project=(
-            str(value["current_project"])
-            if value.get("current_project") is not None
-            else None
+            str(value["current_project"]) if value.get("current_project") is not None else None
         ),
-        context_budget_chars=(
-            int(raw_context_budget) if raw_context_budget is not None else None
-        ),
+        context_budget_chars=(int(raw_context_budget) if raw_context_budget is not None else None),
     )
 
 
@@ -182,10 +175,7 @@ def _load_fixture_records(
     objects = tuple(_load_object(item) for item in raw_objects)
     return (
         objects,
-        tuple(
-            _load_task(item, context_budget_chars=context_budget_chars)
-            for item in raw_tasks
-        ),
+        tuple(_load_task(item, context_budget_chars=context_budget_chars) for item in raw_tasks),
     )
 
 
@@ -277,8 +267,7 @@ class AtcRetrievalAdapter:
                 )
                 connection.execute(insert_sql, values)
                 connection.execute(
-                    "INSERT INTO context_fts(record_id,content,kind,tags,scopes) "
-                    "VALUES(?,?,?,?,?)",
+                    "INSERT INTO context_fts(record_id,content,kind,tags,scopes) VALUES(?,?,?,?,?)",
                     (
                         item.object_id,
                         item.content,
@@ -490,8 +479,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             lines.append(f"- `{adapter_id}`: none.")
             continue
         rendered_cases = "; ".join(
-            f"task-index-{case['task_index']} ({', '.join(case['reason_codes'])})"
-            for case in cases
+            f"task-index-{case['task_index']} ({', '.join(case['reason_codes'])})" for case in cases
         )
         lines.append(f"- `{adapter_id}`: {rendered_cases}.")
     lines.extend(["", "## Validity limitations", ""])

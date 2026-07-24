@@ -82,10 +82,7 @@ def test_memory_lab_fixture_is_frozen_sanitized_and_schema_versioned() -> None:
     objects, tasks = load_fixture()
 
     assert hashlib.sha256(FIXTURES.read_bytes()).hexdigest() == FIXTURE_SHA256
-    assert (
-        hashlib.sha256(LADDER_CONFIG.read_bytes()).hexdigest()
-        == LADDER_CONFIG_SHA256
-    )
+    assert hashlib.sha256(LADDER_CONFIG.read_bytes()).hexdigest() == LADDER_CONFIG_SHA256
     assert all(item.schema == MEMORY_OBJECT_SCHEMA for item in objects)
     assert {task.task_id for task in tasks} == {
         "release-brief",
@@ -136,8 +133,7 @@ def test_lab_compares_simple_baseline_and_current_atc_without_content_in_report(
     assert file_search["metrics"]["task_success_rate"] == 0.8
     assert file_search["metrics"]["forbidden_output_count"] == 1
     assert (
-        "programmatic_log_search_not_exercised"
-        in file_search["benchmark"]["validity_limitations"]
+        "programmatic_log_search_not_exercised" in file_search["benchmark"]["validity_limitations"]
     )
     assert atc["metrics"]["task_success_rate"] == 0.8
     assert atc["metrics"]["forbidden_output_count"] == 0
@@ -153,14 +149,8 @@ def test_lab_compares_simple_baseline_and_current_atc_without_content_in_report(
 
     assessments = report["baseline_ladder"]["rungs"]
     assert assessments["no-memory"]["decision"] == "retain_control"
-    assert (
-        assessments["stable-observation-current-state"]["decision"]
-        == "advance_to_next_fixture"
-    )
-    assert (
-        assessments["atc-retrieval-v3"]["decision"]
-        == "not_earned_on_this_fixture"
-    )
+    assert assessments["stable-observation-current-state"]["decision"] == "advance_to_next_fixture"
+    assert assessments["atc-retrieval-v3"]["decision"] == "not_earned_on_this_fixture"
 
     rendered = json.dumps(report, sort_keys=True)
     for item in load_fixture()[0]:

@@ -235,9 +235,7 @@ class HindsightRetrievalAdapter:
             tags_match="any_strict" if task_tags else "any",
         )
         if not _usage_is_zero(response):
-            raise RuntimeError(
-                "Hindsight reported model usage despite the none-LLM declaration"
-            )
+            raise RuntimeError("Hindsight reported model usage despite the none-LLM declaration")
         results = _field(response, "results", ())
         ranked: list[RankedMemory] = []
         seen: set[str] = set()

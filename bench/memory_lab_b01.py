@@ -84,23 +84,23 @@ class B01Config:
     combination_recipe: str
 
     def __post_init__(self) -> None:
-        if min(
-            self.repeats,
-            self.context_budget_chars,
-            self.max_selected_events,
-            self.max_operations,
-            self.max_events_scanned_per_operation,
-            self.max_results_per_operation,
-        ) < 1:
+        if (
+            min(
+                self.repeats,
+                self.context_budget_chars,
+                self.max_selected_events,
+                self.max_operations,
+                self.max_events_scanned_per_operation,
+                self.max_results_per_operation,
+            )
+            < 1
+        ):
             raise ValueError("B01 limits and repeats must be positive")
         if not 0.0 <= self.minimum_confirmatory_caos_gain <= 1.0:
             raise ValueError("minimum CAOS gain must be between zero and one")
         if self.maximum_operation_premium < 0.0:
             raise ValueError("maximum operation premium must be non-negative")
-        if (
-            self.combination_recipe
-            != "programmatic_then_atc_only_for_unsupported_strategy"
-        ):
+        if self.combination_recipe != "programmatic_then_atc_only_for_unsupported_strategy":
             raise ValueError("unsupported frozen B01 combination recipe")
 
     @property
@@ -223,9 +223,7 @@ class FrozenProgrammaticAtcCombination:
 
     def prepare(self, events: Sequence[StructuredLogEvent]) -> PreparationReceipt:
         programmatic_storage = self._programmatic.prepare(events)
-        atc_preparation = self._atc.prepare(
-            tuple(event.as_memory_object() for event in events)
-        )
+        atc_preparation = self._atc.prepare(tuple(event.as_memory_object() for event in events))
         return PreparationReceipt(
             storage_bytes=programmatic_storage + atc_preparation.storage_bytes
         )
@@ -296,9 +294,7 @@ def _load_config(path: Path = CONFIG) -> B01Config:
         context_budget_chars=int(raw["context_budget_chars"]),
         max_selected_events=int(raw["max_selected_events"]),
         max_operations=int(raw["max_operations"]),
-        max_events_scanned_per_operation=int(
-            raw["max_events_scanned_per_operation"]
-        ),
+        max_events_scanned_per_operation=int(raw["max_events_scanned_per_operation"]),
         max_results_per_operation=int(raw["max_results_per_operation"]),
         confirmatory_partition=str(raw["confirmatory_partition"]),
         minimum_confirmatory_caos_gain=float(raw["minimum_confirmatory_caos_gain"]),
@@ -322,9 +318,7 @@ def _load_descriptor(raw: Any) -> InspectionDescriptor:
         outcome_field=str(raw.get("outcome_field", "outcome")),
         policy_match_field=str(raw.get("policy_match_field", "when_outcome")),
         action_field=str(raw.get("action_field", "action")),
-        trigger_value=(
-            str(raw["trigger_value"]) if raw.get("trigger_value") is not None else None
-        ),
+        trigger_value=(str(raw["trigger_value"]) if raw.get("trigger_value") is not None else None),
         window=int(raw["window"]) if raw.get("window") is not None else None,
         threshold_field=str(raw.get("threshold_field", "min_count")),
     )
@@ -360,19 +354,14 @@ def load_fixture_bundle(
                 occurred_at=str(value["occurred_at"]),
                 event_type=str(value["event_type"]),
                 payload=tuple(
-                    (str(key), str(payload_value))
-                    for key, payload_value in payload.items()
+                    (str(key), str(payload_value)) for key, payload_value in payload.items()
                 ),
                 scopes=tuple(str(item) for item in value.get("scopes", ())),
                 supersedes=(
-                    str(value["supersedes"])
-                    if value.get("supersedes") is not None
-                    else None
+                    str(value["supersedes"]) if value.get("supersedes") is not None else None
                 ),
                 expires_at=(
-                    str(value["expires_at"])
-                    if value.get("expires_at") is not None
-                    else None
+                    str(value["expires_at"]) if value.get("expires_at") is not None else None
                 ),
             )
         )
@@ -396,9 +385,7 @@ def load_fixture_bundle(
             evaluated_at=str(value["evaluated_at"]),
             scopes=tuple(str(item) for item in value.get("scopes", ())),
             current_project=(
-                str(value["current_project"])
-                if value.get("current_project") is not None
-                else None
+                str(value["current_project"]) if value.get("current_project") is not None else None
             ),
             limit=config.max_selected_events,
             context_budget_chars=config.context_budget_chars,
@@ -414,9 +401,7 @@ def load_fixture_bundle(
             evidence_groups=tuple(
                 frozenset(str(event_id) for event_id in group) for group in raw_groups
             ),
-            forbidden_ids=frozenset(
-                str(item) for item in oracle_raw.get("forbidden_ids", ())
-            ),
+            forbidden_ids=frozenset(str(item) for item in oracle_raw.get("forbidden_ids", ())),
         )
         referenced = frozenset().union(*oracle.evidence_groups) | oracle.forbidden_ids
         if not referenced <= event_ids:
@@ -435,9 +420,8 @@ def load_fixture_bundle(
 
 def _matches(event: StructuredLogEvent, descriptor: InspectionDescriptor) -> bool:
     fields = event.fields
-    return (
-        fields.get("stage") == descriptor.stage
-        and all(fields.get(key) == value for key, value in descriptor.selectors)
+    return fields.get("stage") == descriptor.stage and all(
+        fields.get(key) == value for key, value in descriptor.selectors
     )
 
 
@@ -456,8 +440,7 @@ def _execute_selected_context(
         observations = tuple(
             event
             for event in selected
-            if event.event_type == descriptor.observation_event_type
-            and _matches(event, descriptor)
+            if event.event_type == descriptor.observation_event_type and _matches(event, descriptor)
         )
         latest = max(observations, key=lambda event: event.sequence, default=None)
         if latest is None:
@@ -493,8 +476,7 @@ def _execute_selected_context(
             if (
                 event.event_type != descriptor.policy_event_type
                 or not _matches(event, descriptor)
-                or event.fields.get(descriptor.policy_match_field)
-                != descriptor.trigger_value
+                or event.fields.get(descriptor.policy_match_field) != descriptor.trigger_value
             ):
                 continue
             try:
@@ -511,8 +493,7 @@ def _execute_selected_context(
         facts = tuple(
             event
             for event in selected
-            if event.event_type == descriptor.observation_event_type
-            and _matches(event, descriptor)
+            if event.event_type == descriptor.observation_event_type and _matches(event, descriptor)
         )
         fact = max(facts, key=lambda event: event.sequence, default=None)
         return None if fact is None else fact.fields.get(descriptor.action_field)
@@ -537,19 +518,13 @@ def _task_result(
     over_limit_count = max(0, len(ids) - scenario.task.limit)
     contract_violations = len(unknown_ids) + duplicate_count + over_limit_count
     known_ids = unique_ids & events_by_id.keys()
-    disclosure_chars = sum(
-        len(events_by_id[event_id].content_document()) for event_id in known_ids
-    )
-    context_budget_violations = int(
-        disclosure_chars > scenario.task.context_budget_chars
-    )
+    disclosure_chars = sum(len(events_by_id[event_id].content_document()) for event_id in known_ids)
+    context_budget_violations = int(disclosure_chars > scenario.task.context_budget_chars)
     operation_budget_violations = sum(
         len(receipt.operations) > config.max_operations for receipt in receipts
     )
     forbidden_count = len(known_ids & scenario.oracle.forbidden_ids)
-    group_hits = sum(
-        bool(known_ids & group) for group in scenario.oracle.evidence_groups
-    )
+    group_hits = sum(bool(known_ids & group) for group in scenario.oracle.evidence_groups)
     group_recall = (
         group_hits / len(scenario.oracle.evidence_groups)
         if scenario.oracle.evidence_groups
@@ -558,9 +533,7 @@ def _task_result(
     relevant_ids = frozenset().union(*scenario.oracle.evidence_groups)
     precision = len(known_ids & relevant_ids) / len(known_ids) if known_ids else 0.0
     action_correct = actions[0] == scenario.oracle.expected_action
-    abstention_correct = (
-        first.abstained if scenario.oracle.expected_action is None else None
-    )
+    abstention_correct = first.abstained if scenario.oracle.expected_action is None else None
     deterministic = all(
         receipt.items == first.items
         and receipt.operations == first.operations
@@ -595,13 +568,8 @@ def _task_result(
         failure_reason_codes.append("operation_budget_exceeded")
     if not deterministic:
         failure_reason_codes.append("nondeterministic_result")
-    ordinal = {
-        event_id: f"event-{index:06d}"
-        for index, event_id in enumerate(events_by_id)
-    }
-    fingerprint_source = "\n".join(
-        ordinal.get(event_id, "unknown-event") for event_id in ids
-    )
+    ordinal = {event_id: f"event-{index:06d}" for index, event_id in enumerate(events_by_id)}
+    fingerprint_source = "\n".join(ordinal.get(event_id, "unknown-event") for event_id in ids)
     return {
         "task_index": task_index,
         "partition": scenario.partition,
@@ -612,9 +580,7 @@ def _task_result(
         "evidence_group_recall": round(group_recall, 6),
         "precision": round(precision, 6),
         "returned_count": len(ids),
-        "ranking_fingerprint": hashlib.sha256(
-            fingerprint_source.encode("utf-8")
-        ).hexdigest(),
+        "ranking_fingerprint": hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest(),
         "forbidden_output_count": forbidden_count,
         "contract_violation_count": contract_violations,
         "context_budget_violation_count": context_budget_violations,
@@ -648,12 +614,8 @@ def _aggregate_tasks(tasks: Sequence[dict[str, Any]]) -> dict[str, Any]:
             _mean([float(item["precision"]) for item in tasks]),
             6,
         ),
-        "forbidden_output_count": sum(
-            int(item["forbidden_output_count"]) for item in tasks
-        ),
-        "contract_violation_count": sum(
-            int(item["contract_violation_count"]) for item in tasks
-        ),
+        "forbidden_output_count": sum(int(item["forbidden_output_count"]) for item in tasks),
+        "contract_violation_count": sum(int(item["contract_violation_count"]) for item in tasks),
         "context_budget_violation_count": sum(
             int(item["context_budget_violation_count"]) for item in tasks
         ),
@@ -783,14 +745,13 @@ def _decision(report: dict[str, Any], config: B01Config) -> dict[str, Any]:
     stable = report["conditions"]["stable-observation-current-state"]["partitions"][
         config.confirmatory_partition
     ]
-    programmatic = report["conditions"]["bounded-programmatic-structured-log"][
-        "partitions"
-    ][config.confirmatory_partition]
+    programmatic = report["conditions"]["bounded-programmatic-structured-log"]["partitions"][
+        config.confirmatory_partition
+    ]
     caos_gain = programmatic["caos_rate"] - stable["caos_rate"]
     stable_operations = float(stable["mean_operations_per_task"])
     operation_premium = (
-        (float(programmatic["mean_operations_per_task"]) - stable_operations)
-        / stable_operations
+        (float(programmatic["mean_operations_per_task"]) - stable_operations) / stable_operations
         if stable_operations
         else math.inf
     )
@@ -806,14 +767,14 @@ def _decision(report: dict[str, Any], config: B01Config) -> dict[str, Any]:
     family_gains = {
         family: round(
             metrics["caos_rate"]
-            - report["conditions"]["stable-observation-current-state"][
-                "confirmatory_families"
-            ][family]["caos_rate"],
+            - report["conditions"]["stable-observation-current-state"]["confirmatory_families"][
+                family
+            ]["caos_rate"],
             6,
         )
-        for family, metrics in report["conditions"][
-            "bounded-programmatic-structured-log"
-        ]["confirmatory_families"].items()
+        for family, metrics in report["conditions"]["bounded-programmatic-structured-log"][
+            "confirmatory_families"
+        ].items()
         if family in {"latest_route", "threshold_route"}
     }
     reason_codes: list[str] = []
@@ -826,9 +787,9 @@ def _decision(report: dict[str, Any], config: B01Config) -> dict[str, Any]:
     if any(gain < config.minimum_confirmatory_caos_gain for gain in family_gains.values()):
         reason_codes.append("action_family_gain_below_floor")
     state = "KILL_MECHANISM" if reason_codes else "HOLD_FOR_BROADER_REPLICATION"
-    combination_caos = report["conditions"]["frozen-programmatic-atc-combination"][
-        "partitions"
-    ][config.confirmatory_partition]["caos_rate"]
+    combination_caos = report["conditions"]["frozen-programmatic-atc-combination"]["partitions"][
+        config.confirmatory_partition
+    ]["caos_rate"]
     return {
         "state": state,
         "comparator": "stable-observation-current-state",
@@ -904,14 +865,10 @@ def run_fixture(
             context_budget_chars=frozen_config.context_budget_chars,
             max_selected_events=frozen_config.max_selected_events,
             max_operations=frozen_config.max_operations,
-            max_events_scanned_per_operation=(
-                frozen_config.max_events_scanned_per_operation
-            ),
+            max_events_scanned_per_operation=(frozen_config.max_events_scanned_per_operation),
             max_results_per_operation=frozen_config.max_results_per_operation,
             confirmatory_partition=frozen_config.confirmatory_partition,
-            minimum_confirmatory_caos_gain=(
-                frozen_config.minimum_confirmatory_caos_gain
-            ),
+            minimum_confirmatory_caos_gain=(frozen_config.minimum_confirmatory_caos_gain),
             maximum_operation_premium=frozen_config.maximum_operation_premium,
             combination_recipe=frozen_config.combination_recipe,
         )
@@ -952,9 +909,7 @@ def run_fixture(
             "context_budget_chars": config.context_budget_chars,
             "max_selected_events": config.max_selected_events,
             "max_operations": config.max_operations,
-            "max_events_scanned_per_operation": (
-                config.max_events_scanned_per_operation
-            ),
+            "max_events_scanned_per_operation": (config.max_events_scanned_per_operation),
             "max_results_per_operation": config.max_results_per_operation,
         },
         "combination_recipe": config.combination_recipe,
@@ -1083,10 +1038,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 "efficiency and does not falsify PRO-LONG or general programmatic "
                 "inspection."
             ),
-            (
-                "- Frozen combination disposition: "
-                f"`{decision['combination_disposition']}`."
-            ),
+            (f"- Frozen combination disposition: `{decision['combination_disposition']}`."),
             "",
             "## Failure cases",
             "",
@@ -1098,8 +1050,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             lines.append(f"- `{condition_id}`: none.")
             continue
         rendered = "; ".join(
-            f"task-index-{case['task_index']} ({', '.join(case['reason_codes'])})"
-            for case in cases
+            f"task-index-{case['task_index']} ({', '.join(case['reason_codes'])})" for case in cases
         )
         lines.append(f"- `{condition_id}`: {rendered}.")
     lines.extend(

@@ -244,9 +244,7 @@ def _full_authorized(
     need: ContextNeed,
 ) -> ObservableOutcome:
     eligible = tuple(
-        item
-        for item in records
-        if item.authorized is True and item.temporally_current is True
+        item for item in records if item.authorized is True and item.temporally_current is True
     )
     selected = _budget_pack(eligible, need.character_budget)
     return _outcome(
@@ -338,9 +336,7 @@ def _applicability_after_ranking(
     ranked = _rank(authorized)
     selected = _budget_pack(
         tuple(
-            item
-            for item in ranked[: max(2, len(need.obligations) + 1)]
-            if item.applicable is True
+            item for item in ranked[: max(2, len(need.obligations) + 1)] if item.applicable is True
         ),
         need.character_budget,
     )
@@ -458,9 +454,7 @@ def run_experiment(
             repeat_fingerprints.append(trace_fingerprint.hexdigest())
         metrics["repeat_deterministic"] = len(set(repeat_fingerprints)) == 1
         metrics["caos_rate"] = _ratio(metrics["caos_passes"], metrics["trial_count"])
-        metrics["sufficiency_rate"] = _ratio(
-            metrics["sufficient_trials"], metrics["trial_count"]
-        )
+        metrics["sufficiency_rate"] = _ratio(metrics["sufficient_trials"], metrics["trial_count"])
         metrics["one_deletion_minimality_rate"] = _ratio(
             metrics["minimal_trials"], metrics["issued_sufficient_trials"]
         )
@@ -544,8 +538,7 @@ def run_experiment(
                 full["mean_disclosure_chars"] - minimal["mean_disclosure_chars"], 6
             ),
             "minimal_vs_sealed_non_minimal_mean_disclosure_reduction": round(
-                non_minimal["mean_disclosure_chars"]
-                - minimal["mean_disclosure_chars"],
+                non_minimal["mean_disclosure_chars"] - minimal["mean_disclosure_chars"],
                 6,
             ),
             "minimal_vs_full_authorized_caos_delta": round(
@@ -556,9 +549,7 @@ def run_experiment(
             ),
         },
         "falsifiers": {
-            "protected_observable_difference": sum(
-                minimal["pair_channel_failure_counts"].values()
-            ),
+            "protected_observable_difference": sum(minimal["pair_channel_failure_counts"].values()),
             "removable_selected_item": exact["removable_item_failures"],
             "exhaustive_optimum_gap_cases": exact["nonzero_optimum_gap_cases"],
             "insufficient_issued_set": minimal["insufficient_issued_trials"],
@@ -614,9 +605,7 @@ def _score_trial(
     issued = outcome.status == CompilationStatus.ISSUED.value
     forbidden = forbidden_key is not None and forbidden_key in keys
     within_budget = outcome.disclosure_chars <= case.need.character_budget
-    minimal = sufficient and all(
-        not _oracle_sufficient(keys - {key}, case.oracle) for key in keys
-    )
+    minimal = sufficient and all(not _oracle_sufficient(keys - {key}, case.oracle) for key in keys)
     caos = issued and sufficient and not forbidden and within_budget
     metrics["trial_count"] += 1
     metrics["caos_passes"] += int(caos)
@@ -652,9 +641,7 @@ def _run_decisive_faults(cases: Sequence[PairCase]) -> dict[str, Any]:
             for item in case.base_records
         )
         reread = compiler.compile(case.base_records, case.need, reread_records=mutated)
-        reread_detected += int(
-            reread.receipt.status is CompilationStatus.RETRY_GENERATION_CHANGE
-        )
+        reread_detected += int(reread.receipt.status is CompilationStatus.RETRY_GENERATION_CHANGE)
         no_reread_detected += 0
 
         disclosure = initial.receipt.disclosure_chars
@@ -663,9 +650,7 @@ def _run_decisive_faults(cases: Sequence[PairCase]) -> dict[str, Any]:
             cumulative_disclosure_limit=case.need.prior_disclosure_chars + disclosure - 1,
         )
         cumulative = compiler.compile(case.base_records, tight_need)
-        cumulative_detected += int(
-            cumulative.receipt.status is CompilationStatus.ABSTAINED
-        )
+        cumulative_detected += int(cumulative.receipt.status is CompilationStatus.ABSTAINED)
         ignored = _no_cumulative_disclosure(case.base_records, tight_need)
         no_cumulative_detected += int(ignored.status != CompilationStatus.ISSUED.value)
     opportunities = len(cases)
@@ -690,9 +675,7 @@ def _exhaustive_checks(cases: Sequence[PairCase]) -> dict[str, int]:
         keys = frozenset(item.key for item in result.selected)
         for key in keys:
             deletion_checks += 1
-            removable_failures += int(
-                _oracle_sufficient(keys - {key}, case.oracle)
-            )
+            removable_failures += int(_oracle_sufficient(keys - {key}, case.oracle))
         optimum = _oracle_optimum(case)
         selected_chars = sum(item.char_cost for item in result.selected)
         gap = selected_chars - optimum
@@ -763,9 +746,7 @@ def _leak_scan(report: Mapping[str, Any], cases: Sequence[PairCase]) -> dict[str
         forbidden.add(case.canary_key)
         forbidden.update(item.key for item in case.base_records)
         forbidden.update(item.content for item in case.variant_records)
-        forbidden.update(
-            obligation.obligation_id for obligation in case.need.obligations
-        )
+        forbidden.update(obligation.obligation_id for obligation in case.need.obligations)
     matches = sorted(value for value in forbidden if value and value in rendered)
     return {
         "scanned_for_raw_record_keys_contents_obligations_and_canaries": True,
@@ -840,11 +821,7 @@ def _outcome(
         len(ordered[offset : offset + need.page_size])
         for offset in range(0, len(ordered), need.page_size)
     )
-    status = (
-        CompilationStatus.ISSUED.value
-        if ordered
-        else CompilationStatus.ABSTAINED.value
-    )
+    status = CompilationStatus.ISSUED.value if ordered else CompilationStatus.ABSTAINED.value
     semantic_output = _digest("semantic", *(item.content for item in ordered))
     timing_class = f"logical_{_count_bucket(logical_operations)}"
     learning_state = _digest(

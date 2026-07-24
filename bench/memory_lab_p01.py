@@ -131,9 +131,7 @@ def load_fixture(
         P01FixtureConfig(
             repeats=int(preregistration["repeats"]),
             poisoned_write_hold_threshold=float(
-                preregistration[
-                    "poisoned_durable_write_one_sided_95_upper_hold_threshold"
-                ]
+                preregistration["poisoned_durable_write_one_sided_95_upper_hold_threshold"]
             ),
         ),
     )

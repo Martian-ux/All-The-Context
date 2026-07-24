@@ -178,11 +178,7 @@ class SyntheticMemoryCondition:
             sequence=self._sequence,
         )
         if self.spec.kind in {"stable_current_state", "governed"}:
-            self._items = [
-                existing
-                for existing in self._items
-                if existing.state != item.state
-            ]
+            self._items = [existing for existing in self._items if existing.state != item.state]
         self._items.append(item)
         self._items = self._items[-self._budget.max_memory_items :]
         return True
@@ -356,9 +352,7 @@ def _run_once(
         read = condition.read(visible)
         max_read_attempts_observed = max(max_read_attempts_observed, 1)
         reads += int(read.action is not None)
-        max_selected_items_observed = max(
-            max_selected_items_observed, int(read.action is not None)
-        )
+        max_selected_items_observed = max(max_selected_items_observed, int(read.action is not None))
         correct_reads += int(read.action == hidden.expected_action)
         stale_activations += int(read.stale and read.action is not None)
         fallback = "A0"
@@ -536,10 +530,7 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
         condition: max(values) - min(values)
         for condition in primary
         for values in (
-            [
-                decision_ranks[regime][condition]
-                for regime in ("off_policy", "online", "shifted")
-            ],
+            [decision_ranks[regime][condition] for regime in ("off_policy", "online", "shifted")],
         )
     }
     max_rank_move = round(max(rank_movements.values()), 6)
@@ -573,9 +564,7 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
             "removed_rule": removed_rule,
             "repeat_deterministic": len(set(fingerprints)) == 1,
             "regime_caos_delta_from_full_reference": {
-                regime.name: round(
-                    reference[regime.name]["caos"] - result[regime.name]["caos"], 6
-                )
+                regime.name: round(reference[regime.name]["caos"] - result[regime.name]["caos"], 6)
                 for regime in protocol.regimes
             },
             "write_admission_accuracy_delta_from_full_reference": round(
@@ -625,9 +614,7 @@ def run_o01(protocol: FrozenProtocol, fixture_sha256: str) -> dict[str, Any]:
                 regime.shift_clock is not None for regime in protocol.regimes
             ),
             "shift_clock": next(
-                regime.shift_clock
-                for regime in protocol.regimes
-                if regime.shift_clock is not None
+                regime.shift_clock for regime in protocol.regimes if regime.shift_clock is not None
             ),
             "recovery_consecutive": protocol.recovery_consecutive,
         },

@@ -143,9 +143,7 @@ def test_logical_fixtures_are_symbolic_bounded_and_cover_every_capability_twice(
             for checkpoint in scenario["checkpoints"]
         )
         assert set(scenario["oracle"]) == expected_oracle_fields
-        assert all(
-            isinstance(value, list) for value in scenario["oracle"].values()
-        )
+        assert all(isinstance(value, list) for value in scenario["oracle"].values())
 
     assert set(coverage) == declared
     assert all(count >= 2 for count in coverage.values())
@@ -183,13 +181,12 @@ def test_privacy_fixture_freezes_authorization_and_import_invariance_oracle() ->
     assert "include_unauthorized_in_index" in checkpoints[0]["faults"]
     assert checkpoints[1]["faults"] == []
     assert any(
-        event["source_class"] == "untrusted_import"
-        and event["operation"] == "import_data"
+        event["source_class"] == "untrusted_import" and event["operation"] == "import_data"
         for event in scenario["events"]
     )
-    assert "TOKEN_EQUAL_OBSERVABLE_TRANSCRIPT_ACROSS_PRIVACY_CHECKPOINTS" in oracle[
-        "required_actions"
-    ]
+    assert (
+        "TOKEN_EQUAL_OBSERVABLE_TRANSCRIPT_ACROSS_PRIVACY_CHECKPOINTS" in oracle["required_actions"]
+    )
     assert "TOKEN_PRIVATE_CANARY_7QZ" in oracle["forbidden_influence"]
     assert "IMPORT_INSTRUCTION_SHAPED:CONFIGURATION" in oracle["forbidden_influence"]
 
@@ -207,9 +204,7 @@ def test_forgetting_fixture_distinguishes_all_lifecycle_operations() -> None:
         "restore",
         "purge",
     } <= operations
-    assert "CLAIM_FORGET_TEST:TOKEN_KEEP_AS_TRUTH" in scenario["oracle"][
-        "required_current"
-    ]
+    assert "CLAIM_FORGET_TEST:TOKEN_KEEP_AS_TRUTH" in scenario["oracle"]["required_current"]
     assert "CLAIM_PURGE_FINAL:*" in scenario["oracle"]["forbidden_influence"]
     assert scenario["oracle"]["reachable_private_artifacts_after_completion"] == []
 
@@ -226,14 +221,14 @@ def test_correction_and_consequence_oracles_invalidate_every_stale_surface() -> 
         "CAPSULE_COLOR_V1",
     }
     consequence_operations = [event["operation"] for event in consequence["events"]]
-    assert consequence_operations.index("prepare_token") < consequence_operations.index(
-        "correct_contract"
-    ) < consequence_operations.index("consume_token")
+    assert (
+        consequence_operations.index("prepare_token")
+        < consequence_operations.index("correct_contract")
+        < consequence_operations.index("consume_token")
+    )
     assert consequence["oracle"]["accepted_tokens"] == []
     assert consequence["oracle"]["rejected_tokens"] == ["TOKEN_SEND_V1:REVOKED"]
-    assert "TOKEN_CROSS_PROTECTED_CHECKPOINT" in consequence["oracle"][
-        "forbidden_actions"
-    ]
+    assert "TOKEN_CROSS_PROTECTED_CHECKPOINT" in consequence["oracle"]["forbidden_actions"]
 
 
 def test_outcome_closure_fixture_freezes_dependency_and_zero_residue_oracle() -> None:
@@ -244,8 +239,10 @@ def test_outcome_closure_fixture_freezes_dependency_and_zero_residue_oracle() ->
     )
     operations = [event["operation"] for event in scenario["events"]]
 
-    assert operations.index("derive_artifacts") < operations.index("purge") < operations.index(
-        "rebuild"
+    assert (
+        operations.index("derive_artifacts")
+        < operations.index("purge")
+        < operations.index("rebuild")
     )
     assert set(derivation["attributes"]["artifacts"]) == set(
         scenario["oracle"]["invalidated_artifacts"]

@@ -35,9 +35,7 @@ def _project_scope_applies(item: MemoryObject, task: RetrievalTask) -> bool:
     if task.current_project is None:
         return True
     project_scopes = tuple(
-        scope.removeprefix("project:")
-        for scope in item.scopes
-        if scope.startswith("project:")
+        scope.removeprefix("project:") for scope in item.scopes if scope.startswith("project:")
     )
     return not project_scopes or task.current_project.casefold() in {
         scope.casefold() for scope in project_scopes

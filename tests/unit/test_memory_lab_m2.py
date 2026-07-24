@@ -48,9 +48,7 @@ def _record(
         version=1,
         content=content,
         role=ContextRole.CURRENT_CLAIM,
-        coverage_ids=(
-            frozenset({"declared-obligation"}) if covers else frozenset()
-        ),
+        coverage_ids=(frozenset({"declared-obligation"}) if covers else frozenset()),
         relevance=10,
         authorized=True,
         temporally_current=True,
@@ -173,9 +171,7 @@ def test_current_version_reread_retries_after_correction() -> None:
     )
 
     assert result.receipt.status is CompilationStatus.RETRY_GENERATION_CHANGE
-    assert result.receipt.reason_code_multiset == (
-        (CompilationReason.GENERATION_CHANGED.value, 1),
-    )
+    assert result.receipt.reason_code_multiset == ((CompilationReason.GENERATION_CHANGED.value, 1),)
 
 
 def test_compiler_api_cannot_receive_harness_oracle() -> None:
@@ -201,20 +197,9 @@ def test_small_run_exposes_decisive_ablation_regressions() -> None:
         )
         > 0
     )
-    assert (
-        conditions["ablation_no_delete_and_recompile"][
-            "one_deletion_minimality_rate"
-        ]
-        < 1.0
-    )
-    assert (
-        report["decisive_faults"]["sealed_minimal_detected_current_version_change"]
-        == 100
-    )
-    assert (
-        report["decisive_faults"]["no_current_reread_detected_current_version_change"]
-        == 0
-    )
+    assert conditions["ablation_no_delete_and_recompile"]["one_deletion_minimality_rate"] < 1.0
+    assert report["decisive_faults"]["sealed_minimal_detected_current_version_change"] == 100
+    assert report["decisive_faults"]["no_current_reread_detected_current_version_change"] == 0
 
 
 def test_exhaustive_harness_confirms_every_selected_deletion() -> None:

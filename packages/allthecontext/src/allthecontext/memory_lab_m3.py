@@ -220,9 +220,7 @@ class IncrementalInfluenceClosure:
 
         del requested_id
         self._record_counter += 1
-        record_id = (
-            f"root-{self.run_nonce}-{self._minimum_generation}-{self._record_counter}"
-        )
+        record_id = f"root-{self.run_nonce}-{self._minimum_generation}-{self._record_counter}"
         self.install_record(
             CanonicalRecord(
                 record_id=record_id,
@@ -386,9 +384,7 @@ class IncrementalInfluenceClosure:
                 self._barrier = replace(
                     barrier,
                     affected=frozenset(
-                        artifact_id
-                        for artifact_id in affected
-                        if artifact_id in self.blueprints
+                        artifact_id for artifact_id in affected if artifact_id in self.blueprints
                     ),
                 )
         return MutationReceipt(
@@ -428,9 +424,7 @@ class IncrementalInfluenceClosure:
         """Publish an affected generation only after the whole closure resolves."""
 
         barrier = self._require_barrier()
-        expected = {
-            item for item in barrier.affected if item in self.blueprints
-        }
+        expected = {item for item in barrier.affected if item in self.blueprints}
         if not expected <= self._pending.keys():
             self._record_failure(FailureReason.INCOMPLETE_REPAIR_REJECTED)
             return False
@@ -618,11 +612,7 @@ class IncrementalInfluenceClosure:
             for successor in successors:
                 blueprint = self.blueprints[successor]
                 edge = next(
-                    (
-                        item
-                        for item in blueprint.dependencies
-                        if item.predecessor_id == predecessor
-                    ),
+                    (item for item in blueprint.dependencies if item.predecessor_id == predecessor),
                     None,
                 )
                 if edge is None or edge.influence_class not in self.config.influence_classes:
@@ -655,9 +645,7 @@ class IncrementalInfluenceClosure:
         if self.config.inventory_enabled:
             for artifact_id, blueprint in tuple(self.blueprints.items()):
                 kept = tuple(
-                    item
-                    for item in blueprint.dependencies
-                    if item.predecessor_id != record_id
+                    item for item in blueprint.dependencies if item.predecessor_id != record_id
                 )
                 if kept != blueprint.dependencies:
                     self.blueprints[artifact_id] = replace(
@@ -736,9 +724,7 @@ class IncrementalInfluenceClosure:
             )
         if not inputs:
             return None
-        source_versions = tuple(
-            sorted({binding for item in inputs for binding in item[2]})
-        )
+        source_versions = tuple(sorted({binding for item in inputs for binding in item[2]}))
         scopes = tuple(sorted(set().union(*(item[3] for item in inputs))))
         grants = tuple(sorted(set().union(*(item[4] for item in inputs))))
         commitment = _incremental_commitment(
@@ -779,8 +765,7 @@ class IncrementalInfluenceClosure:
             FailureReceipt(
                 reason=reason,
                 per_run_artifact_ref=(
-                    f"ref-{self.run_nonce}-{self._minimum_generation}-"
-                    f"{self._receipt_counter}"
+                    f"ref-{self.run_nonce}-{self._minimum_generation}-{self._receipt_counter}"
                 ),
             )
         )

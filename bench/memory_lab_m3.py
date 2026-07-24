@@ -123,9 +123,7 @@ def verify_local_module_origin(
     module_path = Path(module.__file__ or "").resolve()
     runner_path = Path(__file__).resolve()
     if not module_path.is_relative_to(expected):
-        raise RuntimeError(
-            "allthecontext.memory_lab_m3 resolved outside the active worktree"
-        )
+        raise RuntimeError("allthecontext.memory_lab_m3 resolved outside the active worktree")
     if not runner_path.is_relative_to(root):
         raise RuntimeError("bench.memory_lab_m3 resolved outside the active worktree")
     return {
@@ -194,9 +192,7 @@ def _engine(
                 artifact_id="proc-scope-beta",
                 surface=Surface.PROCEDURE,
                 domain="scope-beta",
-                dependencies=(
-                    Dependency("root-scope-beta-anchor", InfluenceClass.CONTENT),
-                ),
+                dependencies=(Dependency("root-scope-beta-anchor", InfluenceClass.CONTENT),),
             )
         )
     else:
@@ -236,8 +232,7 @@ def _observe_barrier(
         metrics.fail_open_publication_count += 1
         if (
             artifact_id in old_artifacts
-            and published.semantic_commitment
-            == old_artifacts[artifact_id].semantic_commitment
+            and published.semantic_commitment == old_artifacts[artifact_id].semantic_commitment
         ):
             metrics.published_stale_descendant_count += 1
 
@@ -253,9 +248,7 @@ def _randomized_repair(
     barrier = engine.active_barrier
     if barrier is None:
         return
-    remaining = {
-        item for item in barrier.affected if item in engine.blueprints
-    }
+    remaining = {item for item in barrier.affected if item in engine.blueprints}
     randomizer = random.Random(seed)
     while remaining:
         candidates = list(remaining)
@@ -291,9 +284,7 @@ def _compare_clean_build(
     rebuilt = oracle.rebuild(schedule=schedule)
     optimized_state = engine.observable_state()
     rebuilt_state = oracle.observable_state(rebuilt)
-    metrics.optimized_full_rebuild_mismatch_count += int(
-        optimized_state != rebuilt_state
-    )
+    metrics.optimized_full_rebuild_mismatch_count += int(optimized_state != rebuilt_state)
     metrics.descendants_scanned += engine.descendants_scanned
     metrics.descendants_rebuilt += engine.descendants_rebuilt
     metrics.full_rebuild_nodes_evaluated += oracle.evaluated_nodes
@@ -537,9 +528,7 @@ def _case_05(repeat: int, seed: int) -> CaseMetrics:
         if (
             artifact is not None
             and root_id not in recipe_roots
-            and root_id not in {
-                source_id for source_id, _ in artifact.source_versions
-            }
+            and root_id not in {source_id for source_id, _ in artifact.source_versions}
             and recipe_roots <= set(engine.records)
         ):
             metrics.purge_shared_descendant_recipes_validated += 1
@@ -650,24 +639,33 @@ def _case_11(repeat: int, seed: int) -> CaseMetrics:
     metrics = CaseMetrics()
     engine = _engine("fan_in", nonce=f"r{repeat}")
     initial_state = engine.observable_state()
-    if engine.accept_ordered_event(
-        sequence=1,
-        event_id="event-11",
-        body_digest="digest-1",
-    ) != "accepted":
-        metrics.conflicting_replay_accept_count += 1
-    for _ in range(2):
-        if engine.accept_ordered_event(
+    if (
+        engine.accept_ordered_event(
             sequence=1,
             event_id="event-11",
             body_digest="digest-1",
-        ) != "duplicate":
+        )
+        != "accepted"
+    ):
+        metrics.conflicting_replay_accept_count += 1
+    for _ in range(2):
+        if (
+            engine.accept_ordered_event(
+                sequence=1,
+                event_id="event-11",
+                body_digest="digest-1",
+            )
+            != "duplicate"
+        ):
             metrics.duplicate_side_effect_count += 1
-    if engine.accept_ordered_event(
-        sequence=1,
-        event_id="event-11",
-        body_digest="digest-2",
-    ) != "conflict":
+    if (
+        engine.accept_ordered_event(
+            sequence=1,
+            event_id="event-11",
+            body_digest="digest-2",
+        )
+        != "conflict"
+    ):
         metrics.conflicting_replay_accept_count += 1
     for _ in range(3):
         engine.record_use(event_id="use-11", issue_id="issue-in", epoch=0)
@@ -688,23 +686,32 @@ def _case_12(repeat: int, seed: int) -> CaseMetrics:
         record_id="root-chain",
         payload_symbol=f"opaque-v2-{repeat}",
     )
-    if engine.accept_ordered_event(
-        sequence=2,
-        event_id="repair-complete",
-        body_digest="digest-complete",
-    ) == "accepted":
+    if (
+        engine.accept_ordered_event(
+            sequence=2,
+            event_id="repair-complete",
+            body_digest="digest-complete",
+        )
+        == "accepted"
+    ):
         metrics.fail_open_publication_count += 1
     _observe_barrier(engine, old, metrics)
-    assert engine.accept_ordered_event(
-        sequence=1,
-        event_id="mutation",
-        body_digest="digest-mutation",
-    ) == "accepted"
-    assert engine.accept_ordered_event(
-        sequence=2,
-        event_id="repair-complete",
-        body_digest="digest-complete",
-    ) == "accepted"
+    assert (
+        engine.accept_ordered_event(
+            sequence=1,
+            event_id="mutation",
+            body_digest="digest-mutation",
+        )
+        == "accepted"
+    )
+    assert (
+        engine.accept_ordered_event(
+            sequence=2,
+            event_id="repair-complete",
+            body_digest="digest-complete",
+        )
+        == "accepted"
+    )
     _randomized_repair(
         engine,
         seed=seed,
@@ -881,9 +888,7 @@ def _run_ablation(name: str) -> dict[str, int]:
             record_id="root-chain",
             payload_symbol="opaque-ablation-v2",
         )
-        barrier_affected = (
-            engine.active_barrier.affected if engine.active_barrier else ()
-        )
+        barrier_affected = engine.active_barrier.affected if engine.active_barrier else ()
         stale_unwithdrawn = set(old) - set(barrier_affected)
         metrics.published_stale_descendant_count += sum(
             engine.published(item) is not None for item in stale_unwithdrawn
@@ -962,9 +967,7 @@ def _run_ablation(name: str) -> dict[str, int]:
     else:
         raise ValueError(f"unknown ablation: {name}")
     return {
-        key: value
-        for key, value in asdict(metrics).items()
-        if value and key.endswith("_count")
+        key: value for key, value in asdict(metrics).items() if value and key.endswith("_count")
     }
 
 
@@ -978,9 +981,7 @@ def _run_missing_edge_fault() -> dict[str, int]:
         record_id="root-chain",
         payload_symbol="opaque-fault-v2",
     )
-    barrier_affected = (
-        engine.active_barrier.affected if engine.active_barrier else ()
-    )
+    barrier_affected = engine.active_barrier.affected if engine.active_barrier else ()
     stale_unwithdrawn = set(old) - set(barrier_affected)
     metrics.published_stale_descendant_count += sum(
         engine.published(item) is not None for item in stale_unwithdrawn
@@ -993,9 +994,7 @@ def _run_missing_edge_fault() -> dict[str, int]:
     )
     _compare_clean_build(engine, metrics, seed=2)
     return {
-        key: value
-        for key, value in asdict(metrics).items()
-        if value and key.endswith("_count")
+        key: value for key, value in asdict(metrics).items() if value and key.endswith("_count")
     }
 
 
@@ -1023,16 +1022,12 @@ def run_experiment(*, repeats: int = DEFAULT_REPEATS) -> dict[str, Any]:
                 "repeats": repeats,
                 "verdict": "PASS" if aggregate.required_zero_total() == 0 else "FAIL",
                 "safety_metrics": {
-                    key: value
-                    for key, value in asdict(aggregate).items()
-                    if key.endswith("_count")
+                    key: value for key, value in asdict(aggregate).items() if key.endswith("_count")
                 },
                 "work_metrics": {
                     "descendants_scanned": aggregate.descendants_scanned,
                     "descendants_rebuilt": aggregate.descendants_rebuilt,
-                    "full_rebuild_nodes_evaluated": (
-                        aggregate.full_rebuild_nodes_evaluated
-                    ),
+                    "full_rebuild_nodes_evaluated": (aggregate.full_rebuild_nodes_evaluated),
                 },
                 "purge_boundary": {
                     "exclusive_descendant_ids_checked": (
@@ -1058,21 +1053,12 @@ def run_experiment(*, repeats: int = DEFAULT_REPEATS) -> dict[str, Any]:
             }
         )
     c15 = next(
-        item
-        for item in case_reports
-        if item["case_id"] == "M3-C15-OPTIMIZATION-WORK-CONTROL"
+        item for item in case_reports if item["case_id"] == "M3-C15-OPTIMIZATION-WORK-CONTROL"
     )
     work = c15["work_metrics"]
     full_work = work["full_rebuild_nodes_evaluated"]
-    reduction = (
-        1.0 - (work["descendants_rebuilt"] / full_work)
-        if full_work
-        else 0.0
-    )
-    ablations = {
-        name: _run_ablation(name)
-        for name in fixture["ablations"]
-    }
+    reduction = 1.0 - (work["descendants_rebuilt"] / full_work) if full_work else 0.0
+    ablations = {name: _run_ablation(name) for name in fixture["ablations"]}
     injected_faults = {
         "missing_inventory_edge": _run_missing_edge_fault(),
         "stale_writer": next(
@@ -1107,9 +1093,7 @@ def run_experiment(*, repeats: int = DEFAULT_REPEATS) -> dict[str, Any]:
         "surface_coverage_fraction": len(fixture["surfaces"]) / len(Surface),
         "cases": case_reports,
         "decisive_metrics": {
-            key: value
-            for key, value in asdict(total).items()
-            if key.endswith("_count")
+            key: value for key, value in asdict(total).items() if key.endswith("_count")
         },
         "work_control": {
             "optimized_descendants_scanned": work["descendants_scanned"],
@@ -1131,9 +1115,7 @@ def run_experiment(*, repeats: int = DEFAULT_REPEATS) -> dict[str, Any]:
             ),
         },
         "purge_boundary": {
-            "exclusive_descendant_ids_checked": (
-                total.purge_exclusive_descendant_ids_checked
-            ),
+            "exclusive_descendant_ids_checked": (total.purge_exclusive_descendant_ids_checked),
             "shared_descendant_recipes_validated": (
                 total.purge_shared_descendant_recipes_validated
             ),
@@ -1221,8 +1203,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     )
     for case in report["cases"]:
         lines.append(
-            f"| `{case['case_id']}` | {', '.join(case['f02_invariants'])} | "
-            f"`{case['verdict']}` |"
+            f"| `{case['case_id']}` | {', '.join(case['f02_invariants'])} | `{case['verdict']}` |"
         )
     lines.extend(
         [
@@ -1241,9 +1222,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "- Repository-relative imported modules: "
                 + ", ".join(
                     f"`{item}`"
-                    for item in report["execution_origin_attestation"][
-                        "imported_module_paths"
-                    ]
+                    for item in report["execution_origin_attestation"]["imported_module_paths"]
                 )
                 + "."
             ),

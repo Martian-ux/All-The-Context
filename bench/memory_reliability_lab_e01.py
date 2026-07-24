@@ -111,8 +111,7 @@ def _scenario(value: Any) -> LongitudinalScenario:
             },
             expects_abstention=bool(oracle.get("expects_abstention", False)),
             inventory_states={
-                str(object_id): str(state)
-                for object_id, state in inventory_states.items()
+                str(object_id): str(state) for object_id, state in inventory_states.items()
             },
             inventory_absent={
                 str(object_id): _attribution(attribution)

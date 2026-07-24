@@ -175,9 +175,7 @@ def _generic_epistemic_role(root: Path) -> ProbeResult:
     return ProbeResult(
         classification="UNSUPPORTED" if role_fields_absent else "CONTRADICTED_OBSERVED",
         probe_classifications={
-            "role_fields": "UNSUPPORTED"
-            if role_fields_absent
-            else "SUPPORTED_OBSERVED",
+            "role_fields": "UNSUPPORTED" if role_fields_absent else "SUPPORTED_OBSERVED",
             "kind_substitution": "CONTRADICTED_OBSERVED"
             if kind_substitution_incomplete
             else "SUPPORTED_OBSERVED",
@@ -256,9 +254,7 @@ def _project_and_domain_applicability(root: Path) -> ProbeResult:
     return ProbeResult(
         classification="UNSUPPORTED" if exact_fields_absent else "CONTRADICTED_OBSERVED",
         probe_classifications={
-            "project_domain_fields": "UNSUPPORTED"
-            if exact_fields_absent
-            else "SUPPORTED_OBSERVED",
+            "project_domain_fields": "UNSUPPORTED" if exact_fields_absent else "SUPPORTED_OBSERVED",
             "scope_label_and_substitution": "CONTRADICTED_OBSERVED"
             if len(project_label_results) == 2
             else "SUPPORTED_OBSERVED",
@@ -326,9 +322,7 @@ def _dependency_lineage_and_invalidation(root: Path) -> ProbeResult:
         derived_before.version == derived_after.version == 1 and len(derived_results) == 1
     )
     return ProbeResult(
-        classification="UNSUPPORTED"
-        if dependency_fields_absent
-        else "CONTRADICTED_OBSERVED",
+        classification="UNSUPPORTED" if dependency_fields_absent else "CONTRADICTED_OBSERVED",
         probe_classifications={
             "dependency_fields": "UNSUPPORTED"
             if dependency_fields_absent
@@ -467,9 +461,7 @@ def _same_identifier_after_terminal_purge(root: Path) -> ProbeResult:
         and len(_search_contents(core, SearchRequest(query=marker, limit=10))) == 1
     )
     return ProbeResult(
-        classification="NOT_EXERCISED"
-        if caller_id_rejected
-        else "CONTRADICTED_OBSERVED",
+        classification="NOT_EXERCISED" if caller_id_rejected else "CONTRADICTED_OBSERVED",
         probe_classifications={
             "caller_selected_record_id": "NOT_EXERCISED"
             if caller_id_rejected
@@ -743,16 +735,12 @@ def run_fixture(*, repeats: int = 2) -> dict[str, Any]:
             )
     receipts = repeated[0]
     fingerprints = [_fingerprint(value) for value in repeated]
-    classifications = Counter(
-        str(receipt["classification"]) for receipt in receipts
-    )
+    classifications = Counter(str(receipt["classification"]) for receipt in receipts)
     case_mismatch_count = sum(
-        receipt["classification"] != receipt["expected_classification"]
-        for receipt in receipts
+        receipt["classification"] != receipt["expected_classification"] for receipt in receipts
     )
     probe_mismatch_count = sum(
-        receipt["probe_classifications"]
-        != receipt["expected_probe_classifications"]
+        receipt["probe_classifications"] != receipt["expected_probe_classifications"]
         for receipt in receipts
     )
     return {
@@ -787,8 +775,7 @@ def run_fixture(*, repeats: int = 2) -> dict[str, Any]:
             "case_expectation_mismatch_count": case_mismatch_count,
             "probe_expectation_mismatch_count": probe_mismatch_count,
             "evaluation_error_count": sum(
-                not bool(receipt["observed"]["evaluation_completed"])
-                for receipt in receipts
+                not bool(receipt["observed"]["evaluation_completed"]) for receipt in receipts
             ),
         },
         "determinism": {

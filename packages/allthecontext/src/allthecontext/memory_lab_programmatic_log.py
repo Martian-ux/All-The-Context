@@ -181,11 +181,14 @@ class ProgrammaticInspectionLimits:
     max_results_per_operation: int
 
     def __post_init__(self) -> None:
-        if min(
-            self.max_operations,
-            self.max_events_scanned_per_operation,
-            self.max_results_per_operation,
-        ) < 1:
+        if (
+            min(
+                self.max_operations,
+                self.max_events_scanned_per_operation,
+                self.max_results_per_operation,
+            )
+            < 1
+        ):
             raise ValueError("programmatic inspection limits must be positive")
 
 
@@ -231,10 +234,7 @@ class _ProgramRun:
         return materialized_results < self.limits.max_results_per_operation
 
     def record(self, operation: str, *, scanned: int, results: int) -> None:
-        if (
-            not self.preflight(scanned=scanned)
-            or results > self.limits.max_results_per_operation
-        ):
+        if not self.preflight(scanned=scanned) or results > self.limits.max_results_per_operation:
             raise RuntimeError("operation receipt exceeded its preflighted bounds")
         self.operations.append(
             InspectionOperation(
@@ -342,9 +342,7 @@ class ProgrammaticLogInspectionAdapter:
                     return None
                 historical_values.append(event)
         historical = tuple(historical_values)
-        superseded = {
-            event.supersedes for event in historical if event.supersedes is not None
-        }
+        superseded = {event.supersedes for event in historical if event.supersedes is not None}
         current_values: list[StructuredLogEvent] = []
         for event in historical:
             if (
@@ -536,9 +534,7 @@ class ProgrammaticLogInspectionAdapter:
         if current_project is None:
             return True
         project_scopes = tuple(
-            scope.removeprefix("project:")
-            for scope in event.scopes
-            if scope.startswith("project:")
+            scope.removeprefix("project:") for scope in event.scopes if scope.startswith("project:")
         )
         return not project_scopes or current_project.casefold() in {
             project.casefold() for project in project_scopes
