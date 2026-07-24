@@ -35,7 +35,9 @@ evidence remains historical and must not be presented as proof of ADR-039.
   conversation-level provenance, assistant/tool text stays inert, and failed
   extraction can retry from the preserved blob.
 - Required MCP tools over HTTP and a managed STDIO adapter; one-click local
-  Codex and Claude Desktop configuration bound to the exact vault.
+  Codex and Claude Desktop configuration bound to the exact vault. Windows
+  Claude discovery covers classic installers and the Microsoft Store/MSIX
+  package, including its package-local roaming configuration path.
 - Bundled dashboard infrastructure for import, search, local connections,
   encrypted backup, audit/activity, and signed-update controls.
 - Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
@@ -54,6 +56,15 @@ evidence remains historical and must not be presented as proof of ADR-039.
   the canonical Pages channel automatically. The artifact transport follows
   GitHub's single pinned release-CDN redirect while retaining signed size and
   SHA-256 verification; metadata and arbitrary redirects remain refused.
+- Installed Windows packages also recover their packaged update identity from
+  the exact application name plus adjacent updater helper if a frozen child
+  process lacks its normal marker. Update status exposes the trust-backed
+  available channels so the dashboard cannot invite selection of an
+  unconfigured channel.
+- Before the first protected promotion, an HTTP 404 from only the exact
+  built-in beta manifest URL is represented as `unpublished` rather than a
+  transport failure. The dashboard says it is waiting for the first signed
+  release; custom endpoints and all other update failures still fail closed.
 - Manual candidate and publish workflows keep repository-admin credentials out
   of Actions. An owner verifies the immutable-release setting locally, enters
   an exact nonsecret dispatch phrase, and Actions independently enforces the
@@ -82,6 +93,13 @@ progress:
   administrator endpoint can restore the latest soft-deleted state or a chosen
   historical version, rebuild retrieval state, add a new version/audit event,
   and preserve the separate irreversible-purge boundary.
+- Core migration `006_reversible_source_deletion.sql` gives imported sources the
+  same ordinary delete/Undo boundary. A deleted source is hidden from normal
+  listing, counts, raw access, and reprocessing; current records canonically
+  attributable to it are soft-deleted in the same transaction. Undo restores
+  only records whose deletion version still matches that source operation, so
+  independently deleted or purged records cannot be resurrected. Exact
+  duplicate reimport restores the soft-deleted source safely.
 - Finished ingestion sessions evaluate staged observations atomically.
   Unfinished sessions remain noncurrent, and startup reevaluates eligible
   staged legacy/finished-session observations idempotently.
@@ -102,8 +120,9 @@ progress:
 - The dashboard worktree removes Review navigation, pending badges, approval
   forms, and approval copy; Context is the default, Sources reports observations,
   Activity passively shows automatic decisions and provenance, and current records expose
-  correction plus delete/undo/historical-version restoration controls. Its
-  local suite passes 24 tests, type checking, the production build, and a
+  correction plus delete/undo/historical-version restoration controls. Sources
+  now exposes a confirmed Remove action and immediate Undo for the source and
+  derived current memories. Its local suite passes 27 tests, type checking, the production build, and a
   high-severity dependency audit with zero reported vulnerabilities.
 - Physical `context_candidates`/`approval_status` names and legacy administrative
   endpoints remain temporarily for schema, backup, and integration
@@ -192,13 +211,13 @@ state is already noncurrent and creates no user queue.
 ## Current evidence
 
 - Current ADR-039 worktree on Windows Python 3.14.3: Ruff passes; strict mypy
-  passes across 59 source files; the full suite passes 505 tests with four
+  passes across 59 source files; the full suite passes 513 tests with four
   host-limited symlink skips; documentation links and `git diff --check` pass.
   This includes automatic policy, ACL/session isolation, migration restart,
   pre-v5 restore, source-free foreign-key/FTS recovery, purge resurrection
   barriers, context-error idempotency, delete/restore history, Relay queue
   identity, ordered projection restoration, and the approval-free E2E demo.
-- Current dashboard on Node 25.6.1: 24 tests, TypeScript checking, and the
+- Current dashboard on Node 25.6.1: 27 tests, TypeScript checking, and the
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build
   byte-for-byte.
@@ -222,7 +241,10 @@ state is already noncurrent and creates no user queue.
 - The packaged dashboard contains the direct-Core mobile boundary and contains
   no Edge setup copy or `/admin/edge` request path.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
-  deploy only from Actions. No channel artifact has been deployed.
+  deploy only from Actions. The canonical beta metadata URL currently returns
+  HTTP 404 because no channel artifact or beta release has been deployed. The
+  exact built-in client now reports that state as `unpublished`, but this does
+  not replace the required offline-signed release and protected promotion.
 - The Python 3.12 Windows frozen application passed resource discovery and the
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows

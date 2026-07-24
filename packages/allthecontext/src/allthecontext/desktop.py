@@ -445,10 +445,13 @@ def prepare_installed_runtime(
 
 
 def diagnostics() -> dict[str, Any]:
+    from .updater import UpdateConfig
+
     package_root = Path(__file__).resolve().parent
     core_migrations = package_root / "migrations" / "core"
     relay_migrations = package_root / "migrations" / "relay"
     runtime = RuntimeCommand.current()
+    update_config = UpdateConfig.default()
     return {
         "application": "All The Context",
         "version": __version__,
@@ -464,6 +467,7 @@ def diagnostics() -> dict[str, Any]:
         "dashboard_bundled": (package_root / "web" / "index.html").is_file(),
         "update_keyring_bundled": (package_root / "update_keys.json").is_file(),
         "update_helper_bundled": runtime.update_executable is not None,
+        "update_channels": sorted(update_config.manifest_urls),
         "mcp_helper_bundled": runtime.mcp_executable is not None,
         "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
         "core_data_directory": str(CoreConfig.default().data_dir),

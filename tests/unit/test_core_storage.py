@@ -97,6 +97,87 @@ def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> Non
     ]
 
 
+def test_source_delete_and_restore_only_reverse_its_own_record_deletions(
+    core: CoreService,
+) -> None:
+    content = b"private provider archive"
+    source = core.store.add_source(
+        content,
+        source_service="test",
+        source_type="archive",
+        filename="provider-export.zip",
+    )
+    first = core.store.approve_candidate(
+        core.ingestion.propose(
+            CandidateInput(kind="fact", content="First imported memory", source_id=source.id)
+        ).id
+    )
+    already_deleted = core.store.approve_candidate(
+        core.ingestion.propose(
+            CandidateInput(
+                kind="fact",
+                content="Memory removed before the source",
+                source_id=source.id,
+            )
+        ).id
+    )
+    redeleted_independently = core.store.approve_candidate(
+        core.ingestion.propose(
+            CandidateInput(
+                kind="fact",
+                content="Memory independently changed after source removal",
+                source_id=source.id,
+            )
+        ).id
+    )
+    core.store.delete_record(already_deleted.id, reason="removed independently")
+
+    deletion = core.store.delete_source(source.id, reason="remove imported source")
+
+    assert set(deletion["deleted_record_ids"]) == {first.id, redeleted_independently.id}
+    assert core.store.list_sources() == ([], 0)
+    assert core.store.status()["counts"]["sources"] == 0
+    with pytest.raises(NotFoundError):
+        core.store.get_source(source.id)
+    with pytest.raises(NotFoundError):
+        core.store.get_source_content(source.id)
+    with pytest.raises(NotFoundError):
+        core.store.get_record(first.id)
+    with pytest.raises(NotFoundError):
+        core.store.get_record(already_deleted.id)
+    core.store.restore_record(
+        redeleted_independently.id,
+        reason="independent restore after source removal",
+    )
+    core.store.delete_record(
+        redeleted_independently.id,
+        reason="independent re-delete after source removal",
+    )
+
+    restored = core.store.restore_source(source.id, reason="undo source removal")
+
+    assert restored["restored_record_ids"] == [first.id]
+    assert restored["source"]["id"] == source.id
+    assert core.store.get_record(first.id).content == "First imported memory"
+    with pytest.raises(NotFoundError):
+        core.store.get_record(already_deleted.id)
+    with pytest.raises(NotFoundError):
+        core.store.get_record(redeleted_independently.id)
+    assert core.store.get_source_content(source.id) == content
+
+    core.store.delete_source(source.id, reason="remove again")
+    duplicate = core.store.add_source(
+        content,
+        source_service="test",
+        source_type="archive",
+        filename="provider-export.zip",
+    )
+    assert duplicate.id == source.id
+    assert duplicate.duplicate is True
+    assert duplicate.deleted_at is None
+    assert core.store.get_record(first.id).content == "First imported memory"
+
+
 def test_bootstrap_always_includes_authorized_interaction_preferences(
     core: CoreService,
 ) -> None:

@@ -25,6 +25,10 @@ MANAGED_END = "# END All The Context managed MCP"
 TABLE_HEADER = "[mcp_servers.all_the_context]"
 TABLE_PATH = ("mcp_servers", "all_the_context")
 CLAUDE_SERVER_KEY = "all-the-context"
+CLAUDE_MSIX_PACKAGES_KEY = (
+    r"Software\Classes\Local Settings\Software\Microsoft\Windows"
+    r"\CurrentVersion\AppModel\Repository\Packages"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +80,104 @@ def codex_is_detected() -> bool:
     return shutil.which("codex") is not None or home.is_dir() or (Path.home() / ".codex").is_dir()
 
 
+def _claude_msix_installations() -> list[tuple[str, Path]]:
+    """Return registered Claude MSIX package IDs and verified executables."""
+
+    try:
+        winreg = windows_registry()
+    except ImportError:  # pragma: no cover - defensive on nonstandard runtimes
+        return []
+    installations: list[tuple[str, Path]] = []
+    try:
+        packages = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            CLAUDE_MSIX_PACKAGES_KEY,
+            0,
+            winreg.KEY_READ,
+        )
+    except OSError:
+        return []
+    with packages:
+        index = 0
+        while True:
+            try:
+                package_name = winreg.EnumKey(packages, index)
+            except OSError:
+                break
+            index += 1
+            if not isinstance(package_name, str) or not package_name.casefold().startswith(
+                "claude_"
+            ):
+                continue
+            try:
+                package = winreg.OpenKey(packages, package_name, 0, winreg.KEY_READ)
+            except OSError:
+                continue
+            with package:
+                try:
+                    package_id, _kind = winreg.QueryValueEx(package, "PackageID")
+                    package_root, _kind = winreg.QueryValueEx(package, "PackageRootFolder")
+                except OSError:
+                    continue
+                try:
+                    display_name, _kind = winreg.QueryValueEx(package, "DisplayName")
+                except OSError:
+                    display_name = None
+            if (
+                not isinstance(package_id, str)
+                or not package_id.casefold().startswith("claude_")
+                or not isinstance(package_root, str)
+                or (isinstance(display_name, str) and display_name.casefold() != "claude")
+            ):
+                continue
+            executable = Path(package_root).expanduser() / "app" / "Claude.exe"
+            try:
+                if executable.is_file():
+                    installations.append((package_id, executable))
+            except OSError:
+                continue
+    return installations
+
+
+def _claude_msix_config_path() -> Path | None:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    local_root = Path(local_app_data).expanduser().resolve()
+    candidates: list[Path] = []
+    for package_id, _executable in _claude_msix_installations():
+        if "__" not in package_id or "_" not in package_id:
+            continue
+        package_name = package_id.split("_", 1)[0]
+        publisher_id = package_id.rsplit("__", 1)[1]
+        if not package_name or not publisher_id:
+            continue
+        family_name = f"{package_name}_{publisher_id}"
+        candidate = (
+            local_root
+            / "Packages"
+            / family_name
+            / "LocalCache"
+            / "Roaming"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return next((candidate for candidate in candidates if candidate.is_file()), None) or (
+        candidates[0] if candidates else None
+    )
+
+
 def claude_config_path() -> Path:
     configured = os.environ.get("ATC_CLAUDE_CONFIG")
     if configured:
         return Path(configured).expanduser().resolve()
     system = platform.system()
     if system == "Windows":
+        msix_config = _claude_msix_config_path()
+        if msix_config is not None:
+            return msix_config
         app_data = os.environ.get("APPDATA")
         root = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
         return root.resolve() / "Claude" / "claude_desktop_config.json"
@@ -132,6 +228,8 @@ def claude_is_detected() -> bool:
             if root:
                 candidates.append(Path(root).expanduser().resolve() / "Claude" / "Claude.exe")
         if any(candidate.is_file() for candidate in candidates):
+            return True
+        if _claude_msix_installations():
             return True
         try:
             winreg = windows_registry()

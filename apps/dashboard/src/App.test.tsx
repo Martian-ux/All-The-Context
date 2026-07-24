@@ -269,6 +269,63 @@ describe("dashboard", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
   });
 
+  it("removes an imported source and restores it through Undo", async () => {
+    let deleted = false;
+    const source = {
+      id: "source-1",
+      filename: "provider-export.zip",
+      media_type: "application/zip",
+      source_service: "claude",
+      source_type: "archive",
+      byte_size: 4096,
+      content_hash: "source-hash",
+      candidate_count: 3,
+      import_status: "complete",
+      metadata: { provider: "claude", stats: { conversations: 2 } },
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      if (url.endsWith("/admin/sources/source-1/delete") && init?.method === "POST") {
+        deleted = true;
+        return json({
+          source_id: "source-1",
+          deleted_at: "2026-07-23T00:00:00Z",
+          reason: "Removed by user",
+          deleted_record_ids: ["record-1"],
+        });
+      }
+      if (url.endsWith("/admin/sources/source-1/restore") && init?.method === "POST") {
+        deleted = false;
+        return json({ source, restored_record_ids: ["record-1"] });
+      }
+      if (url.endsWith("/admin/sources")) {
+        return json({ total: deleted ? 0 : 1, items: deleted ? [] : [source] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove provider-export.zip" }));
+    expect(screen.getByText(/current memories derived from it/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText(/source and its derived current memories were removed/i)).toBeInTheDocument();
+    expect(screen.queryByText("provider-export.zip")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(await screen.findByText("Source and its derived current memories were restored.")).toBeInTheDocument();
+    expect(screen.getByText("provider-export.zip")).toBeInTheDocument();
+    const deleteCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/sources/source-1/delete"));
+    const restoreCall = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/sources/source-1/restore"));
+    expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({ reason: "Removed by user" });
+    expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({ reason: "Undid source removal by user" });
+  });
+
   it("checks and downloads a verified desktop update", async () => {
     const update = {
       phase: "idle",
@@ -298,12 +355,51 @@ describe("dashboard", () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Updates" }));
-    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+    const checkNow = await screen.findByRole("button", { name: /check now/i });
+    await waitFor(() => expect(checkNow).toBeEnabled());
+    fireEvent.click(checkNow);
+    const download = await screen.findByRole("button", { name: /download & verify/i });
+    await waitFor(() => expect(download).toBeEnabled());
+    fireEvent.click(download);
 
     expect(await screen.findByRole("button", { name: /install & restart/i })).toBeEnabled();
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/check"))).toBe(true);
     expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/updates/download"))).toBe(true);
+  });
+
+  it("shows an unpublished trusted channel without a raw HTTP error", async () => {
+    const update = {
+      phase: "unpublished",
+      current_version: "0.1.0-beta.1",
+      offered_version: null,
+      mandatory: false,
+      last_checked_at: "2026-07-23T07:14:47Z",
+      last_error: null,
+      recovery_attempts: 0,
+      enabled: true,
+      channel: "beta",
+      deferred_version: null,
+      automatic_install_supported: true,
+      verified_artifact_available: false,
+      installer_detail: "Packaged update can restart into the verified installer",
+      configured: true,
+      available_channels: ["beta"],
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/updates")) return json(update);
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(await screen.findByText("waiting for first release")).toBeInTheDocument();
+    expect(screen.getByText(/No signed beta release has been published yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 404/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("saves a reverified package when automatic installation is unavailable", async () => {
@@ -339,8 +435,12 @@ describe("dashboard", () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Updates" }));
-    fireEvent.click(await screen.findByRole("button", { name: /check now/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /download & verify/i }));
+    const checkNow = await screen.findByRole("button", { name: /check now/i });
+    await waitFor(() => expect(checkNow).toBeEnabled());
+    fireEvent.click(checkNow);
+    const download = await screen.findByRole("button", { name: /download & verify/i });
+    await waitFor(() => expect(download).toBeEnabled());
+    fireEvent.click(download);
     click.mockClear();
     fireEvent.click(await screen.findByRole("button", { name: /save verified package/i }));
 
@@ -520,7 +620,7 @@ describe("dashboard", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Activity" })).toBeInTheDocument();
     const activity = screen.getByRole("region", { name: "Automatic activity" });
-    expect(within(activity).getByText(/Applied to current context.*preference/)).toBeInTheDocument();
+    expect(await within(activity).findByText(/Applied to current context.*preference/)).toBeInTheDocument();
     expect(within(activity).getByText("Use concise explanations")).toBeInTheDocument();
     expect(within(activity).getByText(/ongoing client.*client-1.*explicit user/)).toBeInTheDocument();
     expect(within(activity).getByText(/read-only/i)).toBeInTheDocument();

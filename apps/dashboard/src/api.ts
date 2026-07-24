@@ -11,7 +11,9 @@ import type {
   IntegrationsStatus,
   IntegrationConnectResult,
   Page,
+  SourceDeletion,
   SourceRecord,
+  SourceRestoration,
   UpdateStatus,
 } from "./types";
 
@@ -67,6 +69,14 @@ function recordFromWire(item: RecordWire): ContextRecord {
     scope: item.scopes.join(", ") || "general",
     source_record_id: item.source_id,
     valid_until: item.expires_at,
+  };
+}
+
+function sourceFromWire(item: SourceWire): SourceRecord {
+  return {
+    ...item,
+    size_bytes: item.byte_size,
+    observation_count: item.observation_count ?? item.candidate_count,
   };
 }
 
@@ -187,11 +197,7 @@ export const api = {
     const result = await request<Page<SourceWire>>("/admin/sources");
     return {
       ...result,
-      items: result.items.map((item) => ({
-        ...item,
-        size_bytes: item.byte_size,
-        observation_count: item.observation_count ?? item.candidate_count,
-      })),
+      items: result.items.map(sourceFromWire),
     };
   },
   importSource: async (
@@ -205,6 +211,21 @@ export const api = {
   },
   reprocessSource: async (sourceId: string): Promise<ImportResult> =>
     importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess`, { method: "POST" })),
+  deleteSource: (sourceId: string, reason: string): Promise<SourceDeletion> =>
+    request<SourceDeletion>(`/admin/sources/${encodeURIComponent(sourceId)}/delete`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  restoreSource: async (sourceId: string, reason: string): Promise<SourceRestoration> => {
+    const result = await request<{ source: SourceWire; restored_record_ids: string[] }>(
+      `/admin/sources/${encodeURIComponent(sourceId)}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    );
+    return { ...result, source: sourceFromWire(result.source) };
+  },
   searchContext: async (query: string, availability?: Availability): Promise<Page<ContextRecord>> => {
     const result = await request<Page<RecordWire>>("/context/search", {
       method: "POST",

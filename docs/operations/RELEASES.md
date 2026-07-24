@@ -197,6 +197,13 @@ endpoint does. Source runs, unsupported targets, and packages without an active
 beta trust key still configure no inferred endpoint and do not make background
 update requests.
 
+Before the first protected promotion, HTTP 404 from only that exact built-in
+beta URL is the explicit `unpublished` state: no signed release exists yet, and
+automatic checks remain enabled. A persisted legacy 404 error is normalized on
+startup. Overrides, forks, custom endpoints, release assets, and every other
+HTTP or verification failure remain errors; this empty-channel state does not
+relax or replace any signing or promotion gate.
+
 `ATC_UPDATE_STABLE_URL` and `ATC_UPDATE_BETA_URL` remain explicit overrides for
 forks and acceptance environments. Each value must be an exact HTTPS manifest
 endpoint. The release ceremony must import the reviewed public key before a

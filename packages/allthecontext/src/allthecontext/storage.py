@@ -337,6 +337,17 @@ class CoreStore:
                 (vault_id, content_hash, source_service, source_type),
             ).fetchone()
             if existing is not None:
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection, str(existing["id"]), include_deleted=False
+                    )
+                    assert existing is not None
                 return self._source_out(existing, duplicate=True)
             connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
@@ -409,6 +420,17 @@ class CoreStore:
                 (vault_id, content_hash, source_service, source_type),
             ).fetchone()
             if existing is not None:
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection, str(existing["id"]), include_deleted=False
+                    )
+                    assert existing is not None
                 return self._source_out(existing, duplicate=True)
 
             inserted = connection.execute(
@@ -498,17 +520,41 @@ class CoreStore:
                 else []
             ),
             candidate_count=(int(row["candidate_count"]) if "candidate_count" in keys else 0),
+            deleted_at=(cast(str | None, row["deleted_at"]) if "deleted_at" in keys else None),
+            deleted_reason=(
+                cast(str | None, row["deleted_reason"]) if "deleted_reason" in keys else None
+            ),
         )
 
-    def get_source(self, source_id: str, *, duplicate: bool = False) -> SourceOut:
-        with self.connect() as connection:
-            row = connection.execute(
+    def _source_row_tx(
+        self,
+        connection: sqlite3.Connection,
+        source_id: str,
+        *,
+        include_deleted: bool,
+    ) -> sqlite3.Row | None:
+        deleted_filter = "" if include_deleted else " AND sr.deleted_at IS NULL"
+        return cast(
+            sqlite3.Row | None,
+            connection.execute(
                 "SELECT sr.*,sb.byte_size,sb.media_type,"
                 "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
                 "AS candidate_count FROM source_records sr "
-                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                f"WHERE sr.id=?{deleted_filter}",
                 (source_id,),
-            ).fetchone()
+            ).fetchone(),
+        )
+
+    def get_source(
+        self,
+        source_id: str,
+        *,
+        duplicate: bool = False,
+        include_deleted: bool = False,
+    ) -> SourceOut:
+        with self.connect() as connection:
+            row = self._source_row_tx(connection, source_id, include_deleted=include_deleted)
         if row is None:
             raise NotFoundError("source not found")
         return self._source_out(row, duplicate=duplicate)
@@ -524,7 +570,7 @@ class CoreStore:
         with self.transaction() as connection:
             result = connection.execute(
                 "UPDATE source_records SET import_status=?,metadata_json=?,"
-                "parser_warnings_json=? WHERE id=?",
+                "parser_warnings_json=? WHERE id=? AND deleted_at IS NULL",
                 (
                     import_status,
                     _json(dict(metadata)),
@@ -539,7 +585,8 @@ class CoreStore:
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT sb.content FROM source_records sr JOIN source_blobs sb "
-                "ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+                "ON sb.content_hash=sr.content_hash "
+                "WHERE sr.id=? AND sr.deleted_at IS NULL",
                 (source_id,),
             ).fetchone()
         if row is None:
@@ -553,7 +600,8 @@ class CoreStore:
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT sb.rowid,sb.byte_size FROM source_records sr JOIN source_blobs sb "
-                "ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+                "ON sb.content_hash=sr.content_hash "
+                "WHERE sr.id=? AND sr.deleted_at IS NULL",
                 (source_id,),
             ).fetchone()
             if row is None:
@@ -576,12 +624,17 @@ class CoreStore:
         self, *, limit: int = 100, offset: int = 0
     ) -> tuple[list[dict[str, Any]], int]:
         with self.connect() as connection:
-            total = int(connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0])
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM source_records WHERE deleted_at IS NULL"
+                ).fetchone()[0]
+            )
             rows = connection.execute(
                 "SELECT sr.*,sb.byte_size,sb.media_type,"
                 "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
                 "AS candidate_count FROM source_records sr "
                 "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.deleted_at IS NULL "
                 "ORDER BY sr.created_at DESC LIMIT ? OFFSET ?",
                 (min(max(limit, 1), 500), max(offset, 0)),
             ).fetchall()
@@ -591,6 +644,161 @@ class CoreStore:
             }
             for row in rows
         ], total
+
+    def delete_source(
+        self,
+        source_id: str,
+        *,
+        reason: str = "deleted by user",
+        actor: str = "local-user",
+    ) -> dict[str, Any]:
+        """Reversibly hide a source and current records attributable to it."""
+
+        with self.transaction() as connection:
+            source = connection.execute(
+                "SELECT * FROM source_records WHERE id=?", (source_id,)
+            ).fetchone()
+            if source is None:
+                raise NotFoundError("source not found")
+            if source["deleted_at"] is not None:
+                member_rows = connection.execute(
+                    "SELECT record_id FROM source_deletion_members "
+                    "WHERE source_id=? ORDER BY record_id",
+                    (source_id,),
+                ).fetchall()
+                return {
+                    "source_id": source_id,
+                    "deleted_at": str(source["deleted_at"]),
+                    "reason": str(source["deleted_reason"] or reason),
+                    "deleted_record_ids": [str(row["record_id"]) for row in member_rows],
+                }
+
+            now = utc_now()
+            connection.execute(
+                "UPDATE source_records SET deleted_at=?,deleted_reason=?,deleted_by=? WHERE id=?",
+                (now, reason, actor, source_id),
+            )
+            record_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM context_records "
+                    "WHERE source_id=? AND deleted_at IS NULL ORDER BY id",
+                    (source_id,),
+                ).fetchall()
+            ]
+            for record_id in record_ids:
+                tombstone = self._delete_record_tx(
+                    connection,
+                    record_id,
+                    reason=f"source deleted: {reason}",
+                    actor=actor,
+                    recompute_integrity=False,
+                )
+                connection.execute(
+                    "INSERT INTO source_deletion_members"
+                    "(source_id,record_id,deleted_version,created_at) VALUES(?,?,?,?)",
+                    (source_id, record_id, int(tombstone["deleted_version"]), now),
+                )
+            self._recompute_integrity(connection)
+            self._audit(
+                connection,
+                actor,
+                "source_deleted",
+                [source_id],
+                metadata={"deleted_record_count": len(record_ids)},
+            )
+            return {
+                "source_id": source_id,
+                "deleted_at": now,
+                "reason": reason,
+                "deleted_record_ids": record_ids,
+            }
+
+    def restore_source(
+        self,
+        source_id: str,
+        *,
+        reason: str = "restored by user",
+        actor: str = "local-user",
+    ) -> dict[str, Any]:
+        """Restore a source and only the records deleted by its source deletion."""
+
+        with self.transaction() as connection:
+            return self._restore_source_tx(
+                connection,
+                source_id,
+                reason=reason,
+                actor=actor,
+            )
+
+    def _restore_source_tx(
+        self,
+        connection: sqlite3.Connection,
+        source_id: str,
+        *,
+        reason: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        source = connection.execute(
+            "SELECT * FROM source_records WHERE id=?", (source_id,)
+        ).fetchone()
+        if source is None:
+            raise NotFoundError("source not found")
+
+        restored_record_ids: list[str] = []
+        if source["deleted_at"] is not None:
+            members = connection.execute(
+                "SELECT record_id,deleted_version FROM source_deletion_members "
+                "WHERE source_id=? ORDER BY record_id",
+                (source_id,),
+            ).fetchall()
+            connection.execute(
+                "UPDATE source_records SET deleted_at=NULL,deleted_reason=NULL,deleted_by=NULL "
+                "WHERE id=?",
+                (source_id,),
+            )
+            for member in members:
+                record_id = str(member["record_id"])
+                tombstone = connection.execute(
+                    "SELECT deleted_version FROM deletion_tombstones WHERE record_id=?",
+                    (record_id,),
+                ).fetchone()
+                current = connection.execute(
+                    "SELECT * FROM context_records WHERE id=?", (record_id,)
+                ).fetchone()
+                if (
+                    tombstone is None
+                    or current is None
+                    or current["deleted_at"] is None
+                    or int(tombstone["deleted_version"]) != int(member["deleted_version"])
+                ):
+                    continue
+                self._restore_current_record_tx(
+                    connection,
+                    current,
+                    reason=f"source restored: {reason}",
+                    actor=actor,
+                    recompute_integrity=False,
+                )
+                restored_record_ids.append(record_id)
+            connection.execute(
+                "DELETE FROM source_deletion_members WHERE source_id=?", (source_id,)
+            )
+            self._recompute_integrity(connection)
+            self._audit(
+                connection,
+                actor,
+                "source_restored",
+                [source_id],
+                metadata={"restored_record_count": len(restored_record_ids)},
+            )
+
+        restored_source = self._source_row_tx(connection, source_id, include_deleted=False)
+        assert restored_source is not None
+        return {
+            "source": self._source_out(restored_source).model_dump(mode="json"),
+            "restored_record_ids": restored_record_ids,
+        }
 
     def candidate_ids_for_source(self, source_id: str) -> list[str]:
         with self.connect() as connection:
@@ -2443,6 +2651,7 @@ class CoreStore:
         *,
         reason: str,
         actor: str,
+        recompute_integrity: bool = True,
     ) -> dict[str, Any]:
         record = connection.execute(
             "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)
@@ -2479,7 +2688,8 @@ class CoreStore:
             "record_deleted",
             {"record_id": record_id, "version": version, "deleted_at": now},
         )
-        self._recompute_integrity(connection)
+        if recompute_integrity:
+            self._recompute_integrity(connection)
         self._audit(connection, actor, "record_deleted", [record_id])
         return {
             "record_id": record_id,
@@ -2507,9 +2717,12 @@ class CoreStore:
                 raise NotFoundError("context record not found")
             snapshot: Mapping[str, Any]
             if version is None:
-                if current["deleted_at"] is None:
-                    return self._record_out(current)
-                snapshot = self._record_out(current).model_dump(mode="json")
+                return self._restore_current_record_tx(
+                    connection,
+                    current,
+                    reason=reason,
+                    actor=actor,
+                )
             else:
                 historical = connection.execute(
                     "SELECT snapshot_json FROM context_record_versions "
@@ -2612,6 +2825,51 @@ class CoreStore:
                 metadata={"restored_version": version},
             )
             return self._record_out(restored)
+
+    def _restore_current_record_tx(
+        self,
+        connection: sqlite3.Connection,
+        current: sqlite3.Row,
+        *,
+        reason: str,
+        actor: str,
+        recompute_integrity: bool = True,
+    ) -> ContextRecordOut:
+        if current["deleted_at"] is None:
+            return self._record_out(current)
+        record_id = str(current["id"])
+        now = utc_now()
+        next_version = int(current["version"]) + 1
+        availability = Availability(str(current["availability"]))
+        connection.execute(
+            "UPDATE context_records SET approval_status='approved',version=?,updated_at=?,"
+            "deleted_at=NULL,policy_version=? WHERE id=?",
+            (next_version, now, AUTOMATIC_POLICY_VERSION, record_id),
+        )
+        connection.execute("DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,))
+        restored = connection.execute(
+            "SELECT * FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()
+        assert restored is not None
+        self._insert_version(connection, restored, reason)
+        self._replace_fts(connection, restored)
+        if availability == Availability.ALWAYS:
+            self._emit_event(
+                connection,
+                restored,
+                "record_upserted",
+                self._relay_payload(restored),
+            )
+        if recompute_integrity:
+            self._recompute_integrity(connection)
+        self._audit(
+            connection,
+            actor,
+            "record_restored",
+            [record_id],
+            metadata={"restored_version": None},
+        )
+        return self._record_out(restored)
 
     def purge_confirmation_phrase(self, target_type: str, target_id: str) -> str:
         return PURGE_CONFIRMATION_TEMPLATE.format(
@@ -3250,7 +3508,9 @@ class CoreStore:
                 raise InvalidStateError("Core vault is not initialized")
             counts = {
                 "sources": int(
-                    connection.execute("SELECT COUNT(*) FROM source_records").fetchone()[0]
+                    connection.execute(
+                        "SELECT COUNT(*) FROM source_records WHERE deleted_at IS NULL"
+                    ).fetchone()[0]
                 ),
                 "pending_candidates": int(
                     connection.execute(

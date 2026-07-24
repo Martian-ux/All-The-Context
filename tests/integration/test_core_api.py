@@ -717,3 +717,40 @@ def test_failed_source_can_be_reprocessed_from_preserved_raw_blob(tmp_path: Path
     assert len(response.json()["candidate_ids"]) == 1
     assert sources[0]["import_status"] == "complete"
     assert sources[0]["candidate_count"] == 1
+
+
+def test_source_delete_and_restore_are_exposed_as_reversible_admin_actions(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    core = CoreService(config)
+    source = core.store.add_source(
+        b"provider archive",
+        source_service="generic",
+        source_type="text",
+        filename="provider.txt",
+        media_type="text/plain",
+    )
+
+    with TestClient(create_app(config)) as client:
+        deleted = client.post(
+            f"/v1/admin/sources/{source.id}/delete",
+            json={"reason": "Removed by user"},
+        )
+        hidden = client.get("/v1/admin/sources")
+        unavailable = client.post(f"/v1/admin/sources/{source.id}/reprocess")
+        restored = client.post(
+            f"/v1/admin/sources/{source.id}/restore",
+            json={"reason": "Undid source removal by user"},
+        )
+        visible = client.get("/v1/admin/sources")
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["source_id"] == source.id
+    assert deleted.json()["deleted_record_ids"] == []
+    assert hidden.json() == {"items": [], "total": 0}
+    assert unavailable.status_code == 404
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["source"]["id"] == source.id
+    assert restored.json()["restored_record_ids"] == []
+    assert visible.json()["total"] == 1

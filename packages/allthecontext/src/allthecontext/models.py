@@ -293,6 +293,8 @@ class SourceOut(StrictModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     parser_warnings: list[str] = Field(default_factory=list, max_length=512)
     candidate_count: int = Field(default=0, ge=0)
+    deleted_at: str | None = None
+    deleted_reason: str | None = None
 
 
 class CandidateOut(CandidateInput):

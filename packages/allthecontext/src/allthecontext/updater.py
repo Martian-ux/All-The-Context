@@ -71,6 +71,14 @@ class UpdateError(RuntimeError):
     """A safe, operator-facing update failure without sensitive detail."""
 
 
+class UpdateEndpointHttpError(UpdateError):
+    """An update endpoint returned a bounded, nonsecret HTTP status."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"Update endpoint returned HTTP {status_code}")
+
+
 class UpdateBusyError(UpdateError):
     """Another check, download, or install owns the transaction."""
 
@@ -80,6 +88,7 @@ class UpdatePhase(StrEnum):
     DISABLED = "disabled"
     CHECKING = "checking"
     CURRENT = "current"
+    UNPUBLISHED = "unpublished"
     AVAILABLE = "available"
     DEFERRED = "deferred"
     DOWNLOADING = "downloading"
@@ -154,7 +163,7 @@ class UpdateConfig:
         platform_name, architecture = current_platform()
         urls: dict[Channel, str] = {}
         if (
-            bool(getattr(sys, "frozen", False))
+            _packaged_update_runtime(platform_name)
             and platform_name == "windows"
             and architecture == "x86_64"
         ):
@@ -184,6 +193,23 @@ class UpdateConfig:
             platform_name=platform_name,
             architecture=architecture,
         )
+
+
+def _packaged_update_runtime(platform_name: str) -> bool:
+    if bool(getattr(sys, "frozen", False)):
+        return True
+    if platform_name != "windows":
+        return False
+    try:
+        executable = Path(sys.executable).resolve()
+        helper = executable.with_name("AllTheContextUpdater.exe")
+        return (
+            executable.name.casefold() == "allthecontext.exe"
+            and executable.is_file()
+            and helper.is_file()
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def current_platform() -> tuple[str, str]:
@@ -343,7 +369,7 @@ class HttpsTransport:
                     )
                     redirect_count += 1
                     continue
-                raise UpdateError(f"Update endpoint returned HTTP {exc.code}") from exc
+                raise UpdateEndpointHttpError(exc.code) from exc
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 raise UpdateError(
                     "Update endpoint could not be reached within the time limit"
@@ -708,6 +734,7 @@ class UpdateManager:
             self.state = self._load_state()
             self.state.current_version = config.current_version
             self._validate_internal_state()
+            self._normalize_unpublished_channel_state()
             self._recover_interrupted()
             self._prune_directory(self.config.data_dir / "staging", keep=self.state.operation_id)
             active_transaction = (
@@ -866,6 +893,30 @@ class UpdateManager:
             self.state.phase = UpdatePhase.ERROR
             self.state.last_error = "Persisted update paths were invalid and were reset safely"
 
+    def _uses_canonical_beta_channel(self) -> bool:
+        return (
+            self.preferences.channel == "beta"
+            and self.config.manifest_urls.get("beta") == DEFAULT_BETA_MANIFEST_URL
+        )
+
+    def _set_unpublished_channel_state(self) -> None:
+        self._clean_operation()
+        self.state.phase = UpdatePhase.UNPUBLISHED
+        self.state.offered_version = None
+        self.state.mandatory = False
+        self.state.release_notes_url = None
+        self.state.operation_id = None
+        self.state.transaction_path = None
+        self.state.last_error = None
+
+    def _normalize_unpublished_channel_state(self) -> None:
+        if (
+            self._uses_canonical_beta_channel()
+            and self.state.phase == UpdatePhase.ERROR
+            and self.state.last_error == "Update endpoint returned HTTP 404"
+        ):
+            self._set_unpublished_channel_state()
+
     def _save(self) -> None:
         value = asdict(self.state)
         value["phase"] = self.state.phase.value
@@ -1017,6 +1068,7 @@ class UpdateManager:
                         else self.installer.unsupported_reason
                     ),
                     "configured": self.preferences.channel in self.config.manifest_urls,
+                    "available_channels": sorted(self.config.manifest_urls),
                 }
             )
             # Private staging and backup paths are intentionally not exposed.
@@ -1148,6 +1200,16 @@ class UpdateManager:
                     self.state.phase = UpdatePhase.DEFERRED
                 else:
                     self.state.phase = UpdatePhase.AVAILABLE
+                self._save()
+                return self.public_status()
+            except UpdateEndpointHttpError as exc:
+                if exc.status_code == 404 and self._uses_canonical_beta_channel():
+                    self._set_unpublished_channel_state()
+                    self.state.last_checked_at = _utc_now()
+                else:
+                    self.state.phase = UpdatePhase.ERROR
+                    self.state.last_error = str(exc)[:500]
+                    self.state.last_checked_at = _utc_now()
                 self._save()
                 return self.public_status()
             except (
