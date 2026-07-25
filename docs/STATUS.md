@@ -12,6 +12,8 @@ Edge, third-party runtime deployment, offline mobile replicas, and provider
 hosting setup are no longer part of the V1 product or acceptance gate. Mobile
 means connecting directly to Core while Core is online.
 
+Legacy Edge cleanup events now run an inline synchronization attempt when the dormant manager is triggered without a running worker, so paired/manual Edges receive delete, withdraw, and purge tombstones without restoring the V1 background worker.
+
 On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
 product contract is now one-time setup plus automatic, reversible,
 provenance-backed context maintenance, with no routine review queue. The

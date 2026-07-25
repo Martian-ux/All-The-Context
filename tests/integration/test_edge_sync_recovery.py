@@ -486,3 +486,51 @@ def test_claim_ack_crash_resumes_without_redeploying_edge(
     finally:
         oauth_store.close()
         service.close()
+
+
+def test_edge_sync_trigger_runs_inline_when_lifespan_worker_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    core = CoreService(CoreConfig(data_dir=tmp_path / "core"))
+    connections = EdgeConnectionStore(core.config)
+    connections.prepare(core.store.vault_id())
+    manager = EdgeSyncManager(connections, core.store)
+    calls: list[dict[str, object]] = []
+
+    def fake_sync_now(**kwargs: object) -> dict[str, str]:
+        calls.append(kwargs)
+        return {"state": "not_connected"}
+
+    monkeypatch.setattr(manager, "sync_now", fake_sync_now)
+
+    manager.trigger()
+
+    assert calls == [{}]
+
+
+def test_edge_sync_trigger_only_wakes_running_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    core = CoreService(CoreConfig(data_dir=tmp_path / "core"))
+    connections = EdgeConnectionStore(core.config)
+    manager = EdgeSyncManager(connections, core.store)
+    calls: list[dict[str, object]] = []
+
+    def fake_sync_now(**kwargs: object) -> dict[str, str]:
+        calls.append(kwargs)
+        return {"state": "not_connected"}
+
+    monkeypatch.setattr(manager, "sync_now", fake_sync_now)
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait)
+    worker.start()
+    try:
+        manager._thread = worker
+        manager.trigger()
+    finally:
+        release.set()
+        worker.join()
+
+    assert calls == []

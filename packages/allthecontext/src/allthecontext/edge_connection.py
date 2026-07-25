@@ -770,6 +770,8 @@ class EdgeSyncManager:
 
     def trigger(self) -> None:
         self._wake.set()
+        if self._thread is None or not self._thread.is_alive():
+            self.sync_now()
 
     def _run(self) -> None:
         while not self._stop.is_set():

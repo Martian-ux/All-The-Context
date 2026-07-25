@@ -1142,3 +1142,5 @@ pinned revision, license confirmation, static inventory, isolated execution,
 and an adapter that cannot canonize records or bypass Core. Wave 4's
 external-code prohibition remains truthful: it downloaded or executed no
 competitor system.
+
+Legacy Edge compatibility keeps Hosted Edge outside the V1 product boundary and does not restart the Core lifespan background worker. To avoid stale hosted copies for existing paired/manual Edges, mutation-triggered cleanup now performs a bounded inline synchronization attempt when no worker is alive; running workers still receive only a wake signal.
