@@ -44,6 +44,7 @@ suite. Pre-ADR-039 approval evidence does not satisfy automatic-policy rows.
 | No automatic public exposure | loopback default; dashboard warning; acceptance gate | Implemented |
 | Legacy `always_available` compatibility | schema and old records retained; new applied context uses `core_available`/`local_only` and labels old records legacy | Implemented |
 | Legacy review-data migration | migration 005 maps approved/rejected to applied/ignored and startup reevaluates eligible staged rows under `automatic-v1` | Implemented; partial-migration restart, pre-v5 duplicate restore, and idempotency regressions pass locally |
+| Remote Edge scoped forwarding authorization | dormant `edge_connection.py` compatibility path enforces Core-approved `context_scopes` on direct fetch, search, and bootstrap records and scrubs filtered aggregates; `tests/security/test_edge_forwarding.py` covers empty, wildcard, matching, and out-of-scope grants | Implemented locally as defense in depth; not a V1 feature |
 | Relay remains queue/projection only | Relay MCP returns staged receipts; Core evaluates dequeued observations; signed record events originate at Core | Implemented in current worktree over dormant compatibility code; no hosted runtime |
 | Legacy Edge cleanup without normal operation | dormant manager/admin cleanup APIs; no automatic worker | Compatibility only; not a V1 feature |
 | Frozen Retrieval V2 comparator | `retrieval_contracts.py`, pinned fixture hashes/ranking fingerprints, foundation harness | Implemented; comparator identity `70a4808` |
