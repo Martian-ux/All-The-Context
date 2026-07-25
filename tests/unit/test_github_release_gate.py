@@ -97,15 +97,15 @@ def test_release_preflight_rejects_reused_version_and_can_recheck_after_main_adv
     )
 
 
-def test_release_preflight_can_use_external_operator_immutability_evidence(
+def test_release_preflight_always_checks_immutability_api_when_rechecking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses = _responses()
+    requested: list[str] = []
 
     def fake_get(self: GitHubReader, endpoint: str, *, missing_ok: bool = False) -> Any:
         del self, missing_ok
-        if endpoint == "immutable-releases":
-            raise AssertionError("Actions must not call the admin-only immutability endpoint")
+        requested.append(endpoint)
         return responses[endpoint]
 
     monkeypatch.setattr(GitHubReader, "get", fake_get)
@@ -115,5 +115,7 @@ def test_release_preflight_can_use_external_operator_immutability_evidence(
         source_commit=SOURCE_COMMIT,
         token="test-only-token",
         api_url="https://api.github.test",
-        require_immutability_api=False,
+        require_default_head=False,
     )
+
+    assert requested[0] == "immutable-releases"

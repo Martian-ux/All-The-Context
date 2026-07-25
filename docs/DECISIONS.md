@@ -637,26 +637,25 @@ reranking remain unexercised. Promotion requires representative evidence,
 cross-platform measurements, explicit packaging review, and the same
 policy-first and rebuildable-state guarantees as production retrieval.
 
-## ADR-038: Repository-admin release checks stay outside GitHub Actions
+## ADR-038: Immutable-release checks fail closed before publication
 
 **Status:** accepted 2026-07-23.
 
 GitHub's immutable-release settings endpoint requires repository
 `Administration: read`, a permission unavailable to the automatic Actions
-`GITHUB_TOKEN`. Candidate and publish workflows must not receive a personal
-access token or other repository-admin credential merely to inspect that
-setting.
+`GITHUB_TOKEN`. Candidate and publish workflows therefore use the dedicated
+`RELEASE_ADMIN_READ_TOKEN` secret only for read-only immutable-release setting
+checks. The offline Ed25519 private key remains outside GitHub Actions.
 
-Immediately before each candidate or publish dispatch, a repository owner uses
-their existing authenticated `gh` session to verify that immutable releases are
-enabled. The manual workflow requires an exact, nonsecret confirmation phrase.
-Actions then independently verifies every property its least-privilege token
-can observe: the source commit, default-branch head where applicable, unused
-tag/release slot, draft state, artifacts, digests, attestations, signed manifest,
-and final immutable published state. A missing phrase or failed observable check
-stops the workflow. This boundary keeps admin credentials and the offline
-Ed25519 private key out of GitHub Actions without pretending the Actions token
-can perform an impossible admin API call.
+Immediately before each candidate or publish dispatch, a repository owner may
+still use their existing authenticated `gh` session to verify that immutable
+releases are enabled, but the manual confirmation phrase is not trusted as the
+release safety boundary. Actions must fail closed unless the GitHub API reports
+`immutable-releases.enabled == true` before candidate creation, during the
+post-build unused-slot recheck, and immediately before publishing a beta draft.
+Only after that machine-checkable pre-publish gate passes may the workflow make
+a release public; the final published-state and `gh release verify` checks remain
+defense in depth.
 
 ## ADR-039: Context maintenance is automatic, reversible, and Core-owned
 

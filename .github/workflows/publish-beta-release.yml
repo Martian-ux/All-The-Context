@@ -117,6 +117,12 @@ jobs:
           --repository "${{ github.repository }}"
           --source-commit "${{ inputs.source_commit }}"
           --output-dir dist/channel-preflight
+      - name: Recheck immutable releases immediately before publication
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_ADMIN_READ_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN"
+          test "$(gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/${{ github.repository }}/immutable-releases --jq .enabled)" = "true"
       - name: Recheck the exact draft asset set immediately before publication
         env:
           GH_TOKEN: ${{ github.token }}

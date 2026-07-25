@@ -59,15 +59,14 @@ jobs:
         run: >-
           python scripts/release_keyring.py validate
           --require-channel "${{ inputs.channel }}"
-      - name: Require operator-verified immutability, default-branch head, and unused version
+      - name: Require API-verified immutability, default-branch head, and unused version
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_ADMIN_READ_TOKEN }}
         run: >-
           python scripts/github_release_gate.py
           --repository "${{ github.repository }}"
           --version "${{ inputs.version }}"
           --source-commit "${{ inputs.source_commit }}"
-          --operator-verified-immutability
 
   native:
     needs: validate
@@ -276,15 +275,14 @@ jobs:
           --signer-workflow "${{ github.repository }}/.github/workflows/release-candidate.yml"
           --source-digest "${{ inputs.source_commit }}"
           --deny-self-hosted-runners
-      - name: Recheck the operator-confirmed unused release slot after the build
+      - name: Recheck API-verified immutability and unused release slot after the build
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_ADMIN_READ_TOKEN }}
         run: >-
           python scripts/github_release_gate.py
           --repository "${{ github.repository }}"
           --version "${{ inputs.version }}"
           --source-commit "${{ inputs.source_commit }}"
-          --operator-verified-immutability
           --allow-default-branch-advance
       - name: Write explicit unsigned candidate notes
         run: >-

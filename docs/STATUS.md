@@ -7,6 +7,12 @@ has been published. The encrypted `release-2026-a` private key exists outside
 the checkout and cloud-synchronized workspace; only its reviewed public half is
 tracked.
 
+The release workflows now require the `RELEASE_ADMIN_READ_TOKEN` Actions secret
+to verify GitHub immutable releases through the API before creating a candidate,
+again after candidate build, and immediately before publishing a beta draft. The
+manual dispatch phrase remains deliberate-friction only and is not accepted as
+substitute evidence for the machine-checkable pre-publish immutability gate.
+
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
 hosting setup are no longer part of the V1 product or acceptance gate. Mobile

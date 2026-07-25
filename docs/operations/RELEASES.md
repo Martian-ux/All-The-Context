@@ -47,12 +47,15 @@ candidate dispatch, a repository owner therefore runs:
 gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/OWNER/REPOSITORY/immutable-releases --jq .enabled
 ```
 
-The command must return `true`. The owner then dispatches **Release candidate**
-with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The workflow never receives
-the owner's admin credential; it checks that deliberate phrase, the exact
-default-branch head, the unused tag/release slot, version metadata, and the
-reviewed public key. A failed candidate is reissued under a new version rather
-than uploaded with `--clobber`.
+The command must return `true`. The owner then stores the same check-capable
+credential as the `RELEASE_ADMIN_READ_TOKEN` Actions secret and dispatches
+**Release candidate** with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The
+workflow fails closed unless that secret can verify immutable releases through
+the GitHub API before candidate creation, during the post-build unused-slot
+recheck, and immediately before beta publication. It also checks the deliberate
+phrase, the exact default-branch head, the unused tag/release slot, version
+metadata, and the reviewed public key. A failed candidate is reissued under a
+new version rather than uploaded with `--clobber`.
 
 The native matrix builds Windows x86_64, Linux x86_64, macOS arm64 on
 `macos-26`, and macOS x86_64 on `macos-26-intel`. Each job compares the actual

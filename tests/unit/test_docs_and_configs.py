@@ -81,9 +81,11 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--clobber" not in candidate
     assert "github_release_gate.py" in candidate
     assert "BUILD IMMUTABLE CANDIDATE" in candidate
-    assert "--operator-verified-immutability" in candidate
+    assert "--operator-verified-immutability" not in candidate
+    assert "RELEASE_ADMIN_READ_TOKEN" in candidate
     assert "environment: release-promotion" in publish
-    assert "immutable-releases" not in publish
+    assert "immutable-releases" in publish
+    assert "RELEASE_ADMIN_READ_TOKEN" in publish
     assert "PUBLISH UNSIGNED BETA" in publish
     assert "gh release verify" in publish
     assert "workflow_dispatch" in promote

@@ -61,7 +61,6 @@ def preflight_candidate(
     token: str,
     api_url: str,
     require_default_head: bool = True,
-    require_immutability_api: bool = True,
 ) -> None:
     if REPOSITORY.fullmatch(repository) is None:
         raise ManifestError("GitHub repository must be OWNER/REPOSITORY")
@@ -72,10 +71,9 @@ def preflight_candidate(
         raise ManifestError("GitHub token is required for fail-closed release preflight")
     tag = f"v{version}"
     reader = GitHubReader(repository, token, api_url)
-    if require_immutability_api:
-        immutable = reader.get("immutable-releases")
-        if immutable is None or immutable.get("enabled") is not True:
-            raise ManifestError("repository release immutability must be enabled by an operator")
+    immutable = reader.get("immutable-releases")
+    if immutable is None or immutable.get("enabled") is not True:
+        raise ManifestError("repository release immutability must be enabled by an operator")
     if require_default_head:
         metadata = reader.get("")
         default_branch = metadata.get("default_branch") if metadata is not None else None
@@ -107,14 +105,6 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recheck the unused tag without requiring the default branch to remain stationary",
     )
-    parser.add_argument(
-        "--operator-verified-immutability",
-        action="store_true",
-        help=(
-            "skip the admin-only immutability API after a repository owner has "
-            "verified it outside GitHub Actions"
-        ),
-    )
     return parser
 
 
@@ -128,14 +118,8 @@ def main() -> int:
             token=os.environ.get(arguments.token_env, ""),
             api_url=arguments.api_url,
             require_default_head=not arguments.allow_default_branch_advance,
-            require_immutability_api=not arguments.operator_verified_immutability,
         )
-        immutability = (
-            "operator-verified immutable"
-            if arguments.operator_verified_immutability
-            else "API-verified immutable"
-        )
-        print(f"validated {immutability}, unused GitHub release slot")
+        print("validated API-verified immutable, unused GitHub release slot")
         return 0
     except ManifestError as exc:
         raise SystemExit(f"GitHub release gate error: {exc}") from exc
