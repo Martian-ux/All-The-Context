@@ -381,7 +381,7 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         <input type="file" accept=".zip,.json,.jsonl,.md,.markdown,.txt" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; void upload(selected); }} disabled={uploading} />
         <span className="upload-icon"><Upload size={22} /></span>
         <strong>{uploading ? "Saving and extracting locally..." : "Drop the provider export here"}</strong>
-        <span>ZIP, JSON, JSONL, Markdown, or text · up to 512 MB · never sent through MCP or to a third party</span>
+        <span>ZIP, JSON, JSONL, Markdown, or text · up to 2 GB · never sent through MCP or to a third party</span>
         <span className="secondary-button">Choose export</span>
       </label>
       {removedSource ? <Notice kind="success"><span>Source and its derived current memories were removed.</span><button className="notice-action" disabled={workingSource !== null} onClick={() => void undoSourceRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}

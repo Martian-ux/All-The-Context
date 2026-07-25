@@ -17,6 +17,9 @@ from typing import IO, Any
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from .config import MAX_IMPORT_BYTES
+from .storage import SOURCE_BLOB_CHUNK_BYTES
+
 MAGIC = b"ATCEXP1\x00"
 SALT_SIZE = 16
 NONCE_SIZE = 12
@@ -32,6 +35,7 @@ EXCLUDED_TABLES = {
     "context_fts_config",
     "integrity_groups",
     "integrity_group_members",
+    "source_blob_chunks",
 }
 
 
@@ -105,6 +109,45 @@ def _without_source_reference(
     return document
 
 
+def _write_source_chunks(
+    connection: sqlite3.Connection,
+    archive: zipfile.ZipFile,
+    hashes_by_file: dict[str, str],
+) -> list[dict[str, Any]]:
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "source_blob_chunks" not in tables:
+        return []
+    descriptors: list[dict[str, Any]] = []
+    for content_hash, chunk_index, content, byte_size in connection.execute(
+        "SELECT content_hash,chunk_index,content,byte_size "
+        "FROM source_blob_chunks ORDER BY content_hash,chunk_index"
+    ):
+        chunk = bytes(content)
+        index = int(chunk_index)
+        expected_size = int(byte_size)
+        if len(chunk) != expected_size or len(chunk) > SOURCE_BLOB_CHUNK_BYTES or index < 0:
+            raise ValueError("stored source chunk is invalid")
+        entry = f"source-chunks/{content_hash}/{index:08d}.bin"
+        with archive.open(entry, "w") as output:
+            output.write(chunk)
+        digest = hashlib.sha256(chunk).hexdigest()
+        hashes_by_file[entry] = digest
+        descriptors.append(
+            {
+                "byte_size": len(chunk),
+                "chunk_index": index,
+                "content_hash": str(content_hash),
+                "path": entry,
+            }
+        )
+    return descriptors
+
+
 def _database_to_zip(
     database_path: Path,
     zip_path: Path,
@@ -117,7 +160,20 @@ def _database_to_zip(
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
+        connection.execute("BEGIN")
         schema_version = _source_schema_version(connection)
+        source_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        source_columns = {
+            table: {str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')}
+            for table in source_tables
+        }
+        if include_sources:
+            _validate_source_blob_storage(connection, source_tables, source_columns)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for table in _table_names(connection):
                 lowered = table.casefold()
@@ -143,6 +199,9 @@ def _database_to_zip(
                         count += 1
                 hashes_by_file[f"tables/{table}.jsonl"] = digest.hexdigest()
                 counts[table] = count
+            source_chunks = (
+                _write_source_chunks(connection, archive, hashes_by_file) if include_sources else []
+            )
             manifest = {
                 "format": "all-the-context",
                 "format_version": 1,
@@ -151,6 +210,7 @@ def _database_to_zip(
                 "include_audit": include_audit,
                 "tables": counts,
                 "sha256": hashes_by_file,
+                "source_chunks": source_chunks,
             }
             archive.writestr(
                 "manifest.json",
@@ -239,6 +299,150 @@ def _iter_jsonl(stream: IO[bytes]) -> Iterable[dict[str, Any]]:
         if not isinstance(value, dict):
             raise ValueError("portable table row must be a JSON object")
         yield {key: _decode_value(item) for key, item in value.items()}
+
+
+def _source_chunk_descriptors(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_descriptors = manifest.get("source_chunks", [])
+    if not isinstance(raw_descriptors, list):
+        raise ValueError("export source_chunks must be an array")
+    descriptors: list[dict[str, Any]] = []
+    identities: set[tuple[str, int]] = set()
+    paths: set[str] = set()
+    sizes_by_hash: dict[str, list[tuple[int, int]]] = {}
+    for raw in raw_descriptors:
+        if not isinstance(raw, dict):
+            raise ValueError("export source chunk descriptor must be an object")
+        content_hash = raw.get("content_hash")
+        chunk_index = raw.get("chunk_index")
+        byte_size = raw.get("byte_size")
+        path = raw.get("path")
+        if (
+            not isinstance(content_hash, str)
+            or len(content_hash) != 64
+            or any(character not in "0123456789abcdef" for character in content_hash)
+            or isinstance(chunk_index, bool)
+            or not isinstance(chunk_index, int)
+            or chunk_index < 0
+            or isinstance(byte_size, bool)
+            or not isinstance(byte_size, int)
+            or not 1 <= byte_size <= SOURCE_BLOB_CHUNK_BYTES
+            or not isinstance(path, str)
+            or path != f"source-chunks/{content_hash}/{chunk_index:08d}.bin"
+        ):
+            raise ValueError("export source chunk descriptor is invalid")
+        identity = (content_hash, chunk_index)
+        if identity in identities or path in paths:
+            raise ValueError("export source chunk descriptor is duplicated")
+        identities.add(identity)
+        paths.add(path)
+        sizes_by_hash.setdefault(content_hash, []).append((chunk_index, byte_size))
+        descriptors.append(
+            {
+                "byte_size": byte_size,
+                "chunk_index": chunk_index,
+                "content_hash": content_hash,
+                "path": path,
+            }
+        )
+    for chunks in sizes_by_hash.values():
+        ordered = sorted(chunks)
+        if [index for index, _size in ordered] != list(range(len(ordered))):
+            raise ValueError("export source chunk sequence is incomplete")
+        if sum(size for _index, size in ordered) > MAX_IMPORT_BYTES:
+            raise ValueError("export source exceeds the supported size limit")
+    return descriptors
+
+
+def _restore_source_chunks(
+    connection: sqlite3.Connection,
+    archive: zipfile.ZipFile,
+    descriptors: list[dict[str, Any]],
+    blocked_source_hashes: set[str],
+    tables: set[str],
+) -> None:
+    if not descriptors:
+        return
+    if "source_blob_chunks" not in tables or "source_blobs" not in tables:
+        raise ValueError("destination does not support chunked source blobs")
+    for descriptor in descriptors:
+        content_hash = str(descriptor["content_hash"])
+        if content_hash in blocked_source_hashes:
+            continue
+        parent = connection.execute(
+            "SELECT storage_kind FROM source_blobs WHERE content_hash=?",
+            (content_hash,),
+        ).fetchone()
+        if parent is None:
+            raise ValueError("restored source chunk has no source blob")
+        if str(parent[0]) == "inline":
+            continue
+        if str(parent[0]) != "chunked":
+            raise ValueError("restored source blob has an invalid storage kind")
+        content = archive.read(str(descriptor["path"]))
+        if len(content) != int(descriptor["byte_size"]):
+            raise ValueError("restored source chunk has an invalid size")
+        connection.execute(
+            "INSERT OR IGNORE INTO source_blob_chunks"
+            "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
+            (
+                content_hash,
+                int(descriptor["chunk_index"]),
+                content,
+                len(content),
+            ),
+        )
+
+
+def _validate_source_blob_storage(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    if "source_blobs" not in tables or "storage_kind" not in columns_by_table.get(
+        "source_blobs", set()
+    ):
+        return
+    for content_hash, byte_size, storage_kind, inline_content in connection.execute(
+        "SELECT content_hash,byte_size,storage_kind,content FROM source_blobs"
+    ):
+        expected_size = int(byte_size)
+        expected_hash = str(content_hash)
+        if not 0 <= expected_size <= MAX_IMPORT_BYTES:
+            raise ValueError("source blob exceeds the supported size limit")
+        if storage_kind == "inline":
+            content = bytes(inline_content)
+            if (
+                len(content) != expected_size
+                or len(content) > SOURCE_BLOB_CHUNK_BYTES
+                or hashlib.sha256(content).hexdigest() != expected_hash
+            ):
+                raise ValueError("source blob has invalid inline storage")
+            continue
+        if storage_kind != "chunked" or expected_size == 0 or bytes(inline_content):
+            raise ValueError("source blob has an invalid storage kind")
+        rows = connection.execute(
+            "SELECT chunk_index,byte_size,content FROM source_blob_chunks "
+            "WHERE content_hash=? ORDER BY chunk_index",
+            (expected_hash,),
+        )
+        total = 0
+        digest = hashlib.sha256()
+        for expected_index, row in enumerate(rows):
+            chunk_index = int(row[0])
+            declared_size = int(row[1])
+            chunk = bytes(row[2])
+            actual_size = len(chunk)
+            if (
+                chunk_index != expected_index
+                or declared_size != actual_size
+                or actual_size <= 0
+                or actual_size > SOURCE_BLOB_CHUNK_BYTES
+            ):
+                raise ValueError("source blob chunks are invalid")
+            digest.update(chunk)
+            total += actual_size
+        if total != expected_size or digest.hexdigest() != expected_hash:
+            raise ValueError("source blob chunks failed their integrity check")
 
 
 def _normalize_candidate_row(
@@ -400,7 +604,18 @@ def restore_export(
             manifest = json.loads(archive.read("manifest.json"))
             if manifest.get("format") != "all-the-context" or manifest.get("format_version") != 1:
                 raise ValueError("unsupported export format")
-            for name, expected in manifest.get("sha256", {}).items():
+            source_chunks = _source_chunk_descriptors(manifest)
+            if source_chunks and not bool(manifest.get("include_sources", False)):
+                raise ValueError("source chunks require a source-inclusive export")
+            hashes_by_file = manifest.get("sha256")
+            if not isinstance(hashes_by_file, dict) or any(
+                not isinstance(name, str) or not isinstance(expected, str)
+                for name, expected in hashes_by_file.items()
+            ):
+                raise ValueError("export sha256 manifest must be a string mapping")
+            if any(descriptor["path"] not in hashes_by_file for descriptor in source_chunks):
+                raise ValueError("export source chunk is missing an integrity digest")
+            for name, expected in hashes_by_file.items():
                 actual = hashlib.sha256(archive.read(name)).hexdigest()
                 if actual != expected:
                     raise ValueError(f"integrity check failed for {name}")
@@ -579,7 +794,19 @@ def restore_export(
                                     ),
                                     [row[column] for column in columns],
                                 )
+                    _restore_source_chunks(
+                        connection,
+                        archive,
+                        source_chunks,
+                        blocked_source_hashes,
+                        all_tables,
+                    )
                     _post_restore_upgrade(connection, all_tables, columns_by_table)
+                    _validate_source_blob_storage(
+                        connection,
+                        all_tables,
+                        columns_by_table,
+                    )
                     violations = connection.execute("PRAGMA foreign_key_check").fetchall()
                     if violations:
                         raise ValueError(

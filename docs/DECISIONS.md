@@ -490,11 +490,12 @@ compatibility and migration requirements are known.
 Initial memory bootstrap uses user-requested account exports, not provider API
 keys, browser scraping, account credentials, or a recurring cloud connection.
 Core stores the accepted ZIP/JSON/JSONL/Markdown/text source byte-for-byte in
-its content-addressed local source store. HTTP uploads and SQLite BLOB writes
-are chunked; ZIP entries are read in place; root conversation arrays are
-decoded one conversation at a time. The default raw archive limit is 512 MiB,
-with an operator-configurable ceiling below SQLite's safe BLOB limit, and
-expanded text/entry/compression/conversation bounds remain mandatory.
+its content-addressed local source store. HTTP uploads and Core source writes
+are streamed; ZIP entries are read in place; root conversation arrays are
+decoded one conversation at a time. The default and maximum raw archive limit
+is 2,000,000,000 bytes, which an operator may lower. Raw size acceptance does
+not relax expanded-text, entry, compression-ratio, or per-conversation parse
+bounds.
 
 Provider adapters normalize documented ChatGPT conversation JSON, common
 Claude `chat_messages`/memory data, flexible Grok JSON, and Grok Build-style
@@ -1142,3 +1143,56 @@ pinned revision, license confirmation, static inventory, isolated execution,
 and an adapter that cannot canonize records or bypass Core. Wave 4's
 external-code prohibition remains truthful: it downloaded or executed no
 competitor system.
+
+## ADR-050: Release acceptance failures emit bounded evidence without changing gates
+
+**Status:** accepted 2026-07-25 after review against current main; release,
+updater, retrieval, and authority semantics are unchanged.
+
+Hosted release acceptance must preserve enough evidence to diagnose a failure
+without logging credentials, raw personal context, or unbounded local state.
+The integrated retrieval assertion therefore emits its bounded gate,
+lifecycle, operational, and profile report when it fails. The macOS package
+wrapper emits the `hdiutil` return code, output-file existence, and bounded
+stdout/stderr tails. The packaged Windows rollback smoke emits only the helper
+journal phase, fixed error code, and schema version; paths, operation
+identifiers, and the rest of the journal remain excluded.
+
+These diagnostics do not convert a failure to success. No threshold is relaxed
+and no automatic retry is added. The one-file Windows MCP adapter gets one
+bounded 30-second managed-Core readiness window so native extraction and
+startup are not misclassified by the earlier 10-second boundary; it still
+launches once and fails hard at the deadline. A repeated failure still stops
+the matrix, but the next investigation can distinguish a gate regression,
+helper rollback state, native-tool error, missing native output, and a managed
+Core startup timeout from runner noise.
+
+## ADR-051: Store large raw sources as bounded authoritative SQLite chunks
+
+**Status:** accepted 2026-07-25.
+
+The supported raw import boundary is 2,000,000,000 bytes by default and at its
+maximum; `ATC_MAX_IMPORT_BYTES` may lower it. This cannot be implemented as one
+SQLite value: supported SQLite/Python runtimes may cap a single string or BLOB
+well below two billion bytes. Core therefore retains the content-addressed
+source identity and metadata in `source_blobs`, while nonempty path imports and
+in-memory values larger than 8 MiB are stored as ordered 8 MiB-or-smaller rows
+in `source_blob_chunks`.
+
+The chunk table remains inside Core's SQLite transaction and references its
+parent with cascading deletion. A path import hashes the file before the
+transaction, streams it again into chunk rows, and aborts if its size or digest
+changed. Reads require contiguous indices, declared and actual sizes to agree,
+the reconstructed size to match the parent, and the reconstructed SHA-256 to
+match the content-addressed identity. The schema migration converts legacy
+inline values larger than 8 MiB without changing their source identity.
+
+Source-inclusive portable exports write each database chunk as a separately
+hashed encrypted-package entry. Restore verifies the archive digest, descriptor
+shape, bounded chunk size, parent relationship, sequence, reconstructed size,
+and complete source hash; duplicate restore remains idempotent. No sidecar file
+or alternate source authority is introduced. Operators supporting imports near
+the ceiling must provide enough local space for the upload, SQLite transaction
+journal/WAL, database growth, and any source-inclusive export. Existing
+expanded-text, archive-entry, compression, and per-item parser bounds remain
+independent safety controls.

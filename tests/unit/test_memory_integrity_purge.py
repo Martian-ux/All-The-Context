@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -17,7 +18,12 @@ from allthecontext.replication import (
     sign_event,
     verify_event,
 )
-from allthecontext.storage import CoreStore, InvalidStateError, NotFoundError
+from allthecontext.storage import (
+    SOURCE_BLOB_CHUNK_BYTES,
+    CoreStore,
+    InvalidStateError,
+    NotFoundError,
+)
 
 
 def _store(path: Path) -> CoreStore:
@@ -93,8 +99,21 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             "INSERT INTO schema_migrations VALUES"
             "(2,'002_edge_proposal_receipts.sql','2026-01-01T00:00:00+00:00')"
         )
+        legacy_content = b"x" * SOURCE_BLOB_CHUNK_BYTES + b"legacy-chunk-tail"
+        legacy_hash = hashlib.sha256(legacy_content).hexdigest()
+        connection.execute(
+            "INSERT INTO source_blobs"
+            "(content_hash,content,byte_size,media_type,created_at) VALUES(?,?,?,?,?)",
+            (
+                legacy_hash,
+                legacy_content,
+                len(legacy_content),
+                "application/octet-stream",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
     store = CoreStore(database)
-    assert store.migrate() == 6
+    assert store.migrate() == 7
     with store.connect() as connection:
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")
@@ -126,6 +145,20 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_observation_links'"
         ).fetchone()
+        migrated_blob = connection.execute(
+            "SELECT storage_kind,length(content),byte_size FROM source_blobs WHERE content_hash=?",
+            (legacy_hash,),
+        ).fetchone()
+        migrated_chunks = connection.execute(
+            "SELECT chunk_index,length(content),byte_size FROM source_blob_chunks "
+            "WHERE content_hash=? ORDER BY chunk_index",
+            (legacy_hash,),
+        ).fetchall()
+        assert tuple(migrated_blob) == ("chunked", 0, len(legacy_content))
+        assert [tuple(row) for row in migrated_chunks] == [
+            (0, SOURCE_BLOB_CHUNK_BYTES, SOURCE_BLOB_CHUNK_BYTES),
+            (1, len(b"legacy-chunk-tail"), len(b"legacy-chunk-tail")),
+        ]
 
 
 def test_slot_metadata_stays_proposed_until_approval_and_groups_are_deterministic(
@@ -406,7 +439,11 @@ def test_restore_cannot_resurrect_a_pre_purge_record_or_source(tmp_path: Path) -
     database = tmp_path / "core.sqlite3"
     export_path = tmp_path / "before.atcexp"
     store = _store(database)
-    source = store.add_source(b"restore secret", source_service="test", source_type="text")
+    source = store.add_source(
+        b"x" * SOURCE_BLOB_CHUNK_BYTES + b"restore secret",
+        source_service="test",
+        source_type="text",
+    )
     record_id = _approve(store, "restore secret", source_id=source.id)
     create_export(
         database,
@@ -426,3 +463,11 @@ def test_restore_cannot_resurrect_a_pre_purge_record_or_source(tmp_path: Path) -
         store.get_record(record_id, include_deleted=True)
     with pytest.raises(NotFoundError):
         store.get_source_content(source.id)
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM source_blob_chunks WHERE content_hash=?",
+                (source.content_hash,),
+            ).fetchone()[0]
+            == 0
+        )

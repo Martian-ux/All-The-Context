@@ -74,10 +74,17 @@ parser version to reprocess the source.
   names, excessive entry counts, compression bombs, and excessive expanded
   text are rejected or explicitly skipped.
 - JSON conversation arrays are decoded one conversation at a time. The HTTP
-  upload and SQLite source write use bounded chunks rather than loading the
+  upload and Core source write use bounded chunks rather than loading the
   complete archive into memory.
-- The default raw-source limit is 512 MiB. An operator can lower or raise it up
-  to SQLite's safe 900,000,000-byte boundary with `ATC_MAX_IMPORT_BYTES`.
+- The default and maximum raw-source limit is 2,000,000,000 bytes. An operator
+  can lower it with `ATC_MAX_IMPORT_BYTES`.
+- Core stores large raw sources as ordered 8 MiB-or-smaller SQLite rows instead
+  of one oversized BLOB. Reads, retries, and source-inclusive portable restores
+  verify the complete source size and SHA-256 identity.
+- The raw-source boundary does not raise the expanded-text, archive-entry,
+  compression-ratio, or per-conversation parse limits. Imports near 2 GB also
+  require enough local space for the temporary upload, SQLite transaction
+  journal/WAL, database growth, and any source-inclusive export.
 - Observation batches use a versioned session and deterministic idempotency
   keys. If extraction is interrupted, the source is marked failed and the
   dashboard can retry directly from the preserved raw blob without another

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from allthecontext.client_config import repair_managed_runtime_bindings
-from allthecontext.config import CoreConfig
+from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
 from allthecontext.credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import (
@@ -57,6 +57,18 @@ def _dump(value: Any) -> None:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json")
     print(json.dumps(value, indent=2, sort_keys=True, default=str))
+
+
+def _import_byte_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("import byte limit must be an integer") from error
+    if not 1 <= limit <= MAX_IMPORT_BYTES:
+        raise argparse.ArgumentTypeError(
+            f"import byte limit must be between 1 and {MAX_IMPORT_BYTES}"
+        )
+    return limit
 
 
 def _passphrase(args: argparse.Namespace) -> str:
@@ -500,7 +512,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help=argparse.SUPPRESS,
     )
-    import_command.add_argument("--max-bytes", type=int, default=512 * 1024 * 1024)
+    import_command.add_argument(
+        "--max-bytes",
+        type=_import_byte_limit,
+        default=DEFAULT_MAX_IMPORT_BYTES,
+    )
     import_command.set_defaults(handler=_cmd_import)
 
     observations = commands.add_parser(

@@ -15,11 +15,43 @@ means connecting directly to Core while Core is online.
 On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
 product contract is now one-time setup plus automatic, reversible,
 provenance-backed context maintenance, with no routine review queue. The
-automatic-policy migration is present in the current shared worktree and has
-passed the local Ruff, mypy, full pytest, dashboard, demo, documentation, and
-dependency-audit gates described below. The exact worktree has not yet passed
-the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based
-evidence remains historical and must not be presented as proof of ADR-039.
+automatic-policy migration has passed the local Ruff, mypy, full pytest,
+dashboard, demo, documentation, and dependency-audit gates described below,
+plus the hosted Python 3.12 cross-platform/package matrix on main. The
+integrated release-CI diagnostics and startup-readiness work has passed 46
+focused local tests and both hosted matrices at its exact functional branch
+SHA. The final frozen release identity has not yet been validated. Earlier
+approval-based evidence remains historical and must not be presented as proof
+of ADR-039.
+
+The current integration worktree also raises the raw provider-import default
+and ceiling to 2,000,000,000 bytes without placing a two-billion-byte value in
+SQLite. Migration 007 keeps Core authoritative while moving large source
+content into ordered 8 MiB-or-smaller rows; streamed copies and
+source-inclusive encrypted restores validate the reconstructed size and
+SHA-256 identity. Focused configuration, migration, storage, export, importer,
+and CLI regressions pass locally, and the full Python suite passes 662 tests
+with four host-limited symlink skips. Exact integration commit `03a266f` also
+passed all nine jobs in both its hosted push and draft-PR matrices.
+
+Current main `e7ccd5d` passed all nine jobs in
+[hosted CI run](https://github.com/Martian-ux/All-The-Context/actions/runs/30168387478)
+on 2026-07-25. The exact diagnostic/startup branch SHA `f3496df` also passed
+all nine jobs in both its
+[push run](https://github.com/Martian-ux/All-The-Context/actions/runs/30062427719)
+and
+[draft-PR run](https://github.com/Martian-ux/All-The-Context/actions/runs/30062429444).
+The exact combined diagnostic/startup and 2 GB import commit `03a266f` then
+passed all nine jobs in both its
+[push run](https://github.com/Martian-ux/All-The-Context/actions/runs/30176660300)
+and
+[draft-PR run](https://github.com/Martian-ux/All-The-Context/actions/runs/30176687083).
+An intermediate Windows package run reached the managed MCP adapter before the
+one-file Core produced its first log line and failed at the former 10-second
+deadline. The integrated hardening adds bounded retrieval, rollback-journal,
+and `hdiutil` diagnostics plus one 30-second managed-Core readiness window. It
+does not relax a gate, retry a failed launch, or change updater/release
+behavior.
 
 ## AI-memory research direction
 
@@ -423,9 +455,10 @@ state is already noncurrent and creates no user queue.
 
 ## Remaining beta gates
 
-- Run the exact ADR-039 worktree through the hosted Python 3.12
-  Windows/macOS/Linux and native-package matrices, then complete the fresh-user
-  browser smoke.
+- Complete the fresh-user browser smoke on the exact release candidate. Current
+  main and the exact diagnostic/startup branch SHA have passed the hosted
+  Python 3.12 Windows/macOS/Linux and native-package matrices, but that does
+  not substitute for validation of the final frozen release identity.
 - Create and verify two recoverable encrypted backups of the operator-held
   release private key before its first production signature.
 - Add required reviewers to the release-promotion and `github-pages`
@@ -438,6 +471,16 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
+- Current 2 GB import integration on Windows Python 3.14.3: 47 focused
+  configuration, migration, storage, encrypted export/restore, importer, and
+  CLI tests pass; Ruff, strict mypy across 68 source files, and the full
+  662-test suite pass with four host-limited symlink skips. Exact commit
+  `03a266f` passed all nine jobs in both hosted matrices. The final frozen
+  release identity remains pending.
+- Release-CI integration replay on Windows Python 3.14.3: 46 focused packaging,
+  updater, retrieval-gate, and MCP contract tests pass. The exact functional
+  source at `f3496df` passed both complete hosted CI matrices, and current main
+  `e7ccd5d` independently passed all nine hosted jobs.
 - Current Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
   strict mypy passes across 68 source files; 49 focused Wave 4 tests pass;
   decisive M3/M1 reports reproduce byte-for-byte and E02 reproduces
@@ -454,8 +497,8 @@ state is already noncurrent and creates no user queue.
   production build pass; `npm audit --audit-level=high` reports zero
   vulnerabilities. Packaged dashboard assets match the production build
   byte-for-byte.
-- The required Python 3.12 hosted cross-platform/package suite and new
-  automatic-policy browser smoke remain pending for this exact worktree.
+- The new automatic-policy browser smoke and final frozen release identity
+  remain pending.
 - Historical pre-ADR-039 full Python 3.12 suite: 461 passed; four Windows-host
   symlink tests skipped because this account cannot create the required links.
 - The provider importer, API, and end-to-end slice also passed 36 focused tests

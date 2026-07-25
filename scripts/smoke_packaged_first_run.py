@@ -24,7 +24,11 @@ from typing import Any, TextIO
 import anyio
 from allthecontext import __version__
 from allthecontext.release_manifest import sha256_file
-from allthecontext.windows_update_helper import HelperPhase, UpdateJournal
+from allthecontext.windows_update_helper import (
+    HelperPhase,
+    UpdateJournal,
+    journal_failure_diagnostic,
+)
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from smoke_desktop_artifact import ROOT, artifact_executable
@@ -528,7 +532,9 @@ def main() -> int:
         )
         if rolled_back.returncode != 2:
             raise SystemExit(
-                f"packaged updater did not report the exercised rollback: {rolled_back.returncode}"
+                "packaged updater did not report the exercised rollback: "
+                f"{rolled_back.returncode}; "
+                f"journal={journal_failure_diagnostic(rollback_journal)}"
             )
         wait_for_core(base_url, token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
