@@ -54,6 +54,33 @@ def _setup_two_clients(
     return owner_headers, first, second
 
 
+def test_propose_scoped_client_cannot_forget_context(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with TestClient(create_app(config)) as client:
+        owner_headers, (_client_id, client_headers), _other = _setup_two_clients(client)
+        created = client.post(
+            "/v1/ingestion/propose",
+            headers=owner_headers,
+            json={
+                "kind": "interaction_preference",
+                "content": "Prefer concise answers.",
+                "explicit_user_statement": True,
+            },
+        )
+        assert created.status_code == 200, created.text
+        record_id = str(created.json()["record_id"])
+
+        forgotten = client.post(
+            "/v1/ingestion/forget",
+            headers=client_headers,
+            json={"record_id": record_id, "reason": "Forget this preference."},
+        )
+
+        assert forgotten.status_code == 403
+        assert "Missing required scope: admin" in forgotten.text
+        assert client.get(f"/v1/context/{record_id}", headers=owner_headers).status_code == 200
+
+
 def test_authenticated_clients_cannot_submit_or_finish_each_others_session(
     tmp_path: Path,
 ) -> None:
@@ -172,7 +199,7 @@ def test_denied_client_cannot_mutate_target_through_any_observation_endpoint(
         )
 
         assert reported.status_code == 404
-        assert forgotten.status_code == 404
+        assert forgotten.status_code == 403
         assert superseded.status_code == 200, superseded.text
         assert superseded.json()["disposition"] == "ignored"
         current = client.get(f"/v1/context/{record_id}", headers=allowed_headers)

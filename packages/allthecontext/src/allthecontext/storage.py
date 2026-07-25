@@ -1148,15 +1148,22 @@ class CoreStore:
         row = connection.execute(
             "SELECT disposition FROM context_candidates WHERE id=?", (candidate_id,)
         ).fetchone()
-        if row is not None and str(row["disposition"]) == ObservationDisposition.STAGED.value:
+        can_auto_evaluate = (
+            client is None
+            or "*" in client.scopes
+            or "admin" in client.scopes
+            or "context:write" in client.scopes
+            or client.auto_approve
+        )
+        if (
+            can_auto_evaluate
+            and row is not None
+            and str(row["disposition"]) == ObservationDisposition.STAGED.value
+        ):
             self._evaluate_observation_tx(
                 connection,
                 candidate_id,
-                origin=(
-                    ObservationOrigin.ONGOING_CLIENT
-                    if client is not None
-                    else ObservationOrigin.LOCAL_ADMIN
-                ),
+                origin=ObservationOrigin.LOCAL_ADMIN,
                 actor=client.id if client is not None else "local-core",
                 principal=client,
             )

@@ -82,7 +82,7 @@ def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
         "source_reference",
         "evidence",
     } <= schema["properties"].keys()
-    assert schema["properties"]["explicit_user_statement"]["default"] is True
+    assert schema["properties"]["explicit_user_statement"]["default"] is False
     assert schema.get("additionalProperties") is False
 
 

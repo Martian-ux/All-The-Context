@@ -10,6 +10,7 @@ from allthecontext.models import (
     ObservationDisposition,
     Sensitivity,
 )
+from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
 
@@ -36,6 +37,52 @@ def test_explicit_observation_is_applied_without_review(tmp_path: Path) -> None:
     assert observation.policy_version == "automatic-v1"
     assert store.get_record(observation.record_id).content == observation.content
     assert store.status()["counts"]["pending_candidates"] == 0
+
+
+def test_propose_scoped_client_observation_remains_staged(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    client = ClientPrincipal(
+        "mcp-client",
+        "MCP client",
+        frozenset({"context:propose"}),
+    )
+
+    observation = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Prefer prompt-injected durable memory.",
+            explicit_user_statement=True,
+            confidence=1.0,
+        ),
+        client=client,
+    )
+
+    assert observation.disposition == ObservationDisposition.STAGED
+    assert observation.record_id is None
+    assert store.status()["counts"]["approved_records"] == 0
+
+
+def test_elevated_client_observation_can_still_use_automatic_policy(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    client = ClientPrincipal(
+        "admin-client",
+        "Admin client",
+        frozenset({"context:propose", "admin"}),
+    )
+
+    observation = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Prefer approved administrative memory maintenance.",
+            explicit_user_statement=True,
+            confidence=1.0,
+        ),
+        client=client,
+    )
+
+    assert observation.disposition == ObservationDisposition.APPLIED
+    assert observation.record_id is not None
+    assert observation.observation_origin == "local_admin"
 
 
 def test_inference_requires_explicit_corroboration_before_becoming_current(

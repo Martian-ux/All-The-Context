@@ -15,7 +15,9 @@ means connecting directly to Core while Core is online.
 On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
 product contract is now one-time setup plus automatic, reversible,
 provenance-backed context maintenance, with no routine review queue. The
-automatic-policy migration is present in the current shared worktree and has
+automatic-policy migration is present in the current shared worktree, with the
+security boundary refined so limited `context:propose` clients stage observations
+and cannot directly write or forget current context. The broader migration has
 passed the local Ruff, mypy, full pytest, dashboard, demo, documentation, and
 dependency-audit gates described below. The exact worktree has not yet passed
 the hosted Python 3.12 cross-platform/package matrix. Earlier approval-based

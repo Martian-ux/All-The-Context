@@ -361,7 +361,7 @@ def create_app(
 
     @app.post("/v1/ingestion/forget")
     def forget_context(request: ForgetContextRequest, principal: Principal) -> dict[str, Any]:
-        require(principal, "context:propose")
+        require(principal, "admin")
         result = core.ingestion.forget(request, principal)
         edge_sync.trigger()
         return result

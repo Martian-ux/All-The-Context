@@ -689,10 +689,13 @@ The observation ledger records one of five dispositions:
 - `ignored` records that hard or source policy rejected the observation for
   context maintenance.
 
-Explicit durable user statements from eligible authenticated direct clients
-apply immediately. Eligible explicit corrections update the current record
-before the successful operation returns and preserve the earlier version.
-Exact duplicates reinforce. Model inference and provider-synthesized memory are
+Explicit durable user statements from local Core administration and elevated
+write-capable clients apply immediately. Limited `context:propose` clients only
+stage observations for Core/admin evaluation; their model-controlled arguments
+never create, overwrite, or hide current context on their own. Eligible explicit
+corrections from elevated writers update the current record before the
+successful operation returns and preserve the earlier version. Exact duplicates
+reinforce. Model inference and provider-synthesized memory are
 tentative unless later eligible evidence corroborates them. Provider adapters
 exclude assistant, system, tool, and attachment roles. Generic or
 instruction-bearing imports remain tentative, secret-like material is ignored,
@@ -714,9 +717,10 @@ make every decision inspectable and replayable.
 Ordinary automatic changes remain reversible. Correction, supersession,
 deletion, and restoration retain version history and evidence. Irreversible
 purge remains a separate administrator-only state machine. Model-facing
-`forget_context` is deliberately narrow: it requires an explicit user request,
-record ID, and reason; creates an audited reversible tombstone at Core; and
-never grants restore or purge authority. Legacy approved
+`forget_context` is deliberately narrow: direct Core deletion requires admin
+authority plus an explicit user request, record ID, and reason; propose-scoped
+clients can only queue or stage a forget proposal for later Core/admin
+evaluation and never gain restore or purge authority. Legacy approved
 records migrate to applied current context; rejected observations migrate to
 ignored; unresolved legacy candidates are reevaluated idempotently under the
 versioned policy.
