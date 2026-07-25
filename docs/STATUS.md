@@ -31,8 +31,8 @@ content into ordered 8 MiB-or-smaller rows; streamed copies and
 source-inclusive encrypted restores validate the reconstructed size and
 SHA-256 identity. Focused configuration, migration, storage, export, importer,
 and CLI regressions pass locally, and the full Python suite passes 662 tests
-with four host-limited symlink skips. The hosted matrix remains pending for
-this exact worktree.
+with four host-limited symlink skips. Exact integration commit `03a266f` also
+passed all nine jobs in both its hosted push and draft-PR matrices.
 
 Current main `e7ccd5d` passed all nine jobs in
 [hosted CI run](https://github.com/Martian-ux/All-The-Context/actions/runs/30168387478)
@@ -41,6 +41,11 @@ all nine jobs in both its
 [push run](https://github.com/Martian-ux/All-The-Context/actions/runs/30062427719)
 and
 [draft-PR run](https://github.com/Martian-ux/All-The-Context/actions/runs/30062429444).
+The exact combined diagnostic/startup and 2 GB import commit `03a266f` then
+passed all nine jobs in both its
+[push run](https://github.com/Martian-ux/All-The-Context/actions/runs/30176660300)
+and
+[draft-PR run](https://github.com/Martian-ux/All-The-Context/actions/runs/30176687083).
 An intermediate Windows package run reached the managed MCP adapter before the
 one-file Core produced its first log line and failed at the former 10-second
 deadline. The integrated hardening adds bounded retrieval, rollback-journal,
@@ -469,8 +474,9 @@ state is already noncurrent and creates no user queue.
 - Current 2 GB import integration on Windows Python 3.14.3: 47 focused
   configuration, migration, storage, encrypted export/restore, importer, and
   CLI tests pass; Ruff, strict mypy across 68 source files, and the full
-  662-test suite pass with four host-limited symlink skips. This exact branch
-  has not yet passed the hosted matrix, so this is not final release evidence.
+  662-test suite pass with four host-limited symlink skips. Exact commit
+  `03a266f` passed all nine jobs in both hosted matrices. The final frozen
+  release identity remains pending.
 - Release-CI integration replay on Windows Python 3.14.3: 46 focused packaging,
   updater, retrieval-gate, and MCP contract tests pass. The exact functional
   source at `f3496df` passed both complete hosted CI matrices, and current main
