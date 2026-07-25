@@ -1142,3 +1142,13 @@ pinned revision, license confirmation, static inventory, isolated execution,
 and an adapter that cannot canonize records or bypass Core. Wave 4's
 external-code prohibition remains truthful: it downloaded or executed no
 competitor system.
+
+## ADR-050: Context search is a read operation
+
+**Status:** accepted 2026-07-24.
+
+`/v1/context/search` returns full context records, including content and
+provenance metadata, so it is authorized with `context:read`. `context:status`
+must not be sufficient for content-returning retrieval paths; status-scoped
+clients are limited to non-content operations and must fail closed when they
+attempt search, bootstrap, or direct record fetches.

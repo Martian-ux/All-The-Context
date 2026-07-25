@@ -122,6 +122,44 @@ def test_authenticated_clients_cannot_submit_or_finish_each_others_session(
         assert accepted_finish.json()["status"] == "finished"
 
 
+def test_status_only_client_cannot_search_context_records(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with TestClient(create_app(config)) as client:
+        owner_headers = _bearer(
+            str(client.post("/v1/setup", json={"name": "Owner", "scopes": []}).json()["token"])
+        )
+        _status_id, status_headers = _create_client(
+            client,
+            owner_headers,
+            name="Status-only app",
+            scopes=["context:status"],
+        )
+        created = client.post(
+            "/v1/ingestion/propose",
+            headers=owner_headers,
+            json={
+                "kind": "fact",
+                "content": "SECRET_PERSONAL_CONTEXT: status-only clients must not read this.",
+                "explicit_user_statement": True,
+            },
+        )
+        assert created.status_code == 200, created.text
+        record_id = str(created.json()["record_id"])
+
+        status = client.get("/v1/context/status", headers=status_headers)
+        searched = client.post(
+            "/v1/context/search",
+            headers=status_headers,
+            json={"query": "SECRET_PERSONAL_CONTEXT"},
+        )
+        fetched = client.get(f"/v1/context/{record_id}", headers=status_headers)
+
+        assert status.status_code == 403
+        assert fetched.status_code == 403
+        assert searched.status_code == 403
+        assert searched.json()["detail"] == "Missing required scope: context:read"
+
+
 def test_denied_client_cannot_mutate_target_through_any_observation_endpoint(
     tmp_path: Path,
 ) -> None:

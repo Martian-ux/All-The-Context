@@ -438,6 +438,7 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
+- A 2026-07-24 authorization regression closes the Core context-search scope bypass: `/v1/context/search` now requires `context:read`, and a status-only token is covered by a focused denial test.
 - Current Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
   strict mypy passes across 68 source files; 49 focused Wave 4 tests pass;
   decisive M3/M1 reports reproduce byte-for-byte and E02 reproduces
