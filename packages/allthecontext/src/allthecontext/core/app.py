@@ -368,7 +368,7 @@ def create_app(
 
     @app.post("/v1/context/search")
     def search_context(request: SearchRequest, principal: Principal) -> dict[str, Any]:
-        require(principal, "context:status")
+        require(principal, "context:read")
         if request.cursor is not None:
             try:
                 request = request.model_copy(update={"offset": int(request.cursor)})
@@ -389,7 +389,7 @@ def create_app(
 
     @app.get("/v1/context/status")
     def context_status(principal: Principal) -> dict[str, Any]:
-        require(principal, "context:read")
+        require(principal, "context:status")
         return core.store.status()
 
     @app.get("/v1/context/{record_id}")
