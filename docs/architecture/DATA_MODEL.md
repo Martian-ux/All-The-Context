@@ -9,7 +9,7 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | Entity | Purpose |
 |---|---|
 | `vault` | User-owned authority, display time zone, and versioned memory policy |
-| `source_record` / `source_blob` | Deduplicated raw local evidence; provider/format/coverage metadata and extraction status |
+| `source_record` / `source_blob` / `source_blob_chunk` | Deduplicated raw local evidence; provider/format/coverage metadata, extraction status, and ordered bounded storage for large raw sources |
 | `ingestion_session` / `ingestion_batch` | Coverage, resumability, atomic publication, and idempotency |
 | observation | Immutable proposed, extracted, corrected, or inferred durable-context evidence |
 | observation decision | Core-derived `applied`, `reinforced`, `tentative`, or `ignored` disposition, reason, policy version, origin class, and decision time |
@@ -76,3 +76,8 @@ version, coverage completion, and bounded aggregate statistics. Durable
 session/batch rows, not metadata, remain the authority for replay and
 idempotency. `import_status` exposes `processing`, `failed`, or `complete`; the
 content-addressed source blob is retained for a safe retry or later parser.
+`source_blobs` owns the source hash, total size, media type, and storage kind.
+Inline values are at most 8 MiB; nonempty path imports and larger in-memory
+sources use contiguous, 8 MiB-or-smaller `source_blob_chunks` rows under the
+same Core transaction. Chunk reconstruction must reproduce both the declared
+total size and the parent SHA-256 identity.

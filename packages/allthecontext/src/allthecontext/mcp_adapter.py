@@ -32,6 +32,8 @@ from allthecontext.desktop_setup import CoreProbe, launch_core, probe_core
 from allthecontext.http_client import ContextApiError, ContextHttpClient
 from allthecontext.replication import canonical_json
 
+MANAGED_CORE_STARTUP_SECONDS = 30.0
+
 
 def _configured_core_runtime() -> RuntimeCommand:
     serialized = os.environ.get("ATC_CORE_COMMAND")
@@ -83,7 +85,11 @@ def _ensure_local_core(target: str) -> None:
         raise RuntimeError(
             f"Port {target_port} is occupied by a service that is not this All The Context Core"
         )
-    launch_core(_configured_core_runtime(), config, wait_seconds=10.0)
+    launch_core(
+        _configured_core_runtime(),
+        config,
+        wait_seconds=MANAGED_CORE_STARTUP_SECONDS,
+    )
 
 
 def _client() -> ContextHttpClient:

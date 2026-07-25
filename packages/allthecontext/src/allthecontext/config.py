@@ -8,6 +8,9 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
+MAX_IMPORT_BYTES = 2_000_000_000
+DEFAULT_MAX_IMPORT_BYTES = MAX_IMPORT_BYTES
+
 
 @dataclass(frozen=True, slots=True)
 class CoreConfig:
@@ -16,7 +19,7 @@ class CoreConfig:
     lock_path: Path
     host: str = "127.0.0.1"
     port: int = 7337
-    max_import_bytes: int = 512 * 1024 * 1024
+    max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
     max_dashboard_export_bytes: int = 2 * 1024 * 1024 * 1024
     require_auth: bool = True
 
@@ -32,9 +35,11 @@ class CoreConfig:
         port = int(os.environ.get("ATC_CORE_PORT", "7337"))
         if not 1 <= port <= 65_535:
             raise ValueError("ATC_CORE_PORT must be between 1 and 65535")
-        max_import_bytes = int(os.environ.get("ATC_MAX_IMPORT_BYTES", str(512 * 1024 * 1024)))
-        if not 1 <= max_import_bytes <= 900_000_000:
-            raise ValueError("ATC_MAX_IMPORT_BYTES must be between 1 and 900000000")
+        max_import_bytes = int(
+            os.environ.get("ATC_MAX_IMPORT_BYTES", str(DEFAULT_MAX_IMPORT_BYTES))
+        )
+        if not 1 <= max_import_bytes <= MAX_IMPORT_BYTES:
+            raise ValueError(f"ATC_MAX_IMPORT_BYTES must be between 1 and {MAX_IMPORT_BYTES}")
         return cls(
             data_dir=data_dir,
             database_path=data_dir / "core.sqlite3",

@@ -107,6 +107,37 @@ def _read_json(path: Path, maximum_bytes: int) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
+def journal_failure_diagnostic(path: Path) -> str:
+    """Return bounded, non-sensitive updater state for operational failures."""
+    try:
+        value = _read_json(path, MAX_JOURNAL_BYTES)
+    except HelperError as error:
+        return json.dumps({"journal_status": error.code}, sort_keys=True)
+    last_error_code = value.get("last_error_code")
+    if last_error_code is not None and (
+        not isinstance(last_error_code, str) or len(last_error_code) > 64
+    ):
+        last_error_code = "invalid"
+    phase = value.get("phase")
+    if not isinstance(phase, str) or len(phase) > 64:
+        phase = "invalid"
+    schema_version = value.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version < 0
+    ):
+        schema_version = "invalid"
+    return json.dumps(
+        {
+            "last_error_code": last_error_code,
+            "phase": phase,
+            "schema_version": schema_version,
+        },
+        sort_keys=True,
+    )
+
+
 def _sha256(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0

@@ -15,6 +15,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, cast
 
+from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
@@ -65,6 +66,7 @@ class InvalidStateError(StorageError):
 
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
+SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 def durable_sqlite_footprint(database_path: Path) -> int:
@@ -323,6 +325,8 @@ class CoreStore:
         parser_warnings: Sequence[str] = (),
         import_status: Literal["processing", "complete", "failed"] = "complete",
     ) -> SourceOut:
+        if len(content) > MAX_IMPORT_BYTES:
+            raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
         content_hash = hashlib.sha256(content).hexdigest()
         created_at = utc_now()
         vault_id = self.vault_id()
@@ -349,11 +353,30 @@ class CoreStore:
                     )
                     assert existing is not None
                 return self._source_out(existing, duplicate=True)
-            connection.execute(
+            storage_kind = "inline" if len(content) <= SOURCE_BLOB_CHUNK_BYTES else "chunked"
+            inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at) VALUES(?,?,?,?,?)",
-                (content_hash, content, len(content), media_type, created_at),
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    content_hash,
+                    content if storage_kind == "inline" else b"",
+                    len(content),
+                    media_type,
+                    created_at,
+                    storage_kind,
+                ),
             )
+            if inserted.rowcount == 1 and storage_kind == "chunked":
+                for chunk_index, start in enumerate(
+                    range(0, len(content), SOURCE_BLOB_CHUNK_BYTES)
+                ):
+                    chunk = content[start : start + SOURCE_BLOB_CHUNK_BYTES]
+                    connection.execute(
+                        "INSERT INTO source_blob_chunks"
+                        "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
+                        (content_hash, chunk_index, chunk, len(chunk)),
+                    )
             source_id = new_id()
             connection.execute(
                 "INSERT INTO source_records"
@@ -400,12 +423,18 @@ class CoreStore:
     ) -> SourceOut:
         """Store a source from disk without materializing the complete file in memory."""
         resolved = path.expanduser().resolve()
+        if resolved.stat().st_size > MAX_IMPORT_BYTES:
+            raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
         digest = hashlib.sha256()
         byte_size = 0
         with resolved.open("rb") as source_stream:
             while chunk := source_stream.read(1024 * 1024):
                 digest.update(chunk)
                 byte_size += len(chunk)
+                if byte_size > MAX_IMPORT_BYTES:
+                    raise InvalidStateError(
+                        f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit"
+                    )
         content_hash = digest.hexdigest()
         created_at = utc_now()
         vault_id = self.vault_id()
@@ -433,30 +462,34 @@ class CoreStore:
                     assert existing is not None
                 return self._source_out(existing, duplicate=True)
 
+            storage_kind = "inline" if byte_size == 0 else "chunked"
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at) "
-                "VALUES(?,zeroblob(?),?,?,?)",
-                (content_hash, byte_size, byte_size, media_type, created_at),
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    content_hash,
+                    b"",
+                    byte_size,
+                    media_type,
+                    created_at,
+                    storage_kind,
+                ),
             )
-            if inserted.rowcount == 1:
-                blob_row = connection.execute(
-                    "SELECT rowid FROM source_blobs WHERE content_hash=?", (content_hash,)
-                ).fetchone()
-                if blob_row is None:  # pragma: no cover - protected by the insert above
-                    raise InvalidStateError("source blob could not be allocated")
+            if inserted.rowcount == 1 and storage_kind == "chunked":
                 written_digest = hashlib.sha256()
                 written_size = 0
-                with (
-                    resolved.open("rb") as source_stream,
-                    connection.blobopen(
-                        "source_blobs", "content", int(blob_row["rowid"]), readonly=False
-                    ) as blob,
-                ):
-                    while chunk := source_stream.read(1024 * 1024):
-                        blob.write(chunk)
+                with resolved.open("rb") as source_stream:
+                    chunk_index = 0
+                    while chunk := source_stream.read(SOURCE_BLOB_CHUNK_BYTES):
+                        connection.execute(
+                            "INSERT INTO source_blob_chunks"
+                            "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
+                            (content_hash, chunk_index, chunk, len(chunk)),
+                        )
                         written_digest.update(chunk)
                         written_size += len(chunk)
+                        chunk_index += 1
                 if written_size != byte_size or written_digest.hexdigest() != content_hash:
                     raise InvalidStateError("source file changed while it was being imported")
 
@@ -581,17 +614,58 @@ class CoreStore:
             if result.rowcount != 1:
                 raise NotFoundError("source not found")
 
+    def _source_content_chunks_tx(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> Iterator[bytes]:
+        expected_size = int(row["byte_size"])
+        storage_kind = str(row["storage_kind"])
+        if storage_kind == "inline":
+            content = bytes(row["content"])
+            if len(content) != expected_size:
+                raise InvalidStateError("stored inline source blob has an invalid size")
+            yield content
+            return
+        if storage_kind != "chunked" or expected_size <= 0:
+            raise InvalidStateError("stored source blob has an invalid storage kind")
+
+        written = 0
+        for expected_index, chunk_row in enumerate(
+            connection.execute(
+                "SELECT chunk_index,content,byte_size FROM source_blob_chunks "
+                "WHERE content_hash=? ORDER BY chunk_index",
+                (str(row["content_hash"]),),
+            )
+        ):
+            chunk = bytes(chunk_row["content"])
+            if (
+                int(chunk_row["chunk_index"]) != expected_index
+                or len(chunk) != int(chunk_row["byte_size"])
+                or not chunk
+                or len(chunk) > SOURCE_BLOB_CHUNK_BYTES
+            ):
+                raise InvalidStateError("stored source blob chunks are invalid")
+            yield chunk
+            written += len(chunk)
+        if written != expected_size:
+            raise InvalidStateError("stored source blob chunks were truncated")
+
     def get_source_content(self, source_id: str) -> bytes:
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT sb.content FROM source_records sr JOIN source_blobs sb "
+                "SELECT sb.content_hash,sb.content,sb.byte_size,sb.storage_kind "
+                "FROM source_records sr JOIN source_blobs sb "
                 "ON sb.content_hash=sr.content_hash "
                 "WHERE sr.id=? AND sr.deleted_at IS NULL",
                 (source_id,),
             ).fetchone()
-        if row is None:
-            raise NotFoundError("source not found")
-        return bytes(row["content"])
+            if row is None:
+                raise NotFoundError("source not found")
+            content = b"".join(self._source_content_chunks_tx(connection, row))
+        if hashlib.sha256(content).hexdigest() != str(row["content_hash"]):
+            raise InvalidStateError("stored source blob hash does not match its identity")
+        return content
 
     def copy_source_content_to_path(self, source_id: str, destination: Path) -> int:
         """Copy a raw source blob to a caller-owned path using bounded memory."""
@@ -599,25 +673,27 @@ class CoreStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT sb.rowid,sb.byte_size FROM source_records sr JOIN source_blobs sb "
-                "ON sb.content_hash=sr.content_hash "
+                "SELECT sb.content_hash,sb.content,sb.byte_size,sb.storage_kind "
+                "FROM source_records sr JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
                 "WHERE sr.id=? AND sr.deleted_at IS NULL",
                 (source_id,),
             ).fetchone()
             if row is None:
                 raise NotFoundError("source not found")
             written = 0
-            with (
-                connection.blobopen(
-                    "source_blobs", "content", int(row["rowid"]), readonly=True
-                ) as blob,
-                target.open("wb") as output,
-            ):
-                while chunk := blob.read(1024 * 1024):
-                    output.write(chunk)
-                    written += len(chunk)
-        if written != int(row["byte_size"]):
-            raise InvalidStateError("stored source blob was truncated")
+            digest = hashlib.sha256()
+            try:
+                with target.open("wb") as output:
+                    for chunk in self._source_content_chunks_tx(connection, row):
+                        output.write(chunk)
+                        digest.update(chunk)
+                        written += len(chunk)
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+        if written != int(row["byte_size"]) or digest.hexdigest() != str(row["content_hash"]):
+            target.unlink(missing_ok=True)
+            raise InvalidStateError("stored source blob failed its integrity check")
         return written
 
     def list_sources(

@@ -17,6 +17,7 @@ from allthecontext.windows_update_helper import (
     HelperPhase,
     UpdateJournal,
     ensure_recovery_before_core,
+    journal_failure_diagnostic,
     run_transaction,
 )
 
@@ -469,3 +470,42 @@ def test_malformed_journal_values_fail_closed(
     fixture.journal_path.write_text(json.dumps(journal), encoding="utf-8")
     with pytest.raises(HelperError):
         UpdateJournal.load(fixture.journal_path)
+
+
+def test_journal_failure_diagnostic_is_bounded_and_non_sensitive(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "application_path": "sensitive-local-path",
+                "last_error_code": "rollback_retry_required",
+                "operation_id": "private-operation-id",
+                "phase": "rollback_requested",
+                "schema_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostic = journal_failure_diagnostic(journal)
+
+    assert diagnostic == (
+        '{"last_error_code": "rollback_retry_required", '
+        '"phase": "rollback_requested", "schema_version": 1}'
+    )
+    assert "sensitive-local-path" not in diagnostic
+    assert "private-operation-id" not in diagnostic
+
+    journal.write_text(
+        json.dumps(
+            {
+                "last_error_code": "x" * 1_000,
+                "phase": ["not", "text"],
+                "schema_version": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert journal_failure_diagnostic(journal) == (
+        '{"last_error_code": "invalid", "phase": "invalid", "schema_version": "invalid"}'
+    )

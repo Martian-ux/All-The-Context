@@ -50,6 +50,8 @@ def test_import_size_limit(tmp_path: Path) -> None:
     service = ArchiveImportService(CoreService.in_directory(tmp_path).store, max_bytes=8)
     with pytest.raises(InvalidStateError):
         service.import_bytes("large.txt", b"Preference: too large")
+    with pytest.raises(ValueError, match="between 1 and 2000000000"):
+        ArchiveImportService(service.store, max_bytes=2_000_000_001)
 
 
 def test_plain_text_only_extracts_labeled_statements() -> None:

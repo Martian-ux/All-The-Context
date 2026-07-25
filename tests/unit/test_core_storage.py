@@ -17,7 +17,12 @@ from allthecontext.models import (
     SearchRequest,
     SubmitBatchRequest,
 )
-from allthecontext.storage import ConflictError, NotFoundError
+from allthecontext.storage import (
+    SOURCE_BLOB_CHUNK_BYTES,
+    ConflictError,
+    InvalidStateError,
+    NotFoundError,
+)
 
 
 @pytest.fixture
@@ -178,6 +183,88 @@ def test_source_delete_and_restore_only_reverse_its_own_record_deletions(
     assert core.store.get_record(first.id).content == "First imported memory"
 
 
+def test_source_file_storage_chunks_large_content_and_verifies_copies(
+    core: CoreService,
+    tmp_path: Path,
+) -> None:
+    content = b"a" * SOURCE_BLOB_CHUNK_BYTES + b"tail"
+    source_path = tmp_path / "large-provider-export.jsonl"
+    source_path.write_bytes(content)
+
+    source = core.store.add_source_file(
+        source_path,
+        source_service="test",
+        source_type="jsonl",
+        filename=source_path.name,
+    )
+
+    assert core.store.get_source_content(source.id) == content
+    copied = tmp_path / "copied-provider-export.jsonl"
+    assert core.store.copy_source_content_to_path(source.id, copied) == len(content)
+    assert copied.read_bytes() == content
+    with core.store.connect() as connection:
+        parent = connection.execute(
+            "SELECT storage_kind,length(content),byte_size FROM source_blobs WHERE content_hash=?",
+            (source.content_hash,),
+        ).fetchone()
+        chunks = connection.execute(
+            "SELECT chunk_index,length(content),byte_size FROM source_blob_chunks "
+            "WHERE content_hash=? ORDER BY chunk_index",
+            (source.content_hash,),
+        ).fetchall()
+    assert tuple(parent) == ("chunked", 0, len(content))
+    assert [tuple(row) for row in chunks] == [
+        (0, SOURCE_BLOB_CHUNK_BYTES, SOURCE_BLOB_CHUNK_BYTES),
+        (1, 4, 4),
+    ]
+
+    with core.store.transaction() as connection:
+        connection.execute(
+            "UPDATE source_blob_chunks SET content=? WHERE content_hash=? AND chunk_index=1",
+            (b"fail", source.content_hash),
+        )
+    corrupted_copy = tmp_path / "corrupted-copy.jsonl"
+    with pytest.raises(InvalidStateError, match="integrity"):
+        core.store.copy_source_content_to_path(source.id, corrupted_copy)
+    assert not corrupted_copy.exists()
+
+    core.store.purge(
+        "source",
+        source.id,
+        confirmation=core.store.purge_confirmation_phrase("source", source.id),
+        compact=False,
+    )
+    with core.store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM source_blob_chunks WHERE content_hash=?",
+                (source.content_hash,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_large_in_memory_source_uses_the_same_bounded_chunk_store(
+    core: CoreService,
+) -> None:
+    content = b"b" * (SOURCE_BLOB_CHUNK_BYTES + 1)
+
+    source = core.store.add_source(
+        content,
+        source_service="test-memory",
+        source_type="json",
+    )
+
+    with core.store.connect() as connection:
+        rows = connection.execute(
+            "SELECT chunk_index,length(content) FROM source_blob_chunks "
+            "WHERE content_hash=? ORDER BY chunk_index",
+            (source.content_hash,),
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [(0, SOURCE_BLOB_CHUNK_BYTES), (1, 1)]
+    assert core.store.get_source_content(source.id) == content
+
+
 def test_bootstrap_always_includes_authorized_interaction_preferences(
     core: CoreService,
 ) -> None:
@@ -223,8 +310,6 @@ def test_sensitive_replication_requires_explicit_confirmation(core: CoreService)
             availability=Availability.ALWAYS,
         )
     )
-    from allthecontext.storage import InvalidStateError
-
     with pytest.raises(InvalidStateError):
         core.store.approve_candidate(candidate.id)
     approved = core.store.approve_candidate(

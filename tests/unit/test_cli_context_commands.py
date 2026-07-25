@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from allthecontext import cli
-from allthecontext.config import CoreConfig
+from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, CoreConfig
 from allthecontext.models import ObservationDisposition
 
 
@@ -187,6 +187,22 @@ def test_observation_disposition_parser_accepts_only_policy_outcomes() -> None:
 
     with pytest.raises(SystemExit):
         parser.parse_args(["observations", "--disposition", "approved"])
+
+
+def test_import_command_defaults_to_the_supported_two_gigabyte_limit() -> None:
+    parser = cli.build_parser()
+    parsed = parser.parse_args(["import", "provider-export.zip"])
+
+    assert parsed.max_bytes == DEFAULT_MAX_IMPORT_BYTES == 2_000_000_000
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "import",
+                "provider-export.zip",
+                "--max-bytes",
+                str(DEFAULT_MAX_IMPORT_BYTES + 1),
+            ]
+        )
 
 
 @pytest.mark.parametrize("command", ["candidates", "approve", "reject"])

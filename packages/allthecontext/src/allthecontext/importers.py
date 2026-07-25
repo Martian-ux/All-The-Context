@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
+from .config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES
 from .ingestion import IngestionService, archive_session_request
 from .models import (
     Availability,
@@ -31,7 +32,6 @@ from .provider_ingestion import (
 )
 from .storage import CoreStore, InvalidStateError
 
-DEFAULT_MAX_IMPORT_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
 
@@ -668,6 +668,8 @@ class ArchiveImportService:
         max_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
         max_expanded_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
     ) -> None:
+        if not 1 <= max_bytes <= MAX_IMPORT_BYTES:
+            raise ValueError(f"max_bytes must be between 1 and {MAX_IMPORT_BYTES}")
         self.store = store
         self.ingestion = IngestionService(store)
         self.max_bytes = max_bytes
