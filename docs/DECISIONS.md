@@ -1377,8 +1377,12 @@ the null keyring backend plus explicit
 `credential_storage` is the insecure development file, and labels the result as
 outside real OS acceptance. Real OS credential round-trips stay with
 `--packaged-credential-acceptance` / platform acceptance. Headless setup writes
-a redacted failure report when windowed packages hide stderr, and the smoke
-retains work-directory diagnostics on failure without logging credential values.
+a redacted failure report when windowed packages hide stderr. On smoke failure
+the entire disposable work tree is always removed; retained evidence is only a
+content-free summary in a separate diagnostics directory (labels, return codes,
+phases, boolean presence, error class, redacted bounded message, safe relative
+filenames)—never dashboard URLs, tickets, tokens, client IDs, raw statements,
+absolute developer paths, or raw stdout/stderr.
 
 ## ADR-057: Preserve imported bytes before making parser claims
 

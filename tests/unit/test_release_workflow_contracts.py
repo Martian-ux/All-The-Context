@@ -211,7 +211,12 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     assert "credential_storage" in first_run
     assert "os_credential_acceptance" in first_run
     assert "not_this_smoke" in first_run
-    assert "retained diagnostics" in first_run or "kept work directory" in first_run
+    assert "build_failure_diagnostic_summary" in first_run
+    assert "remove_work_tree" in first_run
+    assert "packaged-first-run-diagnostics" in first_run
+    assert "retain_work_on_failure" not in first_run
+    assert "print(f\"{label} stdout" not in first_run
+    assert "print(f\"{label} stderr" not in first_run
     assert "packaged-credential-acceptance" in first_run
     # Never silently treat first-run smoke as production OS-store proof.
     assert "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE" in first_run or (

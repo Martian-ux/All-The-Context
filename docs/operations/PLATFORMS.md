@@ -80,12 +80,13 @@ file so non-secret smoke credentials never enter the host OS store; the setup
 report must record that development store and must not be treated as real OS
 credential acceptance. Real Windows Credential Manager and macOS Keychain
 round-trips remain the separate packaged-credential and platform-acceptance
-gates. On failure the smoke retains its work directory and headless setup
-writes a redacted report (windowed Windows packages have no console). On
-Windows it also uses uniquely named test-only HKCU keys and verifies Apps &
-Features, shortcuts, startup, update recovery, rollback, and uninstall before
-removing them on success. It never targets an existing installation or
-credential name.
+gates. On failure the disposable work tree is always deleted; only a
+content-free allowlisted diagnostic summary is kept outside that tree, and
+headless setup writes a redacted report (windowed Windows packages have no
+console). On Windows it also uses uniquely named test-only HKCU keys and
+verifies Apps & Features, shortcuts, startup, update recovery, rollback, and
+uninstall before removing them on success. It never targets an existing
+installation or credential name.
 
 Long-lived processes spawned by a frozen one-file build are launched with
 `PYINSTALLER_RESET_ENVIRONMENT=1`. This gives a relaunched app or background

@@ -403,12 +403,16 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
 
 
 def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Windowed packages hide stderr; headless setup must leave a redacted report."""
 
     report_path = tmp_path / "setup-report.json"
     diagnostics_path = tmp_path / "desktop-error.json"
+    token_canary = "atc-canary-token-NEVER-LOG-9f3c2b1a"
+    ticket_canary = "ticket=live-browser-ticket-canary-deadbeef"
+    path_canary = r"C:\Users\canary\secret\vault"
+    client_canary = "11111111-2222-4333-a444-555555555555"
     runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
     monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
     monkeypatch.setattr(
@@ -417,7 +421,10 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
             RuntimeError(
                 "the operating-system credential store is unavailable; "
                 "plaintext credential storage is disabled "
-                "(development only: set ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1)"
+                f"(development only: set ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1); "
+                f"token={token_canary}; "
+                f"http://127.0.0.1:9/v1/browser/connect?{ticket_canary}; "
+                f"client_id={client_canary}; path={path_canary}"
             )
         ),
     )
@@ -431,8 +438,22 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
     assert payload["setup"] == "failed"
     assert payload["error_type"] == "RuntimeError"
     assert "plaintext credential storage is disabled" in payload["error"]
-    assert payload["diagnostics_path"] == str(diagnostics_path)
-    assert "ATC_CLIENT_TOKEN" not in payload["error"]
+    assert payload["diagnostics_written"] is True
+    assert payload["diagnostics_name"] == diagnostics_path.name
+    assert "diagnostics_path" not in payload
+    captured = capsys.readouterr()
+    evidence_values = (
+        token_canary,
+        ticket_canary,
+        path_canary,
+        client_canary,
+        str(diagnostics_path),
+    )
+    for evidence in evidence_values:
+        assert evidence not in payload["error"]
+        assert evidence not in json.dumps(payload)
+        assert evidence not in captured.err
+        assert evidence not in captured.out
 
 
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(

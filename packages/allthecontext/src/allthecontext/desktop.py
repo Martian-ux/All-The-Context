@@ -103,16 +103,29 @@ def _retire_installed_ai_clients(
     return database_readable
 
 
-def _redact_failure_message(error: Exception) -> str:
+def _redact_failure_message(error: Exception | str) -> str:
     """Keep setup diagnostics useful without copying known credential forms."""
 
-    message = str(error).strip() or type(error).__name__
+    if isinstance(error, BaseException):
+        message = str(error).strip() or type(error).__name__
+    else:
+        message = str(error).strip() or "error"
     patterns = (
         (r"(?i)(authorization\s*:\s*bearer\s+)\S+", r"\1[redacted]"),
+        (r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]"),
         (r"atc-edge-v1\.[A-Za-z0-9_-]+", "[redacted Edge enrollment]"),
         (
-            r"(?i)((?:token|secret|recovery[_ -]?code)\s*[=:]\s*)[^\s,;]+",
+            r"(?i)((?:token|secret|recovery[_ -]?code|password|api[_-]?key|"
+            r"atc_client_token|client_token)\s*[=:]\s*)[^\s,;\"']+",
             r"\1[redacted]",
+        ),
+        (r"(?i)([?&](?:ticket|atc_token|token)=)[^&\s\"']+", r"\1[redacted]"),
+        (r"https?://[^\s\"']+", "[redacted url]"),
+        (r"[A-Za-z]:\\[^\s\"']+", "[redacted path]"),
+        (r"/(?:Users|home|tmp|var|opt|private)[^\s\"']*", "[redacted path]"),
+        (
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            "[redacted id]",
         ),
     )
     for pattern, replacement in patterns:
@@ -647,7 +660,9 @@ def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path
         "setup": "failed",
         "error_type": type(error).__name__,
         "error": _redact_failure_message(error),
-        "diagnostics_path": str(diagnostics_path) if diagnostics_path is not None else None,
+        # Never embed absolute developer paths; only a presence/basename signal.
+        "diagnostics_written": diagnostics_path is not None,
+        "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
     }
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -692,7 +707,10 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         report_path = _write_headless_setup_failure_report(target, exc)
         message = _redact_failure_message(exc)
         if report_path is not None:
-            print(f"Headless setup failed: {message}\nReport: {report_path}", file=sys.stderr)
+            print(
+                f"Headless setup failed: {message}\nReport: {report_path.name}",
+                file=sys.stderr,
+            )
         else:
             print(f"Headless setup failed: {message}", file=sys.stderr)
         return 1

@@ -51,6 +51,41 @@ from smoke_desktop_artifact import ROOT, artifact_executable
 # Explicit, isolated, non-secret smoke only. Production installs never set this.
 ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
 
+# Work-tree artifacts inspected only for presence / closed-schema projection.
+_DIAGNOSTIC_RELATIVE_NAMES = (
+    "setup-report.json",
+    "reopen-report.json",
+    "uninstall-report.json",
+    "mcp-stderr.log",
+    "mcp-restart-stderr.log",
+    "data/credentials.development.json",
+    "data/core.sqlite3",
+    "codex/config.toml",
+)
+
+# Fields from headless setup reports that may appear in failure summaries.
+_SAFE_SETUP_REPORT_KEYS = frozenset(
+    {
+        "setup",
+        "credential_storage",
+        "error_type",
+        "error",
+    }
+)
+_SENSITIVE_SETUP_PRESENCE_KEYS = (
+    "dashboard_url",
+    "client_id",
+    "vault_id",
+    "log_path",
+    "core_url",
+    "codex",
+    "claude",
+    "startup",
+    "warnings",
+    "diagnostics_path",
+)
+_MAX_REDACTED_ERROR_CHARS = 500
+
 
 def available_port() -> int:
     with socket.socket() as listener:
@@ -228,30 +263,187 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
             raise RuntimeError(f"packaged MCP did not reach Core: {status.structuredContent}")
 
 
-def _print_retained_failure_artifacts(work: Path, report_path: Path) -> None:
-    """Surface redacted failure evidence without deleting the work directory."""
+def redact_smoke_diagnostic_text(value: str) -> str:
+    """Project free text to a content-free diagnostic string (no secrets/paths/URLs)."""
 
-    print(f"packaged first-run smoke retained diagnostics under: {work}", flush=True)
-    for candidate in (
-        report_path,
-        work / "setup-report.json",
-        work / "reopen-report.json",
-        work / "mcp-stderr.log",
-        work / "mcp-restart-stderr.log",
-        work / "uninstall-report.json",
-    ):
-        if not candidate.is_file():
-            continue
+    message = value.strip() or "empty"
+    patterns = (
+        (r"(?i)(authorization\s*:\s*bearer\s+)\S+", r"\1[redacted]"),
+        (r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]"),
+        (r"atc-edge-v1\.[A-Za-z0-9_-]+", "[redacted Edge enrollment]"),
+        (
+            r"(?i)((?:token|secret|recovery[_ -]?code|password|api[_-]?key|"
+            r"atc_client_token|client_token)\s*[=:]\s*)[^\s,;\"']+",
+            r"\1[redacted]",
+        ),
+        (r"(?i)([?&](?:ticket|atc_token|token)=)[^&\s\"']+", r"\1[redacted]"),
+        (r"https?://[^\s\"']+", "[redacted url]"),
+        (r"[A-Za-z]:\\[^\s\"']+", "[redacted path]"),
+        (r"/(?:Users|home|tmp|var|opt|private)[^\s\"']*", "[redacted path]"),
+        (
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            "[redacted id]",
+        ),
+    )
+    for pattern, replacement in patterns:
+        message = re.sub(pattern, replacement, message)
+    return message[:_MAX_REDACTED_ERROR_CHARS]
+
+
+def project_setup_report_for_diagnostics(raw: object) -> dict[str, Any]:
+    """Allowlist a setup report into content-free fields only."""
+
+    if not isinstance(raw, dict):
+        return {"parseable": False}
+    projected: dict[str, Any] = {"parseable": True}
+    setup = raw.get("setup")
+    if setup in {"passed", "failed"}:
+        projected["setup"] = setup
+    storage = raw.get("credential_storage")
+    if storage in {
+        FALLBACK_CREDENTIAL_STORAGE,
+        "operating-system credential store",
+    }:
+        projected["credential_storage"] = storage
+    error_type = raw.get("error_type")
+    if isinstance(error_type, str) and error_type.isidentifier():
+        projected["error_type"] = error_type[:80]
+    error = raw.get("error")
+    if isinstance(error, str) and error.strip():
+        projected["error"] = redact_smoke_diagnostic_text(error)
+    projected["sensitive_fields_present"] = {
+        key: key in raw and raw.get(key) not in (None, "", [], {})
+        for key in _SENSITIVE_SETUP_PRESENCE_KEYS
+    }
+    # Never copy unknown keys through (including dashboard_url / tokens).
+    assert projected.keys() <= {
+        "parseable",
+        "setup",
+        "credential_storage",
+        "error_type",
+        "error",
+        "sensitive_fields_present",
+    } | _SAFE_SETUP_REPORT_KEYS
+    return projected
+
+
+def _relative_artifact_presence(work: Path) -> dict[str, bool]:
+    return {name: (work / name).is_file() for name in _DIAGNOSTIC_RELATIVE_NAMES}
+
+
+def build_failure_diagnostic_summary(
+    *,
+    phase: str,
+    return_code: int | None,
+    work: Path,
+    report_path: Path | None = None,
+    stdout_present: bool = False,
+    stderr_present: bool = False,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    """Build a content-free failure summary; never embed raw reports or streams."""
+
+    summary: dict[str, Any] = {
+        "application": "All The Context packaged first-run smoke",
+        "outcome": "failed",
+        "phase": phase,
+        "return_code": return_code,
+        "labels": {
+            "credential_mode": "explicit-isolated-development-file",
+            "os_credential_acceptance": "not_this_smoke",
+        },
+        "artifacts_present": _relative_artifact_presence(work),
+        "stdout_present": bool(stdout_present),
+        "stderr_present": bool(stderr_present),
+    }
+    if detail:
+        summary["detail"] = redact_smoke_diagnostic_text(detail)
+    candidate = report_path if report_path is not None else work / "setup-report.json"
+    if candidate.is_file():
         try:
-            text = candidate.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            print(f"  could not read {candidate.name}: {exc}", flush=True)
-            continue
-        # Never dump credential files or large opaque blobs.
-        if "credential" in candidate.name.casefold() and candidate.suffix == ".json":
-            continue
-        preview = text if len(text) <= 4_000 else f"{text[:4_000]}\n...[truncated]..."
-        print(f"--- {candidate.name} ---\n{preview}", flush=True)
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            summary["setup_report"] = {"parseable": False, "present": True}
+        else:
+            projected = project_setup_report_for_diagnostics(raw)
+            projected["present"] = True
+            summary["setup_report"] = projected
+    else:
+        summary["setup_report"] = {"present": False, "parseable": False}
+    return summary
+
+
+def write_failure_diagnostic_summary(
+    summary: dict[str, Any],
+    *,
+    diagnostics_root: Path,
+) -> Path:
+    """Persist only the allowlisted summary under a separate diagnostics directory."""
+
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    target = diagnostics_root / f"packaged-first-run-failure-{stamp}-{os.getpid()}.json"
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return target
+
+
+def emit_failure_diagnostics(
+    *,
+    phase: str,
+    return_code: int | None,
+    work: Path,
+    diagnostics_root: Path,
+    report_path: Path | None = None,
+    stdout_present: bool = False,
+    stderr_present: bool = False,
+    detail: str | None = None,
+) -> Path:
+    """Write content-free diagnostics and print only safe relative location + schema."""
+
+    summary = build_failure_diagnostic_summary(
+        phase=phase,
+        return_code=return_code,
+        work=work,
+        report_path=report_path,
+        stdout_present=stdout_present,
+        stderr_present=stderr_present,
+        detail=detail,
+    )
+    target = write_failure_diagnostic_summary(summary, diagnostics_root=diagnostics_root)
+    # Print only the filename and closed outcome fields — never raw streams or reports.
+    print(
+        json.dumps(
+            {
+                "packaged_first_run_failure": True,
+                "phase": phase,
+                "return_code": return_code,
+                "diagnostics_file": target.name,
+                "setup_report_present": bool(summary.get("setup_report", {}).get("present")),
+                "stdout_present": stdout_present,
+                "stderr_present": stderr_present,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return target
+
+
+def remove_work_tree(work: Path, *, timeout_seconds: float = 10.0) -> None:
+    """Always delete the disposable work tree (credentials, vault, configs, binaries)."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while work.exists() and time.monotonic() < deadline:
+        try:
+            shutil.rmtree(work)
+        except OSError:
+            time.sleep(0.1)
+        else:
+            return
+    if work.exists():
+        raise RuntimeError(f"temporary smoke data remained locked: {work.name}")
 
 
 def _run_headless_setup(
@@ -261,9 +453,10 @@ def _run_headless_setup(
     environment: dict[str, str],
     extra_args: list[str],
     work: Path,
+    diagnostics_root: Path,
     label: str,
 ) -> dict[str, Any]:
-    """Run packaged headless setup and keep failure diagnostics when it exits non-zero."""
+    """Run packaged headless setup; on failure write content-free diagnostics only."""
 
     completed = subprocess.run(
         [
@@ -278,23 +471,48 @@ def _run_headless_setup(
         text=True,
         timeout=90,
     )
+    stdout_present = bool(completed.stdout and completed.stdout.strip())
+    stderr_present = bool(completed.stderr and completed.stderr.strip())
     if completed.returncode != 0:
-        if completed.stdout.strip():
-            print(f"{label} stdout:\n{completed.stdout}", flush=True)
-        if completed.stderr.strip():
-            print(f"{label} stderr:\n{completed.stderr}", flush=True)
-        _print_retained_failure_artifacts(work, report_path)
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=completed.returncode,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail=f"{label} exited non-zero",
+        )
         raise SystemExit(
-            f"{label} exited {completed.returncode}; "
-            f"see retained diagnostics under {work} "
-            f"(windowed packages may only write the setup report)"
+            f"{label} exited {completed.returncode}; content-free diagnostics written "
+            f"(work tree will be removed; windowed packages may only leave a setup report)"
         )
     if not report_path.is_file():
-        raise SystemExit(f"{label} did not write a setup report at {report_path}")
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail=f"{label} did not write a setup report",
+        )
+        raise SystemExit(f"{label} did not write a setup report")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("setup") == "failed":
-        _print_retained_failure_artifacts(work, report_path)
-        raise SystemExit(f"{label} reported setup failure: {report}")
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail=f"{label} reported setup failure",
+        )
+        raise SystemExit(f"{label} reported setup failure")
     return report
 
 
@@ -306,7 +524,11 @@ def main() -> int:
 
     temp_parent = ROOT / "tmp"
     temp_parent.mkdir(parents=True, exist_ok=True)
+    # Disposable work holds credentials/vault/binaries and is always removed.
     work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))
+    # Content-free failure summaries live outside the work tree and never hold secrets.
+    diagnostics_root = temp_parent / "packaged-first-run-diagnostics"
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
     data_dir = work / "data"
     codex_home = work / "codex"
     report_path = work / "setup-report.json"
@@ -350,8 +572,19 @@ def main() -> int:
 
     base_url = f"http://127.0.0.1:{port}"
     cleanup_admin_token = ""
-    # Keep work/dir diagnostics on any failure path; clear only after success.
-    retain_work_on_failure = True
+
+    def fail_smoke(phase: str, message: str, *, return_code: int | None = None) -> None:
+        """Record content-free diagnostics, then exit. Work tree is always cleaned."""
+
+        emit_failure_diagnostics(
+            phase=phase,
+            return_code=return_code,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path if report_path.is_file() else None,
+            detail=message,
+        )
+        raise SystemExit(redact_smoke_diagnostic_text(message))
 
     def cleanup_failed_smoke() -> None:
         if cleanup_admin_token:
@@ -367,22 +600,9 @@ def main() -> int:
             ):
                 with suppress(OSError):
                     winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
-        if retain_work_on_failure and work.exists():
-            # Keep redacted setup reports and logs for the operator; do not
-            # print credential file contents.
-            print(
-                f"packaged first-run smoke kept work directory for diagnosis: {work}",
-                flush=True,
-            )
-            return
-        deadline = time.monotonic() + 10
-        while work.exists() and time.monotonic() < deadline:
-            try:
-                shutil.rmtree(work)
-            except OSError:
-                time.sleep(0.1)
-            else:
-                return
+        # Always remove credentials, vault, configs, and installed binaries.
+        with suppress(Exception):
+            remove_work_tree(work)
 
     atexit.register(cleanup_failed_smoke)
 
@@ -396,21 +616,24 @@ def main() -> int:
             "Packaged smoke vault",
         ],
         work=work,
+        diagnostics_root=diagnostics_root,
         label="headless first-run setup",
     )
     if report.get("core_url") != f"http://127.0.0.1:{port}":
-        raise SystemExit(f"unexpected setup report: {report}")
+        fail_smoke("validate-setup-report", "unexpected setup core_url")
     # Contract: this smoke uses the explicit isolated development store only.
     # Real OS credential acceptance remains a separate packaged gate.
     if report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
-        raise SystemExit(
+        fail_smoke(
+            "validate-credential-storage",
             "packaged first-run smoke must use the explicit isolated development "
-            f"credential store, not OS-keyring acceptance; got {report.get('credential_storage')!r}"
+            "credential store, not OS-keyring acceptance",
         )
     warnings = report.get("warnings") or []
     if not any("insecure development credential file" in str(item).casefold() for item in warnings):
-        raise SystemExit(
-            "isolated packaged smoke did not surface the insecure development credential warning"
+        fail_smoke(
+            "validate-credential-warning",
+            "isolated packaged smoke did not surface the insecure development credential warning",
         )
     startup_report = report.get("startup")
     expected_startup = {
@@ -418,7 +641,7 @@ def main() -> int:
         "Darwin": "LaunchAgent",
     }.get(system, "XDG autostart")
     if not isinstance(startup_report, dict) or startup_report.get("mechanism") != expected_startup:
-        raise SystemExit(f"packaged startup adapter was not installed: {startup_report}")
+        fail_smoke("validate-startup", "packaged startup adapter was not installed")
 
     config_path = codex_home / "config.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -578,19 +801,20 @@ def main() -> int:
             "Packaged smoke vault",
         ],
         work=work,
+        diagnostics_root=diagnostics_root,
         label="installed reopen headless setup",
     )
     if reopen_report.get("vault_id") != report.get("vault_id") or reopen_report.get(
         "client_id"
     ) != report.get("client_id"):
-        raise SystemExit(f"installed reopen changed vault authority: {reopen_report}")
+        fail_smoke("validate-reopen", "installed reopen changed vault authority")
     if reopen_report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
-        raise SystemExit(
-            "installed reopen left the isolated development credential contract: "
-            f"{reopen_report.get('credential_storage')!r}"
+        fail_smoke(
+            "validate-reopen-credentials",
+            "installed reopen left the isolated development credential contract",
         )
     if api_request(f"{base_url}/v1/context/status", token).get("core_online") is not True:
-        raise SystemExit("reopened installed Core was not ready")
+        fail_smoke("validate-reopen-core", "reopened installed Core was not ready")
     stop_core(base_url, admin_token)
 
     packaged_update_result = "not_applicable"
@@ -773,16 +997,10 @@ def main() -> int:
             raise SystemExit("packaged uninstaller did not revoke the Codex principal")
         uninstall_result = "passed"
 
-    retain_work_on_failure = False
-    cleanup_deadline = time.monotonic() + 10
-    while True:
-        try:
-            shutil.rmtree(work)
-            break
-        except PermissionError:
-            if time.monotonic() >= cleanup_deadline:
-                raise SystemExit(f"temporary smoke data remained locked: {work}") from None
-            time.sleep(0.1)
+    try:
+        remove_work_tree(work)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
     atexit.unregister(cleanup_failed_smoke)
     print(
         json.dumps(

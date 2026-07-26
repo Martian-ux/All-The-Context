@@ -1,0 +1,213 @@
+"""Content-free failure diagnostics for packaged first-run smoke."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+from allthecontext.credentials import FALLBACK_CREDENTIAL_STORAGE
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_smoke_module():
+    path = ROOT / "scripts" / "smoke_packaged_first_run.py"
+    spec = importlib.util.spec_from_file_location("smoke_packaged_first_run", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # scripts/ imports sibling smoke_desktop_artifact
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    package_src = str(ROOT / "packages" / "allthecontext" / "src")
+    if package_src not in sys.path:
+        sys.path.insert(0, package_src)
+    spec.loader.exec_module(module)
+    return module
+
+
+smoke = _load_smoke_module()
+
+TOKEN_CANARY = "atc-canary-token-NEVER-LOG-9f3c2b1a"
+TICKET_CANARY = "live-browser-ticket-canary-deadbeef"
+CLIENT_CANARY = "11111111-2222-4333-a444-555555555555"
+PATH_CANARY = r"C:\Users\canary\AppData\Local\ATC\secret"
+DASHBOARD_CANARY = (
+    f"http://127.0.0.1:18765/v1/browser/connect?ticket={TICKET_CANARY}&atc_token={TOKEN_CANARY}"
+)
+RAW_STATEMENT = "User said their password is hunter2-never-store"
+
+
+def test_project_setup_report_strips_secrets_and_sensitive_fields() -> None:
+    projected = smoke.project_setup_report_for_diagnostics(
+        {
+            "setup": "passed",
+            "credential_storage": FALLBACK_CREDENTIAL_STORAGE,
+            "dashboard_url": DASHBOARD_CANARY,
+            "client_id": CLIENT_CANARY,
+            "vault_id": CLIENT_CANARY,
+            "log_path": PATH_CANARY,
+            "core_url": "http://127.0.0.1:18765",
+            "warnings": [f"token={TOKEN_CANARY}", RAW_STATEMENT],
+            "token": TOKEN_CANARY,
+        }
+    )
+
+    serialized = json.dumps(projected)
+    assert projected["parseable"] is True
+    assert projected["setup"] == "passed"
+    assert projected["credential_storage"] == FALLBACK_CREDENTIAL_STORAGE
+    assert projected["sensitive_fields_present"]["dashboard_url"] is True
+    assert projected["sensitive_fields_present"]["client_id"] is True
+    assert "dashboard_url" not in projected
+    assert "client_id" not in projected
+    assert "warnings" not in projected
+    for canary in (TOKEN_CANARY, TICKET_CANARY, CLIENT_CANARY, PATH_CANARY, RAW_STATEMENT):
+        assert canary not in serialized
+
+
+def test_project_failed_setup_report_redacts_error_canaries() -> None:
+    projected = smoke.project_setup_report_for_diagnostics(
+        {
+            "setup": "failed",
+            "error_type": "RuntimeError",
+            "error": (
+                f"token={TOKEN_CANARY}; {DASHBOARD_CANARY}; "
+                f"client={CLIENT_CANARY}; path={PATH_CANARY}; {RAW_STATEMENT}"
+            ),
+            "diagnostics_path": PATH_CANARY,
+        }
+    )
+    serialized = json.dumps(projected)
+    assert projected["setup"] == "failed"
+    assert projected["error_type"] == "RuntimeError"
+    assert "token=" in projected["error"]
+    assert "[redacted]" in projected["error"] or "[redacted url]" in projected["error"]
+    for canary in (TOKEN_CANARY, TICKET_CANARY, CLIENT_CANARY, PATH_CANARY):
+        assert canary not in serialized
+        assert canary not in projected["error"]
+
+
+def test_failure_summary_never_embeds_raw_streams_or_absolute_work_paths(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "setup-report.json").write_text(
+        json.dumps(
+            {
+                "setup": "passed",
+                "dashboard_url": DASHBOARD_CANARY,
+                "client_id": CLIENT_CANARY,
+                "credential_storage": FALLBACK_CREDENTIAL_STORAGE,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (work / "data").mkdir()
+    (work / "data" / "credentials.development.json").write_text(
+        json.dumps({f"client:{CLIENT_CANARY}": TOKEN_CANARY}),
+        encoding="utf-8",
+    )
+    (work / "codex").mkdir()
+    (work / "codex" / "config.toml").write_text(
+        f'ATC_CLIENT_TOKEN = "{TOKEN_CANARY}"\n',
+        encoding="utf-8",
+    )
+
+    summary = smoke.build_failure_diagnostic_summary(
+        phase="headless first-run setup",
+        return_code=1,
+        work=work,
+        report_path=work / "setup-report.json",
+        stdout_present=True,
+        stderr_present=True,
+        detail=f"failed with token={TOKEN_CANARY} at {PATH_CANARY}",
+    )
+    diagnostics_root = tmp_path / "diagnostics"
+    written = smoke.write_failure_diagnostic_summary(summary, diagnostics_root=diagnostics_root)
+    body = written.read_text(encoding="utf-8")
+    printed = json.dumps(summary)
+
+    assert summary["artifacts_present"]["setup-report.json"] is True
+    assert summary["artifacts_present"]["data/credentials.development.json"] is True
+    assert summary["stdout_present"] is True
+    assert summary["stderr_present"] is True
+    assert "stdout" not in summary
+    assert "stderr" not in summary
+    assert summary["setup_report"]["setup"] == "passed"
+    assert "dashboard_url" not in summary["setup_report"]
+    for canary in (
+        TOKEN_CANARY,
+        TICKET_CANARY,
+        CLIENT_CANARY,
+        PATH_CANARY,
+        DASHBOARD_CANARY,
+        str(work),
+        RAW_STATEMENT,
+    ):
+        assert canary not in body
+        assert canary not in printed
+
+
+def test_emit_failure_diagnostics_prints_closed_schema_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "setup-report.json").write_text(
+        json.dumps(
+            {
+                "setup": "failed",
+                "error_type": "RuntimeError",
+                "error": f"token={TOKEN_CANARY}",
+                "dashboard_url": DASHBOARD_CANARY,
+            }
+        ),
+        encoding="utf-8",
+    )
+    diagnostics_root = tmp_path / "diagnostics"
+    path = smoke.emit_failure_diagnostics(
+        phase="headless first-run setup",
+        return_code=1,
+        work=work,
+        diagnostics_root=diagnostics_root,
+        report_path=work / "setup-report.json",
+        stdout_present=True,
+        stderr_present=False,
+        detail=f"boom token={TOKEN_CANARY}",
+    )
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["packaged_first_run_failure"] is True
+    assert payload["diagnostics_file"] == path.name
+    assert payload["stdout_present"] is True
+    assert TOKEN_CANARY not in out
+    assert DASHBOARD_CANARY not in out
+    assert TOKEN_CANARY not in path.read_text(encoding="utf-8")
+
+
+def test_remove_work_tree_deletes_credential_bearing_tree(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    secret = work / "data" / "credentials.development.json"
+    secret.parent.mkdir(parents=True)
+    secret.write_text(json.dumps({"client:x": TOKEN_CANARY}), encoding="utf-8")
+    smoke.remove_work_tree(work)
+    assert not work.exists()
+
+
+def test_source_contract_never_retains_full_work_tree() -> None:
+    text = (ROOT / "scripts" / "smoke_packaged_first_run.py").read_text(encoding="utf-8")
+    assert "retain_work_on_failure" not in text
+    assert "kept work directory for diagnosis" not in text
+    assert "build_failure_diagnostic_summary" in text
+    assert "remove_work_tree" in text
+    assert "packaged-first-run-diagnostics" in text
+    # Must not print raw subprocess streams.
+    assert "completed.stdout" not in text or "stdout_present" in text
+    assert "print(f\"{label} stdout" not in text
+    assert "print(f\"{label} stderr" not in text

@@ -73,11 +73,14 @@ credentials with the null keyring backend **and** explicit
 `credential_storage` is the insecure development file, and does **not** claim
 real OS credential acceptance. Real Windows Credential Manager / macOS Keychain
 round-trips remain the separate `--packaged-credential-acceptance` /
-`smoke_platform_acceptance.py` gates. Headless setup now writes a redacted
-failure report when setup exits non-zero, and the smoke retains its work
-directory on failure so windowed packages no longer hide diagnostics by
-deleting evidence at exit. Production installs still never enable plaintext
-credential storage silently.
+`smoke_platform_acceptance.py` gates. Headless setup writes a redacted failure
+report when setup exits non-zero. On smoke failure the disposable work tree
+(credentials, vault, configs, binaries) is always deleted; only a content-free
+allowlisted summary is retained under a separate diagnostics directory (phase,
+return code, boolean artifact presence, error class, redacted message)—never
+raw setup reports, dashboard tickets, tokens, client IDs, or subprocess
+streams. Production installs still never enable plaintext credential storage
+silently.
 
 On 2026-07-26, a narrow exact-lock correction closed three release-install
 holes without broadening release engineering: the reviewed `uv.lock` now
