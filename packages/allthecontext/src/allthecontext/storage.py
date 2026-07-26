@@ -1061,11 +1061,24 @@ class CoreStore:
             if current_status in terminal and next_status != current_status:
                 raise InvalidStateError(f"import operation is already {current_status}")
             next_phase = phase if phase is not None else str(row["phase"])
+            # Durable upload telemetry is monotonic: later phases (blob staging,
+            # parse/member progress) must not regress committed or received bytes
+            # after the raw archive has already been accepted.
+            previous_received = int(row["bytes_received"])
+            previous_committed = int(row["bytes_committed"])
+            if bytes_received is not None and int(bytes_received) < 0:
+                raise InvalidStateError("received progress cannot be negative")
+            if bytes_committed is not None and int(bytes_committed) < 0:
+                raise InvalidStateError("committed progress cannot be negative")
             next_received = (
-                bytes_received if bytes_received is not None else int(row["bytes_received"])
+                max(previous_received, int(bytes_received))
+                if bytes_received is not None
+                else previous_received
             )
             next_committed = (
-                bytes_committed if bytes_committed is not None else int(row["bytes_committed"])
+                max(previous_committed, int(bytes_committed))
+                if bytes_committed is not None
+                else previous_committed
             )
             if next_committed > next_received:
                 raise InvalidStateError("committed progress cannot exceed received bytes")

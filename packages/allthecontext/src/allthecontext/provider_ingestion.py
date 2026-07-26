@@ -245,7 +245,7 @@ class ProviderArchiveBuilder:
         if conversations:
             for conversation in conversations:
                 conversation_provider = _detect_json_provider(conversation, safe_name, provider)
-                messages = _normalize_conversation(
+                messages, residual = _normalize_conversation(
                     conversation,
                     conversation_provider,
                     safe_name,
@@ -259,7 +259,23 @@ class ProviderArchiveBuilder:
                 self._stats["conversations"] += 1
                 raw_message_count = _conversation_message_count(conversation)
                 self._stats["message_records"] += raw_message_count
-                self._stats["unparsed_messages"] += max(raw_message_count - len(messages), 0)
+                # Known classifiable residuals close into excluded/skipped/unavailable.
+                # Only genuinely unknown/malformed material stays unparsed.
+                self._stats["assistant_messages"] += residual["assistant_excluded"]
+                self._stats["other_messages"] += residual["other_excluded"]
+                self._stats["skipped_messages"] += residual["skipped"]
+                self._stats["unsupported_entries"] += residual["unavailable"]
+                self._stats["unparsed_messages"] += residual["unparsed"]
+                accounted = (
+                    len(messages)
+                    + residual["assistant_excluded"]
+                    + residual["other_excluded"]
+                    + residual["skipped"]
+                    + residual["unavailable"]
+                    + residual["unparsed"]
+                )
+                if accounted < raw_message_count:
+                    self._stats["unparsed_messages"] += raw_message_count - accounted
                 self._consume_messages(messages)
 
         memory_items = list(_deduplicate_strings(_memory_strings(value)))
@@ -574,34 +590,52 @@ def _format_for_conversation(value: Mapping[str, Any], provider: ArchiveProvider
     return "provider_conversations"
 
 
+def _empty_message_residual() -> dict[str, int]:
+    return {
+        "assistant_excluded": 0,
+        "other_excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "unparsed": 0,
+    }
+
+
 def _normalize_conversation(
     value: Mapping[str, Any],
     provider: ArchiveProvider,
     source_name: str,
     ordinal: int,
-) -> list[NormalizedMessage]:
+) -> tuple[list[NormalizedMessage], dict[str, int]]:
     title = _first_string(value, ("title", "name", "subject"))
     raw_id = _first_string(value, ("id", "uuid", "conversation_id", "chat_id"))
     conversation_id = raw_id or _stable_id(f"{source_name}:{title or ''}:{ordinal}")
+    residual = _empty_message_residual()
     if isinstance(value.get("mapping"), dict):
         raw_messages: list[tuple[int, Mapping[str, Any]]] = []
         for index, (node_id, node) in enumerate(value["mapping"].items()):
-            if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+            if not isinstance(node, dict):
+                residual["unparsed"] += 1
                 continue
-            message = dict(node["message"])
-            message.setdefault("id", str(node_id))
-            raw_messages.append((index, message))
+            message_value = node.get("message")
+            if message_value is None:
+                continue
+            if not isinstance(message_value, dict):
+                residual["unparsed"] += 1
+                continue
+            node_message = dict(message_value)
+            node_message.setdefault("id", str(node_id))
+            raw_messages.append((index, node_message))
         raw_messages.sort(key=lambda pair: _message_sort_key(pair[1], pair[0]))
-        return [
-            normalized
-            for index, (_, message) in enumerate(raw_messages)
-            if (
-                normalized := _normalize_message(
-                    message, provider, source_name, conversation_id, title, index
-                )
+        result: list[NormalizedMessage] = []
+        for index, (_, mapped_message) in enumerate(raw_messages):
+            normalized, disposition = _normalize_or_classify_message(
+                mapped_message, provider, source_name, conversation_id, title, index
             )
-            is not None
-        ]
+            if normalized is not None:
+                result.append(normalized)
+            elif disposition is not None:
+                residual[disposition] += 1
+        return result, residual
 
     raw_values: list[Any] = []
     for key in ("chat_messages", "messages", "turns", "responses", "history"):
@@ -611,27 +645,33 @@ def _normalize_conversation(
             break
     if not raw_values and _looks_like_turn_pair(value):
         raw_values = [value]
-    result: list[NormalizedMessage] = []
+    result = []
     for index, message in enumerate(raw_values):
         if not isinstance(message, dict):
+            residual["unparsed"] += 1
             continue
-        normalized = _normalize_message(
+        normalized, disposition = _normalize_or_classify_message(
             message, provider, source_name, conversation_id, title, index
         )
         if normalized is not None:
             result.append(normalized)
             continue
-        result.extend(
-            _normalize_turn_pair(
-                message,
-                provider=provider,
-                source_name=source_name,
-                conversation_id=conversation_id,
-                title=title,
-                ordinal=index,
-            )
+        pair = _normalize_turn_pair(
+            message,
+            provider=provider,
+            source_name=source_name,
+            conversation_id=conversation_id,
+            title=title,
+            ordinal=index,
         )
-    return result
+        if pair:
+            result.extend(pair)
+            continue
+        if disposition is not None:
+            residual[disposition] += 1
+        else:
+            residual["unparsed"] += 1
+    return result, residual
 
 
 def _conversation_message_count(value: Mapping[str, Any]) -> int:
@@ -640,7 +680,7 @@ def _conversation_message_count(value: Mapping[str, Any]) -> int:
         return sum(
             1
             for node in mapping.values()
-            if isinstance(node, dict) and isinstance(node.get("message"), dict)
+            if not isinstance(node, dict) or node.get("message") is not None
         )
     for key in ("chat_messages", "messages", "turns", "responses", "history"):
         candidate = value.get(key)
@@ -715,14 +755,24 @@ def _message_sort_key(message: Mapping[str, Any], fallback: int) -> tuple[int, f
     return (2, float(fallback), fallback)
 
 
-def _normalize_message(
-    value: Mapping[str, Any],
-    provider: ArchiveProvider,
-    source_name: str,
-    conversation_id: str,
-    title: str | None,
-    ordinal: int,
-) -> NormalizedMessage | None:
+_KNOWN_NON_TEXT_CONTENT_TYPES = frozenset(
+    {
+        "image_asset_pointer",
+        "audio_asset_pointer",
+        "video_asset_pointer",
+        "real_time_user_audio_video_asset_pointer",
+        "code",
+        "execution_output",
+        "system_error",
+        "tether_browsing_display",
+        "tether_quote",
+        "tether_image",
+    }
+)
+_EXCLUDED_NON_USER_ROLES = frozenset({"system", "tool", "developer", "function"})
+
+
+def _message_role_raw(value: Mapping[str, Any]) -> str:
     role_value: Any = (
         value.get("role")
         or value.get("sender")
@@ -732,23 +782,53 @@ def _normalize_message(
     )
     if isinstance(role_value, dict):
         role_value = role_value.get("role") or role_value.get("name")
-    role = _normalize_role(str(role_value or ""))
+    return str(role_value or "")
+
+
+def _normalize_or_classify_message(
+    value: Mapping[str, Any],
+    provider: ArchiveProvider,
+    source_name: str,
+    conversation_id: str,
+    title: str | None,
+    ordinal: int,
+) -> tuple[NormalizedMessage | None, str | None]:
+    """Normalize a message or classify residual closed-coverage disposition.
+
+    Known provider roles/structures close into excluded, skipped, or unavailable.
+    Genuinely unknown or malformed structures remain unparsed so coverage stays
+    fail-closed.
+    """
+    role = _normalize_role(_message_role_raw(value))
     text = _message_text(value)
-    if not role or not text.strip():
-        return None
-    message_id = _first_string(value, ("id", "uuid", "message_id")) or str(ordinal + 1)
-    created = value.get("created_at") or value.get("create_time") or value.get("timestamp")
-    created_at = str(created) if isinstance(created, (str, int, float)) else None
-    return NormalizedMessage(
-        provider=provider,
-        conversation_id=conversation_id[:200],
-        conversation_title=title[:500] if title else None,
-        message_id=message_id[:200],
-        role=role,
-        text=text,
-        source_name=source_name,
-        created_at=created_at,
-    )
+    if role and text.strip():
+        message_id = _first_string(value, ("id", "uuid", "message_id")) or str(ordinal + 1)
+        created = value.get("created_at") or value.get("create_time") or value.get("timestamp")
+        created_at = str(created) if isinstance(created, (str, int, float)) else None
+        return (
+            NormalizedMessage(
+                provider=provider,
+                conversation_id=conversation_id[:200],
+                conversation_title=title[:500] if title else None,
+                message_id=message_id[:200],
+                role=role,
+                text=text,
+                source_name=source_name,
+                created_at=created_at,
+            ),
+            None,
+        )
+    if role == "assistant":
+        return None, "assistant_excluded"
+    if role in _EXCLUDED_NON_USER_ROLES:
+        return None, "other_excluded"
+    if role == "user":
+        if _looks_like_attachment_or_nontext_only(value):
+            return None, "unavailable"
+        return None, "skipped"
+    # Missing and unknown roles remain unparsed even for attachment-shaped
+    # content. Without a trusted provider role the residual is not classifiable.
+    return None, "unparsed"
 
 
 def _normalize_role(value: str) -> str:
@@ -760,6 +840,29 @@ def _normalize_role(value: str) -> str:
     if normalized in {"system", "tool", "developer", "function"}:
         return normalized
     return ""
+
+
+def _looks_like_attachment_or_nontext_only(value: Mapping[str, Any]) -> bool:
+    """True when a message is a known non-text/attachment shell without usable text."""
+    if _message_text(value).strip():
+        return False
+    content = value.get("content")
+    if isinstance(content, dict):
+        content_type = str(content.get("content_type") or "").casefold()
+        if content_type in _KNOWN_NON_TEXT_CONTENT_TYPES:
+            return True
+        if content_type in {"multimodal_text", "text", ""}:
+            parts = content.get("parts")
+            if isinstance(parts, list) and parts and all(isinstance(part, dict) for part in parts):
+                return True
+    if any(isinstance(value.get(key), list) and value.get(key) for key in ("attachments", "files")):
+        return True
+    metadata = value.get("metadata")
+    if isinstance(metadata, dict):
+        attachments = metadata.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            return True
+    return False
 
 
 def _message_text(value: Mapping[str, Any]) -> str:
@@ -784,6 +887,10 @@ def _text_fragments(value: Any) -> Iterable[str]:
             yield from _text_fragments(item)
         return
     if not isinstance(value, dict):
+        return
+    content_type = str(value.get("content_type") or "").casefold()
+    if content_type in _KNOWN_NON_TEXT_CONTENT_TYPES:
+        # Asset pointers and execution shells are not user-authored text.
         return
     for key in ("text", "parts"):
         candidate = value.get(key)

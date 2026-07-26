@@ -191,23 +191,38 @@ def run_packaged_provider_acceptance(
         config = CoreConfig.in_directory(data_root, require_auth=False)
         if config.host != "127.0.0.1":
             raise InvalidStateError("non-loopback host")
-        operation = CoreService(config).import_operations.import_path_via_operation(
-            source,
-            filename=_safe_display_name(normalized, source),
-            source_service=normalized,
-            provider=normalized,
-        )
-        if operation.get("status") != "complete":
+        try:
+            operation = CoreService(config).import_operations.import_path_via_operation(
+                source,
+                filename=_safe_display_name(normalized, source),
+                source_service=normalized,
+                provider=normalized,
+            )
+        except (InvalidStateError, OSError, TypeError, UnicodeError, ValueError):
+            # Production operation/import refused or failed before a complete result.
             payload = _failure("import_operation_failed")
+        except Exception:
+            # Process boundary: never persist exception text or dynamic type names.
+            payload = _failure("import_failed")
         else:
-            raw_result = operation.get("result")
-            if not isinstance(raw_result, dict):
-                raise ValueError("missing import result")
-            payload = _successful_payload(raw_result, normalized)
+            if operation.get("status") != "complete":
+                # Operation reached a terminal or non-complete status without a usable result.
+                payload = _failure("import_operation_incomplete")
+            else:
+                try:
+                    raw_result = operation.get("result")
+                    if not isinstance(raw_result, dict):
+                        raise ValueError("missing import result")
+                    payload = _successful_payload(raw_result, normalized)
+                except (InvalidStateError, OSError, TypeError, UnicodeError, ValueError):
+                    # Content-free acceptance reconciliation refused the terminal result.
+                    payload = _failure("import_acceptance_reconcile_failed")
+                except Exception:
+                    payload = _failure("import_failed")
     except (InvalidStateError, OSError, TypeError, UnicodeError, ValueError):
-        payload = _failure("import_validation_failed")
+        # Config/host/setup failure before the operation stage.
+        payload = _failure("import_operation_failed")
     except Exception:
-        # This is a process boundary. Never persist exception text or dynamic type names.
         payload = _failure("import_failed")
 
     cleanup_ok = True

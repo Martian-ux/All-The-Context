@@ -98,6 +98,73 @@ def test_stream_upload_commits_within_one_chunk_and_completes(tmp_path: Path) ->
     assert finished["progress"]["percent"] == 100
 
 
+def test_durable_bytes_committed_never_regresses_across_progress_domains(
+    tmp_path: Path,
+) -> None:
+    """Raw-archive commit must not be lowered by later staging/member progress writes."""
+    core, ops = _ops(tmp_path)
+    # Multi-chunk raw payload so upload commits full size before staging rewalks.
+    line = b'{"kind":"goal","content":"Preference: Keep durable progress honest."}\n'
+    payload = line * ((SOURCE_BLOB_CHUNK_BYTES // len(line)) + 8)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="goals.jsonl",
+        provider="generic",
+    )
+    observed: list[int] = []
+    original_update = core.store.update_import_operation
+
+    def watching_update(operation_id: str, **kwargs: object) -> dict[str, object]:
+        result = original_update(operation_id, **kwargs)
+        observed.append(int(result["bytes_committed"]))
+        return result
+
+    core.store.update_import_operation = watching_update  # type: ignore[method-assign]
+    finished = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+    )
+    assert finished["status"] == "complete"
+    assert finished["bytes_committed"] == len(payload)
+    assert observed
+    # Once committed bytes reach a high-water mark they never fall.
+    high_water = 0
+    for value in observed:
+        assert value >= high_water
+        high_water = value
+    assert high_water == len(payload)
+
+    # Direct storage API also clamps regressions from mixed progress domains.
+    # Recreate a fresh operation to exercise the storage clamp in isolation.
+    isolated = ops.start_operation(
+        declared_byte_size=1_000,
+        filename="clamp.bin",
+        provider="generic",
+    )
+    isolated_id = str(isolated["operation_id"])
+    core.store.update_import_operation(
+        isolated_id,
+        status="uploading",
+        phase="uploading",
+        bytes_received=900,
+        bytes_committed=800,
+    )
+    core.store.update_import_operation(
+        isolated_id,
+        status="processing",
+        phase="staging",
+        bytes_received=900,
+        bytes_committed=100,  # would-be regression from member/staging domain
+    )
+    clamped = core.store.get_import_operation(isolated_id)
+    assert int(clamped["bytes_committed"]) == 800
+    with pytest.raises(InvalidStateError, match="cannot be negative"):
+        core.store.update_import_operation(isolated_id, bytes_committed=-1)
+    with pytest.raises(InvalidStateError, match="cannot be negative"):
+        core.store.update_import_operation(isolated_id, bytes_received=-1)
+
+
 def test_size_mismatch_refuses_without_partial_publication(tmp_path: Path) -> None:
     core, ops = _ops(tmp_path)
     operation = ops.start_operation(declared_byte_size=20, filename="bad.jsonl")
