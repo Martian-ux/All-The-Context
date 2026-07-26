@@ -82,8 +82,8 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     assert "--require-hashes" in install_script
     assert "--no-deps" in install_script
     assert "--no-build-isolation" in install_script
-    assert 'BUILD_BACKEND_PACKAGES = ("setuptools", "wheel")' in install_script
-    assert "missing hashed build backends" in install_script
+    assert 'BUILD_BACKEND_PACKAGES = ("packaging", "setuptools", "wheel")' in install_script
+    assert "missing hashed build-environment packages" in install_script
     assert "pip-audit>=" not in audit_script
     assert "pip install" not in audit_script
     assert "importlib.metadata.version" in audit_script

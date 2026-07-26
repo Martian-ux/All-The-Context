@@ -15,7 +15,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 # Reviewed local baseline; bootstrap and workflows must use this exact uv.
 PINNED_UV_VERSION = "0.11.32"
 UV_VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+)\b")
-BUILD_BACKEND_PACKAGES = ("setuptools", "wheel")
+# Complete locked dependency closure for the no-build-isolation environment.
+# wheel 0.47.0 requires packaging>=24, so packaging must be hash-pinned here too.
+BUILD_BACKEND_PACKAGES = ("packaging", "setuptools", "wheel")
 
 
 def _run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -97,10 +99,11 @@ def _hash_requirement_from_lock(lock: dict[str, object], name: str) -> str | Non
 
 
 def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> None:
-    """Install every declared build backend from uv.lock digests.
+    """Install the complete build environment from uv.lock digests.
 
-    Both setuptools and wheel must be present with hashes; partial success would
-    let --no-build-isolation borrow an ambient unreviewed wheel/setuptools.
+    Packaging, setuptools, and wheel must all be present with hashes. Partial
+    success would either make ``--require-hashes`` resolve an unpinned
+    dependency or let ``--no-build-isolation`` borrow ambient build tooling.
     """
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
@@ -114,11 +117,13 @@ def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> 
             lines.append(requirement)
     if missing:
         raise RuntimeError(
-            "uv.lock is missing hashed build backends required for locked builds: "
+            "uv.lock is missing hashed build-environment packages required for locked builds: "
             + ", ".join(missing)
         )
     if len(lines) != len(BUILD_BACKEND_PACKAGES):
-        raise RuntimeError("uv.lock did not yield exact hashed requirements for all build backends")
+        raise RuntimeError(
+            "uv.lock did not yield exact hashed requirements for the complete build environment"
+        )
     requirements = temporary / "build-backends.txt"
     requirements.write_text("\n".join(lines) + "\n", encoding="utf-8")
     _run(

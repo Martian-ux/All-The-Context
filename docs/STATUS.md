@@ -114,10 +114,12 @@ secret-like reject/delete reasons. Fifty-eight focused provider, desktop,
 pre-ledger, policy, and storage tests pass locally, with touched-source Ruff
 and mypy clean. Full-suite and exact-candidate validation remain pending.
 
-On 2026-07-26, a narrow exact-lock correction closed three release-install
-holes without broadening release engineering: the reviewed `uv.lock` now
-contains hashed `setuptools` and `wheel` and the locked installer fails closed
-unless both are installed before `--no-build-isolation`; `ensure_pinned_uv`
+On 2026-07-26, narrow exact-lock corrections closed release-install holes
+without broadening release engineering: the reviewed `uv.lock` contains hashed
+`packaging`, `setuptools`, and `wheel`, and the locked installer fails closed
+unless the complete dependency-closed build environment is installed before
+`--no-build-isolation`; this specifically prevents wheel's `packaging>=24`
+dependency from escaping pip's `--require-hashes` gate. `ensure_pinned_uv`
 no longer network-bootstraps unhashed `uv` and requires the already pinned
 `0.11.32` binary; and `dependency_audit.py` audits a frozen hashed export of
 `uv.lock` (dev and packaging) with lock-installed `pip-audit==2.10.1` and

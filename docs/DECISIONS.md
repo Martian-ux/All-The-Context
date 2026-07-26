@@ -1488,6 +1488,13 @@ Cryptographic provenance/Sigstore trust and live operator GitHub controls remain
 outside what source bytes alone can recompute; those stay honest human/hosted
 boundaries.
 
+The locked installer also treats the no-build-isolation environment as a
+dependency-closed unit: `packaging`, `setuptools`, and `wheel` must each come
+from exact `uv.lock` versions and hashes. Installing only the two declared
+backend packages is insufficient because modern wheel itself depends on
+`packaging`; allowing pip to resolve that edge under `--require-hashes` either
+fails CI or tempts an unreviewed ambient dependency.
+
 Publication and receipt aggregation recompute relationships from receipts and
 inventories. Required package/platform gates (including **BETA-P04**) pass only
 with `exact_downloaded_artifact` evidence whose every `artifact_digests` key is

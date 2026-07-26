@@ -23,14 +23,14 @@ def _load_script(name: str) -> ModuleType:
     return module
 
 
-def test_uv_lock_contains_hashed_setuptools_and_wheel() -> None:
+def test_uv_lock_contains_hashed_build_environment() -> None:
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {
         item["name"]: item
         for item in lock["package"]
         if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
-    for name in ("setuptools", "wheel"):
+    for name in ("packaging", "setuptools", "wheel"):
         package = packages[name]
         version = package["version"]
         assert isinstance(version, str) and version
@@ -47,16 +47,19 @@ def test_uv_lock_contains_hashed_setuptools_and_wheel() -> None:
         assert all(item.startswith("sha256:") for item in digests)
 
 
-def test_install_locked_build_backends_fail_closed_when_wheel_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("missing_name", ["packaging", "setuptools", "wheel"])
+def test_install_locked_build_backends_fail_closed_when_requirement_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_name: str,
 ) -> None:
     install = _load_script("install_locked_python.py")
     lock_text = (ROOT / "uv.lock").read_text(encoding="utf-8")
-    # Drop the wheel package stanza while leaving setuptools intact.
+    # Drop one required package stanza while leaving the rest intact.
     packages = lock_text.split("\n[[package]]\n")
     kept = [packages[0]]
     for stanza in packages[1:]:
-        if stanza.lstrip().startswith('name = "wheel"'):
+        if stanza.lstrip().startswith(f'name = "{missing_name}"'):
             continue
         kept.append(stanza)
     (tmp_path / "uv.lock").write_text("\n[[package]]\n".join(kept), encoding="utf-8")
@@ -69,7 +72,10 @@ def test_install_locked_build_backends_fail_closed_when_wheel_missing(
     monkeypatch.setattr(install, "_run", fake_run)
     with (
         tempfile.TemporaryDirectory() as temporary_name,
-        pytest.raises(RuntimeError, match=r"missing hashed build backends.*wheel"),
+        pytest.raises(
+            RuntimeError,
+            match=rf"missing hashed build-environment packages.*{missing_name}",
+        ),
     ):
         install._install_locked_build_backends(sys.executable, tmp_path, Path(temporary_name))
     assert calls == []
@@ -93,9 +99,10 @@ def test_install_locked_build_backends_requires_both_exact_hashed_requirements(
         temporary = Path(temporary_name)
         install._install_locked_build_backends(sys.executable, tmp_path, temporary)
         requirements = (temporary / "build-backends.txt").read_text(encoding="utf-8")
+    assert "packaging==" in requirements
     assert "setuptools==" in requirements
     assert "wheel==" in requirements
-    assert requirements.count("--hash=sha256:") >= 2
+    assert requirements.count("--hash=sha256:") >= 3
     assert len(calls) == 1
     assert calls[0][:5] == [
         sys.executable,
