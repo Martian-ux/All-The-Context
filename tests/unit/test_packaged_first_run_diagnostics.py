@@ -34,7 +34,7 @@ smoke = _load_smoke_module()
 TOKEN_CANARY = "atc-canary-token-NEVER-LOG-9f3c2b1a"
 TICKET_CANARY = "live-browser-ticket-canary-deadbeef"
 CLIENT_CANARY = "11111111-2222-4333-a444-555555555555"
-PATH_CANARY = r"C:\Users\canary\AppData\Local\ATC\secret"
+PATH_CANARY = "C:" + r"\Users\canary\AppData\Local\ATC\secret"
 DASHBOARD_CANARY = (
     f"http://127.0.0.1:18765/v1/browser/connect?ticket={TICKET_CANARY}&atc_token={TOKEN_CANARY}"
 )

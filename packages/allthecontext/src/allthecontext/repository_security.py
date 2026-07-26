@@ -7,6 +7,7 @@ stdout.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -136,6 +137,10 @@ SKIP_DIR_NAMES = frozenset(
 )
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_SCAN_BYTES = 16 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_ARCHIVE_EXPANDED_BYTES = 64 * 1024 * 1024
+MAX_HISTORY_BLOBS = 100_000
 MAX_FINDINGS = 200
 
 
@@ -285,6 +290,111 @@ def _is_unexpected_executable(path: Path, *, allow_packaged_binaries: bool) -> b
     return path.name.casefold() not in allowed_names
 
 
+def _scan_zip(
+    bundle: zipfile.ZipFile,
+    *,
+    relative_path: str,
+    findings: list[SecurityFinding],
+) -> None:
+    infos = bundle.infolist()
+    if len(infos) > MAX_ARCHIVE_MEMBERS:
+        raise SecurityScanError(f"ZIP member count exceeds scan ceiling: {relative_path}")
+    expanded = 0
+    for info in infos:
+        if info.is_dir():
+            continue
+        name = info.filename.replace("\\", "/")
+        if name.startswith("/") or ".." in Path(name).parts:
+            raise SecurityScanError(f"unsafe ZIP member path in artifact: {relative_path}")
+        if info.flag_bits & 0x1:
+            raise SecurityScanError(f"encrypted ZIP member cannot be scanned: {relative_path}")
+        if info.file_size > MAX_SCAN_BYTES:
+            raise SecurityScanError(f"ZIP member exceeds scan ceiling: {relative_path}")
+        expanded += info.file_size
+        if expanded > MAX_ARCHIVE_EXPANDED_BYTES:
+            raise SecurityScanError(f"ZIP expanded size exceeds scan ceiling: {relative_path}")
+        try:
+            payload = bundle.read(info)
+        except (RuntimeError, zipfile.BadZipFile, OSError) as exc:
+            raise SecurityScanError(f"could not scan ZIP member: {relative_path}") from exc
+        if len(payload) != info.file_size:
+            raise SecurityScanError(f"ZIP member size mismatch: {relative_path}")
+        member_path = f"{relative_path}:{name}"
+        _scan_bytes(
+            payload,
+            relative_path=member_path,
+            findings=findings,
+            allow_absolute_paths=False,
+        )
+
+
+def _scan_complete_payload(
+    value: bytes,
+    *,
+    relative_path: str,
+    findings: list[SecurityFinding],
+    allow_absolute_paths: bool,
+) -> None:
+    if len(value) > MAX_SCAN_BYTES:
+        raise SecurityScanError(f"payload exceeds scan ceiling: {relative_path}")
+    if value.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        try:
+            with zipfile.ZipFile(io.BytesIO(value), "r") as bundle:
+                _scan_zip(bundle, relative_path=relative_path, findings=findings)
+        except zipfile.BadZipFile as exc:
+            raise SecurityScanError(f"invalid ZIP payload: {relative_path}") from exc
+    _scan_bytes(
+        value,
+        relative_path=relative_path,
+        findings=findings,
+        allow_absolute_paths=allow_absolute_paths,
+    )
+
+
+def _git(
+    repository_root: Path,
+    *args: str,
+    text: bool = False,
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(repository_root), *args],
+        check=False,
+        capture_output=True,
+        text=text,
+    )
+
+
+def _resolve_commit(repository_root: Path, revision: str) -> str:
+    completed = _git(repository_root, "rev-parse", "--verify", f"{revision}^{{commit}}", text=True)
+    if completed.returncode != 0:
+        raise SecurityScanError(f"could not resolve source commit: {revision}")
+    assert isinstance(completed.stdout, str)
+    commit = completed.stdout.strip().lower()
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        raise SecurityScanError("resolved source commit is not a full SHA")
+    return commit
+
+
+def _read_git_blob(repository_root: Path, object_id: str, *, label: str) -> bytes:
+    size_result = _git(repository_root, "cat-file", "-s", object_id, text=True)
+    if size_result.returncode != 0:
+        raise SecurityScanError(f"could not size git blob: {label}")
+    assert isinstance(size_result.stdout, str)
+    try:
+        size = int(size_result.stdout.strip())
+    except ValueError as exc:
+        raise SecurityScanError(f"invalid git blob size: {label}") from exc
+    if size > MAX_SCAN_BYTES:
+        raise SecurityScanError(f"git blob exceeds scan ceiling: {label}")
+    content = _git(repository_root, "cat-file", "blob", object_id)
+    if content.returncode != 0:
+        raise SecurityScanError(f"could not read git blob: {label}")
+    assert isinstance(content.stdout, bytes)
+    if len(content.stdout) != size:
+        raise SecurityScanError(f"git blob size mismatch: {label}")
+    return content.stdout
+
+
 def scan_tree(
     root: Path,
     *,
@@ -389,6 +499,52 @@ def scan_tree(
     )
 
 
+def scan_committed_tree(
+    repository_root: Path,
+    *,
+    source_commit: str,
+    scope: str = "tree",
+    allow_absolute_paths: bool = False,
+) -> SecurityScanReport:
+    """Scan the committed blobs at the exact candidate SHA."""
+
+    repository_root = repository_root.resolve()
+    if not (repository_root / ".git").exists():
+        raise SecurityScanError("committed tree scan requires a git repository")
+    commit = _resolve_commit(repository_root, source_commit)
+    listed = _git(repository_root, "ls-tree", "-r", "-z", commit)
+    if listed.returncode != 0:
+        raise SecurityScanError("could not enumerate committed source tree")
+    assert isinstance(listed.stdout, bytes)
+    entries = [entry for entry in listed.stdout.split(b"\0") if entry]
+    findings: list[SecurityFinding] = []
+    examined = 0
+    for entry in entries:
+        metadata, separator, raw_path = entry.partition(b"\t")
+        fields = metadata.split()
+        if not separator or len(fields) != 3 or fields[1] != b"blob":
+            raise SecurityScanError("unexpected committed tree entry")
+        object_id = fields[2].decode("ascii", errors="strict")
+        relative = raw_path.decode("utf-8", errors="replace").replace("\\", "/")
+        value = _read_git_blob(repository_root, object_id, label=relative)
+        _scan_complete_payload(
+            value,
+            relative_path=relative,
+            findings=findings,
+            allow_absolute_paths=allow_absolute_paths,
+        )
+        examined += 1
+        if len(findings) >= MAX_FINDINGS:
+            break
+    return SecurityScanReport(
+        scope=scope,
+        source_commit=commit,
+        files_examined=examined,
+        findings=tuple(sorted(set(findings))),
+        truncated=len(findings) >= MAX_FINDINGS,
+    )
+
+
 def scan_artifact_directory(
     directory: Path,
     *,
@@ -410,57 +566,25 @@ def scan_artifact_directory(
         if suffix == ".zip":
             try:
                 with zipfile.ZipFile(path, "r") as bundle:
-                    for info in bundle.infolist():
-                        name = info.filename
-                        if ".." in Path(name).parts or name.startswith(("/", "\\")):
-                            findings.append(
-                                SecurityFinding(
-                                    finding_class="unexpected_executable",
-                                    path=f"{relative}:{name}",
-                                    location="zip-entry",
-                                    severity=SEVERITY["unexpected_executable"],
-                                )
-                            )
-                        folded = name.casefold()
-                        if any(folded.endswith(ext) for ext in (".pem", ".key", ".p12", ".pfx")):
-                            findings.append(
-                                SecurityFinding(
-                                    finding_class="private_key_marker",
-                                    path=f"{relative}:{name}",
-                                    location="zip-entry-name",
-                                    severity=SEVERITY["private_key_marker"],
-                                )
-                            )
-                        if not info.is_dir() and info.file_size <= 256 * 1024:
-                            try:
-                                payload = bundle.read(info)
-                            except (RuntimeError, zipfile.BadZipFile):
-                                continue
-                            _scan_bytes(
-                                payload,
-                                relative_path=f"{relative}:{name}",
-                                findings=findings,
-                                allow_absolute_paths=False,
-                            )
+                    _scan_zip(bundle, relative_path=relative, findings=findings)
             except zipfile.BadZipFile as exc:
                 raise SecurityScanError(f"artifact is not a valid ZIP: {relative}") from exc
             continue
+        size = path.stat().st_size
+        if size > MAX_SCAN_BYTES:
+            raise SecurityScanError(f"artifact exceeds scan ceiling: {relative}")
         if _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}:
             try:
-                value = (
-                    path.read_bytes()
-                    if path.stat().st_size <= MAX_FILE_BYTES
-                    else path.read_bytes()[: 256 * 1024]
-                )
+                value = path.read_bytes()
             except OSError as exc:
                 raise SecurityScanError(f"could not read artifact: {relative}") from exc
-            _scan_bytes(
+            _scan_complete_payload(
                 value,
                 relative_path=relative,
                 findings=findings,
                 allow_absolute_paths=False,
             )
-        elif contains_private_key_block(path.read_bytes()[: min(path.stat().st_size, 256 * 1024)]):
+        elif contains_private_key_block(path.read_bytes()):
             findings.append(
                 SecurityFinding(
                     finding_class="private_key_marker",
@@ -483,82 +607,55 @@ def scan_git_history(
     *,
     source_commit: str | None = None,
 ) -> SecurityScanReport:
-    """Search reachable history for forbidden markers without printing matches."""
+    """Scan every unique blob reachable from the exact source commit."""
 
     repository_root = repository_root.resolve()
     if not (repository_root / ".git").exists():
         raise SecurityScanError("git history scan requires a git repository")
-    # git -S expects a fixed string; use plain marker strings only.
-    string_markers = [
-        "-----BEGIN PRIVATE KEY-----",
-        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
-        "-----BEGIN OPENSSH PRIVATE KEY-----",
-        "-----BEGIN RSA PRIVATE KEY-----",
-        "ATC_CANARY_SECRET_",
-        "ATC_CANARY_TOKEN_",
-        "ATC_CANARY_PASSWORD_",
-        "ATC_CANARY_RAW_CONTEXT_",
-        "ATC_CANARY_PERSONAL_MEMORY_",
-    ]
+    commit = _resolve_commit(repository_root, source_commit or "HEAD")
+    listed = _git(repository_root, "rev-list", "--objects", commit)
+    if listed.returncode != 0:
+        raise SecurityScanError("could not enumerate reachable git history")
+    assert isinstance(listed.stdout, bytes)
+    object_lines = listed.stdout.splitlines()
+    if len(object_lines) > MAX_HISTORY_BLOBS * 4:
+        raise SecurityScanError("reachable git object count exceeds scan ceiling")
     findings: list[SecurityFinding] = []
     examined = 0
-    for marker in string_markers:
+    seen: set[str] = set()
+    for line in object_lines:
         if len(findings) >= MAX_FINDINGS:
             break
-        completed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository_root),
-                "log",
-                "--all",
-                "--full-history",
-                "-S",
-                marker,
-                "--name-only",
-                "--pretty=format:%H",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
+        parts = line.split(b" ", 1)
+        object_id = parts[0].decode("ascii", errors="strict")
+        if object_id in seen:
+            continue
+        object_type = _git(repository_root, "cat-file", "-t", object_id, text=True)
+        if object_type.returncode != 0:
+            raise SecurityScanError("could not inspect reachable git object")
+        assert isinstance(object_type.stdout, str)
+        if object_type.stdout.strip() != "blob":
+            continue
+        seen.add(object_id)
+        if len(seen) > MAX_HISTORY_BLOBS:
+            raise SecurityScanError("reachable git blob count exceeds scan ceiling")
+        path = (
+            parts[1].decode("utf-8", errors="replace").replace("\\", "/")
+            if len(parts) == 2
+            else f"blob:{object_id[:12]}"
         )
-        if completed.returncode not in {0, 1}:
-            raise SecurityScanError(
-                f"git history scan failed for marker class (exit {completed.returncode})"
-            )
+        value = _read_git_blob(repository_root, object_id, label=f"history:{object_id[:12]}")
+        _scan_complete_payload(
+            value,
+            relative_path=path,
+            findings=findings,
+            allow_absolute_paths=True,
+        )
         examined += 1
-        current_commit: str | None = None
-        for line in completed.stdout.splitlines():
-            value = line.strip()
-            if not value:
-                continue
-            if re.fullmatch(r"[0-9a-f]{40}", value):
-                current_commit = value
-                continue
-            if current_commit is None:
-                continue
-            finding_class: FindingClass
-            if "PRIVATE KEY" in marker or "OPENSSH PRIVATE" in marker:
-                finding_class = "private_key_marker"
-            elif "RAW_CONTEXT" in marker or "PERSONAL_MEMORY" in marker:
-                finding_class = "raw_context_canary"
-            else:
-                finding_class = "credential_canary"
-            findings.append(
-                SecurityFinding(
-                    finding_class=finding_class,
-                    path=value.replace("\\", "/"),
-                    location=f"history:{current_commit[:12]}",
-                    severity=SEVERITY[finding_class],
-                )
-            )
-            if len(findings) >= MAX_FINDINGS:
-                break
-    # Deduplicate while preserving sort order via set of tuples.
     unique = tuple(sorted(set(findings)))
     return SecurityScanReport(
         scope="history",
-        source_commit=source_commit,
+        source_commit=commit,
         files_examined=examined,
         findings=unique,
         truncated=len(unique) >= MAX_FINDINGS,

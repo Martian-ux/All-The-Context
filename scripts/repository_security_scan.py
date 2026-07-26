@@ -12,8 +12,8 @@ from allthecontext.repository_security import (
     SecurityScanError,
     require_clean,
     scan_artifact_directory,
+    scan_committed_tree,
     scan_git_history,
-    scan_tree,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +54,7 @@ def main() -> int:
         source_commit = arguments.source_commit or _source_commit(root)
         reports = []
         if arguments.scope in {"tree", "all"}:
-            report = scan_tree(
+            report = scan_committed_tree(
                 root,
                 scope="tree",
                 source_commit=source_commit,
@@ -70,7 +70,7 @@ def main() -> int:
             require_clean(report)
             reports.append(report)
             print(
-                f"history scan ok markers={report.files_examined} findings=0 "
+                f"history scan ok blobs={report.files_examined} findings=0 "
                 f"commit={source_commit[:12]}"
             )
         if arguments.scope in {"artifacts", "all"} and arguments.artifact_dir is not None:

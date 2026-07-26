@@ -804,3 +804,13 @@ state is already noncurrent and creates no user queue.
   community beta.
 - The live SQLite vault is not application-encrypted at rest; portable exports
   are passphrase-encrypted.
+
+## Repository security convergence
+
+- Exact-candidate tree scans now read committed blobs at the bound source SHA,
+  and history scans inspect each unique blob reachable from that SHA rather
+  than unrelated refs or marker-only diffs.
+- ZIP members and complete private-key blocks are scanned through explicit
+  member, expanded-size, object-count, and per-payload ceilings. Oversized or
+  unreadable inputs fail closed. Current `dist/` artifacts were unavailable in
+  this worktree, so exact built-artifact scanning remains pending.

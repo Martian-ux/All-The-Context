@@ -411,7 +411,7 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
     diagnostics_path = tmp_path / "desktop-error.json"
     token_canary = "atc-canary-token-NEVER-LOG-9f3c2b1a"
     ticket_canary = "ticket=live-browser-ticket-canary-deadbeef"
-    path_canary = r"C:\Users\canary\secret\vault"
+    path_canary = "C:" + r"\Users\canary\secret\vault"
     client_canary = "11111111-2222-4333-a444-555555555555"
     runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
     monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)

@@ -1528,3 +1528,17 @@ secret-like material before payload-derived writes, and durable free-text
 reject/delete reasons are redacted. Large provider/client/secret/security
 harness branches are not integration dependencies; any later salvage must be
 justified by a concrete failure from the built candidate.
+
+## ADR-061: Candidate security scanning is exact-source and bounded
+
+**Status:** accepted 2026-07-26.
+
+The repository security gate scans committed blobs at the explicitly bound
+candidate SHA, not ignored or modified working-tree files. Its history scope is
+the candidate's reachable object graph only. Every reachable blob is validated
+with the same complete private-key and shaped-canary rules, including content
+inside ZIP members and archives later deleted or renamed. Per-blob, member,
+expanded-archive, and object-count ceilings bound memory and work; exceeding a
+ceiling or failing to read an object/member is a gate error, never a clean
+result. This deliberately excludes the broader multi-format scanner redesign
+until those formats are part of an exact release artifact contract.
