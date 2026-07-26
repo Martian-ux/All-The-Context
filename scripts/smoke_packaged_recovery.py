@@ -1,4 +1,9 @@
-"""Smoke packaged recovery/admin modes without inventing candidate receipts."""
+"""Smoke packaged recovery/admin modes without inventing candidate receipts.
+
+Prefer the console recovery helper on Windows/macOS so operator-reachable
+stdout is exercised. Fall back to the Linux console desktop binary or the
+source desktop module when frozen artifacts are absent.
+"""
 
 from __future__ import annotations
 
@@ -14,34 +19,43 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist" / "desktop"
 
 
-def artifact_executable(system: str) -> Path:
+def recovery_command(system: str) -> tuple[list[str], str]:
+    """Return (command_prefix, mode) for the operator-reachable recovery surface."""
+
     if system == "Windows":
-        return DIST / "AllTheContextSetup.exe"
-    if system == "Darwin":
-        return DIST / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
-    return DIST / "all-the-context"
-
-
-def main() -> int:
-    system = platform.system()
-    # Prefer frozen artifact; fall back to source desktop entry for contributor smoke.
-    executable = artifact_executable(system)
-    if executable.is_file():
-        command_prefix: list[str] = [str(executable)]
-        mode = "frozen-artifact"
+        candidates = [
+            DIST / "AllTheContextRecovery.exe",
+            DIST / "AllTheContextSetup.exe",  # windowed; not preferred
+        ]
+        helper = next((path for path in candidates if path.is_file()), None)
+        if helper is not None:
+            mode = (
+                "frozen-console-recovery-helper"
+                if helper.name == "AllTheContextRecovery.exe"
+                else "frozen-windowed-desktop-fallback"
+            )
+            return [str(helper)], mode
+    elif system == "Darwin":
+        console = DIST / "AllTheContext.app" / "Contents" / "MacOS" / "all-the-context-recovery"
+        windowed = DIST / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
+        # Also accept recovery helper staged next to the app in recovery-helper-dist.
+        staged = ROOT / "build" / "desktop" / "recovery-helper-dist" / "all-the-context-recovery"
+        for path, mode in (
+            (console, "frozen-console-recovery-helper"),
+            (staged, "frozen-staged-console-recovery-helper"),
+            (windowed, "frozen-windowed-desktop-fallback"),
+        ):
+            if path.is_file():
+                return [str(path)], mode
     else:
-        command_prefix = [sys.executable, "-m", "allthecontext.desktop"]
-        mode = "source-desktop-mode"
-        print(
-            json.dumps(
-                {
-                    "warning": "frozen artifact missing; exercising source desktop recovery modes",
-                    "expected_artifact": str(executable),
-                }
-            ),
-            file=sys.stderr,
-        )
+        linux = DIST / "all-the-context"
+        if linux.is_file():
+            return [str(linux)], "frozen-linux-console-desktop"
 
+    return [sys.executable, "-m", "allthecontext.desktop"], "source-desktop-mode"
+
+
+def _require_help_output(command_prefix: list[str], mode: str) -> None:
     help_proc = subprocess.run(
         [*command_prefix, "--recovery-help"],
         capture_output=True,
@@ -50,13 +64,51 @@ def main() -> int:
         check=False,
         cwd=str(ROOT),
     )
-    if help_proc.returncode != 0 or "recovery" not in help_proc.stdout.casefold():
-        raise SystemExit(f"recovery help failed: {help_proc.returncode} {help_proc.stderr}")
+    combined = f"{help_proc.stdout}\n{help_proc.stderr}"
+    if help_proc.returncode != 0 or "recovery" not in combined.casefold():
+        raise SystemExit(
+            f"recovery help failed ({mode}): rc={help_proc.returncode} "
+            f"stdout={help_proc.stdout!r} stderr={help_proc.stderr!r}"
+        )
+    if not help_proc.stdout.strip():
+        # Windowed PE may still inherit captured pipes in CI; require real stdout text
+        # so operator-reachable console helpers cannot silent-pass.
+        raise SystemExit(
+            f"recovery help produced empty stdout ({mode}); console recovery helper required"
+        )
+
+
+def main() -> int:
+    system = platform.system()
+    command_prefix, mode = recovery_command(system)
+    if mode == "source-desktop-mode":
+        print(
+            json.dumps(
+                {
+                    "warning": (
+                        "frozen recovery surface missing; exercising source desktop recovery modes"
+                    ),
+                    "mode": mode,
+                }
+            ),
+            file=sys.stderr,
+        )
+    if mode.endswith("windowed-desktop-fallback"):
+        print(
+            json.dumps(
+                {
+                    "warning": "console recovery helper missing; using windowed desktop fallback",
+                    "mode": mode,
+                }
+            ),
+            file=sys.stderr,
+        )
+
+    _require_help_output(command_prefix, mode)
 
     with tempfile.TemporaryDirectory(prefix="atc-recovery-smoke-") as temporary:
         data_dir = Path(temporary) / "data"
         data_dir.mkdir()
-        # Seed via Python store only for contributor path; frozen path still gets doctor.
         from allthecontext.models import CandidateInput
         from allthecontext.storage import CoreStore
 
@@ -106,7 +158,7 @@ def main() -> int:
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,
             check=False,
             cwd=str(ROOT),
             env=env,
@@ -115,6 +167,9 @@ def main() -> int:
             raise SystemExit(
                 f"recovery restore failed: {restore_proc.returncode} {restore_proc.stderr}"
             )
+        restore_payload = json.loads(restore_proc.stdout)
+        if restore_payload.get("integrity") != "verified":
+            raise SystemExit(f"restore integrity not verified: {restore_payload}")
         purge_proc = subprocess.run(
             [
                 *command_prefix,
@@ -144,7 +199,9 @@ def main() -> int:
                 "mode": mode,
                 "help": "passed",
                 "export_restore_purge": "passed",
+                "integrity": "verified",
                 "python_checkout_required": False,
+                "console_helper_preferred": not mode.endswith("windowed-desktop-fallback"),
             },
             indent=2,
         )

@@ -14,6 +14,16 @@ def mcp_helper_name() -> str:
     return "AllTheContextMCP.exe" if sys.platform == "win32" else "all-the-context-mcp"
 
 
+def recovery_helper_name() -> str:
+    """Console recovery helper for windowed desktop OSes; Linux reuses the main binary."""
+
+    if sys.platform == "win32":
+        return "AllTheContextRecovery.exe"
+    if sys.platform == "darwin":
+        return "all-the-context-recovery"
+    return Path(sys.executable).name if getattr(sys, "frozen", False) else "all-the-context"
+
+
 def update_helper_name() -> str:
     return "AllTheContextUpdater.exe" if sys.platform == "win32" else "all-the-context-updater"
 
@@ -53,6 +63,36 @@ def _packaged_mcp_helper(executable: Path) -> Path | None:
     return data_helper if data_helper.is_file() else None
 
 
+def _packaged_recovery_helper(executable: Path) -> Path | None:
+    """Locate the operator-reachable console recovery surface."""
+
+    configured = os.environ.get("ATC_RECOVERY_EXECUTABLE")
+    if configured:
+        candidate = Path(configured).expanduser().resolve()
+        return candidate if candidate.is_file() else None
+
+    # Linux ships a console-capable main binary; recovery flags attach to it.
+    if sys.platform.startswith("linux"):
+        return executable if getattr(sys, "frozen", False) else None
+
+    sibling = executable.with_name(recovery_helper_name())
+    if sibling.is_file():
+        return sibling
+
+    bundle_root_value = getattr(sys, "_MEIPASS", None)
+    if bundle_root_value:
+        candidate = Path(bundle_root_value).resolve() / recovery_helper_name()
+        if candidate.is_file():
+            return candidate
+
+    data_helper = (
+        Path(user_data_path("AllTheContext", "AllTheContext", roaming=False))
+        / "bin"
+        / recovery_helper_name()
+    )
+    return data_helper if data_helper.is_file() else None
+
+
 def _packaged_update_helper(executable: Path) -> Path | None:
     configured = os.environ.get("ATC_UPDATE_HELPER_EXECUTABLE")
     if configured:
@@ -75,6 +115,7 @@ class RuntimeCommand:
     base_args: tuple[str, ...] = ()
     mcp_executable: Path | None = None
     update_executable: Path | None = None
+    recovery_executable: Path | None = None
 
     @classmethod
     def current(cls) -> RuntimeCommand:
@@ -84,6 +125,7 @@ class RuntimeCommand:
                 executable,
                 mcp_executable=_packaged_mcp_helper(executable),
                 update_executable=_packaged_update_helper(executable),
+                recovery_executable=_packaged_recovery_helper(executable),
             )
         return cls(executable, ("-m", "allthecontext.desktop"))
 
@@ -94,6 +136,13 @@ class RuntimeCommand:
         if self.mcp_executable is not None:
             return (str(self.mcp_executable),)
         return self.mode("--mcp-stdio")
+
+    def recovery(self, *arguments: str) -> tuple[str, ...]:
+        """Command prefix for operator-facing recovery/admin modes."""
+
+        if self.recovery_executable is not None:
+            return (str(self.recovery_executable), *arguments)
+        return (*self.mode(arguments[0] if arguments else "--recovery-help"), *arguments[1:])
 
     def core(self) -> tuple[str, ...]:
         return self.mode("--core")

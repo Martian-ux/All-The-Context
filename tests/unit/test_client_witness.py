@@ -120,6 +120,49 @@ def test_unattested_inference_remains_tentative_even_with_witness_grant(
     assert observation.disposition == ObservationDisposition.TENTATIVE
 
 
+def test_codex_style_witness_direct_statement_applies_while_omission_stays_tentative(
+    tmp_path: Path,
+) -> None:
+    """Configured Codex/Claude-style witness: explicit true applies; default false does not."""
+
+    store = _store(tmp_path)
+    principal, _token = store.create_client(
+        ClientCreate(
+            name="Codex",
+            scopes=[
+                "context:ingest",
+                "context:propose",
+                "context:read",
+                "context:status",
+                WITNESS_EXPLICIT_USER_STATEMENT,
+            ],
+        )
+    )
+    direct = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Prefer fiction-mode concise answers in this vault.",
+            explicit_user_statement=True,
+        ),
+        client=principal,
+    )
+    omitted = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Maybe prefers fiction-mode verbose answers (inference only).",
+            # Safer MCP default: omit explicit claim → treated as non-witness statement.
+            explicit_user_statement=False,
+            idempotency_key="inference-omission",
+        ),
+        client=principal,
+    )
+    assert direct.disposition == ObservationDisposition.APPLIED
+    assert direct.record_id is not None
+    assert store.get_record(direct.record_id).content == direct.content
+    assert omitted.disposition == ObservationDisposition.TENTATIVE
+    assert omitted.record_id is None
+
+
 def test_admin_principal_may_attest_without_separate_witness_scope(tmp_path: Path) -> None:
     store = _store(tmp_path)
     principal, _token = store.create_client(

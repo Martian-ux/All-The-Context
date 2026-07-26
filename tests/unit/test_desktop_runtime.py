@@ -48,11 +48,13 @@ def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
 def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkeypatch) -> None:
     source_app = tmp_path / "download" / "AllTheContextSetup.exe"
     source_helper = tmp_path / "bundle" / "AllTheContextMCP.exe"
+    source_recovery = tmp_path / "bundle" / "AllTheContextRecovery.exe"
     source_updater = tmp_path / "bundle" / "AllTheContextUpdater.exe"
     source_app.parent.mkdir()
     source_helper.parent.mkdir()
     source_app.write_bytes(b"desktop")
     source_helper.write_bytes(b"mcp")
+    source_recovery.write_bytes(b"recovery")
     source_updater.write_bytes(b"updater")
     install_dir = tmp_path / "installed"
     install_dir.mkdir()
@@ -90,6 +92,7 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
             source_app,
             mcp_executable=source_helper,
             update_executable=source_updater,
+            recovery_executable=source_recovery,
         ),
         relaunch_args=(),
     )
@@ -99,6 +102,8 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert installed.executable.read_bytes() == b"desktop"
     assert installed.mcp_executable == install_dir / "AllTheContextMCP.exe"
     assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert installed.recovery_executable == install_dir / "AllTheContextRecovery.exe"
+    assert installed.recovery_executable.read_bytes() == b"recovery"
     assert installed.update_executable == install_dir / "AllTheContextUpdater.exe"
     assert installed.update_executable.read_bytes() == b"updater"
     assert launched == [(str(installed.executable),)]
@@ -247,10 +252,12 @@ def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monke
     source = tmp_path / "download" / "AllTheContext.app"
     source_app = source / "Contents" / "MacOS" / "AllTheContext"
     source_helper = source / "Contents" / "Frameworks" / "all-the-context-mcp"
+    source_recovery = source / "Contents" / "Frameworks" / "all-the-context-recovery"
     source_app.parent.mkdir(parents=True)
     source_helper.parent.mkdir(parents=True)
     source_app.write_bytes(b"desktop")
     source_helper.write_bytes(b"mcp")
+    source_recovery.write_bytes(b"recovery")
     install_root = tmp_path / "Applications"
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_root))
     monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Darwin")
@@ -267,7 +274,11 @@ def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monke
     monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", fake_popen)
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(source_app, mcp_executable=source_helper),
+        RuntimeCommand(
+            source_app,
+            mcp_executable=source_helper,
+            recovery_executable=source_recovery,
+        ),
         relaunch_args=("--setup",),
     )
 
@@ -278,6 +289,10 @@ def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monke
         expected_bundle / "Contents" / "Frameworks" / "all-the-context-mcp"
     )
     assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert installed.recovery_executable == (
+        expected_bundle / "Contents" / "Frameworks" / "all-the-context-recovery"
+    )
+    assert installed.recovery_executable.read_bytes() == b"recovery"
     assert relaunched is True
     assert launched[0][0] == (str(installed.executable), "--setup")
     assert launched[0][1]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"  # type: ignore[index]
@@ -289,10 +304,12 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     install_dir = tmp_path / "installed"
     app = install_dir / "AllTheContext.exe"
     helper = install_dir / "AllTheContextMCP.exe"
+    recovery = install_dir / "AllTheContextRecovery.exe"
     updater = install_dir / "AllTheContextUpdater.exe"
     install_dir.mkdir()
     app.write_bytes(b"desktop")
     helper.write_bytes(b"mcp")
+    recovery.write_bytes(b"recovery")
     updater.write_bytes(b"updater")
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
@@ -313,7 +330,12 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     )
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(app, mcp_executable=helper, update_executable=updater),
+        RuntimeCommand(
+            app,
+            mcp_executable=helper,
+            update_executable=updater,
+            recovery_executable=recovery,
+        ),
         relaunch_args=("--setup",),
     )
 
@@ -321,6 +343,7 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
         app,
         mcp_executable=helper,
         update_executable=updater,
+        recovery_executable=recovery,
     )
     assert relaunched is False
     assert not stopped

@@ -2130,6 +2130,8 @@ class CoreStore:
         connection: sqlite3.Connection,
         observation: sqlite3.Row,
         principal: ClientPrincipal | None = None,
+        *,
+        origin: ObservationOrigin | None = None,
     ) -> sqlite3.Row | None:
         supersedes = cast(str | None, observation["supersedes"])
         if supersedes is not None:
@@ -2157,10 +2159,12 @@ class CoreStore:
                 (record for record in rows if self._record_is_allowed(record, principal)),
                 None,
             )
-        # Beta minimum conflict safety (B-102): unkeyed historical preferences,
-        # goals, projects, decisions, workflows, and constraints share one
-        # current lineage per kind so contradictory imports cannot all stay
-        # confident current truth. Provenance remains on version history.
+        # Beta minimum (B-102): unkeyed lineage collapse applies only to
+        # archive-import material so contradictory imported history cannot all
+        # stay current. Direct configured-client / local-admin unkeyed goals,
+        # projects, and workflows remain independent current records.
+        if origin != ObservationOrigin.ARCHIVE_IMPORT:
+            return None
         kind = str(observation["kind"]).casefold()
         if kind not in UNKEYED_CONFLICT_KINDS:
             return None
@@ -2170,8 +2174,9 @@ class CoreStore:
                 "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
                 "AND entity_key IS NULL AND attribute_key IS NULL "
                 "AND approval_status='approved' AND deleted_at IS NULL "
+                "AND observation_origin=? "
                 "ORDER BY observed_at DESC,updated_at DESC,id",
-                (observation["vault_id"], kind),
+                (observation["vault_id"], kind, ObservationOrigin.ARCHIVE_IMPORT.value),
             ).fetchall(),
         )
         return next(
@@ -2617,7 +2622,7 @@ class CoreStore:
             principal=principal,
         )
         if str(observation["kind"]).casefold() == "context_forget":
-            target = self._target_record_tx(connection, observation, principal)
+            target = self._target_record_tx(connection, observation, principal, origin=origin)
             if decision.disposition != ObservationDisposition.APPLIED or target is None:
                 self._set_observation_decision_tx(
                     connection,
@@ -2708,7 +2713,9 @@ class CoreStore:
                     )
                     self._audit(connection, actor, "observation_tentative", [])
                 else:
-                    target = self._target_record_tx(connection, observation, principal)
+                    target = self._target_record_tx(
+                        connection, observation, principal, origin=origin
+                    )
                     if target is not None and not self._observation_wins(observation, target):
                         reason = (
                             "older or lower-authority observation did not replace current context"

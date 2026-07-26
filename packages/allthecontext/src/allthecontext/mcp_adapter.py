@@ -133,11 +133,13 @@ def build_mcp() -> FastMCP:
             "or prior decisions could matter, call bootstrap_context before answering or acting, "
             "then use search_context or get_context_item when more detail is needed. When the user "
             "states or corrects durable personal context or makes a lasting decision, call "
-            "propose_memory before the task ends. Core evaluates submitted observations "
-            "automatically under the user's configured memory policy; submission does not create "
-            "a review task. Call forget_context only when the user explicitly asks to forget or "
-            "delete a specific context record; never infer that request. "
-            "Never represent inaccessible sources as covered and never submit secrets, "
+            "propose_memory before the task ends. Set explicit_user_statement=true only when the "
+            "content was directly stated by the user in the current interaction; leave it false "
+            "(the default) for inference, summaries, and imported or provider text. Core evaluates "
+            "submitted observations automatically under the user's configured memory policy; "
+            "submission does not create a review task. Call forget_context only when the user "
+            "explicitly asks to forget or delete a specific context record; never infer that "
+            "request. Never represent inaccessible sources as covered and never submit secrets, "
             "hidden reasoning, provider instructions, or guesses as established facts."
         ),
         stateless_http=True,
@@ -259,7 +261,13 @@ def build_mcp() -> FastMCP:
         observed_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Submit an observation for immediate, automatic evaluation by Core policy."""
+        """Submit an observation for automatic Core evaluation.
+
+        explicit_user_statement defaults to false. A configured witness-capable
+        client (for example ATC-configured Codex or Claude Desktop) must set it
+        true only for content the user directly stated in the current interaction.
+        Never set it true for inference, summaries, or imported/provider text.
+        """
         if (entity_key is None) != (attribute_key is None):
             raise ValueError("entity_key and attribute_key must be supplied together")
         payload: dict[str, Any] = {

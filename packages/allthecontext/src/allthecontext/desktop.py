@@ -60,6 +60,7 @@ from .user_startup import remove_user_startup
 
 WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
+WINDOWS_RECOVERY_NAME = "AllTheContextRecovery.exe"
 WINDOWS_UPDATE_HELPER_NAME = "AllTheContextUpdater.exe"
 MACOS_APP_NAME = "All The Context.app"
 
@@ -370,16 +371,22 @@ def _prepare_macos_runtime(
         return runtime, False
     if runtime.mcp_executable is None or not runtime.mcp_executable.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the app again.")
+    if runtime.recovery_executable is None or not runtime.recovery_executable.is_file():
+        raise RuntimeError("The packaged recovery helper is missing. Download the app again.")
     try:
         executable_relative = runtime.executable.resolve(strict=True).relative_to(source_bundle)
         helper_relative = runtime.mcp_executable.resolve(strict=True).relative_to(source_bundle)
+        recovery_relative = runtime.recovery_executable.resolve(strict=True).relative_to(
+            source_bundle
+        )
     except ValueError as exc:
         raise RuntimeError("The packaged macOS helper is outside its application bundle") from exc
 
     target_executable = target_bundle / executable_relative
     target_helper = target_bundle / helper_relative
+    target_recovery = target_bundle / recovery_relative
     current = False
-    if target_executable.is_file() and target_helper.is_file():
+    if target_executable.is_file() and target_helper.is_file() and target_recovery.is_file():
         try:
             current = macos_bundle_fingerprint(source_bundle) == macos_bundle_fingerprint(
                 target_bundle
@@ -390,9 +397,17 @@ def _prepare_macos_runtime(
         if target_executable.is_file():
             _stop_installed_core_for_upgrade()
         _copy_macos_bundle_atomically(source_bundle, target_bundle, trusted_base=trusted_base)
-    if not target_executable.is_file() or not target_helper.is_file():
+    if (
+        not target_executable.is_file()
+        or not target_helper.is_file()
+        or not target_recovery.is_file()
+    ):
         raise RuntimeError("The per-user macOS application copy is incomplete")
-    installed = RuntimeCommand(target_executable, mcp_executable=target_helper)
+    installed = RuntimeCommand(
+        target_executable,
+        mcp_executable=target_helper,
+        recovery_executable=target_recovery,
+    )
     if relaunch_args is not None:
         _relaunch_installed_runtime(installed, relaunch_args)
         return installed, True
@@ -416,6 +431,9 @@ def prepare_installed_runtime(
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
+    recovery_source = runtime.recovery_executable
+    if recovery_source is None or not recovery_source.is_file():
+        raise RuntimeError("The packaged recovery helper is missing. Download the installer again.")
     update_source = runtime.update_executable
     if update_source is None or not update_source.is_file():
         raise RuntimeError("The packaged update helper is missing. Download the installer again.")
@@ -423,11 +441,13 @@ def prepare_installed_runtime(
     install_dir = windows_install_directory()
     app_target = install_dir / WINDOWS_APP_NAME
     helper_target = install_dir / WINDOWS_MCP_NAME
+    recovery_target = install_dir / WINDOWS_RECOVERY_NAME
     update_target = install_dir / WINDOWS_UPDATE_HELPER_NAME
     app_needs_update = not _same_file(runtime.executable, app_target)
     if runtime.executable != app_target and app_target.is_file() and app_needs_update:
         _stop_installed_core_for_upgrade()
     installed_helper = _install_mcp_helper(helper_source, helper_target)
+    _copy_atomically(recovery_source, recovery_target)
     _copy_atomically(update_source, update_target)
     _copy_atomically(runtime.executable, app_target)
     if runtime.executable != app_target:
@@ -436,6 +456,7 @@ def prepare_installed_runtime(
         app_target,
         mcp_executable=installed_helper,
         update_executable=update_target,
+        recovery_executable=recovery_target,
     )
 
     if runtime.executable != app_target and relaunch_args is not None:
@@ -471,6 +492,16 @@ def diagnostics() -> dict[str, Any]:
         "mcp_helper_bundled": runtime.mcp_executable is not None,
         "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
         "recovery_admin_mode": True,
+        "recovery_helper_bundled": (
+            runtime.recovery_executable is not None
+            if platform.system() in {"Windows", "Darwin"}
+            else True
+        ),
+        "recovery_console_helper": (
+            runtime.recovery_executable.name
+            if runtime.recovery_executable is not None
+            else ("all-the-context" if platform.system() == "Linux" else None)
+        ),
         "recovery_python_checkout_required": False,
         "core_data_directory": str(CoreConfig.default().data_dir),
     }

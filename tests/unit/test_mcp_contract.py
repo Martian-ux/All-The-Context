@@ -63,6 +63,8 @@ def test_server_instructions_make_context_use_automatic() -> None:
     assert instructions is not None
     assert "call bootstrap_context before answering or acting" in instructions
     assert "call propose_memory before the task ends" in instructions
+    assert "explicit_user_statement=true only when" in instructions
+    assert "leave it false" in instructions
     assert "evaluates submitted observations automatically" in instructions
     assert "does not create a review task" in instructions
     assert "Call forget_context only when the user explicitly asks" in instructions
@@ -72,6 +74,7 @@ def test_server_instructions_make_context_use_automatic() -> None:
 def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
     tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
     schema = tools["propose_memory"].parameters
+    description = (tools["propose_memory"].description or "").casefold()
 
     assert set(schema["required"]) == {"kind", "content", "scope", "confidence"}
     assert {
@@ -85,6 +88,9 @@ def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
     } <= schema["properties"].keys()
     assert schema["properties"]["explicit_user_statement"]["default"] is False
     assert schema.get("additionalProperties") is False
+    assert "defaults to false" in description
+    assert "directly stated" in description
+    assert "inference" in description
 
 
 def test_local_propose_memory_forwards_automatic_policy_fields(monkeypatch) -> None:

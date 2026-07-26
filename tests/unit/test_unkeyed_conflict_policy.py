@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from allthecontext.models import CandidateInput, ObservationDisposition
+from allthecontext.models import (
+    CandidateInput,
+    CoverageReport,
+    IngestionMode,
+    ObservationDisposition,
+)
 from allthecontext.storage import CoreStore
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "b102_chronological_conflicts.json"
@@ -17,6 +22,45 @@ def _store(tmp_path: Path) -> CoreStore:
     return store
 
 
+def _import_archive_statements(
+    store: CoreStore,
+    *,
+    kind: str,
+    statements: list[dict[str, object]],
+    scenario_id: str,
+) -> list:
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["fiction-archive"],
+        unavailable_sources=[],
+        idempotency_key=f"begin-{scenario_id}",
+    )
+    session_id = str(session["session_id"])
+    submitted_ids: list[str] = []
+    for index, statement in enumerate(statements):
+        batch = store.submit_batch(
+            session_id,
+            f"batch-{scenario_id}-{index}",
+            [
+                CandidateInput(
+                    kind=kind,
+                    content=str(statement["content"]),
+                    observed_at=str(statement["observed_at"]),
+                    explicit_user_statement=True,
+                    source_type="provider_archive",
+                    source_service="fiction-provider",
+                    idempotency_key=f"{scenario_id}:{statement['observed_at']}",
+                )
+            ],
+        )
+        submitted_ids.extend(str(item) for item in batch["candidate_ids"])
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fiction-archive"], complete=True),
+    )
+    return [store.get_candidate(item_id) for item_id in submitted_ids]
+
+
 def test_chronological_unkeyed_conflicts_keep_one_current_and_history(
     tmp_path: Path,
 ) -> None:
@@ -25,23 +69,13 @@ def test_chronological_unkeyed_conflicts_keep_one_current_and_history(
 
     for scenario in payload["scenarios"]:
         kind = scenario["kind"]
-        observations = []
-        for statement in scenario["statements"]:
-            observations.append(
-                store.add_candidate(
-                    CandidateInput(
-                        kind=kind,
-                        content=statement["content"],
-                        observed_at=statement["observed_at"],
-                        explicit_user_statement=True,
-                        source_type="provider_archive",
-                        source_service="fiction-provider",
-                        idempotency_key=f"{scenario['id']}:{statement['observed_at']}",
-                    )
-                )
-            )
+        observations = _import_archive_statements(
+            store,
+            kind=kind,
+            statements=scenario["statements"],
+            scenario_id=scenario["id"],
+        )
 
-        # Resolve the single current record for this kind (status / list active).
         status = store.status()
         assert status["counts"]["active_records"] >= 1
         current_by_kind: dict[str, str] = {}
@@ -61,7 +95,6 @@ def test_chronological_unkeyed_conflicts_keep_one_current_and_history(
         )
         assert current_by_kind.get(kind) == expected_current
 
-        # Provenance: history preserves the superseded older statement.
         winner = next(
             item
             for item in reversed(observations)
@@ -75,7 +108,6 @@ def test_chronological_unkeyed_conflicts_keep_one_current_and_history(
             expected_current in history_contents
             or expected_current == store.get_record(winner.record_id).content
         )
-        # Older contradictory text is retained as history or as an ignored observation link.
         older = observations[0]
         assert older.disposition in {
             ObservationDisposition.APPLIED,
@@ -83,8 +115,73 @@ def test_chronological_unkeyed_conflicts_keep_one_current_and_history(
             ObservationDisposition.REINFORCED,
         }
         if older.disposition == ObservationDisposition.APPLIED and older.record_id:
-            # Same lineage updated in place: version history should mention prior content.
             assert older_content in history_contents or len(history) >= 2
+
+
+def test_two_unrelated_direct_unkeyed_goals_coexist(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    first = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction project Alpha shipping.",
+            explicit_user_statement=True,
+        )
+    )
+    second = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction project Beta research.",
+            explicit_user_statement=True,
+            idempotency_key="direct-goal-beta",
+        )
+    )
+    assert first.disposition == ObservationDisposition.APPLIED
+    assert second.disposition == ObservationDisposition.APPLIED
+    assert first.record_id is not None
+    assert second.record_id is not None
+    assert first.record_id != second.record_id
+    assert store.get_record(first.record_id).content == first.content
+    assert store.get_record(second.record_id).content == second.content
+
+
+def test_archive_import_does_not_replace_direct_same_kind_record(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    direct = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is the live direct fiction objective.",
+            explicit_user_statement=True,
+        )
+    )
+    assert direct.record_id is not None
+    archive_observations = _import_archive_statements(
+        store,
+        kind="goal",
+        statements=[
+            {
+                "content": "My goal was the older archive fiction objective.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            },
+            {
+                "content": "My goal is the newer archive fiction objective.",
+                "observed_at": "2025-01-01T00:00:00+00:00",
+                "expected_current": True,
+            },
+        ],
+        scenario_id="archive-vs-direct",
+    )
+    # Direct record remains current and is not overwritten by archive lineage.
+    assert store.get_record(direct.record_id).content == direct.content
+    archive_winner = next(
+        item
+        for item in reversed(archive_observations)
+        if item.disposition == ObservationDisposition.APPLIED and item.record_id
+    )
+    assert archive_winner.record_id != direct.record_id
+    assert (
+        store.get_record(archive_winner.record_id).content
+        == "My goal is the newer archive fiction objective."
+    )
 
 
 def test_exact_unkeyed_reinforce_does_not_duplicate_current(tmp_path: Path) -> None:
