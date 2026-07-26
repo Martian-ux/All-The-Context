@@ -14,6 +14,7 @@ Manager and macOS Keychain round-trips are exercised separately by
 from __future__ import annotations
 
 import atexit
+import html
 import json
 import os
 import platform
@@ -105,6 +106,15 @@ def api_request(url: str, token: str, *, method: str = "GET") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(f"unexpected API response from {url}")
     return value
+
+
+def browser_session_from_handoff_html(handoff_html: str) -> str | None:
+    """Read the opaque browser capability from its HTML-escaped data attribute."""
+
+    match = re.search(r'\bdata-browser-token="([^"]+)"', handoff_html)
+    if match is None:
+        return None
+    return html.unescape(match.group(1))
 
 
 def stop_core(base_url: str, admin_token: str) -> None:
@@ -816,16 +826,13 @@ def main() -> int:
             if response.status != 200:
                 raise SystemExit(f"browser handoff did not reach dashboard: {response.status}")
             handoff_html = response.read().decode("utf-8")
-        session_match = re.search(
-            r'sessionStorage\.setItem\("atc\.browserSession","([^"]+)"\)',
-            handoff_html,
-        )
-        if session_match is None or admin_token in handoff_html:
+        browser_session = browser_session_from_handoff_html(handoff_html)
+        if browser_session is None or admin_token in handoff_html:
             raise SystemExit("browser handoff exposed no safe opaque session")
         browser_request = urllib.request.Request(
             f"http://127.0.0.1:{port}/v1/context/status",
             headers={
-                "Authorization": f"Browser {session_match.group(1)}",
+                "Authorization": f"Browser {browser_session}",
                 "X-ATC-Dashboard": "1",
             },
         )

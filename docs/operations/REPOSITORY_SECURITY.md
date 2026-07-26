@@ -36,23 +36,26 @@ or changing branch protection. Those remain coordinator/operator actions.
 
 ## Feasible automated defenses (operator-owned settings)
 
-Repository-side workflows and scripts implement scans and gates. The following
-**GitHub product controls** remain operator settings and were observed disabled
-or incomplete at implementation time; enable them before beta publication or
-record an accepted residual:
+Repository-side workflows and scripts implement scans and gates. The
+coordinator verified these **GitHub product controls** on 2026-07-26:
 
-| Control | Operator action | Notes |
+| Control | Live state | Notes |
 |---|---|---|
-| Secret scanning | Enable for the public repository | Required for BETA-S06 |
-| Push protection | Enable secret scanning push protection | Blocks accidental secret pushes |
-| Dependabot alerts | Enable dependency alerts | Complements hosted audit gates |
-| Dependabot security updates | Optional for solo maintainer | Prefer reviewed PRs over auto-merge |
-| Code scanning | Enable CodeQL or equivalent when available | Free for public repos when offered |
-| Branch protection on `main` | Require PR + required checks; allow sole-maintainer override only as recorded residual | Workable for one maintainer |
-| Actions SHA pinning enforcement | Optional org/repo setting `sha_pinning_required` | Workflows already pin via policy |
-| `release-promotion` environment | Required reviewers = maintainer | Deliberate solo approval |
-| `github-pages` environment | Required reviewers = maintainer | No auto-promote |
-| Immutable releases | Keep enabled (verified) | Owner rechecks before each candidate |
+| Secret scanning | Enabled | Required for BETA-S06 |
+| Push protection | Enabled | Blocks accidental secret pushes |
+| Dependabot alerts | Enabled | Complements hosted audit gates |
+| Dependabot security updates | Enabled | PRs remain review-gated; no auto-merge claim |
+| Code scanning | CodeQL default setup enabled | Initial findings are fixed and rescanned, never dismissed to clear a gate |
+| Branch protection on `main` | Strict PR plus 14 required CI/CodeQL contexts; conversations required; force push/deletion off | Administrator bypass is the recorded sole-maintainer recovery residual |
+| Actions SHA pinning enforcement | `sha_pinning_required=true` | Repository policy and workflow pin verifier both apply |
+| `release-promotion` environment | Sole maintainer required; administrator bypass off; protected branches only | Self-review is available and must be recorded truthfully |
+| `github-pages` environment | Sole maintainer required; administrator bypass off; custom `main` policy | No auto-promote |
+| Immutable releases | Enabled | Owner rechecks immediately before each candidate |
+
+Optional secret-scanning validity checks and non-provider patterns remain
+disabled and are not part of the claimed beta baseline. Reverify every live
+setting and require zero unresolved release-blocking alerts on the final
+candidate SHA.
 
 ## Repository-side scan and audit commands
 

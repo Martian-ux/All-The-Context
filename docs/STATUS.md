@@ -65,6 +65,26 @@ behavior.
 
 ## Security maintenance
 
+On 2026-07-26, Core browser handoff values were removed from executable
+JavaScript literals and are now passed through quoted HTML-escaped data
+attributes to a constant nonce-protected script. The integrations status
+endpoint also replaces local configuration exceptions with a stable repair
+message, so parser errors cannot disclose paths, credentials, or personal
+configuration material. Focused regressions cover both response sinks. GitHub
+alerts #1 and #2 were left open for the integrated `main` rescan; no alert was
+dismissed or otherwise mutated to manufacture a clean gate.
+
+On 2026-07-26, the live public repository enabled secret scanning and push
+protection, Dependabot alerts and security updates, CodeQL default setup, and
+required immutable Action SHA pins. `main` now requires an up-to-date pull
+request, conversation resolution, the eleven canonical CI checks, and three
+CodeQL language checks; force pushes and branch deletion are disabled.
+`release-promotion` and `github-pages` both require the sole maintainer's
+deliberate approval with administrator bypass disabled. The documented
+administrator branch bypass and self-review capability remain explicit
+sole-maintainer residuals, not independent review. Optional secret-scanning
+validity checks and non-provider patterns remain disabled and are not claimed.
+
 On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
 credential safety and the Windows windowed artifact can both be meaningful:
 `scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke
@@ -662,12 +682,11 @@ state is already noncurrent and creates no user queue.
 - Create and restore-test two recoverable encrypted backups of the
   operator-held release private key in distinct failure domains before its
   first production signature.
-- Configure the release-promotion and `github-pages` paths for deliberate
-  sole-maintainer approval and record that AI-assisted review is not
-  independent human review; no live channel or public release exists yet.
-- Protect the release branch and enable the available repository
-  secret/dependency/code-scanning controls, or record a narrower accepted
-  security posture before publication.
+- Preserve and reverify the live branch, environment, secret, dependency,
+  immutable-Action, and CodeQL controls on the final candidate SHA. CodeQL
+  findings must close through an integrated rescan rather than dismissal; the
+  documented administrator bypass and sole-maintainer self-review remain
+  explicit residuals. No live channel or public release exists yet.
 - GitHub private vulnerability reporting is enabled. Keep detailed credential,
   secret-boundary, and client-witness findings there and verify that public
   security guidance routes reporters to it.

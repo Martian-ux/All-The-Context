@@ -41,6 +41,19 @@ DASHBOARD_CANARY = (
 RAW_STATEMENT = "User said their password is hunter2-never-store"
 
 
+def test_browser_session_reads_escaped_handoff_data_attribute() -> None:
+    browser_session = 'opaque-session-"&<canary>'
+    handoff_html = (
+        '<body data-browser-token="opaque-session-&quot;&amp;&lt;canary&gt;">'
+        '<script nonce="fixed">sessionStorage.setItem('
+        "handoff.dataset.storageKey,handoff.dataset.browserToken);"
+        "</script></body>"
+    )
+
+    assert smoke.browser_session_from_handoff_html(handoff_html) == browser_session
+    assert smoke.browser_session_from_handoff_html("<body></body>") is None
+
+
 def test_project_setup_report_strips_secrets_and_sensitive_fields() -> None:
     projected = smoke.project_setup_report_for_diagnostics(
         {

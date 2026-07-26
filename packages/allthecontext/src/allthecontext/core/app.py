@@ -1,5 +1,6 @@
 """FastAPI transport for the local authoritative Core."""
 
+import html
 import json
 import os
 import secrets
@@ -275,10 +276,13 @@ def create_app(
         content = (
             '<!doctype html><html><head><meta charset="utf-8">'
             '<meta name="referrer" content="no-referrer"><title>Connecting…</title>'
-            f'</head><body><script nonce="{nonce}">'
-            f"sessionStorage.setItem({json.dumps(BROWSER_STORAGE_KEY)},"
-            f"{json.dumps(browser_token)});"
-            f"window.location.replace({json.dumps(dashboard_target)});"
+            f'</head><body><script nonce="{html.escape(nonce, quote=True)}"'
+            f' data-storage-key="{html.escape(BROWSER_STORAGE_KEY, quote=True)}"'
+            f' data-browser-token="{html.escape(browser_token, quote=True)}"'
+            f' data-dashboard-target="{html.escape(dashboard_target, quote=True)}">'
+            "const handoff=document.currentScript;"
+            "sessionStorage.setItem(handoff.dataset.storageKey,handoff.dataset.browserToken);"
+            "window.location.replace(handoff.dataset.dashboardTarget);"
             "</script></body></html>"
         )
         response = HTMLResponse(content=content)
@@ -1196,11 +1200,11 @@ def create_app(
             }
             try:
                 configured = read_config()
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError):
                 return {
                     **base,
                     "state": "degraded",
-                    "reason": f"The app configuration is invalid: {exc}",
+                    "reason": "The app configuration could not be read. Choose Repair.",
                 }
             if configured is None:
                 return base
