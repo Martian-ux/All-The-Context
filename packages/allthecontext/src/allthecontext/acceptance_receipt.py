@@ -74,6 +74,32 @@ REQUIRED_PUBLICATION_GATES = frozenset(
 )
 POST_PUBLICATION_GATES = frozenset({"BETA-R05"})
 
+# Gates whose pass claims must be exact downloaded-artifact evidence, not source-only.
+EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
+    {
+        "BETA-P01",
+        "BETA-P02",
+        "BETA-P03",
+        "BETA-P04",
+        "BETA-P05",
+        "BETA-P06",
+        "BETA-S01",
+        "BETA-S02",
+        "BETA-S03",
+        "BETA-S04",
+        "BETA-S05",
+        "BETA-S06",
+        "BETA-D01",
+        "BETA-D02",
+        "BETA-D03",
+        "BETA-R03",
+        "BETA-R04",
+        "BETA-X01",
+    }
+)
+# Source-level publication scaffolding only (never label these as exact artifact).
+SOURCE_ALLOWED_PUBLICATION_GATES = frozenset({"BETA-R01", "BETA-R02", "BETA-O01"})
+
 RECEIPT_ALLOWED_KEYS = frozenset(
     {
         "schema_version",
@@ -321,6 +347,28 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         raise ManifestError("acceptance source_commit must be a full lowercase SHA")
     if status == "pass" and evidence_kind in {"skipped", "unavailable"}:
         raise ManifestError("skipped/unavailable evidence cannot claim pass")
+    # Pass claims for package/platform gates must be exact downloaded artifacts.
+    if (
+        status == "pass"
+        and isinstance(gate_id, str)
+        and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        and evidence_kind != "exact_downloaded_artifact"
+    ):
+        raise ManifestError(
+            f"gate {gate_id} pass requires exact_downloaded_artifact evidence; "
+            "source-only evidence cannot satisfy it"
+        )
+    # Do not launder source scaffolding as exact artifact evidence.
+    if (
+        status == "pass"
+        and isinstance(gate_id, str)
+        and gate_id in SOURCE_ALLOWED_PUBLICATION_GATES
+        and evidence_kind == "exact_downloaded_artifact"
+    ):
+        raise ManifestError(
+            f"gate {gate_id} is source-level publication scaffolding and cannot "
+            "be labeled exact_downloaded_artifact"
+        )
     severity = value.get("severity")
     if severity is not None and severity not in ALLOWED_SEVERITIES:
         raise ManifestError("acceptance severity is invalid")
@@ -349,6 +397,10 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     value["attempts"] = attempts
     if "artifact_digests" in value:
         value["artifact_digests"] = _validate_artifact_digests(value.get("artifact_digests"))
+    if status == "pass" and evidence_kind == "exact_downloaded_artifact":
+        digests = value.get("artifact_digests")
+        if not isinstance(digests, dict) or not digests:
+            raise ManifestError("exact downloaded-artifact pass receipts require artifact_digests")
     if "counts" in value:
         value["counts"] = _validate_counts(value.get("counts"))
     notes = value.get("notes")
@@ -417,11 +469,20 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
         raise ManifestError("acceptance receipt bundle must contain receipts")
     receipts: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
+    seen_gates: set[str] = set()
+    shared_artifact_digests: dict[str, str] = {}
     for item in receipts_value:
         receipt = validate_receipt(_require_dict(item, "bundle receipt"))
         if receipt["receipt_id"] in seen_ids:
             raise ManifestError(f"duplicate receipt_id: {receipt['receipt_id']}")
         seen_ids.add(receipt["receipt_id"])
+        gate_id = receipt["gate_id"]
+        if gate_id in seen_gates:
+            raise ManifestError(
+                f"duplicate gate_id in receipt bundle: {gate_id}; "
+                "duplicate-shadowed checks are refused"
+            )
+        seen_gates.add(gate_id)
         if receipt["source_commit"] != source_commit:
             raise ManifestError("receipt source_commit does not match the bundle")
         receipt_digest = receipt.get("candidate_sha256")
@@ -429,6 +490,13 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
             raise ManifestError("receipt candidate_sha256 does not match the bundle")
         if receipt.get("status") == "pass" and receipt_digest != candidate_sha256:
             raise ManifestError("pass receipt must bind the exact candidate digest")
+        digests = receipt.get("artifact_digests")
+        if isinstance(digests, dict):
+            for key, digest in digests.items():
+                prior = shared_artifact_digests.get(key)
+                if prior is not None and prior != digest:
+                    raise ManifestError(f"conflicting artifact_digests for {key} across receipts")
+                shared_artifact_digests[key] = digest
         receipts.append(receipt)
     decision = value.get("maintainer_decision")
     decision_obj = _require_dict(decision, "maintainer_decision")
@@ -505,8 +573,83 @@ def missing_required_gates(
                 continue
             if not isinstance(receipt.get("candidate_sha256"), str):
                 continue
+            evidence_kind = receipt.get("evidence_kind")
+            if gate_id in EXACT_ARTIFACT_PUBLICATION_GATES:
+                if evidence_kind != "exact_downloaded_artifact":
+                    continue
+                digests = receipt.get("artifact_digests")
+                if not isinstance(digests, dict) or not digests:
+                    continue
+            elif gate_id in SOURCE_ALLOWED_PUBLICATION_GATES:
+                if evidence_kind != "source":
+                    continue
             satisfied.add(gate_id)
     return sorted(required - satisfied)
+
+
+def candidate_inventory_digests(candidate: Mapping[str, Any]) -> dict[str, str]:
+    """Collect name→sha256 pairs declared by a verified candidate inventory."""
+
+    digests: dict[str, str] = {}
+    source_evidence = candidate.get("source_evidence")
+    if isinstance(source_evidence, dict):
+        for descriptor in source_evidence.values():
+            if not isinstance(descriptor, Mapping):
+                continue
+            name = descriptor.get("name")
+            digest = descriptor.get("sha256")
+            if isinstance(name, str) and isinstance(digest, str):
+                digests[name] = digest
+    artifacts = candidate.get("artifacts")
+    if isinstance(artifacts, list):
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping):
+                continue
+            for key, descriptor in artifact.items():
+                if key in {"platform", "architecture", "ota_manifest_eligible"}:
+                    continue
+                if not isinstance(descriptor, Mapping):
+                    continue
+                name = descriptor.get("name")
+                digest = descriptor.get("sha256")
+                if isinstance(name, str) and isinstance(digest, str):
+                    digests[name] = digest
+    return digests
+
+
+def recompute_receipt_artifact_bindings(
+    receipts: Sequence[Mapping[str, Any]],
+    *,
+    inventory_digests: Mapping[str, str],
+    candidate_sha256: str,
+) -> None:
+    """Refuse mixed inventory/artifact digests that do not recompute from inventory."""
+
+    if SHA256.fullmatch(candidate_sha256) is None:
+        raise ManifestError("candidate_sha256 must be a lowercase SHA-256 digest")
+    for receipt in receipts:
+        if receipt.get("status") != "pass":
+            continue
+        if receipt.get("candidate_sha256") != candidate_sha256:
+            raise ManifestError("pass receipt candidate digest does not recompute")
+        digests = receipt.get("artifact_digests")
+        if not isinstance(digests, dict):
+            continue
+        for name, digest in digests.items():
+            expected = inventory_digests.get(name)
+            if expected is not None and expected != digest:
+                raise ManifestError(
+                    f"receipt artifact digest does not match candidate inventory: {name}"
+                )
+            # Names that look like controlled release assets must exist in inventory.
+            controlled = name.startswith("all-the-context-") or name in {
+                "release-candidate-v1.json",
+                "matrix-evidence.json",
+                "component-inventory-v1.json",
+                "NOTICES.txt",
+            }
+            if controlled and expected is None:
+                raise ManifestError(f"receipt references undeclared release asset digest: {name}")
 
 
 def write_template_receipt(path: Path, *, source_commit: str, gate_id: str) -> None:

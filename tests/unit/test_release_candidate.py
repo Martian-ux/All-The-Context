@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from allthecontext.exact_source_gate import REQUIRED_CI_JOBS
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
     CANDIDATE_PROVENANCE_FILE_NAME,
@@ -60,7 +61,33 @@ def _bundle(path: Path) -> None:
 def _source_evidence(release_dir: Path) -> None:
     inventory = release_dir / COMPONENT_INVENTORY_FILE_NAME
     inventory.write_text(
-        json.dumps({"schema_version": 1, "components": [], "component_count": 0}) + "\n",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": VERSION,
+                "source_commit": SOURCE_COMMIT,
+                "project_version": VERSION,
+                "locks": {
+                    "uv.lock": {"sha256": "a" * 64},
+                    "apps/dashboard/package-lock.json": {"sha256": "b" * 64},
+                },
+                "component_count": 1,
+                "components": [
+                    {
+                        "ecosystem": "python",
+                        "name": "all-the-context",
+                        "version": VERSION,
+                        "license": "MIT",
+                        "locked": True,
+                        "source_kind": "path",
+                        "scope": "runtime",
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     digest, _ = sha256_file(inventory)
@@ -68,11 +95,28 @@ def _source_evidence(release_dir: Path) -> None:
         f"{digest}  {inventory.name}\n", encoding="ascii", newline="\n"
     )
     (release_dir / MATRIX_EVIDENCE_FILE_NAME).write_text(
-        json.dumps({"schema_version": 1, "ok": True, "source_commit": SOURCE_COMMIT}) + "\n",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_commit": SOURCE_COMMIT,
+                "workflow_run_id": 42,
+                "workflow_name": "CI",
+                "conclusion": "success",
+                "jobs": list(REQUIRED_CI_JOBS),
+                "required_jobs": list(REQUIRED_CI_JOBS),
+                "ok": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     (release_dir / NOTICES_FILE_NAME).write_text(
-        "All The Context component inventory notices\n", encoding="utf-8"
+        "All The Context component inventory notices\n"
+        f"Source commit: {SOURCE_COMMIT}\n"
+        f"Release version: {VERSION}\n",
+        encoding="utf-8",
     )
 
 

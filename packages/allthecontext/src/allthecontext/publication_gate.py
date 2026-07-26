@@ -18,12 +18,16 @@ from typing import Any
 from .acceptance_receipt import (
     RECEIPT_BUNDLE_FILE_NAME,
     REQUIRED_PUBLICATION_GATES,
+    candidate_inventory_digests,
     load_receipt_bundle,
     missing_required_gates,
+    recompute_receipt_artifact_bindings,
     validate_receipt_bundle,
 )
+from .exact_source_gate import load_matrix_evidence
 from .release_candidate import (
     CANDIDATE_FILE_NAME,
+    MATRIX_EVIDENCE_FILE_NAME,
     PUBLICATION_GATE_RECORD_FILE_NAME,
     expected_release_asset_names,
     verify_candidate,
@@ -133,6 +137,15 @@ def evaluate_publication_gate(
         raise ManifestError("receipt bundle source_commit does not match publication input")
     if bundle["candidate_sha256"] != candidate_sha256:
         raise ManifestError("receipt bundle candidate_sha256 does not match publication input")
+
+    # Candidate inventory already verified; recompute matrix evidence identity.
+    load_matrix_evidence(release_dir / MATRIX_EVIDENCE_FILE_NAME, source_commit=source_commit)
+    inventory_digests = candidate_inventory_digests(candidate)
+    recompute_receipt_artifact_bindings(
+        bundle["receipts"],
+        inventory_digests=inventory_digests,
+        candidate_sha256=candidate_sha256,
+    )
 
     decision = bundle.get("maintainer_decision")
     if not isinstance(decision, dict):

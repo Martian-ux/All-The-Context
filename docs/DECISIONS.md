@@ -1453,3 +1453,34 @@ Decision reason, decided_at, and policy_version remain inspectable without
 persisting credentials. Residual honesty: this is a local trust grant, not
 cryptographic authorship proof, and an authorized malicious witness client can
 lie.
+
+## ADR-059: Exact candidate and publication gates recompute fail-closed source evidence
+
+**Status:** accepted 2026-07-26.
+
+The release-candidate path binds one exact 40-character source commit. Hosted
+preflight must observe a completed successful `ci.yml` run for that SHA whose
+jobs include the full nine-slot matrix **and** the repository-security and
+dashboard-parity jobs. Branch names, short SHAs, merge-queue mismatches,
+skipped/cancelled/neutral required jobs, partial job sets, and jobs from a
+different workflow run never satisfy the gate. Durable `matrix-evidence.json`
+must recompute with `ok` as boolean true, the frozen required-job set, and the
+same source commit; forged truthy strings or incomplete job lists are refused.
+
+Candidate assembly and verification revalidate bound source evidence: matrix
+evidence semantics, component-inventory checksum binding to inventory bytes,
+source/version identity, nonempty locked components and lock digests, and
+notices that reference the exact commit. Inventory verification still rejects
+extra, missing, or substituted release files.
+
+Publication and receipt aggregation recompute relationships from receipts and
+inventories. Required package/platform gates pass only with
+`exact_downloaded_artifact` evidence, non-empty artifact digests, and matching
+candidate inventory digests where names are declared. Source-scaffolding gates
+(`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be labeled exact artifact.
+Duplicate `gate_id` values, conflicting digests across receipts, incomplete
+required-gate sets, forged maintainer booleans, and overwrite of immutable
+evidence files fail closed. Hosted CI still must not deploy Edge or a third-party
+runtime. Human key custody, protected-environment promotion, private-key
+signing, repository-control enablement, and public channel smoke remain explicit
+operator blockers and are not fabricated in source.

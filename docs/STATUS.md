@@ -82,6 +82,20 @@ raw setup reports, dashboard tickets, tokens, client IDs, or subprocess
 streams. Production installs still never enable plaintext credential storage
 silently.
 
+On 2026-07-26, source-side exact-candidate and publication aggregation gaps
+for BETA-R01/R03/R04/R05/O01 and B-107/B-108/B-201/B-206 scaffolding were
+closed without claiming a frozen release or fabricating receipts (ADR-059):
+hosted matrix evidence now requires the nine CI matrix jobs **plus** repository
+security and dashboard production-parity jobs on the same 40-hex SHA; skipped,
+cancelled, neutral, branch-name, short-SHA, wrong-run, and partial job sets are
+refused; candidate verification recomputes matrix evidence, inventory
+checksums/identity, and notices; receipt bundles refuse duplicate gate_ids,
+source-only labels on exact-artifact gates, conflicting digests, and inventory
+mismatches; publication recomputes those relationships before promotion. Human
+key custody, protected publication, offline signing, and public channel smoke
+remain explicit blockers. Focused release/receipt/workflow tests, Ruff, mypy,
+and docs checks pass on this worktree.
+
 On 2026-07-26, a narrow exact-lock correction closed three release-install
 holes without broadening release engineering: the reviewed `uv.lock` now
 contains hashed `setuptools` and `wheel` and the locked installer fails closed

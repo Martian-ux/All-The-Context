@@ -67,7 +67,7 @@ jobs:
           --version "${{ inputs.version }}"
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
-      - name: Require exact green nine-job hosted matrix on this SHA
+      - name: Require exact green nine-job matrix plus security/parity jobs on this SHA
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-

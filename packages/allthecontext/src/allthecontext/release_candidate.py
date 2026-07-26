@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from .exact_source_gate import load_matrix_evidence
 from .release_manifest import (
     ARCHITECTURES,
     CHANNELS,
@@ -336,7 +337,75 @@ def attach_attestation_bundles(
     return outputs
 
 
-def _source_evidence_descriptors(release_dir: Path) -> dict[str, dict[str, Any]]:
+def _validate_component_inventory_pair(
+    inventory_path: Path,
+    checksum_path: Path,
+    *,
+    source_commit: str,
+    version: str,
+) -> None:
+    """Require inventory checksum binding and source/version identity."""
+
+    _validate_checksum(inventory_path, checksum_path)
+    inventory = _read_json_object(inventory_path)
+    if inventory.get("schema_version") != 1:
+        raise ManifestError("component inventory schema_version must be 1")
+    if inventory.get("source_commit") != source_commit:
+        raise ManifestError("component inventory source_commit does not match the candidate")
+    if inventory.get("version") != version:
+        raise ManifestError("component inventory version does not match the candidate")
+    components = inventory.get("components")
+    count = inventory.get("component_count")
+    if not isinstance(components, list):
+        raise ManifestError("component inventory components must be a list")
+    if isinstance(count, bool) or not isinstance(count, int) or count != len(components):
+        raise ManifestError("component inventory component_count does not match components")
+    if count < 1:
+        raise ManifestError("component inventory must list at least one locked component")
+    locks = inventory.get("locks")
+    if not isinstance(locks, dict) or not locks:
+        raise ManifestError("component inventory must declare reviewed lock digests")
+    for lock_name, lock_value in locks.items():
+        if not isinstance(lock_name, str) or not isinstance(lock_value, dict):
+            raise ManifestError("component inventory locks entry is malformed")
+        digest = lock_value.get("sha256")
+        if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+            raise ManifestError("component inventory lock digest is malformed")
+
+
+def _validate_source_evidence_contents(
+    release_dir: Path,
+    *,
+    source_commit: str,
+    version: str,
+) -> None:
+    """Semantically validate bound source-evidence files (not just digests)."""
+
+    load_matrix_evidence(release_dir / MATRIX_EVIDENCE_FILE_NAME, source_commit=source_commit)
+    _validate_component_inventory_pair(
+        release_dir / COMPONENT_INVENTORY_FILE_NAME,
+        release_dir / COMPONENT_INVENTORY_CHECKSUM_FILE_NAME,
+        source_commit=source_commit,
+        version=version,
+    )
+    notices = release_dir / NOTICES_FILE_NAME
+    try:
+        notices_text = notices.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ManifestError("component notices must be UTF-8") from exc
+    if not notices_text.strip() or len(notices_text) > 2 * 1024 * 1024:
+        raise ManifestError("component notices file is empty or unreasonably large")
+    if source_commit not in notices_text:
+        raise ManifestError("component notices must reference the exact source commit")
+
+
+def _source_evidence_descriptors(
+    release_dir: Path,
+    *,
+    source_commit: str,
+    version: str,
+) -> dict[str, dict[str, Any]]:
+    _validate_source_evidence_contents(release_dir, source_commit=source_commit, version=version)
     descriptors: dict[str, dict[str, Any]] = {}
     for field, file_name in SOURCE_EVIDENCE_FILE_NAMES.items():
         path = release_dir / file_name
@@ -371,7 +440,9 @@ def assemble_candidate(
         raise ManifestError("release candidate must contain at least one target")
     if not eligible_ota_targets or not eligible_ota_targets.issubset(unique_targets):
         raise ManifestError("release candidate requires a non-empty OTA target subset")
-    source_evidence = _source_evidence_descriptors(release_dir)
+    source_evidence = _source_evidence_descriptors(
+        release_dir, source_commit=source_commit, version=version
+    )
     artifacts: list[dict[str, Any]] = []
     expected_files: set[str] = set(SOURCE_EVIDENCE_FILE_NAMES.values())
     for target in unique_targets:
@@ -499,6 +570,8 @@ def verify_candidate(
         if path.name in seen_files:
             raise ManifestError("release candidate files must be uniquely assigned")
         seen_files.add(path.name)
+    # Recompute semantic relationships; digest match alone is not enough.
+    _validate_source_evidence_contents(release_dir, source_commit=source_commit, version=version)
     artifact_values = candidate.get("artifacts")
     if not isinstance(artifact_values, list) or not artifact_values:
         raise ManifestError("release candidate artifact inventory is empty")

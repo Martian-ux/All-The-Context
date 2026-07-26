@@ -524,7 +524,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-D01 | The inclusive 2,000,000,000-byte import boundary is usable on every frozen target | Structural chunks only | Predeclared hardware/budgets; allocated non-sparse canary; per-OS/architecture exact-boundary success; boundary+1 refusal; progress/cancel/retry/interruption/SHA/export/restore |
 | BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
 | BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on every OS family from exact downloaded artifacts |
-| BETA-R01 | Candidate derives from exact green, locked source | Partial | Exact nine-job matrix, required checks, locks, dashboard parity, component inventory |
+| BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
 | BETA-R02 | Key custody and publication are recoverable and deliberate | Open | Two restore-tested backups in distinct failure domains, protected workflows, sole-maintainer decision record |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |

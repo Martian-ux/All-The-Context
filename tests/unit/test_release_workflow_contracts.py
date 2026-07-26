@@ -38,6 +38,38 @@ def test_release_candidate_validate_job_grants_actions_read() -> None:
     assert "hosted-matrix" in validate_block
 
 
+def test_ci_declares_matrix_security_and_parity_job_names() -> None:
+    from allthecontext.exact_source_gate import (
+        REQUIRED_CI_JOBS,
+        REQUIRED_CI_MATRIX_JOBS,
+        REQUIRED_SECURITY_PARITY_JOBS,
+    )
+
+    text = _read(WORKFLOWS / "ci.yml")
+    assert "name: Python 3.12 - ${{ matrix.os }}" in text or "Python 3.12 -" in text
+    assert "Repository security gates" in text
+    assert "Dashboard production asset parity" in text
+    assert "Desktop artifact -" in text
+    assert set(REQUIRED_SECURITY_PARITY_JOBS).issubset(set(REQUIRED_CI_JOBS))
+    assert set(REQUIRED_CI_MATRIX_JOBS).issubset(set(REQUIRED_CI_JOBS))
+    for name in REQUIRED_SECURITY_PARITY_JOBS:
+        assert name in text
+    # Hosted CI may build/test but must not deploy an Edge/runtime service.
+    assert "deploy-pages" not in text
+    assert "ghcr.io" not in text.casefold()
+    assert "docker push" not in text.casefold()
+    for forbidden in (
+        "azure/webapps-deploy",
+        "aws-actions",
+        "google-github-actions/deploy",
+        "prepare_edge_distribution",
+        "activate_edge_deployment",
+        "smoke_edge_container",
+        "verify_edge_image",
+    ):
+        assert forbidden not in text
+
+
 def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     install_script = _read(ROOT / "scripts" / "install_locked_python.py")
     audit_script = _read(ROOT / "scripts" / "dependency_audit.py")
@@ -215,8 +247,8 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     assert "remove_work_tree" in first_run
     assert "packaged-first-run-diagnostics" in first_run
     assert "retain_work_on_failure" not in first_run
-    assert "print(f\"{label} stdout" not in first_run
-    assert "print(f\"{label} stderr" not in first_run
+    assert 'print(f"{label} stdout' not in first_run
+    assert 'print(f"{label} stderr' not in first_run
     assert "packaged-credential-acceptance" in first_run
     # Never silently treat first-run smoke as production OS-store proof.
     assert "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE" in first_run or (

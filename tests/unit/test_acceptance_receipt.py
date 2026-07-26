@@ -5,9 +5,12 @@ from pathlib import Path
 
 import pytest
 from allthecontext.acceptance_receipt import (
+    EXACT_ARTIFACT_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
+    SOURCE_ALLOWED_PUBLICATION_GATES,
     load_receipt,
     missing_required_gates,
+    recompute_receipt_artifact_bindings,
     validate_receipt,
     validate_receipt_bundle,
 )
@@ -210,16 +213,27 @@ def test_approve_requires_reviewed_receipt_ids_and_rejects_p0() -> None:
         )
 
 
-def test_exact_artifact_pass_requires_candidate_digest() -> None:
+def test_exact_artifact_pass_requires_candidate_digest_and_digests() -> None:
     with pytest.raises(ManifestError, match="candidate_sha256"):
         body = _receipt(
             evidence_kind="exact_downloaded_artifact",
             status="pass",
             gate_id="BETA-R03",
             receipt_id="artifact-beta-r03",
+            artifact_digests={"acceptance-smoke-fixture.bin": "c" * 64},
         )
         del body["candidate_sha256"]
         validate_receipt(body)
+    with pytest.raises(ManifestError, match="artifact_digests"):
+        validate_receipt(
+            _receipt(
+                evidence_kind="exact_downloaded_artifact",
+                status="pass",
+                gate_id="BETA-R03",
+                receipt_id="artifact-beta-r03",
+                candidate_sha256=DIGEST,
+            )
+        )
     validate_receipt(
         _receipt(
             evidence_kind="exact_downloaded_artifact",
@@ -227,8 +241,99 @@ def test_exact_artifact_pass_requires_candidate_digest() -> None:
             gate_id="BETA-R03",
             receipt_id="artifact-beta-r03",
             candidate_sha256=DIGEST,
+            artifact_digests={"acceptance-smoke-fixture.bin": "c" * 64},
         )
     )
+
+
+def test_source_only_cannot_pass_exact_artifact_gates() -> None:
+    with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
+        validate_receipt(
+            _receipt(
+                gate_id="BETA-R03",
+                receipt_id="source-labeled-r03",
+                evidence_kind="source",
+                status="pass",
+            )
+        )
+    assert "BETA-R03" in EXACT_ARTIFACT_PUBLICATION_GATES
+    assert "BETA-R01" in SOURCE_ALLOWED_PUBLICATION_GATES
+    with pytest.raises(ManifestError, match="source-level"):
+        validate_receipt(
+            _receipt(
+                gate_id="BETA-R01",
+                receipt_id="artifact-labeled-r01",
+                evidence_kind="exact_downloaded_artifact",
+                status="pass",
+                artifact_digests={"acceptance-smoke-fixture.bin": "c" * 64},
+            )
+        )
+
+
+def test_bundle_rejects_duplicate_gate_and_conflicting_digests() -> None:
+    with pytest.raises(ManifestError, match="duplicate gate_id"):
+        validate_receipt_bundle(
+            {
+                "schema_version": 1,
+                "source_commit": SOURCE,
+                "candidate_sha256": DIGEST,
+                "receipts": [
+                    _receipt(),
+                    _receipt(receipt_id="shadow-r01", gate_id="BETA-R01"),
+                ],
+                "maintainer_decision": {
+                    "decision": None,
+                    "independent_human_review_claimed": False,
+                },
+            }
+        )
+    with pytest.raises(ManifestError, match="conflicting artifact_digests"):
+        validate_receipt_bundle(
+            {
+                "schema_version": 1,
+                "source_commit": SOURCE,
+                "candidate_sha256": DIGEST,
+                "receipts": [
+                    _receipt(
+                        gate_id="BETA-R03",
+                        receipt_id="artifact-r03",
+                        evidence_kind="exact_downloaded_artifact",
+                        artifact_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+                    ),
+                    _receipt(
+                        gate_id="BETA-R04",
+                        receipt_id="artifact-r04",
+                        evidence_kind="exact_downloaded_artifact",
+                        artifact_digests={"all-the-context-linux-x86_64.zip": "d" * 64},
+                    ),
+                ],
+                "maintainer_decision": {
+                    "decision": None,
+                    "independent_human_review_claimed": False,
+                },
+            }
+        )
+
+
+def test_recompute_refuses_mixed_inventory_digests() -> None:
+    receipt = _receipt(
+        gate_id="BETA-R03",
+        receipt_id="artifact-r03",
+        evidence_kind="exact_downloaded_artifact",
+        artifact_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+    )
+    with pytest.raises(ManifestError, match="does not match candidate inventory"):
+        recompute_receipt_artifact_bindings(
+            [receipt],
+            inventory_digests={"all-the-context-linux-x86_64.zip": "e" * 64},
+            candidate_sha256=DIGEST,
+        )
+    with pytest.raises(ManifestError, match="undeclared release asset"):
+        recompute_receipt_artifact_bindings(
+            [receipt],
+            inventory_digests={},
+            candidate_sha256=DIGEST,
+        )
 
 
 def test_template_bundle_loads() -> None:

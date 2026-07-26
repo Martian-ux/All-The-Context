@@ -14,6 +14,8 @@ from typing import Any, cast
 
 from allthecontext.exact_source_gate import (
     REQUIRED_CI_JOBS,
+    REQUIRED_CI_MATRIX_JOBS,
+    REQUIRED_SECURITY_PARITY_JOBS,
     matrix_evidence_from_github,
     run_local_quality_gates,
     write_matrix_evidence,
@@ -111,6 +113,13 @@ def main() -> int:
             results = run_local_quality_gates(arguments.repository_root)
             print(json.dumps({"ok": True, "gates": len(results)}, sort_keys=True))
         elif arguments.command == "list-required-jobs":
+            print("# matrix")
+            for name in REQUIRED_CI_MATRIX_JOBS:
+                print(name)
+            print("# security_parity")
+            for name in REQUIRED_SECURITY_PARITY_JOBS:
+                print(name)
+            print("# all")
             for name in REQUIRED_CI_JOBS:
                 print(name)
         else:
