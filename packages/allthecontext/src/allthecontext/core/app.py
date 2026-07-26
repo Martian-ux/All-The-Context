@@ -557,8 +557,15 @@ def create_app(
             stop_pump.set()
             if not pump_task.done():
                 pump_task.cancel()
-            with suppress(Exception):
+            # CancelledError is BaseException (not Exception) on supported Python.
+            # Await of a cancelled pump must not mask a successful worker result
+            # or surface a spurious cancellation after disconnect/cancel.
+            try:
                 await pump_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
             # Drain so no blocked threadpool put remains after disconnect/cancel.
             with suppress(Exception):
                 while True:

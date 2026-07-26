@@ -181,12 +181,16 @@ def parse_content_length_header(value: str | None) -> int | None:
 
 
 def durable_import_error_code(error: BaseException, *, phase: str | None = None) -> str:
-    """Return a closed, content-free durable error code (never raw exception text)."""
+    """Return a closed, content-free durable error code (never raw exception text).
+
+    Unknown exception types map to the constant ``import_failed``. Never embed
+    dynamic type names (attacker/provider-controlled) into durable telemetry.
+    """
     del phase  # reserved for future phase-qualified codes
     if isinstance(error, ImportCancelledError):
         return "import_cancelled"
     type_name = type(error).__name__
-    # Trust only the exception type name, never str(error) which may carry content.
+    # Trust only known type names for closed codes; never str(error) (content).
     if type_name == "ConflictError":
         return "import_conflict"
     if type_name == "NotFoundError":
@@ -203,8 +207,7 @@ def durable_import_error_code(error: BaseException, *, phase: str | None = None)
         return "import_value_error"
     if isinstance(error, RuntimeError):
         return "import_runtime_error"
-    safe_type = "".join(ch if ch.isalnum() else "_" for ch in type_name)[:64] or "Exception"
-    return f"import_failed:{safe_type}"
+    return "import_failed"
 
 
 def preflight_disk_space(

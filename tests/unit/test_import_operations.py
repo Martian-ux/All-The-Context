@@ -745,6 +745,181 @@ def test_durable_telemetry_never_persists_raw_exception_text(
     assert b"private-export.zip" not in db_bytes
 
 
+def test_durable_error_code_rejects_dynamic_exception_type_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown types must map to constant import_failed — never embed type names."""
+    from allthecontext.import_boundary import durable_import_error_code
+
+    canary_type = "AttackerControlledProviderError_XYZ_canary9f3a"
+    canary_msg = "provider-leak: SECRET=dyn-type-hunter2"
+    DynamicError = type(canary_type, (Exception,), {})
+    code = durable_import_error_code(DynamicError(canary_msg))
+    assert code == "import_failed"
+    assert canary_type not in code
+    assert "import_failed:" not in code
+    assert canary_msg not in code
+
+    core, ops = _ops(tmp_path)
+    size = SOURCE_BLOB_CHUNK_BYTES + 16
+    payload = b"d" * size
+    operation = ops.start_operation(declared_byte_size=size, filename="dyn-type.bin")
+
+    def boom(**kwargs):  # type: ignore[no-untyped-def]
+        del kwargs
+        raise DynamicError(canary_msg)
+
+    monkeypatch.setattr(core.store, "write_source_blob_chunk", boom)
+    with pytest.raises(Exception, match="provider-leak"):
+        ops.accept_upload(operation["operation_id"], io.BytesIO(payload), expected_size=size)
+    failed = ops.get_operation(operation["operation_id"])
+    assert failed["status"] == "failed"
+    assert failed["error_message"] == "import_failed"
+    assert canary_type not in str(failed)
+    assert canary_msg not in str(failed)
+    assert "import_failed:" not in str(failed.get("error_message") or "")
+    progress = failed.get("progress") or {}
+    assert progress.get("message") == "import_failed"
+    # Raw durable scan: dynamic type name and message must never reach SQLite.
+    db_bytes = core.store.database_path.read_bytes()
+    assert canary_type.encode() not in db_bytes
+    assert b"dyn-type-hunter2" not in db_bytes
+    assert b"provider-leak" not in db_bytes
+    assert b"import_failed:" not in db_bytes
+
+
+def test_http_put_bridge_quiesces_when_pump_blocked_on_full_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finalizer must exit while the async pump is blocked; no producer left hung.
+
+    Exercises the PUT bridge when the bounded queue is full (pump blocked on put)
+    and the worker finishes via cancel. CancelledError from the cancelled pump
+    must not hang the request or leave a blocked producer thread.
+    """
+    import asyncio
+
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+    from allthecontext.import_boundary import (
+        CANCEL_POLL_SECONDS,
+        MAX_REQUEST_CHUNK_BYTES,
+        ImportCancelledError,
+    )
+    from allthecontext.import_operations import ImportOperationService
+    from fastapi.testclient import TestClient
+
+    pump_blocked = threading.Event()
+    worker_entered = threading.Event()
+    active_puts = {"n": 0}
+    blocked_put_seen = {"n": 0}
+    lock = threading.Lock()
+
+    original_to_thread = asyncio.to_thread
+
+    def _put_with_block_signal(func, *args, **kwargs):  # type: ignore[no-untyped-def]
+        """Run _put_bounded; signal when a put stays blocked past one cancel poll."""
+        stop_watch = threading.Event()
+
+        def watch() -> None:
+            if not stop_watch.wait(timeout=CANCEL_POLL_SECONDS * 0.9):
+                with lock:
+                    blocked_put_seen["n"] += 1
+                pump_blocked.set()
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=1.0)
+
+    async def tracking_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        name = getattr(func, "__name__", "")
+        if name == "_put_bounded":
+            with lock:
+                active_puts["n"] += 1
+            try:
+                return await original_to_thread(_put_with_block_signal, func, *args, **kwargs)
+            finally:
+                with lock:
+                    active_puts["n"] -= 1
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", tracking_to_thread)
+
+    def accept_without_draining(  # type: ignore[no-untyped-def]
+        self,
+        operation_id,
+        source,
+        *,
+        expected_size=None,
+        process_after=True,
+    ):
+        del self, expected_size, process_after, source
+        worker_entered.set()
+        # Wait until the async pump has filled the bounded queue and blocked on put.
+        assert pump_blocked.wait(timeout=8.0), "pump never blocked on full queue"
+        # Hold so the finalizer must cancel/quiesce a still-blocked pump.
+        time.sleep(CANCEL_POLL_SECONDS)
+        raise ImportCancelledError("import cancelled by operator request")
+
+    monkeypatch.setattr(ImportOperationService, "accept_upload", accept_without_draining)
+
+    # More than Queue(maxsize=8) slices so the pump blocks on put while the worker
+    # does not consume the chunk iterator.
+    payload = b"p" * (MAX_REQUEST_CHUNK_BYTES * 10)
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        started = client.post(
+            "/v1/admin/import-operations",
+            json={"declared_byte_size": len(payload), "filename": "blocked-pump.bin"},
+        )
+        assert started.status_code == 200, started.text
+        operation_id = started.json()["operation_id"]
+
+        result_box: dict[str, object] = {}
+
+        def do_put() -> None:
+            try:
+                result_box["response"] = client.put(
+                    f"/v1/admin/import-operations/{operation_id}/content",
+                    content=payload,
+                    headers={"Content-Length": str(len(payload))},
+                )
+            except BaseException as error:
+                result_box["error"] = error
+
+        put_thread = threading.Thread(target=do_put, daemon=True)
+        put_thread.start()
+        put_thread.join(timeout=15.0)
+        assert not put_thread.is_alive(), (
+            "PUT request hung: pump finalizer failed to quiesce blocked producer"
+        )
+        if "error" in result_box:
+            raise AssertionError(f"PUT failed: {result_box['error']!r}")
+        uploaded = result_box["response"]
+        assert uploaded is not None
+        # ImportCancelledError is an InvalidStateError → 422; must not hang.
+        assert uploaded.status_code == 422, uploaded.text  # type: ignore[union-attr]
+        deadline_puts = time.monotonic() + 2.0
+        while time.monotonic() < deadline_puts:
+            with lock:
+                if active_puts["n"] == 0:
+                    break
+            time.sleep(0.05)
+        with lock:
+            assert active_puts["n"] == 0, (
+                f"producer still blocked after request exit (active_puts={active_puts['n']})"
+            )
+            assert blocked_put_seen["n"] >= 1
+        assert worker_entered.is_set()
+        assert pump_blocked.is_set()
+
+
 def test_progress_write_failure_fails_safe_and_retains_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
