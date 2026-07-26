@@ -498,7 +498,7 @@ class CoreStore:
         media_type: str = "application/octet-stream",
         metadata: Mapping[str, Any] | None = None,
         parser_warnings: Sequence[str] = (),
-        import_status: Literal["processing", "complete", "failed"] = "complete",
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete",
     ) -> SourceOut:
         if len(content) > MAX_IMPORT_BYTES:
             raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
@@ -594,7 +594,7 @@ class CoreStore:
         media_type: str = "application/octet-stream",
         metadata: Mapping[str, Any] | None = None,
         parser_warnings: Sequence[str] = (),
-        import_status: Literal["processing", "complete", "failed"] = "complete",
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete",
     ) -> SourceOut:
         """Store a source from disk without materializing the complete file in memory."""
         resolved = path.expanduser().resolve()
@@ -713,7 +713,10 @@ class CoreStore:
             created_at=str(row["created_at"]),
             duplicate=duplicate,
             import_status=(
-                cast(Literal["processing", "complete", "failed"], row["import_status"])
+                cast(
+                    Literal["processing", "complete", "failed", "cancelled"],
+                    row["import_status"],
+                )
                 if "import_status" in keys
                 else "complete"
             ),
@@ -771,7 +774,7 @@ class CoreStore:
         self,
         source_id: str,
         *,
-        import_status: Literal["processing", "complete", "failed"],
+        import_status: Literal["processing", "complete", "failed", "cancelled"],
         metadata: Mapping[str, Any],
         parser_warnings: Sequence[str],
     ) -> None:
@@ -788,6 +791,59 @@ class CoreStore:
             )
             if result.rowcount != 1:
                 raise NotFoundError("source not found")
+
+    def update_source_progress(
+        self,
+        source_id: str,
+        *,
+        progress: Mapping[str, Any],
+        import_status: Literal["processing", "complete", "failed", "cancelled"] | None = None,
+    ) -> None:
+        """Persist bounded import progress without rewriting parser warnings."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT metadata_json,import_status FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("source not found")
+            metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+            metadata["import_progress"] = dict(progress)
+            status = import_status or cast(str, row["import_status"])
+            connection.execute(
+                "UPDATE source_records SET metadata_json=?,import_status=? "
+                "WHERE id=? AND deleted_at IS NULL",
+                (_json(metadata), status, source_id),
+            )
+
+    def request_import_cancel(self, source_id: str) -> dict[str, Any]:
+        """Mark an in-flight import for cancellation and return current source state."""
+        source = self.get_source(source_id, duplicate=True)
+        if source.import_status in {"complete", "failed", "cancelled"}:
+            return {
+                "source_id": source.id,
+                "import_status": source.import_status,
+                "cancel_requested": False,
+                "already_terminal": True,
+            }
+        metadata = dict(source.metadata)
+        progress = dict(metadata.get("import_progress") or {})
+        progress["cancel_requested"] = True
+        metadata["import_progress"] = progress
+        metadata["cancel_requested"] = True
+        self.update_source_import(
+            source.id,
+            import_status="processing",
+            metadata=metadata,
+            parser_warnings=source.parser_warnings,
+        )
+        return {
+            "source_id": source.id,
+            "import_status": "processing",
+            "cancel_requested": True,
+            "already_terminal": False,
+        }
 
     def _source_content_chunks_tx(
         self,

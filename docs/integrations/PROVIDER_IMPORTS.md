@@ -78,22 +78,29 @@ parser version to reprocess the source.
 - The current implementation default and maximum raw-source limit is
   2,000,000,000 bytes, and an operator can lower it with
   `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the
-  mandatory beta maximum. The current implementation establishes a structural
-  storage boundary, not yet an accepted V1 beta claim. The frozen reference
-  floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free. Core plus
-  import-worker RSS is capped at 1 GiB; incremental import storage is capped at
-  four times raw size plus 1 GiB. Progress starts within 5 seconds and advances
-  every 5 seconds or 64 MiB; cancellation is acknowledged within 5 seconds and
-  quiesces safely within 30 seconds; import, source-inclusive export, and
-  isolated restore each have a 60-minute ceiling. Before publication, a
-  deterministic physically
-  allocated/non-sparse exact-boundary canary with a known generator, SHA-256,
-  chunk count, nonzero publication result, and interruption checkpoints must
-  pass on Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64 candidate
-  artifacts; a 2,000,000,001-byte source must fail deterministically. Each
-  receipt also covers disk preflight, durable
-  progress, cancellation/retry, temporary/WAL/database space, interruption
-  recovery, complete integrity, packaged source-inclusive export, and restore.
+  mandatory beta maximum. The inclusive boundary is implemented and tested;
+  exact multi-platform candidate receipts remain acceptance work. The frozen
+  reference floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free.
+  Core plus import-worker RSS is capped at 1 GiB; incremental import storage is
+  capped at four times raw size plus 1 GiB. Progress starts within 5 seconds and
+  advances every 5 seconds or 64 MiB; cancellation is acknowledged within 5
+  seconds and quiesces safely within 30 seconds; import, source-inclusive
+  export, and isolated restore each have a 60-minute ceiling.
+- Disk preflight requires the greater of four-times-source-plus-1-GiB or any
+  measured durable high-water plus 25 percent before accepting a raw source.
+  Durable progress is stored on the source record (`import_progress`), reaches
+  100 percent only after integrity verification and atomic publication, and is
+  queryable via CLI/API. Cancel requests mark an in-flight import without
+  publishing current context; retries use the preserved raw blob and
+  parser-versioned idempotency keys so decisions are not duplicated.
+- A deterministic physically allocated/non-sparse boundary canary generator
+  (`boundary-canary-v1`) publishes version, SHA-256, 8 MiB chunk-count
+  expectations, nonzero parse/publication material, and interruption
+  checkpoints. Generate or verify with
+  `python scripts/generate_boundary_canary.py`. Exact
+  `2,000,000,000`-byte candidate runs on Windows x86-64, macOS ARM64, macOS
+  x86-64, and Linux x86-64 remain operator-controlled acceptance; a
+  `2,000,000,001`-byte source is refused deterministically.
 - Core stores large raw sources as ordered 8 MiB-or-smaller SQLite rows instead
   of one oversized BLOB. Reads, retries, and source-inclusive portable restores
   verify the complete source size and SHA-256 identity.
@@ -102,18 +109,21 @@ parser version to reprocess the source.
   require enough local space for the temporary upload, SQLite transaction
   journal/WAL, database growth, and any source-inclusive export.
 - Observation batches use a versioned session and deterministic idempotency
-  keys. If extraction is interrupted, the source is marked failed and the
-  dashboard can retry directly from the preserved raw blob without another
-  upload or duplicate decisions.
+  keys. If extraction is interrupted, the source is marked failed or cancelled
+  and the dashboard/CLI can retry directly from the preserved raw blob without
+  another upload or duplicate decisions.
 - Raw source text and credentials are never logged.
 
-ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each must
-pass a privacy-safe nonempty real-export receipt acquired after parser freeze
-and within 30 days of candidate acceptance. The receipt records a content-free
-structural fingerprint, exercises the frozen fictional canary shapes, and
-reconciles every item to a recognized, excluded, skipped, unavailable, or
-failed count with a closed reason. Unknown/unparsed material is a visible
-coverage warning, not parser success. Missing evidence for any provider keeps
+ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each
+provider claim has a parser identity (`chatgpt-archives-v1`,
+`claude-archives-v1`, `grok-archives-v1`) under the aggregate
+`provider-archives-v1` session version. Frozen fictional shapes live in the
+runtime claim manifest. Each import reports closed coverage counts
+(recognized, excluded, skipped, unavailable, failed, unparsed). Unknown or
+unparsed material is a visible coverage warning and keeps coverage incomplete
+rather than counting as parser success. Each provider must still pass a
+privacy-safe nonempty real-export receipt acquired after parser freeze and
+within 30 days of candidate acceptance. Missing real-export evidence keeps
 beta1 in draft rather than narrowing the provider list.
 
 ## Contributor CLI
@@ -123,12 +133,17 @@ macOS shells, and Linux shells:
 
 ```text
 atc import "path/to/provider-export.zip" --provider auto
+atc import-progress <source-id>
+atc cancel-import <source-id>
+atc reprocess-source <source-id>
+atc import-boundary
 ```
 
 Use `--provider chatgpt`, `--provider claude`, or `--provider grok` only when
 auto-detection needs a hint. The CLI returns provider, format, conversation and
-message counts, warnings, and the complete coverage report. Its import result
-includes:
+message counts, warnings, parser identity, closed coverage, and the complete
+coverage report. Admin HTTP routes mirror progress, cancel, reprocess, and the
+frozen boundary/provider claim profile. Its import result includes:
 
 ```json
 {

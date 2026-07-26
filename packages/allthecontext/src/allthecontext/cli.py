@@ -253,6 +253,45 @@ def _cmd_import(args: argparse.Namespace) -> None:
     _dump(service.import_path(path, source_service=args.provider))
 
 
+def _cmd_import_progress(args: argparse.Namespace) -> None:
+    service = ArchiveImportService(_store(args))
+    _dump(service.import_progress(args.source_id))
+
+
+def _cmd_cancel_import(args: argparse.Namespace) -> None:
+    service = ArchiveImportService(_store(args))
+    _dump(service.cancel_import(args.source_id))
+
+
+def _cmd_reprocess_source(args: argparse.Namespace) -> None:
+    service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
+    _dump(service.reprocess_source(args.source_id))
+
+
+def _cmd_import_boundary(args: argparse.Namespace) -> None:
+    from allthecontext.boundary_canary import (
+        BOUNDARY_CANARY_GENERATOR_VERSION,
+        BOUNDARY_CANARY_SIZE_BYTES,
+        checkpoint_offsets,
+    )
+    from allthecontext.import_boundary import expected_chunk_count, scale_profile
+    from allthecontext.provider_shapes import provider_claim_manifest
+
+    _dump(
+        {
+            "scale_profile": scale_profile(),
+            "boundary_canary": {
+                "generator_version": BOUNDARY_CANARY_GENERATOR_VERSION,
+                "size_bytes": BOUNDARY_CANARY_SIZE_BYTES,
+                "expected_chunk_count": expected_chunk_count(BOUNDARY_CANARY_SIZE_BYTES),
+                "checkpoint_offsets": list(checkpoint_offsets(BOUNDARY_CANARY_SIZE_BYTES)),
+                "exact_artifact_acceptance": "pending",
+            },
+            "provider_claims": provider_claim_manifest(),
+        }
+    )
+
+
 def _cmd_observations(args: argparse.Namespace) -> None:
     disposition = ObservationDisposition(args.disposition) if args.disposition is not None else None
     items, total = _store(args).list_observations(
@@ -680,6 +719,41 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_IMPORT_BYTES,
     )
     import_command.set_defaults(handler=_cmd_import)
+
+    import_progress = commands.add_parser(
+        "import-progress",
+        help="Inspect durable progress for one raw-source import",
+    )
+    _common_data(import_progress)
+    import_progress.add_argument("source_id")
+    import_progress.set_defaults(handler=_cmd_import_progress)
+
+    cancel_import = commands.add_parser(
+        "cancel-import",
+        help="Request cancellation of an in-flight raw-source import",
+    )
+    _common_data(cancel_import)
+    cancel_import.add_argument("source_id")
+    cancel_import.set_defaults(handler=_cmd_cancel_import)
+
+    reprocess = commands.add_parser(
+        "reprocess-source",
+        help="Retry extraction from a preserved raw source without re-upload",
+    )
+    _common_data(reprocess)
+    reprocess.add_argument("source_id")
+    reprocess.add_argument(
+        "--max-bytes",
+        type=_import_byte_limit,
+        default=DEFAULT_MAX_IMPORT_BYTES,
+    )
+    reprocess.set_defaults(handler=_cmd_reprocess_source)
+
+    import_boundary = commands.add_parser(
+        "import-boundary",
+        help="Show the frozen import scale profile and provider claim identities",
+    )
+    import_boundary.set_defaults(handler=_cmd_import_boundary)
 
     observations = commands.add_parser(
         "observations",

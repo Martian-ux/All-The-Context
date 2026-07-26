@@ -289,7 +289,7 @@ class SourceOut(StrictModel):
     byte_size: int
     created_at: str
     duplicate: bool = False
-    import_status: Literal["processing", "complete", "failed"] = "complete"
+    import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete"
     metadata: dict[str, Any] = Field(default_factory=dict)
     parser_warnings: list[str] = Field(default_factory=list, max_length=512)
     candidate_count: int = Field(default=0, ge=0)

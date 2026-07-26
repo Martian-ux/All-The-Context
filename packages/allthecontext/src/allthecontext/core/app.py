@@ -457,6 +457,41 @@ def create_app(
         require(principal, "admin")
         return await run_in_threadpool(core.imports.reprocess_source, source_id)
 
+    @app.get("/v1/admin/sources/{source_id}/import-progress")
+    def import_progress(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.imports.import_progress(source_id)
+
+    @app.post("/v1/admin/sources/{source_id}/cancel-import")
+    def cancel_import(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.imports.cancel_import(source_id)
+
+    @app.get("/v1/admin/import-boundary")
+    def import_boundary_profile(principal: Principal) -> dict[str, Any]:
+        """Return the frozen scale profile and canary generator contract."""
+        require(principal, "admin")
+        from allthecontext.boundary_canary import (
+            BOUNDARY_CANARY_GENERATOR_VERSION,
+            BOUNDARY_CANARY_SIZE_BYTES,
+            checkpoint_offsets,
+        )
+        from allthecontext.import_boundary import expected_chunk_count, scale_profile
+        from allthecontext.provider_shapes import provider_claim_manifest
+
+        profile = scale_profile()
+        return {
+            "scale_profile": profile,
+            "boundary_canary": {
+                "generator_version": BOUNDARY_CANARY_GENERATOR_VERSION,
+                "size_bytes": BOUNDARY_CANARY_SIZE_BYTES,
+                "expected_chunk_count": expected_chunk_count(BOUNDARY_CANARY_SIZE_BYTES),
+                "checkpoint_offsets": list(checkpoint_offsets(BOUNDARY_CANARY_SIZE_BYTES)),
+                "exact_artifact_acceptance": "pending",
+            },
+            "provider_claims": provider_claim_manifest(),
+        }
+
     @app.post("/v1/admin/sources/{source_id}/delete")
     def delete_source(
         source_id: str, request: RejectRequest, principal: Principal
