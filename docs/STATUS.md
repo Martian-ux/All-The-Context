@@ -102,6 +102,25 @@ configuration material. Focused regressions cover both response sinks. GitHub
 alerts #1 and #2 were left open for the integrated `main` rescan; no alert was
 dismissed or otherwise mutated to manufacture a clean gate.
 
+A later exact-candidate Windows Edge run found one same-origin, query-free
+`/favicon.ico` JSON 404 during every healthy dashboard handoff. The dashboard
+now declares and packages a local SVG favicon, and bundled-serving coverage
+requires the icon with no external resource reference. The browser acceptance
+harness functional correction reads the escaped ADR-064
+`data-browser-token` attribute instead of the obsolete executable literal. A
+clean committed Windows package built locally from this correction passed the
+focused real Edge P06/S05 journey with zero unexpected console/page errors, no
+external requests, the packaged favicon, and the accepted ticket/session
+lifecycle; the repaired happy-path Python control also passed. Independent
+review then closed the extractor's false-pass paths by binding its nonce to the
+exact response CSP and rejecting external `src`, extra executable markup,
+inert/ambiguous handoffs, and non-production targets. The integrated Python
+suite passes 932 tests with four host-limited skips. A rebuilt official
+downloaded release candidate is still required for release acceptance. Under
+the frozen S05 contract, consumed ticket bytes in browser history files are not
+a byte-erasure failure when current navigation is clean and expiry, non-replay,
+referrer/cache isolation, session termination, and revocation pass.
+
 On 2026-07-26, the live public repository enabled secret scanning and push
 protection, Dependabot alerts and security updates, CodeQL default setup, and
 required immutable Action SHA pins. `main` now requires an up-to-date pull

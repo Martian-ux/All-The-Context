@@ -14,16 +14,128 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_HANDOFF_SCRIPT = (
+    "const handoff=document.currentScript;"
+    "sessionStorage.setItem(handoff.dataset.storageKey,handoff.dataset.browserToken);"
+    "window.location.replace(handoff.dataset.dashboardTarget);"
+)
+_HANDOFF_ATTRIBUTES = frozenset(
+    {
+        "nonce",
+        "data-storage-key",
+        "data-browser-token",
+        "data-dashboard-target",
+    }
+)
+_DASHBOARD_TARGETS = frozenset(
+    {
+        "/",
+        "/?page=sources",
+        "/?page=context",
+        "/?page=connections",
+        "/?page=activity",
+        "/?page=backup",
+        "/?page=updates",
+    }
+)
+_HANDOFF_CSP_PREFIX = (
+    "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
+    "script-src 'nonce-"
+)
+
+
+class _BrowserHandoffParser(HTMLParser):
+    """Read inert handoff data without interpreting script text as credentials."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._active_token: str | None = None
+        self._active_nonce: str | None = None
+        self._active_script: list[str] = []
+        self._inert_depth = 0
+        self.ambiguous = False
+        self.script_count = 0
+        self.handoffs: list[tuple[str, str]] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        folded_tag = tag.casefold()
+        names = [name.casefold() for name, _value in attrs]
+        if folded_tag in {"template", "noscript"}:
+            self._inert_depth += 1
+        if folded_tag != "script":
+            if _HANDOFF_ATTRIBUTES.intersection(names):
+                self.ambiguous = True
+            return
+        self.script_count += 1
+        if self._active_token is not None:
+            self.ambiguous = True
+            return
+        if self._inert_depth or len(names) != len(set(names)) or set(names) != _HANDOFF_ATTRIBUTES:
+            return
+        attributes = {name.casefold(): value for name, value in attrs if value is not None}
+        nonce = attributes.get("nonce", "")
+        token = attributes.get("data-browser-token", "")
+        target = attributes.get("data-dashboard-target", "")
+        if (
+            not nonce
+            or attributes.get("data-storage-key") != "atc.browserSession"
+            or not token
+            or target not in _DASHBOARD_TARGETS
+        ):
+            return
+        self._active_nonce = nonce
+        self._active_token = token
+        self._active_script = []
+
+    def handle_data(self, data: str) -> None:
+        if self._active_token is not None:
+            self._active_script.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        folded_tag = tag.casefold()
+        if folded_tag in {"template", "noscript"}:
+            self._inert_depth = max(0, self._inert_depth - 1)
+        if folded_tag != "script" or self._active_token is None:
+            return
+        if "".join(self._active_script) == _HANDOFF_SCRIPT and self._active_nonce is not None:
+            self.handoffs.append((self._active_token, self._active_nonce))
+        self._active_nonce = None
+        self._active_token = None
+        self._active_script = []
+
+
+def browser_session_from_handoff_html(
+    handoff_html: str,
+    content_security_policy: str,
+) -> str | None:
+    """Extract one escaped ADR-064 browser capability from inert handoff HTML."""
+
+    parser = _BrowserHandoffParser()
+    try:
+        parser.feed(handoff_html)
+        parser.close()
+    except (TypeError, ValueError):
+        return None
+    if parser.ambiguous or parser.script_count != 1 or len(parser.handoffs) != 1:
+        return None
+    token, nonce = parser.handoffs[0]
+    expected_csp = f"{_HANDOFF_CSP_PREFIX}{nonce}'"
+    return token if content_security_policy == expected_csp else None
 
 
 def _http_json(
@@ -104,8 +216,13 @@ def run_against_core(base_url: str) -> list[dict[str, Any]]:
 
     conn_code, conn_headers, conn_body = _http_json("GET", f"{base}{connect_path}")
     body_text = conn_body if isinstance(conn_body, str) else str(conn_body)
-    match = re.search(r'sessionStorage\.setItem\("[^"]+",\s*"([^"]+)"\)', body_text)
-    browser_token = match.group(1) if match else ""
+    browser_token = (
+        browser_session_from_handoff_html(
+            body_text,
+            conn_headers.get("content-security-policy", ""),
+        )
+        or ""
+    )
     checks.append(
         _check(
             "handoff_html_safety",
