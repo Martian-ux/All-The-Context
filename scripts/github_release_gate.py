@@ -52,6 +52,32 @@ class GitHubReader:
             raise ManifestError("GitHub release preflight returned an unexpected response")
         return cast(dict[str, Any], value)
 
+    def get_list(self, endpoint: str) -> list[dict[str, Any]]:
+        repository_url = f"{self.api_url.rstrip('/')}/repos/{self.repository}"
+        normalized_endpoint = endpoint.lstrip("/")
+        url = f"{repository_url}/{normalized_endpoint}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "X-GitHub-Api-Version": "2026-03-10",
+                "User-Agent": "all-the-context-release-preflight",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                value = json.load(response)
+        except urllib.error.HTTPError as exc:
+            raise ManifestError(f"GitHub release preflight failed with HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise ManifestError(
+                "GitHub release preflight could not read trusted repository state"
+            ) from exc
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise ManifestError("GitHub release preflight returned an unexpected release listing")
+        return cast(list[dict[str, Any]], value)
+
 
 def preflight_candidate(
     *,
@@ -87,6 +113,19 @@ def preflight_candidate(
         if not isinstance(commit, dict) or commit.get("sha") != source_commit:
             raise ManifestError("candidate source must equal the current default-branch head")
     encoded_tag = urllib.parse.quote(tag, safe="")
+    for page in range(1, 1001):
+        releases = reader.get_list(f"releases?per_page=100&page={page}")
+        if any(
+            not isinstance(release.get("tag_name"), str) or not release.get("tag_name")
+            for release in releases
+        ):
+            raise ManifestError("GitHub release listing contains an invalid tag name")
+        if any(release.get("tag_name") == tag for release in releases):
+            raise ManifestError("release version already has a GitHub Release and cannot be reused")
+        if len(releases) < 100:
+            break
+    else:
+        raise ManifestError("GitHub release listing exceeded the bounded preflight")
     if reader.get(f"releases/tags/{encoded_tag}", missing_ok=True) is not None:
         raise ManifestError("release version already has a GitHub Release and cannot be reused")
     if reader.get(f"git/ref/tags/{encoded_tag}", missing_ok=True) is not None:

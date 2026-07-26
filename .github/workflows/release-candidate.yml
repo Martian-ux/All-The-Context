@@ -409,6 +409,28 @@ jobs:
             --target "$SOURCE_COMMIT" \
             --title "All The Context $TAG — unsigned community build" \
             --notes-file dist/release-notes.md
-          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SOURCE_COMMIT"
-          gh release view "$TAG" --json url,isDraft,isImmutable,isPrerelease,targetCommitish,assets
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > dist/draft-release-list.json
+          release_id="$(
+            python scripts/release_candidate.py resolve-release \
+              --input dist/draft-release-list.json \
+              --tag "$TAG" \
+              --source-commit "$SOURCE_COMMIT" \
+              --draft true \
+              --immutable false \
+              --release-dir dist/release \
+              --asset-stage draft \
+              --output dist/draft-release-state.json
+          )"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            > dist/draft-release-by-id.json
+          python scripts/release_candidate.py verify-release-state \
+            --input dist/draft-release-by-id.json \
+            --tag "$TAG" \
+            --source-commit "$SOURCE_COMMIT" \
+            --draft true \
+            --immutable false \
+            --release-dir dist/release \
+            --asset-stage draft

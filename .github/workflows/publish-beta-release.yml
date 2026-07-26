@@ -71,23 +71,55 @@ jobs:
       - name: Install from reviewed lock constraints
         run: python scripts/install_locked_python.py
       - name: Verify unpublished beta release state
+        id: draft_release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
+          set -euo pipefail
           mkdir -p dist
-          gh release view "${{ inputs.tag }}" \
-            --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets \
-            > dist/release-state.json
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > dist/release-list.json
+          release_id="$(
+            python scripts/release_candidate.py resolve-release \
+              --input dist/release-list.json \
+              --tag "$TAG" \
+              --source-commit "$SOURCE_COMMIT" \
+              --draft true \
+              --immutable false \
+              --output dist/release-state.json
+          )"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            > dist/release-state-by-id.json
           python scripts/release_candidate.py verify-release-state \
-            --input dist/release-state.json \
-            --tag "${{ inputs.tag }}" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --input dist/release-state-by-id.json \
+            --tag "$TAG" \
+            --source-commit "$SOURCE_COMMIT" \
             --draft true \
             --immutable false
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
       - name: Download candidate without replacing any asset
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ inputs.tag }}" --dir dist/release
+          RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          set -o noclobber
+          while IFS=$'\t' read -r asset_id asset_name; do
+            gh api \
+              -H "Accept: application/octet-stream" \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              > "dist/release/$asset_name"
+          done < <(
+            python scripts/release_candidate.py list-release-assets \
+              --input dist/release-state.json
+          )
       - name: Materialize operator acceptance receipt bundle
         env:
           RECEIPT_BUNDLE_JSON: ${{ inputs.receipt_bundle_json }}
@@ -102,16 +134,24 @@ jobs:
           print(path)
           PY
       - name: Verify signed candidate inventory before decision artifacts
-        run: >-
-          python scripts/release_candidate.py verify
-          --release-dir dist/release
-          --expected-sha256 "${{ inputs.candidate_sha256 }}"
-          --target windows:x86_64
-          --target macos:arm64
-          --target macos:x86_64
-          --target linux:x86_64
-          --ota-target windows:x86_64
-          --asset-stage signed
+        run: |
+          python scripts/release_candidate.py verify \
+            --release-dir dist/release \
+            --expected-sha256 "${{ inputs.candidate_sha256 }}" \
+            --target windows:x86_64 \
+            --target macos:arm64 \
+            --target macos:x86_64 \
+            --target linux:x86_64 \
+            --ota-target windows:x86_64 \
+            --asset-stage signed
+          python scripts/release_candidate.py verify-release-state \
+            --input dist/release-state.json \
+            --tag "${{ inputs.tag }}" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --draft true \
+            --immutable false \
+            --release-dir dist/release \
+            --asset-stage signed
       - name: Fail-closed protected publication gate
         run: >-
           python scripts/publication_gate.py
@@ -131,12 +171,23 @@ jobs:
             dist/release/acceptance-receipt-bundle-v1.json
             dist/release/publication-gate-record.json
       - name: Upload decision artifacts to the draft before final recheck
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "${{ inputs.tag }}"
-          dist/release/acceptance-receipt-bundle-v1.json
-          dist/release/publication-gate-record.json
+          RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          for asset in \
+            dist/release/acceptance-receipt-bundle-v1.json \
+            dist/release/publication-gate-record.json; do
+            asset_name="$(basename "$asset")"
+            gh api \
+              --method POST \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$asset_name" \
+              --input "$asset" \
+              > /dev/null
+          done
       - name: Verify exact build workflow, commit, provenance, and SBOM attestations
         shell: bash
         env:
@@ -178,9 +229,9 @@ jobs:
       - name: Recheck the exact promotion asset set immediately before publication
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}
         run: |
-          gh release view "${{ inputs.tag }}" \
-            --json tagName,targetCommitish,isDraft,isImmutable,isPrerelease,assets \
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
             > dist/pre-publish-release-state.json
           python scripts/release_candidate.py verify-release-state \
             --input dist/pre-publish-release-state.json \
@@ -193,7 +244,14 @@ jobs:
       - name: Publish only after protected-environment approval and all verification
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "${{ inputs.tag }}" --draft=false --prerelease
+          RELEASE_ID: ${{ steps.draft_release.outputs.release_id }}
+        run: >-
+          gh api
+          --method PATCH
+          "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          -F draft=false
+          -F prerelease=true
+          > /dev/null
       - name: Require immutable published state and GitHub release attestation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -209,4 +267,8 @@ jobs:
             --immutable true \
             --release-dir dist/release \
             --asset-stage promotion
+          test "$(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/${{ inputs.tag }}" \
+              --jq .object.sha
+          )" = "${{ inputs.source_commit }}"
           gh release verify "${{ inputs.tag }}"

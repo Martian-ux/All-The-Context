@@ -94,6 +94,17 @@ source commit and exact release workflow, then writes and attests
 draft containing every reviewed byte. It never signs an OTA manifest and never
 publishes the draft.
 
+In immutable-release mode, that unpublished draft is not available from
+`releases/tags/<tag>` and has no Git tag ref yet. Candidate verification and
+the protected publication workflow therefore enumerate authenticated release
+pages, require exactly one matching `tag_name`, and bind the numeric release
+ID, target commit, prerelease/draft state, and exact asset names, sizes, and
+SHA-256 digests. Every draft read, download, upload, recheck, and publication
+PATCH uses that numeric ID. The unused-version gate also enumerates drafts, so
+a published-by-tag 404 never makes an occupied slot reusable. Only after
+publication do the controls require the by-tag release, exact tag ref,
+immutable state, and `gh release verify`.
+
 Direct packages are the human install path: Windows provides one-click setup,
 macOS provides an open-and-launch DMG, and Linux provides a portable archive.
 An updater ZIP is not automatically

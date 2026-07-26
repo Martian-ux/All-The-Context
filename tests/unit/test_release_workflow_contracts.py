@@ -125,12 +125,46 @@ def test_publish_workflow_persists_decision_artifacts_before_final_recheck() -> 
     assert "--asset-stage promotion" in text
     assert ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME in text
     assert PUBLICATION_GATE_RECORD_FILE_NAME in text
-    assert "gh release upload" in text
+    assert "https://uploads.github.com/repos/" in text
+    assert "--hostname uploads.github.com" not in text
     assert "decision_attest" in text or "Attest acceptance" in text
     # Upload happens before the pre-publish recheck.
-    upload_at = text.index("gh release upload")
+    upload_at = text.index("https://uploads.github.com/repos/")
     recheck_at = text.index("Recheck the exact promotion asset set")
     assert upload_at < recheck_at
+
+
+def test_unpublished_release_workflows_use_unique_numeric_release_identity() -> None:
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    assert "gh api --paginate --slurp" in candidate
+    assert "resolve-release" in candidate
+    assert "repos/$GITHUB_REPOSITORY/releases/$release_id" in candidate
+    assert 'gh release view "$TAG"' not in candidate
+    assert "git/ref/tags/$TAG" not in candidate
+
+    publish = _read(WORKFLOWS / "publish-beta-release.yml")
+    prepublication, postpublication = publish.split(
+        "- name: Require immutable published state and GitHub release attestation",
+        maxsplit=1,
+    )
+    for tag_command in (
+        "gh release view",
+        "gh release download",
+        "gh release upload",
+        "gh release edit",
+        "git/ref/tags/",
+    ):
+        assert tag_command not in prepublication
+    assert "resolve-release" in prepublication
+    assert "list-release-assets" in prepublication
+    assert "releases/assets/$asset_id" in prepublication
+    assert "https://uploads.github.com/repos/" in prepublication
+    assert "--hostname uploads.github.com" not in prepublication
+    assert '"repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"' in prepublication
+    assert "--method PATCH" in prepublication
+    assert "gh release view" in postpublication
+    assert "git/ref/tags/" in postpublication
+    assert "gh release verify" in postpublication
 
 
 def test_release_candidate_binds_source_evidence_into_inventory() -> None:
