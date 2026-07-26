@@ -70,8 +70,9 @@ tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every
 record scope; an empty grant exposes only unscoped records. Out-of-grant records
 are omitted without contributing to forwarded search counts or bootstrap
-character totals. This is defense in depth on a still-callable surface; B-103
-must remove or build-gate it from supported beta artifacts.
+character totals. That experimental module remains for residual cleanup and
+security regressions only; B-103 has removed the ordinary Core product routes
+that would call it.
 
 ## AI-memory research direction
 
@@ -427,7 +428,7 @@ Tentative-observation expiry/decay is intentionally not implemented in
 `automatic-v1`. It is a possible later versioned-policy extension; tentative
 state is already noncurrent and creates no user queue.
 
-## V1 Edge UI and worker removal
+## V1 Edge UI and worker removal / B-103 Core-only isolation
 
 - Edge navigation and setup were removed from the dashboard.
 - First run no longer offers or opens hosted web/mobile setup.
@@ -436,15 +437,31 @@ state is already noncurrent and creates no user queue.
 - Core no longer starts the legacy Edge network worker.
 - The GHCR Edge workflow, Render templates, and Relay container CI job were
   removed from the V1 path.
-- Core still constructs Edge compatibility state and sync managers, exposes
-  authenticated enrollment/connect/sync/client-management routes, and can
-  trigger that manager after mutations. The CLI also retains explicit
-  Relay/Edge operation paths. The background worker is disabled, but these
-  callable surfaces are not dormant.
-- The V1 beta therefore still needs to remove or build-gate active Edge/Relay
-  operation from supported artifacts while retaining a narrow, separately
-  tested legacy decommission path. This is roadmap gate `BETA-S04` and work
-  package `B-103`.
+- Ordinary Core HTTP routes for Edge enroll/prepare/deploy/connect/sync,
+  secure-storage migration, owner-link, remote-client approve/revoke, and the
+  old forget/decommission product paths return HTTP 404 tombstones.
+- Ordinary Core mutations no longer trigger Edge sync. The CLI no longer
+  exposes `sync`, `serve-relay`, or other ordinary Edge/Relay operation
+  commands.
+- Residual cleanup is isolated under `/v1/admin/legacy-edge` and
+  `atc legacy-edge {status,decommission,forget}`. Decommission refuses when no
+  residual paired Edge exists so the path cannot create a second authority by
+  default. Status is local-only and does not open outbound sockets.
+- Negative proofs cover removed routes/CLI, package entrypoints/web assets,
+  process worker absence, ordinary-mutation network isolation, and default
+  cleanup refusal (`tests/unit/test_core_only_boundary.py` and updated Core
+  API integration tests).
+- Same-version OTA acceptance: after a verified channel check that reports
+  `current`, `accept_exact_candidate` reopens that already-verified equal
+  version for download/install/health/rollback smoke without network I/O and
+  without weakening signature, hash, platform, channel, or key checks. The
+  admin route is `POST /v1/admin/updates/accept-exact-candidate`. This supports
+  beta1 exact-candidate same-version transactional proof; it is not a public
+  beta1-to-beta2 N-1 receipt.
+- Roadmap gate `BETA-S04` / work package `B-103` is implemented for the
+  supported Core product surface. Exact packaged artifact matrix proof on the
+  frozen release identity, release-key ceremony, and deliberate publication
+  remain separate human-controlled gates.
 
 ## Retrieval V3 integration
 
@@ -511,8 +528,9 @@ state is already noncurrent and creates no user queue.
 - Implement the accepted trust grant for explicitly authorized, ATC-configured
   same-device Codex/Claude clients and prevent contradictory unkeyed imported
   history from simultaneously becoming confident current truth.
-- Remove or build-gate the active Edge/Relay operation surface from the
-  supported Core-only artifact and prove the isolated legacy cleanup path.
+- Repeat B-103 negative route/CLI/package proofs on the exact frozen candidate
+  package artifacts; the Core product surface isolation is implemented and
+  unit/integration-tested.
 - Complete privacy-safe acceptance against current real ChatGPT, Claude, and
   Grok exports acquired after parser freeze and within 30 days of acceptance.
   Each must be nonempty, exercise the frozen fictional shape set, and reconcile
@@ -595,8 +613,10 @@ state is already noncurrent and creates no user queue.
   correctly at desktop and 390-pixel mobile widths. It does not satisfy the
   new automatic-policy browser gate.
 - The historical packaged dashboard contained no Edge setup copy or
-  `/admin/edge` request path. That smoke is not evidence for B-103, and the
-  active beta claim now excludes mobile and remote-computer use entirely.
+  `/admin/edge` request path. B-103 Core product-surface isolation is now
+  implemented with unit/integration negative proofs; exact frozen packaged
+  artifact re-proof remains open. The active beta claim continues to exclude
+  mobile and remote-computer use entirely.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
   deploy only from Actions. The canonical beta metadata URL currently returns
   HTTP 404 because no channel artifact or beta release has been deployed. The

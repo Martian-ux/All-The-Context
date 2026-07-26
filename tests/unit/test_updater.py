@@ -84,6 +84,7 @@ class FakeInstaller:
     rollback_failure: str | None = None
     handed_off: bool = False
     rolled_back: bool = False
+    expected_target_version: str | None = "0.2.0"
 
     @property
     def unsupported_reason(self) -> str:
@@ -97,7 +98,8 @@ class FakeInstaller:
 
     def handoff(self, plan: InstallPlan) -> None:
         assert plan.artifact.is_file()
-        assert plan.target_version == "0.2.0"
+        if self.expected_target_version is not None:
+            assert plan.target_version == self.expected_target_version
         assert plan.operation_dir.is_dir()
         if self.failure == "locked":
             raise UpdateError("Installed files are locked")
@@ -429,6 +431,91 @@ def test_equal_version_is_truthfully_current_and_can_be_disabled(tmp_path: Path)
     assert manager.check()["phase"] == "current"
     assert manager.configure(enabled=False, channel="stable")["phase"] == "disabled"
     assert manager.check()["phase"] == "disabled"
+
+
+def test_same_version_acceptance_reopens_verified_candidate_without_network(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path, version="0.1.0")
+    manager, transport, installer = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        installer=FakeInstaller(expected_target_version="0.1.0"),
+    )
+    assert manager.check()["phase"] == "current"
+    transport.metadata_error = UpdateError("network must not be used after check")
+    status = manager.accept_exact_candidate()
+    assert status["phase"] == "available"
+    assert status["offered_version"] == "0.1.0"
+    assert manager.download()["phase"] == "ready"
+    install = manager.install()
+    assert install["phase"] == "restart_required"
+    assert installer.handed_off
+    backup = Path(manager.state.backup_path or "")
+    assert backup.is_file()
+    with sqlite3.connect(backup) as connection:
+        assert connection.execute("SELECT id FROM records").fetchone() == (1,)
+        assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
+
+
+def test_same_version_acceptance_failed_health_rolls_back_and_preserves_vault(
+    tmp_path: Path,
+) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path, version="0.1.0")
+    installer = FakeInstaller(expected_target_version="0.1.0")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.accept_exact_candidate()
+    manager.download()
+    manager.install()
+    vault = tmp_path / "core.sqlite3"
+    original_digest = hashlib.sha256(vault.read_bytes()).hexdigest()
+
+    recovered, _, recovered_installer = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.1.0",
+        installer=installer,
+        health=FakeHealth(False),
+    )
+    status = recovered.recover_after_restart()
+    assert status["phase"] == "rolled_back"
+    assert recovered_installer.rolled_back
+    assert "rolled back" in (status["last_error"] or "").casefold()
+    assert hashlib.sha256(vault.read_bytes()).hexdigest() == original_digest
+    assert recovered.recover_after_restart()["phase"] == "rolled_back"
+
+
+def test_same_version_acceptance_success_marks_installed(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path, version="0.1.0")
+    installer = FakeInstaller(expected_target_version="0.1.0")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring, installer=installer)
+    manager.check()
+    manager.accept_exact_candidate()
+    manager.download()
+    manager.install()
+    recovered, _, _ = _manager(
+        tmp_path,
+        manifest,
+        artifact,
+        keyring,
+        current_version="0.1.0",
+        installer=installer,
+        health=FakeHealth(True),
+    )
+    assert recovered.recover_after_restart()["phase"] == "installed"
+
+
+def test_accept_exact_candidate_rejects_newer_available_offer(tmp_path: Path) -> None:
+    manifest, artifact, keyring = _fixture(tmp_path, version="0.2.0")
+    manager, _, _ = _manager(tmp_path, manifest, artifact, keyring)
+    assert manager.check()["phase"] == "available"
+    with pytest.raises(UpdateError, match="same-version candidate"):
+        manager.accept_exact_candidate()
 
 
 def test_channel_change_discards_an_old_verified_offer(tmp_path: Path) -> None:

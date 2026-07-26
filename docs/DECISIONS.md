@@ -487,9 +487,33 @@ limitation rather than offering an unsafe shortcut.
 The `always_available` schema value and experimental Relay modules remain
 temporarily for import/history compatibility and safe cleanup of engineering
 setups. Newly applied context uses only `local_only` and `core_available`.
-ADR-053 and B-103 strengthen the beta boundary: current callable Edge/Relay
-paths must be removed or build-gated from supported artifacts, with any
-retained cleanup path isolated from ordinary Core operation.
+ADR-053 and B-103 strengthen the beta boundary: ordinary Core Edge/Relay
+operation paths are removed or tombstoned from the supported product surface,
+and the retained cleanup path is isolated under legacy-edge API/CLI commands
+that cannot enroll, connect, sync, or create a second authority by default.
+
+## ADR-054: Same-version OTA acceptance is explicit and fail-closed
+
+**Status:** accepted 2026-07-25.
+
+Ordinary channel checks report `current` when a signed offer equals the
+installed version. Beta1 exact-candidate acceptance still needs that already
+verified same-version candidate to exercise download, transactional
+replacement, health verification, and rollback without fabricating a newer
+release or weakening trust checks.
+
+`UpdateManager.accept_exact_candidate` therefore reopens only a phase=`current`
+offer whose offered version equals the installed version, re-verifies the
+stored signed manifest against the keyring, platform, architecture, and
+channel, performs no network I/O, and transitions the phase to `available` so
+the existing download/install/recover path can run. A newer available offer is
+rejected. The Core admin route is
+`POST /v1/admin/updates/accept-exact-candidate`.
+
+This is an engineering acceptance helper for exact-candidate same-version
+smoke. It is not public promotion, not a substitute for a real signed
+beta1-to-beta2 N-1 receipt, and not a weakening of signature, hash, platform,
+channel, or key policy.
 
 ## ADR-033: Provider history is preserved completely but evaluated selectively
 

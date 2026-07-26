@@ -37,7 +37,6 @@ from allthecontext.models import (
 )
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.storage import CoreStore
-from allthecontext.sync import CoreRelaySync
 
 
 def _config(args: argparse.Namespace) -> CoreConfig:
@@ -363,14 +362,109 @@ def _cmd_status(args: argparse.Namespace) -> None:
     _dump(_store(args).status())
 
 
-def _cmd_sync(args: argparse.Namespace) -> None:
-    secret = os.environ.get(args.secret_env, "").encode()
-    bearer = os.environ.get(args.token_env, "")
-    store = _store(args)
-    with CoreRelaySync(store.database_path, args.relay_url, secret, bearer) as sync:
-        pushed = sync.push(limit=args.limit)
-        pulled = sync.pull_proposals(store.vault_id(), store, limit=args.limit)
-    _dump({"pushed": pushed, "proposals_imported": pulled})
+def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
+    """Report residual local Edge state without connecting outbound."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore
+
+    config = _config(args)
+    config.prepare()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+    except RuntimeError as error:
+        _dump({"product_surface": "legacy_cleanup_only", "state": "degraded", "error": str(error)})
+        return
+    try:
+        material = connections.material()
+    except RuntimeError as error:
+        _dump({"product_surface": "legacy_cleanup_only", "state": "degraded", "error": str(error)})
+        return
+    edge_url = state.edge_url if state is not None else None
+    _dump(
+        {
+            "product_surface": "legacy_cleanup_only",
+            "active_operation_available": False,
+            "configured": edge_url is not None and material is not None,
+            "remote_present": edge_url is not None,
+            "credential_available": material is not None,
+            "state": (
+                "not_configured"
+                if state is None
+                else "prepared"
+                if edge_url is None
+                else "paired"
+            ),
+            "edge_url": edge_url,
+            "detail": (
+                "Ordinary Edge enroll/connect/sync and Relay serve are outside the V1 "
+                "Core product boundary. Only isolated decommission or local forget remain."
+            ),
+        }
+    )
+
+
+def _cmd_legacy_edge_decommission(args: argparse.Namespace) -> None:
+    """Decommission a pre-existing residual Edge without creating a new authority."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
+
+    config = _config(args)
+    config.prepare()
+    store = CoreStore(config.database_path)
+    store.migrate()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+        material = connections.material()
+    except RuntimeError as error:
+        raise RuntimeError(str(error)) from error
+    if state is None or material is None or state.edge_url is None:
+        raise RuntimeError(
+            "No residual paired Edge is configured. Core will not open a new hosted "
+            "connection or create a second authority."
+        )
+    EdgeSyncManager(connections, store).decommission()
+    store.revoke_all_remote_edge_clients()
+    _dump(
+        {
+            "status": "decommissioned",
+            "active_records_remaining": 0,
+            "remote_access_revoked": True,
+            "product_surface": "legacy_cleanup_only",
+        }
+    )
+
+
+def _cmd_legacy_edge_forget(args: argparse.Namespace) -> None:
+    """Forget local residual Edge credentials after explicit confirmation."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
+
+    if args.confirmation != "DELETE HOSTED EDGE":
+        raise RuntimeError('confirmation must be exactly "DELETE HOSTED EDGE"')
+    config = _config(args)
+    config.prepare()
+    store = CoreStore(config.database_path)
+    store.migrate()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+        material = connections.material()
+    except RuntimeError:
+        state = None
+        material = None
+    if (
+        state is not None
+        and state.edge_url is not None
+        and state.last_error is None
+        and material is not None
+    ):
+        raise RuntimeError(
+            "Edge is paired and manageable. Use legacy-edge decommission before forget."
+        )
+    EdgeSyncManager(connections, store).forget_local()
+    _dump({"status": "forgotten", "product_surface": "legacy_cleanup_only"})
 
 
 def _cmd_export(args: argparse.Namespace) -> None:
@@ -444,12 +538,6 @@ def _cmd_serve_core(args: argparse.Namespace) -> None:
     core_main()
 
 
-def _cmd_serve_relay(args: argparse.Namespace) -> None:
-    from allthecontext.relay.app import main as relay_main
-
-    relay_main()
-
-
 def _common_data(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-dir", help="Override the per-user Core data directory")
 
@@ -484,8 +572,37 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", default=7337, type=int)
     serve.set_defaults(handler=_cmd_serve_core)
 
-    relay = commands.add_parser("serve-relay", help="Run the separately configured Relay")
-    relay.set_defaults(handler=_cmd_serve_relay)
+    legacy_edge = commands.add_parser(
+        "legacy-edge",
+        help=(
+            "Isolated residual Edge cleanup only; cannot enroll, deploy, connect, "
+            "sync, or serve Relay"
+        ),
+    )
+    legacy_commands = legacy_edge.add_subparsers(dest="legacy_edge_command", required=True)
+    legacy_status = legacy_commands.add_parser(
+        "status",
+        help="Show residual local Edge state without outbound contact",
+    )
+    _common_data(legacy_status)
+    legacy_status.set_defaults(handler=_cmd_legacy_edge_status)
+    legacy_decommission = legacy_commands.add_parser(
+        "decommission",
+        help="Decommission a pre-existing residual Edge connection only",
+    )
+    _common_data(legacy_decommission)
+    legacy_decommission.set_defaults(handler=_cmd_legacy_edge_decommission)
+    legacy_forget = legacy_commands.add_parser(
+        "forget",
+        help="Forget residual local Edge credentials after confirmation",
+    )
+    _common_data(legacy_forget)
+    legacy_forget.add_argument(
+        "--confirmation",
+        required=True,
+        help='Must be exactly "DELETE HOSTED EDGE"',
+    )
+    legacy_forget.set_defaults(handler=_cmd_legacy_edge_forget)
 
     config_mcp = commands.add_parser("config-mcp", help="Generate one-time Codex MCP config")
     _common_data(config_mcp)
@@ -692,18 +809,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser(
         "status",
-        help="Show current-context, observation, and replication health",
+        help="Show current-context, observation, and local vault health",
     )
     _common_data(status)
     status.set_defaults(handler=_cmd_status)
-
-    sync = commands.add_parser("sync", help="Push events and import Relay proposals")
-    _common_data(sync)
-    sync.add_argument("relay_url")
-    sync.add_argument("--secret-env", default="ATC_RELAY_REPLICATION_SECRET")
-    sync.add_argument("--token-env", default="ATC_RELAY_BEARER_TOKEN")
-    sync.add_argument("--limit", type=int, default=500)
-    sync.set_defaults(handler=_cmd_sync)
 
     export = commands.add_parser("export", help="Create an encrypted portable export")
     _common_data(export)
