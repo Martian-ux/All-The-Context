@@ -60,6 +60,26 @@ def helper_arguments(system: str) -> list[str]:
     ]
 
 
+def recovery_helper_arguments(system: str) -> list[str]:
+    """Console recovery/admin helper for windowed Windows/macOS desktop builds."""
+
+    name = "AllTheContextRecovery" if system == "Windows" else "all-the-context-recovery"
+    return [
+        *common_arguments(),
+        "--onefile",
+        "--console",
+        "--name",
+        name,
+        "--distpath",
+        str(BUILD_ROOT / "recovery-helper-dist"),
+        "--workpath",
+        str(BUILD_ROOT / "recovery-helper-work"),
+        "--specpath",
+        str(BUILD_ROOT / "spec"),
+        str(ROOT / "scripts" / "recovery_entry.py"),
+    ]
+
+
 def update_helper_arguments(system: str) -> list[str]:
     name = "AllTheContextUpdater" if system == "Windows" else "all-the-context-updater"
     subsystem = ["--windowed"] if system == "Windows" else ["--console"]
@@ -83,7 +103,10 @@ def update_helper_arguments(system: str) -> list[str]:
 
 
 def desktop_arguments(
-    system: str, helper: Path | None, update_helper: Path | None = None
+    system: str,
+    helper: Path | None,
+    update_helper: Path | None = None,
+    recovery_helper: Path | None = None,
 ) -> list[str]:
     name = {
         "Windows": "AllTheContextSetup",
@@ -94,8 +117,11 @@ def desktop_arguments(
     bundle_identity = (
         ["--osx-bundle-identifier", "com.allthecontext.desktop"] if system == "Darwin" else []
     )
-    helper_arguments = ["--add-binary", f"{helper}{os.pathsep}."] if helper else []
+    helper_args = ["--add-binary", f"{helper}{os.pathsep}."] if helper else []
     update_arguments = ["--add-binary", f"{update_helper}{os.pathsep}."] if update_helper else []
+    recovery_arguments = (
+        ["--add-binary", f"{recovery_helper}{os.pathsep}."] if recovery_helper else []
+    )
     return [
         *common_arguments(),
         bundle_mode,
@@ -103,8 +129,9 @@ def desktop_arguments(
         *bundle_identity,
         "--name",
         name,
-        *helper_arguments,
+        *helper_args,
         *update_arguments,
+        *recovery_arguments,
         "--distpath",
         str(DIST_ROOT),
         "--workpath",
@@ -195,18 +222,30 @@ def build(*, system: str | None = None) -> Path:
     DIST_ROOT.mkdir(parents=True, exist_ok=True)
     helper: Path | None = None
     update_helper: Path | None = None
+    recovery_helper: Path | None = None
     if active_system in {"Windows", "Darwin"}:
         helper_stem = "AllTheContextMCP" if active_system == "Windows" else "all-the-context-mcp"
         helper = BUILD_ROOT / "helper-dist" / executable_name(helper_stem, active_system)
         PyInstaller.__main__.run(helper_arguments(active_system))
         if not helper.is_file():
             raise RuntimeError(f"MCP helper was not produced at {helper}")
+        recovery_stem = (
+            "AllTheContextRecovery" if active_system == "Windows" else "all-the-context-recovery"
+        )
+        recovery_helper = (
+            BUILD_ROOT / "recovery-helper-dist" / executable_name(recovery_stem, active_system)
+        )
+        PyInstaller.__main__.run(recovery_helper_arguments(active_system))
+        if not recovery_helper.is_file():
+            raise RuntimeError(f"Recovery helper was not produced at {recovery_helper}")
     if active_system == "Windows":
         update_helper = BUILD_ROOT / "update-helper-dist" / "AllTheContextUpdater.exe"
         PyInstaller.__main__.run(update_helper_arguments(active_system))
         if not update_helper.is_file():
             raise RuntimeError(f"Update helper was not produced at {update_helper}")
-    PyInstaller.__main__.run(desktop_arguments(active_system, helper, update_helper))
+    PyInstaller.__main__.run(
+        desktop_arguments(active_system, helper, update_helper, recovery_helper)
+    )
 
     app_stem = {
         "Windows": "AllTheContextSetup",
@@ -222,6 +261,12 @@ def build(*, system: str | None = None) -> Path:
         # still sees an unsigned/unnotarized community build, but the bundle is
         # not internally corrupt.
         reseal_macos_bundle(artifact)
+    if recovery_helper is not None and active_system == "Windows":
+        # Stage the console helper next to the setup binary so package smokes and
+        # operator layout checks can invoke built bytes without MEIPASS extraction.
+        # Install still extracts the embedded helper from the setup onefile.
+        staged = DIST_ROOT / recovery_helper.name
+        shutil.copy2(recovery_helper, staged)
     return artifact
 
 

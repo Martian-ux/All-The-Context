@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from allthecontext.models import (
     Availability,
     CandidateInput,
@@ -10,7 +11,7 @@ from allthecontext.models import (
     ObservationDisposition,
     Sensitivity,
 )
-from allthecontext.storage import CoreStore
+from allthecontext.storage import CoreStore, InvalidStateError
 
 
 def _store(tmp_path: Path) -> CoreStore:
@@ -71,41 +72,36 @@ def test_inference_requires_explicit_corroboration_before_becoming_current(
     assert store.get_candidate(first.id).record_id == explicit.record_id
 
 
-def test_secret_is_ignored_and_sensitive_context_stays_local(tmp_path: Path) -> None:
+def test_secret_is_refused_before_write_and_sensitive_context_stays_local(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
-    secrets = [
-        store.add_candidate(
-            CandidateInput(
-                kind="fact",
-                content="API key: do-not-store-this",
-                explicit_user_statement=True,
-            )
+    secrets = (
+        CandidateInput(
+            kind="fact",
+            content="API key: do-not-store-this",
+            explicit_user_statement=True,
         ),
-        store.add_candidate(
-            CandidateInput(
-                kind="fact",
-                content="My password is do-not-store-this",
-                explicit_user_statement=True,
-            )
+        CandidateInput(
+            kind="fact",
+            content="My password is do-not-store-this",
+            explicit_user_statement=True,
         ),
-        store.add_candidate(
-            CandidateInput(
-                kind="fact",
-                content="Benign summary",
-                structured_value={"api_key": "do-not-store-this"},
-                explicit_user_statement=True,
-            )
+        CandidateInput(
+            kind="fact",
+            content="Benign summary",
+            structured_value={"api_key": "do-not-store-this"},
+            explicit_user_statement=True,
         ),
-        store.add_candidate(
-            CandidateInput(
-                kind="fact",
-                content="Benign summary",
-                evidence="Access token = do-not-store-this",
-                explicit_user_statement=True,
-            )
+        CandidateInput(
+            kind="fact",
+            content="Benign summary",
+            evidence="Access token = do-not-store-this",
+            explicit_user_statement=True,
         ),
-    ]
+    )
+    for secret in secrets:
+        with pytest.raises(InvalidStateError):
+            store.add_candidate(secret)
     sensitive = store.add_candidate(
         CandidateInput(
             kind="personal_context",
@@ -116,8 +112,7 @@ def test_secret_is_ignored_and_sensitive_context_stays_local(tmp_path: Path) -> 
         )
     )
 
-    assert all(item.disposition == ObservationDisposition.IGNORED for item in secrets)
-    assert all(item.record_id is None for item in secrets)
+    assert store.list_observations()[1] == 1
     assert sensitive.disposition == ObservationDisposition.APPLIED
     assert sensitive.record_id is not None
     assert store.get_record(sensitive.record_id).availability == Availability.LOCAL

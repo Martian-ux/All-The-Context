@@ -9,9 +9,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from allthecontext import client_config as client_config_module
 from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
 from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
     OS_CREDENTIAL_STORAGE,
     DevelopmentFileCredentialStore,
 )
@@ -23,6 +25,7 @@ from allthecontext.desktop_setup import (
     DESKTOP_SCOPES,
     CoreProbe,
     SetupOptions,
+    configure_client_access_transactionally,
     delete_client_credential,
     ensure_client_access,
     launch_core,
@@ -34,6 +37,7 @@ from allthecontext.desktop_setup import (
 from allthecontext.models import ClientCreate
 from allthecontext.storage import CoreStore
 from filelock import FileLock
+from keyring.errors import KeyringError
 
 
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
@@ -155,6 +159,159 @@ def test_revoked_client_cleanup_tolerates_missing_linux_secret_service(
     assert fallback.get(f"client:{stale.id}") is None
 
 
+def test_null_keyring_without_explicit_fallback_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Packaged smoke isolation must not silently weaken production credential safety."""
+
+    config = CoreConfig.in_directory(tmp_path / "null-keyring")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+
+    with pytest.raises(RuntimeError, match="plaintext credential storage is disabled"):
+        ensure_client_access(
+            store,
+            config,
+            name=CODEX_CLIENT_NAME,
+            scopes=AI_CLIENT_SCOPES,
+        )
+
+    clients = store.list_clients()
+    assert len(clients) == 1
+    assert clients[0]["revoked"] is True
+    assert not (config.data_dir / "credentials.development.json").exists()
+
+
+def test_null_keyring_with_explicit_fallback_uses_development_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Isolated non-secret smokes may opt into the development file deliberately."""
+
+    config = CoreConfig.in_directory(tmp_path / "null-keyring-fallback")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    monkeypatch.setenv(DEVELOPMENT_FALLBACK_ENV, "1")
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+
+    access = ensure_client_access(
+        store,
+        config,
+        name=CODEX_CLIENT_NAME,
+        scopes=AI_CLIENT_SCOPES,
+    )
+
+    assert access.credential_storage == "insecure development credential file"
+    credential_path = config.data_dir / "credentials.development.json"
+    assert credential_path.is_file()
+    payload = json.loads(credential_path.read_text(encoding="utf-8"))
+    assert payload.get(f"client:{access.client_id}") == access.token
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "backend_error"),
+    [
+        ("Windows", "Credential Manager is locked"),
+        ("macOS", "Keychain interaction is not allowed"),
+        ("Linux", "Secret Service collection is unavailable"),
+    ],
+)
+def test_platform_credential_failure_fails_closed_and_revokes_new_principal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    platform_name: str,
+    backend_error: str,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / platform_name)
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    secret_marker = "never-log-this-credential"
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+    monkeypatch.setattr(
+        "allthecontext.credentials.keyring.get_password",
+        lambda *_args: (_ for _ in ()).throw(KeyringError(f"{backend_error}: {secret_marker}")),
+    )
+
+    with pytest.raises(RuntimeError) as failure:
+        ensure_client_access(
+            store,
+            config,
+            name=CODEX_CLIENT_NAME,
+            scopes=AI_CLIENT_SCOPES,
+        )
+
+    clients = store.list_clients()
+    assert len(clients) == 1
+    assert clients[0]["revoked"] is True
+    assert not (config.data_dir / "credentials.development.json").exists()
+    assert secret_marker not in str(failure.value)
+    assert secret_marker not in caplog.text
+
+
+@pytest.mark.parametrize("platform_name", ["Windows", "macOS", "Linux"])
+def test_configuration_failure_removes_new_credential_and_restores_prior_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / platform_name / "core")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    client_config = tmp_path / platform_name / "config.toml"
+    client_config.parent.mkdir(parents=True, exist_ok=True)
+    original = 'model = "keep-me"\n'
+    client_config.write_text(original, encoding="utf-8")
+    credentials: dict[str, str] = {}
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+    monkeypatch.setattr(
+        "allthecontext.credentials.keyring.get_password",
+        lambda _service, name: credentials.get(name),
+    )
+    monkeypatch.setattr(
+        "allthecontext.credentials.keyring.set_password",
+        lambda _service, name, value: credentials.__setitem__(name, value),
+    )
+    monkeypatch.setattr(
+        "allthecontext.credentials.keyring.delete_password",
+        lambda _service, name: credentials.pop(name, None),
+    )
+    real_atomic_write = client_config_module._atomic_write
+    attempts = 0
+
+    def fail_after_replace(path: Path, content: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        real_atomic_write(path, content)
+        if attempts == 1:
+            raise OSError(f"{platform_name} configuration fault")
+
+    monkeypatch.setattr(client_config_module, "_atomic_write", fail_after_replace)
+
+    with pytest.raises(OSError, match="configuration fault"):
+        configure_client_access_transactionally(
+            store,
+            config,
+            name=CODEX_CLIENT_NAME,
+            scopes=AI_CLIENT_SCOPES,
+            configure=lambda access: configure_codex(
+                RuntimeCommand(Path("python")),
+                access.client_id,
+                token=None,
+                path=client_config,
+            ),
+        )
+
+    clients = store.list_clients()
+    assert len(clients) == 1
+    assert clients[0]["revoked"] is True
+    assert credentials == {}
+    assert client_config.read_text(encoding="utf-8") == original
+
+
 def test_setup_initializes_recoverable_access_and_codex(tmp_path: Path, monkeypatch) -> None:
     config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_440)
     codex_home = tmp_path / "codex"
@@ -190,7 +347,7 @@ def test_setup_initializes_recoverable_access_and_codex(tmp_path: Path, monkeypa
         config=config,
     )
 
-    assert result.credential_storage == "local app-data fallback"
+    assert result.credential_storage == "insecure development credential file"
     assert result.warnings
     assert result.dashboard_url == "http://127.0.0.1:17440/v1/browser/connect?ticket=test"
     access = recover_desktop_access(config)

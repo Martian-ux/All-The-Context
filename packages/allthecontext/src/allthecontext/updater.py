@@ -488,6 +488,7 @@ class PlatformInstaller:
         application_path: Path | None = None,
         helper_path: Path | None = None,
         mcp_path: Path | None = None,
+        recovery_path: Path | None = None,
     ) -> None:
         self.system = system or platform.system()
         self.frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
@@ -495,6 +496,9 @@ class PlatformInstaller:
         self.application_path = (application_path or runtime.executable).resolve()
         self.helper_path = helper_path or runtime.update_executable
         self.mcp_path = mcp_path or self.application_path.with_name("AllTheContextMCP.exe")
+        self.recovery_path = recovery_path or self.application_path.with_name(
+            "AllTheContextRecovery.exe"
+        )
         self.stable_update_helper_path = self.application_path.with_name("AllTheContextUpdater.exe")
 
     @property
@@ -506,6 +510,7 @@ class PlatformInstaller:
             and self.helper_path is not None
             and self.helper_path.is_file()
             and self.stable_update_helper_path.is_file()
+            and self.recovery_path.is_file()
         )
 
     @property
@@ -513,8 +518,13 @@ class PlatformInstaller:
         if self.system == "Windows":
             if not self.frozen:
                 return "Automatic Windows updates require the installed desktop application"
+            if not self.recovery_path.is_file():
+                return (
+                    "The installed Windows recovery/admin helper is unavailable; reinstall the "
+                    "current desktop package before applying updates"
+                )
             return (
-                "The installed Windows recovery helper is unavailable; reinstall the current "
+                "The installed Windows update helper is unavailable; reinstall the current "
                 "desktop package before applying updates"
             )
         if self.system == "Darwin":
@@ -607,6 +617,14 @@ class PlatformInstaller:
                 rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
                     self.mcp_path, rollback_mcp
                 )
+            rollback_recovery: Path | None = None
+            rollback_recovery_digest: str | None = None
+            rollback_recovery_size: int | None = None
+            if self.recovery_path.is_file():
+                rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
+                rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
+                    self.recovery_path, rollback_recovery
+                )
             rollback_update_helper = plan.transaction_dir / "rollback" / "AllTheContextUpdater.exe"
             rollback_update_digest, rollback_update_size = self._copy_verified(
                 self.stable_update_helper_path, rollback_update_helper
@@ -633,6 +651,10 @@ class PlatformInstaller:
                 rollback_mcp_path=str(rollback_mcp) if rollback_mcp else None,
                 rollback_mcp_sha256=rollback_mcp_digest,
                 rollback_mcp_size=rollback_mcp_size,
+                recovery_path=str(self.recovery_path),
+                rollback_recovery_path=str(rollback_recovery) if rollback_recovery else None,
+                rollback_recovery_sha256=rollback_recovery_digest,
+                rollback_recovery_size=rollback_recovery_size,
                 stable_update_helper_path=str(self.stable_update_helper_path),
                 rollback_update_helper_path=str(rollback_update_helper),
                 rollback_update_helper_sha256=rollback_update_digest,
@@ -1226,6 +1248,59 @@ class UpdateManager:
                 self.state.last_checked_at = _utc_now()
                 self._save()
                 return self.public_status()
+
+    def accept_exact_candidate(self) -> dict[str, Any]:
+        """Reopen a verified same-version candidate for acceptance smoke.
+
+        Ordinary channel checks report :attr:`UpdatePhase.CURRENT` when the
+        signed offer equals the installed version. Beta1 acceptance and
+        packaged rollback proof still need that already-verified exact
+        candidate to proceed through download, transactional replacement,
+        health verification, and rollback without fabricating a newer release.
+        This step performs no network I/O and never weakens signature, hash,
+        platform, channel, or key checks.
+        """
+
+        with self._exclusive():
+            self._require_no_active_handoff()
+            if self.state.phase != UpdatePhase.CURRENT:
+                raise UpdateError("A verified same-version candidate is required before acceptance")
+            offered = self.state.offered_version
+            if offered is None:
+                raise UpdateError("No verified candidate is available for acceptance")
+            try:
+                if ReleaseVersion.parse(offered) != ReleaseVersion.parse(
+                    self.config.current_version
+                ):
+                    raise UpdateError("Only an exact same-version signed candidate can be accepted")
+            except ManifestError as exc:
+                raise UpdateError("Verified candidate version metadata is invalid") from exc
+            manifest_path = self._operation_directory() / "manifest.json"
+            try:
+                raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if not isinstance(raw_manifest, dict):
+                    raise UpdateError("Verified update metadata is invalid; check again")
+                manifest = cast(dict[str, Any], raw_manifest)
+                verify_manifest(
+                    manifest,
+                    load_keyring(self.config.keyring_path),
+                    current_version=self.config.current_version,
+                    expected_channel=self.preferences.channel,
+                )
+                if manifest["platform"] != self.config.platform_name:
+                    raise UpdateError("Signed update metadata targets a different platform")
+                if manifest["architecture"] != self.config.architecture:
+                    raise UpdateError("Signed update metadata targets a different architecture")
+                if cast(str, manifest["version"]) != offered:
+                    raise UpdateError("Verified update state no longer matches its metadata")
+            except (ManifestError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise UpdateError(
+                    "Verified same-version metadata could not be re-checked; check again"
+                ) from exc
+            self.state.phase = UpdatePhase.AVAILABLE
+            self.state.last_error = None
+            self._save()
+            return self.public_status()
 
     def download(self) -> dict[str, Any]:
         with self._exclusive():

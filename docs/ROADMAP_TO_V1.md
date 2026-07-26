@@ -99,7 +99,7 @@ Current main is a strong implementation baseline, not a release candidate.
 
 | Area | Existing strength | Beta gap |
 |---|---|---|
-| Core and policy | One authoritative Core; automatic dispositions; correction; reversible delete/restore; purge barriers | Secret-like direct content can enter durable observation history before it is ignored; the accepted configured-client witness grant and minimum imported-conflict behavior still need implementation proof |
+| Core and policy | One authoritative Core; automatic dispositions; correction; reversible delete/restore; purge barriers; source-level B-102 witness grant and unkeyed archive conflict collapse | Exact packaged Codex/Claude witness E2E receipts and generalized multi-slot conflict normalization remain open |
 | Retrieval | Authorization/time-first Retrieval V3, bounded FTS5, deterministic selection, 1k/10k gates | Repeat safety and quality gates on the exact candidate |
 | Imports | Generic and ChatGPT/Claude/Grok parsers, raw preservation, atomic finish, retry, bounded chunks | Current real exports for all three providers plus exact-boundary, progress/cancel, resource, interruption, export, and restore evidence at 2,000,000,000 bytes |
 | Desktop | Windows/macOS/Linux packages, setup flow, managed MCP adapter, dashboard | Downloaded-artifact browser/client acceptance in all three mandatory OS families |
@@ -107,7 +107,7 @@ Current main is a strong implementation baseline, not a release candidate.
 | Runtime scope | Edge UI, worker, and deployment workflow removed | Core still constructs Edge managers and exposes callable enrollment/connect/sync/client-management and CLI surfaces |
 | Release | Candidate assets, checksums, SBOM/provenance, beta public key, updater/rollback mechanics | Exact-SHA quality enforcement, locked composition, generated-dashboard parity, key backups, protected publication, and first immutable release |
 | Repository operations | Strong hosted nine-job matrix; GitHub private vulnerability reporting enabled | No execution backlog; `main` remains unprotected and several repository security controls are absent at the baseline snapshot |
-| Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback | Version-matched packaged restore/admin helper and purge surface are absent; exact-artifact backup/restore/purge receipts and candid CLI-only limitation remain open |
+| Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback, version-matched packaged recovery/admin helper (Windows/macOS) and Linux console recovery modes | Exact downloaded-artifact backup/restore/purge receipts on every OS family remain open; contributor CLI alone is not the acceptance surface |
 
 Exact `main` commit `1d44fdd` passed all nine hosted jobs in
 [CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472):
@@ -326,17 +326,17 @@ All implementation changes finish before the candidate is frozen.
 
 ### Packaged recovery and irreversible administration
 
-- Add a version-matched recovery/admin helper or deliberately hidden native
-  mode to every Windows, macOS, and Linux artifact; it must not require Python,
-  a source checkout, or developer tooling.
-- Expose documented stopped-Core preflight, encrypted restore into an isolated
-  destination, integrity verification, cutover/rollback, and help from the
-  installed product. CLI use is acceptable for beta recovery when disclosed.
-- Expose a deliberate authenticated purge path from the packaged product with
+- Version-matched recovery/admin helper or native mode is integrated in every
+  Windows, macOS, and Linux artifact without Python, a source checkout, or
+  developer tooling.
+- Documented stopped-Core preflight, encrypted restore into an isolated
+  destination, integrity verification, cutover/rollback, and help are exposed
+  from the installed product. Contributor CLI use remains secondary.
+- Deliberate authenticated purge is exposed from the packaged product with
   unmistakable confirmation, non-resurrection checks, and no client-facing
   purge permission.
-- Test recovery and purge from frozen downloaded artifacts, not the contributor
-  `atc` CLI.
+- Prove recovery and purge from exact frozen downloaded artifacts, not only
+  contributor CLI or built-byte engineering smokes.
 
 ### Exit
 
@@ -511,20 +511,20 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 |---|---|---|---|
 | BETA-P01 | Install/start without developer tooling on every claimed platform | Earlier hosted/package evidence | Exact downloaded-artifact clean-machine receipts |
 | BETA-P02 | One-time claimed Codex/Claude connection survives restart | Earlier tests | Real-client exact-artifact receipt |
-| BETA-P03 | Direct context applies and is later retrieved without review | Earlier tests | Accepted witness model plus exact-client E2E |
+| BETA-P03 | Direct context applies and is later retrieved without review | Source-level automatic apply/retrieve and witness policy tests pass; residual is exact-client E2E | Exact packaged Codex/Claude observe-to-retrieve receipt |
 | BETA-P04 | Current mandatory provider imports are truthful | Synthetic/parser evidence | Fresh nonempty real-export receipts, frozen shape canaries, and complete count reconciliation |
-| BETA-P05 | Correction, record/source delete/restore, provenance, history, and deliberate purge are reachable | Earlier API/tests; no packaged purge surface | Exact-artifact UI/MCP plus packaged administrator receipt |
+| BETA-P05 | Correction, record/source delete/restore, provenance, history, and deliberate purge are reachable | Earlier API/tests; packaged recovery/admin purge surface integrated in source packaging | Exact-artifact UI/MCP plus packaged administrator receipt |
 | BETA-P06 | Basic keyboard/focus/error/narrow-width behavior | Partial tests | Real browser receipt |
 | BETA-S01 | Direct secret-like payload or guessable verifier is not durably retained | Open | Pre-ledger refusal, no unkeyed fingerprint, repair/compaction, raw SQLite/WAL/freelist/export/diagnostic scans |
-| BETA-S02 | Client witness and minimum conflict handling are safe and explicit | Trust decision accepted; implementation/fixtures partial | Authorized configured-client contract and chronological fixtures |
+| BETA-S02 | Client witness and minimum conflict handling are safe and explicit | Source implementation and chronological fixtures integrated; residual exact-client evidence open | Exact packaged authorized-client witness and conflict receipts |
 | BETA-S03 | Credentials use accepted protected storage and setup rolls back | Partial | Real OS stores; no silent plaintext; orphan-free failure |
 | BETA-S04 | Supported artifacts expose only the Core product boundary | Open | No active Edge operation path; isolated cleanup proof |
 | BETA-S05 | Browser handoff/session credentials obey the accepted design | Partial | URL/ticket/session/referrer/cache/revocation browser tests |
 | BETA-S06 | Repository, dependency, artifact, and private-intake defenses exist | Private intake enabled; other controls partial | Enabled controls and exact-candidate scan receipts |
 | BETA-D01 | The inclusive 2,000,000,000-byte import boundary is usable on every frozen target | Structural chunks only | Predeclared hardware/budgets; allocated non-sparse canary; per-OS/architecture exact-boundary success; boundary+1 refusal; progress/cancel/retry/interruption/SHA/export/restore |
-| BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge absent | Exact-candidate packaged destructive-privacy matrix |
-| BETA-D03 | Encrypted backup and documented packaged recovery work | Contributor CLI tests only | Shipped-helper stopped-Core restore receipt on every OS family |
-| BETA-R01 | Candidate derives from exact green, locked source | Partial | Exact nine-job matrix, required checks, locks, dashboard parity, component inventory |
+| BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
+| BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on every OS family from exact downloaded artifacts |
+| BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
 | BETA-R02 | Key custody and publication are recoverable and deliberate | Open | Two restore-tested backups in distinct failure domains, protected workflows, sole-maintainer decision record |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |

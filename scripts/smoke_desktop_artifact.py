@@ -42,10 +42,23 @@ def main() -> int:
         raise SystemExit(f"unexpected frozen diagnostics: {payload}")
     if system in {"Windows", "Darwin"} and not payload.get("mcp_helper_bundled"):
         raise SystemExit(f"the GUI build is missing its console MCP helper: {payload}")
+    if system in {"Windows", "Darwin"} and not payload.get("recovery_helper_bundled"):
+        raise SystemExit(f"the GUI build is missing its console recovery helper: {payload}")
     if system == "Windows" and not payload.get("update_helper_bundled"):
-        raise SystemExit(f"the Windows build is missing its recovery helper: {payload}")
-    if payload.get("core_migrations", 0) < 1 or payload.get("relay_migrations", 0) < 1:
+        raise SystemExit(f"the Windows build is missing its update helper: {payload}")
+    if system == "Linux" and not payload.get("recovery_helper_bundled"):
+        raise SystemExit(f"Linux console recovery surface missing: {payload}")
+    if payload.get("core_migrations", 0) < 9 or payload.get("relay_migrations", 0) < 1:
         raise SystemExit(f"migrations were not bundled: {payload}")
+    migration_names = payload.get("core_migration_names") or []
+    if "009_import_operations.sql" not in migration_names and not payload.get(
+        "import_operations_migration"
+    ):
+        raise SystemExit(f"import-operations migration missing from frozen package: {payload}")
+    if not payload.get("dashboard_import_operations"):
+        raise SystemExit(
+            f"combined browser+import dashboard assets missing import-operations surface: {payload}"
+        )
     if system in {"Windows", "Darwin"}:
         with tempfile.TemporaryDirectory(prefix="atc-packaged-credential-") as temporary:
             credential_report = Path(temporary) / "credential.json"

@@ -31,34 +31,82 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Require deliberate operator preflight phrase
         shell: bash
         env:
           APPROVAL: ${{ inputs.approval }}
         run: test "$APPROVAL" = "BUILD IMMUTABLE CANDIDATE"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e .
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # pin: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - name: Install Python from reviewed lock constraints
+        run: python scripts/install_locked_python.py --extra dev
       - name: Validate exact source and Python/SemVer metadata
         run: >-
           python scripts/release_candidate.py validate-source
           --version "${{ inputs.version }}"
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
+      - name: Require exact green nine-job matrix plus security/parity jobs on this SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/exact_source_gate.py hosted-matrix
+          --repository "${{ github.repository }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --output dist/matrix-evidence.json
+      - name: Rerun exact local quality gates on the candidate SHA
+        run: python scripts/exact_source_gate.py local-quality
+      - name: Verify third-party Actions pins
+        run: python scripts/verify_actions_pins.py
+      - name: Content-free tree and history security scans
+        run: |
+          python scripts/repository_security_scan.py --scope tree --source-commit "${{ inputs.source_commit }}"
+          python scripts/repository_security_scan.py --scope history --source-commit "${{ inputs.source_commit }}"
       - name: Reject tracked private-key material
         run: python scripts/release_keyring.py audit
       - name: Require a reviewed public key for this channel
         run: >-
           python scripts/release_keyring.py validate
           --require-channel "${{ inputs.channel }}"
+      - name: Python dependency vulnerability gate
+        run: python scripts/dependency_audit.py --ecosystem python
+      - name: Dashboard install, check, test, build, and high-severity audit
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+          npm audit --audit-level=high
+      - name: Verify committed dashboard assets match production build
+        run: python scripts/verify_dashboard_parity.py --source-commit "${{ inputs.source_commit }}" --built-dist apps/dashboard/dist
+      - name: Build component inventory and notices from reviewed locks
+        run: >-
+          python scripts/build_component_inventory.py
+          --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --output-dir dist/inventory
       - name: Require operator-verified immutability, default-branch head, and unused version
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -68,6 +116,14 @@ jobs:
           --version "${{ inputs.version }}"
           --source-commit "${{ inputs.source_commit }}"
           --operator-verified-immutability
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: candidate-source-evidence
+          path: |
+            dist/matrix-evidence.json
+            dist/inventory/**
+          if-no-files-found: error
+          retention-days: 14
 
   native:
     needs: validate
@@ -103,18 +159,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
-      - run: python -m pip install -e ".[packaging]"
+      - name: Install packaging extras from reviewed lock constraints
+        run: python scripts/install_locked_python.py --extra packaging
       - name: Reject a mislabeled or non-native runner
         run: >-
           python scripts/release_candidate.py validate-runner
@@ -122,6 +183,7 @@ jobs:
           --architecture "${{ matrix.architecture }}"
       - run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
+      - run: python scripts/smoke_packaged_recovery.py
       - run: python scripts/smoke_packaged_first_run.py
       - name: Build direct unsigned native package and disclosure sidecars
         run: >-
@@ -149,13 +211,13 @@ jobs:
           --subject-metadata-only
       - name: Attest SLSA build provenance
         id: provenance
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
         with:
           subject-path: >-
             dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip
       - name: Attest SPDX inventory
         id: sbom
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
         with:
           subject-path: >-
             dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip
@@ -163,13 +225,13 @@ jobs:
             dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip.spdx.json
       - name: Attest direct native package SLSA provenance
         id: package_provenance
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
         with:
           subject-path: >-
             dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
       - name: Attest direct native package SPDX subject
         id: package_sbom
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
         with:
           subject-path: >-
             dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
@@ -188,7 +250,7 @@ jobs:
           --subject dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned${{ matrix.package_suffix }}
           --provenance-bundle "${{ steps.package_provenance.outputs.bundle-path }}"
           --sbom-bundle "${{ steps.package_sbom.outputs.bundle-path }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}-${{ matrix.architecture }}
           path: dist/release/*
@@ -205,20 +267,35 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e .
-      - uses: actions/download-artifact@v4
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Install from reviewed lock constraints
+        run: python scripts/install_locked_python.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # pin: actions/download-artifact@v4
         with:
           pattern: release-*
           path: dist/release
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # pin: actions/download-artifact@v4
+        with:
+          name: candidate-source-evidence
+          path: dist/source-evidence
+      - name: Content-free candidate artifact security scan
+        run: >-
+          python scripts/repository_security_scan.py
+          --scope artifacts
+          --artifact-dir dist/release
+          --source-commit "${{ inputs.source_commit }}"
       - name: Verify native SLSA and SPDX attestations
         shell: bash
         env:
@@ -243,10 +320,26 @@ jobs:
               --source-digest "$SOURCE_COMMIT" \
               --deny-self-hosted-runners
           done
+      - name: Stage inventory files into the release directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Inventory may land under dist/source-evidence/inventory/ from the upload layout.
+          mkdir -p dist/source-evidence
+          if [[ -f dist/source-evidence/inventory/component-inventory-v1.json ]]; then
+            cp dist/source-evidence/inventory/component-inventory-v1.json dist/source-evidence/
+            cp dist/source-evidence/inventory/component-inventory-v1.json.sha256 dist/source-evidence/
+            cp dist/source-evidence/inventory/NOTICES.txt dist/source-evidence/
+          fi
+          test -f dist/source-evidence/matrix-evidence.json
+          test -f dist/source-evidence/component-inventory-v1.json
+          test -f dist/source-evidence/component-inventory-v1.json.sha256
+          test -f dist/source-evidence/NOTICES.txt
       - name: Assemble and verify the exact candidate inventory
         run: >-
           python scripts/release_candidate.py assemble
           --release-dir dist/release
+          --source-evidence-dir dist/source-evidence
           --version "${{ inputs.version }}"
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
@@ -257,7 +350,7 @@ jobs:
           --ota-target windows:x86_64
       - name: Attest candidate inventory provenance
         id: candidate_provenance
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
         with:
           subject-path: dist/release/release-candidate-v1.json
       - name: Preserve candidate inventory attestation bundle

@@ -35,9 +35,16 @@ state separately.
 Clients cannot request a disposition or write a current record. Core derives
 origin from the authenticated route and ingestion session, evaluates the
 client-asserted basis and evidence with hard policy, then records the result
-under its versioned memory policy. An explicit correction that is eligible
-under this policy updates current context before the successful tool call
-returns. `forget_context` requires a record ID and reason, creates a reversible
+under its versioned memory policy. `propose_memory` defaults
+`explicit_user_statement` to false. Setting it true is effective only when
+the authenticated principal holds the closed
+`witness:explicit_user_statement` grant (or intentional local `admin`/`*`);
+authentication and propose scope alone reduce the claim to tentative.
+Inference, summaries, and provider/import/Relay text must leave the flag
+false. Payload fields cannot select origin, disposition, or force current
+state. An explicit correction that is eligible under this policy updates
+current context before the successful tool call returns.
+`forget_context` requires a record ID and reason, creates a reversible
 tombstone before returning, and is not a purge. When routed through dormant
 Relay compatibility, it remains a staged observation until Core evaluates it.
 Administrative permission, availability, restoration, and irreversible purge
@@ -72,12 +79,12 @@ After the selected client restarts, normal operation requires no recurring
 memory setup or approval work. MCP instructions require automatic
 `bootstrap_context` for relevant tasks and automatic `propose_memory` when
 durable user context changes. They require `forget_context` only when the user
-explicitly asks to forget or remove a particular memory. The current baseline
-generates an unkeyed SHA-256 idempotency value from the normalized proposal
-payload. That makes exact retries convenient but can leave an offline-guessing
-verifier for low-entropy refused secrets. B-101 must replace it before beta
-with an opaque client operation ID or reviewed keyed construction and prove
-that refused payloads leave neither content nor an unkeyed fingerprint.
+explicitly asks to forget or remove a particular memory. The adapter generates
+a random UUIDv4 operation ID independent of proposal content. Direct
+secret-like payloads are refused before the observation ledger. Their durable
+receipt contains only opaque IDs, a closed reason code, detector version,
+route, time, and replay identity. It contains no raw content, content-derived
+hash, prefix, or other offline-guessing verifier.
 
 V1 beta has no hosted MCP endpoint and is same-device only. Core remains
 loopback-only by default. A future phone or remote-computer path would use the

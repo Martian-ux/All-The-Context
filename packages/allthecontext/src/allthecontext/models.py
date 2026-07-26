@@ -289,7 +289,7 @@ class SourceOut(StrictModel):
     byte_size: int
     created_at: str
     duplicate: bool = False
-    import_status: Literal["processing", "complete", "failed"] = "complete"
+    import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete"
     metadata: dict[str, Any] = Field(default_factory=dict)
     parser_warnings: list[str] = Field(default_factory=list, max_length=512)
     candidate_count: int = Field(default=0, ge=0)
@@ -325,6 +325,19 @@ class ObservationOut(CandidateInput):
     decided_at: str | None = None
     observation_origin: str | None = None
     policy_version: str | None = None
+
+
+class SecretRefusalOut(StrictModel):
+    """Content-free receipt for a direct payload stopped before the ledger."""
+
+    id: str
+    refused: Literal[True] = True
+    disposition: Literal["ignored"] = "ignored"
+    reason_code: Literal["direct_secret_like_content"] = "direct_secret_like_content"
+    detector_version: str
+    created_at: str
+    replayed: bool = False
+    user_action_required: Literal[True] = True
 
 
 class ContextRecordOut(CandidateInput):

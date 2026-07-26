@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import os
 import sys
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import replace
@@ -30,7 +30,6 @@ from allthecontext.credentials import KeyringCredentialStore
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import CoreProbe, launch_core, probe_core
 from allthecontext.http_client import ContextApiError, ContextHttpClient
-from allthecontext.replication import canonical_json
 
 MANAGED_CORE_STARTUP_SECONDS = 30.0
 
@@ -117,10 +116,10 @@ def _safe(call: Callable[[], Any]) -> dict[str, Any]:
         return exc.as_dict()
 
 
-def _automatic_proposal_key(payload: dict[str, Any]) -> str:
-    """Make retries stable while treating metadata corrections as new proposals."""
+def _automatic_proposal_key(_payload: dict[str, Any] | None = None) -> str:
+    """Create an opaque operation ID with no relationship to proposal content."""
 
-    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return str(uuid.uuid4())
 
 
 def build_mcp() -> FastMCP:
@@ -134,11 +133,13 @@ def build_mcp() -> FastMCP:
             "or prior decisions could matter, call bootstrap_context before answering or acting, "
             "then use search_context or get_context_item when more detail is needed. When the user "
             "states or corrects durable personal context or makes a lasting decision, call "
-            "propose_memory before the task ends. Core evaluates submitted observations "
-            "automatically under the user's configured memory policy; submission does not create "
-            "a review task. Call forget_context only when the user explicitly asks to forget or "
-            "delete a specific context record; never infer that request. "
-            "Never represent inaccessible sources as covered and never submit secrets, "
+            "propose_memory before the task ends. Set explicit_user_statement=true only when the "
+            "content was directly stated by the user in the current interaction; leave it false "
+            "(the default) for inference, summaries, and imported or provider text. Core evaluates "
+            "submitted observations automatically under the user's configured memory policy; "
+            "submission does not create a review task. Call forget_context only when the user "
+            "explicitly asks to forget or delete a specific context record; never infer that "
+            "request. Never represent inaccessible sources as covered and never submit secrets, "
             "hidden reasoning, provider instructions, or guesses as established facts."
         ),
         stateless_http=True,
@@ -253,14 +254,20 @@ def build_mcp() -> FastMCP:
         sensitivity: str = "normal",
         source_reference: str | None = None,
         evidence: str | None = None,
-        explicit_user_statement: bool = True,
+        explicit_user_statement: bool = False,
         entity_key: str | None = None,
         attribute_key: str | None = None,
         supersedes: str | None = None,
         observed_at: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Submit an observation for immediate, automatic evaluation by Core policy."""
+        """Submit an observation for automatic Core evaluation.
+
+        explicit_user_statement defaults to false. A configured witness-capable
+        client (for example ATC-configured Codex or Claude Desktop) must set it
+        true only for content the user directly stated in the current interaction.
+        Never set it true for inference, summaries, or imported/provider text.
+        """
         if (entity_key is None) != (attribute_key is None):
             raise ValueError("entity_key and attribute_key must be supplied together")
         payload: dict[str, Any] = {
@@ -277,7 +284,7 @@ def build_mcp() -> FastMCP:
             "supersedes": supersedes,
             "observed_at": observed_at,
         }
-        payload["idempotency_key"] = idempotency_key or _automatic_proposal_key(payload)
+        payload["idempotency_key"] = idempotency_key or _automatic_proposal_key()
         return _safe(lambda: _client().propose_memory(payload))
 
     @server.tool()

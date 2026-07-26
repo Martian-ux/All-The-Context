@@ -7,7 +7,6 @@ turns the resulting decision into current context.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -17,13 +16,24 @@ from .models import (
     ObservationDisposition,
     Sensitivity,
 )
+from .secret_boundary import contains_direct_secret
+from .security import ClientPrincipal, principal_may_attest_explicit_user_statement
 
 AUTOMATIC_POLICY_VERSION = "automatic-v1"
 
-_SECRET_HINT = re.compile(
-    r"(?:api[_ -]?key|password|passphrase|private[_ -]?key|access[_ -]?token|"
-    r"refresh[_ -]?token|client[_ -]?secret|secret)\b\s*(?::|=|\bis\b|\bwas\b)",
-    flags=re.IGNORECASE,
+# Kinds where contradictory unkeyed historical statements must not all remain
+# confident current truth. Keyed entity/attribute slots keep existing behavior.
+UNKEYED_CONFLICT_KINDS = frozenset(
+    {
+        "preference",
+        "interaction_preference",
+        "editor_preference",
+        "goal",
+        "project",
+        "project_decision",
+        "workflow",
+        "constraint",
+    }
 )
 
 
@@ -55,22 +65,45 @@ def normalized_observation_text(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def _contains_secret_like_material(candidate: CandidateInput) -> bool:
-    def structured_contains(value: object) -> bool:
-        if isinstance(value, dict):
-            return any(
-                _SECRET_HINT.search(f"{key}:") is not None or structured_contains(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(structured_contains(item) for item in value)
-        return isinstance(value, str) and _SECRET_HINT.search(value) is not None
+def effective_explicit_user_statement(
+    claimed: bool,
+    *,
+    origin: ObservationOrigin,
+    principal: ClientPrincipal | None,
+) -> tuple[bool, str | None]:
+    """Derive Core-authoritative explicitness from origin and witness grant.
 
-    return (
-        _SECRET_HINT.search(candidate.content) is not None
-        or _SECRET_HINT.search(candidate.evidence or "") is not None
-        or structured_contains(candidate.structured_value)
-    )
+    Clients may *claim* ``explicit_user_statement`` in a payload. Only an
+    ATC-configured same-device principal with the closed
+    ``witness:explicit_user_statement`` grant (or intentional ``admin``/``*``)
+    may make that claim force applied current context on authenticated
+    ongoing-client routes. Authentication and ``context:propose`` alone are
+    insufficient.
+
+    Local-admin and legacy-migration paths assign explicitness from Core.
+    Core-controlled archive importers (no client principal) may also assign it
+    for trusted parser output. Authenticated non-admin clients cannot re-label
+    batch, provider, import, or Relay material as witnessed user evidence by
+    smuggling origin, role, force, or ``source_type`` fields.
+    """
+    if not claimed:
+        return False, None
+    if origin in {
+        ObservationOrigin.LOCAL_ADMIN,
+        ObservationOrigin.LEGACY_MIGRATION,
+    }:
+        return True, None
+    if origin == ObservationOrigin.ARCHIVE_IMPORT:
+        # Principal is None only on the Core importer path. Authenticated
+        # clients still need the closed witness grant (or admin/*).
+        if principal is None or principal_may_attest_explicit_user_statement(principal):
+            return True, None
+        return False, "explicit claim reduced to tentative: principal lacks witness grant"
+    if origin == ObservationOrigin.RELAY_QUEUE:
+        return False, "remote relay proposals cannot attest direct user statements"
+    if principal_may_attest_explicit_user_statement(principal):
+        return True, None
+    return False, "explicit claim reduced to tentative: principal lacks witness grant"
 
 
 class AutomaticMemoryPolicy:
@@ -84,6 +117,7 @@ class AutomaticMemoryPolicy:
         candidate: CandidateInput,
         *,
         origin: ObservationOrigin,
+        principal: ClientPrincipal | None = None,
     ) -> PolicyDecision:
         # Automatic observations never opt a record into Relay replication.
         # ``always_available`` remains a legacy/admin compatibility choice.
@@ -94,11 +128,19 @@ class AutomaticMemoryPolicy:
         )
         is_correction = candidate.kind.casefold() == "correction"
         is_forget = candidate.kind.casefold() == "context_forget"
-        # Forget is an authenticated control request, not retained context.
-        # Validate its structured intent before inspecting the user-supplied
-        # reason so secret-like wording cannot prevent a privacy action.
+        claimed_explicit = bool(candidate.explicit_user_statement)
+        effective_explicit, strip_reason = effective_explicit_user_statement(
+            claimed_explicit,
+            origin=origin,
+            principal=principal,
+        )
+        # Forget is an authenticated control request (privacy), not a fact that
+        # becomes current context. It does not consume the explicit-statement
+        # witness grant; ACL on the target still runs in storage. Validate the
+        # structured intent before inspecting user-supplied reason text so
+        # secret-like wording cannot prevent a privacy action.
         if is_forget:
-            if candidate.explicit_user_statement and candidate.supersedes is not None:
+            if claimed_explicit and candidate.supersedes is not None:
                 return PolicyDecision(
                     ObservationDisposition.APPLIED,
                     "explicit forget request applied as a reversible deletion",
@@ -115,7 +157,7 @@ class AutomaticMemoryPolicy:
                 "automatic context maintenance is disabled",
                 availability,
             )
-        if _contains_secret_like_material(candidate):
+        if contains_direct_secret(candidate):
             return PolicyDecision(
                 ObservationDisposition.IGNORED,
                 "secret-like content is never promoted to current context",
@@ -142,7 +184,7 @@ class AutomaticMemoryPolicy:
                 "a correction without a target is retained as a tentative signal",
                 availability,
             )
-        if is_correction and candidate.explicit_user_statement:
+        if is_correction and effective_explicit:
             return PolicyDecision(
                 ObservationDisposition.APPLIED,
                 "explicit user correction applied automatically",
@@ -158,10 +200,10 @@ class AutomaticMemoryPolicy:
                 "generic imported text is retained as untrusted evidence",
                 availability,
             )
-        if not candidate.explicit_user_statement:
+        if not effective_explicit:
             return PolicyDecision(
                 ObservationDisposition.TENTATIVE,
-                "inferred or provider-generated observations require corroboration",
+                strip_reason or "inferred or provider-generated observations require corroboration",
                 availability,
             )
         if candidate.confidence < 0.5:

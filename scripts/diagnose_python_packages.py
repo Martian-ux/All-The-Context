@@ -9,6 +9,7 @@ from pathlib import Path
 
 REQUIRED_SUFFIXES = {
     "allthecontext/migrations/core/001_initial.sql",
+    "allthecontext/migrations/core/009_import_operations.sql",
     "allthecontext/migrations/relay/0001_initial.sql",
     "allthecontext/web/index.html",
     "allthecontext/update_keys.json",

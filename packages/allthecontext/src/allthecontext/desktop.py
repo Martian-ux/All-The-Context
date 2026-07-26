@@ -22,7 +22,7 @@ from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import messagebox
-from typing import Any
+from typing import Any, Literal
 
 from platformdirs import user_data_path
 
@@ -60,6 +60,7 @@ from .user_startup import remove_user_startup
 
 WINDOWS_APP_NAME = "AllTheContext.exe"
 WINDOWS_MCP_NAME = "AllTheContextMCP.exe"
+WINDOWS_RECOVERY_NAME = "AllTheContextRecovery.exe"
 WINDOWS_UPDATE_HELPER_NAME = "AllTheContextUpdater.exe"
 MACOS_APP_NAME = "All The Context.app"
 
@@ -102,16 +103,29 @@ def _retire_installed_ai_clients(
     return database_readable
 
 
-def _redact_failure_message(error: Exception) -> str:
+def _redact_failure_message(error: Exception | str) -> str:
     """Keep setup diagnostics useful without copying known credential forms."""
 
-    message = str(error).strip() or type(error).__name__
+    if isinstance(error, BaseException):
+        message = str(error).strip() or type(error).__name__
+    else:
+        message = str(error).strip() or "error"
     patterns = (
         (r"(?i)(authorization\s*:\s*bearer\s+)\S+", r"\1[redacted]"),
+        (r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]"),
         (r"atc-edge-v1\.[A-Za-z0-9_-]+", "[redacted Edge enrollment]"),
         (
-            r"(?i)((?:token|secret|recovery[_ -]?code)\s*[=:]\s*)[^\s,;]+",
+            r"(?i)((?:token|secret|recovery[_ -]?code|password|api[_-]?key|"
+            r"atc_client_token|client_token)\s*[=:]\s*)[^\s,;\"']+",
             r"\1[redacted]",
+        ),
+        (r"(?i)([?&](?:ticket|atc_token|token)=)[^&\s\"']+", r"\1[redacted]"),
+        (r"https?://[^\s\"']+", "[redacted url]"),
+        (r"[A-Za-z]:\\[^\s\"']+", "[redacted path]"),
+        (r"/(?:Users|home|tmp|var|opt|private)[^\s\"']*", "[redacted path]"),
+        (
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            "[redacted id]",
         ),
     )
     for pattern, replacement in patterns:
@@ -370,16 +384,22 @@ def _prepare_macos_runtime(
         return runtime, False
     if runtime.mcp_executable is None or not runtime.mcp_executable.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the app again.")
+    if runtime.recovery_executable is None or not runtime.recovery_executable.is_file():
+        raise RuntimeError("The packaged recovery helper is missing. Download the app again.")
     try:
         executable_relative = runtime.executable.resolve(strict=True).relative_to(source_bundle)
         helper_relative = runtime.mcp_executable.resolve(strict=True).relative_to(source_bundle)
+        recovery_relative = runtime.recovery_executable.resolve(strict=True).relative_to(
+            source_bundle
+        )
     except ValueError as exc:
         raise RuntimeError("The packaged macOS helper is outside its application bundle") from exc
 
     target_executable = target_bundle / executable_relative
     target_helper = target_bundle / helper_relative
+    target_recovery = target_bundle / recovery_relative
     current = False
-    if target_executable.is_file() and target_helper.is_file():
+    if target_executable.is_file() and target_helper.is_file() and target_recovery.is_file():
         try:
             current = macos_bundle_fingerprint(source_bundle) == macos_bundle_fingerprint(
                 target_bundle
@@ -390,9 +410,17 @@ def _prepare_macos_runtime(
         if target_executable.is_file():
             _stop_installed_core_for_upgrade()
         _copy_macos_bundle_atomically(source_bundle, target_bundle, trusted_base=trusted_base)
-    if not target_executable.is_file() or not target_helper.is_file():
+    if (
+        not target_executable.is_file()
+        or not target_helper.is_file()
+        or not target_recovery.is_file()
+    ):
         raise RuntimeError("The per-user macOS application copy is incomplete")
-    installed = RuntimeCommand(target_executable, mcp_executable=target_helper)
+    installed = RuntimeCommand(
+        target_executable,
+        mcp_executable=target_helper,
+        recovery_executable=target_recovery,
+    )
     if relaunch_args is not None:
         _relaunch_installed_runtime(installed, relaunch_args)
         return installed, True
@@ -416,6 +444,9 @@ def prepare_installed_runtime(
     helper_source = runtime.mcp_executable
     if helper_source is None or not helper_source.is_file():
         raise RuntimeError("The packaged MCP helper is missing. Download the installer again.")
+    recovery_source = runtime.recovery_executable
+    if recovery_source is None or not recovery_source.is_file():
+        raise RuntimeError("The packaged recovery helper is missing. Download the installer again.")
     update_source = runtime.update_executable
     if update_source is None or not update_source.is_file():
         raise RuntimeError("The packaged update helper is missing. Download the installer again.")
@@ -423,11 +454,13 @@ def prepare_installed_runtime(
     install_dir = windows_install_directory()
     app_target = install_dir / WINDOWS_APP_NAME
     helper_target = install_dir / WINDOWS_MCP_NAME
+    recovery_target = install_dir / WINDOWS_RECOVERY_NAME
     update_target = install_dir / WINDOWS_UPDATE_HELPER_NAME
     app_needs_update = not _same_file(runtime.executable, app_target)
     if runtime.executable != app_target and app_target.is_file() and app_needs_update:
         _stop_installed_core_for_upgrade()
     installed_helper = _install_mcp_helper(helper_source, helper_target)
+    _copy_atomically(recovery_source, recovery_target)
     _copy_atomically(update_source, update_target)
     _copy_atomically(runtime.executable, app_target)
     if runtime.executable != app_target:
@@ -436,6 +469,7 @@ def prepare_installed_runtime(
         app_target,
         mcp_executable=installed_helper,
         update_executable=update_target,
+        recovery_executable=recovery_target,
     )
 
     if runtime.executable != app_target and relaunch_args is not None:
@@ -444,14 +478,36 @@ def prepare_installed_runtime(
     return installed, False
 
 
+def _dashboard_exposes_import_operations(package_root: Path) -> bool:
+    """True when committed packaged dashboard assets reference durable import ops."""
+
+    web_root = package_root / "web"
+    if not (web_root / "index.html").is_file():
+        return False
+    needles = ("import-operations", "importOperations", "startImportOperation")
+    for path in web_root.rglob("*"):
+        if not path.is_file() or path.suffix.casefold() not in {".js", ".html", ".css", ".map"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if any(needle in text for needle in needles):
+            return True
+    return False
+
+
 def diagnostics() -> dict[str, Any]:
     from .updater import UpdateConfig
 
     package_root = Path(__file__).resolve().parent
     core_migrations = package_root / "migrations" / "core"
     relay_migrations = package_root / "migrations" / "relay"
+    core_migration_names = sorted(path.name for path in core_migrations.glob("*.sql"))
+    relay_migration_names = sorted(path.name for path in relay_migrations.glob("*.sql"))
     runtime = RuntimeCommand.current()
     update_config = UpdateConfig.default()
+    system = platform.system()
     return {
         "application": "All The Context",
         "version": __version__,
@@ -459,17 +515,32 @@ def diagnostics() -> dict[str, Any]:
         "distribution_trust": (
             "unsigned-community" if getattr(sys, "frozen", False) else "source-development"
         ),
-        "platform": platform.system(),
+        "platform": system,
         "python": platform.python_version(),
         "tk": tkinter.TkVersion,
-        "core_migrations": len(tuple(core_migrations.glob("*.sql"))),
-        "relay_migrations": len(tuple(relay_migrations.glob("*.sql"))),
+        "core_migrations": len(core_migration_names),
+        "core_migration_names": core_migration_names,
+        "relay_migrations": len(relay_migration_names),
+        "import_operations_migration": "009_import_operations.sql" in core_migration_names,
         "dashboard_bundled": (package_root / "web" / "index.html").is_file(),
+        "dashboard_import_operations": _dashboard_exposes_import_operations(package_root),
         "update_keyring_bundled": (package_root / "update_keys.json").is_file(),
         "update_helper_bundled": runtime.update_executable is not None,
         "update_channels": sorted(update_config.manifest_urls),
         "mcp_helper_bundled": runtime.mcp_executable is not None,
-        "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
+        "mcp_stdio_available": runtime.mcp_executable is not None or system == "Linux",
+        "recovery_admin_mode": True,
+        "recovery_helper_bundled": (
+            runtime.recovery_executable is not None
+            if system in {"Windows", "Darwin"}
+            else True  # Linux recovery modes attach to the console main binary
+        ),
+        "recovery_console_helper": (
+            runtime.recovery_executable.name
+            if runtime.recovery_executable is not None
+            else ("all-the-context" if system == "Linux" else None)
+        ),
+        "recovery_python_checkout_required": False,
         "core_data_directory": str(CoreConfig.default().data_dir),
     }
 
@@ -506,6 +577,10 @@ def _apply_packaged_update(report_value: str) -> int:
     if update_helper is None or not update_helper.is_file():
         raise RuntimeError("The installed update helper is unavailable after update")
     update_helper_digest, update_helper_size = _file_digest(update_helper)
+    recovery = installed.recovery_executable
+    if recovery is None or not recovery.is_file():
+        raise RuntimeError("The installed recovery helper is unavailable after update")
+    recovery_digest, recovery_size = _file_digest(recovery)
     payload = {
         "status": "installed",
         "version": __version__,
@@ -515,6 +590,9 @@ def _apply_packaged_update(report_value: str) -> int:
         "mcp": str(helper),
         "mcp_sha256": helper_digest,
         "mcp_size": helper_size,
+        "recovery": str(recovery),
+        "recovery_sha256": recovery_digest,
+        "recovery_size": recovery_size,
         "update_helper": str(update_helper),
         "update_helper_sha256": update_helper_digest,
         "update_helper_size": update_helper_size,
@@ -574,27 +652,108 @@ def _packaged_credential_acceptance(report_value: str) -> int:
     return 0
 
 
-def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
-    installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
-    result = perform_setup(
-        SetupOptions(
-            vault_name=args.vault_name,
-            timezone=args.timezone or local_timezone(),
-            configure_codex=not args.no_codex,
-            configure_claude=not args.no_claude,
-            start_at_login=not args.no_startup,
-        ),
-        installed,
+def _packaged_provider_acceptance(args: argparse.Namespace) -> int:
+    """Run a real provider import inside the shipped desktop binary."""
+
+    smoke_ok = os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+    if not getattr(sys, "frozen", False) and not smoke_ok:
+        raise RuntimeError("Packaged provider acceptance requires a frozen package")
+    if args.provider_accept_provider is None or args.provider_accept_export is None:
+        raise RuntimeError("provider and export are required for packaged provider acceptance")
+    from .packaged_provider_acceptance import run_packaged_provider_acceptance
+
+    data_dir_value = os.environ.get("ATC_CORE_DATA_DIR")
+    data_dir = Path(data_dir_value).expanduser() if data_dir_value else None
+    return run_packaged_provider_acceptance(
+        report_path=Path(args.packaged_provider_acceptance),
+        export_path=args.provider_accept_export,
+        provider=args.provider_accept_provider,
+        data_dir=data_dir,
     )
-    report = asdict(result)
-    report["log_path"] = str(result.log_path)
-    report["codex"] = asdict(result.codex) if result.codex else None
-    report["claude"] = asdict(result.claude) if result.claude else None
-    report["startup"] = asdict(result.startup) if result.startup else None
+
+
+def _headless_setup_error_code(error: Exception) -> str:
+    """Map arbitrary setup failures to the closed automation diagnostic vocabulary."""
+
+    message = str(error).casefold()
+    if "credential store" in message or "credential storage" in message:
+        return "credential_store_unavailable"
+    if isinstance(error, OSError):
+        return "setup_io_error"
+    if isinstance(error, ValueError):
+        return "setup_invalid_value"
+    return "setup_failed"
+
+
+def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path | None:
+    """Write a redacted headless failure report when the windowed app has no console."""
+
+    error_code = _headless_setup_error_code(error)
+    # The general graphical diagnostic path accepts a human-facing exception
+    # message. Headless setup is automation-facing, so persist only a closed
+    # code even if a lower layer accidentally embeds a token, path, or imported
+    # text in its exception.
+    diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
+    report: dict[str, Any] = {
+        "setup": "failed",
+        "error_type": type(error).__name__
+        if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
+        else "Exception",
+        "error_code": error_code,
+        # Never embed absolute developer paths; only a presence/basename signal.
+        "diagnostics_written": diagnostics_path is not None,
+        "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
+    }
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{secrets.token_hex(6)}.atc-new")
+        try:
+            temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return target
+    except OSError:
+        return None
+
+
+def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
     target = Path(args.headless_setup).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
-    return 0
+    try:
+        installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
+        result = perform_setup(
+            SetupOptions(
+                vault_name=args.vault_name,
+                timezone=args.timezone or local_timezone(),
+                configure_codex=not args.no_codex,
+                configure_claude=not args.no_claude,
+                start_at_login=not args.no_startup,
+            ),
+            installed,
+        )
+        report = asdict(result)
+        report["setup"] = "passed"
+        report["log_path"] = str(result.log_path)
+        report["codex"] = asdict(result.codex) if result.codex else None
+        report["claude"] = asdict(result.claude) if result.claude else None
+        report["startup"] = asdict(result.startup) if result.startup else None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+        return 0
+    except Exception as exc:
+        # Windowed Windows packages have no console; persist a redacted report so
+        # packaged smoke and operators can diagnose fail-closed setup without
+        # relying on hidden stderr.
+        report_path = _write_headless_setup_failure_report(target, exc)
+        error_code = _headless_setup_error_code(exc)
+        if report_path is not None:
+            print(
+                f"Headless setup failed: {error_code}\nReport: {report_path.name}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Headless setup failed: {error_code}", file=sys.stderr)
+        return 1
 
 
 def _open_existing(runtime: RuntimeCommand) -> bool:
@@ -827,6 +986,21 @@ def _parser() -> argparse.ArgumentParser:
         metavar="REPORT_PATH",
         help=argparse.SUPPRESS,
     )
+    mode.add_argument(
+        "--packaged-provider-acceptance",
+        metavar="REPORT_PATH",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--provider-accept-provider",
+        choices=["chatgpt", "claude", "grok"],
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--provider-accept-export",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     mode.add_argument("--apply-update", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument("--update-health-check", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument(
@@ -835,12 +1009,115 @@ def _parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     mode.add_argument("--uninstall", action="store_true", help=argparse.SUPPRESS)
+    # Packaged recovery/admin (B-109): deliberately hidden native modes.
+    mode.add_argument("--recovery-help", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-export", metavar="DESTINATION", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-restore", metavar="SOURCE", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-rollback", metavar="ROLLBACK_DIR", help=argparse.SUPPRESS)
+    mode.add_argument(
+        "--recovery-purge",
+        nargs=2,
+        metavar=("TYPE", "ID"),
+        help=argparse.SUPPRESS,
+    )
+    mode.add_argument("--recovery-purge-resume", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-doctor", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--vault-name", default="My Context", help=argparse.SUPPRESS)
     parser.add_argument("--timezone", help=argparse.SUPPRESS)
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-claude", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-startup", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-data-dir", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-destination", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-rollback-path", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-confirmation", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-dry-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-cutover", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-no-compact", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--recovery-passphrase-env",
+        default="ATC_EXPORT_PASSPHRASE",
+        help=argparse.SUPPRESS,
+    )
     return parser
+
+
+def _run_recovery(args: argparse.Namespace) -> int:
+    from .recovery_admin import (
+        RecoveryError,
+        doctor,
+        dump_json,
+        export_active_vault,
+        passphrase_from_env,
+        purge_target,
+        recovery_help_text,
+        restore_isolated,
+        resume_purge_jobs,
+        rollback_active_vault,
+    )
+
+    data_dir = args.recovery_data_dir
+    try:
+        if args.recovery_help:
+            print(recovery_help_text())
+            return 0
+        if args.recovery_doctor:
+            dump_json(doctor(data_dir=data_dir))
+            return 0
+        if args.recovery_export:
+            dump_json(
+                export_active_vault(
+                    Path(args.recovery_export),
+                    data_dir=data_dir,
+                    passphrase=passphrase_from_env(args.recovery_passphrase_env),
+                )
+            )
+            return 0
+        if args.recovery_restore:
+            dump_json(
+                restore_isolated(
+                    Path(args.recovery_restore),
+                    data_dir=data_dir,
+                    destination=args.recovery_destination,
+                    passphrase=passphrase_from_env(args.recovery_passphrase_env),
+                    dry_run=args.recovery_dry_run,
+                    cutover=args.recovery_cutover,
+                    rollback_path=args.recovery_rollback_path,
+                )
+            )
+            return 0
+        if args.recovery_rollback:
+            dump_json(rollback_active_vault(Path(args.recovery_rollback), data_dir=data_dir))
+            return 0
+        if args.recovery_purge is not None:
+            raw_type, target_id = args.recovery_purge
+            if raw_type not in {"record", "source"}:
+                raise RecoveryError("purge type must be record or source")
+            target_type: Literal["record", "source"] = (
+                "record" if raw_type == "record" else "source"
+            )
+            if not args.recovery_confirmation:
+                raise RecoveryError("--recovery-confirmation is required for purge")
+            dump_json(
+                purge_target(
+                    target_type,
+                    target_id,
+                    confirmation=args.recovery_confirmation,
+                    data_dir=data_dir,
+                    compact=not args.recovery_no_compact,
+                )
+            )
+            return 0
+        if args.recovery_purge_resume:
+            dump_json(resume_purge_jobs(data_dir=data_dir))
+            return 0
+    except RecoveryError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    except Exception as error:  # pragma: no cover - defensive packaging boundary
+        print(f"Recovery failed: {error}", file=sys.stderr)
+        return 1
+    return 1
 
 
 def _run_graphical(args: argparse.Namespace) -> int:
@@ -881,10 +1158,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.diagnostics:
         write_diagnostics(args.diagnostics)
         return 0
+    if (
+        args.recovery_help
+        or args.recovery_export
+        or args.recovery_restore
+        or args.recovery_rollback
+        or args.recovery_purge is not None
+        or args.recovery_purge_resume
+        or args.recovery_doctor
+    ):
+        return _run_recovery(args)
     if args.headless_setup:
         return _headless_setup(args, RuntimeCommand.current())
     if args.packaged_credential_acceptance:
         return _packaged_credential_acceptance(args.packaged_credential_acceptance)
+    if args.packaged_provider_acceptance:
+        return _packaged_provider_acceptance(args)
     if args.apply_update:
         return _apply_packaged_update(args.apply_update)
     if args.update_health_check:

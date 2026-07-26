@@ -38,6 +38,30 @@ all represent the requested release. Beta tags, asset names, and manifests keep
 the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
 equivalent `x.y.zbN` spelling.
 
+Before native packaging, the validate job fail-closes unless:
+
+1. the exact nine-job hosted CI matrix is green on that SHA;
+2. local Ruff format/lint, mypy, pytest, and docs checks rerun cleanly;
+3. third-party Actions pins match `release/actions-policy.json`;
+4. content-free tree/history security scans and private-key audit pass;
+5. Python and dashboard dependency vulnerability gates pass;
+6. dashboard `npm ci` / check / test / build / high-severity audit pass and
+   committed `packages/.../web` assets match the production build byte-for-byte;
+7. a component/license inventory and `NOTICES.txt` are produced from
+   `uv.lock` and `apps/dashboard/package-lock.json`.
+
+Python installs use `scripts/install_locked_python.py` so composition comes from
+the reviewed `uv.lock` rather than independently resolving broad ranges.
+Build backends (`setuptools`, `wheel`) must be present as hashed lock entries and
+installed before `--no-build-isolation`; the installer fails closed if either is
+missing. `ensure_pinned_uv` never network-bootstraps `uv` without digests—the
+reviewed `0.11.32` binary must already be available (for example via the
+SHA-pinned setup-uv action). The Python dependency vulnerability gate audits a
+frozen hashed export of `uv.lock` (dev and packaging extras) with lock-installed
+`pip-audit==2.10.1` and `--disable-pip`, not a fresh resolve of declared ranges.
+Repository security and receipt scaffolding are documented in
+[REPOSITORY_SECURITY.md](REPOSITORY_SECURITY.md).
+
 GitHub's **immutable releases** repository setting was enabled on 2026-07-22.
 GitHub's check-setting endpoint requires repository `Administration: read`,
 which the automatic Actions `GITHUB_TOKEN` cannot receive. Immediately before
@@ -148,8 +172,13 @@ x86_64 OTA ZIP:
    tag, source commit, candidate digest, and phrase `PUBLISH UNSIGNED BETA`.
    The protected job never receives the admin token. It repeats package,
    checksum, SPDX, provenance, source, keyring, signature, URL, and supported
-   manifest-set verification before publishing, then requires the resulting
-   release to report immutable and verifies GitHub's release attestation.
+   manifest-set verification before publishing. It also runs
+   `scripts/publication_gate.py` against the reviewed candidate digest, the
+   exact promotion asset inventory, a content-free acceptance receipt bundle
+   with an explicit maintainer `approve` decision, and the reviewed public-key
+   identity. The private signing key never enters Actions. The job then requires
+   the resulting release to report immutable and verifies GitHub's release
+   attestation.
 6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new

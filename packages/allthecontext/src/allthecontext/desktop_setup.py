@@ -40,6 +40,8 @@ from .credentials import (
     OS_CREDENTIAL_STORAGE,
     DevelopmentFileCredentialStore,
     KeyringCredentialStore,
+    development_file_credentials_enabled,
+    require_development_file_credentials,
 )
 from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
@@ -64,6 +66,9 @@ AI_CLIENT_SCOPES = [
     "context:propose",
     "context:read",
     "context:status",
+    # Explicit local trust grant for A-09 / B-102. Authentication alone is not
+    # enough; only ATC-configured same-device AI principals receive this class.
+    "witness:explicit_user_statement",
 ]
 ProgressCallback = Callable[[str, str], None]
 
@@ -271,12 +276,13 @@ def recover_client_access(client_id: str, config: CoreConfig) -> DesktopAccess |
     if token:
         return DesktopAccess(client_id, token, OS_CREDENTIAL_STORAGE)
 
-    try:
-        token = _fallback_store(config).get(f"client:{client_id}")
-    except (OSError, RuntimeError, ValueError):
-        token = None
-    if token:
-        return DesktopAccess(client_id, token, FALLBACK_CREDENTIAL_STORAGE)
+    if development_file_credentials_enabled():
+        try:
+            token = _fallback_store(config).get(f"client:{client_id}")
+        except (OSError, RuntimeError, ValueError):
+            token = None
+        if token:
+            return DesktopAccess(client_id, token, FALLBACK_CREDENTIAL_STORAGE)
     return None
 
 
@@ -377,6 +383,7 @@ def _persist_client_token(client_id: str, token: str, config: CoreConfig) -> Des
     try:
         previous = credential_store.get(credential_name)
     except RuntimeError:
+        require_development_file_credentials()
         _fallback_store(config).set(credential_name, token)
         return DesktopAccess(client_id, token, FALLBACK_CREDENTIAL_STORAGE)
     try:
@@ -399,6 +406,7 @@ def _persist_client_token(client_id: str, token: str, config: CoreConfig) -> Des
                 "The operating-system credential write failed and could not be rolled back. "
                 "No fallback copy was created"
             ) from rollback_error
+        require_development_file_credentials()
         _fallback_store(config).set(credential_name, token)
         return DesktopAccess(client_id, token, FALLBACK_CREDENTIAL_STORAGE)
 
@@ -411,7 +419,62 @@ def _create_client_access(
     scopes: list[str],
 ) -> DesktopAccess:
     principal, token = store.create_client(ClientCreate(name=name, scopes=scopes))
-    return _persist_client_token(principal.id, token, config)
+    try:
+        return _persist_client_token(principal.id, token, config)
+    except BaseException:
+        store.revoke_client(principal.id)
+        delete_client_credential(principal.id, config)
+        raise
+
+
+def _ensure_client_access_with_state(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    name: str,
+    scopes: list[str],
+) -> tuple[DesktopAccess, bool]:
+    for client in store.list_clients():
+        if client["name"] != name or client["revoked"]:
+            continue
+        client_id = str(client["id"])
+        if set(client.get("scopes", [])) != set(scopes):
+            continue
+        access = recover_client_access(client_id, config)
+        principal = store.authenticate(access.token) if access else None
+        if access is not None and principal is not None and principal.id == client_id:
+            return access, False
+    return _create_client_access(store, config, name=name, scopes=scopes), True
+
+
+def configure_client_access_transactionally(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    name: str,
+    scopes: list[str],
+    configure: Callable[[DesktopAccess], ClientConfigResult],
+) -> tuple[DesktopAccess, ClientConfigResult]:
+    """Create/reuse a principal and remove a newly created one if configuration fails."""
+
+    access, created = _ensure_client_access_with_state(
+        store,
+        config,
+        name=name,
+        scopes=scopes,
+    )
+    try:
+        result = configure(access)
+    except BaseException:
+        if created:
+            store.revoke_client(access.client_id)
+            delete_client_credential(
+                access.client_id,
+                config,
+                strict_storage=access.credential_storage,
+            )
+        raise
+    return access, result
 
 
 def retire_other_named_clients(
@@ -437,18 +500,13 @@ def ensure_client_access(
     scopes: list[str],
 ) -> DesktopAccess:
     """Return a recoverable named client without sharing another app's credential."""
-    for client in store.list_clients():
-        if client["name"] != name or client["revoked"]:
-            continue
-        client_id = str(client["id"])
-        if set(client.get("scopes", [])) != set(scopes):
-            continue
-        access = recover_client_access(client_id, config)
-        principal = store.authenticate(access.token) if access else None
-        if access is not None and principal is not None and principal.id == client_id:
-            return access
-
-    return _create_client_access(store, config, name=name, scopes=scopes)
+    access, _created = _ensure_client_access_with_state(
+        store,
+        config,
+        name=name,
+        scopes=scopes,
+    )
+    return access
 
 
 def _desktop_client(store: CoreStore, config: CoreConfig) -> DesktopAccess:
@@ -602,30 +660,30 @@ def perform_setup(
     stored_in_keyring = access.credential_storage == OS_CREDENTIAL_STORAGE
     if not stored_in_keyring:
         warnings.append(
-            "Your OS credential service was unavailable, so this first release used its "
-            "local app-data fallback."
+            "The explicitly enabled insecure development credential file is in use; "
+            "credentials are stored as plaintext."
         )
 
     codex_result: ClientConfigResult | None = None
     if options.configure_codex:
         notify("client", "Connecting Codex to All The Context")
         try:
-            codex_access = ensure_client_access(
+            codex_access, codex_result = configure_client_access_transactionally(
                 store,
                 active_config,
                 name=CODEX_CLIENT_NAME,
                 scopes=AI_CLIENT_SCOPES,
-            )
-            codex_result = configure_codex(
-                active_runtime,
-                codex_access.client_id,
-                token=(
-                    None
-                    if codex_access.credential_storage == OS_CREDENTIAL_STORAGE
-                    else codex_access.token
+                configure=lambda client_access: configure_codex(
+                    active_runtime,
+                    client_access.client_id,
+                    token=(
+                        None
+                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
+                        else client_access.token
+                    ),
+                    target_url=f"http://{active_config.host}:{active_config.port}",
+                    core_data_dir=active_config.data_dir,
                 ),
-                target_url=f"http://{active_config.host}:{active_config.port}",
-                core_data_dir=active_config.data_dir,
             )
             retire_other_named_clients(
                 store,
@@ -633,29 +691,29 @@ def perform_setup(
                 name=CODEX_CLIENT_NAME,
                 keep_id=codex_access.client_id,
             )
-        except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+        except (OSError, RuntimeError, ValueError, tomllib.TOMLDecodeError) as exc:
             warnings.append(f"Codex configuration was not changed: {exc}")
 
     claude_result: ClientConfigResult | None = None
     if options.configure_claude:
         notify("client", "Connecting Claude Desktop to All The Context")
         try:
-            claude_access = ensure_client_access(
+            claude_access, claude_result = configure_client_access_transactionally(
                 store,
                 active_config,
                 name=CLAUDE_CLIENT_NAME,
                 scopes=AI_CLIENT_SCOPES,
-            )
-            claude_result = configure_claude(
-                active_runtime,
-                claude_access.client_id,
-                token=(
-                    None
-                    if claude_access.credential_storage == OS_CREDENTIAL_STORAGE
-                    else claude_access.token
+                configure=lambda client_access: configure_claude(
+                    active_runtime,
+                    client_access.client_id,
+                    token=(
+                        None
+                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
+                        else client_access.token
+                    ),
+                    target_url=f"http://{active_config.host}:{active_config.port}",
+                    core_data_dir=active_config.data_dir,
                 ),
-                target_url=f"http://{active_config.host}:{active_config.port}",
-                core_data_dir=active_config.data_dir,
             )
             retire_other_named_clients(
                 store,
@@ -663,7 +721,7 @@ def perform_setup(
                 name=CLAUDE_CLIENT_NAME,
                 keep_id=claude_access.client_id,
             )
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Claude Desktop configuration was not changed: {exc}")
 
     startup_result: StartupResult | None = None

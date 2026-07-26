@@ -30,6 +30,19 @@ basis, or source text cannot bypass hard policy. Legacy `auto_approve` grants,
 where present for schema compatibility, do not override the automatic policy
 and are not a user-facing setup choice.
 
+The closed capability `witness:explicit_user_statement` is not an ordinary
+operation scope. Authentication and `context:propose` alone never grant it.
+Only ATC-configured same-device Codex/Claude principals that setup explicitly
+assigns this class (and intentional local `admin`/`*` authorities) may attest
+that a specific input was directly stated by the user. Clients cannot
+self-add the grant, select a disposition, force current state, or smuggle
+origin/role/force fields. Omitted or default-false `explicit_user_statement`
+stays tentative; authenticated archive/provider/Relay paths cannot re-label
+material as witnessed user evidence without the grant. Core-controlled
+importers (no client principal) remain a separate Core assignment path. This
+is a local trust grant, not cryptographic authorship proof; an authorized
+malicious witness principal can lie.
+
 Administrative UI operations require `admin`. Model-facing clients are not
 granted it by default and cannot change another client's origin or scopes,
 availability policy, restore deleted context, or invoke irreversible purge.

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
+    SOURCE_EVIDENCE_FILE_NAMES,
     ReleaseTarget,
     assemble_candidate,
     attach_attestation_bundles,
@@ -23,6 +24,21 @@ from allthecontext.release_candidate import (
 from allthecontext.release_manifest import ManifestError, ReleaseVersion, sha256_file
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _stage_into_release(release_dir: Path, source_evidence_dir: Path) -> None:
+    """Copy reviewed source-evidence files into the release inventory directory."""
+
+    if not source_evidence_dir.is_dir():
+        raise ManifestError(f"source evidence directory is missing: {source_evidence_dir}")
+    for file_name in SOURCE_EVIDENCE_FILE_NAMES.values():
+        source = source_evidence_dir / file_name
+        destination = release_dir / file_name
+        if not source.is_file() or source.is_symlink():
+            raise ManifestError(f"source evidence file is missing: {file_name}")
+        if destination.exists():
+            raise ManifestError(f"refusing to replace release file: {file_name}")
+        destination.write_bytes(source.read_bytes())
 
 
 def canonical_python_version(version: str) -> str:
@@ -126,6 +142,11 @@ def _parser() -> argparse.ArgumentParser:
     assemble.add_argument("--source-commit", required=True)
     assemble.add_argument("--target", action="append", required=True)
     assemble.add_argument("--ota-target", action="append", required=True)
+    assemble.add_argument(
+        "--source-evidence-dir",
+        type=Path,
+        help="Directory containing matrix evidence, component inventory, and notices",
+    )
     assemble.add_argument("--output", type=Path)
     verify = commands.add_parser("verify")
     verify.add_argument("--release-dir", type=Path, required=True)
@@ -133,11 +154,11 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--expected-sha256")
     verify.add_argument("--target", action="append")
     verify.add_argument("--ota-target", action="append")
-    verify.add_argument("--asset-stage", choices=("draft", "promotion"))
+    verify.add_argument("--asset-stage", choices=("draft", "signed", "promotion"))
     assets = commands.add_parser("list-assets")
     assets.add_argument("--release-dir", type=Path, required=True)
     assets.add_argument("--candidate", type=Path)
-    assets.add_argument("--stage", choices=("draft", "promotion"), required=True)
+    assets.add_argument("--stage", choices=("draft", "signed", "promotion"), required=True)
     state = commands.add_parser("verify-release-state")
     state.add_argument("--input", type=Path, required=True)
     state.add_argument("--tag", required=True)
@@ -146,7 +167,7 @@ def _parser() -> argparse.ArgumentParser:
     state.add_argument("--immutable", choices=("true", "false"), required=True)
     state.add_argument("--release-dir", type=Path)
     state.add_argument("--candidate", type=Path)
-    state.add_argument("--asset-stage", choices=("draft", "promotion"))
+    state.add_argument("--asset-stage", choices=("draft", "signed", "promotion"))
     notes = commands.add_parser("write-notes")
     notes.add_argument("--release-dir", type=Path, required=True)
     notes.add_argument("--candidate", type=Path)
@@ -230,6 +251,8 @@ def main() -> int:
             )
             print("\n".join(str(path) for path in outputs))
         elif arguments.command == "assemble":
+            if arguments.source_evidence_dir is not None:
+                _stage_into_release(arguments.release_dir, arguments.source_evidence_dir)
             candidate = assemble_candidate(
                 arguments.release_dir,
                 version=arguments.version,

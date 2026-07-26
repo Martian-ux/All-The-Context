@@ -8,12 +8,17 @@ import json
 import os
 import shlex
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
-from allthecontext.credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
+from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
+    DevelopmentFileCredentialStore,
+    KeyringCredentialStore,
+)
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import (
     AI_CLIENT_SCOPES,
@@ -37,7 +42,6 @@ from allthecontext.models import (
 )
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.storage import CoreStore
-from allthecontext.sync import CoreRelaySync
 
 
 def _config(args: argparse.Namespace) -> CoreConfig:
@@ -116,7 +120,42 @@ def _render_cli_command(command: str) -> str:
     return f"{shlex.quote(str(executable))} {command}"
 
 
+def _persist_cli_client_credential(
+    store: CoreStore,
+    config: CoreConfig,
+    client_id: str,
+    token: str,
+    *,
+    insecure_development_file: bool,
+) -> bool:
+    """Persist a new CLI credential or revoke its principal before returning failure."""
+
+    name = f"client:{client_id}"
+    try:
+        if insecure_development_file:
+            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").set(
+                name, token
+            )
+            return False
+        credential_store = KeyringCredentialStore()
+        credential_store.set(name, token)
+        if credential_store.get(name) != token:
+            raise RuntimeError("the operating-system credential did not round trip")
+        return True
+    except BaseException:
+        store.revoke_client(client_id)
+        with suppress(RuntimeError):
+            KeyringCredentialStore().delete(name)
+        with suppress(OSError, RuntimeError, ValueError):
+            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").delete(
+                name
+            )
+        raise
+
+
 def _cmd_init(args: argparse.Namespace) -> None:
+    if args.no_keyring:
+        os.environ[DEVELOPMENT_FALLBACK_ENV] = "1"
     config = _config(args)
     config.prepare()
     store = CoreStore(config.database_path)
@@ -135,17 +174,13 @@ def _cmd_init(args: argparse.Namespace) -> None:
                 ],
             )
         )
-        stored_in_keyring = False
-        if not args.no_keyring:
-            try:
-                KeyringCredentialStore().set(f"client:{principal.id}", token)
-                stored_in_keyring = True
-            except RuntimeError:
-                pass
-        if not stored_in_keyring:
-            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").set(
-                f"client:{principal.id}", token
-            )
+        stored_in_keyring = _persist_cli_client_credential(
+            store,
+            config,
+            principal.id,
+            token,
+            insecure_development_file=args.no_keyring,
+        )
         mcp_access = ensure_client_access(
             store,
             config,
@@ -212,10 +247,100 @@ def _cmd_config_mcp(args: argparse.Namespace) -> None:
     print(_render_mcp_config(config, args.client_id, token=args.token, target=args.target))
 
 
+def _import_operations(args: argparse.Namespace) -> Any:
+    from allthecontext.import_operations import ImportOperationService
+
+    config = _config(args)
+    store = _store(args)
+    max_bytes = getattr(args, "max_bytes", None) or config.max_import_bytes
+    imports = ArchiveImportService(store, max_bytes=max_bytes)
+    return ImportOperationService(
+        store,
+        imports,
+        data_dir=config.data_dir,
+        max_bytes=max_bytes,
+    )
+
+
 def _cmd_import(args: argparse.Namespace) -> None:
     path = Path(args.path).expanduser().resolve()
-    service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
-    _dump(service.import_path(path, source_service=args.provider))
+    service = _import_operations(args)
+    finished = service.import_path_via_operation(
+        path,
+        source_service=args.provider,
+        provider=None if args.provider == "auto" else args.provider,
+    )
+    if finished.get("result"):
+        _dump(finished["result"])
+        return
+    _dump(finished)
+
+
+def _cmd_import_progress(args: argparse.Namespace) -> None:
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    # Prefer operation id when it matches a durable import operation.
+    try:
+        _dump(operations.get_operation(identifier))
+        return
+    except NotFoundError:
+        pass
+    service = ArchiveImportService(_store(args))
+    _dump(service.import_progress(identifier))
+
+
+def _cmd_cancel_import(args: argparse.Namespace) -> None:
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    try:
+        _dump(operations.cancel_operation(identifier))
+        return
+    except NotFoundError:
+        pass
+    service = ArchiveImportService(_store(args))
+    _dump(service.cancel_import(identifier))
+
+
+def _cmd_reprocess_source(args: argparse.Namespace) -> None:
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    try:
+        operations.get_operation(identifier)
+    except NotFoundError:
+        service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
+        _dump(service.reprocess_source(identifier))
+        return
+    _dump(operations.retry_operation(identifier))
+
+
+def _cmd_import_boundary(args: argparse.Namespace) -> None:
+    from allthecontext.boundary_canary import (
+        BOUNDARY_CANARY_GENERATOR_VERSION,
+        BOUNDARY_CANARY_SIZE_BYTES,
+        checkpoint_offsets,
+    )
+    from allthecontext.import_boundary import expected_chunk_count, scale_profile
+    from allthecontext.provider_shapes import provider_claim_manifest
+
+    _dump(
+        {
+            "scale_profile": scale_profile(),
+            "boundary_canary": {
+                "generator_version": BOUNDARY_CANARY_GENERATOR_VERSION,
+                "size_bytes": BOUNDARY_CANARY_SIZE_BYTES,
+                "expected_chunk_count": expected_chunk_count(BOUNDARY_CANARY_SIZE_BYTES),
+                "checkpoint_offsets": list(checkpoint_offsets(BOUNDARY_CANARY_SIZE_BYTES)),
+                "exact_artifact_acceptance": "pending",
+            },
+            "provider_claims": provider_claim_manifest(),
+        }
+    )
 
 
 def _cmd_observations(args: argparse.Namespace) -> None:
@@ -330,16 +455,18 @@ def _cmd_clients(args: argparse.Namespace) -> None:
 
 
 def _cmd_client_add(args: argparse.Namespace) -> None:
-    principal, token = _store(args).create_client(
+    store = _store(args)
+    config = _config(args)
+    principal, token = store.create_client(
         ClientCreate(name=args.name, scopes=args.scope, auto_approve=args.auto_approve)
     )
-    stored_in_keyring = False
-    if not args.no_keyring:
-        try:
-            KeyringCredentialStore().set(f"client:{principal.id}", token)
-            stored_in_keyring = True
-        except RuntimeError:
-            pass
+    stored_in_keyring = _persist_cli_client_credential(
+        store,
+        config,
+        principal.id,
+        token,
+        insecure_development_file=args.no_keyring,
+    )
     _dump(
         {
             "client": {
@@ -363,18 +490,112 @@ def _cmd_status(args: argparse.Namespace) -> None:
     _dump(_store(args).status())
 
 
-def _cmd_sync(args: argparse.Namespace) -> None:
-    secret = os.environ.get(args.secret_env, "").encode()
-    bearer = os.environ.get(args.token_env, "")
-    store = _store(args)
-    with CoreRelaySync(store.database_path, args.relay_url, secret, bearer) as sync:
-        pushed = sync.push(limit=args.limit)
-        pulled = sync.pull_proposals(store.vault_id(), store, limit=args.limit)
-    _dump({"pushed": pushed, "proposals_imported": pulled})
+def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
+    """Report residual local Edge state without connecting outbound."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore
+
+    config = _config(args)
+    config.prepare()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+    except RuntimeError as error:
+        _dump({"product_surface": "legacy_cleanup_only", "state": "degraded", "error": str(error)})
+        return
+    try:
+        material = connections.material()
+    except RuntimeError as error:
+        _dump({"product_surface": "legacy_cleanup_only", "state": "degraded", "error": str(error)})
+        return
+    edge_url = state.edge_url if state is not None else None
+    _dump(
+        {
+            "product_surface": "legacy_cleanup_only",
+            "active_operation_available": False,
+            "configured": edge_url is not None and material is not None,
+            "remote_present": edge_url is not None,
+            "credential_available": material is not None,
+            "state": (
+                "not_configured" if state is None else "prepared" if edge_url is None else "paired"
+            ),
+            "edge_url": edge_url,
+            "detail": (
+                "Ordinary Edge enroll/connect/sync and Relay serve are outside the V1 "
+                "Core product boundary. Only isolated decommission or local forget remain."
+            ),
+        }
+    )
+
+
+def _cmd_legacy_edge_decommission(args: argparse.Namespace) -> None:
+    """Decommission a pre-existing residual Edge without creating a new authority."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
+
+    config = _config(args)
+    config.prepare()
+    store = CoreStore(config.database_path)
+    store.migrate()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+        material = connections.material()
+    except RuntimeError as error:
+        raise RuntimeError(str(error)) from error
+    if state is None or material is None or state.edge_url is None:
+        raise RuntimeError(
+            "No residual paired Edge is configured. Core will not open a new hosted "
+            "connection or create a second authority."
+        )
+    EdgeSyncManager(connections, store).decommission()
+    store.revoke_all_remote_edge_clients()
+    _dump(
+        {
+            "status": "decommissioned",
+            "active_records_remaining": 0,
+            "remote_access_revoked": True,
+            "product_surface": "legacy_cleanup_only",
+        }
+    )
+
+
+def _cmd_legacy_edge_forget(args: argparse.Namespace) -> None:
+    """Forget local residual Edge credentials after explicit confirmation."""
+
+    from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
+
+    if args.confirmation != "DELETE HOSTED EDGE":
+        raise RuntimeError('confirmation must be exactly "DELETE HOSTED EDGE"')
+    config = _config(args)
+    config.prepare()
+    store = CoreStore(config.database_path)
+    store.migrate()
+    connections = EdgeConnectionStore(config)
+    try:
+        state = connections.state()
+        material = connections.material()
+    except RuntimeError:
+        state = None
+        material = None
+    if (
+        state is not None
+        and state.edge_url is not None
+        and state.last_error is None
+        and material is not None
+    ):
+        raise RuntimeError(
+            "Edge is paired and manageable. Use legacy-edge decommission before forget."
+        )
+    EdgeSyncManager(connections, store).forget_local()
+    _dump({"status": "forgotten", "product_surface": "legacy_cleanup_only"})
 
 
 def _cmd_export(args: argparse.Namespace) -> None:
     config = _config(args)
+    store = CoreStore(config.database_path)
+    store.migrate()
+    store.repair_preledger_secrets()
     _dump(
         create_export(
             config.database_path,
@@ -444,12 +665,6 @@ def _cmd_serve_core(args: argparse.Namespace) -> None:
     core_main()
 
 
-def _cmd_serve_relay(args: argparse.Namespace) -> None:
-    from allthecontext.relay.app import main as relay_main
-
-    relay_main()
-
-
 def _common_data(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-dir", help="Override the per-user Core data directory")
 
@@ -466,7 +681,11 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--name", default="My Context")
     init.add_argument("--timezone")
     init.add_argument("--client-name", default=DESKTOP_CLIENT_NAME)
-    init.add_argument("--no-keyring", action="store_true")
+    init.add_argument(
+        "--no-keyring",
+        action="store_true",
+        help="development only: store credentials in an insecure plaintext app-data file",
+    )
     init.add_argument("--json-only", action="store_true", help="omit the copyable MCP block")
     init.set_defaults(handler=_cmd_init)
 
@@ -484,8 +703,37 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", default=7337, type=int)
     serve.set_defaults(handler=_cmd_serve_core)
 
-    relay = commands.add_parser("serve-relay", help="Run the separately configured Relay")
-    relay.set_defaults(handler=_cmd_serve_relay)
+    legacy_edge = commands.add_parser(
+        "legacy-edge",
+        help=(
+            "Isolated residual Edge cleanup only; cannot enroll, deploy, connect, "
+            "sync, or serve Relay"
+        ),
+    )
+    legacy_commands = legacy_edge.add_subparsers(dest="legacy_edge_command", required=True)
+    legacy_status = legacy_commands.add_parser(
+        "status",
+        help="Show residual local Edge state without outbound contact",
+    )
+    _common_data(legacy_status)
+    legacy_status.set_defaults(handler=_cmd_legacy_edge_status)
+    legacy_decommission = legacy_commands.add_parser(
+        "decommission",
+        help="Decommission a pre-existing residual Edge connection only",
+    )
+    _common_data(legacy_decommission)
+    legacy_decommission.set_defaults(handler=_cmd_legacy_edge_decommission)
+    legacy_forget = legacy_commands.add_parser(
+        "forget",
+        help="Forget residual local Edge credentials after confirmation",
+    )
+    _common_data(legacy_forget)
+    legacy_forget.add_argument(
+        "--confirmation",
+        required=True,
+        help='Must be exactly "DELETE HOSTED EDGE"',
+    )
+    legacy_forget.set_defaults(handler=_cmd_legacy_edge_forget)
 
     config_mcp = commands.add_parser("config-mcp", help="Generate one-time Codex MCP config")
     _common_data(config_mcp)
@@ -518,6 +766,50 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_IMPORT_BYTES,
     )
     import_command.set_defaults(handler=_cmd_import)
+
+    import_progress = commands.add_parser(
+        "import-progress",
+        help="Inspect durable progress for an import operation or source id",
+    )
+    _common_data(import_progress)
+    import_progress.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
+    import_progress.set_defaults(handler=_cmd_import_progress)
+
+    cancel_import = commands.add_parser(
+        "cancel-import",
+        help="Request cancellation of an in-flight import operation or source import",
+    )
+    _common_data(cancel_import)
+    cancel_import.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
+    cancel_import.set_defaults(handler=_cmd_cancel_import)
+
+    reprocess = commands.add_parser(
+        "reprocess-source",
+        help="Retry extraction from a preserved raw source without re-upload",
+    )
+    _common_data(reprocess)
+    reprocess.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
+    reprocess.add_argument(
+        "--max-bytes",
+        type=_import_byte_limit,
+        default=DEFAULT_MAX_IMPORT_BYTES,
+    )
+    reprocess.set_defaults(handler=_cmd_reprocess_source)
+
+    import_boundary = commands.add_parser(
+        "import-boundary",
+        help="Show the frozen import scale profile and provider claim identities",
+    )
+    import_boundary.set_defaults(handler=_cmd_import_boundary)
 
     observations = commands.add_parser(
         "observations",
@@ -682,7 +974,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated compatibility flag; Core's automatic policy owns decisions",
     )
-    client_add.add_argument("--no-keyring", action="store_true")
+    client_add.add_argument(
+        "--no-keyring",
+        action="store_true",
+        help="development only: store credentials in an insecure plaintext app-data file",
+    )
     client_add.set_defaults(handler=_cmd_client_add)
 
     client_revoke = commands.add_parser("client-revoke", help="Revoke a client")
@@ -692,18 +988,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser(
         "status",
-        help="Show current-context, observation, and replication health",
+        help="Show current-context, observation, and local vault health",
     )
     _common_data(status)
     status.set_defaults(handler=_cmd_status)
-
-    sync = commands.add_parser("sync", help="Push events and import Relay proposals")
-    _common_data(sync)
-    sync.add_argument("relay_url")
-    sync.add_argument("--secret-env", default="ATC_RELAY_REPLICATION_SECRET")
-    sync.add_argument("--token-env", default="ATC_RELAY_BEARER_TOKEN")
-    sync.add_argument("--limit", type=int, default=500)
-    sync.set_defaults(handler=_cmd_sync)
 
     export = commands.add_parser("export", help="Create an encrypted portable export")
     _common_data(export)

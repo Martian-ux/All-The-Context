@@ -487,9 +487,33 @@ limitation rather than offering an unsafe shortcut.
 The `always_available` schema value and experimental Relay modules remain
 temporarily for import/history compatibility and safe cleanup of engineering
 setups. Newly applied context uses only `local_only` and `core_available`.
-ADR-053 and B-103 strengthen the beta boundary: current callable Edge/Relay
-paths must be removed or build-gated from supported artifacts, with any
-retained cleanup path isolated from ordinary Core operation.
+ADR-053 and B-103 strengthen the beta boundary: ordinary Core Edge/Relay
+operation paths are removed or tombstoned from the supported product surface,
+and the retained cleanup path is isolated under legacy-edge API/CLI commands
+that cannot enroll, connect, sync, or create a second authority by default.
+
+## ADR-054: Same-version OTA acceptance is explicit and fail-closed
+
+**Status:** accepted 2026-07-25.
+
+Ordinary channel checks report `current` when a signed offer equals the
+installed version. Beta1 exact-candidate acceptance still needs that already
+verified same-version candidate to exercise download, transactional
+replacement, health verification, and rollback without fabricating a newer
+release or weakening trust checks.
+
+`UpdateManager.accept_exact_candidate` therefore reopens only a phase=`current`
+offer whose offered version equals the installed version, re-verifies the
+stored signed manifest against the keyring, platform, architecture, and
+channel, performs no network I/O, and transitions the phase to `available` so
+the existing download/install/recover path can run. A newer available offer is
+rejected. The Core admin route is
+`POST /v1/admin/updates/accept-exact-candidate`.
+
+This is an engineering acceptance helper for exact-candidate same-version
+smoke. It is not public promotion, not a substitute for a real signed
+beta1-to-beta2 N-1 receipt, and not a weakening of signature, hash, platform,
+channel, or key policy.
 
 ## ADR-033: Provider history is preserved completely but evaluated selectively
 
@@ -1269,10 +1293,11 @@ and quiesces safely within 30 seconds, and import, source-inclusive export, and
 isolated restore each complete within 60 minutes. The full boundary journey
 runs on Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64.
 
-The downloaded packages must expose a version-matched recovery/admin helper or
+The downloaded packages expose a version-matched recovery/admin helper or
 native mode for stopped-Core restore and deliberate administrator purge without
-Python or a source checkout. Contributor-only `atc restore` and an API-only
-purge route do not satisfy the beta user journey.
+Python or a source checkout. Contributor-only `atc restore` remains a
+development path; beta acceptance requires exact downloaded-artifact packaged
+recovery receipts rather than contributor CLI evidence alone.
 
 An ATC-configured same-device Codex or Claude client principal may attest that
 text is an explicit user statement only when Core grants that witness class.
@@ -1304,3 +1329,249 @@ limitations may be accepted with public disclosure and a follow-up issue.
 and immutable release receipts will record the exact candidate results. An
 earlier green commit, synthetic result, roadmap checkbox, or elapsed date cannot
 promote the beta.
+
+## ADR-055: Refuse direct secret-like payloads before the durable ledger
+
+**Status:** accepted 2026-07-25.
+
+Direct observation paths inspect caller-controlled proposal, batch,
+correction/error, and Relay-queue material before any payload write. Detected
+secret-like content is refused or, for forget reasons, replaced with a fixed
+content-free statement. A durable refusal receipt may contain only a random
+UUIDv4 operation identity, route/principal identity, closed reason and detector
+version, and timestamps. It may not retain an unkeyed payload hash,
+deterministic fingerprint, prefix, or other offline-guessing verifier.
+
+Migration 008 adds the refusal ledger and batch refusal count. Core startup,
+new export creation, and restore repair affected direct-observation rows,
+rebuild FTS, checkpoint WAL, enable secure deletion, and vacuum the live
+database. Imported raw archives remain governed by the separate inert-source
+contract. Synthetic byte scans cover SQLite pages/freelists, WAL, FTS, temp
+state, diagnostics, and encrypted export/restore. Historical external backups,
+user copies, and device remanence are outside the live-store repair claim and
+require explicit retirement or replacement.
+
+## ADR-056: Normal client setup fails closed without protected credential storage
+
+**Status:** accepted 2026-07-25; packaged first-run isolation clarified 2026-07-26.
+
+Normal V1 setup stores client credentials in Windows Credential Manager, macOS
+Keychain, or Linux Secret Service and verifies each write by reading it back.
+When protected storage is unavailable or fails, setup stops; it does not
+silently write a plaintext app-data fallback. The plaintext development file
+requires deliberate operator opt-in and is excluded from the normal beta
+journey.
+
+Managed Codex and Claude configurations carry the client identity and protected
+credential lookup, not a bearer token, when the OS store is used. A failed
+credential or configuration transaction revokes a newly created principal,
+removes its credential, and restores the exact prior configuration bytes.
+Backend errors are surfaced without credential values. Exact-package real
+credential-service receipts on every mandatory OS remain a release-acceptance
+gate.
+
+Packaged first-run smoke (`scripts/smoke_packaged_first_run.py`) is intentionally
+**not** that OS-credential receipt. It isolates non-secret smoke credentials with
+the null keyring backend plus explicit
+`ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1`, asserts the setup report's
+`credential_storage` is the insecure development file, and labels the result as
+outside real OS acceptance. Real OS credential round-trips stay with
+`--packaged-credential-acceptance` / platform acceptance. Headless setup writes
+a redacted failure report when windowed packages hide stderr. On smoke failure
+the entire disposable work tree is always removed; retained evidence is only a
+content-free summary in a separate diagnostics directory (labels, return codes,
+phases, boolean presence, error class, redacted bounded message, safe relative
+filenames)—never dashboard URLs, tickets, tokens, client IDs, raw statements,
+absolute developer paths, or raw stdout/stderr.
+
+## ADR-057: Preserve imported bytes before making parser claims
+
+**Status:** accepted 2026-07-26.
+
+Core commits an inert raw import and verifies its content-addressed identity
+before a provider parser may create observations. Path imports are parsed from
+a bounded temporary reconstruction of that authoritative blob, not from the
+caller-owned path after storage. A parser failure or acknowledged cancellation
+marks the source terminal without publishing current context and leaves the raw
+bytes available for no-upload, parser-versioned retry.
+
+Auto-detection may initially store a provisional provider label. After parsing,
+Core reclassifies that source transactionally to the versioned parser-derived
+identity; a collision may reuse an existing identical source only when the
+provisional source has no observations. This keeps content identity,
+provenance, retry idempotency, and duplicate suppression aligned.
+
+ChatGPT, Claude, and Grok claims carry explicit parser identities, frozen
+fictional shapes, and closed coverage counts. Unknown/unparsed material is a
+visible incomplete-coverage result, not implicit support. Durable import
+operation identifiers and cancellable chunk heartbeats are implemented in
+source; this source-level decision still does not satisfy the beta scale gate:
+real-provider plus exact-boundary candidate receipts remain mandatory.
+
+## ADR-058: Integrated packaged recovery and durable import surfaces are source-complete before exact-artifact acceptance
+
+**Status:** accepted 2026-07-26.
+
+Native candidates must carry a version-matched recovery/admin surface on every
+OS family: Windows and macOS ship a console recovery helper
+(`AllTheContextRecovery.exe` / `all-the-context-recovery`); Linux attaches
+the same stopped-Core modes to the console-capable main binary. Candidate and
+CI native matrices fail closed when that surface is missing and exercise
+content-free `--recovery-help` / doctor from built bytes. Windows OTA
+journals, diagnostics, and rollback inventory include the recovery helper.
+
+Durable import operations (migration `009_import_operations.sql`, runtime,
+and the combined browser+import dashboard) travel through ordinary package-data
+and packaging collect paths. Package-resource diagnose and frozen desktop
+smokes refuse wheels or artifacts that omit the migration or import dashboard
+surface. Candidate source evidence stays content-free: no raw exports, 2 GB
+canaries, or personal data.
+
+This decision does not mark BETA-D03, provider, 2 GB, or browser/client gates
+passed. Exact downloaded-artifact and operator receipts remain mandatory and
+use the existing content-free acceptance-receipt fields without silently
+widening release inventory allowlists.
+
+## ADR-053 implementation note: A-09 / B-102 client witness (source-complete)
+
+**Status:** source-level implementation under ADR-053 A-09; accepted residual
+risks unchanged. Does not satisfy exact packaged Codex/Claude receipts.
+
+Core enforces the closed capability `witness:explicit_user_statement` on
+authenticated ongoing-client and authenticated archive-batch paths. Desktop
+setup assigns that class only to ATC-configured same-device Codex and Claude
+principals; authentication, `context:propose`, and `context:ingest` alone do
+not. Intentional local `admin`/`*` remain local authorities. Payload schemas
+forbid smuggled origin/disposition/force fields. Relay proposals cannot attest
+direct user statements. Core-controlled importers with no client principal may
+still assign archive explicitness for trusted parser output. Unkeyed
+archive-import preference/goal/project/decision/workflow/constraint lineages
+collapse conservatively by explicitness then `observed_at` so contradictory
+imported history cannot all remain confident current truth. Exact duplicate
+retries are idempotent; matching content reinforces rather than duplicates.
+Decision reason, decided_at, and policy_version remain inspectable without
+persisting credentials. Residual honesty: this is a local trust grant, not
+cryptographic authorship proof, and an authorized malicious witness client can
+lie.
+
+## ADR-059: Exact candidate and publication gates recompute fail-closed source evidence
+
+**Status:** accepted 2026-07-26; revised 2026-07-26 after independent false-pass
+audit.
+
+The release-candidate path binds one exact 40-character source commit. Hosted
+preflight must observe a completed successful run of the **canonical** workflow
+path `.github/workflows/ci.yml` (not suffix-matched paths such as
+`evilci.yml`) for that SHA, with workflow name `CI` when the API supplies it.
+Required jobs are the nine-slot matrix **plus** repository-security and
+dashboard-parity jobs. Branch names, short SHAs, merge-queue mismatches,
+skipped/cancelled/neutral required jobs, partial job sets, duplicate required
+job names / re-run shadows, jobs missing `run_id`/`head_sha`, jobs bound to
+another run or SHA, and incomplete paginated job payloads (`total_count` >
+returned) never satisfy the gate.
+
+Durable `matrix-evidence.json` stores recomputable primitives: canonical
+workflow path/name, selected run ID, exact head SHA, run status/conclusion, and
+one job record per required name with `name`/`run_id`/`head_sha`/`status`/
+`conclusion`. The stored `ok` boolean is recomputed from those primitives and
+is never trusted as authority. Forged truthy strings, name-only job lists,
+bool-as-int IDs/schema values, and partial/extra shadow records are refused.
+
+Candidate assembly and verification revalidate bound source evidence: matrix
+evidence primitives, component-inventory schema matching
+`build_component_inventory` (exact keys, unique components/locks, count
+consistency, lowercase digests), required inventory and candidate checksum
+sidecars, source/version identity, and notices that reference the exact commit.
+Descriptor/file duplication is rejected rather than last-write-wins. Inventory
+verification still rejects extra, missing, or substituted release files.
+Cryptographic provenance/Sigstore trust and live operator GitHub controls remain
+outside what source bytes alone can recompute; those stay honest human/hosted
+boundaries.
+
+The locked installer also treats the no-build-isolation environment as a
+dependency-closed unit: `packaging`, `setuptools`, and `wheel` must each come
+from exact `uv.lock` versions and hashes. Installing only the two declared
+backend packages is insufficient because modern wheel itself depends on
+`packaging`; allowing pip to resolve that edge under `--require-hashes` either
+fails CI or tempts an unreviewed ambient dependency.
+
+Publication and receipt aggregation recompute relationships from receipts and
+inventories. Required package/platform gates (including **BETA-P04**) pass only
+with `exact_downloaded_artifact` evidence whose every `artifact_digests` key is
+a filename declared by the verified candidate inventory with an exact matching
+digest. Arbitrary safe basenames (for example `foo.bin`) never satisfy an exact
+gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be
+labeled exact artifact; provider source-preparation fragments cannot pass as
+BETA-P04. Duplicate `gate_id`/`receipt_id` values, conflicting digests, incomplete
+required-gate sets, non-pass statuses, open P0/P1 limitations, forged maintainer
+booleans, post-publication BETA-R05 before release, and overwrite of immutable
+evidence files fail closed. Hosted CI still must not deploy Edge or a
+third-party runtime. Human key custody, protected-environment promotion,
+private-key signing, repository-control enablement, and public channel smoke
+remain explicit operator blockers and are not fabricated in source.
+
+## ADR-060: Candidate convergence accepts executable product paths, not acceptance-shaped volume
+
+**Status:** accepted 2026-07-26.
+
+V1 convergence freezes broad acceptance-framework growth. A change advances a
+candidate only when the shipped application executes the claimed behavior or
+when a focused regression protects that executable path. Schema-only
+aggregators, caller-authored lifecycle primitives, and subprocess doubles that
+require fictitious flags on a named client cannot satisfy exact-artifact gates,
+regardless of their test volume.
+
+The desktop binary therefore carries a narrow hidden provider-acceptance mode.
+It creates a disposable loopback Core, invokes the production durable import
+operation on one mandatory-provider export, reconciles parser/coverage/outcome
+counts, emits no export content or path, and fails if cleanup is incomplete.
+This is an execution control surface, not a BETA-P04 receipt generator. Exact
+downloaded-candidate identity, three current nonempty real exports, and
+inventory-bound receipt aggregation remain separate mandatory evidence.
+
+The same rule permits compact defense-in-depth fixes discovered during
+acceptance work: direct Core-store and Relay candidate paths now reject
+secret-like material before payload-derived writes, and durable free-text
+reject/delete reasons are redacted. Large provider/client/secret/security
+harness branches are not integration dependencies; any later salvage must be
+justified by a concrete failure from the built candidate.
+
+## ADR-061: Candidate security scanning is exact-source and bounded
+
+**Status:** accepted 2026-07-26.
+
+The repository security gate scans committed blobs at the explicitly bound
+candidate SHA, not ignored or modified working-tree files. Its history scope is
+the candidate's reachable object graph only. Every reachable blob is validated
+with the same complete private-key and shaped-canary rules, including content
+inside ZIP members and archives later deleted or renamed. Per-blob, member,
+expanded-archive, and object-count ceilings bound memory and work; exceeding a
+ceiling or failing to read an object/member is a gate error, never a clean
+result. Native package files and ZIP members use bounded chunk streaming so
+normal release sizes do not fail solely for exceeding the in-memory history
+blob ceiling. This deliberately excludes the broader multi-format scanner
+redesign; tar.gz and DMG content coverage is not claimed.
+
+## ADR-062: Managed Codex connections explicitly approve the scoped ATC tool set
+
+**Status:** accepted 2026-07-26.
+
+Generated Codex MCP entries set the documented
+`default_tools_approval_mode = "approve"` server policy. Codex CLI 0.144.0
+otherwise reports ATC calls as user-cancelled when the client runs
+noninteractively with `approval_policy = "never"`, even though the managed
+principal is already scoped by Core. This setting removes repeated
+client-side prompts only for the named ATC server; it does not bypass the Codex
+sandbox, broaden the principal's durable Core scopes, grant administrator
+operations, or weaken Core's explicit-user and purge boundaries.
+
+## ADR-063: Automated tests never inherit real AI-client configuration roots
+
+**Status:** accepted 2026-07-26.
+
+The pytest harness assigns every test its own temporary `CODEX_HOME` and Claude
+configuration path, in addition to the existing null keyring. The
+open-dashboard regression also pins and asserts its disposable client paths.
+This is mandatory even for tests whose primary subject is browser handoff:
+launch repair is a production side effect and otherwise rewrites a real
+managed Codex or Claude entry when one exists on the developer host.

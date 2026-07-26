@@ -62,6 +62,7 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
                 "entity_key": "user",
                 "attribute_key": "answer_style",
                 "observed_at": "2026-07-23T16:00:00+00:00",
+                "explicit_user_statement": True,
             },
         )
         assert proposed.isError is not True
@@ -132,7 +133,13 @@ def test_real_stdio_mcp_handshake_and_tool_call(tmp_path: Path) -> None:
     principal, token = service.store.create_client(
         ClientCreate(
             name="MCP integration test",
-            scopes=["context:read", "context:status", "context:propose", "context:ingest"],
+            scopes=[
+                "context:read",
+                "context:status",
+                "context:propose",
+                "context:ingest",
+                "witness:explicit_user_statement",
+            ],
         )
     )
     server = uvicorn.Server(

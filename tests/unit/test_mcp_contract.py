@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 from allthecontext import mcp_adapter as local_mcp
@@ -62,6 +63,8 @@ def test_server_instructions_make_context_use_automatic() -> None:
     assert instructions is not None
     assert "call bootstrap_context before answering or acting" in instructions
     assert "call propose_memory before the task ends" in instructions
+    assert "explicit_user_statement=true only when" in instructions
+    assert "leave it false" in instructions
     assert "evaluates submitted observations automatically" in instructions
     assert "does not create a review task" in instructions
     assert "Call forget_context only when the user explicitly asks" in instructions
@@ -71,6 +74,7 @@ def test_server_instructions_make_context_use_automatic() -> None:
 def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
     tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
     schema = tools["propose_memory"].parameters
+    description = (tools["propose_memory"].description or "").casefold()
 
     assert set(schema["required"]) == {"kind", "content", "scope", "confidence"}
     assert {
@@ -82,8 +86,11 @@ def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
         "source_reference",
         "evidence",
     } <= schema["properties"].keys()
-    assert schema["properties"]["explicit_user_statement"]["default"] is True
+    assert schema["properties"]["explicit_user_statement"]["default"] is False
     assert schema.get("additionalProperties") is False
+    assert "defaults to false" in description
+    assert "directly stated" in description
+    assert "inference" in description
 
 
 def test_local_propose_memory_forwards_automatic_policy_fields(monkeypatch) -> None:
@@ -111,6 +118,8 @@ def test_local_propose_memory_forwards_automatic_policy_fields(monkeypatch) -> N
     )
 
     assert result["disposition"] == "applied"
+    operation_id = captured.pop("idempotency_key")
+    assert UUID(str(operation_id)).version == 4
     assert captured == {
         "kind": "preference",
         "content": "Prefer direct answers",
@@ -124,22 +133,6 @@ def test_local_propose_memory_forwards_automatic_policy_fields(monkeypatch) -> N
         "attribute_key": "answer_style",
         "supersedes": "record-0",
         "observed_at": "2026-07-23T12:00:00-04:00",
-        "idempotency_key": local_proposal_key(
-            {
-                "kind": "preference",
-                "content": "Prefer direct answers",
-                "scopes": ["general"],
-                "confidence": 1.0,
-                "sensitivity": "normal",
-                "source_reference": "conversation:turn-7",
-                "evidence": "The user stated this preference.",
-                "explicit_user_statement": True,
-                "entity_key": "user",
-                "attribute_key": "answer_style",
-                "supersedes": "record-0",
-                "observed_at": "2026-07-23T12:00:00-04:00",
-            }
-        ),
     }
 
 
@@ -552,7 +545,7 @@ def test_edge_forget_stages_without_claiming_deletion(monkeypatch) -> None:
     }
 
 
-def test_automatic_proposal_keys_cover_metadata_and_preserve_exact_retries() -> None:
+def test_automatic_proposal_keys_are_opaque_and_payload_independent() -> None:
     original = {
         "kind": "preference",
         "content": "Prefer concise answers",
@@ -563,10 +556,17 @@ def test_automatic_proposal_keys_cover_metadata_and_preserve_exact_retries() -> 
     }
     corrected = {**original, "confidence": 0.95, "evidence": "User repeated it"}
 
-    assert local_proposal_key(original) == local_proposal_key(dict(original))
-    assert local_proposal_key(original) != local_proposal_key(corrected)
-    assert edge_proposal_key(original) == edge_proposal_key(dict(original))
-    assert edge_proposal_key(original) != edge_proposal_key(corrected)
+    original_id = local_proposal_key(original)
+    corrected_id = local_proposal_key(corrected)
+    assert UUID(original_id).version == 4
+    assert UUID(corrected_id).version == 4
+    assert original_id != corrected_id
+    assert "Prefer concise answers" not in original_id
+    edge_original_id = edge_proposal_key(original)
+    edge_corrected_id = edge_proposal_key(corrected)
+    assert UUID(edge_original_id).version == 4
+    assert UUID(edge_corrected_id).version == 4
+    assert edge_original_id != edge_corrected_id
 
 
 def test_managed_adapter_never_replaces_an_unverified_loopback_service(

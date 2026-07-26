@@ -7,9 +7,18 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from allthecontext.exact_source_gate import (
+    CANONICAL_CI_WORKFLOW_NAME,
+    CANONICAL_CI_WORKFLOW_PATH,
+    REQUIRED_CI_JOBS,
+)
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
     CANDIDATE_PROVENANCE_FILE_NAME,
+    COMPONENT_INVENTORY_CHECKSUM_FILE_NAME,
+    COMPONENT_INVENTORY_FILE_NAME,
+    MATRIX_EVIDENCE_FILE_NAME,
+    NOTICES_FILE_NAME,
     ReleaseTarget,
     archive_name,
     assemble_candidate,
@@ -53,9 +62,83 @@ def _bundle(path: Path) -> None:
     )
 
 
+def _source_evidence(release_dir: Path) -> None:
+    inventory = release_dir / COMPONENT_INVENTORY_FILE_NAME
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": VERSION,
+                "source_commit": SOURCE_COMMIT,
+                "project_version": VERSION,
+                "locks": {
+                    "uv.lock": {"sha256": "a" * 64},
+                    "apps/dashboard/package-lock.json": {"sha256": "b" * 64},
+                },
+                "component_count": 1,
+                "components": [
+                    {
+                        "ecosystem": "python",
+                        "name": "all-the-context",
+                        "version": VERSION,
+                        "license": "MIT",
+                        "locked": True,
+                        "source_kind": "path",
+                        "scope": "runtime",
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    digest, _ = sha256_file(inventory)
+    (release_dir / COMPONENT_INVENTORY_CHECKSUM_FILE_NAME).write_text(
+        f"{digest}  {inventory.name}\n", encoding="ascii", newline="\n"
+    )
+    (release_dir / MATRIX_EVIDENCE_FILE_NAME).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_commit": SOURCE_COMMIT,
+                "workflow_path": CANONICAL_CI_WORKFLOW_PATH,
+                "workflow_name": CANONICAL_CI_WORKFLOW_NAME,
+                "workflow_run_id": 42,
+                "run_status": "completed",
+                "run_conclusion": "success",
+                "job_records": [
+                    {
+                        "name": name,
+                        "run_id": 42,
+                        "head_sha": SOURCE_COMMIT,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                    for name in REQUIRED_CI_JOBS
+                ],
+                "required_jobs": list(REQUIRED_CI_JOBS),
+                "ok": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (release_dir / NOTICES_FILE_NAME).write_text(
+        "All The Context component inventory notices\n"
+        f"Source commit: {SOURCE_COMMIT}\n"
+        f"Release version: {VERSION}\n",
+        encoding="utf-8",
+    )
+
+
 def _candidate_files(tmp_path: Path) -> tuple[Path, Path]:
     release_dir = tmp_path / "release"
     release_dir.mkdir(parents=True)
+    _source_evidence(release_dir)
     source = tmp_path / "all-the-context"
     source.write_bytes(b"portable app\n")
     ota = build_archive(
@@ -86,6 +169,8 @@ def _candidate_files(tmp_path: Path) -> tuple[Path, Path]:
                 "notice": notice.name,
                 "package": direct_package.name,
                 "platform": TARGET.platform,
+                "recovery_console_helper": "all-the-context",
+                "recovery_surface": "console-main-binary",
                 "schema_version": 1,
                 "sha256": digest,
                 "size": size,
@@ -205,6 +290,9 @@ def test_signed_beta_channel_is_exact_and_reproducibly_verified(tmp_path: Path) 
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     _bundle(release_dir / CANDIDATE_PROVENANCE_FILE_NAME)
+    verify_release_asset_set(candidate_path, release_dir, stage="signed")
+    (release_dir / "acceptance-receipt-bundle-v1.json").write_text("{}\n", encoding="utf-8")
+    (release_dir / "publication-gate-record.json").write_text("{}\n", encoding="utf-8")
     verify_release_asset_set(candidate_path, release_dir, stage="promotion")
 
     provenance = release_dir / CANDIDATE_PROVENANCE_FILE_NAME

@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -23,13 +23,12 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
-    Response,
     UploadFile,
 )
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, StrictInt
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -58,13 +57,12 @@ from ..desktop_setup import (
     AI_CLIENT_SCOPES,
     CLAUDE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
+    configure_client_access_transactionally,
     delete_client_credential,
-    ensure_client_access,
     recover_client_access,
     retire_other_named_clients,
 )
 from ..edge_connection import EdgeConnectionStore, EdgeSyncManager
-from ..edge_distribution import deployment_config
 from ..export import create_export
 from ..ids import new_id
 from ..instance_identity import ensure_instance_secret, instance_proof
@@ -109,23 +107,10 @@ DashboardPage = Literal[
 ]
 
 
-class EdgeConnectRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    edge_url: str = Field(min_length=8, max_length=2_048)
-
-
 class EdgeForgetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirmation: Literal["DELETE HOSTED EDGE"]
-
-
-class EdgeClientApprovalRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=200)
-    context_scopes: list[str] = Field(default_factory=list, max_length=64)
 
 
 class UpdatePreferencesRequest(BaseModel):
@@ -144,8 +129,11 @@ def create_app(
 ) -> FastAPI:
     active_config = config or CoreConfig.default()
     core = service or CoreService(active_config)
-    edge_connections = EdgeConnectionStore(active_config)
-    edge_sync = EdgeSyncManager(edge_connections, core.store)
+    # Legacy Edge stores exist only for isolated cleanup of pre-V1 residual state.
+    # Ordinary Core operation never starts the sync worker, enrolls, connects, or
+    # triggers outbound replication.
+    legacy_edge_connections = EdgeConnectionStore(active_config)
+    legacy_edge_sync = EdgeSyncManager(legacy_edge_connections, core.store)
     default_update = UpdateConfig.default()
     updates = update_manager or UpdateManager(
         UpdateConfig(
@@ -173,8 +161,9 @@ def create_app(
                 recovery = threading.Timer(1.0, updates.recover_after_restart)
                 recovery.daemon = True
                 recovery.start()
-        # Hosted Edge is outside the V1 product boundary. Keep the legacy manager
-        # available for explicit cleanup calls, but never start its network worker.
+        # Never start the legacy Edge network worker. Cleanup routes construct
+        # outbound contacts only when an operator explicitly decommissions an
+        # already-configured residual connection.
         yield
 
     app = FastAPI(
@@ -189,8 +178,8 @@ def create_app(
         allowed_hosts=[active_config.host, "localhost", "[::1]", "testserver"],
     )
     app.state.core = core
-    app.state.edge_connections = edge_connections
-    app.state.edge_sync = edge_sync
+    app.state.legacy_edge_connections = legacy_edge_connections
+    app.state.legacy_edge_sync = legacy_edge_sync
     app.state.updates = updates
     instance_secret = ensure_instance_secret(active_config)
     browser_tickets = BrowserSessionTickets()
@@ -306,6 +295,29 @@ def create_app(
         response.delete_cookie(LEGACY_BROWSER_COOKIE, path="/", samesite="strict")
         return response
 
+    @app.post("/v1/browser/session/revoke")
+    def revoke_browser_session(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Revoke the short-lived browser capability for this tab session."""
+        if authorization is None:
+            raise HTTPException(status_code=401, detail="Credential required")
+        scheme, _, token = authorization.partition(" ")
+        token = token.strip()
+        if scheme != BROWSER_AUTH_SCHEME or not token:
+            raise HTTPException(
+                status_code=400,
+                detail="Browser session revocation requires Browser authorization",
+            )
+        if request.headers.get(DASHBOARD_REQUEST_HEADER) != "1":
+            raise HTTPException(
+                status_code=403,
+                detail="Same-origin dashboard request required",
+            )
+        browser_sessions.revoke(token)
+        return {"revoked": True}
+
     @app.post("/v1/setup")
     def setup(request: ClientCreate, http_request: Request) -> dict[str, Any]:
         if core.store.client_count() != 0:
@@ -362,9 +374,7 @@ def create_app(
     @app.post("/v1/ingestion/forget")
     def forget_context(request: ForgetContextRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:propose")
-        result = core.ingestion.forget(request, principal)
-        edge_sync.trigger()
-        return result
+        return core.ingestion.forget(request, principal)
 
     @app.post("/v1/context/search")
     def search_context(request: SearchRequest, principal: Principal) -> dict[str, Any]:
@@ -400,6 +410,180 @@ def create_app(
             raise HTTPException(status_code=404, detail="Context item not found")
         return record.model_dump(mode="json")
 
+    class StartImportOperationRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        # StrictInt rejects bool (True/False) and non-integer coercions.
+        declared_byte_size: StrictInt
+        filename: str | None = None
+        provider: str | None = None
+        source_service: str = "auto"
+        media_type: str | None = None
+
+    @app.post("/v1/admin/import-operations")
+    def start_import_operation(
+        body: StartImportOperationRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        """Create a durable operation id after preflight; no source bytes yet."""
+        require(principal, "admin")
+        return core.import_operations.start_operation(
+            declared_byte_size=body.declared_byte_size,
+            filename=body.filename,
+            source_service=body.source_service,
+            provider=body.provider,
+            media_type=body.media_type,
+        )
+
+    @app.get("/v1/admin/import-operations/{operation_id}")
+    def get_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.import_operations.get_operation(operation_id)
+
+    @app.put("/v1/admin/import-operations/{operation_id}/content")
+    async def upload_import_operation_content(
+        operation_id: str,
+        http_request: Request,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        """Stream source bytes into a pre-created operation with chunk heartbeats."""
+        require(principal, "admin")
+        import asyncio
+        from queue import Empty, Full, Queue
+
+        from allthecontext.import_boundary import (
+            CANCEL_POLL_SECONDS,
+            MAX_REQUEST_CHUNK_BYTES,
+            ImportCancelledError,
+            parse_content_length_header,
+        )
+
+        try:
+            expected_size = parse_content_length_header(http_request.headers.get("content-length"))
+        except InvalidStateError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        # Bounded queue bridges the async request body to the sync Core worker.
+        # maxsize keeps memory within the import RSS envelope.
+        chunk_queue: Queue[bytes | None] = Queue(maxsize=8)
+        stream_error: list[BaseException] = []
+        stop_pump = threading.Event()
+
+        def _put_bounded(item: bytes | None) -> bool:
+            """Put with timeout so cancellation/disconnect never blocks forever."""
+            while not stop_pump.is_set():
+                try:
+                    chunk_queue.put(item, timeout=CANCEL_POLL_SECONDS)
+                    return True
+                except Full:
+                    continue
+            return False
+
+        async def _pump() -> None:
+            try:
+                async for chunk in http_request.stream():
+                    if stop_pump.is_set():
+                        return
+                    # Bound/slice oversized transport chunks before queueing.
+                    data = bytes(chunk)
+                    step = MAX_REQUEST_CHUNK_BYTES
+                    end = len(data)
+                    for offset in range(0, end, step):
+                        if stop_pump.is_set():
+                            return
+                        piece = data[offset : offset + step]
+                        if not piece:
+                            continue
+                        ok = await asyncio.to_thread(_put_bounded, piece)
+                        if not ok:
+                            return
+                await asyncio.to_thread(_put_bounded, None)
+            except BaseException as error:
+                stream_error.append(error)
+                with suppress(Exception):
+                    await asyncio.to_thread(_put_bounded, None)
+
+        pump_task = asyncio.create_task(_pump())
+
+        def run_upload() -> dict[str, Any]:
+            def iterator() -> Any:
+                while True:
+                    try:
+                        item = chunk_queue.get(timeout=CANCEL_POLL_SECONDS)
+                    except Empty:
+                        # Observe cancel at least every 250 ms while waiting for bytes.
+                        if core.import_operations.cancel_registry.is_cancelled(operation_id):
+                            raise ImportCancelledError(
+                                "import cancelled by operator request"
+                            ) from None
+                        try:
+                            op = core.import_operations.get_operation(operation_id)
+                        except Exception:
+                            op = None
+                        if op is not None and (
+                            op.get("cancel_requested") or op.get("status") == "cancelled"
+                        ):
+                            core.import_operations.cancel_registry.request_cancel(operation_id)
+                            raise ImportCancelledError(
+                                "import cancelled by operator request"
+                            ) from None
+                        continue
+                    if item is None:
+                        if stream_error:
+                            raise stream_error[0]
+                        return
+                    yield item
+
+            try:
+                return core.import_operations.accept_upload(
+                    operation_id,
+                    iterator(),
+                    expected_size=expected_size,
+                    process_after=True,
+                )
+            finally:
+                # Unblock any pump put waiting on a full queue.
+                stop_pump.set()
+                with suppress(Exception):
+                    while True:
+                        try:
+                            chunk_queue.get_nowait()
+                        except Empty:
+                            break
+
+        try:
+            return await run_in_threadpool(run_upload)
+        finally:
+            stop_pump.set()
+            if not pump_task.done():
+                pump_task.cancel()
+            # CancelledError is BaseException (not Exception) on supported Python.
+            # Await of a cancelled pump must not mask a successful worker result
+            # or surface a spurious cancellation after disconnect/cancel.
+            try:
+                await pump_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            # Drain so no blocked threadpool put remains after disconnect/cancel.
+            with suppress(Exception):
+                while True:
+                    try:
+                        chunk_queue.get_nowait()
+                    except Empty:
+                        break
+
+    @app.post("/v1/admin/import-operations/{operation_id}/cancel")
+    def cancel_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.import_operations.cancel_operation(operation_id)
+
+    @app.post("/v1/admin/import-operations/{operation_id}/retry")
+    async def retry_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return await run_in_threadpool(core.import_operations.retry_operation, operation_id)
+
     @app.post("/v1/admin/import")
     async def import_source(
         principal: Principal,
@@ -407,8 +591,11 @@ def create_app(
         source_service: Annotated[str, Form()] = "auto",
         provider: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
+        """Compatibility multipart import. Prefer the import-operations API."""
         require(principal, "admin")
         safe_name = Path(file.filename or "import.txt").name
+        # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
+        # then stream through the operation lifecycle so the same cancel/progress rules apply.
         with tempfile.TemporaryDirectory(
             prefix="atc-import-", dir=active_config.data_dir
         ) as temporary_directory:
@@ -420,13 +607,33 @@ def create_app(
                     if total > active_config.max_import_bytes:
                         raise InvalidStateError("import exceeds configured size limit")
                     destination.write(chunk)
-            return await run_in_threadpool(
-                core.imports.import_path,
-                upload_path,
+            operation = core.import_operations.start_operation(
+                declared_byte_size=total,
                 filename=safe_name,
                 source_service=source_service,
                 provider=provider,
             )
+
+            def file_iter() -> Any:
+                with upload_path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        yield chunk
+
+            finished = await run_in_threadpool(
+                core.import_operations.accept_upload,
+                str(operation["operation_id"]),
+                file_iter(),
+                expected_size=total,
+                process_after=True,
+            )
+            result = finished.get("result")
+            if isinstance(result, dict):
+                return result
+            if finished.get("status") == "complete" and finished.get("source_id"):
+                return await run_in_threadpool(
+                    core.imports.reprocess_source, str(finished["source_id"])
+                )
+            raise InvalidStateError(str(finished.get("error_message") or "import operation failed"))
 
     @app.get("/v1/admin/candidates", deprecated=True, tags=["legacy compatibility"])
     def list_candidates(
@@ -470,6 +677,41 @@ def create_app(
         require(principal, "admin")
         return await run_in_threadpool(core.imports.reprocess_source, source_id)
 
+    @app.get("/v1/admin/sources/{source_id}/import-progress")
+    def import_progress(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.imports.import_progress(source_id)
+
+    @app.post("/v1/admin/sources/{source_id}/cancel-import")
+    def cancel_import(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.imports.cancel_import(source_id)
+
+    @app.get("/v1/admin/import-boundary")
+    def import_boundary_profile(principal: Principal) -> dict[str, Any]:
+        """Return the frozen scale profile and canary generator contract."""
+        require(principal, "admin")
+        from allthecontext.boundary_canary import (
+            BOUNDARY_CANARY_GENERATOR_VERSION,
+            BOUNDARY_CANARY_SIZE_BYTES,
+            checkpoint_offsets,
+        )
+        from allthecontext.import_boundary import expected_chunk_count, scale_profile
+        from allthecontext.provider_shapes import provider_claim_manifest
+
+        profile = scale_profile()
+        return {
+            "scale_profile": profile,
+            "boundary_canary": {
+                "generator_version": BOUNDARY_CANARY_GENERATOR_VERSION,
+                "size_bytes": BOUNDARY_CANARY_SIZE_BYTES,
+                "expected_chunk_count": expected_chunk_count(BOUNDARY_CANARY_SIZE_BYTES),
+                "checkpoint_offsets": list(checkpoint_offsets(BOUNDARY_CANARY_SIZE_BYTES)),
+                "exact_artifact_acceptance": "pending",
+            },
+            "provider_claims": provider_claim_manifest(),
+        }
+
     @app.post("/v1/admin/sources/{source_id}/delete")
     def delete_source(
         source_id: str, request: RejectRequest, principal: Principal
@@ -480,7 +722,6 @@ def create_app(
             reason=request.reason or "deleted by user",
             actor=principal.id,
         )
-        edge_sync.trigger()
         return result
 
     @app.post("/v1/admin/sources/{source_id}/restore")
@@ -493,7 +734,6 @@ def create_app(
             reason=request.reason or "restored by user",
             actor=principal.id,
         )
-        edge_sync.trigger()
         return result
 
     @app.post(
@@ -505,8 +745,15 @@ def create_app(
         candidate_id: str, request: ApprovalRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        refusal = core.store.refuse_direct_value(
+            request.model_dump(mode="json"),
+            route="approve_candidate",
+            operation_id=None,
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal.model_dump(mode="json")
         result = core.store.approve_candidate(candidate_id, request, actor=principal.id)
-        edge_sync.trigger()
         return result.model_dump(mode="json")
 
     @app.post(
@@ -527,6 +774,14 @@ def create_app(
         record_id: str, request: CorrectionRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        refusal = core.store.refuse_direct_value(
+            request.model_dump(mode="json"),
+            route="correct_record",
+            operation_id=None,
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal.model_dump(mode="json")
         result = core.store.correct_record(
             record_id,
             content=request.content,
@@ -537,7 +792,6 @@ def create_app(
             reason=request.reason,
             actor=principal.id,
         )
-        edge_sync.trigger()
         return result.model_dump(mode="json")
 
     @app.post("/v1/admin/records/{record_id}/availability")
@@ -551,7 +805,6 @@ def create_app(
             explicit_sensitive_replication=request.explicit_sensitive_replication,
             actor=principal.id,
         )
-        edge_sync.trigger()
         return result.model_dump(mode="json")
 
     @app.post("/v1/admin/records/{record_id}/delete")
@@ -562,7 +815,6 @@ def create_app(
         result = core.store.delete_record(
             record_id, reason=request.reason or "deleted by user", actor=principal.id
         )
-        edge_sync.trigger()
         return result
 
     @app.post("/v1/admin/records/{record_id}/restore")
@@ -576,7 +828,6 @@ def create_app(
             reason=request.reason,
             actor=principal.id,
         )
-        edge_sync.trigger()
         return result.model_dump(mode="json")
 
     @app.get("/v1/admin/records/{record_id}/history")
@@ -604,7 +855,6 @@ def create_app(
             actor=principal.id,
             compact=request.compact,
         )
-        edge_sync.trigger()
         return result
 
     @app.get("/v1/admin/purge-jobs")
@@ -726,20 +976,22 @@ def create_app(
                 status_code=500, detail="Encrypted export could not be created"
             ) from exc
 
-    def edge_status_payload() -> dict[str, Any]:
-        """Return public Edge state without enrollment or replication credentials."""
+    def legacy_edge_status_payload() -> dict[str, Any]:
+        """Return local residual Edge state for isolated cleanup only.
 
-        distribution = deployment_config()
+        This path never advertises enrollment, deployment, connect, sync, or
+        remote-client management. It cannot create a second authority.
+        """
 
         state_error: str | None = None
         material_error: str | None = None
         try:
-            state = edge_connections.state()
+            state = legacy_edge_connections.state()
         except RuntimeError:
             state = None
             state_error = "The saved Edge setup needs to be repaired."
         try:
-            material = edge_connections.material()
+            material = legacy_edge_connections.material()
         except RuntimeError:
             material = None
             material_error = "The saved Edge enrollment credential is invalid."
@@ -757,7 +1009,6 @@ def create_app(
                 "Core will not rotate or overwrite the existing remote service."
             )
 
-        counts = core.store.status()["counts"]
         if state_error is not None or material_error is not None or mismatch_error is not None:
             connection_state = "degraded"
         elif state is None:
@@ -771,18 +1022,6 @@ def create_app(
         else:
             connection_state = "paired"
 
-        wizard_state = (
-            "recover"
-            if connection_state == "degraded"
-            else "preflight"
-            if connection_state == "not_configured"
-            else "deploy"
-            if connection_state == "prepared"
-            else "sync"
-            if connection_state == "paired"
-            else "connect"
-        )
-
         edge_url = state.edge_url if state is not None else None
         last_error = (
             state_error
@@ -791,13 +1030,14 @@ def create_app(
             or (state.last_error if state is not None else None)
         )
         return {
+            "product_surface": "legacy_cleanup_only",
+            "active_operation_available": False,
             "configured": edge_url is not None and material_available,
             "remote_present": edge_url is not None,
             "credential_available": material_available,
             "state": connection_state,
             "vault_id": state.vault_id if state is not None else core.store.vault_id(),
             "edge_url": edge_url,
-            "mcp_url": f"{edge_url}/mcp" if edge_url else None,
             "prepared_at": state.prepared_at if state is not None else None,
             "connected_at": state.connected_at if state is not None else None,
             "credential_storage": (
@@ -806,233 +1046,78 @@ def create_app(
                 else (state.credential_storage if state is not None else None)
             ),
             "last_sequence": state.last_sequence if state is not None else 0,
-            "pending_events": int(counts["pending_replication_events"]),
             "last_success_at": state.last_success_at if state is not None else None,
             "last_error": last_error,
-            "proposals_imported": state.proposals_imported if state is not None else 0,
-            "wizard": {
-                "state": wizard_state,
-                "preflight_ok": material_available or state is None,
-                "paired": edge_url is not None,
-                "synchronized": connection_state == "ready",
-                "ordinary_path_requires_terminal": False,
-            },
-            "deployment": {
-                "provider": "render_blueprint",
-                "available": distribution.enabled,
-                "deploy_url": distribution.deploy_url,
-                "deploy_branch": distribution.deploy_branch,
-                "image_reference": distribution.image_reference,
-                "source_commit": distribution.source_commit,
-                "blueprint_commit": distribution.blueprint_commit,
-                "configuration_source": distribution.source,
-                "configuration_error": distribution.error,
-                "enrollment_environment_variable": "ATC_EDGE_BUNDLE",
-                "requires_host_account": True,
-                "estimated_monthly_cost_usd": 7.25,
-                "cost_note": "Render Starter plus a 1 GB disk; bandwidth overages are extra.",
-            },
-            "providers": [
-                {
-                    "id": "claude",
-                    "name": "Claude",
-                    "web_supported": True,
-                    "mobile_supported": True,
-                    "setup_url": "https://claude.ai/settings/connectors",
-                    "detail": (
-                        "Claude remote custom connectors currently require Pro, Max, Team, or "
-                        "Enterprise. Add one on claude.ai or Claude Desktop; an existing "
-                        "connector can then be used on iOS and Android."
-                    ),
-                    "setup_steps": [
-                        "Open Settings → Connectors on claude.ai or Claude Desktop.",
-                        "Choose Add custom connector and enter the Remote MCP address.",
-                        "Complete Edge authorization; the connector can then be used on mobile.",
-                    ],
-                },
-                {
-                    "id": "chatgpt",
-                    "name": "ChatGPT",
-                    "web_supported": True,
-                    "mobile_supported": False,
-                    "setup_url": "https://chatgpt.com/",
-                    "detail": (
-                        "Developer-mode MCP apps are currently a web-only beta for ChatGPT "
-                        "Business, Enterprise, and Edu workspaces. Admin or owner policy applies."
-                    ),
-                    "setup_steps": [
-                        (
-                            "On ChatGPT web, an eligible workspace admin enables developer mode "
-                            "under Apps or workspace permissions."
-                        ),
-                        ("Create or test a developer-mode app from the workspace Apps settings."),
-                        (
-                            "Paste the Remote MCP address, create the app, and complete Edge "
-                            "authorization. Current developer-mode MCP apps are not on mobile."
-                        ),
-                    ],
-                },
-            ],
-        }
-
-    @app.get("/v1/admin/edge")
-    def get_edge_status(principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        return edge_status_payload()
-
-    @app.post("/v1/admin/edge/prepare")
-    def prepare_edge(response: Response, principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        try:
-            material = edge_connections.prepare(core.store.vault_id())
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        claim_bundle = material.claim_bundle
-        if claim_bundle is None and material.forwarding_public_key is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="This Edge is already claimed; its deployment credential is not exportable",
-            )
-        response.headers["Cache-Control"] = "no-store"
-        return {
-            **edge_status_payload(),
-            "enrollment_bundle": claim_bundle.encode()
-            if claim_bundle
-            else material.bundle.encode(),
-            "recovery_code": material.recovery_code,
-            "secret_notice": (
-                (
-                    "The deployment claim contains only an expiring reference and Core public "
-                    "keys. Keep the separate recovery code private."
-                )
-                if claim_bundle
-                else "Legacy enrollment contains durable credentials. Keep both values private."
+            "detail": (
+                "Hosted Edge enrollment, deployment, connect, sync, and remote-client "
+                "management are outside the V1 Core product boundary. Only isolated "
+                "decommissioning or local forget of residual state remains."
             ),
         }
 
-    @app.post("/v1/admin/edge/deployment-env")
-    def download_edge_claim(principal: Principal) -> Response:
-        require(principal, "admin")
-        material = edge_connections.material()
-        if material is None or material.claim_bundle is None:
-            raise HTTPException(status_code=409, detail="Prepare a new Edge claim first")
-        return Response(
-            content=f"ATC_EDGE_BUNDLE={material.claim_bundle.encode()}\n",
-            media_type="application/octet-stream",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Disposition": 'attachment; filename="setup.env"',
-                "X-Content-Type-Options": "nosniff",
-            },
+    def _removed_edge_product_surface() -> None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Hosted Edge enrollment, deployment, connect, sync, and remote-client "
+                "management are outside the V1 Core product boundary. Use "
+                "/v1/admin/legacy-edge only for residual cleanup."
+            ),
         )
 
-    @app.post("/v1/admin/edge/connect")
-    def connect_edge(request: EdgeConnectRequest, principal: Principal) -> dict[str, Any]:
+    # Explicit tombstones so removed Edge operations never fall through to the
+    # dashboard static mount (which would otherwise answer POST with HTTP 405).
+    for _removed_path in (
+        "/v1/admin/edge",
+        "/v1/admin/edge/prepare",
+        "/v1/admin/edge/deployment-env",
+        "/v1/admin/edge/connect",
+        "/v1/admin/edge/sync",
+        "/v1/admin/edge/secure-storage",
+        "/v1/admin/edge/owner-link",
+        "/v1/admin/edge/clients",
+        "/v1/admin/edge/clients/{logical_client_id}",
+        "/v1/admin/edge/clients/{logical_client_id}/approve",
+        "/v1/admin/edge/decommission",
+        "/v1/admin/edge/forget",
+    ):
+        app.api_route(
+            _removed_path,
+            methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            include_in_schema=False,
+        )(_removed_edge_product_surface)
+
+    @app.get("/v1/admin/legacy-edge")
+    def get_legacy_edge_status(principal: Principal) -> dict[str, Any]:
+        """Read residual Edge state for cleanup. Does not enroll or connect."""
+
+        require(principal, "admin")
+        return legacy_edge_status_payload()
+
+    @app.post("/v1/admin/legacy-edge/decommission")
+    def decommission_legacy_edge(principal: Principal) -> dict[str, Any]:
+        """Decommission a pre-existing residual Edge only.
+
+        Refuses when nothing is configured so this path cannot create a new
+        authority or open an arbitrary outbound connection by default.
+        """
+
         require(principal, "admin")
         try:
-            edge_connections.connect(request.edge_url)
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        synchronization = edge_sync.sync_now()
-        edge_sync.trigger()
-        return {**edge_status_payload(), "synchronization": synchronization}
-
-    @app.post("/v1/admin/edge/sync")
-    def synchronize_edge(principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        result = edge_sync.sync_now()
-        return {**edge_status_payload(), "synchronization": result}
-
-    @app.post("/v1/admin/edge/secure-storage")
-    def secure_edge_storage(principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        try:
-            edge_connections.migrate_credential_to_os_store()
+            state = legacy_edge_connections.state()
+            material = legacy_edge_connections.material()
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return edge_status_payload()
-
-    @app.post("/v1/admin/edge/owner-link")
-    def create_edge_owner_link(principal: Principal) -> dict[str, str]:
-        require(principal, "admin")
-        try:
-            return {"url": edge_sync.owner_link()}
-        except RuntimeError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/v1/admin/edge/clients")
-    def list_edge_clients(principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        try:
-            items = edge_sync.authorized_clients()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        approved = {
-            str(item["id"]): item
-            for item in core.store.remote_edge_clients()
-            if not bool(item["revoked"])
-        }
-        merged = [
-            {
-                **item,
-                "core_approved": str(item.get("id")) in approved,
-                "core_context_scopes": approved.get(str(item.get("id")), {}).get(
-                    "context_scopes", []
+        if state is None or material is None or state.edge_url is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No residual paired Edge is configured. Core will not open a new "
+                    "hosted connection or create a second authority."
                 ),
-            }
-            for item in items
-        ]
-        return {"items": merged, "count": len(merged)}
-
-    @app.post("/v1/admin/edge/clients/{logical_client_id}/approve")
-    def approve_edge_client(
-        logical_client_id: str,
-        request: EdgeClientApprovalRequest,
-        principal: Principal,
-    ) -> dict[str, Any]:
-        require(principal, "admin")
-        try:
-            approved = core.store.approve_remote_edge_client(
-                logical_client_id,
-                name=request.name,
-                scopes=("context:read", "context:status"),
-                context_scopes=request.context_scopes,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        core.store.audit_access(
-            principal.id,
-            "edge.remote_client.approve",
-            (),
-            trace_id=new_id(),
-            metadata={"remote_client_id": approved.id, "scopes": sorted(approved.scopes)},
-        )
-        return {"id": approved.id, "core_approved": True, "scopes": sorted(approved.scopes)}
-
-    @app.delete("/v1/admin/edge/clients/{logical_client_id}")
-    def revoke_edge_client(logical_client_id: str, principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        core.store.revoke_remote_edge_client(logical_client_id)
         try:
-            edge_sync.revoke_client(logical_client_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        core.store.audit_access(
-            principal.id,
-            "edge.remote_client.revoke",
-            (),
-            trace_id=new_id(),
-            metadata={"remote_client_id": logical_client_id},
-        )
-        return {"id": logical_client_id, "revoked": True}
-
-    @app.post("/v1/admin/edge/decommission")
-    def decommission_edge(principal: Principal) -> dict[str, Any]:
-        require(principal, "admin")
-        try:
-            edge_sync.decommission()
+            legacy_edge_sync.decommission()
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         core.store.revoke_all_remote_edge_clients()
@@ -1046,16 +1131,19 @@ def create_app(
             "status": "decommissioned",
             "active_records_remaining": 0,
             "remote_access_revoked": True,
+            "product_surface": "legacy_cleanup_only",
         }
 
-    @app.post("/v1/admin/edge/forget")
-    def forget_edge(request: EdgeForgetRequest, principal: Principal) -> dict[str, Any]:
+    @app.post("/v1/admin/legacy-edge/forget")
+    def forget_legacy_edge(request: EdgeForgetRequest, principal: Principal) -> dict[str, Any]:
+        """Forget local residual Edge credentials without creating a new connection."""
+
         require(principal, "admin")
         if request.confirmation != "DELETE HOSTED EDGE":  # pragma: no cover - Literal validates
             raise HTTPException(status_code=422, detail="confirmation phrase does not match")
         try:
-            state = edge_connections.state()
-            material = edge_connections.material()
+            state = legacy_edge_connections.state()
+            material = legacy_edge_connections.material()
         except RuntimeError:
             state = None
             material = None
@@ -1068,15 +1156,15 @@ def create_app(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Edge is paired and manageable. Use Remove active data and disconnect "
+                    "Edge is paired and manageable. Use the isolated decommission path "
                     "before forgetting its local recovery credential"
                 ),
             )
         try:
-            edge_sync.forget_local()
+            legacy_edge_sync.forget_local()
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return edge_status_payload()
+        return legacy_edge_status_payload()
 
     @app.get("/v1/admin/integrations")
     def list_integrations(principal: Principal) -> dict[str, Any]:
@@ -1217,39 +1305,48 @@ def create_app(
                 status_code=409,
                 detail=f"{name} is not installed on this computer.",
             )
-        client_access = ensure_client_access(
-            core.store,
-            active_config,
-            name=CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME,
-            scopes=AI_CLIENT_SCOPES,
-        )
-        embedded_token = (
-            None
-            if client_access.credential_storage == "operating-system credential store"
-            else client_access.token
-        )
         runtime = RuntimeCommand.current()
         target_url = f"http://{active_config.host}:{active_config.port}"
+        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
         try:
             if integration_id == "chatgpt_codex":
-                result = configure_codex(
-                    runtime,
-                    client_access.client_id,
-                    token=embedded_token,
-                    target_url=target_url,
-                    core_data_dir=active_config.data_dir,
+                client_access, result = configure_client_access_transactionally(
+                    core.store,
+                    active_config,
+                    name=name,
+                    scopes=AI_CLIENT_SCOPES,
+                    configure=lambda access: configure_codex(
+                        runtime,
+                        access.client_id,
+                        token=(
+                            None
+                            if access.credential_storage == "operating-system credential store"
+                            else access.token
+                        ),
+                        target_url=target_url,
+                        core_data_dir=active_config.data_dir,
+                    ),
                 )
             else:
-                result = configure_claude(
-                    runtime,
-                    client_access.client_id,
-                    token=embedded_token,
-                    target_url=target_url,
-                    core_data_dir=active_config.data_dir,
+                client_access, result = configure_client_access_transactionally(
+                    core.store,
+                    active_config,
+                    name=name,
+                    scopes=AI_CLIENT_SCOPES,
+                    configure=lambda access: configure_claude(
+                        runtime,
+                        access.client_id,
+                        token=(
+                            None
+                            if access.credential_storage == "operating-system credential store"
+                            else access.token
+                        ),
+                        target_url=target_url,
+                        core_data_dir=active_config.data_dir,
+                    ),
                 )
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
         retire_other_named_clients(
             core.store,
             active_config,
@@ -1349,6 +1446,13 @@ def create_app(
     def download_update(principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
         return update_action(updates.download)
+
+    @app.post("/v1/admin/updates/accept-exact-candidate")
+    def accept_exact_update_candidate(principal: Principal) -> dict[str, Any]:
+        """Reopen a verified same-version offer for transactional acceptance smoke."""
+
+        require(principal, "admin")
+        return update_action(updates.accept_exact_candidate)
 
     @app.get("/v1/admin/updates/artifact")
     def save_verified_update(principal: Principal) -> FileResponse:

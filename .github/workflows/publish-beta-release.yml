@@ -15,6 +15,20 @@ on:
         description: Reviewed SHA-256 of release-candidate-v1.json
         required: true
         type: string
+      receipt_bundle_json:
+        description: Content-free acceptance receipt bundle JSON (explicit maintainer decision required)
+        required: true
+        type: string
+      key_id:
+        description: Reviewed public release key ID
+        required: true
+        type: string
+        default: release-2026-a
+      expected_public_key_sha256:
+        description: Reviewed public-key fingerprint (sha256:<hex>)
+        required: true
+        type: string
+        default: sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4
       approval:
         description: Type PUBLISH UNSIGNED BETA
         required: true
@@ -33,23 +47,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      attestations: read
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - name: Require deliberate operator preflight phrase
         shell: bash
         env:
           APPROVAL: ${{ inputs.approval }}
         run: test "$APPROVAL" = "PUBLISH UNSIGNED BETA"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # pin: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # pin: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e .
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Install from reviewed lock constraints
+        run: python scripts/install_locked_python.py
       - name: Verify unpublished beta release state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -68,7 +88,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "${{ inputs.tag }}" --dir dist/release
-      - name: Verify candidate inventory, packages, checksums, and SPDX documents
+      - name: Materialize operator acceptance receipt bundle
+        env:
+          RECEIPT_BUNDLE_JSON: ${{ inputs.receipt_bundle_json }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          raw = os.environ["RECEIPT_BUNDLE_JSON"]
+          value = json.loads(raw)
+          path = pathlib.Path("dist/evidence/acceptance-receipt-bundle-v1.json")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(path)
+          PY
+      - name: Verify signed candidate inventory before decision artifacts
         run: >-
           python scripts/release_candidate.py verify
           --release-dir dist/release
@@ -78,7 +111,32 @@ jobs:
           --target macos:x86_64
           --target linux:x86_64
           --ota-target windows:x86_64
+          --asset-stage signed
+      - name: Fail-closed protected publication gate
+        run: >-
+          python scripts/publication_gate.py
+          --release-dir dist/release
+          --candidate-sha256 "${{ inputs.candidate_sha256 }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --receipt-bundle dist/evidence/acceptance-receipt-bundle-v1.json
+          --key-id "${{ inputs.key_id }}"
+          --expected-public-key-sha256 "${{ inputs.expected_public_key_sha256 }}"
           --asset-stage promotion
+          --output dist/release/publication-gate-record.json
+      - name: Attest acceptance receipt bundle and publication record
+        id: decision_attest
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6  # pin: actions/attest@v4
+        with:
+          subject-path: |
+            dist/release/acceptance-receipt-bundle-v1.json
+            dist/release/publication-gate-record.json
+      - name: Upload decision artifacts to the draft before final recheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "${{ inputs.tag }}"
+          dist/release/acceptance-receipt-bundle-v1.json
+          dist/release/publication-gate-record.json
       - name: Verify exact build workflow, commit, provenance, and SBOM attestations
         shell: bash
         env:
@@ -117,7 +175,7 @@ jobs:
           --repository "${{ github.repository }}"
           --source-commit "${{ inputs.source_commit }}"
           --output-dir dist/channel-preflight
-      - name: Recheck the exact draft asset set immediately before publication
+      - name: Recheck the exact promotion asset set immediately before publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

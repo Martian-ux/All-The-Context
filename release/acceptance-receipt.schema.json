@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "All The Context Content-Free Acceptance Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "gate_id",
+    "evidence_kind",
+    "status",
+    "source_commit",
+    "content_free"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "gate_id": {
+      "type": "string",
+      "pattern": "^BETA-[A-Z][0-9]{2}$"
+    },
+    "evidence_kind": {
+      "enum": ["source", "exact_downloaded_artifact", "skipped", "unavailable"]
+    },
+    "status": {
+      "enum": ["pass", "fail", "skipped", "unavailable", "not_run"]
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "content_free": { "const": true },
+    "severity": {
+      "type": ["string", "null"],
+      "enum": ["P0", "P1", "P2", "P3", null]
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "summary"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "severity": { "enum": ["P0", "P1", "P2", "P3"] },
+          "workaround": { "type": "string", "maxLength": 500 },
+          "follow_up": { "type": "string", "maxLength": 200 }
+        }
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attempt", "status"],
+        "properties": {
+          "attempt": { "type": "integer", "minimum": 1 },
+          "status": {
+            "enum": ["pass", "fail", "skipped", "unavailable", "not_run"]
+          },
+          "closed_reason": { "type": "string", "maxLength": 200 }
+        }
+      }
+    },
+    "artifact_digests": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "counts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 280
+    }
+  }
+}

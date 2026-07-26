@@ -16,6 +16,7 @@ from scripts.build_desktop import (
     finalize_macos_bundle,
     helper_arguments,
     macos_bundle_version,
+    recovery_helper_arguments,
     reseal_macos_bundle,
     update_helper_arguments,
 )
@@ -29,34 +30,97 @@ from scripts.smoke_platform_package import (
 )
 
 
-def test_windows_packaging_embeds_console_mcp_helper() -> None:
+def test_windows_packaging_embeds_console_mcp_and_recovery_helpers() -> None:
     helper = Path("build") / "AllTheContextMCP.exe"
+    recovery = Path("build") / "AllTheContextRecovery.exe"
     updater = Path("build") / "AllTheContextUpdater.exe"
     helper_args = helper_arguments("Windows")
+    recovery_args = recovery_helper_arguments("Windows")
     updater_args = update_helper_arguments("Windows")
-    desktop_args = desktop_arguments("Windows", helper, updater)
+    desktop_args = desktop_arguments("Windows", helper, updater, recovery)
 
     assert "--console" in helper_args
     assert "--onefile" in helper_args
     assert "AllTheContextMCP" in helper_args
+    assert "--console" in recovery_args
+    assert "AllTheContextRecovery" in recovery_args
+    assert "recovery_entry.py" in "".join(recovery_args)
     assert "--windowed" in updater_args
     assert "AllTheContextUpdater" in updater_args
     assert "--windowed" in desktop_args
     assert "--onefile" in desktop_args
     assert f"{helper}{os.pathsep}." in desktop_args
+    assert f"{recovery}{os.pathsep}." in desktop_args
     assert f"{updater}{os.pathsep}." in desktop_args
     assert "AllTheContextSetup" in desktop_args
     assert "keyring.backends" in common_arguments()
     assert "keyring" in common_arguments()
 
 
-def test_macos_packaging_produces_an_application_bundle() -> None:
-    args = desktop_arguments("Darwin", Path("all-the-context-mcp"))
+def test_macos_packaging_embeds_console_recovery_helper() -> None:
+    helper = Path("all-the-context-mcp")
+    recovery = Path("all-the-context-recovery")
+    args = desktop_arguments("Darwin", helper, recovery_helper=recovery)
+    recovery_args = recovery_helper_arguments("Darwin")
     assert "--windowed" in args
     assert "--onedir" in args
     assert "--osx-bundle-identifier" in args
     assert "com.allthecontext.desktop" in args
     assert "AllTheContext" in args
+    assert "--console" in recovery_args
+    assert "all-the-context-recovery" in recovery_args
+    assert f"{recovery}{os.pathsep}." in args
+
+
+def test_linux_desktop_is_console_capable_without_separate_recovery_binary() -> None:
+    args = desktop_arguments("Linux", None)
+    assert "--windowed" not in args
+    assert "all-the-context" in args
+
+
+def test_package_report_records_platform_recovery_surface(tmp_path: Path) -> None:
+    executable = tmp_path / "all-the-context"
+    executable.write_bytes(b"linux-binary")
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        tmp_path / "out",
+        version="0.1.0-beta.1",
+        platform_name="linux",
+        architecture="x86_64",
+    )
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["recovery_surface"] == "console-main-binary"
+    assert payload["recovery_console_helper"] == "all-the-context"
+
+
+def test_windows_package_report_records_embedded_recovery_helper(tmp_path: Path) -> None:
+    executable = tmp_path / "AllTheContextSetup.exe"
+    executable.write_bytes(b"windows-setup")
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        tmp_path / "out",
+        version="0.1.0",
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["recovery_surface"] == "embedded-console-helper"
+    assert payload["recovery_console_helper"] == "AllTheContextRecovery.exe"
+
+
+def test_smoke_packaged_recovery_fails_closed_without_frozen_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.smoke_packaged_recovery as smoke
+
+    monkeypatch.setattr(smoke, "DIST", tmp_path / "dist")
+    monkeypatch.setattr(smoke, "BUILD", tmp_path / "build")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Windows")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Darwin")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Linux")
 
 
 def test_native_runner_architecture_labels_fail_closed() -> None:

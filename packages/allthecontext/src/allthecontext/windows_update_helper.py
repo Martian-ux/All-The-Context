@@ -211,6 +211,10 @@ class UpdateJournal:
     rollback_mcp_path: str | None
     rollback_mcp_sha256: str | None
     rollback_mcp_size: int | None
+    recovery_path: str
+    rollback_recovery_path: str | None
+    rollback_recovery_sha256: str | None
+    rollback_recovery_size: int | None
     stable_update_helper_path: str
     rollback_update_helper_path: str
     rollback_update_helper_sha256: str
@@ -303,6 +307,22 @@ class UpdateJournal:
             or self.rollback_mcp_size <= 0
         ):
             raise HelperError("journal_mcp_invalid")
+        optional_recovery = (
+            self.rollback_recovery_path,
+            self.rollback_recovery_sha256,
+            self.rollback_recovery_size,
+        )
+        if any(item is None for item in optional_recovery) != all(
+            item is None for item in optional_recovery
+        ):
+            raise HelperError("journal_recovery_invalid")
+        if self.rollback_recovery_sha256 is not None and (
+            not _valid_digest(self.rollback_recovery_sha256)
+            or isinstance(self.rollback_recovery_size, bool)
+            or not isinstance(self.rollback_recovery_size, int)
+            or self.rollback_recovery_size <= 0
+        ):
+            raise HelperError("journal_recovery_invalid")
         if self.last_error_code is not None and (
             not isinstance(self.last_error_code, str)
             or len(self.last_error_code) > 64
@@ -323,6 +343,7 @@ class UpdateJournal:
             self.replacement_path,
             self.rollback_application_path,
             self.mcp_path,
+            self.recovery_path,
             self.stable_update_helper_path,
             self.rollback_update_helper_path,
             self.database_path,
@@ -343,6 +364,10 @@ class UpdateJournal:
                 _install_directory() / "AllTheContext.exe",
             ),
             "mcp": (Path(self.mcp_path), _install_directory() / "AllTheContextMCP.exe"),
+            "recovery": (
+                Path(self.recovery_path),
+                _install_directory() / "AllTheContextRecovery.exe",
+            ),
             "stable_update_helper": (
                 Path(self.stable_update_helper_path),
                 _install_directory() / "AllTheContextUpdater.exe",
@@ -362,6 +387,7 @@ class UpdateJournal:
             Path(self.rollback_application_path),
             Path(self.rollback_update_helper_path),
             *([Path(self.rollback_mcp_path)] if self.rollback_mcp_path else []),
+            *([Path(self.rollback_recovery_path)] if self.rollback_recovery_path else []),
         ):
             if not _within(child, transaction_dir):
                 raise HelperError("journal_path_invalid")
@@ -568,6 +594,9 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
             "mcp",
             "mcp_sha256",
             "mcp_size",
+            "recovery",
+            "recovery_sha256",
+            "recovery_size",
             "update_helper",
             "update_helper_sha256",
             "update_helper_size",
@@ -587,6 +616,15 @@ def _apply_replacement(journal: UpdateJournal, journal_path: Path) -> None:
                 Path(journal.mcp_path),
                 cast(str, value.get("mcp_sha256")),
                 cast(int, value.get("mcp_size")),
+            )
+            or Path(str(value.get("recovery"))).resolve() != Path(journal.recovery_path).resolve()
+            or not _valid_digest(value.get("recovery_sha256"))
+            or isinstance(value.get("recovery_size"), bool)
+            or not isinstance(value.get("recovery_size"), int)
+            or not _verified(
+                Path(journal.recovery_path),
+                cast(str, value.get("recovery_sha256")),
+                cast(int, value.get("recovery_size")),
             )
             or Path(str(value.get("update_helper"))).resolve()
             != Path(journal.stable_update_helper_path).resolve()
@@ -625,6 +663,7 @@ def _verify_diagnostics(journal: UpdateJournal, journal_path: Path) -> None:
             or value.get("version") != journal.target_version
             or value.get("frozen") is not True
             or value.get("mcp_helper_bundled") is not True
+            or value.get("recovery_helper_bundled") is not True
             or value.get("update_helper_bundled") is not True
         ):
             raise HelperError("diagnostics_failed")
@@ -759,6 +798,15 @@ def _restore_binaries(journal: UpdateJournal) -> None:
         )
     else:
         Path(journal.mcp_path).unlink(missing_ok=True)
+    if journal.rollback_recovery_path is not None:
+        _copy_verified(
+            Path(journal.rollback_recovery_path),
+            Path(journal.recovery_path),
+            cast(str, journal.rollback_recovery_sha256),
+            cast(int, journal.rollback_recovery_size),
+        )
+    else:
+        Path(journal.recovery_path).unlink(missing_ok=True)
     _copy_verified(
         Path(journal.rollback_update_helper_path),
         Path(journal.stable_update_helper_path),

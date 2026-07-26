@@ -383,6 +383,7 @@ def render_codex_mcp_block(
             f"env = {{ {rendered_env} }}",
             "required = true",
             "startup_timeout_sec = 20",
+            'default_tools_approval_mode = "approve"',
             MANAGED_END,
         ]
     )
@@ -462,6 +463,27 @@ def _atomic_write(path: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _write_config_transactionally(path: Path, original: str, updated: str) -> Path | None:
+    """Replace one config and restore its exact prior state if the write reports failure."""
+
+    existed = path.is_file()
+    backup = _backup(path) if existed else None
+    try:
+        _atomic_write(path, updated)
+    except BaseException:
+        try:
+            if existed:
+                _atomic_write(path, original)
+            else:
+                path.unlink(missing_ok=True)
+        except BaseException as rollback_error:
+            raise RuntimeError(
+                "AI client configuration failed and its prior state could not be restored"
+            ) from rollback_error
+        raise
+    return backup
+
+
 def configure_codex(
     runtime: RuntimeCommand,
     client_id: str,
@@ -487,8 +509,7 @@ def configure_codex(
     tomllib.loads(updated)
     if updated == existing:
         return ClientConfigResult("Codex", config_path, None, False)
-    backup = _backup(config_path) if config_path.is_file() else None
-    _atomic_write(config_path, updated)
+    backup = _write_config_transactionally(config_path, existing, updated)
     return ClientConfigResult("Codex", config_path, backup, True)
 
 
@@ -506,8 +527,7 @@ def disconnect_codex(path: Path | None = None) -> ClientConfigResult:
     tomllib.loads(updated)
     if updated == existing:
         return ClientConfigResult("Codex", config_path, None, False, managed_client_id)
-    backup = _backup(config_path)
-    _atomic_write(config_path, updated)
+    backup = _write_config_transactionally(config_path, existing, updated)
     return ClientConfigResult("Codex", config_path, backup, True, managed_client_id)
 
 
@@ -556,8 +576,7 @@ def configure_claude(
     rendered = json.dumps(updated, indent=2, ensure_ascii=False) + "\n"
     if rendered == existing_text:
         return ClientConfigResult("Claude Desktop", config_path, None, False)
-    backup = _backup(config_path) if config_path.is_file() else None
-    _atomic_write(config_path, rendered)
+    backup = _write_config_transactionally(config_path, existing_text, rendered)
     return ClientConfigResult("Claude Desktop", config_path, backup, True)
 
 
@@ -577,8 +596,7 @@ def disconnect_claude(path: Path | None = None) -> ClientConfigResult:
     rendered = json.dumps(updated, indent=2, ensure_ascii=False) + "\n"
     if rendered == existing_text:
         return ClientConfigResult("Claude Desktop", config_path, None, False)
-    backup = _backup(config_path)
-    _atomic_write(config_path, rendered)
+    backup = _write_config_transactionally(config_path, existing_text, rendered)
     return ClientConfigResult("Claude Desktop", config_path, backup, True, managed_client_id)
 
 

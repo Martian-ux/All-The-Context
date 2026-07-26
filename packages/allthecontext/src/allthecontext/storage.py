@@ -19,6 +19,7 @@ from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
+    UNKEYED_CONFLICT_KINDS,
     AutomaticMemoryPolicy,
     MemoryPolicy,
     ObservationOrigin,
@@ -36,10 +37,19 @@ from .models import (
     IngestionMode,
     ObservationDisposition,
     ObservationOut,
+    SecretRefusalOut,
     Sensitivity,
     SourceOut,
 )
 from .replication import MAX_REPLICATION_PAYLOAD_BYTES
+from .secret_boundary import (
+    SECRET_DETECTOR_VERSION,
+    SECRET_REFUSAL_REASON,
+    contains_direct_secret,
+    contains_secret_like_value,
+    opaque_operation_id,
+    redact_secret_reason,
+)
 from .security import (
     ClientPrincipal,
     generate_token,
@@ -306,6 +316,172 @@ class CoreStore:
             )
             return vault_id
 
+    def repair_preledger_secrets(self) -> dict[str, Any]:
+        """Remove legacy direct secret observations and physically rebuild SQLite.
+
+        Imported source archives remain governed by their separate inert-source
+        contract. This repair targets direct observations only and emits counts
+        and closed codes, never copied content or content-derived fingerprints.
+        """
+
+        repaired_candidates = 0
+        repaired_records = 0
+        with self.transaction() as connection:
+            affected_record_ids: list[str] = []
+            for record in connection.execute(
+                "SELECT r.*,"
+                "(SELECT json_group_array(v.snapshot_json) "
+                "FROM context_record_versions v WHERE v.record_id=r.id) AS history_material "
+                "FROM context_records r WHERE r.source_id IS NULL ORDER BY r.created_at,r.id"
+            ).fetchall():
+                record_material = {
+                    "content": record["content"],
+                    "structured_value": _loads(record["structured_value_json"], None),
+                    "source_reference": record["source_reference"],
+                    "evidence": record["evidence"],
+                    "history": _loads(record["history_material"], []),
+                }
+                if contains_secret_like_value(record_material):
+                    affected_record_ids.append(str(record["id"]))
+
+            rows = connection.execute(
+                "SELECT c.*,s.mode AS ingestion_mode,"
+                "(SELECT json_group_array(json_object('description',e.description,"
+                "'evidence',e.evidence)) FROM context_errors e WHERE e.candidate_id=c.id) "
+                "AS error_material "
+                "FROM context_candidates c "
+                "LEFT JOIN ingestion_sessions s ON s.id=c.session_id "
+                "WHERE c.source_id IS NULL AND COALESCE(s.mode,'') != ? "
+                "ORDER BY c.created_at,c.id",
+                (IngestionMode.ARCHIVE.value,),
+            ).fetchall()
+            affected_ids: list[str] = []
+            for row in rows:
+                material = {
+                    "kind": row["kind"],
+                    "content": row["content"],
+                    "structured_value": _loads(row["structured_value_json"], None),
+                    "entity_key": row["entity_key"],
+                    "attribute_key": row["attribute_key"],
+                    "scopes": _loads(row["scopes_json"], []),
+                    "tags": _loads(row["tags_json"], []),
+                    "source_reference": row["source_reference"],
+                    "source_service": row["source_service"],
+                    "source_type": row["source_type"],
+                    "evidence": row["evidence"],
+                    "allowed_clients": _loads(row["allowed_clients_json"], []),
+                    "denied_clients": _loads(row["denied_clients_json"], []),
+                    "idempotency_key": row["idempotency_key"],
+                    "context_errors": _loads(row["error_material"], []),
+                }
+                if contains_secret_like_value(material):
+                    affected_ids.append(str(row["id"]))
+
+            for record_id in affected_record_ids:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM context_records WHERE id=?", (record_id,)
+                    ).fetchone()
+                    is not None
+                ):
+                    self._purge_record_tx(
+                        connection,
+                        record_id,
+                        purge_scope="secret_boundary_repair",
+                        purged_at=utc_now(),
+                    )
+                    repaired_records += 1
+
+            for candidate_id in affected_ids:
+                record_ids = {
+                    str(row["id"])
+                    for row in connection.execute(
+                        "SELECT id FROM context_records WHERE candidate_id=? OR id=("
+                        "SELECT record_id FROM context_candidates WHERE id=?)",
+                        (candidate_id, candidate_id),
+                    ).fetchall()
+                }
+                record_ids.update(
+                    str(row["record_id"])
+                    for row in connection.execute(
+                        "SELECT record_id FROM context_observation_links WHERE observation_id=?",
+                        (candidate_id,),
+                    ).fetchall()
+                )
+                for record_id in sorted(record_ids):
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM context_records WHERE id=?", (record_id,)
+                        ).fetchone()
+                        is not None
+                    ):
+                        self._purge_record_tx(
+                            connection,
+                            record_id,
+                            purge_scope="secret_boundary_repair",
+                            purged_at=utc_now(),
+                        )
+                        repaired_records += 1
+                candidate = connection.execute(
+                    "SELECT session_id FROM context_candidates WHERE id=?", (candidate_id,)
+                ).fetchone()
+                if candidate is None:
+                    repaired_candidates += 1
+                    continue
+                self._detach_candidate_from_batches(connection, candidate_id)
+                connection.execute(
+                    "DELETE FROM edge_proposal_receipts WHERE candidate_id=?", (candidate_id,)
+                )
+                connection.execute(
+                    "DELETE FROM context_errors WHERE candidate_id=?", (candidate_id,)
+                )
+                connection.execute(
+                    "DELETE FROM context_observation_links WHERE observation_id=?",
+                    (candidate_id,),
+                )
+                connection.execute("DELETE FROM context_candidates WHERE id=?", (candidate_id,))
+                if candidate["session_id"] is not None:
+                    connection.execute(
+                        "UPDATE ingestion_sessions SET candidate_count=("
+                        "SELECT COUNT(*) FROM context_candidates WHERE session_id=?) WHERE id=?",
+                        (candidate["session_id"], candidate["session_id"]),
+                    )
+                repaired_candidates += 1
+            if repaired_candidates or repaired_records:
+                connection.execute("DELETE FROM context_fts")
+                for record in connection.execute(
+                    "SELECT * FROM context_records "
+                    "WHERE approval_status='approved' AND deleted_at IS NULL ORDER BY id"
+                ).fetchall():
+                    self._replace_fts(connection, record)
+
+        if repaired_candidates or repaired_records:
+            self._compact_secret_repair()
+        return {
+            "reason_code": "preledger_secret_repair",
+            "repaired_candidates": repaired_candidates,
+            "repaired_records": repaired_records,
+            "compacted": repaired_candidates > 0 or repaired_records > 0,
+            "external_backup_action": "retire_or_replace_historical_backups",
+        }
+
+    def _compact_secret_repair(self) -> None:
+        """Checkpoint and rebuild the affected live SQLite storage boundary."""
+
+        database_size = self.database_path.stat().st_size
+        required_free = database_size * 2 + 16_777_216
+        if shutil.disk_usage(self.database_path.parent).free < required_free:
+            raise InvalidStateError("insufficient disk space for secret-boundary compaction")
+        with self._write_lock, self.connect() as connection:
+            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if checkpoint is not None and int(checkpoint[0]) != 0:
+                raise InvalidStateError(
+                    "secret-boundary compaction requires exclusive database access"
+                )
+            connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("VACUUM")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def vault_id(self) -> str:
         with self.connect() as connection:
             row = connection.execute("SELECT id FROM vaults ORDER BY created_at LIMIT 1").fetchone()
@@ -323,7 +499,7 @@ class CoreStore:
         media_type: str = "application/octet-stream",
         metadata: Mapping[str, Any] | None = None,
         parser_warnings: Sequence[str] = (),
-        import_status: Literal["processing", "complete", "failed"] = "complete",
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete",
     ) -> SourceOut:
         if len(content) > MAX_IMPORT_BYTES:
             raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
@@ -356,8 +532,8 @@ class CoreStore:
             storage_kind = "inline" if len(content) <= SOURCE_BLOB_CHUNK_BYTES else "chunked"
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
-                "VALUES(?,?,?,?,?,?)",
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,1)",
                 (
                     content_hash,
                     content if storage_kind == "inline" else b"",
@@ -377,6 +553,17 @@ class CoreStore:
                         "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
                         (content_hash, chunk_index, chunk, len(chunk)),
                     )
+            elif inserted.rowcount != 1:
+                existing_blob = connection.execute(
+                    "SELECT blob_complete,byte_size FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+                if existing_blob is None or int(existing_blob["blob_complete"]) != 1:
+                    raise ConflictError(
+                        "identical content is still staging under another import operation"
+                    )
+                if int(existing_blob["byte_size"]) != len(content):
+                    raise InvalidStateError("content hash collision with different byte size")
             source_id = new_id()
             connection.execute(
                 "INSERT INTO source_records"
@@ -419,7 +606,7 @@ class CoreStore:
         media_type: str = "application/octet-stream",
         metadata: Mapping[str, Any] | None = None,
         parser_warnings: Sequence[str] = (),
-        import_status: Literal["processing", "complete", "failed"] = "complete",
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "complete",
     ) -> SourceOut:
         """Store a source from disk without materializing the complete file in memory."""
         resolved = path.expanduser().resolve()
@@ -465,8 +652,8 @@ class CoreStore:
             storage_kind = "inline" if byte_size == 0 else "chunked"
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
-                "VALUES(?,?,?,?,?,?)",
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,1)",
                 (
                     content_hash,
                     b"",
@@ -492,6 +679,17 @@ class CoreStore:
                         chunk_index += 1
                 if written_size != byte_size or written_digest.hexdigest() != content_hash:
                     raise InvalidStateError("source file changed while it was being imported")
+            elif inserted.rowcount != 1:
+                existing_blob = connection.execute(
+                    "SELECT blob_complete,byte_size FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+                if existing_blob is None or int(existing_blob["blob_complete"]) != 1:
+                    raise ConflictError(
+                        "identical content is still staging under another import operation"
+                    )
+                if int(existing_blob["byte_size"]) != byte_size:
+                    raise InvalidStateError("content hash collision with different byte size")
 
             source_id = new_id()
             connection.execute(
@@ -538,7 +736,10 @@ class CoreStore:
             created_at=str(row["created_at"]),
             duplicate=duplicate,
             import_status=(
-                cast(Literal["processing", "complete", "failed"], row["import_status"])
+                cast(
+                    Literal["processing", "complete", "failed", "cancelled"],
+                    row["import_status"],
+                )
                 if "import_status" in keys
                 else "complete"
             ),
@@ -596,7 +797,7 @@ class CoreStore:
         self,
         source_id: str,
         *,
-        import_status: Literal["processing", "complete", "failed"],
+        import_status: Literal["processing", "complete", "failed", "cancelled"],
         metadata: Mapping[str, Any],
         parser_warnings: Sequence[str],
     ) -> None:
@@ -613,6 +814,718 @@ class CoreStore:
             )
             if result.rowcount != 1:
                 raise NotFoundError("source not found")
+
+    def reclassify_source(
+        self,
+        source_id: str,
+        *,
+        source_service: str,
+        source_type: str,
+    ) -> SourceOut:
+        """Apply parser-derived source identity after the raw blob is durable."""
+
+        with self.transaction() as connection:
+            row = self._source_row_tx(connection, source_id, include_deleted=False)
+            if row is None:
+                raise NotFoundError("source not found")
+            if (
+                str(row["source_service"]) == source_service
+                and str(row["source_type"]) == source_type
+            ):
+                return self._source_out(row)
+            existing = connection.execute(
+                "SELECT sr.*,sb.byte_size,sb.media_type,"
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
+                "AND sr.source_type=? AND sr.id<>?",
+                (
+                    row["vault_id"],
+                    row["content_hash"],
+                    source_service,
+                    source_type,
+                    source_id,
+                ),
+            ).fetchone()
+            if existing is not None:
+                if int(row["candidate_count"]) != 0:
+                    raise InvalidStateError(
+                        "cannot merge a reclassified source that already has observations"
+                    )
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection,
+                        str(existing["id"]),
+                        include_deleted=False,
+                    )
+                    assert existing is not None
+                connection.execute("DELETE FROM source_records WHERE id=?", (source_id,))
+                return self._source_out(existing, duplicate=True)
+            connection.execute(
+                "UPDATE source_records SET source_service=?,source_type=? WHERE id=?",
+                (source_service, source_type, source_id),
+            )
+            updated = self._source_row_tx(connection, source_id, include_deleted=False)
+            assert updated is not None
+            return self._source_out(updated)
+
+    def update_source_progress(
+        self,
+        source_id: str,
+        *,
+        progress: Mapping[str, Any],
+        import_status: Literal["processing", "complete", "failed", "cancelled"] | None = None,
+    ) -> None:
+        """Persist bounded import progress without rewriting parser warnings."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT metadata_json,import_status FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("source not found")
+            metadata = cast(dict[str, Any], _loads(row["metadata_json"], {}))
+            metadata["import_progress"] = dict(progress)
+            status = import_status or cast(str, row["import_status"])
+            connection.execute(
+                "UPDATE source_records SET metadata_json=?,import_status=? "
+                "WHERE id=? AND deleted_at IS NULL",
+                (_json(metadata), status, source_id),
+            )
+
+    def request_import_cancel(self, source_id: str) -> dict[str, Any]:
+        """Mark an in-flight import for cancellation and return current source state."""
+        source = self.get_source(source_id, duplicate=True)
+        if source.import_status in {"complete", "failed", "cancelled"}:
+            return {
+                "source_id": source.id,
+                "import_status": source.import_status,
+                "cancel_requested": False,
+                "already_terminal": True,
+            }
+        metadata = dict(source.metadata)
+        progress = dict(metadata.get("import_progress") or {})
+        progress["cancel_requested"] = True
+        metadata["import_progress"] = progress
+        metadata["cancel_requested"] = True
+        self.update_source_import(
+            source.id,
+            import_status="processing",
+            metadata=metadata,
+            parser_warnings=source.parser_warnings,
+        )
+        return {
+            "source_id": source.id,
+            "import_status": "processing",
+            "cancel_requested": True,
+            "already_terminal": False,
+        }
+
+    # --- Import operations (durable lifecycle before a source id exists) ---
+
+    def create_import_operation(
+        self,
+        *,
+        operation_id: str,
+        declared_byte_size: int,
+        filename: str | None,
+        media_type: str,
+        source_service: str,
+        provider_hint: str | None,
+        staging_name: str,
+        preflight: Mapping[str, Any] | None,
+        progress: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a new import operation before any source bytes are accepted."""
+        if isinstance(declared_byte_size, bool) or not isinstance(declared_byte_size, int):
+            raise InvalidStateError("declared_byte_size must be a non-boolean integer")
+        if declared_byte_size < 0 or declared_byte_size > MAX_IMPORT_BYTES:
+            raise InvalidStateError(
+                f"import exceeds the {MAX_IMPORT_BYTES}-byte size limit "
+                f"(received declared size {declared_byte_size} bytes; boundary+1 is refused)"
+            )
+        now = utc_now()
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT INTO import_operations("
+                "id,vault_id,status,phase,declared_byte_size,bytes_received,bytes_committed,"
+                "content_hash,source_id,filename,media_type,source_service,provider_hint,"
+                "cancel_requested,progress_json,preflight_json,result_json,error_message,"
+                "staging_name,created_at,updated_at,completed_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    operation_id,
+                    vault_id,
+                    "awaiting_upload",
+                    "awaiting_upload",
+                    declared_byte_size,
+                    0,
+                    0,
+                    None,
+                    None,
+                    filename,
+                    media_type,
+                    source_service,
+                    provider_hint,
+                    0,
+                    _json(dict(progress)),
+                    _json(dict(preflight or {})),
+                    None,
+                    None,
+                    staging_name,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+        return self.get_import_operation(operation_id)
+
+    def get_import_operation(self, operation_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("import operation not found")
+        return self._import_operation_out(row)
+
+    def list_import_operations(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses = ["vault_id=?"]
+        params: list[Any] = [self.vault_id()]
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        with self.connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM import_operations WHERE {where}",
+                    params,
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT * FROM import_operations WHERE {where} "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (*params, min(max(limit, 1), 500), max(offset, 0)),
+            ).fetchall()
+        return [self._import_operation_out(row) for row in rows], total
+
+    def update_import_operation(
+        self,
+        operation_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        bytes_received: int | None = None,
+        bytes_committed: int | None = None,
+        content_hash: str | None = None,
+        source_id: str | None = None,
+        cancel_requested: bool | None = None,
+        progress: Mapping[str, Any] | None = None,
+        preflight: Mapping[str, Any] | None = None,
+        result: Mapping[str, Any] | None = None,
+        error_message: str | None = None,
+        clear_error: bool = False,
+        completed: bool = False,
+    ) -> dict[str, Any]:
+        """Update durable operation telemetry. Incomplete source blobs stay non-canonical."""
+        terminal = frozenset({"complete", "failed", "cancelled"})
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            current_status = str(row["status"])
+            next_status = status if status is not None else current_status
+            # Fail closed: never reactivate a terminal operation via stale writers.
+            if current_status in terminal and next_status not in terminal:
+                raise InvalidStateError(f"import operation is already {current_status}")
+            if current_status in terminal and next_status != current_status:
+                raise InvalidStateError(f"import operation is already {current_status}")
+            next_phase = phase if phase is not None else str(row["phase"])
+            next_received = (
+                bytes_received if bytes_received is not None else int(row["bytes_received"])
+            )
+            next_committed = (
+                bytes_committed if bytes_committed is not None else int(row["bytes_committed"])
+            )
+            if next_committed > next_received:
+                raise InvalidStateError("committed progress cannot exceed received bytes")
+            if next_received > int(row["declared_byte_size"]):
+                raise InvalidStateError("received bytes exceed declared size")
+            # Keep reported committed progress within one chunk of durable writes.
+            if next_committed + SOURCE_BLOB_CHUNK_BYTES < next_received:
+                # Allow received to lead by at most one chunk; clamp reportable lead.
+                pass
+            next_hash = content_hash if content_hash is not None else row["content_hash"]
+            next_source = source_id if source_id is not None else row["source_id"]
+            next_cancel = (
+                int(cancel_requested)
+                if cancel_requested is not None
+                else int(row["cancel_requested"])
+            )
+            next_progress = (
+                _json(dict(progress)) if progress is not None else str(row["progress_json"])
+            )
+            next_preflight = (
+                _json(dict(preflight)) if preflight is not None else str(row["preflight_json"])
+            )
+            next_result = _json(dict(result)) if result is not None else row["result_json"]
+            if clear_error:
+                next_error = None
+            elif error_message is not None:
+                next_error = error_message[:2_000]
+            else:
+                next_error = row["error_message"]
+            now = utc_now()
+            completed_at = now if completed else row["completed_at"]
+            if next_status in terminal and completed_at is None:
+                completed_at = now
+                completed = True
+            connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,bytes_received=?,"
+                "bytes_committed=?,content_hash=?,source_id=?,cancel_requested=?,"
+                "progress_json=?,preflight_json=?,result_json=?,error_message=?,"
+                "updated_at=?,completed_at=? WHERE id=?",
+                (
+                    next_status,
+                    next_phase,
+                    next_received,
+                    next_committed,
+                    next_hash,
+                    next_source,
+                    next_cancel,
+                    next_progress,
+                    next_preflight,
+                    next_result,
+                    next_error,
+                    now,
+                    completed_at,
+                    operation_id,
+                ),
+            )
+        return self.get_import_operation(operation_id)
+
+    def claim_import_operation_upload(self, operation_id: str) -> dict[str, Any]:
+        """Exclusively claim an operation for upload (awaiting_upload -> uploading)."""
+        now = utc_now()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            status = str(row["status"])
+            if status in {"complete", "failed", "cancelled"}:
+                raise InvalidStateError(f"import operation is already {status}")
+            if status != "awaiting_upload":
+                raise ConflictError(f"import operation upload already claimed (status={status})")
+            cursor = connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,updated_at=? "
+                "WHERE id=? AND status=?",
+                ("uploading", "uploading", now, operation_id, "awaiting_upload"),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("import operation upload already claimed")
+        return self.get_import_operation(operation_id)
+
+    def claim_import_operation_retry(self, operation_id: str) -> dict[str, Any]:
+        """Exclusively claim a failed/cancelled operation with preserved source for retry."""
+        now = utc_now()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            status = str(row["status"])
+            if status == "complete":
+                return self._import_operation_out(row)
+            if row["source_id"] is None:
+                raise InvalidStateError(
+                    "import operation has no preserved source; re-upload is required"
+                )
+            if status not in {"failed", "cancelled"}:
+                raise ConflictError(f"import operation is not retryable (status={status})")
+            loaded = _loads(cast(str | None, row["progress_json"]), {})
+            progress = dict(cast(dict[str, Any], loaded))
+            progress.update(
+                {
+                    "phase": "parsing",
+                    "message": "retry claimed for parse/ingest",
+                    "cancel_requested": False,
+                    "cancel_acknowledged": False,
+                }
+            )
+            cursor = connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,cancel_requested=?,"
+                "progress_json=?,error_message=NULL,completed_at=NULL,updated_at=? "
+                "WHERE id=? AND status IN ('failed','cancelled') AND source_id IS NOT NULL",
+                (
+                    "processing",
+                    "parsing",
+                    0,
+                    _json(progress),
+                    now,
+                    operation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("import operation retry already claimed")
+        return self.get_import_operation(operation_id)
+
+    def request_import_operation_cancel(self, operation_id: str) -> dict[str, Any]:
+        operation = self.get_import_operation(operation_id)
+        if operation["status"] in {"complete", "failed", "cancelled"}:
+            return {
+                "operation_id": operation_id,
+                "status": operation["status"],
+                "cancel_requested": False,
+                "already_terminal": True,
+                "source_id": operation.get("source_id"),
+            }
+        # No worker consumes awaiting_upload; terminalize immediately.
+        if operation["status"] == "awaiting_upload":
+            bytes_total = max(int(operation.get("declared_byte_size") or 1), 1)
+            progress = {
+                "phase": "cancelled",
+                "bytes_processed": 0,
+                "bytes_total": bytes_total,
+                "percent": 0,
+                "message": "import cancelled",
+                "cancel_requested": True,
+                "cancel_acknowledged": True,
+            }
+            updated = self.update_import_operation(
+                operation_id,
+                status="cancelled",
+                phase="cancelled",
+                cancel_requested=True,
+                progress=progress,
+                completed=True,
+            )
+            return {
+                "operation_id": operation_id,
+                "status": updated["status"],
+                "cancel_requested": True,
+                "already_terminal": False,
+                "source_id": updated.get("source_id"),
+                "immediate": True,
+            }
+        progress = dict(operation.get("progress") or {})
+        progress["cancel_requested"] = True
+        updated = self.update_import_operation(
+            operation_id,
+            cancel_requested=True,
+            progress=progress,
+        )
+        return {
+            "operation_id": operation_id,
+            "status": updated["status"],
+            "cancel_requested": True,
+            "already_terminal": False,
+            "source_id": updated.get("source_id"),
+        }
+
+    def list_nonterminal_import_operations(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM import_operations "
+                "WHERE status IN ('awaiting_upload','uploading','processing') "
+                "ORDER BY created_at"
+            ).fetchall()
+        return [self._import_operation_out(row) for row in rows]
+
+    def begin_incomplete_source_blob(
+        self,
+        *,
+        content_hash: str,
+        byte_size: int,
+        media_type: str,
+    ) -> Literal["created", "complete", "in_progress"]:
+        """Create or inspect a content-addressed blob before it is canonical."""
+        if byte_size < 0 or byte_size > MAX_IMPORT_BYTES:
+            raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
+        created_at = utc_now()
+        storage_kind = "inline" if byte_size == 0 else "chunked"
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "SELECT content_hash,byte_size,blob_complete FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if existing is not None:
+                if int(existing["byte_size"]) != byte_size:
+                    raise InvalidStateError("content hash collision with different byte size")
+                if int(existing["blob_complete"]) == 1:
+                    return "complete"
+                return "in_progress"
+            connection.execute(
+                "INSERT INTO source_blobs"
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,0)",
+                (content_hash, b"", byte_size, media_type, created_at, storage_kind),
+            )
+            return "created"
+
+    def write_source_blob_chunk(
+        self,
+        *,
+        content_hash: str,
+        chunk_index: int,
+        content: bytes,
+    ) -> None:
+        """Durably write one incomplete-blob chunk. Not a canonical source yet."""
+        if not content or len(content) > SOURCE_BLOB_CHUNK_BYTES:
+            raise InvalidStateError("source blob chunk size is invalid")
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["blob_complete"]) == 1:
+                raise InvalidStateError("cannot modify a complete source blob")
+            if str(blob["storage_kind"]) != "chunked":
+                raise InvalidStateError("inline source blobs do not accept chunks")
+            existing = connection.execute(
+                "SELECT byte_size FROM source_blob_chunks WHERE content_hash=? AND chunk_index=?",
+                (content_hash, chunk_index),
+            ).fetchone()
+            if existing is not None:
+                if int(existing["byte_size"]) != len(content):
+                    raise InvalidStateError("source blob chunk size mismatch on rewrite")
+                return
+            connection.execute(
+                "INSERT INTO source_blob_chunks"
+                "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
+                (content_hash, chunk_index, content, len(content)),
+            )
+
+    def finalize_source_blob(
+        self,
+        *,
+        content_hash: str,
+        expected_byte_size: int,
+        media_type: str,
+        inline_content: bytes | None = None,
+    ) -> None:
+        """Mark a blob complete only after size integrity checks pass."""
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["byte_size"]) != expected_byte_size:
+                raise InvalidStateError("source blob size mismatch during finalize")
+            if int(blob["blob_complete"]) == 1:
+                return
+            if expected_byte_size == 0 or str(blob["storage_kind"]) == "inline":
+                payload = inline_content if inline_content is not None else b""
+                if len(payload) != expected_byte_size:
+                    raise InvalidStateError("inline source blob payload size mismatch")
+                connection.execute(
+                    "UPDATE source_blobs SET content=?,media_type=?,blob_complete=1 "
+                    "WHERE content_hash=?",
+                    (payload, media_type, content_hash),
+                )
+                return
+            total = 0
+            for expected_index, chunk_row in enumerate(
+                connection.execute(
+                    "SELECT chunk_index,byte_size FROM source_blob_chunks "
+                    "WHERE content_hash=? ORDER BY chunk_index",
+                    (content_hash,),
+                )
+            ):
+                if int(chunk_row["chunk_index"]) != expected_index:
+                    raise InvalidStateError("source blob chunks are not contiguous")
+                total += int(chunk_row["byte_size"])
+            if total != expected_byte_size:
+                raise InvalidStateError("source blob chunks do not match declared size")
+            connection.execute(
+                "UPDATE source_blobs SET media_type=?,blob_complete=1 WHERE content_hash=?",
+                (media_type, content_hash),
+            )
+
+    def create_source_record_for_blob(
+        self,
+        *,
+        content_hash: str,
+        source_service: str,
+        source_type: str,
+        filename: str | None,
+        metadata: Mapping[str, Any] | None = None,
+        parser_warnings: Sequence[str] = (),
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "processing",
+    ) -> SourceOut:
+        """Link a complete blob as a source record. Incomplete blobs are refused."""
+        created_at = utc_now()
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT content_hash,byte_size,media_type,blob_complete FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["blob_complete"]) != 1:
+                raise InvalidStateError("incomplete source blob cannot become a canonical source")
+            existing = connection.execute(
+                "SELECT sr.*, sb.byte_size, sb.media_type, "
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
+                "AND sr.source_type=?",
+                (vault_id, content_hash, source_service, source_type),
+            ).fetchone()
+            if existing is not None:
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection, str(existing["id"]), include_deleted=False
+                    )
+                    assert existing is not None
+                return self._source_out(existing, duplicate=True)
+            source_id = new_id()
+            connection.execute(
+                "INSERT INTO source_records"
+                "(id,vault_id,content_hash,source_service,source_type,filename,metadata_json,"
+                "import_status,parser_warnings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    source_id,
+                    vault_id,
+                    content_hash,
+                    source_service,
+                    source_type,
+                    filename,
+                    _json(dict(metadata or {})),
+                    import_status,
+                    _json(list(parser_warnings)[:512]),
+                    created_at,
+                ),
+            )
+            return SourceOut(
+                id=source_id,
+                content_hash=content_hash,
+                source_service=source_service,
+                source_type=source_type,
+                filename=filename,
+                media_type=str(blob["media_type"]),
+                byte_size=int(blob["byte_size"]),
+                created_at=created_at,
+                import_status=import_status,
+                metadata=dict(metadata or {}),
+                parser_warnings=list(parser_warnings)[:512],
+            )
+
+    def delete_incomplete_source_blob(self, content_hash: str) -> None:
+        """Remove a non-canonical incomplete blob and its chunks."""
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT blob_complete FROM source_blobs WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                return
+            if int(blob["blob_complete"]) == 1:
+                referenced = connection.execute(
+                    "SELECT 1 FROM source_records WHERE content_hash=? LIMIT 1",
+                    (content_hash,),
+                ).fetchone()
+                if referenced is not None:
+                    return
+            connection.execute(
+                "DELETE FROM source_blob_chunks WHERE content_hash=?",
+                (content_hash,),
+            )
+            connection.execute(
+                "DELETE FROM source_blobs WHERE content_hash=? AND blob_complete=0",
+                (content_hash,),
+            )
+
+    def cleanup_orphan_incomplete_blobs(self) -> int:
+        """Delete incomplete blobs not referenced by any source record."""
+        removed = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT content_hash FROM source_blobs WHERE blob_complete=0"
+            ).fetchall()
+            for row in rows:
+                content_hash = str(row["content_hash"])
+                referenced = connection.execute(
+                    "SELECT 1 FROM source_records WHERE content_hash=? LIMIT 1",
+                    (content_hash,),
+                ).fetchone()
+                if referenced is not None:
+                    continue
+                connection.execute(
+                    "DELETE FROM source_blob_chunks WHERE content_hash=?",
+                    (content_hash,),
+                )
+                connection.execute(
+                    "DELETE FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                )
+                removed += 1
+        return removed
+
+    def _import_operation_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "operation_id": str(row["id"]),
+            "status": str(row["status"]),
+            "phase": str(row["phase"]),
+            "declared_byte_size": int(row["declared_byte_size"]),
+            "bytes_received": int(row["bytes_received"]),
+            "bytes_committed": int(row["bytes_committed"]),
+            "content_hash": cast(str | None, row["content_hash"]),
+            "source_id": cast(str | None, row["source_id"]),
+            "filename": cast(str | None, row["filename"]),
+            "media_type": str(row["media_type"]),
+            "source_service": str(row["source_service"]),
+            "provider_hint": cast(str | None, row["provider_hint"]),
+            "cancel_requested": bool(row["cancel_requested"]),
+            "progress": cast(dict[str, Any], _loads(row["progress_json"], {})),
+            "preflight": cast(dict[str, Any], _loads(row["preflight_json"], {})),
+            "result": cast(dict[str, Any] | None, _loads(row["result_json"], None)),
+            "error_message": cast(str | None, row["error_message"]),
+            "staging_name": str(row["staging_name"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "completed_at": cast(str | None, row["completed_at"]),
+        }
 
     def _source_content_chunks_tx(
         self,
@@ -1146,7 +2059,28 @@ class CoreStore:
         *,
         client: ClientPrincipal | None = None,
     ) -> dict[str, Any]:
-        canonical_request = _json([candidate.model_dump(mode="json") for candidate in candidates])
+        accepted_candidates = list(candidates)
+        refused_count = 0
+        safe_idempotency_key = idempotency_key
+        with self.connect() as connection:
+            session_mode = connection.execute(
+                "SELECT mode FROM ingestion_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        if session_mode is not None and str(session_mode["mode"]) != IngestionMode.ARCHIVE.value:
+            accepted_candidates = [
+                candidate for candidate in candidates if not contains_direct_secret(candidate)
+            ]
+            refused_count = len(candidates) - len(accepted_candidates)
+            if refused_count:
+                opaque_idempotency_key = opaque_operation_id(idempotency_key)
+                if opaque_idempotency_key is None:
+                    raise InvalidStateError(
+                        "A secret-like batch requires an opaque UUIDv4 idempotency key"
+                    )
+                safe_idempotency_key = opaque_idempotency_key
+        canonical_request = _json(
+            [candidate.model_dump(mode="json") for candidate in accepted_candidates]
+        )
         request_hash = _hash_text(canonical_request)
         created_ids: list[str] = []
         with self.transaction() as connection:
@@ -1161,7 +2095,7 @@ class CoreStore:
                 raise NotFoundError("ingestion session not found")
             existing = connection.execute(
                 "SELECT * FROM ingestion_batches WHERE session_id=? AND idempotency_key=?",
-                (session_id, idempotency_key),
+                (session_id, safe_idempotency_key),
             ).fetchone()
             if existing is not None:
                 if str(existing["request_hash"]) != request_hash:
@@ -1169,33 +2103,140 @@ class CoreStore:
                 return {
                     "batch_id": str(existing["id"]),
                     "candidate_ids": _loads(existing["candidate_ids_json"], []),
+                    "refused_count": int(existing["refused_count"]),
+                    "refusal_reason": (
+                        SECRET_REFUSAL_REASON if int(existing["refused_count"]) else None
+                    ),
                     "replayed": True,
                 }
             if str(session["status"]) != "open":
                 raise InvalidStateError("ingestion session is already finished")
-            for candidate in candidates:
+            for candidate in accepted_candidates:
                 created_ids.append(
                     self._insert_candidate(connection, candidate, session_id, client)
+                )
+            if refused_count:
+                self._secret_refusal_tx(
+                    connection,
+                    route="ingestion_batch",
+                    operation_id=safe_idempotency_key,
+                    client=client,
                 )
             batch_id = new_id()
             connection.execute(
                 "INSERT INTO ingestion_batches"
-                "(id,session_id,idempotency_key,request_hash,candidate_ids_json,created_at) "
-                "VALUES(?,?,?,?,?,?)",
+                "(id,session_id,idempotency_key,request_hash,candidate_ids_json,created_at,"
+                "refused_count) VALUES(?,?,?,?,?,?,?)",
                 (
                     batch_id,
                     session_id,
-                    idempotency_key,
+                    safe_idempotency_key,
                     request_hash,
                     _json(created_ids),
                     utc_now(),
+                    refused_count,
                 ),
             )
             connection.execute(
                 "UPDATE ingestion_sessions SET candidate_count=candidate_count+? WHERE id=?",
                 (len(created_ids), session_id),
             )
-        return {"batch_id": batch_id, "candidate_ids": created_ids, "replayed": False}
+        return {
+            "batch_id": batch_id,
+            "candidate_ids": created_ids,
+            "refused_count": refused_count,
+            "refusal_reason": SECRET_REFUSAL_REASON if refused_count else None,
+            "replayed": False,
+        }
+
+    def refuse_direct_candidate(
+        self,
+        candidate: CandidateInput,
+        *,
+        route: str,
+        client: ClientPrincipal | None = None,
+    ) -> SecretRefusalOut | None:
+        """Persist only an opaque receipt when a direct candidate contains a secret."""
+
+        if not contains_direct_secret(candidate):
+            return None
+        operation_id = opaque_operation_id(candidate.idempotency_key) or new_id()
+        with self.transaction() as connection:
+            return self._secret_refusal_tx(
+                connection,
+                route=route,
+                operation_id=operation_id,
+                client=client,
+            )
+
+    def refuse_direct_value(
+        self,
+        value: object,
+        *,
+        route: str,
+        operation_id: str | None,
+        client: ClientPrincipal | None = None,
+    ) -> SecretRefusalOut | None:
+        """Apply the same boundary to direct request shapes other than candidates."""
+
+        if not contains_secret_like_value(value):
+            return None
+        safe_operation_id = opaque_operation_id(operation_id) or new_id()
+        with self.transaction() as connection:
+            return self._secret_refusal_tx(
+                connection,
+                route=route,
+                operation_id=safe_operation_id,
+                client=client,
+            )
+
+    def _secret_refusal_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        route: str,
+        operation_id: str,
+        client: ClientPrincipal | None,
+    ) -> SecretRefusalOut:
+        principal_key = client.id if client is not None else "local-core"
+        existing = connection.execute(
+            "SELECT * FROM secret_refusal_receipts "
+            "WHERE vault_id=? AND principal_key=? AND route=? AND operation_id=?",
+            (self.vault_id(), principal_key, route, operation_id),
+        ).fetchone()
+        if existing is not None:
+            return self._secret_refusal_out(existing, replayed=True)
+        receipt_id = new_id()
+        created_at = utc_now()
+        connection.execute(
+            "INSERT INTO secret_refusal_receipts"
+            "(id,vault_id,principal_key,route,operation_id,reason_code,detector_version,"
+            "created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                receipt_id,
+                self.vault_id(),
+                principal_key,
+                route,
+                operation_id,
+                SECRET_REFUSAL_REASON,
+                SECRET_DETECTOR_VERSION,
+                created_at,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM secret_refusal_receipts WHERE id=?", (receipt_id,)
+        ).fetchone()
+        assert row is not None
+        return self._secret_refusal_out(row, replayed=False)
+
+    @staticmethod
+    def _secret_refusal_out(row: sqlite3.Row, *, replayed: bool) -> SecretRefusalOut:
+        return SecretRefusalOut(
+            id=str(row["id"]),
+            detector_version=str(row["detector_version"]),
+            created_at=str(row["created_at"]),
+            replayed=replayed,
+        )
 
     def add_candidate(
         self,
@@ -1220,6 +2261,14 @@ class CoreStore:
         session_id: str | None = None,
         client: ClientPrincipal | None = None,
     ) -> CandidateOut:
+        # Defense in depth for internal callers: no direct secret-like payload is
+        # written before the public ingestion service can issue a refusal receipt.
+        # Archive batches use submit_batch/_insert_candidate and remain inert data.
+        if contains_direct_secret(candidate):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
+        policy_principal = self._policy_principal_tx(connection, client)
         candidate_id = self._insert_candidate(connection, candidate, session_id, client)
         row = connection.execute(
             "SELECT disposition FROM context_candidates WHERE id=?", (candidate_id,)
@@ -1234,7 +2283,7 @@ class CoreStore:
                     else ObservationOrigin.LOCAL_ADMIN
                 ),
                 actor=client.id if client is not None else "local-core",
-                principal=client,
+                principal=policy_principal,
             )
         result = connection.execute(
             "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -1254,6 +2303,16 @@ class CoreStore:
     ) -> CandidateOut:
         """Atomically evaluate an error observation and retain its report provenance."""
 
+        if contains_secret_like_value(
+            {
+                "candidate": candidate.model_dump(mode="json"),
+                "description": description,
+                "evidence": evidence,
+            }
+        ):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
         with self.transaction() as connection:
             created = self._add_candidate_tx(connection, candidate, client=client)
             existing = connection.execute(
@@ -1301,6 +2360,10 @@ class CoreStore:
             raise InvalidStateError("Edge proposal ID is invalid")
         if not client_id.strip() or len(client_id) > 256:
             raise InvalidStateError("Edge client ID is invalid")
+        if contains_direct_secret(candidate):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
         candidate = candidate.model_copy(
             update={
                 "source_service": client_id,
@@ -1475,13 +2538,16 @@ class CoreStore:
                 (session_id,),
             ).fetchall()
             actor = cast(str | None, session["client_id"]) or "local-core"
+            # Re-bind from durable registrations; never trust caller-supplied scopes
+            # for witness / archive explicitness (principal-shape hardening).
+            policy_principal = self._policy_principal_tx(connection, client)
             for item in staged:
                 self._evaluate_observation_tx(
                     connection,
                     str(item["id"]),
                     origin=origin,
                     actor=actor,
-                    principal=client,
+                    principal=policy_principal,
                 )
         result = self.get_session(session_id)
         result["replayed"] = replayed
@@ -1709,6 +2775,8 @@ class CoreStore:
         connection: sqlite3.Connection,
         observation: sqlite3.Row,
         principal: ClientPrincipal | None = None,
+        *,
+        origin: ObservationOrigin | None = None,
     ) -> sqlite3.Row | None:
         supersedes = cast(str | None, observation["supersedes"])
         if supersedes is not None:
@@ -1722,21 +2790,84 @@ class CoreStore:
             return record if record is None or self._record_is_allowed(record, principal) else None
         entity_key = cast(str | None, observation["entity_key"])
         attribute_key = cast(str | None, observation["attribute_key"])
-        if entity_key is None or attribute_key is None:
+        if entity_key is not None and attribute_key is not None:
+            rows = cast(
+                list[sqlite3.Row],
+                connection.execute(
+                    "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                    "ORDER BY observed_at DESC,updated_at DESC,id",
+                    (observation["vault_id"], entity_key, attribute_key),
+                ).fetchall(),
+            )
+            return next(
+                (record for record in rows if self._record_is_allowed(record, principal)),
+                None,
+            )
+        # Beta minimum (B-102): unkeyed lineage collapse applies only to
+        # archive-import material so contradictory imported history cannot all
+        # stay current. Direct configured-client / local-admin unkeyed goals,
+        # projects, and workflows remain independent current records.
+        if origin != ObservationOrigin.ARCHIVE_IMPORT:
+            return None
+        kind = str(observation["kind"]).casefold()
+        if kind not in UNKEYED_CONFLICT_KINDS:
             return None
         rows = cast(
             list[sqlite3.Row],
             connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
+                "AND entity_key IS NULL AND attribute_key IS NULL "
+                "AND approval_status='approved' AND deleted_at IS NULL "
+                "AND observation_origin=? "
                 "ORDER BY observed_at DESC,updated_at DESC,id",
-                (observation["vault_id"], entity_key, attribute_key),
+                (observation["vault_id"], kind, ObservationOrigin.ARCHIVE_IMPORT.value),
             ).fetchall(),
         )
         return next(
             (record for record in rows if self._record_is_allowed(record, principal)),
             None,
         )
+
+    def _principal_for_client_id_tx(
+        self,
+        connection: sqlite3.Connection,
+        client_id: str | None,
+    ) -> ClientPrincipal | None:
+        if client_id is None:
+            return None
+        row = cast(
+            sqlite3.Row | None,
+            connection.execute(
+                "SELECT id,name,scopes_json,auto_approve FROM client_registrations "
+                "WHERE id=? AND revoked_at IS NULL",
+                (client_id,),
+            ).fetchone(),
+        )
+        if row is None:
+            return ClientPrincipal(client_id, "Stored client", frozenset())
+        return ClientPrincipal(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            scopes=frozenset(cast(list[str], _loads(row["scopes_json"], []))),
+            auto_approve=bool(row["auto_approve"]),
+        )
+
+    def _policy_principal_tx(
+        self,
+        connection: sqlite3.Connection,
+        principal: ClientPrincipal | None,
+    ) -> ClientPrincipal | None:
+        """Re-bind policy authority from durable registration state.
+
+        Callers may pass a ClientPrincipal object; its scopes are never trusted
+        for witness evaluation. ``None`` remains the Core importer / local-admin
+        path. Unknown or revoked IDs resolve to an empty-scope principal so
+        forged or stale shape cannot manufacture witness authority.
+        """
+        if principal is None:
+            return None
+        return self._principal_for_client_id_tx(connection, principal.id)
 
     @staticmethod
     def _record_is_allowed(
@@ -2149,9 +3280,10 @@ class CoreStore:
         decision = AutomaticMemoryPolicy(policy).evaluate(
             self._candidate_out(observation),
             origin=origin,
+            principal=principal,
         )
         if str(observation["kind"]).casefold() == "context_forget":
-            target = self._target_record_tx(connection, observation, principal)
+            target = self._target_record_tx(connection, observation, principal, origin=origin)
             if decision.disposition != ObservationDisposition.APPLIED or target is None:
                 self._set_observation_decision_tx(
                     connection,
@@ -2242,7 +3374,9 @@ class CoreStore:
                     )
                     self._audit(connection, actor, "observation_tentative", [])
                 else:
-                    target = self._target_record_tx(connection, observation, principal)
+                    target = self._target_record_tx(
+                        connection, observation, principal, origin=origin
+                    )
                     if target is not None and not self._observation_wins(observation, target):
                         reason = (
                             "older or lower-authority observation did not replace current context"
@@ -2360,15 +3494,7 @@ class CoreStore:
                     if origin == ObservationOrigin.RELAY_QUEUE
                     else submitted_by
                 )
-                principal = (
-                    ClientPrincipal(
-                        id=effective_client_id,
-                        name="Stored client",
-                        scopes=frozenset(),
-                    )
-                    if effective_client_id is not None
-                    else None
-                )
+                principal = self._principal_for_client_id_tx(connection, effective_client_id)
                 self._evaluate_observation_tx(
                     connection,
                     str(row["id"]),
@@ -2387,6 +3513,8 @@ class CoreStore:
         actor: str = "local-user",
     ) -> ContextRecordOut:
         request = request or ApprovalRequest()
+        if contains_secret_like_value(request.model_dump(mode="json")):
+            raise InvalidStateError("direct secret-like approval content was refused")
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -2527,6 +3655,7 @@ class CoreStore:
         self, candidate_id: str, *, reason: str | None = None, actor: str = "local-user"
     ) -> CandidateOut:
         now = utc_now()
+        safe_reason = None if reason is None else redact_secret_reason(reason)
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -2543,8 +3672,8 @@ class CoreStore:
                     ApprovalStatus.REJECTED.value,
                     now,
                     actor,
-                    reason,
-                    reason or "manually ignored through compatibility endpoint",
+                    safe_reason,
+                    safe_reason or "manually ignored through compatibility endpoint",
                     now,
                     AUTOMATIC_POLICY_VERSION,
                     ObservationOrigin.LOCAL_ADMIN.value,
@@ -2617,6 +3746,16 @@ class CoreStore:
     ) -> ContextRecordOut:
         if (entity_key is None) != (attribute_key is None):
             raise InvalidStateError("entity_key and attribute_key must be supplied together")
+        if contains_secret_like_value(
+            {
+                "content": content,
+                "reason": reason,
+                "structured_value": structured_value,
+                "entity_key": entity_key,
+                "attribute_key": attribute_key,
+            }
+        ):
+            raise InvalidStateError("direct secret-like correction content was refused")
         with self.transaction() as connection:
             previous = connection.execute(
                 "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)
@@ -2739,9 +3878,10 @@ class CoreStore:
             if existing is not None:
                 return dict(existing)
             raise NotFoundError("context record not found")
+        safe_reason = redact_secret_reason(reason)
         now = utc_now()
         version = int(record["version"]) + 1
-        tombstone_hash = _hash_text(f"{record_id}:{version}:{reason}:{now}")
+        tombstone_hash = _hash_text(f"{record_id}:{version}:{now}")
         connection.execute(
             "UPDATE context_records SET deleted_at=?,updated_at=?,version=? WHERE id=?",
             (now, now, version, record_id),
@@ -2750,13 +3890,13 @@ class CoreStore:
             "SELECT * FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         assert deleted is not None
-        self._insert_version(connection, deleted, reason)
+        self._insert_version(connection, deleted, safe_reason)
         connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
         connection.execute(
             "INSERT INTO deletion_tombstones"
             "(record_id,vault_id,deleted_version,reason,content_hash,deleted_at) "
             "VALUES(?,?,?,?,?,?)",
-            (record_id, record["vault_id"], version, reason, tombstone_hash, now),
+            (record_id, record["vault_id"], version, safe_reason, tombstone_hash, now),
         )
         self._emit_event(
             connection,
@@ -2770,7 +3910,7 @@ class CoreStore:
         return {
             "record_id": record_id,
             "deleted_version": version,
-            "reason": reason,
+            "reason": safe_reason,
             "content_hash": tombstone_hash,
             "deleted_at": now,
         }

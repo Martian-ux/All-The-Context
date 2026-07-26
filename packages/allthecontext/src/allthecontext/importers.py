@@ -14,6 +14,17 @@ from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
 from .config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES
+from .import_boundary import (
+    DEFAULT_CANCEL_REGISTRY,
+    ImportCancelledError,
+    ImportCancelRegistry,
+    ImportProgress,
+    ImportProgressTracker,
+    durable_import_error_code,
+    merge_progress_metadata,
+    preflight_disk_space,
+    refuse_if_over_boundary,
+)
 from .ingestion import IngestionService, archive_session_request
 from .models import (
     Availability,
@@ -29,6 +40,7 @@ from .provider_ingestion import (
     ProviderArchiveBuilder,
     ProviderExtraction,
     normalize_provider,
+    parser_identity_for,
 )
 from .storage import CoreStore, InvalidStateError
 
@@ -71,12 +83,14 @@ class ParsedArchive:
     warnings: list[str]
     provider: str = ArchiveProvider.GENERIC.value
     export_format: str = "generic_document"
-    stats: dict[str, int | str] = field(default_factory=dict)
+    stats: dict[str, Any] = field(default_factory=dict)
     available: list[str] = field(default_factory=list)
     unavailable: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     complete: bool = True
     recognized_provider: bool = False
+    closed_coverage: dict[str, int] = field(default_factory=dict)
+    parser_identity: str = PARSER_VERSION
 
 
 def _candidate(kind: str, content: str, *, evidence: str | None = None) -> CandidateInput | None:
@@ -245,7 +259,8 @@ def _combine(
     warnings: Sequence[str] = (),
 ) -> ParsedArchive:
     combined_warnings = _deduplicate_strings([*warnings, *provider_result.warnings])[:512]
-    candidates = _deduplicate([*generic, *provider_result.candidates])
+    generic_list = list(generic)
+    candidates = _deduplicate([*generic_list, *provider_result.candidates])
     stats = dict(provider_result.stats)
     stats["candidates"] = len(candidates)
     available = provider_result.available or ["generic structured/labeled document"]
@@ -268,6 +283,20 @@ def _combine(
         for warning in combined_warnings
         for marker in incomplete_markers
     )
+    closed = dict(provider_result.closed_coverage)
+    if not closed:
+        closed = {
+            "recognized": 0,
+            "excluded": 0,
+            "skipped": 0,
+            "unavailable": 0,
+            "failed": 0,
+            "unparsed": 0,
+        }
+    # Generic kind/content and labeled extractors contribute recognized coverage.
+    closed["recognized"] = max(int(closed.get("recognized", 0)), len(candidates))
+    if generic_list and not provider_result.recognized:
+        closed["recognized"] = max(closed["recognized"], len(candidates))
     return ParsedArchive(
         candidates=candidates,
         warnings=combined_warnings,
@@ -279,6 +308,9 @@ def _combine(
         limitations=limitations,
         complete=complete,
         recognized_provider=provider_result.recognized,
+        closed_coverage=closed,
+        parser_identity=provider_result.parser_identity
+        or parser_identity_for(provider_result.provider),
     )
 
 
@@ -339,6 +371,8 @@ def parse_archive(
         limitations=result.limitations,
         complete=result.complete,
         recognized_provider=result.recognized_provider,
+        closed_coverage=dict(result.closed_coverage),
+        parser_identity=result.parser_identity,
     )
 
 
@@ -348,6 +382,7 @@ def parse_archive_path(
     display_name: str | None = None,
     provider: str | ArchiveProvider = ArchiveProvider.AUTO,
     max_uncompressed_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
+    progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
     safe_name = Path(display_name or path.name).name
     suffix = Path(safe_name).suffix.casefold()
@@ -356,6 +391,7 @@ def parse_archive_path(
             path,
             provider=provider,
             max_uncompressed_bytes=max_uncompressed_bytes,
+            progress=progress,
         )
     if suffix == ".json":
         builder = _builder(provider)
@@ -363,13 +399,17 @@ def parse_archive_path(
         try:
             with path.open("rb") as stream:
                 for document in _iter_json_documents(stream):
+                    if progress is not None:
+                        progress.check_cancelled()
                     _consume_json_value(builder, safe_name, document, generic)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise _invalid_json_error(error) from error
         return _combine(builder.finish(), generic)
     if suffix == ".jsonl":
-        return _parse_jsonl_stream(path, safe_name, provider)
+        return _parse_jsonl_stream(path, safe_name, provider, progress=progress)
     if suffix in {".md", ".markdown", ".txt", ""}:
+        if progress is not None:
+            progress.check_cancelled()
         try:
             text = path.read_text(encoding="utf-8-sig")
             warnings: list[str] = []
@@ -377,6 +417,8 @@ def parse_archive_path(
             text = path.read_text(encoding="utf-8-sig", errors="replace")
             warnings = ["invalid UTF-8 sequences were replaced"]
         result = parse_text(text, provider=provider, source_name=safe_name)
+        if progress is not None:
+            progress.check_cancelled()
         return ParsedArchive(
             candidates=result.candidates,
             warnings=[*warnings, *result.warnings],
@@ -388,6 +430,8 @@ def parse_archive_path(
             limitations=result.limitations,
             complete=result.complete,
             recognized_provider=result.recognized_provider,
+            closed_coverage=dict(result.closed_coverage),
+            parser_identity=result.parser_identity,
         )
     raise InvalidStateError("supported import types are ZIP, JSON, JSONL, Markdown, and text")
 
@@ -396,12 +440,20 @@ def _parse_jsonl_stream(
     path: Path,
     source_name: str,
     provider: str | ArchiveProvider,
+    *,
+    progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
     builder = _builder(provider)
     generic: list[CandidateInput] = []
     warnings: list[str] = []
+    processed = 0
+    next_progress = 0
     with path.open("rb") as stream:
         for line_number, raw_line in enumerate(stream, start=1):
+            processed += len(raw_line)
+            if progress is not None and processed >= next_progress:
+                progress.advance_bytes(processed, message=f"parsed line {line_number}")
+                next_progress = processed + 1024 * 1024
             if not raw_line.strip():
                 continue
             try:
@@ -410,6 +462,8 @@ def _parse_jsonl_stream(
                 _append_warning(warnings, f"line {line_number}: invalid JSON skipped")
                 continue
             _consume_json_value(builder, source_name, value, generic)
+    if progress is not None:
+        progress.advance_bytes(processed, message="raw source parsing complete")
     return _combine(builder.finish(), generic, warnings)
 
 
@@ -421,6 +475,7 @@ def parse_zip_bundle(
     max_uncompressed_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
     max_compression_ratio: int = 500,
     max_json_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
+    progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
     """Parse supported ZIP members in place; archive paths are never extracted."""
     builder = _builder(provider)
@@ -476,6 +531,8 @@ def parse_zip_bundle(
                 supported_members.append(member)
 
             for member in supported_members:
+                if progress is not None:
+                    progress.check_cancelled()
                 safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
                 try:
@@ -486,7 +543,15 @@ def parse_zip_bundle(
                             ):
                                 _consume_json_value(builder, safe_name, document, generic)
                     elif suffix == ".jsonl":
-                        _consume_zip_jsonl(archive, member, safe_name, builder, generic, warnings)
+                        _consume_zip_jsonl(
+                            archive,
+                            member,
+                            safe_name,
+                            builder,
+                            generic,
+                            warnings,
+                            progress=progress,
+                        )
                     else:
                         with archive.open(member) as stream:
                             raw_text = stream.read()
@@ -524,9 +589,17 @@ def _consume_zip_jsonl(
     builder: ProviderArchiveBuilder,
     generic: list[CandidateInput],
     warnings: list[str],
+    *,
+    progress: ImportProgressTracker | None = None,
 ) -> None:
+    processed = 0
+    next_progress = 0
     with archive.open(member) as stream:
         for line_number, raw_line in enumerate(stream, start=1):
+            processed += len(raw_line)
+            if progress is not None and processed >= next_progress:
+                progress.advance_bytes(processed, message=f"parsed ZIP line {line_number}")
+                next_progress = processed + 1024 * 1024
             if not raw_line.strip():
                 continue
             try:
@@ -667,6 +740,8 @@ class ArchiveImportService:
         *,
         max_bytes: int = DEFAULT_MAX_IMPORT_BYTES,
         max_expanded_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
+        cancel_registry: ImportCancelRegistry | None = None,
+        skip_disk_preflight: bool = False,
     ) -> None:
         if not 1 <= max_bytes <= MAX_IMPORT_BYTES:
             raise ValueError(f"max_bytes must be between 1 and {MAX_IMPORT_BYTES}")
@@ -674,6 +749,8 @@ class ArchiveImportService:
         self.ingestion = IngestionService(store)
         self.max_bytes = max_bytes
         self.max_expanded_bytes = max(max_expanded_bytes, max_bytes)
+        self.cancel_registry = cancel_registry or DEFAULT_CANCEL_REGISTRY
+        self.skip_disk_preflight = skip_disk_preflight
 
     def import_path(
         self,
@@ -687,27 +764,71 @@ class ArchiveImportService:
         if not resolved.is_file():
             raise InvalidStateError("import file does not exist")
         size = resolved.stat().st_size
-        if size > self.max_bytes:
-            raise InvalidStateError(f"import exceeds the {self.max_bytes}-byte size limit")
+        refuse_if_over_boundary(size, limit=self.max_bytes)
         safe_name = Path(filename or resolved.name).name
-        parsed = parse_archive_path(
-            resolved,
-            display_name=safe_name,
-            provider=_provider_hint(provider, source_service),
-            max_uncompressed_bytes=self.max_expanded_bytes,
+        provider_hint = _provider_hint(provider, source_service)
+        provisional_service = _provisional_source_service(source_service, provider)
+        preflight = None
+        if not self.skip_disk_preflight:
+            preflight = preflight_disk_space(
+                self.store.database_path.parent,
+                size,
+                database_path=self.store.database_path,
+            )
+        tracker = ImportProgressTracker(
+            bytes_total=max(size, 1),
+            registry=self.cancel_registry,
         )
-        actual_service = _actual_source_service(parsed, source_service, provider)
+        tracker.set_phase("preflight", message="disk preflight complete")
+        tracker.set_phase("storing", message="preserving raw source")
+        tracker.check_cancelled()
+        metadata = _processing_source_metadata(
+            provider_hint,
+            preflight=preflight,
+            progress=tracker.snapshot(),
+        )
         source = self.store.add_source_file(
             resolved,
-            source_service=actual_service,
+            source_service=provisional_service,
             source_type=_source_type(safe_name),
             filename=safe_name,
             media_type=_media_type(safe_name),
-            metadata=_source_metadata(parsed),
-            parser_warnings=parsed.warnings,
+            metadata=metadata,
+            parser_warnings=(),
             import_status="processing",
         )
-        return self._ingest(source, parsed, actual_service)
+        tracker.bind_source(source.id)
+        tracker.durable_sink = self._durable_progress_sink(source.id)
+        tracker.advance_bytes(size, message="raw source preserved")
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="atc-import-parse-", dir=self.store.database_path.parent
+            ) as temporary_directory:
+                preserved_path = Path(temporary_directory) / "preserved-source"
+                self.store.copy_source_content_to_path(source.id, preserved_path)
+                tracker.set_phase("parsing", message="parsing preserved raw source")
+                parsed = parse_archive_path(
+                    preserved_path,
+                    display_name=safe_name,
+                    provider=provider_hint,
+                    max_uncompressed_bytes=self.max_expanded_bytes,
+                    progress=tracker,
+                )
+            actual_service = _actual_source_service(parsed, source_service, provider)
+            source = self.store.reclassify_source(
+                source.id,
+                source_service=actual_service,
+                source_type=_source_type(safe_name),
+            )
+            tracker.bind_source(source.id)
+            tracker.durable_sink = self._durable_progress_sink(source.id)
+        except ImportCancelledError:
+            self._mark_cancelled(source.id, tracker)
+            raise
+        except Exception as error:
+            self._mark_failed(source.id, tracker, error)
+            raise
+        return self._ingest(source, parsed, actual_service, tracker=tracker)
 
     def import_bytes(
         self,
@@ -717,33 +838,78 @@ class ArchiveImportService:
         source_service: str = ArchiveProvider.AUTO.value,
         provider: str | None = None,
     ) -> dict[str, Any]:
-        if len(content) > self.max_bytes:
-            raise InvalidStateError(f"import exceeds the {self.max_bytes}-byte size limit")
+        refuse_if_over_boundary(len(content), limit=self.max_bytes)
         safe_name = Path(filename).name
         provider_hint = _provider_hint(provider, source_service)
-        parsed = (
-            parse_zip_bundle(
-                content,
-                provider=provider_hint,
-                max_uncompressed_bytes=self.max_expanded_bytes,
+        provisional_service = _provisional_source_service(source_service, provider)
+        preflight = None
+        if not self.skip_disk_preflight:
+            preflight = preflight_disk_space(
+                self.store.database_path.parent,
+                len(content),
+                database_path=self.store.database_path,
             )
-            if Path(safe_name).suffix.casefold() == ".zip"
-            else parse_archive(safe_name, content, provider=provider_hint)
+        tracker = ImportProgressTracker(
+            bytes_total=max(len(content), 1),
+            registry=self.cancel_registry,
         )
-        actual_service = _actual_source_service(parsed, source_service, provider)
+        tracker.set_phase("preflight", message="disk preflight complete")
+        tracker.set_phase("storing", message="preserving raw source")
+        tracker.check_cancelled()
+        metadata = _processing_source_metadata(
+            provider_hint,
+            preflight=preflight,
+            progress=tracker.snapshot(),
+        )
         source = self.store.add_source(
             content,
-            source_service=actual_service,
+            source_service=provisional_service,
             source_type=_source_type(safe_name),
             filename=safe_name,
             media_type=_media_type(safe_name),
-            metadata=_source_metadata(parsed),
-            parser_warnings=parsed.warnings,
+            metadata=metadata,
+            parser_warnings=(),
             import_status="processing",
         )
-        return self._ingest(source, parsed, actual_service)
+        tracker.bind_source(source.id)
+        tracker.durable_sink = self._durable_progress_sink(source.id)
+        tracker.advance_bytes(len(content), message="raw source preserved")
+        try:
+            tracker.set_phase("parsing", message="parsing preserved raw source")
+            tracker.check_cancelled()
+            parsed = (
+                parse_zip_bundle(
+                    content,
+                    provider=provider_hint,
+                    max_uncompressed_bytes=self.max_expanded_bytes,
+                    progress=tracker,
+                )
+                if Path(safe_name).suffix.casefold() == ".zip"
+                else parse_archive(safe_name, content, provider=provider_hint)
+            )
+            tracker.check_cancelled()
+            actual_service = _actual_source_service(parsed, source_service, provider)
+            source = self.store.reclassify_source(
+                source.id,
+                source_service=actual_service,
+                source_type=_source_type(safe_name),
+            )
+            tracker.bind_source(source.id)
+            tracker.durable_sink = self._durable_progress_sink(source.id)
+        except ImportCancelledError:
+            self._mark_cancelled(source.id, tracker)
+            raise
+        except Exception as error:
+            self._mark_failed(source.id, tracker, error)
+            raise
+        return self._ingest(source, parsed, actual_service, tracker=tracker)
 
-    def reprocess_source(self, source_id: str) -> dict[str, Any]:
+    def reprocess_source(
+        self,
+        source_id: str,
+        *,
+        progress_tracker: ImportProgressTracker | None = None,
+    ) -> dict[str, Any]:
         """Resume extraction from the preserved raw blob after interruption or failure."""
         source = self.store.get_source(source_id, duplicate=True)
         if source.import_status == "complete":
@@ -755,6 +921,7 @@ class ArchiveImportService:
                 "limitations": [],
                 "warnings": source.parser_warnings,
                 "complete": bool(source.metadata.get("coverage_complete", True)),
+                "closed_coverage": source.metadata.get("closed_coverage", {}),
             }
             return {
                 "source": source.model_dump(mode="json"),
@@ -782,37 +949,201 @@ class ArchiveImportService:
                     else {}
                 ),
                 "coverage": coverage,
+                "parser_identity": str(
+                    source.metadata.get(
+                        "parser_identity",
+                        parser_identity_for(str(source.metadata.get("provider", "generic"))),
+                    )
+                ),
             }
 
-        provider = str(source.metadata.get("provider", source.source_service))
-        with tempfile.TemporaryDirectory(
-            prefix="atc-reprocess-", dir=self.store.database_path.parent
-        ) as temporary_directory:
-            raw_path = Path(temporary_directory) / "preserved-source"
-            self.store.copy_source_content_to_path(source.id, raw_path)
-            parsed = parse_archive_path(
-                raw_path,
-                display_name=source.filename or "import.txt",
-                provider=_provider_hint(None, provider),
-                max_uncompressed_bytes=self.max_expanded_bytes,
+        if not self.skip_disk_preflight:
+            preflight_disk_space(
+                self.store.database_path.parent,
+                source.byte_size,
+                database_path=self.store.database_path,
             )
-        self.store.update_source_import(
-            source.id,
-            import_status="processing",
-            metadata=_source_metadata(parsed),
-            parser_warnings=parsed.warnings,
+        # Preserve the caller's operation-level sink across source-id merges.
+        external_operation_sink = (
+            progress_tracker.durable_sink if progress_tracker is not None else None
         )
-        processing = self.store.get_source(source.id, duplicate=True)
-        return self._ingest(processing, parsed, source.source_service)
+        if progress_tracker is None:
+            tracker = ImportProgressTracker(
+                bytes_total=max(source.byte_size, 1),
+                source_id=source.id,
+                registry=self.cancel_registry,
+            )
+        else:
+            tracker = progress_tracker
+            tracker.bind_source(source.id)
+
+        def attach_progress_sinks(bound_source_id: str) -> None:
+            """Bind source telemetry; rebind after reclassify merge may change ids."""
+            source_sink = self._durable_progress_sink(bound_source_id)
+            if external_operation_sink is None:
+                tracker.durable_sink = source_sink
+                return
+
+            def combined_sink(progress: ImportProgress) -> None:
+                source_sink(progress)
+                external_operation_sink(progress)
+
+            tracker.durable_sink = combined_sink
+
+        attach_progress_sinks(source.id)
+        if progress_tracker is None:
+            tracker.set_phase("storing", message="using preserved raw source")
+            tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
+        provider = str(source.metadata.get("provider", source.source_service))
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="atc-reprocess-", dir=self.store.database_path.parent
+            ) as temporary_directory:
+                raw_path = Path(temporary_directory) / "preserved-source"
+                self.store.copy_source_content_to_path(source.id, raw_path)
+                tracker.set_phase("parsing", message="parsing preserved raw source")
+                tracker.check_cancelled()
+                parsed = parse_archive_path(
+                    raw_path,
+                    display_name=source.filename or "import.txt",
+                    provider=_provider_hint(None, provider),
+                    max_uncompressed_bytes=self.max_expanded_bytes,
+                    progress=tracker,
+                )
+            actual_service = _actual_source_service(
+                parsed,
+                source.source_service,
+                None,
+            )
+            source = self.store.reclassify_source(
+                source.id,
+                source_service=actual_service,
+                source_type=source.source_type,
+            )
+            tracker.bind_source(source.id)
+            # Duplicate merge deletes the provisional source id; rebind sinks.
+            attach_progress_sinks(source.id)
+            metadata = _source_metadata(parsed)
+            metadata = merge_progress_metadata(metadata, tracker.snapshot())
+            self.store.update_source_import(
+                source.id,
+                import_status="processing",
+                metadata=metadata,
+                parser_warnings=parsed.warnings,
+            )
+            processing = self.store.get_source(source.id, duplicate=True)
+        except ImportCancelledError:
+            self._mark_cancelled(source.id, tracker)
+            raise
+        except Exception as error:
+            self._mark_failed(source.id, tracker, error)
+            raise
+        return self._ingest(processing, parsed, actual_service, tracker=tracker)
+
+    def cancel_import(self, source_id: str) -> dict[str, Any]:
+        """Request cancellation of an in-flight import; acknowledged by the worker."""
+        result = self.store.request_import_cancel(source_id)
+        in_flight = self.cancel_registry.request_cancel(source_id)
+        result["worker_registered"] = in_flight
+        return result
+
+    def import_progress(self, source_id: str) -> dict[str, Any]:
+        source = self.store.get_source(source_id, duplicate=True)
+        progress = source.metadata.get("import_progress")
+        return {
+            "source_id": source.id,
+            "import_status": source.import_status,
+            "progress": progress if isinstance(progress, dict) else None,
+            "byte_size": source.byte_size,
+            "cancel_requested": bool(source.metadata.get("cancel_requested")),
+        }
+
+    def _durable_progress_sink(self, source_id: str) -> Any:
+        def _sink(progress: ImportProgress) -> None:
+            status: Any = None
+            if progress.phase == "complete":
+                status = "complete"
+            elif progress.phase == "cancelled":
+                status = "cancelled"
+            elif progress.phase == "failed":
+                status = "failed"
+            elif progress.phase in {
+                "preflight",
+                "awaiting_upload",
+                "uploading",
+                "hashing",
+                "staging",
+                "storing",
+                "parsing",
+                "ingesting",
+                "verifying",
+                "publishing",
+            }:
+                status = "processing"
+            # Durable progress must commit; silent success would claim false progress.
+            self.store.update_source_progress(
+                source_id,
+                progress=progress.as_dict(),
+                import_status=status,
+            )
+
+        return _sink
+
+    def _mark_cancelled(self, source_id: str, tracker: ImportProgressTracker) -> None:
+        tracker.set_phase("cancelled", message="import cancelled")
+        try:
+            source = self.store.get_source(source_id, duplicate=True)
+            metadata = merge_progress_metadata(source.metadata, tracker.snapshot())
+            metadata["cancel_requested"] = True
+            self.store.update_source_import(
+                source_id,
+                import_status="cancelled",
+                metadata=metadata,
+                parser_warnings=source.parser_warnings,
+            )
+        finally:
+            tracker.close()
+
+    def _mark_failed(
+        self,
+        source_id: str,
+        tracker: ImportProgressTracker,
+        error: Exception,
+    ) -> None:
+        # Closed content-free code only; never persist raw exception text.
+        tracker.fail(message=durable_import_error_code(error))
+        try:
+            source = self.store.get_source(source_id, duplicate=True)
+            metadata = merge_progress_metadata(source.metadata, tracker.snapshot())
+            self.store.update_source_import(
+                source_id,
+                import_status="failed",
+                metadata=metadata,
+                parser_warnings=source.parser_warnings,
+            )
+        except Exception:
+            pass
+        finally:
+            tracker.close()
 
     def _ingest(
         self,
         source: SourceOut,
         parsed: ParsedArchive,
         source_service: str,
+        *,
+        tracker: ImportProgressTracker | None = None,
     ) -> dict[str, Any]:
+        progress = tracker or ImportProgressTracker(
+            bytes_total=max(source.byte_size, 1),
+            source_id=source.id,
+            registry=self.cancel_registry,
+            durable_sink=self._durable_progress_sink(source.id),
+        )
         if source.duplicate and source.import_status == "complete":
             existing_ids = self.store.candidate_ids_for_source(source.id)
+            progress.complete(message="duplicate complete source")
+            progress.close()
             return self._import_result(
                 source,
                 {
@@ -824,6 +1155,7 @@ class ArchiveImportService:
                         "limitations": parsed.limitations,
                         "warnings": parsed.warnings,
                         "complete": parsed.complete,
+                        "closed_coverage": parsed.closed_coverage,
                     },
                 },
                 existing_ids,
@@ -842,11 +1174,19 @@ class ArchiveImportService:
             for candidate in parsed.candidates
         ]
         try:
+            progress.set_phase("ingesting", message="submitting observation batches")
+            progress.check_cancelled()
             begin = self.ingestion.begin(
                 archive_session_request(source.id, parser_version=PARSER_VERSION)
             )
             candidate_ids: list[str] = []
-            for index, batch in enumerate(_chunks(candidates, 200)):
+            batches = list(_chunks(candidates, 200)) or []
+            total_batches = max(len(batches), 1)
+            if not batches and not candidates:
+                # Empty candidate set still needs a finish for atomic coverage.
+                pass
+            for index, batch in enumerate(batches):
+                progress.check_cancelled()
                 submitted = self.ingestion.submit(
                     SubmitBatchRequest(
                         session_id=str(begin["session_id"]),
@@ -855,6 +1195,13 @@ class ArchiveImportService:
                     )
                 )
                 candidate_ids.extend(str(item) for item in submitted["candidate_ids"])
+                # Bound progress to one storage chunk of accuracy for byte mapping.
+                if source.byte_size > 0:
+                    fraction = (index + 1) / total_batches
+                    mapped = int(source.byte_size * fraction)
+                    progress.advance_bytes(mapped, message=f"ingested batch {index + 1}")
+            progress.set_phase("verifying", message="verifying coverage and integrity")
+            progress.check_cancelled()
             coverage = CoverageReport(
                 available=parsed.available,
                 unavailable=parsed.unavailable,
@@ -862,33 +1209,41 @@ class ArchiveImportService:
                 limitations=parsed.limitations,
                 complete=parsed.complete,
             )
+            progress.set_phase("publishing", message="atomic policy publication")
+            progress.check_cancelled()
             finished = self.ingestion.finish(
                 FinishIngestionRequest(
                     session_id=str(begin["session_id"]),
                     coverage_report=coverage,
                 )
             )
+            metadata = _source_metadata(parsed)
+            # Preserve preflight and any earlier durable progress fields.
+            if isinstance(source.metadata.get("preflight"), dict):
+                metadata["preflight"] = source.metadata["preflight"]
+            progress.complete(message="import complete")
+            metadata = merge_progress_metadata(metadata, progress.snapshot())
             self.store.update_source_import(
                 source.id,
                 import_status="complete",
-                metadata=_source_metadata(parsed),
+                metadata=metadata,
                 parser_warnings=parsed.warnings,
             )
             refreshed = self.store.get_source(source.id, duplicate=source.duplicate)
-            return self._import_result(
+            result = self._import_result(
                 refreshed,
                 finished,
                 candidate_ids or self.store.candidate_ids_for_source(source.id),
                 parsed,
                 duplicate=source.duplicate,
             )
-        except Exception:
-            self.store.update_source_import(
-                source.id,
-                import_status="failed",
-                metadata=_source_metadata(parsed),
-                parser_warnings=parsed.warnings,
-            )
+            progress.close()
+            return result
+        except ImportCancelledError:
+            self._mark_cancelled(source.id, progress)
+            raise
+        except Exception as error:
+            self._mark_failed(source.id, progress, error)
             raise
 
     def _import_result(
@@ -921,14 +1276,60 @@ class ArchiveImportService:
         return result
 
 
-def _source_metadata(parsed: ParsedArchive) -> dict[str, Any]:
-    return {
+def _source_metadata(
+    parsed: ParsedArchive,
+    *,
+    preflight: Any | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
         "provider": parsed.provider,
         "export_format": parsed.export_format,
         "parser_version": PARSER_VERSION,
+        "parser_identity": parsed.parser_identity or parser_identity_for(parsed.provider),
         "stats": parsed.stats,
         "coverage_complete": parsed.complete,
+        "closed_coverage": dict(parsed.closed_coverage),
     }
+    if preflight is not None and hasattr(preflight, "as_dict"):
+        metadata["preflight"] = preflight.as_dict()
+    return metadata
+
+
+def _processing_source_metadata(
+    provider: ArchiveProvider,
+    *,
+    preflight: Any | None,
+    progress: ImportProgress,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "provider": provider.value,
+        "parser_version": PARSER_VERSION,
+        "parser_identity": parser_identity_for(provider),
+        "coverage_complete": False,
+        "closed_coverage": {
+            "recognized": 0,
+            "excluded": 0,
+            "skipped": 0,
+            "unavailable": 0,
+            "failed": 0,
+            "unparsed": 0,
+        },
+    }
+    if preflight is not None and hasattr(preflight, "as_dict"):
+        metadata["preflight"] = preflight.as_dict()
+    return merge_progress_metadata(metadata, progress)
+
+
+def _provisional_source_service(requested: str, explicit_provider: str | None) -> str:
+    if explicit_provider is not None:
+        try:
+            return normalize_provider(explicit_provider).value
+        except ValueError as error:
+            raise InvalidStateError(str(error)) from error
+    normalized = requested.strip()
+    if not normalized or len(normalized) > 128:
+        raise InvalidStateError("source service must contain 1 to 128 characters")
+    return normalized
 
 
 def _provider_hint(explicit_provider: str | None, source_service: str) -> ArchiveProvider:
@@ -1004,12 +1405,15 @@ def _import_result(
         "provider": parsed.provider,
         "export_format": parsed.export_format,
         "stats": parsed.stats,
+        "parser_identity": parsed.parser_identity or parser_identity_for(parsed.provider),
+        "parser_version": PARSER_VERSION,
         "coverage": {
             "available": parsed.available,
             "unavailable": parsed.unavailable,
             "limitations": parsed.limitations,
             "warnings": parsed.warnings,
             "complete": parsed.complete,
+            "closed_coverage": dict(parsed.closed_coverage),
         },
     }
 

@@ -17,7 +17,14 @@ import httpx
 from filelock import FileLock
 
 from .config import CoreConfig
-from .credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
+from .credentials import (
+    FALLBACK_CREDENTIAL_STORAGE,
+    OS_CREDENTIAL_STORAGE,
+    DevelopmentFileCredentialStore,
+    KeyringCredentialStore,
+    development_file_credentials_enabled,
+    require_development_file_credentials,
+)
 from .edge_claim import (
     EdgeClaimBundle,
     EdgeClaimError,
@@ -163,22 +170,25 @@ class EdgeConnectionStore:
             value = keyring.get(self.credential_name)
             legacy = keyring.get(LEGACY_EDGE_CREDENTIAL_NAME) if not value else None
         except RuntimeError:
+            require_development_file_credentials()
             value = None
             legacy = None
         if value:
-            return value, "operating-system credential store"
+            return value, OS_CREDENTIAL_STORAGE
         if legacy:
             storage = self._write_secret(legacy)
             with suppress(RuntimeError):
                 keyring.delete(LEGACY_EDGE_CREDENTIAL_NAME)
             return legacy, storage
+        if not development_file_credentials_enabled():
+            return None, OS_CREDENTIAL_STORAGE
         value = self.fallback.get(self.credential_name)
         legacy = self.fallback.get(LEGACY_EDGE_CREDENTIAL_NAME) if not value else None
         if legacy:
             self.fallback.set(self.credential_name, legacy)
             self.fallback.delete(LEGACY_EDGE_CREDENTIAL_NAME)
             value = legacy
-        return value, "local app-data fallback"
+        return value, FALLBACK_CREDENTIAL_STORAGE
 
     def _write_secret(self, value: str) -> str:
         keyring = KeyringCredentialStore()
@@ -188,14 +198,15 @@ class EdgeConnectionStore:
             # Do not attempt a write after an availability probe fails. That
             # keeps the development fallback from accidentally duplicating a
             # secret after an ambiguous partial keyring write.
+            require_development_file_credentials()
             self.fallback.set(self.credential_name, value)
-            return "local app-data fallback"
+            return FALLBACK_CREDENTIAL_STORAGE
         try:
             keyring.set(self.credential_name, value)
             if keyring.get(self.credential_name) != value:
                 raise RuntimeError("the operating-system credential store did not persist Edge")
             self.fallback.delete(self.credential_name)
-            return "operating-system credential store"
+            return OS_CREDENTIAL_STORAGE
         except RuntimeError:
             try:
                 if previous is None:
@@ -213,8 +224,9 @@ class EdgeConnectionStore:
                     "The operating-system credential write failed and could not be rolled "
                     "back. No fallback copy was created; retry secure storage before deploying"
                 ) from rollback_error
+            require_development_file_credentials()
             self.fallback.set(self.credential_name, value)
-            return "local app-data fallback"
+            return FALLBACK_CREDENTIAL_STORAGE
 
     def material(self) -> EdgeMaterial | None:
         encoded, storage = self._read_secret()
@@ -411,7 +423,7 @@ class EdgeConnectionStore:
             if storage != "operating-system credential store":
                 raise RuntimeError(
                     "The operating-system credential store is still unavailable. "
-                    "The existing local app-data fallback was kept"
+                    "The existing insecure development credential file was kept"
                 )
             state = self.state()
             if state is not None:

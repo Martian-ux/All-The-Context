@@ -159,6 +159,16 @@ def build_platform_package(
     digest, size = sha256_file(package)
     checksum = output_dir / f"{package.name}.sha256"
     checksum.write_text(f"{digest}  {package.name}\n", encoding="utf-8", newline="\n")
+    recovery_surface = {
+        "windows": "embedded-console-helper",
+        "macos": "bundled-console-helper",
+        "linux": "console-main-binary",
+    }[platform_name]
+    recovery_console_helper = {
+        "windows": "AllTheContextRecovery.exe",
+        "macos": "all-the-context-recovery",
+        "linux": "all-the-context",
+    }[platform_name]
     report = output_dir / f"{base_name}.package.json"
     report.write_text(
         json.dumps(
@@ -174,6 +184,8 @@ def build_platform_package(
                 "source": source.name,
                 "sha256": digest,
                 "size": size,
+                "recovery_surface": recovery_surface,
+                "recovery_console_helper": recovery_console_helper,
             },
             indent=2,
             sort_keys=True,

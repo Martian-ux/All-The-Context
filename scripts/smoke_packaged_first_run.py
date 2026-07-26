@@ -1,4 +1,15 @@
-"""Exercise frozen first-run setup, installed MCP, retrieval, and graceful shutdown."""
+"""Exercise frozen first-run setup, installed MCP, retrieval, and graceful shutdown.
+
+This smoke deliberately isolates credential storage from the host OS keyring:
+it forces the null keyring backend and explicitly enables the insecure
+development credential file. That proves packaged first-run install, MCP,
+startup, and recovery paths under a non-secret isolated store.
+
+It is not BETA-P03 / real OS credential acceptance. Real Windows Credential
+Manager and macOS Keychain round-trips are exercised separately by
+``scripts/smoke_desktop_artifact.py --packaged-credential-acceptance`` and
+``scripts/smoke_platform_acceptance.py``.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +34,10 @@ from typing import Any, TextIO
 
 import anyio
 from allthecontext import __version__
+from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
+    FALLBACK_CREDENTIAL_STORAGE,
+)
 from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
@@ -32,6 +47,45 @@ from allthecontext.windows_update_helper import (
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from smoke_desktop_artifact import ROOT, artifact_executable
+
+# Explicit, isolated, non-secret smoke only. Production installs never set this.
+ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
+
+# Work-tree artifacts inspected only for presence / closed-schema projection.
+_DIAGNOSTIC_RELATIVE_NAMES = (
+    "setup-report.json",
+    "reopen-report.json",
+    "uninstall-report.json",
+    "mcp-stderr.log",
+    "mcp-restart-stderr.log",
+    "data/credentials.development.json",
+    "data/core.sqlite3",
+    "codex/config.toml",
+)
+
+# Fields from headless setup reports that may appear in failure summaries.
+_SAFE_SETUP_REPORT_KEYS = frozenset(
+    {
+        "setup",
+        "credential_storage",
+        "error_type",
+        "error_code",
+    }
+)
+_SENSITIVE_SETUP_PRESENCE_KEYS = (
+    "dashboard_url",
+    "client_id",
+    "vault_id",
+    "log_path",
+    "core_url",
+    "codex",
+    "claude",
+    "startup",
+    "warnings",
+    "diagnostics_path",
+)
+_MAX_REDACTED_ERROR_CHARS = 500
+_CLOSED_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 def available_port() -> int:
@@ -97,16 +151,19 @@ def prepare_packaged_update_transaction(
     transaction_helper = transaction_dir / "AllTheContextUpdater.exe"
     stable_helper = installed_app.with_name("AllTheContextUpdater.exe")
     stable_mcp = installed_app.with_name("AllTheContextMCP.exe")
-    if not stable_helper.is_file() or not stable_mcp.is_file():
-        raise RuntimeError("installed update or MCP helper is missing")
+    stable_recovery = installed_app.with_name("AllTheContextRecovery.exe")
+    if not stable_helper.is_file() or not stable_mcp.is_file() or not stable_recovery.is_file():
+        raise RuntimeError("installed update, MCP, or recovery helper is missing")
     shutil.copy2(stable_helper, transaction_helper)
     replacement = replacement_dir / "AllTheContextSetup.exe"
     rollback_app = rollback_dir / "AllTheContext.exe"
     rollback_mcp = rollback_dir / "AllTheContextMCP.exe"
+    rollback_recovery = rollback_dir / "AllTheContextRecovery.exe"
     rollback_update_helper = rollback_dir / "AllTheContextUpdater.exe"
     shutil.copy2(release_app, replacement)
     shutil.copy2(installed_app, rollback_app)
     shutil.copy2(stable_mcp, rollback_mcp)
+    shutil.copy2(stable_recovery, rollback_recovery)
     shutil.copy2(stable_helper, rollback_update_helper)
 
     database = data_dir / "core.sqlite3"
@@ -145,6 +202,7 @@ def prepare_packaged_update_transaction(
     replacement_digest, replacement_size = sha256_file(replacement)
     rollback_digest, rollback_size = sha256_file(rollback_app)
     rollback_mcp_digest, rollback_mcp_size = sha256_file(rollback_mcp)
+    rollback_recovery_digest, rollback_recovery_size = sha256_file(rollback_recovery)
     rollback_update_digest, rollback_update_size = sha256_file(rollback_update_helper)
     backup_digest, backup_size = sha256_file(backup)
     now = "2026-07-22T12:00:00+00:00"
@@ -165,6 +223,10 @@ def prepare_packaged_update_transaction(
         rollback_mcp_path=str(rollback_mcp),
         rollback_mcp_sha256=rollback_mcp_digest,
         rollback_mcp_size=rollback_mcp_size,
+        recovery_path=str(stable_recovery),
+        rollback_recovery_path=str(rollback_recovery),
+        rollback_recovery_sha256=rollback_recovery_digest,
+        rollback_recovery_size=rollback_recovery_size,
         stable_update_helper_path=str(stable_helper),
         rollback_update_helper_path=str(rollback_update_helper),
         rollback_update_helper_sha256=rollback_update_digest,
@@ -202,6 +264,326 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
             raise RuntimeError(f"packaged MCP did not reach Core: {status.structuredContent}")
 
 
+def redact_smoke_diagnostic_text(value: str) -> str:
+    """Project free text to a content-free diagnostic string (no secrets/paths/URLs)."""
+
+    message = value.strip() or "empty"
+    patterns = (
+        (r"(?i)(authorization\s*:\s*bearer\s+)\S+", r"\1[redacted]"),
+        (r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]"),
+        (r"atc-edge-v1\.[A-Za-z0-9_-]+", "[redacted Edge enrollment]"),
+        (
+            r"(?i)((?:token|secret|recovery[_ -]?code|password|api[_-]?key|"
+            r"atc_client_token|client_token)\s*[=:]\s*)[^\s,;\"']+",
+            r"\1[redacted]",
+        ),
+        (r"(?i)([?&](?:ticket|atc_token|token)=)[^&\s\"']+", r"\1[redacted]"),
+        (r"https?://[^\s\"']+", "[redacted url]"),
+        (r"[A-Za-z]:\\[^\s\"']+", "[redacted path]"),
+        (r"/(?:Users|home|tmp|var|opt|private)[^\s\"']*", "[redacted path]"),
+        (
+            r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+            "[redacted id]",
+        ),
+    )
+    for pattern, replacement in patterns:
+        message = re.sub(pattern, replacement, message)
+    return message[:_MAX_REDACTED_ERROR_CHARS]
+
+
+def project_setup_report_for_diagnostics(raw: object) -> dict[str, Any]:
+    """Allowlist a setup report into content-free fields only."""
+
+    if not isinstance(raw, dict):
+        return {"parseable": False}
+    projected: dict[str, Any] = {"parseable": True}
+    setup = raw.get("setup")
+    if setup in {"passed", "failed"}:
+        projected["setup"] = setup
+    storage = raw.get("credential_storage")
+    if storage in {
+        FALLBACK_CREDENTIAL_STORAGE,
+        "operating-system credential store",
+    }:
+        projected["credential_storage"] = storage
+    error_type = raw.get("error_type")
+    if error_type in {"RuntimeError", "OSError", "ValueError", "Exception"}:
+        projected["error_type"] = error_type[:80]
+    error_code = raw.get("error_code")
+    if isinstance(error_code, str) and _CLOSED_DIAGNOSTIC_CODE.fullmatch(error_code):
+        projected["error_code"] = error_code
+    projected["sensitive_fields_present"] = {
+        key: key in raw and raw.get(key) not in (None, "", [], {})
+        for key in _SENSITIVE_SETUP_PRESENCE_KEYS
+    }
+    # Never copy unknown keys through (including dashboard_url / tokens).
+    assert (
+        projected.keys()
+        <= {
+            "parseable",
+            "setup",
+            "credential_storage",
+            "error_type",
+            "error_code",
+            "sensitive_fields_present",
+        }
+        | _SAFE_SETUP_REPORT_KEYS
+    )
+    return projected
+
+
+def _relative_artifact_presence(work: Path) -> dict[str, bool]:
+    return {name: (work / name).is_file() for name in _DIAGNOSTIC_RELATIVE_NAMES}
+
+
+def build_failure_diagnostic_summary(
+    *,
+    phase: str,
+    return_code: int | None,
+    work: Path,
+    report_path: Path | None = None,
+    stdout_present: bool = False,
+    stderr_present: bool = False,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    """Build a content-free failure summary; never embed raw reports or streams."""
+
+    summary: dict[str, Any] = {
+        "application": "All The Context packaged first-run smoke",
+        "outcome": "failed",
+        "phase": phase,
+        "return_code": return_code,
+        "labels": {
+            "credential_mode": "explicit-isolated-development-file",
+            "os_credential_acceptance": "not_this_smoke",
+        },
+        "artifacts_present": _relative_artifact_presence(work),
+        "stdout_present": bool(stdout_present),
+        "stderr_present": bool(stderr_present),
+    }
+    if detail:
+        summary["detail_code"] = (
+            detail if _CLOSED_DIAGNOSTIC_CODE.fullmatch(detail) else "diagnostic_failure"
+        )
+    candidate = report_path if report_path is not None else work / "setup-report.json"
+    if candidate.is_file():
+        try:
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            summary["setup_report"] = {"parseable": False, "present": True}
+        else:
+            projected = project_setup_report_for_diagnostics(raw)
+            projected["present"] = True
+            summary["setup_report"] = projected
+    else:
+        summary["setup_report"] = {"present": False, "parseable": False}
+    return summary
+
+
+def write_failure_diagnostic_summary(
+    summary: dict[str, Any],
+    *,
+    diagnostics_root: Path,
+) -> Path:
+    """Persist only the allowlisted summary under a separate diagnostics directory."""
+
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    target = diagnostics_root / f"packaged-first-run-failure-{stamp}-{os.getpid()}.json"
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return target
+
+
+def emit_failure_diagnostics(
+    *,
+    phase: str,
+    return_code: int | None,
+    work: Path,
+    diagnostics_root: Path,
+    report_path: Path | None = None,
+    stdout_present: bool = False,
+    stderr_present: bool = False,
+    detail: str | None = None,
+) -> Path:
+    """Write content-free diagnostics and print only safe relative location + schema."""
+
+    summary = build_failure_diagnostic_summary(
+        phase=phase,
+        return_code=return_code,
+        work=work,
+        report_path=report_path,
+        stdout_present=stdout_present,
+        stderr_present=stderr_present,
+        detail=detail,
+    )
+    target = write_failure_diagnostic_summary(summary, diagnostics_root=diagnostics_root)
+    # Print only the filename and closed outcome fields — never raw streams or reports.
+    print(
+        json.dumps(
+            {
+                "packaged_first_run_failure": True,
+                "phase": phase,
+                "return_code": return_code,
+                "diagnostics_file": target.name,
+                "setup_report_present": bool(summary.get("setup_report", {}).get("present")),
+                "stdout_present": stdout_present,
+                "stderr_present": stderr_present,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return target
+
+
+def remove_work_tree(work: Path, *, timeout_seconds: float = 10.0) -> None:
+    """Always delete the disposable work tree (credentials, vault, configs, binaries)."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while work.exists() and time.monotonic() < deadline:
+        try:
+            shutil.rmtree(work)
+        except OSError:
+            time.sleep(0.1)
+        else:
+            return
+    if work.exists():
+        raise RuntimeError(f"temporary smoke data remained locked: {work.name}")
+
+
+def recover_disposable_admin_token(work: Path) -> str:
+    """Recover the disposable desktop token solely to stop Core during cleanup."""
+
+    credential_path = work / "data" / "credentials.development.json"
+    if not credential_path.is_file():
+        return ""
+    client_id = ""
+    for report_name in ("setup-report.json", "reopen-report.json"):
+        candidate = work / report_name
+        if not candidate.is_file():
+            continue
+        try:
+            report = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        value = report.get("client_id") if isinstance(report, dict) else None
+        if isinstance(value, str) and value:
+            client_id = value
+            break
+    if not client_id:
+        return ""
+    try:
+        credentials = json.loads(credential_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return ""
+    token = credentials.get(f"client:{client_id}") if isinstance(credentials, dict) else None
+    return token if isinstance(token, str) and token else ""
+
+
+def scrub_sensitive_work_tree(work: Path) -> None:
+    """Remove credential-, vault-, config-, ticket-, and log-bearing smoke state first."""
+
+    root = work.resolve()
+    directories = ("data", "codex", "config")
+    files = (
+        "data/credentials.development.json",
+        "codex/config.toml",
+        "setup-report.json",
+        "reopen-report.json",
+        "uninstall-report.json",
+        "mcp-stderr.log",
+        "mcp-restart-stderr.log",
+    )
+    # Delete plaintext credentials, client config, tickets, and logs before
+    # attempting recursive vault cleanup; a still-exiting Core can temporarily
+    # hold SQLite open on Windows.
+    for name in files:
+        candidate = (work / name).resolve()
+        if not candidate.is_relative_to(root):
+            raise RuntimeError("refusing unsafe smoke cleanup target")
+        candidate.unlink(missing_ok=True)
+    for name in directories:
+        candidate = (work / name).resolve()
+        if not candidate.is_relative_to(root):
+            raise RuntimeError("refusing unsafe smoke cleanup target")
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+        elif candidate.exists():
+            candidate.unlink()
+
+
+def _run_headless_setup(
+    *,
+    executable: Path,
+    report_path: Path,
+    environment: dict[str, str],
+    extra_args: list[str],
+    work: Path,
+    diagnostics_root: Path,
+    label: str,
+) -> dict[str, Any]:
+    """Run packaged headless setup; on failure write content-free diagnostics only."""
+
+    completed = subprocess.run(
+        [
+            str(executable),
+            "--headless-setup",
+            str(report_path),
+            *extra_args,
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    stdout_present = bool(completed.stdout and completed.stdout.strip())
+    stderr_present = bool(completed.stderr and completed.stderr.strip())
+    if completed.returncode != 0:
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=completed.returncode,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail="subprocess_nonzero",
+        )
+        raise SystemExit(
+            f"{label} exited {completed.returncode}; content-free diagnostics written "
+            f"(work tree will be removed; windowed packages may only leave a setup report)"
+        )
+    if not report_path.is_file():
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail="setup_report_missing",
+        )
+        raise SystemExit(f"{label} did not write a setup report")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("setup") == "failed":
+        emit_failure_diagnostics(
+            phase=label,
+            return_code=0,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path,
+            stdout_present=stdout_present,
+            stderr_present=stderr_present,
+            detail="setup_report_failed",
+        )
+        raise SystemExit(f"{label} reported setup failure")
+    return report
+
+
 def main() -> int:
     system = os.environ.get("ATC_SMOKE_PLATFORM") or platform.system()
     executable = artifact_executable(system)
@@ -210,7 +592,11 @@ def main() -> int:
 
     temp_parent = ROOT / "tmp"
     temp_parent.mkdir(parents=True, exist_ok=True)
+    # Disposable work holds credentials/vault/binaries and is always removed.
     work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))
+    # Content-free failure summaries live outside the work tree and never hold secrets.
+    diagnostics_root = temp_parent / "packaged-first-run-diagnostics"
+    diagnostics_root.mkdir(parents=True, exist_ok=True)
     data_dir = work / "data"
     codex_home = work / "codex"
     report_path = work / "setup-report.json"
@@ -223,7 +609,10 @@ def main() -> int:
             "ATC_CORE_PORT": str(port),
             "ATC_CORE_HOST": "127.0.0.1",
             "CODEX_HOME": str(codex_home),
-            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            # Isolate non-secret smoke credentials from the host OS store.
+            "PYTHON_KEYRING_BACKEND": ISOLATED_SMOKE_CREDENTIAL_BACKEND,
+            # Explicit opt-in only for this disposable smoke; never production default.
+            DEVELOPMENT_FALLBACK_ENV: "1",
         }
     )
     if system == "Windows":
@@ -252,10 +641,24 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{port}"
     cleanup_admin_token = ""
 
+    def fail_smoke(phase: str, error_code: str, *, return_code: int | None = None) -> None:
+        """Record content-free diagnostics, then exit. Work tree is always cleaned."""
+
+        emit_failure_diagnostics(
+            phase=phase,
+            return_code=return_code,
+            work=work,
+            diagnostics_root=diagnostics_root,
+            report_path=report_path if report_path.is_file() else None,
+            detail=error_code,
+        )
+        raise SystemExit(error_code)
+
     def cleanup_failed_smoke() -> None:
-        if cleanup_admin_token:
+        cleanup_token = cleanup_admin_token or recover_disposable_admin_token(work)
+        if cleanup_token:
             with suppress(Exception):
-                stop_core(base_url, cleanup_admin_token)
+                stop_core(base_url, cleanup_token)
         if system == "Windows":
             import winreg
 
@@ -266,40 +669,64 @@ def main() -> int:
             ):
                 with suppress(OSError):
                     winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
-        deadline = time.monotonic() + 10
-        while work.exists() and time.monotonic() < deadline:
-            try:
-                shutil.rmtree(work)
-            except OSError:
-                time.sleep(0.1)
-            else:
-                return
+        cleanup_failed = False
+        try:
+            scrub_sensitive_work_tree(work)
+        except Exception:
+            cleanup_failed = True
+        try:
+            remove_work_tree(work)
+        except Exception:
+            cleanup_failed = True
+        if cleanup_failed:
+            print(
+                json.dumps(
+                    {
+                        "packaged_first_run_cleanup": "failed",
+                        "content_free": True,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     atexit.register(cleanup_failed_smoke)
 
-    subprocess.run(
-        [
-            str(executable),
-            "--headless-setup",
-            str(report_path),
+    report = _run_headless_setup(
+        executable=executable,
+        report_path=report_path,
+        environment=environment,
+        extra_args=[
             "--no-claude",
             "--vault-name",
             "Packaged smoke vault",
         ],
-        env=environment,
-        check=True,
-        timeout=90,
+        work=work,
+        diagnostics_root=diagnostics_root,
+        label="headless first-run setup",
     )
-    report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("core_url") != f"http://127.0.0.1:{port}":
-        raise SystemExit(f"unexpected setup report: {report}")
+        fail_smoke("validate-setup-report", "unexpected_core_url")
+    # Contract: this smoke uses the explicit isolated development store only.
+    # Real OS credential acceptance remains a separate packaged gate.
+    if report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
+        fail_smoke(
+            "validate-credential-storage",
+            "unexpected_credential_storage",
+        )
+    warnings = report.get("warnings") or []
+    if not any("insecure development credential file" in str(item).casefold() for item in warnings):
+        fail_smoke(
+            "validate-credential-warning",
+            "credential_warning_missing",
+        )
     startup_report = report.get("startup")
     expected_startup = {
         "Windows": "HKCU Run",
         "Darwin": "LaunchAgent",
     }.get(system, "XDG autostart")
     if not isinstance(startup_report, dict) or startup_report.get("mechanism") != expected_startup:
-        raise SystemExit(f"packaged startup adapter was not installed: {startup_report}")
+        fail_smoke("validate-startup", "startup_adapter_missing")
 
     config_path = codex_home / "config.toml"
     config = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -448,27 +875,31 @@ def main() -> int:
     # Reopen the stable installed copy and run the idempotent setup/upgrade
     # path; the same vault and desktop authority must survive.
     reopen_report_path = work / "reopen-report.json"
-    subprocess.run(
-        [
-            str(installed_app),
-            "--headless-setup",
-            str(reopen_report_path),
+    reopen_report = _run_headless_setup(
+        executable=installed_app,
+        report_path=reopen_report_path,
+        environment=environment,
+        extra_args=[
             "--no-startup",
             "--no-claude",
             "--vault-name",
             "Packaged smoke vault",
         ],
-        env=environment,
-        check=True,
-        timeout=90,
+        work=work,
+        diagnostics_root=diagnostics_root,
+        label="installed reopen headless setup",
     )
-    reopen_report = json.loads(reopen_report_path.read_text(encoding="utf-8"))
     if reopen_report.get("vault_id") != report.get("vault_id") or reopen_report.get(
         "client_id"
     ) != report.get("client_id"):
-        raise SystemExit(f"installed reopen changed vault authority: {reopen_report}")
+        fail_smoke("validate-reopen", "reopen_authority_changed")
+    if reopen_report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
+        fail_smoke(
+            "validate-reopen-credentials",
+            "reopen_credential_storage_changed",
+        )
     if api_request(f"{base_url}/v1/context/status", token).get("core_online") is not True:
-        raise SystemExit("reopened installed Core was not ready")
+        fail_smoke("validate-reopen-core", "reopened_core_not_ready")
     stop_core(base_url, admin_token)
 
     packaged_update_result = "not_applicable"
@@ -550,6 +981,11 @@ def main() -> int:
                 Path(str(rollback_status["mcp_path"])),
                 str(rollback_status["rollback_mcp_sha256"]),
                 int(rollback_status["rollback_mcp_size"]),
+            ),
+            (
+                Path(str(rollback_status["recovery_path"])),
+                str(rollback_status["rollback_recovery_sha256"]),
+                int(rollback_status["rollback_recovery_size"]),
             ),
             (
                 Path(str(rollback_status["stable_update_helper_path"])),
@@ -646,20 +1082,19 @@ def main() -> int:
             raise SystemExit("packaged uninstaller did not revoke the Codex principal")
         uninstall_result = "passed"
 
-    cleanup_deadline = time.monotonic() + 10
-    while True:
-        try:
-            shutil.rmtree(work)
-            break
-        except PermissionError:
-            if time.monotonic() >= cleanup_deadline:
-                raise SystemExit(f"temporary smoke data remained locked: {work}") from None
-            time.sleep(0.1)
+    try:
+        scrub_sensitive_work_tree(work)
+        remove_work_tree(work)
+    except (OSError, RuntimeError):
+        raise SystemExit("packaged_first_run_cleanup_failed") from None
     atexit.unregister(cleanup_failed_smoke)
     print(
         json.dumps(
             {
                 "setup": "passed",
+                "credential_storage": FALLBACK_CREDENTIAL_STORAGE,
+                "credential_mode": "explicit-isolated-development-file",
+                "os_credential_acceptance": "not_this_smoke",
                 "browser_handoff": "passed",
                 "stable_mcp_command": True,
                 "mcp_handshake": "passed",

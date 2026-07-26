@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import urllib.request
 from pathlib import Path
 
@@ -48,11 +49,13 @@ def test_bundled_dashboard_contains_direct_core_mobile_boundary() -> None:
 def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkeypatch) -> None:
     source_app = tmp_path / "download" / "AllTheContextSetup.exe"
     source_helper = tmp_path / "bundle" / "AllTheContextMCP.exe"
+    source_recovery = tmp_path / "bundle" / "AllTheContextRecovery.exe"
     source_updater = tmp_path / "bundle" / "AllTheContextUpdater.exe"
     source_app.parent.mkdir()
     source_helper.parent.mkdir()
     source_app.write_bytes(b"desktop")
     source_helper.write_bytes(b"mcp")
+    source_recovery.write_bytes(b"recovery")
     source_updater.write_bytes(b"updater")
     install_dir = tmp_path / "installed"
     install_dir.mkdir()
@@ -90,6 +93,7 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
             source_app,
             mcp_executable=source_helper,
             update_executable=source_updater,
+            recovery_executable=source_recovery,
         ),
         relaunch_args=(),
     )
@@ -99,6 +103,8 @@ def test_windows_frozen_app_self_installs_with_mcp_helper(tmp_path: Path, monkey
     assert installed.executable.read_bytes() == b"desktop"
     assert installed.mcp_executable == install_dir / "AllTheContextMCP.exe"
     assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert installed.recovery_executable == install_dir / "AllTheContextRecovery.exe"
+    assert installed.recovery_executable.read_bytes() == b"recovery"
     assert installed.update_executable == install_dir / "AllTheContextUpdater.exe"
     assert installed.update_executable.read_bytes() == b"updater"
     assert launched == [(str(installed.executable),)]
@@ -243,14 +249,35 @@ def test_macos_bundle_copy_trusts_resolved_base_without_rechecking_alias_ancesto
     assert (target / "Contents" / "MacOS" / "AllTheContext").read_bytes() == b"desktop"
 
 
+def test_macos_runtime_discovers_frameworks_helpers(tmp_path: Path) -> None:
+    from allthecontext.desktop_runtime import _macos_bundle_helper
+
+    app = tmp_path / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
+    recovery = (
+        tmp_path / "AllTheContext.app" / "Contents" / "Frameworks" / "all-the-context-recovery"
+    )
+    mcp = tmp_path / "AllTheContext.app" / "Contents" / "Frameworks" / "all-the-context-mcp"
+    app.parent.mkdir(parents=True)
+    recovery.parent.mkdir(parents=True)
+    app.write_bytes(b"app")
+    recovery.write_bytes(b"recovery")
+    mcp.write_bytes(b"mcp")
+
+    assert _macos_bundle_helper(app, "all-the-context-recovery") == recovery
+    assert _macos_bundle_helper(app, "all-the-context-mcp") == mcp
+    assert _macos_bundle_helper(app, "missing-helper") is None
+
+
 def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "download" / "AllTheContext.app"
     source_app = source / "Contents" / "MacOS" / "AllTheContext"
     source_helper = source / "Contents" / "Frameworks" / "all-the-context-mcp"
+    source_recovery = source / "Contents" / "Frameworks" / "all-the-context-recovery"
     source_app.parent.mkdir(parents=True)
     source_helper.parent.mkdir(parents=True)
     source_app.write_bytes(b"desktop")
     source_helper.write_bytes(b"mcp")
+    source_recovery.write_bytes(b"recovery")
     install_root = tmp_path / "Applications"
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_root))
     monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Darwin")
@@ -267,7 +294,11 @@ def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monke
     monkeypatch.setattr("allthecontext.desktop.subprocess.Popen", fake_popen)
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(source_app, mcp_executable=source_helper),
+        RuntimeCommand(
+            source_app,
+            mcp_executable=source_helper,
+            recovery_executable=source_recovery,
+        ),
         relaunch_args=("--setup",),
     )
 
@@ -278,6 +309,10 @@ def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monke
         expected_bundle / "Contents" / "Frameworks" / "all-the-context-mcp"
     )
     assert installed.mcp_executable.read_bytes() == b"mcp"
+    assert installed.recovery_executable == (
+        expected_bundle / "Contents" / "Frameworks" / "all-the-context-recovery"
+    )
+    assert installed.recovery_executable.read_bytes() == b"recovery"
     assert relaunched is True
     assert launched[0][0] == (str(installed.executable), "--setup")
     assert launched[0][1]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"  # type: ignore[index]
@@ -289,10 +324,12 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     install_dir = tmp_path / "installed"
     app = install_dir / "AllTheContext.exe"
     helper = install_dir / "AllTheContextMCP.exe"
+    recovery = install_dir / "AllTheContextRecovery.exe"
     updater = install_dir / "AllTheContextUpdater.exe"
     install_dir.mkdir()
     app.write_bytes(b"desktop")
     helper.write_bytes(b"mcp")
+    recovery.write_bytes(b"recovery")
     updater.write_bytes(b"updater")
     monkeypatch.setenv("ATC_INSTALL_DIR", str(install_dir))
     monkeypatch.setattr("allthecontext.desktop.platform.system", lambda: "Windows")
@@ -313,7 +350,12 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
     )
 
     installed, relaunched = prepare_installed_runtime(
-        RuntimeCommand(app, mcp_executable=helper, update_executable=updater),
+        RuntimeCommand(
+            app,
+            mcp_executable=helper,
+            update_executable=updater,
+            recovery_executable=recovery,
+        ),
         relaunch_args=("--setup",),
     )
 
@@ -321,6 +363,7 @@ def test_current_installed_runtime_does_not_reinstall_or_relaunch(
         app,
         mcp_executable=helper,
         update_executable=updater,
+        recovery_executable=recovery,
     )
     assert relaunched is False
     assert not stopped
@@ -357,6 +400,59 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Start-Sleep -Milliseconds 100" in script
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["cwd"] == install_dir.resolve().parent
+
+
+def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Windowed packages hide stderr; headless setup must leave a redacted report."""
+
+    report_path = tmp_path / "setup-report.json"
+    diagnostics_path = tmp_path / "desktop-error.json"
+    token_canary = "atc-canary-token-NEVER-LOG-9f3c2b1a"
+    ticket_canary = "ticket=live-browser-ticket-canary-deadbeef"
+    path_canary = "C:" + r"\Users\canary\secret\vault"
+    client_canary = "11111111-2222-4333-a444-555555555555"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+    monkeypatch.setattr(
+        "allthecontext.desktop.prepare_installed_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "the operating-system credential store is unavailable; "
+                "plaintext credential storage is disabled "
+                f"(development only: set ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1); "
+                f"token={token_canary}; "
+                f"http://127.0.0.1:9/v1/browser/connect?{ticket_canary}; "
+                f"client_id={client_canary}; path={path_canary}"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop._write_failure_diagnostics",
+        lambda _error: diagnostics_path,
+    )
+
+    assert main(["--headless-setup", str(report_path), "--no-claude"]) == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["setup"] == "failed"
+    assert payload["error_type"] == "RuntimeError"
+    assert payload["error_code"] == "credential_store_unavailable"
+    assert payload["diagnostics_written"] is True
+    assert payload["diagnostics_name"] == diagnostics_path.name
+    assert "diagnostics_path" not in payload
+    captured = capsys.readouterr()
+    evidence_values = (
+        token_canary,
+        ticket_canary,
+        path_canary,
+        client_canary,
+        str(diagnostics_path),
+    )
+    for evidence in evidence_values:
+        assert evidence not in json.dumps(payload)
+        assert evidence not in captured.err
+        assert evidence not in captured.out
 
 
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(

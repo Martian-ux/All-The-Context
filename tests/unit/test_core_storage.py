@@ -102,6 +102,35 @@ def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> Non
     ]
 
 
+def test_secret_like_payloads_and_delete_reasons_never_reach_storage(
+    core: CoreService,
+) -> None:
+    token = "sk-" + ("A7" * 16)
+    with pytest.raises(InvalidStateError):
+        core.store.add_candidate(CandidateInput(kind="fact", content=token))
+    with pytest.raises(InvalidStateError):
+        core.store.add_edge_candidate(
+            "opaque-proposal",
+            CandidateInput(kind="fact", content=token),
+            client_id="relay-client",
+        )
+
+    created = core.store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="A safe record for deletion.",
+            explicit_user_statement=True,
+        )
+    )
+    assert created.record_id is not None
+    deleted = core.store.delete_record(
+        created.record_id,
+        reason=f"api_key={token}",
+    )
+    assert deleted["reason"] == "Explicit user privacy action"
+    assert token.encode() not in core.config.database_path.read_bytes()
+
+
 def test_source_delete_and_restore_only_reverse_its_own_record_deletions(
     core: CoreService,
 ) -> None:

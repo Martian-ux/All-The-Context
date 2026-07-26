@@ -39,10 +39,14 @@ runs on; artifacts are never cross-compiled.
   wizard and supports `--mcp-stdio`; it does not require Docker, Python, Bash,
   systemd, or an installer script at runtime.
 
-Before beta publication, each artifact must also expose a version-matched
-recovery/admin helper or hidden native mode for documented stopped-Core restore
-and deliberate administrator purge. The current contributor-only `atc restore`
-command and API-only purge surface do not satisfy that packaged-user gate.
+Each native artifact exposes a version-matched recovery/admin surface for
+documented stopped-Core restore and deliberate administrator purge:
+Windows embeds `AllTheContextRecovery.exe`, macOS bundles
+`all-the-context-recovery` inside the app, and Linux attaches recovery modes to
+the console-capable `all-the-context` binary. Contributor-only `atc restore`
+remains available for source development but is not the packaged-user gate.
+Exact downloaded-artifact recovery acceptance receipts remain required before
+publication.
 
 `scripts/package_desktop.py` emits direct downloads named
 `all-the-context-VERSION-PLATFORM-ARCHITECTURE-unsigned` with the appropriate
@@ -70,10 +74,19 @@ initialization, a stable installed MCP command, a real MCP handshake and Core
 retrieval, authenticated shutdown, and release of files before cleanup.
 
 The clean-install smoke uses a temporary Core data directory, temporary AI
-client configuration, and isolated per-user startup location. On Windows it
-also uses uniquely named test-only HKCU keys and verifies Apps & Features,
-shortcuts, startup, update recovery, rollback, and uninstall before removing
-them. It never targets an existing installation or credential name.
+client configuration, and isolated per-user startup location. It forces the
+null keyring backend and explicitly enables the insecure development credential
+file so non-secret smoke credentials never enter the host OS store; the setup
+report must record that development store and must not be treated as real OS
+credential acceptance. Real Windows Credential Manager and macOS Keychain
+round-trips remain the separate packaged-credential and platform-acceptance
+gates. On failure the disposable work tree is always deleted; only a
+content-free allowlisted diagnostic summary is kept outside that tree, and
+headless setup writes a redacted report (windowed Windows packages have no
+console). On Windows it also uses uniquely named test-only HKCU keys and
+verifies Apps & Features, shortcuts, startup, update recovery, rollback, and
+uninstall before removing them on success. It never targets an existing
+installation or credential name.
 
 Long-lived processes spawned by a frozen one-file build are launched with
 `PYINSTALLER_RESET_ENVIRONMENT=1`. This gives a relaunched app or background
@@ -115,16 +128,19 @@ required offline Ed25519 manifest signing, stable/beta promotion, key rotation,
 and downgrade rules.
 
 The native updater verifies and stages a versioned ZIP on every platform. The
-packaged Windows application also includes a separate recovery executable, so
-it exposes one-click install when running from the complete per-user
-installation. The helper journals each phase, registers per-user RunOnce
-recovery, waits for Core to stop, refreshes the SQLite backup, verifies the
-replacement and its MCP/updater helpers, runs a real loopback Core health check,
-and either commits or restores all prior binaries and the database. Its frozen
-smoke covers a crash after replacement and a failed-health rollback. The macOS
-app self-installs per user but OTA handoff remains manual. The Linux archive is
-portable and its OTA handoff remains manual. Those are deliberate safety
-states, not missing success messages.
+packaged Windows application also includes separate MCP, recovery
+(`AllTheContextRecovery.exe`), and updater executables, so it exposes one-click
+install when running from the complete per-user installation. The helper
+journals each phase, registers per-user RunOnce recovery, waits for Core to
+stop, refreshes the SQLite backup, verifies the replacement and its
+MCP/recovery/updater helpers, runs a real loopback Core health check, and either
+commits or restores all prior binaries and the database. Its frozen smoke covers
+a crash after replacement and a failed-health rollback that re-verifies the
+recovery helper digest. The macOS app self-installs per user (including the
+bundled console recovery helper) but OTA handoff remains manual. The Linux
+archive is portable with recovery modes on the main console binary, and its OTA
+handoff remains manual. Those are deliberate safety states, not missing success
+messages.
 
 ## Source development installation
 

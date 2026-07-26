@@ -32,11 +32,13 @@ class TransactionFixture:
     journal_path: Path
     application: Path
     mcp: Path
+    recovery: Path
     update_helper: Path
     database: Path
     state_path: Path
     old_application: bytes
     old_mcp: bytes
+    old_recovery: bytes
     old_update_helper: bytes
     replacement: bytes
 
@@ -58,21 +60,26 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
 
     old_application = b"old application binary"
     old_mcp = b"old mcp binary"
+    old_recovery = b"old recovery helper binary"
     old_update_helper = b"old update helper binary"
     replacement = b"new application binary"
     application = install_dir / "AllTheContext.exe"
     mcp = install_dir / "AllTheContextMCP.exe"
+    recovery = install_dir / "AllTheContextRecovery.exe"
     stable_update_helper = install_dir / "AllTheContextUpdater.exe"
     rollback_application = rollback_dir / "AllTheContext.exe"
     rollback_mcp = rollback_dir / "AllTheContextMCP.exe"
+    rollback_recovery = rollback_dir / "AllTheContextRecovery.exe"
     rollback_update_helper = rollback_dir / "AllTheContextUpdater.exe"
     replacement_path = replacement_dir / "AllTheContextSetup.exe"
     helper_path = transaction_dir / "AllTheContextUpdater.exe"
     application.write_bytes(old_application)
     mcp.write_bytes(old_mcp)
+    recovery.write_bytes(old_recovery)
     stable_update_helper.write_bytes(old_update_helper)
     rollback_application.write_bytes(old_application)
     rollback_mcp.write_bytes(old_mcp)
+    rollback_recovery.write_bytes(old_recovery)
     rollback_update_helper.write_bytes(old_update_helper)
     replacement_path.write_bytes(replacement)
     helper_path.write_bytes(b"independent helper")
@@ -90,6 +97,7 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
     replacement_digest, replacement_size = _digest(replacement_path)
     rollback_digest, rollback_size = _digest(rollback_application)
     rollback_mcp_digest, rollback_mcp_size = _digest(rollback_mcp)
+    rollback_recovery_digest, rollback_recovery_size = _digest(rollback_recovery)
     rollback_update_digest, rollback_update_size = _digest(rollback_update_helper)
     backup_digest, backup_size = _digest(database_backup)
     state_path = updates / "state.json"
@@ -131,6 +139,10 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         rollback_mcp_path=str(rollback_mcp),
         rollback_mcp_sha256=rollback_mcp_digest,
         rollback_mcp_size=rollback_mcp_size,
+        recovery_path=str(recovery),
+        rollback_recovery_path=str(rollback_recovery),
+        rollback_recovery_sha256=rollback_recovery_digest,
+        rollback_recovery_size=rollback_recovery_size,
         stable_update_helper_path=str(stable_update_helper),
         rollback_update_helper_path=str(rollback_update_helper),
         rollback_update_helper_sha256=rollback_update_digest,
@@ -150,11 +162,13 @@ def _transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Transaction
         journal_path,
         application,
         mcp,
+        recovery,
         stable_update_helper,
         database,
         state_path,
         old_application,
         old_mcp,
+        old_recovery,
         old_update_helper,
         replacement,
     )
@@ -169,9 +183,11 @@ def _fake_commands(
         if "--apply-update" in command:
             fixture.application.write_bytes(fixture.replacement)
             fixture.mcp.write_bytes(b"new mcp binary")
+            fixture.recovery.write_bytes(b"new recovery helper binary")
             fixture.update_helper.write_bytes(b"new update helper binary")
             application_digest, application_size = _digest(fixture.application)
             mcp_digest, mcp_size = _digest(fixture.mcp)
+            recovery_digest, recovery_size = _digest(fixture.recovery)
             update_digest, update_size = _digest(fixture.update_helper)
             report = Path(command[-1])
             report.write_text(
@@ -185,6 +201,9 @@ def _fake_commands(
                         "mcp": str(fixture.mcp),
                         "mcp_sha256": mcp_digest,
                         "mcp_size": mcp_size,
+                        "recovery": str(fixture.recovery),
+                        "recovery_sha256": recovery_digest,
+                        "recovery_size": recovery_size,
                         "update_helper": str(fixture.update_helper),
                         "update_helper_sha256": update_digest,
                         "update_helper_size": update_size,
@@ -201,6 +220,7 @@ def _fake_commands(
                         "version": "0.2.0",
                         "frozen": True,
                         "mcp_helper_bundled": True,
+                        "recovery_helper_bundled": True,
                         "update_helper_bundled": True,
                     }
                 ),
@@ -313,6 +333,7 @@ def test_failed_health_restores_previous_binary_mcp_and_database(
     assert run_transaction(fixture.journal_path) == 2
     assert fixture.application.read_bytes() == fixture.old_application
     assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
     assert fixture.update_helper.read_bytes() == fixture.old_update_helper
     assert UpdateJournal.load(fixture.journal_path).phase is HelperPhase.ROLLED_BACK
     state = json.loads(fixture.state_path.read_text(encoding="utf-8"))
@@ -354,6 +375,7 @@ def test_failure_before_cutover_never_restores_the_older_database_backup(
     assert run_transaction(fixture.journal_path) == 2
     assert fixture.application.read_bytes() == fixture.old_application
     assert fixture.mcp.read_bytes() == fixture.old_mcp
+    assert fixture.recovery.read_bytes() == fixture.old_recovery
     assert fixture.update_helper.read_bytes() == fixture.old_update_helper
     with sqlite3.connect(fixture.database) as connection:
         assert connection.execute("SELECT value FROM facts ORDER BY rowid").fetchall() == [

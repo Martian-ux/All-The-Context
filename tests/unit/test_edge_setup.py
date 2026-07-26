@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from allthecontext.config import CoreConfig
+from allthecontext.credentials import DEVELOPMENT_FALLBACK_ENV
 from allthecontext.edge_connection import EdgeConnectionStore
 from allthecontext.edge_setup import (
     BUNDLE_PREFIX,
@@ -155,9 +156,23 @@ def test_core_edge_prepare_is_idempotent_and_uses_app_data_fallback(
     second = connections.prepare("vault-1")
 
     assert first == second
-    assert first.credential_storage == "local app-data fallback"
+    assert first.credential_storage == "insecure development credential file"
     assert connections.state() is not None
     assert (tmp_path / "edge.json").is_file()
+
+
+def test_edge_prepare_does_not_silently_create_plaintext_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    connections = EdgeConnectionStore(CoreConfig.in_directory(tmp_path))
+
+    with pytest.raises(RuntimeError, match="plaintext credential storage is disabled"):
+        connections.prepare("vault-1")
+
+    assert connections.state() is None
+    assert not (tmp_path / "edge-credentials.development.json").exists()
 
 
 def test_prepare_preserves_paired_url_when_credential_is_missing(

@@ -252,6 +252,8 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [provider, setProvider] = useState<ArchiveProvider>("auto");
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
@@ -274,8 +276,17 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   async function upload(file?: File) {
     if (!file) return;
     setUploading(true); setNotice(null); setLastImport(null); setRemovedSource(null); setError(null);
+    setUploadProgress("Starting import operation…"); setActiveOperationId(null);
     try {
-      const result = await api.importSource(file, provider);
+      const result = await api.importSource(file, provider, {
+        onOperation: (operation) => {
+          setActiveOperationId(operation.operation_id);
+          const percent = operation.progress?.percent ?? 0;
+          const phase = operation.phase || operation.status;
+          const message = operation.progress?.message || phase;
+          setUploadProgress(`${percent}% · ${message}`);
+        },
+      });
       setLastImport(result);
       const conversationCount = result.stats.conversations ?? 0;
       const providerName = providerDisplayName(result.provider);
@@ -284,7 +295,21 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         : `${providerName}: ${conversationCount} conversations scanned and ${result.observation_count} observations processed automatically.`);
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
-    finally { setUploading(false); }
+    finally {
+      setUploading(false);
+      setUploadProgress(null);
+      setActiveOperationId(null);
+    }
+  }
+
+  async function cancelActiveImport() {
+    if (!activeOperationId) return;
+    try {
+      await api.cancelImportOperation(activeOperationId);
+      setUploadProgress("Cancellation requested…");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
   }
 
   async function retry(source: SourceRecord) {
@@ -380,9 +405,19 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       >
         <input type="file" accept=".zip,.json,.jsonl,.md,.markdown,.txt" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; void upload(selected); }} disabled={uploading} />
         <span className="upload-icon"><Upload size={22} /></span>
-        <strong>{uploading ? "Saving and extracting locally..." : "Drop the provider export here"}</strong>
+        <strong>{uploading ? (uploadProgress ?? "Saving and extracting locally...") : "Drop the provider export here"}</strong>
         <span>ZIP, JSON, JSONL, Markdown, or text · up to 2 GB · never sent through MCP or to a third party</span>
         <span className="secondary-button">Choose export</span>
+        {uploading && activeOperationId ? (
+          <button
+            type="button"
+            className="quiet-button"
+            style={{ marginTop: "0.75rem" }}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelActiveImport(); }}
+          >
+            Cancel import
+          </button>
+        ) : null}
       </label>
       {removedSource ? <Notice kind="success"><span>Source and its derived current memories were removed.</span><button className="notice-action" disabled={workingSource !== null} onClick={() => void undoSourceRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
       {confirmingSource ? <Notice kind="info">Remove {confirmingSource.filename ?? "this source"} and current memories derived from it? You can undo immediately.</Notice> : null}

@@ -13,6 +13,7 @@ from .models import (
     ForgetContextRequest,
     IngestionMode,
     ObservationOut,
+    SecretRefusalOut,
     Sensitivity,
     SubmitBatchRequest,
 )
@@ -60,14 +61,29 @@ class IngestionService:
 
     def propose(
         self, request: CandidateInput, principal: ClientPrincipal | None = None
-    ) -> ObservationOut:
+    ) -> ObservationOut | SecretRefusalOut:
+        refusal = self.store.refuse_direct_candidate(
+            request,
+            route="propose_memory",
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal
         created = self.store.add_candidate(request, client=principal)
         return self.store.get_observation(created.id)
 
     def report_error(
         self, request: ContextErrorRequest, principal: ClientPrincipal | None = None
-    ) -> ObservationOut:
+    ) -> ObservationOut | SecretRefusalOut:
         self._require_target_access(request.record_id, principal)
+        refusal = self.store.refuse_direct_value(
+            request.model_dump(mode="json"),
+            route="report_context_error",
+            operation_id=request.idempotency_key,
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal
         has_correction = request.suggested_correction is not None
         candidate = CandidateInput(
             kind="correction" if has_correction else "context_error",

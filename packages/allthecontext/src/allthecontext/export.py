@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
-from .storage import SOURCE_BLOB_CHUNK_BYTES
+from .storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore
 
 MAGIC = b"ATCEXP1\x00"
 SALT_SIZE = 16
@@ -82,6 +82,29 @@ def _source_schema_version(connection: sqlite3.Connection) -> int:
             ).fetchone()
             return int(row[0]) if row is not None else 0
     return 0
+
+
+def _has_secret_boundary(database_path: Path) -> bool:
+    connection = sqlite3.connect(database_path)
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    finally:
+        connection.close()
+    return {"vaults", "context_candidates", "secret_refusal_receipts"}.issubset(tables)
+
+
+def _repair_secret_boundary(database_path: Path) -> None:
+    """Repair a migrated Core ledger before moving its durable bytes."""
+
+    if not _has_secret_boundary(database_path):
+        return
+    store = CoreStore(database_path)
+    store.repair_preledger_secrets()
 
 
 def _without_source_reference(
@@ -245,6 +268,7 @@ def create_export(
     """Create an encrypted portable package without placing plaintext beside it."""
     database_path = database_path.resolve()
     destination = destination.resolve()
+    _repair_secret_boundary(database_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="atc-export-") as temporary:
         archive_path = Path(temporary) / "payload.zip"
@@ -814,4 +838,5 @@ def restore_export(
                         )
             finally:
                 connection.close()
+    _repair_secret_boundary(database_path)
     return {"valid": True, "dry_run": False, "manifest": manifest}

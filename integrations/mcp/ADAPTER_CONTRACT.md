@@ -42,7 +42,9 @@ observation. It accepts the observation kind, content, scope, confidence,
 sensitivity, source reference, evidence, and idempotency key, plus these
 optional policy inputs:
 
-- `explicit_user_statement` (defaults to `true`)
+- `explicit_user_statement` (defaults to `false`; set true only for text the
+  user directly stated in the current interaction, and only when Core grants
+  the closed `witness:explicit_user_statement` class to the configured client)
 - `entity_key` and `attribute_key` (supplied together for slot-based context)
 - `supersedes`
 - `observed_at`
@@ -50,7 +52,8 @@ optional policy inputs:
 Core evaluates the observation during the request and returns its disposition:
 `applied`, `reinforced`, `tentative`, or `ignored` (`staged` is reserved for
 work that has not reached Core policy evaluation yet). This flow does not create
-a user review task.
+a user review task. Authentication and propose scope alone never force an
+explicit claim to applied current context; omission stays tentative.
 
 `report_context_error` sends the error description separately from an optional
 explicit correction. Core evaluates a supplied correction automatically. An

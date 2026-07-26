@@ -186,22 +186,64 @@ describe("dashboard", () => {
   });
 
   it("imports a provider export and shows local coverage", async () => {
-    let submittedProvider: FormDataEntryValue | null = null;
+    let submittedProvider: string | null = null;
+    const importResult = {
+      source: { id: "source-1", duplicate: false },
+      observation_ids: ["candidate-1", "candidate-2", "candidate-3"],
+      provider: "claude",
+      export_format: "claude_conversations",
+      stats: { conversations: 2, user_messages: 7, observations: 3 },
+      outcomes: { applied: 1, tentative: 1, ignored: 1 },
+      warnings: [],
+      coverage: { available: ["2 conversations"], unavailable: [], limitations: [], warnings: [], complete: true },
+    };
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json({ core_online: true, schema_version: 1, database_size_bytes: 4096, counts: { observations: 0, tentative_observations: 0, active_records: 0, sources: 0, pending_replication_events: 0 } });
-      if (url.endsWith("/admin/import")) {
-        const body = init?.body as FormData;
-        submittedProvider = body.get("provider");
+      if (url.endsWith("/admin/import-operations") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { provider?: string };
+        submittedProvider = body.provider ?? null;
         return json({
-          source: { id: "source-1", duplicate: false },
-          observation_ids: ["candidate-1", "candidate-2", "candidate-3"],
-          provider: "claude",
-          export_format: "claude_conversations",
-          stats: { conversations: 2, user_messages: 7, observations: 3 },
-          outcomes: { applied: 1, tentative: 1, ignored: 1 },
-          warnings: [],
-          coverage: { available: ["2 conversations"], unavailable: [], limitations: [], warnings: [], complete: true },
+          operation_id: "op-1",
+          status: "awaiting_upload",
+          phase: "awaiting_upload",
+          declared_byte_size: 7,
+          bytes_received: 0,
+          bytes_committed: 0,
+          cancel_requested: false,
+          progress: { percent: 0, phase: "awaiting_upload" },
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        });
+      }
+      if (url.includes("/admin/import-operations/op-1/content") && init?.method === "PUT") {
+        return json({
+          operation_id: "op-1",
+          status: "complete",
+          phase: "complete",
+          declared_byte_size: 7,
+          bytes_received: 7,
+          bytes_committed: 7,
+          source_id: "source-1",
+          cancel_requested: false,
+          progress: { percent: 100, phase: "complete" },
+          result: importResult,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        });
+      }
+      if (url.includes("/admin/import-operations/op-1")) {
+        return json({
+          operation_id: "op-1",
+          status: "processing",
+          phase: "uploading",
+          declared_byte_size: 7,
+          bytes_received: 3,
+          bytes_committed: 0,
+          cancel_requested: false,
+          progress: { percent: 20, phase: "uploading", message: "receiving source bytes" },
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
         });
       }
       if (url.endsWith("/admin/sources")) return json({ total: 0, items: [] });

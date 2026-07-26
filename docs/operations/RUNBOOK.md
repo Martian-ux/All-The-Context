@@ -93,3 +93,17 @@ database with a pre-purge copy during recovery.
 Purge is not a promise of erasure from SSD remanence, filesystem snapshots,
 external backups, already-downloaded exports, remote copies not yet integrated,
 or files the user copied elsewhere. Rotate or delete those systems separately.
+
+## Direct-secret repair boundary
+
+Core refuses direct password/token/key-like observations before the durable
+observation ledger and retains only a content-free receipt. On startup, before
+staged observations are evaluated, Core scans legacy direct observations,
+removes affected candidate/error/history/FTS state, truncates the WAL, and
+vacuums the live database. Export repeats this maintenance before reading the
+database; restore repeats it before reporting success.
+
+This maintenance cannot rewrite historical exports, filesystem snapshots,
+offline database copies, update backups, or storage-device remanence outside
+the active Core data boundary. Retire or securely replace every such copy that
+predates the repair. Do not restore an older copy over the repaired vault.

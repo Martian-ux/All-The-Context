@@ -65,13 +65,123 @@ behavior.
 
 ## Security maintenance
 
+On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
+credential safety and the Windows windowed artifact can both be meaningful:
+`scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke
+credentials with the null keyring backend **and** explicit
+`ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1`, asserts
+`credential_storage` is the insecure development file, and does **not** claim
+real OS credential acceptance. Real Windows Credential Manager / macOS Keychain
+round-trips remain the separate `--packaged-credential-acceptance` /
+`smoke_platform_acceptance.py` gates. Headless setup writes a redacted failure
+report when setup exits non-zero. On smoke failure the disposable work tree
+(credentials, vault, configs, binaries) is always deleted; only a content-free
+allowlisted summary is retained under a separate diagnostics directory (phase,
+return code, boolean artifact presence, error class, redacted message)—never
+raw setup reports, dashboard tickets, tokens, client IDs, or subprocess
+streams. Production installs still never enable plaintext credential storage
+silently.
+
+On 2026-07-26, source-side exact-candidate and publication aggregation gaps
+for BETA-R01/R03/R04/R05/O01 and B-107/B-108/B-201/B-206 scaffolding were
+closed without claiming a frozen release or fabricating receipts (ADR-059),
+then re-audited against remaining false-pass paths: hosted matrix selection
+requires the exact `.github/workflows/ci.yml` path (not suffix matches), every
+required job must bind `run_id`/`head_sha` with completed success and no
+duplicate/shadow names, incomplete job pagination fails closed, and durable
+matrix evidence stores primitive job records with recomputed `ok`. Exact
+receipt `artifact_digests` must name inventory-declared files with matching
+digests (arbitrary safe keys cannot pass); BETA-P04 cannot be satisfied by
+source-only provider preparation; inventory/candidate checksum sidecars and
+full inventory schema are required; bool-as-int schema values are refused.
+Human key custody, protected publication, offline signing, and public channel
+smoke remain explicit blockers. Focused release/receipt/workflow tests, Ruff,
+mypy, and docs checks pass on this worktree.
+
+On 2026-07-26, candidate convergence added one deliberately small provider
+execution surface to the desktop binary:
+`--packaged-provider-acceptance` creates a fresh disposable Core vault, imports
+one nonempty ChatGPT/Claude/Grok export through the production durable
+import-operation path, requires loopback configuration and reconciled parser,
+coverage, candidate, and outcome identities, emits only a bounded content-free
+report, and verifies cleanup before returning success. It does not itself
+satisfy BETA-P04: all three fresh real exports still have to run inside exact
+downloaded candidates and bind their receipts to inventory-declared package
+digests. The same convergence pass hardened the internal Core-store boundary
+so direct and Relay secret-like candidates fail before payload/hash writes,
+expanded high-confidence token/credential-URI detection, and redacts
+secret-like reject/delete reasons. Fifty-eight focused provider, desktop,
+pre-ledger, policy, and storage tests pass locally, with touched-source Ruff
+and mypy clean. Full-suite and exact-candidate validation remain pending.
+
+On 2026-07-26, narrow exact-lock corrections closed release-install holes
+without broadening release engineering: the reviewed `uv.lock` contains hashed
+`packaging`, `setuptools`, and `wheel`, and the locked installer fails closed
+unless the complete dependency-closed build environment is installed before
+`--no-build-isolation`; this specifically prevents wheel's `packaging>=24`
+dependency from escaping pip's `--require-hashes` gate. `ensure_pinned_uv`
+no longer network-bootstraps unhashed `uv` and requires the already pinned
+`0.11.32` binary; and `dependency_audit.py` audits a frozen hashed export of
+`uv.lock` (dev and packaging) with lock-installed `pip-audit==2.10.1` and
+`--disable-pip` rather than re-resolving project ranges. The export audit
+required bumping the dev pin of `pytest` to `>=9.0.3,<10` (locked `9.1.1`)
+for PYSEC-2026-1845.
+
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every
 record scope; an empty grant exposes only unscoped records. Out-of-grant records
 are omitted without contributing to forwarded search counts or bootstrap
-character totals. This is defense in depth on a still-callable surface; B-103
-must remove or build-gate it from supported beta artifacts.
+character totals. That experimental module remains for residual cleanup and
+security regressions only; B-103 has removed the ordinary Core product routes
+that would call it.
+
+The integrated beta-safety implementation now also closes the source-level
+parts of B-101, B-102, and B-104:
+
+- direct secret-like proposals, batches, corrections/errors, and Relay queue
+  submissions are refused before payload persistence; forget reasons are
+  redacted before storage;
+- refusal receipts retain only opaque UUIDv4 operation identity and closed
+  detector/reason metadata, never an unkeyed payload hash or fingerprint;
+- startup, export, and restore migrate and repair affected live Core ledgers,
+  rebuild FTS, checkpoint WAL, enable secure deletion, and compact SQLite;
+  synthetic tests scan database pages, WAL/freelists, temp state, diagnostics,
+  and encrypted export/restore bytes;
+- normal credential setup now requires Windows Credential Manager, macOS
+  Keychain, or Linux Secret Service, while plaintext development storage
+  requires explicit opt-in;
+- failed credential or managed-client configuration revokes any new principal,
+  removes the credential, and restores the prior client configuration bytes;
+- A-09 / B-102 client witness: only ATC-configured same-device Codex/Claude
+  principals with the closed `witness:explicit_user_statement` grant (plus
+  intentional local `admin`/`*`) may force applied current context from an
+  explicit-user claim; authentication and `context:propose` alone stay
+  tentative; omission/default false stays tentative; exact retry is
+  idempotent and exact duplicates reinforce; clients cannot self-add the
+  grant or smuggle origin/disposition/force fields; authenticated archive
+  batches cannot re-label `provider_archive` material as witnessed without
+  the grant; policy evaluation re-binds principal scopes from durable
+  registration state so forged principal shapes cannot manufacture witness
+  authority; Core-controlled importers (no client principal) remain a Core
+  assignment path for normalized provider user-authored archive evidence;
+  generic imports and provider synthesis stay tentative; Relay claims cannot
+  attest direct user statements;
+- B-102 minimum chronological conflict safety: unkeyed archive-import
+  preferences/goals/projects/decisions/workflows/constraints share one
+  current lineage per kind ordered by explicitness then `observed_at`, with
+  synthetic fixture `tests/fixtures/b102_chronological_conflicts.json` and
+  reverse-order coverage; direct unkeyed client goals remain independent
+  current records; decision reason/time/policy version remain inspectable
+  without persisting credentials; residual truth is an explicit local trust
+  grant, not cryptographic authorship proof—an authorized malicious witness
+  client can lie.
+
+Historical external backups and device remanence are not called repaired.
+Real OS credential services, the secret boundary, and exact Codex/Claude
+client artifacts still require exact downloaded-artifact acceptance on the
+frozen candidate. Source-level BETA-P03/BETA-S02 evidence is content-free
+unit/integration coverage, not fabricated exact-client receipts.
 
 ## AI-memory research direction
 
@@ -427,7 +537,7 @@ Tentative-observation expiry/decay is intentionally not implemented in
 `automatic-v1`. It is a possible later versioned-policy extension; tentative
 state is already noncurrent and creates no user queue.
 
-## V1 Edge UI and worker removal
+## V1 Edge UI and worker removal / B-103 Core-only isolation
 
 - Edge navigation and setup were removed from the dashboard.
 - First run no longer offers or opens hosted web/mobile setup.
@@ -436,15 +546,55 @@ state is already noncurrent and creates no user queue.
 - Core no longer starts the legacy Edge network worker.
 - The GHCR Edge workflow, Render templates, and Relay container CI job were
   removed from the V1 path.
-- Core still constructs Edge compatibility state and sync managers, exposes
-  authenticated enrollment/connect/sync/client-management routes, and can
-  trigger that manager after mutations. The CLI also retains explicit
-  Relay/Edge operation paths. The background worker is disabled, but these
-  callable surfaces are not dormant.
-- The V1 beta therefore still needs to remove or build-gate active Edge/Relay
-  operation from supported artifacts while retaining a narrow, separately
-  tested legacy decommission path. This is roadmap gate `BETA-S04` and work
-  package `B-103`.
+- Ordinary Core HTTP routes for Edge enroll/prepare/deploy/connect/sync,
+  secure-storage migration, owner-link, remote-client approve/revoke, and the
+  old forget/decommission product paths return HTTP 404 tombstones.
+- Ordinary Core mutations no longer trigger Edge sync. The CLI no longer
+  exposes `sync`, `serve-relay`, or other ordinary Edge/Relay operation
+  commands.
+- Residual cleanup is isolated under `/v1/admin/legacy-edge` and
+  `atc legacy-edge {status,decommission,forget}`. Decommission refuses when no
+  residual paired Edge exists so the path cannot create a second authority by
+  default. Status is local-only and does not open outbound sockets.
+- Negative proofs cover removed routes/CLI, package entrypoints/web assets,
+  process worker absence, ordinary-mutation network isolation, and default
+  cleanup refusal (`tests/unit/test_core_only_boundary.py` and updated Core
+  API integration tests).
+- Same-version OTA acceptance: after a verified channel check that reports
+  `current`, `accept_exact_candidate` reopens that already-verified equal
+  version for download/install/health/rollback smoke without network I/O and
+  without weakening signature, hash, platform, channel, or key checks. The
+  admin route is `POST /v1/admin/updates/accept-exact-candidate`. This supports
+  beta1 exact-candidate same-version transactional proof; it is not a public
+  beta1-to-beta2 N-1 receipt.
+- Roadmap gate `BETA-S04` / work package `B-103` is implemented for the
+  supported Core product surface. Exact packaged artifact matrix proof on the
+  frozen release identity, release-key ceremony, and deliberate publication
+  remain separate human-controlled gates.
+
+## V1 provider/import boundary / B-105
+
+- ChatGPT, Claude, and Grok now have versioned parser identities, a frozen
+  fictional shape manifest, and closed recognized/excluded/skipped/
+  unavailable/failed/unparsed coverage accounting. Unknown material keeps
+  coverage incomplete rather than silently widening a provider claim.
+- Core preflights the database volume, preserves and integrity-checks the raw
+  source before parsing, and parses path imports from a reconstructed
+  authoritative copy. Parser failure or cancellation retains inert raw bytes
+  for no-upload retry and does not partially publish current context.
+- Source-record progress, cancellation, parser-versioned retry, duplicate
+  suppression, and a versioned deterministic non-sparse boundary-canary
+  generator are implemented. The focused importer/provider slice passes 37
+  tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
+  pass for the integrated source.
+- B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
+  states, and cancellable chunk heartbeats are implemented in source
+  (`import_operations.py`, migration `009_import_operations.sql`, Core admin
+  routes, and the combined dashboard import flow). Exact-candidate proof of
+  the frozen 5-second first-progress/cancel budget, privacy-safe current
+  real-export receipts for all three providers, and the exact
+  2,000,000,000-byte four-target import/export/restore receipts remain
+  candidate-controlled acceptance work.
 
 ## Retrieval V3 integration
 
@@ -486,6 +636,23 @@ state is already noncurrent and creates no user queue.
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
   measurements rather than cross-platform performance claims.
 
+## V1 recovery/import/release integration reconciliation
+
+- Packaged recovery/admin is integrated across native candidates: Windows and
+  macOS ship a version-matched console helper; Linux exposes the same
+  stopped-Core modes on the console-capable main binary. Candidate and CI
+  native jobs run fail-closed `smoke_packaged_recovery.py` against built bytes
+  (`--recovery-help` / doctor plus fiction export/restore/purge). Package reports
+  record `recovery_surface` / `recovery_console_helper`; Windows OTA first-run
+  smoke continues to journal and verify `AllTheContextRecovery.exe`.
+- Durable import operations (migration `009_import_operations.sql`, runtime,
+  combined browser+import dashboard) are required by package-resource diagnose,
+  frozen diagnostics, and desktop artifact smoke. Source-evidence inventory
+  remains content-free (no raw exports, 2 GB canaries, or personal data).
+- Acceptance receipts still use existing content-free fields; exact
+  downloaded-artifact browser/client/provider/2 GB/recovery operator receipts
+  remain honestly pending and are not claimed by this integration work.
+
 ## Remaining beta gates
 
 - Complete the fresh-user browser smoke on the exact release candidate. Current
@@ -504,23 +671,25 @@ state is already noncurrent and creates no user queue.
 - GitHub private vulnerability reporting is enabled. Keep detailed credential,
   secret-boundary, and client-witness findings there and verify that public
   security guidance routes reporters to it.
-- Prevent direct secret-like payload content from entering durable observation
-  history or encrypted backups; preserve no unkeyed content hash or other
-  guessable verifier, and repair affected SQLite pages/freelists, WAL/journal,
-  FTS, temp state, diagnostics, and new exports with byte-level canary proof.
+- Repeat the implemented B-101 pre-ledger refusal, repair/compaction, and
+  byte-level SQLite/WAL/freelist/FTS/export/restore proofs on the exact frozen
+  candidate; retire or replace historical external backups according to the
+  runbook rather than claiming they were rewritten.
 - Implement the accepted trust grant for explicitly authorized, ATC-configured
   same-device Codex/Claude clients and prevent contradictory unkeyed imported
   history from simultaneously becoming confident current truth.
-- Remove or build-gate the active Edge/Relay operation surface from the
-  supported Core-only artifact and prove the isolated legacy cleanup path.
+- Repeat B-103 negative route/CLI/package proofs on the exact frozen candidate
+  package artifacts; the Core product surface isolation is implemented and
+  unit/integration-tested.
 - Complete privacy-safe acceptance against current real ChatGPT, Claude, and
   Grok exports acquired after parser freeze and within 30 days of acceptance.
   Each must be nonempty, exercise the frozen fictional shape set, and reconcile
   every input to a closed recognized/excluded/skipped/unavailable/failed
   outcome. All three are mandatory; missing evidence leaves the release in
   draft.
-- Resolve credential fallback so a missing OS keyring does not silently become
-  plaintext storage, and prove setup failure leaves no orphaned principal.
+- Repeat B-104 against real Windows Credential Manager, macOS Keychain, and
+  Linux Secret Service from exact packages, including unavailable/locked
+  backend and partial-write rollback receipts.
 - Freeze exact Windows/macOS build/patch and supported Codex/Claude variants
   for the mandatory Windows 11 x86-64, macOS 26 ARM64/x86-64, and Ubuntu 24.04
   LTS x86-64 GNOME/Secret-Service floor. Before measuring candidates, use the
@@ -530,9 +699,11 @@ state is already noncurrent and creates no user queue.
   Prove the inclusive `2,000,000,000`-byte boundary with an allocated
   non-sparse, nonempty canary on Windows x86-64, macOS ARM64, macOS x86-64, and
   Linux x86-64.
-- Ship a version-matched packaged recovery/admin helper or native mode for
-  stopped-Core restore and deliberate purge on Windows, macOS, and Linux; the
-  current contributor CLI/API-only paths do not satisfy the beta journey.
+- Prove the already-shipped version-matched packaged recovery/admin helper
+  (Windows/macOS console helper) and Linux console main-binary recovery modes
+  on exact downloaded candidate artifacts for every OS family; source packaging
+  and fail-closed built-byte recovery smokes are integrated, but
+  downloaded-artifact export/restore/purge acceptance receipts remain open.
 - Freeze the final release commit after review and repeat the exact nine-job
   hosted matrix on that identity: Python Windows/macOS/Ubuntu, dashboard Node
   20/22, and packages on Windows, Ubuntu, macOS ARM64, and macOS x86-64.
@@ -545,6 +716,35 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
+- A real installed Codex CLI 0.144.0 process on Windows, using an ephemeral
+  session, ignored user config/rules, a read-only empty workspace, a disposable
+  loopback Core, Windows Credential Manager, and only supported MCP config
+  overrides, applied and then retrieved a fictional explicit-user canary. A
+  second Codex process auto-started the stopped disposable Core and retrieved
+  the same canary. The first attempt exposed a concrete compatibility defect:
+  with global `approval_policy = "never"` and no explicit server tool policy,
+  Codex returned `user cancelled`; the documented managed-server
+  `default_tools_approval_mode = "approve"` made the journey succeed without
+  disabling the sandbox. This is source-runtime, installed-client evidence,
+  not an exact downloaded-ATC-artifact BETA-P02/P03 receipt.
+- Claude Desktop MSIX 1.24012.1.0 was launched against an isolated
+  `CLAUDE_USER_DATA_DIR`. Its real packaged executable read
+  `claude_desktop_config.json` from that root (a malformed synthetic probe
+  produced the native settings error), and
+  `--force-renderer-accessibility` exposed the real Windows sign-in UI through
+  UI Automation. The isolated client stopped at **Get started** without an
+  authorized user sign-in, so no Claude MCP call or BETA-P02/P03 claim was
+  made. This build rejects Electron remote-debugging flags unless supplied an
+  Anthropic-signed, path-bound CDP authorization token.
+- The first post-fix full-suite replay exposed that
+  `test_open_dashboard_starts_core_and_uses_authenticated_handoff` reached the
+  production launch-repair path without an isolated Codex/Claude configuration
+  root. On this host it created a real ATC backup and rewrote the live managed
+  Codex block. The test now pins and asserts disposable paths, and the autouse
+  harness assigns every test a temporary `CODEX_HOME`, temporary Claude config,
+  and null keyring. The live file was not blindly restored while Codex was
+  active; its timestamped backups and semantic, secret-free differences were
+  recorded for operator review.
 - GitHub private vulnerability reporting was enabled and verified on
   2026-07-25. Branch, dependency, secret, and code-scanning controls still need
   their own acceptance.
@@ -558,6 +758,12 @@ state is already noncurrent and creates no user queue.
   662-test suite pass with four host-limited symlink skips. Exact commit
   `03a266f` passed all nine jobs in both hosted matrices. The final frozen
   release identity remains pending.
+- The B-105 provider/import implementation plus coordinator lifecycle
+  hardening passes Ruff, strict mypy across 72 source files, and 37 focused
+  raw-first recovery, cancellation, preflight, provider-shape, path-provenance,
+  and ingestion tests on Windows Python 3.14.3. This is source-level evidence;
+  the initial operation-progress gap and exact candidate receipts above remain
+  open.
 - Release-CI integration replay on Windows Python 3.14.3: 46 focused packaging,
   updater, retrieval-gate, and MCP contract tests pass. The exact functional
   source at `f3496df` passed both complete hosted CI matrices.
@@ -595,8 +801,10 @@ state is already noncurrent and creates no user queue.
   correctly at desktop and 390-pixel mobile widths. It does not satisfy the
   new automatic-policy browser gate.
 - The historical packaged dashboard contained no Edge setup copy or
-  `/admin/edge` request path. That smoke is not evidence for B-103, and the
-  active beta claim now excludes mobile and remote-computer use entirely.
+  `/admin/edge` request path. B-103 Core product-surface isolation is now
+  implemented with unit/integration negative proofs; exact frozen packaged
+  artifact re-proof remains open. The active beta claim continues to exclude
+  mobile and remote-computer use entirely.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
   deploy only from Actions. The canonical beta metadata URL currently returns
   HTTP 404 because no channel artifact or beta release has been deployed. The
@@ -627,3 +835,17 @@ state is already noncurrent and creates no user queue.
   community beta.
 - The live SQLite vault is not application-encrypted at rest; portable exports
   are passphrase-encrypted.
+
+## Repository security convergence
+
+- Exact-candidate tree scans now read committed blobs at the bound source SHA,
+  and history scans inspect each unique blob reachable from that SHA rather
+  than unrelated refs or marker-only diffs.
+- ZIP members and complete private-key blocks are scanned through explicit
+  member, expanded-size, object-count, and per-payload ceilings. Oversized or
+  unreadable inputs fail closed. The existing Windows desktop directory
+  (including the 97 MB installer and 29 MB recovery helper) and 61 MB direct
+  ZIP directory scan clean with bounded streaming. The fresh eight-file
+  `v1-engineering-1b894dd` Windows engineering set also scans clean. It is not
+  built from this scanner commit or the still-unfrozen exact candidate; Linux
+  tar.gz and macOS DMG contents are not claimed as inspected by this scanner.

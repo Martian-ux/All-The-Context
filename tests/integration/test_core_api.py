@@ -75,17 +75,19 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         assert status["database_size_bytes"] == expected_size
 
 
-def test_edge_deploy_button_requires_complete_digest_bound_activation(
+def test_active_edge_operation_routes_are_absent_from_core(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     digest = "1" * 64
     branch = f"edge-deploy-{digest}"
-    deploy_url = (
-        "https://render.com/deploy?"
-        "repo=https%3A%2F%2Fgithub.com%2FMartian-ux%2FAll-The-Context%2Ftree%2F"
-        f"{branch}"
+    monkeypatch.setenv(
+        "ATC_EDGE_DEPLOY_URL",
+        (
+            "https://render.com/deploy?"
+            "repo=https%3A%2F%2Fgithub.com%2FMartian-ux%2FAll-The-Context%2Ftree%2F"
+            f"{branch}"
+        ),
     )
-    monkeypatch.setenv("ATC_EDGE_DEPLOY_URL", deploy_url)
     monkeypatch.setenv("ATC_EDGE_DEPLOY_BRANCH", branch)
     monkeypatch.setenv(
         "ATC_EDGE_IMAGE_REFERENCE",
@@ -95,18 +97,32 @@ def test_edge_deploy_button_requires_complete_digest_bound_activation(
     monkeypatch.setenv("ATC_EDGE_BLUEPRINT_COMMIT", "b" * 40)
 
     with TestClient(create_app(CoreConfig.in_directory(tmp_path, require_auth=False))) as client:
-        deployment = client.get("/v1/admin/edge").json()["deployment"]
-        assert deployment["available"] is True
-        assert deployment["deploy_url"] == deploy_url
-        assert deployment["deploy_branch"] == branch
-        assert deployment["source_commit"] == "a" * 40
-        assert deployment["blueprint_commit"] == "b" * 40
+        for method, path in (
+            ("GET", "/v1/admin/edge"),
+            ("POST", "/v1/admin/edge/prepare"),
+            ("POST", "/v1/admin/edge/deployment-env"),
+            ("POST", "/v1/admin/edge/connect"),
+            ("POST", "/v1/admin/edge/sync"),
+            ("POST", "/v1/admin/edge/secure-storage"),
+            ("POST", "/v1/admin/edge/owner-link"),
+            ("GET", "/v1/admin/edge/clients"),
+            ("POST", "/v1/admin/edge/clients/example/approve"),
+            ("DELETE", "/v1/admin/edge/clients/example"),
+            ("POST", "/v1/admin/edge/decommission"),
+            ("POST", "/v1/admin/edge/forget"),
+        ):
+            response = client.request(method, path, json={})
+            assert response.status_code == 404, path
 
-        monkeypatch.setenv("ATC_EDGE_IMAGE_REFERENCE", "private-invalid-value")
-        disabled = client.get("/v1/admin/edge").json()["deployment"]
-        assert disabled["available"] is False
-        assert disabled["deploy_url"] is None
-        assert "private-invalid-value" not in json.dumps(disabled)
+        legacy = client.get("/v1/admin/legacy-edge")
+        assert legacy.status_code == 200
+        body = legacy.json()
+        assert body["product_surface"] == "legacy_cleanup_only"
+        assert body["active_operation_available"] is False
+        assert body["state"] == "not_configured"
+        assert "deployment" not in body
+        assert "providers" not in body
+        assert client.post("/v1/admin/legacy-edge/decommission").status_code == 409
 
 
 def test_update_controls_are_admin_scoped_and_persist_preferences(tmp_path: Path) -> None:
@@ -271,54 +287,56 @@ def test_dashboard_export_refuses_vault_above_resource_bound(tmp_path: Path, mon
     assert not called
 
 
-def test_edge_local_forget_requires_explicit_host_deletion_phrase(
+def test_legacy_edge_local_forget_requires_explicit_host_deletion_phrase(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     app = create_app(config)
+    app.state.legacy_edge_connections.prepare(app.state.core.store.vault_id())
     with TestClient(app) as client:
-        prepared = client.post("/v1/admin/edge/prepare")
-        assert prepared.status_code == 200
         assert (
-            client.post("/v1/admin/edge/forget", json={"confirmation": "delete"}).status_code == 422
+            client.post("/v1/admin/legacy-edge/forget", json={"confirmation": "delete"}).status_code
+            == 422
         )
         forgotten = client.post(
-            "/v1/admin/edge/forget",
+            "/v1/admin/legacy-edge/forget",
             json={"confirmation": "DELETE HOSTED EDGE"},
         )
         assert forgotten.status_code == 200
         assert forgotten.json()["state"] == "not_configured"
-        assert app.state.edge_connections.state() is None
-        assert app.state.edge_connections.material() is None
+        assert forgotten.json()["product_surface"] == "legacy_cleanup_only"
+        assert app.state.legacy_edge_connections.state() is None
+        assert app.state.legacy_edge_connections.material() is None
 
 
-def test_edge_local_forget_refuses_a_healthy_paired_service(tmp_path: Path, monkeypatch) -> None:
+def test_legacy_edge_local_forget_refuses_a_healthy_paired_service(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     app = create_app(config)
-    with TestClient(app) as client:
-        assert client.post("/v1/admin/edge/prepare").status_code == 200
-        state = app.state.edge_connections.state()
-        assert state is not None
-        app.state.edge_connections.save_state(
-            replace(
-                state,
-                edge_url="https://personal-edge.example",
-                connected_at="2026-07-21T00:00:00+00:00",
-                last_success_at="2026-07-21T00:01:00+00:00",
-            )
+    app.state.legacy_edge_connections.prepare(app.state.core.store.vault_id())
+    state = app.state.legacy_edge_connections.state()
+    assert state is not None
+    app.state.legacy_edge_connections.save_state(
+        replace(
+            state,
+            edge_url="https://personal-edge.example",
+            connected_at="2026-07-21T00:00:00+00:00",
+            last_success_at="2026-07-21T00:01:00+00:00",
         )
-
+    )
+    with TestClient(app) as client:
         refused = client.post(
-            "/v1/admin/edge/forget",
+            "/v1/admin/legacy-edge/forget",
             json={"confirmation": "DELETE HOSTED EDGE"},
         )
 
         assert refused.status_code == 409
-        assert "Remove active data and disconnect" in refused.json()["detail"]
-        assert app.state.edge_connections.state() is not None
-        assert app.state.edge_connections.material() is not None
+        assert "decommission" in refused.json()["detail"].casefold()
+        assert app.state.legacy_edge_connections.state() is not None
+        assert app.state.legacy_edge_connections.material() is not None
 
 
 def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypatch) -> None:
@@ -364,37 +382,16 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         browser_auth = {"Authorization": f"{BROWSER_AUTH_SCHEME} {browser_token}"}
         dashboard_headers = {**browser_auth, DASHBOARD_REQUEST_HEADER: "1"}
         assert client.get("/v1/context/status", headers=browser_auth).status_code == 200
-        edge_setup = client.get("/v1/admin/edge", headers=browser_auth)
-        assert edge_setup.status_code == 200
-        providers = {item["id"]: item for item in edge_setup.json()["providers"]}
-        assert providers["chatgpt"]["mobile_supported"] is False
-        assert "web-only" in providers["chatgpt"]["detail"]
-        prepared_claim = client.post("/v1/admin/edge/prepare", headers=dashboard_headers)
-        assert prepared_claim.status_code == 200
-        deployment_file = client.post("/v1/admin/edge/deployment-env", headers=dashboard_headers)
-        assert deployment_file.status_code == 200
-        assert deployment_file.headers["cache-control"] == "no-store"
-        assert 'filename="setup.env"' in deployment_file.headers["content-disposition"]
-        assert "atc-edge-claim-v1." in deployment_file.text
-        material = client.app.state.edge_connections.material()
-        assert material is not None
-        assert material.bundle.replication_secret not in deployment_file.text
-        assert material.bundle.replication_token not in deployment_file.text
-        assert token not in deployment_file.text
-        client.app.state.edge_connections.replace_bundle(
-            material,
-            material.bundle,
-            preserve_claim=False,
+        assert client.get("/v1/admin/edge", headers=browser_auth).status_code == 404
+        assert client.post("/v1/admin/edge/prepare", headers=dashboard_headers).status_code == 404
+        assert (
+            client.post("/v1/admin/edge/deployment-env", headers=dashboard_headers).status_code
+            == 404
         )
-        prepared_again = client.post("/v1/admin/edge/prepare", headers=dashboard_headers)
-        assert prepared_again.status_code == 409
-        assert material.bundle.replication_secret not in prepared_again.text
-        assert material.bundle.replication_token not in prepared_again.text
-        assert token not in prepared_again.text
-        assert providers["chatgpt"]["setup_url"] == "https://chatgpt.com/"
-        assert "eligible workspace admin" in providers["chatgpt"]["setup_steps"][0]
-        assert providers["claude"]["mobile_supported"] is True
-        assert "Settings → Connectors" in providers["claude"]["setup_steps"][0]
+        legacy = client.get("/v1/admin/legacy-edge", headers=browser_auth)
+        assert legacy.status_code == 200
+        assert legacy.json()["product_surface"] == "legacy_cleanup_only"
+        assert legacy.json()["active_operation_available"] is False
         assert client.get("/v1/context/status").status_code == 401
         assert client.get(connect_path, follow_redirects=False).status_code == 410
         integrations = client.get("/v1/admin/integrations", headers=browser_auth)

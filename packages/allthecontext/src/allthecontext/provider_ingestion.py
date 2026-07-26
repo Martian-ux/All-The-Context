@@ -21,6 +21,24 @@ from .models import Availability, CandidateInput, Sensitivity
 
 PARSER_VERSION = "provider-archives-v1"
 
+# Per-provider claim identities. Session idempotency still uses PARSER_VERSION;
+# these values version each mandatory provider surface independently.
+PARSER_IDENTITIES: dict[str, str] = {
+    "chatgpt": "chatgpt-archives-v1",
+    "claude": "claude-archives-v1",
+    "grok": "grok-archives-v1",
+    "generic": "generic-documents-v1",
+}
+
+CLOSED_COVERAGE_REASONS = (
+    "recognized",
+    "excluded",
+    "skipped",
+    "unavailable",
+    "failed",
+    "unparsed",
+)
+
 
 class ArchiveProvider(StrEnum):
     AUTO = "auto"
@@ -31,6 +49,38 @@ class ArchiveProvider(StrEnum):
 
 
 SUPPORTED_PROVIDER_VALUES = tuple(provider.value for provider in ArchiveProvider)
+
+
+def parser_identity_for(provider: str | ArchiveProvider) -> str:
+    key = provider.value if isinstance(provider, ArchiveProvider) else provider.strip().casefold()
+    if key in {ArchiveProvider.AUTO.value}:
+        return PARSER_VERSION
+    return PARSER_IDENTITIES.get(key, PARSER_IDENTITIES["generic"])
+
+
+def _closed_coverage_counts(
+    stats: Mapping[str, int],
+    candidates: Sequence[CandidateInput],
+) -> dict[str, int]:
+    """Map extractor stats into closed coverage reasons.
+
+    Unknown/unparsed material stays visible and is never folded into success.
+    """
+    recognized = max(int(stats.get("recognized_items", 0)), len(candidates))
+    excluded = int(stats.get("assistant_messages", 0)) + int(stats.get("other_messages", 0))
+    skipped = int(stats.get("skipped_messages", 0))
+    unavailable = int(stats.get("unsupported_entries", 0))
+    failed = int(stats.get("failed_items", 0))
+    unparsed = int(stats.get("unparsed_messages", 0))
+    return {
+        "recognized": recognized,
+        "excluded": excluded,
+        "skipped": skipped,
+        "unavailable": unavailable,
+        "failed": failed,
+        "unparsed": unparsed,
+    }
+
 
 _SECRET_HINT = re.compile(
     r"(?:api[_ -]?key|password|passphrase|private[_ -]?key|access[_ -]?token|"
@@ -109,12 +159,14 @@ class ProviderExtraction:
     export_format: str
     candidates: list[CandidateInput]
     warnings: list[str]
-    stats: dict[str, int | str]
+    stats: dict[str, Any]
     available: list[str]
     unavailable: list[str]
     limitations: list[str]
     complete: bool
     recognized: bool
+    closed_coverage: dict[str, int] = field(default_factory=dict)
+    parser_identity: str = PARSER_VERSION
 
 
 def normalize_provider(value: str | ArchiveProvider | None) -> ArchiveProvider:
@@ -165,6 +217,8 @@ class ProviderArchiveBuilder:
             "skipped_messages": 0,
             "unparsed_messages": 0,
             "unsupported_entries": 0,
+            "failed_items": 0,
+            "recognized_items": 0,
         }
 
     def note_file(self, source_name: str) -> None:
@@ -229,6 +283,7 @@ class ProviderArchiveBuilder:
                 if candidate is not None:
                     self._candidates.append(candidate)
                     self._stats["memory_items"] += 1
+                    self._stats["recognized_items"] += 1
 
         if recognized:
             self._recognized_files.add(safe_name)
@@ -288,6 +343,7 @@ class ProviderArchiveBuilder:
                 if candidate is not None:
                     self._candidates.append(candidate)
                     self._stats["memory_items"] += 1
+                    self._stats["recognized_items"] += 1
             return True
         return False
 
@@ -296,13 +352,17 @@ class ProviderArchiveBuilder:
         provider = self._result_provider()
         formats = sorted(self._formats)
         export_format = "+".join(formats) if formats else "generic_document"
-        stats: dict[str, int | str] = {
+        closed_coverage = _closed_coverage_counts(self._stats, candidates)
+        identity = parser_identity_for(provider)
+        stats: dict[str, Any] = {
             **self._stats,
             "files": len(self._files_seen),
             "recognized_files": len(self._recognized_files),
             "candidates": len(candidates),
             "provider": provider.value,
             "parser_version": PARSER_VERSION,
+            "parser_identity": identity,
+            "closed_coverage": closed_coverage,
         }
         recognized = bool(self._recognized_files)
         available = [f"raw import ({len(self._files_seen)} file entries inspected)"]
@@ -330,23 +390,43 @@ class ProviderArchiveBuilder:
             "source and are never trusted as user memory.",
             "Deterministic extraction can miss implicit context; the preserved source can be "
             "reprocessed by a later extractor.",
+            f"Parser identity for this claim surface is {identity}.",
         ]
-        complete = not any(
-            marker in warning.casefold()
-            for warning in self._warnings
-            for marker in ("invalid json", "could not parse", "exceeds", "truncated")
+        warnings = list(self._warnings)
+        if closed_coverage["unparsed"] or closed_coverage["failed"]:
+            warnings.append(
+                "unknown or unparsed material remains visible in closed coverage and is not "
+                "counted as parser success"
+            )
+        if closed_coverage["excluded"]:
+            warnings.append(
+                f"{closed_coverage['excluded']} assistant/system/tool/attachment items were "
+                "excluded from context publication"
+            )
+        complete = (
+            not any(
+                marker in warning.casefold()
+                for warning in warnings
+                for marker in ("invalid json", "could not parse", "exceeds", "truncated")
+            )
+            and closed_coverage["failed"] == 0
         )
+        # Unparsed material keeps coverage incomplete so it cannot report pure success.
+        if closed_coverage["unparsed"] > 0:
+            complete = False
         return ProviderExtraction(
             provider=provider,
             export_format=export_format,
             candidates=candidates,
-            warnings=list(self._warnings),
+            warnings=warnings,
             stats=stats,
             available=available,
             unavailable=unavailable,
             limitations=limitations,
             complete=complete,
             recognized=recognized,
+            closed_coverage=closed_coverage,
+            parser_identity=identity,
         )
 
     def _consume_messages(self, messages: Sequence[NormalizedMessage]) -> None:
@@ -356,7 +436,9 @@ class ProviderArchiveBuilder:
                 self._stats["user_messages"] += 1
                 extracted = _durable_candidates(message)
                 self._candidates.extend(extracted)
-                if not extracted:
+                if extracted:
+                    self._stats["recognized_items"] += len(extracted)
+                else:
                     self._stats["skipped_messages"] += 1
             elif message.role == "assistant":
                 self._stats["assistant_messages"] += 1

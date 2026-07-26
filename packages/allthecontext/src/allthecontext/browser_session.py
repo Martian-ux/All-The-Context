@@ -86,6 +86,19 @@ class BrowserSessions:
         with self._lock:
             self._sessions.pop(token, None)
 
+    def revoke_all(self) -> int:
+        """Drop every in-memory browser session (operator/session termination)."""
+        with self._lock:
+            count = len(self._sessions)
+            self._sessions.clear()
+            return count
+
+    def active_count(self) -> int:
+        now = time.monotonic()
+        with self._lock:
+            self._discard_expired(now)
+            return len(self._sessions)
+
     def _discard_expired(self, now: float) -> None:
         expired = [key for key, value in self._sessions.items() if value.expires_at <= now]
         for key in expired:

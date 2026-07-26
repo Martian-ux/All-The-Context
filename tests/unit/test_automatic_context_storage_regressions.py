@@ -161,8 +161,8 @@ def test_migration_005_recovers_after_partial_application_and_restart(
         )
 
     store = CoreStore(database)
-    assert store.migrate() == 7
-    assert store.migrate() == 7
+    assert store.migrate() == 9
+    assert store.migrate() == 9
 
     with store.connect() as connection:
         assert (
