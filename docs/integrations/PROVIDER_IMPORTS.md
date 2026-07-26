@@ -119,7 +119,7 @@ parser version to reprocess the source.
   - `POST /v1/admin/import-operations/{id}/cancel`
   - `POST /v1/admin/import-operations/{id}/retry`
 - A deterministic physically allocated/non-sparse boundary canary generator
-  (`boundary-canary-v1`) publishes version, SHA-256, 8 MiB chunk-count
+  (`boundary-canary-v2`) publishes version, SHA-256, 8 MiB chunk-count
   expectations, nonzero parse/publication material, and interruption
   checkpoints. Generate or verify with
   `python scripts/generate_boundary_canary.py`. Exact

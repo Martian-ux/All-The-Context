@@ -607,6 +607,16 @@ state is already noncurrent and creates no user queue.
   generator are implemented. The focused importer/provider slice passes 37
   tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
   pass for the integrated source.
+- Acceptance diagnosis on 2026-07-26 found two real Windows-package defects:
+  synchronous parsing could leave more than five seconds between durable
+  operation updates after all bytes were committed, and boundary-canary-v1
+  padding produced five malformed JSONL fragments outside closed coverage.
+  Production parsing now runs a serialized durable unchanged-byte heartbeat,
+  and boundary-canary-v2 uses JSONL whitespace padding while generic parsing
+  closes every valid noncandidate value as skipped and every malformed value
+  as unparsed. Focused regressions exercise a blocked synchronous parser and
+  all five scaled-canary checkpoint records without inventing byte progress or
+  treating unparsed material as complete.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

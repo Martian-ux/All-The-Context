@@ -341,8 +341,14 @@ class ImportProgressTracker:
     _last_emit_bytes: int = 0
     _cancel_acknowledged_at: float | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _emit_lock: threading.Lock = field(default_factory=threading.Lock)
+    _heartbeat_stop: threading.Event = field(default_factory=threading.Event)
+    _heartbeat_thread: threading.Thread | None = None
+    _heartbeat_error: BaseException | None = None
 
     def __post_init__(self) -> None:
+        if self.heartbeat_seconds <= 0:
+            raise ValueError("heartbeat_seconds must be positive")
         key = self.cancel_key or self.source_id
         if key is not None:
             self.registry.register(key)
@@ -368,6 +374,7 @@ class ImportProgressTracker:
             )
 
     def set_phase(self, phase: ImportPhase, *, message: str = "", force: bool = True) -> None:
+        self._raise_heartbeat_error()
         with self._lock:
             self._phase = phase
             if message:
@@ -375,6 +382,7 @@ class ImportProgressTracker:
         self._emit(force=force)
 
     def advance_bytes(self, absolute_processed: int, *, message: str = "") -> None:
+        self._raise_heartbeat_error()
         with self._lock:
             processed = max(0, min(absolute_processed, max(self.bytes_total, 0)))
             if processed < self._bytes_processed:
@@ -401,6 +409,7 @@ class ImportProgressTracker:
         Used when a source is slow or stalled below the byte heartbeat threshold so
         durable ``updated_at`` advances without a false committed-byte claim.
         """
+        self._raise_heartbeat_error()
         with self._lock:
             if message:
                 self._message = message
@@ -410,6 +419,7 @@ class ImportProgressTracker:
         self.check_cancelled()
 
     def check_cancelled(self) -> None:
+        self._raise_heartbeat_error()
         if not self._cancel_requested():
             return
         with self._lock:
@@ -421,6 +431,7 @@ class ImportProgressTracker:
         raise ImportCancelledError("import cancelled by operator request")
 
     def complete(self, *, message: str = "import complete") -> None:
+        self._raise_heartbeat_error()
         with self._lock:
             self._phase = "complete"
             self._bytes_processed = max(self._bytes_processed, self.bytes_total)
@@ -434,9 +445,38 @@ class ImportProgressTracker:
         self._emit(force=True)
 
     def close(self) -> None:
+        self._heartbeat_stop.set()
+        thread = self._heartbeat_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=CANCEL_QUIESCE_SECONDS)
+            if thread.is_alive():
+                raise InvalidStateError("durable progress heartbeat did not stop")
+        self._heartbeat_thread = None
         key = self.cancel_key or self.source_id
         if key is not None:
             self.registry.clear(key)
+
+    def start_durable_heartbeats(self) -> None:
+        """Keep durable liveness fresh while synchronous work makes no byte progress.
+
+        The worker emits the current snapshot, including unchanged committed bytes.
+        It runs at one quarter of the public heartbeat budget so durable sink latency
+        cannot consume the entire five-second observer-visible allowance.
+        """
+        self._raise_heartbeat_error()
+        if self.durable_sink is None:
+            return
+        with self._lock:
+            if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+                return
+            self._heartbeat_stop.clear()
+            thread = threading.Thread(
+                target=self._run_durable_heartbeats,
+                name="atc-import-progress-heartbeat",
+                daemon=True,
+            )
+            self._heartbeat_thread = thread
+        thread.start()
 
     def bind_source(self, source_id: str) -> None:
         current_key = self.cancel_key or self.source_id
@@ -460,16 +500,41 @@ class ImportProgressTracker:
         return timed_out or bytes_elapsed
 
     def _emit(self, *, force: bool) -> None:
-        progress = self.snapshot()
-        with self._lock:
-            if not force and not self._should_emit_locked():
+        # Serialize complete sink writes so a slower, older heartbeat can never
+        # overwrite a newer phase emitted by the synchronous worker.
+        with self._emit_lock:
+            progress = self.snapshot()
+            with self._lock:
+                if not force and not self._should_emit_locked():
+                    return
+                self._last_emit_monotonic = time.monotonic()
+                self._last_emit_bytes = self._bytes_processed
+            if self.on_progress is not None:
+                self.on_progress(progress)
+            sink = self.durable_sink
+            if sink is not None:
+                sink(progress)
+
+    def _run_durable_heartbeats(self) -> None:
+        interval = max(self.heartbeat_seconds / 4, 0.001)
+        deadline = time.monotonic() + interval
+        while not self._heartbeat_stop.wait(max(deadline - time.monotonic(), 0.0)):
+            try:
+                self._emit(force=True)
+            except BaseException as error:
+                with self._lock:
+                    self._heartbeat_error = error
+                self._heartbeat_stop.set()
                 return
-            self._last_emit_monotonic = time.monotonic()
-            self._last_emit_bytes = self._bytes_processed
-        if self.on_progress is not None:
-            self.on_progress(progress)
-        if self.durable_sink is not None:
-            self.durable_sink(progress)
+            # Fixed-rate scheduling avoids adding a full interval after a slow
+            # durable commit. If a sink consumed the interval, retry promptly.
+            deadline = max(deadline + interval, time.monotonic())
+
+    def _raise_heartbeat_error(self) -> None:
+        with self._lock:
+            error = self._heartbeat_error
+        if error is not None:
+            raise InvalidStateError("durable progress heartbeat failed") from error
 
 
 def merge_progress_metadata(

@@ -724,6 +724,77 @@ def test_upload_heartbeat_without_false_committed_bytes(
     assert len(set(stamps)) >= 2, "heartbeats must advance durable updated_at"
 
 
+def test_parse_stall_heartbeats_durably_without_false_byte_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import import_operations as ops_module
+    from allthecontext import importers as importers_module
+
+    tracker_type = ops_module.ImportProgressTracker
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.04
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", fast_tracker)
+    original_parse = importers_module.parse_archive_path
+    parser_entered = threading.Event()
+    release_parser = threading.Event()
+
+    def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        parser_entered.set()
+        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
+    _core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Durable parse heartbeat"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="parse-heartbeat.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            outcomes.append(
+                ops.accept_upload(
+                    operation_id,
+                    io.BytesIO(payload),
+                    expected_size=len(payload),
+                )
+            )
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert parser_entered.wait(timeout=5), "parser did not enter synchronous stall"
+        stamps: list[str] = []
+        observed_bytes: list[int] = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            current = ops.get_operation(operation_id)
+            if current["phase"] == "parsing":
+                stamps.append(str(current["updated_at"]))
+                observed_bytes.append(int(current["bytes_committed"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+        assert observed_bytes
+        assert set(observed_bytes) == {len(payload)}
+    finally:
+        release_parser.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["status"] == "complete"
+
+
 def test_durable_telemetry_never_persists_raw_exception_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
