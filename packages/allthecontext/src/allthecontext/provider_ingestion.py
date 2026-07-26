@@ -613,9 +613,16 @@ def _normalize_conversation(
     if isinstance(value.get("mapping"), dict):
         raw_messages: list[tuple[int, Mapping[str, Any]]] = []
         for index, (node_id, node) in enumerate(value["mapping"].items()):
-            if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+            if not isinstance(node, dict):
+                residual["unparsed"] += 1
                 continue
-            node_message = dict(node["message"])
+            message_value = node.get("message")
+            if message_value is None:
+                continue
+            if not isinstance(message_value, dict):
+                residual["unparsed"] += 1
+                continue
+            node_message = dict(message_value)
             node_message.setdefault("id", str(node_id))
             raw_messages.append((index, node_message))
         raw_messages.sort(key=lambda pair: _message_sort_key(pair[1], pair[0]))
@@ -673,7 +680,7 @@ def _conversation_message_count(value: Mapping[str, Any]) -> int:
         return sum(
             1
             for node in mapping.values()
-            if isinstance(node, dict) and isinstance(node.get("message"), dict)
+            if not isinstance(node, dict) or node.get("message") is not None
         )
     for key in ("chat_messages", "messages", "turns", "responses", "history"):
         candidate = value.get(key)
@@ -754,7 +761,6 @@ _KNOWN_NON_TEXT_CONTENT_TYPES = frozenset(
         "audio_asset_pointer",
         "video_asset_pointer",
         "real_time_user_audio_video_asset_pointer",
-        "audio_transcription",
         "code",
         "execution_output",
         "system_error",
@@ -820,24 +826,9 @@ def _normalize_or_classify_message(
         if _looks_like_attachment_or_nontext_only(value):
             return None, "unavailable"
         return None, "skipped"
-    if _looks_like_attachment_or_nontext_only(value):
-        # Attachment shells without a trusted role still close as unavailable.
-        return None, "unavailable"
+    # Missing and unknown roles remain unparsed even for attachment-shaped
+    # content. Without a trusted provider role the residual is not classifiable.
     return None, "unparsed"
-
-
-def _normalize_message(
-    value: Mapping[str, Any],
-    provider: ArchiveProvider,
-    source_name: str,
-    conversation_id: str,
-    title: str | None,
-    ordinal: int,
-) -> NormalizedMessage | None:
-    normalized, _disposition = _normalize_or_classify_message(
-        value, provider, source_name, conversation_id, title, ordinal
-    )
-    return normalized
 
 
 def _normalize_role(value: str) -> str:

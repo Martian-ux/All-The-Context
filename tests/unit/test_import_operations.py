@@ -136,7 +136,6 @@ def test_durable_bytes_committed_never_regresses_across_progress_domains(
     assert high_water == len(payload)
 
     # Direct storage API also clamps regressions from mixed progress domains.
-    op_id = str(operation["operation_id"])
     # Recreate a fresh operation to exercise the storage clamp in isolation.
     isolated = ops.start_operation(
         declared_byte_size=1_000,
@@ -160,7 +159,10 @@ def test_durable_bytes_committed_never_regresses_across_progress_domains(
     )
     clamped = core.store.get_import_operation(isolated_id)
     assert int(clamped["bytes_committed"]) == 800
-    del op_id
+    with pytest.raises(InvalidStateError, match="cannot be negative"):
+        core.store.update_import_operation(isolated_id, bytes_committed=-1)
+    with pytest.raises(InvalidStateError, match="cannot be negative"):
+        core.store.update_import_operation(isolated_id, bytes_received=-1)
 
 
 def test_size_mismatch_refuses_without_partial_publication(tmp_path: Path) -> None:

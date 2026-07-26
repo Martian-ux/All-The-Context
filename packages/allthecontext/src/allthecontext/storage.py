@@ -1066,6 +1066,10 @@ class CoreStore:
             # after the raw archive has already been accepted.
             previous_received = int(row["bytes_received"])
             previous_committed = int(row["bytes_committed"])
+            if bytes_received is not None and int(bytes_received) < 0:
+                raise InvalidStateError("received progress cannot be negative")
+            if bytes_committed is not None and int(bytes_committed) < 0:
+                raise InvalidStateError("committed progress cannot be negative")
             next_received = (
                 max(previous_received, int(bytes_received))
                 if bytes_received is not None
