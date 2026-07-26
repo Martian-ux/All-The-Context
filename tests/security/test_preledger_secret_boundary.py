@@ -155,8 +155,8 @@ def test_batch_correction_and_forget_keep_direct_canary_out_of_storage(
                 "description": f"client_secret: {CANARY}",
                 "suggested_correction": "The synthetic account rotates credentials weekly.",
                 "idempotency_key": str(uuid.uuid4()),
-                },
-            )
+            },
+        )
         admin_correction = client.post(
             f"/v1/admin/records/{record_id}/correct",
             json={
@@ -256,12 +256,18 @@ def test_startup_repair_compacts_legacy_sqlite_wal_fts_and_export_restore(
 
     repaired = CoreService(CoreConfig.in_directory(source_dir, require_auth=False))
     with sqlite3.connect(repaired.config.database_path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_candidates WHERE id=?", (legacy.id,)
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_fts WHERE content MATCH ?", (CANARY,)
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE id=?", (legacy.id,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_fts WHERE content MATCH ?", (CANARY,)
+            ).fetchone()[0]
+            == 0
+        )
         assert connection.execute("PRAGMA freelist_count").fetchone()[0] == 0
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     _assert_absent_from_paths(source_dir, (CANARY.encode(),))
@@ -291,8 +297,7 @@ def test_restore_repairs_legacy_export_before_returning(tmp_path: Path) -> None:
     )
     with sqlite3.connect(unsafe.config.database_path) as connection:
         connection.execute(
-            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' "
-            "WHERE id=?",
+            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' WHERE id=?",
             (SECRET_TEXT, SECRET_TEXT, candidate.id),
         )
         connection.commit()
@@ -325,8 +330,7 @@ def test_export_repairs_a_migrated_core_before_writing_package_bytes(tmp_path: P
     )
     with sqlite3.connect(source.config.database_path) as connection:
         connection.execute(
-            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' "
-            "WHERE id=?",
+            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' WHERE id=?",
             (SECRET_TEXT, SECRET_TEXT, candidate.id),
         )
         connection.commit()
@@ -335,9 +339,12 @@ def test_export_repairs_a_migrated_core_before_writing_package_bytes(tmp_path: P
     create_export(source.config.database_path, package, PASSPHRASE, include_audit=True)
 
     with sqlite3.connect(source.config.database_path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
+            ).fetchone()[0]
+            == 0
+        )
         assert connection.execute("PRAGMA freelist_count").fetchone()[0] == 0
     _assert_absent_from_paths(source_dir, (CANARY.encode(),))
     assert CANARY.encode() not in package.read_bytes()
@@ -354,8 +361,7 @@ def test_supported_cli_migrates_pre_boundary_core_before_export(
     )
     with sqlite3.connect(source.config.database_path) as connection:
         connection.execute(
-            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' "
-            "WHERE id=?",
+            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' WHERE id=?",
             (SECRET_TEXT, SECRET_TEXT, candidate.id),
         )
         connection.execute("DROP TABLE secret_refusal_receipts")
@@ -377,12 +383,18 @@ def test_supported_cli_migrates_pre_boundary_core_before_export(
     )
 
     with sqlite3.connect(source.config.database_path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version=8"
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version=8").fetchone()[
+                0
+            ]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
+            ).fetchone()[0]
+            == 0
+        )
     _assert_absent_from_paths(source_dir, (CANARY.encode(),))
     assert CANARY.encode() not in package.read_bytes()
 

@@ -122,9 +122,7 @@ def frozen_provider_shapes() -> tuple[FrozenProviderShape, ...]:
                                 "author": {"role": "user"},
                                 "create_time": 1_700_000_000,
                                 "content": {
-                                    "parts": [
-                                        "Preference: Keep fictional demo answers concise."
-                                    ]
+                                    "parts": ["Preference: Keep fictional demo answers concise."]
                                 },
                             }
                         },

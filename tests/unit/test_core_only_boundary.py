@@ -213,10 +213,13 @@ def test_legacy_cleanup_cannot_create_authority_or_connect_by_default(tmp_path: 
         refused = client.post("/v1/admin/legacy-edge/decommission")
         assert refused.status_code == 409
         assert "second authority" in refused.json()["detail"]
-        assert client.post(
-            "/v1/admin/legacy-edge/forget",
-            json={"confirmation": "DELETE HOSTED EDGE"},
-        ).status_code == 200
+        assert (
+            client.post(
+                "/v1/admin/legacy-edge/forget",
+                json={"confirmation": "DELETE HOSTED EDGE"},
+            ).status_code
+            == 200
+        )
 
 
 def test_integrations_surface_has_no_hosted_edge_remote_pairing(tmp_path: Path) -> None:

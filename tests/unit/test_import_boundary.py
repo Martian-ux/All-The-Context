@@ -322,8 +322,7 @@ def test_in_flight_cancel_marks_cancelled_without_publication(tmp_path: Path) ->
         service.import_bytes(
             "cancel-me.jsonl",
             b'{"kind":"fact","content":"Synthetic cancel target one"}\n'
-            b'{"kind":"fact","content":"Synthetic cancel target two"}\n'
-            * 150,
+            b'{"kind":"fact","content":"Synthetic cancel target two"}\n' * 150,
         )
     items, total = core.store.list_sources()
     assert total == 1

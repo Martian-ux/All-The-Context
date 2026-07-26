@@ -296,9 +296,7 @@ def test_legacy_edge_local_forget_requires_explicit_host_deletion_phrase(
     app.state.legacy_edge_connections.prepare(app.state.core.store.vault_id())
     with TestClient(app) as client:
         assert (
-            client.post(
-                "/v1/admin/legacy-edge/forget", json={"confirmation": "delete"}
-            ).status_code
+            client.post("/v1/admin/legacy-edge/forget", json={"confirmation": "delete"}).status_code
             == 422
         )
         forgotten = client.post(

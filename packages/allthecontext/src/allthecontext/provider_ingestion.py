@@ -52,11 +52,7 @@ SUPPORTED_PROVIDER_VALUES = tuple(provider.value for provider in ArchiveProvider
 
 
 def parser_identity_for(provider: str | ArchiveProvider) -> str:
-    key = (
-        provider.value
-        if isinstance(provider, ArchiveProvider)
-        else provider.strip().casefold()
-    )
+    key = provider.value if isinstance(provider, ArchiveProvider) else provider.strip().casefold()
     if key in {ArchiveProvider.AUTO.value}:
         return PARSER_VERSION
     return PARSER_IDENTITIES.get(key, PARSER_IDENTITIES["generic"])
@@ -84,6 +80,7 @@ def _closed_coverage_counts(
         "failed": failed,
         "unparsed": unparsed,
     }
+
 
 _SECRET_HINT = re.compile(
     r"(?:api[_ -]?key|password|passphrase|private[_ -]?key|access[_ -]?token|"

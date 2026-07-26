@@ -36,6 +36,10 @@ BOUNDARY_PLUS_ONE_BYTES = MAX_IMPORT_BYTES + 1
 
 ImportPhase = Literal[
     "preflight",
+    "awaiting_upload",
+    "uploading",
+    "hashing",
+    "staging",
     "storing",
     "parsing",
     "ingesting",

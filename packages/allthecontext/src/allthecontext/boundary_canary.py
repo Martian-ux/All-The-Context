@@ -291,9 +291,7 @@ def verify_boundary_canary_file(path: Path, *, size_bytes: int | None = None) ->
     logical = resolved.stat().st_size
     expected_size = logical if size_bytes is None else size_bytes
     if logical != expected_size:
-        raise InvalidStateError(
-            f"canary size mismatch: expected {expected_size}, found {logical}"
-        )
+        raise InvalidStateError(f"canary size mismatch: expected {expected_size}, found {logical}")
     allocated = _allocated_size(resolved)
     if allocated is not None and allocated < logical:
         raise InvalidStateError(

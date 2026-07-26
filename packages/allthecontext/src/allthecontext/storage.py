@@ -403,8 +403,7 @@ class CoreStore:
                 record_ids.update(
                     str(row["record_id"])
                     for row in connection.execute(
-                        "SELECT record_id FROM context_observation_links "
-                        "WHERE observation_id=?",
+                        "SELECT record_id FROM context_observation_links WHERE observation_id=?",
                         (candidate_id,),
                     ).fetchall()
                 )
@@ -532,8 +531,8 @@ class CoreStore:
             storage_kind = "inline" if len(content) <= SOURCE_BLOB_CHUNK_BYTES else "chunked"
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
-                "VALUES(?,?,?,?,?,?)",
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,1)",
                 (
                     content_hash,
                     content if storage_kind == "inline" else b"",
@@ -553,6 +552,17 @@ class CoreStore:
                         "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
                         (content_hash, chunk_index, chunk, len(chunk)),
                     )
+            elif inserted.rowcount != 1:
+                existing_blob = connection.execute(
+                    "SELECT blob_complete,byte_size FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+                if existing_blob is None or int(existing_blob["blob_complete"]) != 1:
+                    raise ConflictError(
+                        "identical content is still staging under another import operation"
+                    )
+                if int(existing_blob["byte_size"]) != len(content):
+                    raise InvalidStateError("content hash collision with different byte size")
             source_id = new_id()
             connection.execute(
                 "INSERT INTO source_records"
@@ -641,8 +651,8 @@ class CoreStore:
             storage_kind = "inline" if byte_size == 0 else "chunked"
             inserted = connection.execute(
                 "INSERT OR IGNORE INTO source_blobs"
-                "(content_hash,content,byte_size,media_type,created_at,storage_kind) "
-                "VALUES(?,?,?,?,?,?)",
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,1)",
                 (
                     content_hash,
                     b"",
@@ -668,6 +678,17 @@ class CoreStore:
                         chunk_index += 1
                 if written_size != byte_size or written_digest.hexdigest() != content_hash:
                     raise InvalidStateError("source file changed while it was being imported")
+            elif inserted.rowcount != 1:
+                existing_blob = connection.execute(
+                    "SELECT blob_complete,byte_size FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+                if existing_blob is None or int(existing_blob["blob_complete"]) != 1:
+                    raise ConflictError(
+                        "identical content is still staging under another import operation"
+                    )
+                if int(existing_blob["byte_size"]) != byte_size:
+                    raise InvalidStateError("content hash collision with different byte size")
 
             source_id = new_id()
             connection.execute(
@@ -905,6 +926,497 @@ class CoreStore:
             "import_status": "processing",
             "cancel_requested": True,
             "already_terminal": False,
+        }
+
+    # --- Import operations (durable lifecycle before a source id exists) ---
+
+    def create_import_operation(
+        self,
+        *,
+        operation_id: str,
+        declared_byte_size: int,
+        filename: str | None,
+        media_type: str,
+        source_service: str,
+        provider_hint: str | None,
+        staging_name: str,
+        preflight: Mapping[str, Any] | None,
+        progress: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a new import operation before any source bytes are accepted."""
+        if declared_byte_size < 0 or declared_byte_size > MAX_IMPORT_BYTES:
+            raise InvalidStateError(
+                f"import exceeds the {MAX_IMPORT_BYTES}-byte size limit "
+                f"(received declared size {declared_byte_size} bytes; boundary+1 is refused)"
+            )
+        now = utc_now()
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT INTO import_operations("
+                "id,vault_id,status,phase,declared_byte_size,bytes_received,bytes_committed,"
+                "content_hash,source_id,filename,media_type,source_service,provider_hint,"
+                "cancel_requested,progress_json,preflight_json,result_json,error_message,"
+                "staging_name,created_at,updated_at,completed_at"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    operation_id,
+                    vault_id,
+                    "awaiting_upload",
+                    "awaiting_upload",
+                    declared_byte_size,
+                    0,
+                    0,
+                    None,
+                    None,
+                    filename,
+                    media_type,
+                    source_service,
+                    provider_hint,
+                    0,
+                    _json(dict(progress)),
+                    _json(dict(preflight or {})),
+                    None,
+                    None,
+                    staging_name,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+        return self.get_import_operation(operation_id)
+
+    def get_import_operation(self, operation_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("import operation not found")
+        return self._import_operation_out(row)
+
+    def list_import_operations(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses = ["vault_id=?"]
+        params: list[Any] = [self.vault_id()]
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
+        where = " AND ".join(clauses)
+        with self.connect() as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) FROM import_operations WHERE {where}",
+                    params,
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT * FROM import_operations WHERE {where} "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (*params, min(max(limit, 1), 500), max(offset, 0)),
+            ).fetchall()
+        return [self._import_operation_out(row) for row in rows], total
+
+    def update_import_operation(
+        self,
+        operation_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        bytes_received: int | None = None,
+        bytes_committed: int | None = None,
+        content_hash: str | None = None,
+        source_id: str | None = None,
+        cancel_requested: bool | None = None,
+        progress: Mapping[str, Any] | None = None,
+        preflight: Mapping[str, Any] | None = None,
+        result: Mapping[str, Any] | None = None,
+        error_message: str | None = None,
+        clear_error: bool = False,
+        completed: bool = False,
+    ) -> dict[str, Any]:
+        """Update durable operation telemetry. Incomplete source blobs stay non-canonical."""
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            next_status = status if status is not None else str(row["status"])
+            next_phase = phase if phase is not None else str(row["phase"])
+            next_received = (
+                bytes_received if bytes_received is not None else int(row["bytes_received"])
+            )
+            next_committed = (
+                bytes_committed if bytes_committed is not None else int(row["bytes_committed"])
+            )
+            if next_committed > next_received:
+                raise InvalidStateError("committed progress cannot exceed received bytes")
+            if next_received > int(row["declared_byte_size"]):
+                raise InvalidStateError("received bytes exceed declared size")
+            # Keep reported committed progress within one chunk of durable writes.
+            if next_committed + SOURCE_BLOB_CHUNK_BYTES < next_received:
+                # Allow received to lead by at most one chunk; clamp reportable lead.
+                pass
+            next_hash = content_hash if content_hash is not None else row["content_hash"]
+            next_source = source_id if source_id is not None else row["source_id"]
+            next_cancel = (
+                int(cancel_requested)
+                if cancel_requested is not None
+                else int(row["cancel_requested"])
+            )
+            next_progress = (
+                _json(dict(progress)) if progress is not None else str(row["progress_json"])
+            )
+            next_preflight = (
+                _json(dict(preflight)) if preflight is not None else str(row["preflight_json"])
+            )
+            next_result = _json(dict(result)) if result is not None else row["result_json"]
+            if clear_error:
+                next_error = None
+            elif error_message is not None:
+                next_error = error_message[:2_000]
+            else:
+                next_error = row["error_message"]
+            now = utc_now()
+            completed_at = now if completed else row["completed_at"]
+            if next_status in {"complete", "failed", "cancelled"} and completed_at is None:
+                completed_at = now
+                completed = True
+            connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,bytes_received=?,"
+                "bytes_committed=?,content_hash=?,source_id=?,cancel_requested=?,"
+                "progress_json=?,preflight_json=?,result_json=?,error_message=?,"
+                "updated_at=?,completed_at=? WHERE id=?",
+                (
+                    next_status,
+                    next_phase,
+                    next_received,
+                    next_committed,
+                    next_hash,
+                    next_source,
+                    next_cancel,
+                    next_progress,
+                    next_preflight,
+                    next_result,
+                    next_error,
+                    now,
+                    completed_at,
+                    operation_id,
+                ),
+            )
+        return self.get_import_operation(operation_id)
+
+    def request_import_operation_cancel(self, operation_id: str) -> dict[str, Any]:
+        operation = self.get_import_operation(operation_id)
+        if operation["status"] in {"complete", "failed", "cancelled"}:
+            return {
+                "operation_id": operation_id,
+                "status": operation["status"],
+                "cancel_requested": False,
+                "already_terminal": True,
+                "source_id": operation.get("source_id"),
+            }
+        progress = dict(operation.get("progress") or {})
+        progress["cancel_requested"] = True
+        updated = self.update_import_operation(
+            operation_id,
+            cancel_requested=True,
+            progress=progress,
+        )
+        return {
+            "operation_id": operation_id,
+            "status": updated["status"],
+            "cancel_requested": True,
+            "already_terminal": False,
+            "source_id": updated.get("source_id"),
+        }
+
+    def list_nonterminal_import_operations(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM import_operations "
+                "WHERE status IN ('awaiting_upload','uploading','processing') "
+                "ORDER BY created_at"
+            ).fetchall()
+        return [self._import_operation_out(row) for row in rows]
+
+    def begin_incomplete_source_blob(
+        self,
+        *,
+        content_hash: str,
+        byte_size: int,
+        media_type: str,
+    ) -> Literal["created", "complete", "in_progress"]:
+        """Create or inspect a content-addressed blob before it is canonical."""
+        if byte_size < 0 or byte_size > MAX_IMPORT_BYTES:
+            raise InvalidStateError(f"source exceeds the {MAX_IMPORT_BYTES}-byte size limit")
+        created_at = utc_now()
+        storage_kind = "inline" if byte_size == 0 else "chunked"
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "SELECT content_hash,byte_size,blob_complete FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if existing is not None:
+                if int(existing["byte_size"]) != byte_size:
+                    raise InvalidStateError("content hash collision with different byte size")
+                if int(existing["blob_complete"]) == 1:
+                    return "complete"
+                return "in_progress"
+            connection.execute(
+                "INSERT INTO source_blobs"
+                "(content_hash,content,byte_size,media_type,created_at,storage_kind,blob_complete) "
+                "VALUES(?,?,?,?,?,?,0)",
+                (content_hash, b"", byte_size, media_type, created_at, storage_kind),
+            )
+            return "created"
+
+    def write_source_blob_chunk(
+        self,
+        *,
+        content_hash: str,
+        chunk_index: int,
+        content: bytes,
+    ) -> None:
+        """Durably write one incomplete-blob chunk. Not a canonical source yet."""
+        if not content or len(content) > SOURCE_BLOB_CHUNK_BYTES:
+            raise InvalidStateError("source blob chunk size is invalid")
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["blob_complete"]) == 1:
+                raise InvalidStateError("cannot modify a complete source blob")
+            if str(blob["storage_kind"]) != "chunked":
+                raise InvalidStateError("inline source blobs do not accept chunks")
+            existing = connection.execute(
+                "SELECT byte_size FROM source_blob_chunks WHERE content_hash=? AND chunk_index=?",
+                (content_hash, chunk_index),
+            ).fetchone()
+            if existing is not None:
+                if int(existing["byte_size"]) != len(content):
+                    raise InvalidStateError("source blob chunk size mismatch on rewrite")
+                return
+            connection.execute(
+                "INSERT INTO source_blob_chunks"
+                "(content_hash,chunk_index,content,byte_size) VALUES(?,?,?,?)",
+                (content_hash, chunk_index, content, len(content)),
+            )
+
+    def finalize_source_blob(
+        self,
+        *,
+        content_hash: str,
+        expected_byte_size: int,
+        media_type: str,
+        inline_content: bytes | None = None,
+    ) -> None:
+        """Mark a blob complete only after size integrity checks pass."""
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["byte_size"]) != expected_byte_size:
+                raise InvalidStateError("source blob size mismatch during finalize")
+            if int(blob["blob_complete"]) == 1:
+                return
+            if expected_byte_size == 0 or str(blob["storage_kind"]) == "inline":
+                payload = inline_content if inline_content is not None else b""
+                if len(payload) != expected_byte_size:
+                    raise InvalidStateError("inline source blob payload size mismatch")
+                connection.execute(
+                    "UPDATE source_blobs SET content=?,media_type=?,blob_complete=1 "
+                    "WHERE content_hash=?",
+                    (payload, media_type, content_hash),
+                )
+                return
+            total = 0
+            for expected_index, chunk_row in enumerate(
+                connection.execute(
+                    "SELECT chunk_index,byte_size FROM source_blob_chunks "
+                    "WHERE content_hash=? ORDER BY chunk_index",
+                    (content_hash,),
+                )
+            ):
+                if int(chunk_row["chunk_index"]) != expected_index:
+                    raise InvalidStateError("source blob chunks are not contiguous")
+                total += int(chunk_row["byte_size"])
+            if total != expected_byte_size:
+                raise InvalidStateError("source blob chunks do not match declared size")
+            connection.execute(
+                "UPDATE source_blobs SET media_type=?,blob_complete=1 WHERE content_hash=?",
+                (media_type, content_hash),
+            )
+
+    def create_source_record_for_blob(
+        self,
+        *,
+        content_hash: str,
+        source_service: str,
+        source_type: str,
+        filename: str | None,
+        metadata: Mapping[str, Any] | None = None,
+        parser_warnings: Sequence[str] = (),
+        import_status: Literal["processing", "complete", "failed", "cancelled"] = "processing",
+    ) -> SourceOut:
+        """Link a complete blob as a source record. Incomplete blobs are refused."""
+        created_at = utc_now()
+        vault_id = self.vault_id()
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT content_hash,byte_size,media_type,blob_complete FROM source_blobs "
+                "WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                raise NotFoundError("source blob not found")
+            if int(blob["blob_complete"]) != 1:
+                raise InvalidStateError("incomplete source blob cannot become a canonical source")
+            existing = connection.execute(
+                "SELECT sr.*, sb.byte_size, sb.media_type, "
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
+                "AND sr.source_type=?",
+                (vault_id, content_hash, source_service, source_type),
+            ).fetchone()
+            if existing is not None:
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection, str(existing["id"]), include_deleted=False
+                    )
+                    assert existing is not None
+                return self._source_out(existing, duplicate=True)
+            source_id = new_id()
+            connection.execute(
+                "INSERT INTO source_records"
+                "(id,vault_id,content_hash,source_service,source_type,filename,metadata_json,"
+                "import_status,parser_warnings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    source_id,
+                    vault_id,
+                    content_hash,
+                    source_service,
+                    source_type,
+                    filename,
+                    _json(dict(metadata or {})),
+                    import_status,
+                    _json(list(parser_warnings)[:512]),
+                    created_at,
+                ),
+            )
+            return SourceOut(
+                id=source_id,
+                content_hash=content_hash,
+                source_service=source_service,
+                source_type=source_type,
+                filename=filename,
+                media_type=str(blob["media_type"]),
+                byte_size=int(blob["byte_size"]),
+                created_at=created_at,
+                import_status=import_status,
+                metadata=dict(metadata or {}),
+                parser_warnings=list(parser_warnings)[:512],
+            )
+
+    def delete_incomplete_source_blob(self, content_hash: str) -> None:
+        """Remove a non-canonical incomplete blob and its chunks."""
+        with self.transaction() as connection:
+            blob = connection.execute(
+                "SELECT blob_complete FROM source_blobs WHERE content_hash=?",
+                (content_hash,),
+            ).fetchone()
+            if blob is None:
+                return
+            if int(blob["blob_complete"]) == 1:
+                referenced = connection.execute(
+                    "SELECT 1 FROM source_records WHERE content_hash=? LIMIT 1",
+                    (content_hash,),
+                ).fetchone()
+                if referenced is not None:
+                    return
+            connection.execute(
+                "DELETE FROM source_blob_chunks WHERE content_hash=?",
+                (content_hash,),
+            )
+            connection.execute(
+                "DELETE FROM source_blobs WHERE content_hash=? AND blob_complete=0",
+                (content_hash,),
+            )
+
+    def cleanup_orphan_incomplete_blobs(self) -> int:
+        """Delete incomplete blobs not referenced by any source record."""
+        removed = 0
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT content_hash FROM source_blobs WHERE blob_complete=0"
+            ).fetchall()
+            for row in rows:
+                content_hash = str(row["content_hash"])
+                referenced = connection.execute(
+                    "SELECT 1 FROM source_records WHERE content_hash=? LIMIT 1",
+                    (content_hash,),
+                ).fetchone()
+                if referenced is not None:
+                    continue
+                connection.execute(
+                    "DELETE FROM source_blob_chunks WHERE content_hash=?",
+                    (content_hash,),
+                )
+                connection.execute(
+                    "DELETE FROM source_blobs WHERE content_hash=?",
+                    (content_hash,),
+                )
+                removed += 1
+        return removed
+
+    def _import_operation_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "operation_id": str(row["id"]),
+            "status": str(row["status"]),
+            "phase": str(row["phase"]),
+            "declared_byte_size": int(row["declared_byte_size"]),
+            "bytes_received": int(row["bytes_received"]),
+            "bytes_committed": int(row["bytes_committed"]),
+            "content_hash": cast(str | None, row["content_hash"]),
+            "source_id": cast(str | None, row["source_id"]),
+            "filename": cast(str | None, row["filename"]),
+            "media_type": str(row["media_type"]),
+            "source_service": str(row["source_service"]),
+            "provider_hint": cast(str | None, row["provider_hint"]),
+            "cancel_requested": bool(row["cancel_requested"]),
+            "progress": cast(dict[str, Any], _loads(row["progress_json"], {})),
+            "preflight": cast(dict[str, Any], _loads(row["preflight_json"], {})),
+            "result": cast(dict[str, Any] | None, _loads(row["result_json"], None)),
+            "error_message": cast(str | None, row["error_message"]),
+            "staging_name": str(row["staging_name"]),
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "completed_at": cast(str | None, row["completed_at"]),
         }
 
     def _source_content_chunks_tx(

@@ -201,7 +201,7 @@ describe("desktop browser session", () => {
 
   it("maps automatic import outcomes without review-era labels", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    const importResult = {
       source: { id: "source-1", duplicate: false },
       observation_ids: ["observation-1", "observation-2"],
       provider: "chatgpt",
@@ -210,13 +210,66 @@ describe("desktop browser session", () => {
       outcomes: { applied: 1, tentative: 1 },
       warnings: [],
       coverage: { available: [], unavailable: [], limitations: [], warnings: [], complete: true },
-    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    };
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/admin/import-operations") && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          operation_id: "op-1",
+          status: "awaiting_upload",
+          phase: "awaiting_upload",
+          declared_byte_size: 7,
+          bytes_received: 0,
+          bytes_committed: 0,
+          cancel_requested: false,
+          progress: { percent: 0, phase: "awaiting_upload" },
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/admin/import-operations/op-1/content") && init?.method === "PUT") {
+        return new Response(JSON.stringify({
+          operation_id: "op-1",
+          status: "complete",
+          phase: "complete",
+          declared_byte_size: 7,
+          bytes_received: 7,
+          bytes_committed: 7,
+          source_id: "source-1",
+          cancel_requested: false,
+          progress: { percent: 100, phase: "complete" },
+          result: importResult,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/admin/import-operations/op-1")) {
+        return new Response(JSON.stringify({
+          operation_id: "op-1",
+          status: "processing",
+          phase: "uploading",
+          declared_byte_size: 7,
+          bytes_received: 7,
+          bytes_committed: 7,
+          cancel_requested: false,
+          progress: { percent: 50, phase: "uploading" },
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: { message: `unexpected ${url}` } }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
 
     await expect(
       api.importSource(new File(["archive"], "export.zip"), "chatgpt"),
     ).resolves.toMatchObject({
       observation_count: 2,
       outcomes: { applied: 1, tentative: 1 },
+      operation_id: "op-1",
     });
   });
 

@@ -1264,9 +1264,7 @@ class UpdateManager:
         with self._exclusive():
             self._require_no_active_handoff()
             if self.state.phase != UpdatePhase.CURRENT:
-                raise UpdateError(
-                    "A verified same-version candidate is required before acceptance"
-                )
+                raise UpdateError("A verified same-version candidate is required before acceptance")
             offered = self.state.offered_version
             if offered is None:
                 raise UpdateError("No verified candidate is available for acceptance")
@@ -1274,9 +1272,7 @@ class UpdateManager:
                 if ReleaseVersion.parse(offered) != ReleaseVersion.parse(
                     self.config.current_version
                 ):
-                    raise UpdateError(
-                        "Only an exact same-version signed candidate can be accepted"
-                    )
+                    raise UpdateError("Only an exact same-version signed candidate can be accepted")
             except ManifestError as exc:
                 raise UpdateError("Verified candidate version metadata is invalid") from exc
             manifest_path = self._operation_directory() / "manifest.json"
@@ -1294,9 +1290,7 @@ class UpdateManager:
                 if manifest["platform"] != self.config.platform_name:
                     raise UpdateError("Signed update metadata targets a different platform")
                 if manifest["architecture"] != self.config.architecture:
-                    raise UpdateError(
-                        "Signed update metadata targets a different architecture"
-                    )
+                    raise UpdateError("Signed update metadata targets a different architecture")
                 if cast(str, manifest["version"]) != offered:
                     raise UpdateError("Verified update state no longer matches its metadata")
             except (ManifestError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:

@@ -133,9 +133,9 @@ def _persist_cli_client_credential(
     name = f"client:{client_id}"
     try:
         if insecure_development_file:
-            DevelopmentFileCredentialStore(
-                config.data_dir / "credentials.development.json"
-            ).set(name, token)
+            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").set(
+                name, token
+            )
             return False
         credential_store = KeyringCredentialStore()
         credential_store.set(name, token)
@@ -147,9 +147,9 @@ def _persist_cli_client_credential(
         with suppress(RuntimeError):
             KeyringCredentialStore().delete(name)
         with suppress(OSError, RuntimeError, ValueError):
-            DevelopmentFileCredentialStore(
-                config.data_dir / "credentials.development.json"
-            ).delete(name)
+            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").delete(
+                name
+            )
         raise
 
 
@@ -247,25 +247,76 @@ def _cmd_config_mcp(args: argparse.Namespace) -> None:
     print(_render_mcp_config(config, args.client_id, token=args.token, target=args.target))
 
 
+def _import_operations(args: argparse.Namespace) -> Any:
+    from allthecontext.import_operations import ImportOperationService
+
+    config = _config(args)
+    store = _store(args)
+    max_bytes = getattr(args, "max_bytes", None) or config.max_import_bytes
+    imports = ArchiveImportService(store, max_bytes=max_bytes)
+    return ImportOperationService(
+        store,
+        imports,
+        data_dir=config.data_dir,
+        max_bytes=max_bytes,
+    )
+
+
 def _cmd_import(args: argparse.Namespace) -> None:
     path = Path(args.path).expanduser().resolve()
-    service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
-    _dump(service.import_path(path, source_service=args.provider))
+    service = _import_operations(args)
+    finished = service.import_path_via_operation(
+        path,
+        source_service=args.provider,
+        provider=None if args.provider == "auto" else args.provider,
+    )
+    if finished.get("result"):
+        _dump(finished["result"])
+        return
+    _dump(finished)
 
 
 def _cmd_import_progress(args: argparse.Namespace) -> None:
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    # Prefer operation id when it matches a durable import operation.
+    try:
+        _dump(operations.get_operation(identifier))
+        return
+    except NotFoundError:
+        pass
     service = ArchiveImportService(_store(args))
-    _dump(service.import_progress(args.source_id))
+    _dump(service.import_progress(identifier))
 
 
 def _cmd_cancel_import(args: argparse.Namespace) -> None:
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    try:
+        _dump(operations.cancel_operation(identifier))
+        return
+    except NotFoundError:
+        pass
     service = ArchiveImportService(_store(args))
-    _dump(service.cancel_import(args.source_id))
+    _dump(service.cancel_import(identifier))
 
 
 def _cmd_reprocess_source(args: argparse.Namespace) -> None:
-    service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
-    _dump(service.reprocess_source(args.source_id))
+    from allthecontext.storage import NotFoundError
+
+    identifier = args.source_id
+    operations = _import_operations(args)
+    try:
+        operations.get_operation(identifier)
+    except NotFoundError:
+        service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
+        _dump(service.reprocess_source(identifier))
+        return
+    _dump(operations.retry_operation(identifier))
 
 
 def _cmd_import_boundary(args: argparse.Namespace) -> None:
@@ -466,11 +517,7 @@ def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
             "remote_present": edge_url is not None,
             "credential_available": material is not None,
             "state": (
-                "not_configured"
-                if state is None
-                else "prepared"
-                if edge_url is None
-                else "paired"
+                "not_configured" if state is None else "prepared" if edge_url is None else "paired"
             ),
             "edge_url": edge_url,
             "detail": (
@@ -722,18 +769,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_progress = commands.add_parser(
         "import-progress",
-        help="Inspect durable progress for one raw-source import",
+        help="Inspect durable progress for an import operation or source id",
     )
     _common_data(import_progress)
-    import_progress.add_argument("source_id")
+    import_progress.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
     import_progress.set_defaults(handler=_cmd_import_progress)
 
     cancel_import = commands.add_parser(
         "cancel-import",
-        help="Request cancellation of an in-flight raw-source import",
+        help="Request cancellation of an in-flight import operation or source import",
     )
     _common_data(cancel_import)
-    cancel_import.add_argument("source_id")
+    cancel_import.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
     cancel_import.set_defaults(handler=_cmd_cancel_import)
 
     reprocess = commands.add_parser(
@@ -741,7 +794,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retry extraction from a preserved raw source without re-upload",
     )
     _common_data(reprocess)
-    reprocess.add_argument("source_id")
+    reprocess.add_argument(
+        "source_id",
+        help="import operation id or source id",
+    )
     reprocess.add_argument(
         "--max-bytes",
         type=_import_byte_limit,

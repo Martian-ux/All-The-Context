@@ -903,7 +903,12 @@ class ArchiveImportService:
             raise
         return self._ingest(source, parsed, actual_service, tracker=tracker)
 
-    def reprocess_source(self, source_id: str) -> dict[str, Any]:
+    def reprocess_source(
+        self,
+        source_id: str,
+        *,
+        progress_tracker: ImportProgressTracker | None = None,
+    ) -> dict[str, Any]:
         """Resume extraction from the preserved raw blob after interruption or failure."""
         source = self.store.get_source(source_id, duplicate=True)
         if source.import_status == "complete":
@@ -957,14 +962,27 @@ class ArchiveImportService:
                 source.byte_size,
                 database_path=self.store.database_path,
             )
-        tracker = ImportProgressTracker(
-            bytes_total=max(source.byte_size, 1),
-            source_id=source.id,
-            registry=self.cancel_registry,
-            durable_sink=self._durable_progress_sink(source.id),
-        )
-        tracker.set_phase("storing", message="using preserved raw source")
-        tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
+        if progress_tracker is None:
+            tracker = ImportProgressTracker(
+                bytes_total=max(source.byte_size, 1),
+                source_id=source.id,
+                registry=self.cancel_registry,
+                durable_sink=self._durable_progress_sink(source.id),
+            )
+            tracker.set_phase("storing", message="using preserved raw source")
+            tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
+        else:
+            tracker = progress_tracker
+            tracker.bind_source(source.id)
+            source_sink = self._durable_progress_sink(source.id)
+            external_sink = tracker.durable_sink
+
+            def combined_sink(progress: ImportProgress) -> None:
+                source_sink(progress)
+                if external_sink is not None:
+                    external_sink(progress)
+
+            tracker.durable_sink = combined_sink
         provider = str(source.metadata.get("provider", source.source_service))
         try:
             with tempfile.TemporaryDirectory(
@@ -992,7 +1010,8 @@ class ArchiveImportService:
                 source_type=source.source_type,
             )
             tracker.bind_source(source.id)
-            tracker.durable_sink = self._durable_progress_sink(source.id)
+            if progress_tracker is None:
+                tracker.durable_sink = self._durable_progress_sink(source.id)
             metadata = _source_metadata(parsed)
             metadata = merge_progress_metadata(metadata, tracker.snapshot())
             self.store.update_source_import(
@@ -1039,6 +1058,10 @@ class ArchiveImportService:
                 status = "failed"
             elif progress.phase in {
                 "preflight",
+                "awaiting_upload",
+                "uploading",
+                "hashing",
+                "staging",
                 "storing",
                 "parsing",
                 "ingesting",

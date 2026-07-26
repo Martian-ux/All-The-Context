@@ -14,7 +14,9 @@ user must continually curate.
    - [Grok: Settings > Data Controls > Download data](https://x.ai/legal/faq)
 3. Drop the downloaded ZIP into All The Context without unpacking or editing it.
    Auto-detection is the default; a provider hint is available for unusual
-   exports.
+   exports. The dashboard uses the durable import-operation API: it creates an
+   opaque operation id, streams the file, shows committed progress, and can
+   cancel mid-upload or mid-extraction.
 4. Let extraction complete. The dashboard reports truthful source coverage and
    the total observations processed. Core's import response also returns
    per-disposition `outcomes` and affected `record_ids`; the dashboard presents
@@ -89,21 +91,33 @@ parser version to reprocess the source.
   each to finish within 60 minutes.
 - Disk preflight requires the greater of four-times-source-plus-1-GiB or any
   measured durable high-water plus 25 percent on the Core database volume
-  before accepting a raw source. Once the source record exists, durable
-  progress is stored on it (`import_progress`), reaches 100 percent only after
-  integrity verification and atomic publication, and is queryable via CLI/API.
-  Cancel requests mark an in-flight import without publishing current context;
-  retries use the preserved raw blob and parser-versioned idempotency keys so
-  decisions are not duplicated.
-- Core commits and integrity-checks the inert raw source before parsing it.
-  Parser failure or cancellation therefore leaves a failed/cancelled source
-  available for no-upload retry and publishes no partial current context.
-  Path imports parse a temporary copy reconstructed from that authoritative
-  blob, not the caller-owned path.
-- The initial HTTP upload, source hash, and SQLite blob transaction do not yet
-  expose a durable operation identifier or cancellable chunk heartbeat. The
-  exact-candidate 5-second first-progress/cancel budget is therefore still an
-  implementation blocker, not satisfied by later source-record telemetry.
+  before accepting a raw source. A durable opaque **import operation** id is
+  created after that preflight and before any source bytes are accepted.
+  Status, cancel, and progress are queryable by operation id while the upload
+  and Core blob staging are still in flight and before any source id exists.
+- Upload streams request bytes without materializing the archive in memory.
+  Integrity (SHA-256) is computed while streaming. Committed progress is
+  advanced on durable 8 MiB boundaries and stays within one chunk of bytes
+  written. Heartbeats publish within the 5-second / 64 MiB budget. Incomplete
+  blobs are never linked as canonical sources (`blob_complete=0` until
+  finalize).
+- After complete raw preservation, the operation links to the authoritative
+  source id. Parser/ingest failure or cancellation retains that source for
+  no-upload retry. Process restart recovers non-terminal operations into a
+  deterministic failed terminal state with staging cleanup; linked sources
+  remain retryable without re-upload.
+- Cancel is acknowledged within the in-process cancel registry and durable
+  operation row during upload, hashing, Core blob staging, parsing, ingestion,
+  and verification. Current context is never partially published from an
+  incomplete operation.
+- The synchronous multipart `POST /v1/admin/import` endpoint remains for
+  compatibility and routes through the same operation lifecycle. The V1
+  dashboard journey uses:
+  - `POST /v1/admin/import-operations` (declared size + preflight → operation id)
+  - `PUT /v1/admin/import-operations/{id}/content` (streamed body)
+  - `GET /v1/admin/import-operations/{id}` (concurrent status)
+  - `POST /v1/admin/import-operations/{id}/cancel`
+  - `POST /v1/admin/import-operations/{id}/retry`
 - A deterministic physically allocated/non-sparse boundary canary generator
   (`boundary-canary-v1`) publishes version, SHA-256, 8 MiB chunk-count
   expectations, nonzero parse/publication material, and interruption
@@ -111,7 +125,7 @@ parser version to reprocess the source.
   `python scripts/generate_boundary_canary.py`. Exact
   `2,000,000,000`-byte candidate runs on Windows x86-64, macOS ARM64, macOS
   x86-64, and Linux x86-64 remain operator-controlled acceptance; a
-  `2,000,000,001`-byte source is refused deterministically.
+  `2,000,000,001`-byte source is refused deterministically before upload.
 - Core stores large raw sources as ordered 8 MiB-or-smaller SQLite rows instead
   of one oversized BLOB. Reads, retries, and source-inclusive portable restores
   verify the complete source size and SHA-256 identity.
@@ -144,17 +158,21 @@ macOS shells, and Linux shells:
 
 ```text
 atc import "path/to/provider-export.zip" --provider auto
-atc import-progress <source-id>
-atc cancel-import <source-id>
-atc reprocess-source <source-id>
+atc import-progress <operation-id-or-source-id>
+atc cancel-import <operation-id-or-source-id>
+atc reprocess-source <operation-id-or-source-id>
 atc import-boundary
 ```
 
-Use `--provider chatgpt`, `--provider claude`, or `--provider grok` only when
-auto-detection needs a hint. The CLI returns provider, format, conversation and
-message counts, warnings, parser identity, closed coverage, and the complete
-coverage report. Admin HTTP routes mirror progress, cancel, reprocess, and the
-frozen boundary/provider claim profile. Its import result includes:
+`atc import` creates a durable operation, streams the local file with committed
+chunk progress, then parses and ingests. Progress/cancel/retry accept either an
+operation id (preferred during upload/staging) or a source id (after raw
+preservation). Use `--provider chatgpt`, `--provider claude`, or
+`--provider grok` only when auto-detection needs a hint. The CLI returns
+provider, format, conversation and message counts, warnings, parser identity,
+closed coverage, and the complete coverage report. Admin HTTP routes expose the
+operation API above plus source-scoped progress/cancel/reprocess compatibility
+and the frozen boundary/provider claim profile. Its import result includes:
 
 ```json
 {

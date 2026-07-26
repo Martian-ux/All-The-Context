@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -410,6 +410,102 @@ def create_app(
             raise HTTPException(status_code=404, detail="Context item not found")
         return record.model_dump(mode="json")
 
+    class StartImportOperationRequest(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        declared_byte_size: int
+        filename: str | None = None
+        provider: str | None = None
+        source_service: str = "auto"
+        media_type: str | None = None
+
+    @app.post("/v1/admin/import-operations")
+    def start_import_operation(
+        body: StartImportOperationRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        """Create a durable operation id after preflight; no source bytes yet."""
+        require(principal, "admin")
+        return core.import_operations.start_operation(
+            declared_byte_size=body.declared_byte_size,
+            filename=body.filename,
+            source_service=body.source_service,
+            provider=body.provider,
+            media_type=body.media_type,
+        )
+
+    @app.get("/v1/admin/import-operations/{operation_id}")
+    def get_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.import_operations.get_operation(operation_id)
+
+    @app.put("/v1/admin/import-operations/{operation_id}/content")
+    async def upload_import_operation_content(
+        operation_id: str,
+        http_request: Request,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        """Stream source bytes into a pre-created operation with chunk heartbeats."""
+        require(principal, "admin")
+        content_length = http_request.headers.get("content-length")
+        expected_size = int(content_length) if content_length is not None else None
+
+        import asyncio
+        from queue import Empty, Queue
+
+        # Bounded queue bridges the async request body to the sync Core worker.
+        chunk_queue: Queue[bytes | None] = Queue(maxsize=8)
+        stream_error: list[BaseException] = []
+
+        async def _pump() -> None:
+            try:
+                async for chunk in http_request.stream():
+                    await asyncio.to_thread(chunk_queue.put, chunk)
+                await asyncio.to_thread(chunk_queue.put, None)
+            except BaseException as error:
+                stream_error.append(error)
+                await asyncio.to_thread(chunk_queue.put, None)
+
+        pump_task = asyncio.create_task(_pump())
+
+        def run_upload() -> dict[str, Any]:
+            def iterator() -> Any:
+                while True:
+                    try:
+                        item = chunk_queue.get(timeout=30.0)
+                    except Empty as error:
+                        raise InvalidStateError("import upload stream stalled") from error
+                    if item is None:
+                        if stream_error:
+                            raise stream_error[0]
+                        return
+                    yield item
+
+            return core.import_operations.accept_upload(
+                operation_id,
+                iterator(),
+                expected_size=expected_size,
+                process_after=True,
+            )
+
+        try:
+            return await run_in_threadpool(run_upload)
+        finally:
+            if not pump_task.done():
+                pump_task.cancel()
+            with suppress(Exception):
+                await pump_task
+
+    @app.post("/v1/admin/import-operations/{operation_id}/cancel")
+    def cancel_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.import_operations.cancel_operation(operation_id)
+
+    @app.post("/v1/admin/import-operations/{operation_id}/retry")
+    async def retry_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return await run_in_threadpool(core.import_operations.retry_operation, operation_id)
+
     @app.post("/v1/admin/import")
     async def import_source(
         principal: Principal,
@@ -417,8 +513,11 @@ def create_app(
         source_service: Annotated[str, Form()] = "auto",
         provider: Annotated[str | None, Form()] = None,
     ) -> dict[str, Any]:
+        """Compatibility multipart import. Prefer the import-operations API."""
         require(principal, "admin")
         safe_name = Path(file.filename or "import.txt").name
+        # Multipart UploadFile is async-only; stage to a temp path with bounded reads,
+        # then stream through the operation lifecycle so the same cancel/progress rules apply.
         with tempfile.TemporaryDirectory(
             prefix="atc-import-", dir=active_config.data_dir
         ) as temporary_directory:
@@ -430,13 +529,33 @@ def create_app(
                     if total > active_config.max_import_bytes:
                         raise InvalidStateError("import exceeds configured size limit")
                     destination.write(chunk)
-            return await run_in_threadpool(
-                core.imports.import_path,
-                upload_path,
+            operation = core.import_operations.start_operation(
+                declared_byte_size=total,
                 filename=safe_name,
                 source_service=source_service,
                 provider=provider,
             )
+
+            def file_iter() -> Any:
+                with upload_path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        yield chunk
+
+            finished = await run_in_threadpool(
+                core.import_operations.accept_upload,
+                str(operation["operation_id"]),
+                file_iter(),
+                expected_size=total,
+                process_after=True,
+            )
+            result = finished.get("result")
+            if isinstance(result, dict):
+                return result
+            if finished.get("status") == "complete" and finished.get("source_id"):
+                return await run_in_threadpool(
+                    core.imports.reprocess_source, str(finished["source_id"])
+                )
+            raise InvalidStateError(str(finished.get("error_message") or "import operation failed"))
 
     @app.get("/v1/admin/candidates", deprecated=True, tags=["legacy compatibility"])
     def list_candidates(

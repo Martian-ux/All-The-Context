@@ -37,20 +37,34 @@ retention.
 
 ## Provider archive ingestion
 
-Raw imports travel directly to Core. ZIP, JSON, JSONL, Markdown, and text
-importers store a content-addressed source locally, then pass normalized data
-to a deterministic extractor. ChatGPT conversation graphs, Claude
-`chat_messages`, flexible Grok conversation envelopes, provider memory/profile
-fields, and Grok-style Markdown transcripts have explicit adapters. Imported
-text is untrusted data and imported instructions remain inert.
+Raw imports travel directly to Core through a durable **import operation**
+owned by Core:
+
+1. Create an opaque operation id with a declared byte size after boundary and
+   Core-volume disk preflight (no source bytes yet).
+2. Stream upload bytes; compute SHA-256 while streaming; commit progress on
+   durable 8 MiB boundaries. Status is queryable by operation id concurrently.
+3. Stage incomplete content-addressed blob rows (`blob_complete=0`) until size
+   and hash integrity pass; only then create a canonical `source_records` row
+   and link `operation.source_id`.
+4. Parse and ingest from the preserved raw blob. Operation telemetry is not a
+   second source of canonical context.
+
+ZIP, JSON, JSONL, Markdown, and text importers pass normalized data to a
+deterministic extractor. ChatGPT conversation graphs, Claude `chat_messages`,
+flexible Grok conversation envelopes, provider memory/profile fields, and
+Grok-style Markdown transcripts have explicit adapters. Imported text is
+untrusted data and imported instructions remain inert.
 
 Provider imports use a versioned archive session keyed by source ID and parser
 version. Batches use the source hash, parser version, and stable batch ordinal
 as idempotency material. Replaying an interrupted batch returns the original
 observation IDs and decisions; changed content under the same key fails closed.
-Source status is `processing`, `failed`, or `complete`. Failed or processing
-sources can be reprocessed from the preserved raw blob, so retry does not
-require another provider download or create duplicate observations.
+Source status is `processing`, `failed`, `cancelled`, or `complete`. Failed or
+cancelled sources can be reprocessed from the preserved raw blob (operation
+retry or source reprocess), so retry does not require another provider download
+or create duplicate observations. Process restart recovers non-terminal
+operations into a deterministic failed state with bounded staging cleanup.
 
 Every provider import result includes detected provider/format, file and
 conversation counts, user/assistant/other message counts, provider-memory item

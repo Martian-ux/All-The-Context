@@ -181,9 +181,7 @@ def test_platform_credential_failure_fails_closed_and_revokes_new_principal(
     monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
     monkeypatch.setattr(
         "allthecontext.credentials.keyring.get_password",
-        lambda *_args: (_ for _ in ()).throw(
-            KeyringError(f"{backend_error}: {secret_marker}")
-        ),
+        lambda *_args: (_ for _ in ()).throw(KeyringError(f"{backend_error}: {secret_marker}")),
     )
 
     with pytest.raises(RuntimeError) as failure:

@@ -503,9 +503,7 @@ def build_edge_mcp(
         payload: dict[str, JsonValue] = {
             "kind": "context_forget",
             "content": (
-                "Explicit user forget request"
-                if contains_secret_like_value(reason)
-                else reason
+                "Explicit user forget request" if contains_secret_like_value(reason) else reason
             ),
             "scope": [],
             "confidence": 1.0,

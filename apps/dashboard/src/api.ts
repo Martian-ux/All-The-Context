@@ -7,6 +7,7 @@ import type {
   ContextRecord,
   ContextRecordVersion,
   CoreStatus,
+  ImportOperation,
   ImportResult,
   IntegrationsStatus,
   IntegrationConnectResult,
@@ -202,14 +203,91 @@ export const api = {
       items: result.items.map(sourceFromWire),
     };
   },
+  startImportOperation: async (
+    declaredByteSize: number,
+    filename: string,
+    provider: ArchiveProvider = "auto",
+  ): Promise<ImportOperation> =>
+    request<ImportOperation>("/admin/import-operations", {
+      method: "POST",
+      body: JSON.stringify({
+        declared_byte_size: declaredByteSize,
+        filename,
+        provider,
+        source_service: provider,
+      }),
+    }),
+  getImportOperation: (operationId: string): Promise<ImportOperation> =>
+    request<ImportOperation>(`/admin/import-operations/${encodeURIComponent(operationId)}`),
+  uploadImportOperation: async (operationId: string, file: File): Promise<ImportOperation> => {
+    const headers = new Headers({
+      Accept: "application/json",
+      "Content-Type": "application/octet-stream",
+      "X-ATC-Dashboard": "1",
+    });
+    const browserSession = window.sessionStorage.getItem(BROWSER_SESSION_KEY);
+    if (browserSession) headers.set("Authorization", `Browser ${browserSession}`);
+    let response: Response;
+    try {
+      response = await fetch(`${API_ROOT}/admin/import-operations/${encodeURIComponent(operationId)}/content`, {
+        method: "PUT",
+        headers,
+        body: file,
+      });
+    } catch {
+      throw new ApiError("Core is not reachable on this device.", 0);
+    }
+    if (response.status === 401) window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
+    const body = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      let detail = body && typeof body === "object" && "detail" in body ? body.detail : undefined;
+      if (body && typeof body === "object" && "error" in body && body.error && typeof body.error === "object" && "message" in body.error) {
+        detail = (body.error as { message?: unknown }).message;
+      }
+      throw new ApiError(typeof detail === "string" ? detail : `Request failed (${response.status}).`, response.status, body);
+    }
+    return body as ImportOperation;
+  },
+  cancelImportOperation: (operationId: string): Promise<ImportOperation & { already_terminal?: boolean }> =>
+    request(`/admin/import-operations/${encodeURIComponent(operationId)}/cancel`, { method: "POST" }),
+  retryImportOperation: async (operationId: string): Promise<ImportOperation> =>
+    request<ImportOperation>(`/admin/import-operations/${encodeURIComponent(operationId)}/retry`, { method: "POST" }),
   importSource: async (
     file: File,
     provider: ArchiveProvider = "auto",
+    options?: {
+      onOperation?: (operation: ImportOperation) => void;
+      pollMs?: number;
+    },
   ): Promise<ImportResult> => {
-    const body = new FormData();
-    body.set("file", file);
-    body.set("provider", provider);
-    return importFromWire(await request<ImportWire>("/admin/import", { method: "POST", body }));
+    const started = await api.startImportOperation(file.size, file.name, provider);
+    options?.onOperation?.(started);
+    const pollMs = options?.pollMs ?? 1000;
+    let stopPolling = false;
+    const poll = window.setInterval(() => {
+      if (stopPolling) return;
+      void api.getImportOperation(started.operation_id).then((operation) => {
+        options?.onOperation?.(operation);
+      }).catch(() => undefined);
+    }, pollMs);
+    try {
+      const finished = await api.uploadImportOperation(started.operation_id, file);
+      options?.onOperation?.(finished);
+      if (finished.result && typeof finished.result === "object" && "source" in (finished.result as object)) {
+        return {
+          ...importFromWire(finished.result as ImportWire),
+          operation_id: finished.operation_id,
+        };
+      }
+      if (finished.status === "complete" && finished.source_id) {
+        const reprocessed = await api.reprocessSource(finished.source_id);
+        return { ...reprocessed, operation_id: finished.operation_id };
+      }
+      throw new ApiError(finished.error_message ?? "Import operation failed.", 422, finished);
+    } finally {
+      stopPolling = true;
+      window.clearInterval(poll);
+    }
   },
   reprocessSource: async (sourceId: string): Promise<ImportResult> =>
     importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess`, { method: "POST" })),

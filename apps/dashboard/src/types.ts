@@ -188,6 +188,50 @@ export interface ImportResult {
   };
   warnings: string[];
   coverage: IngestionCoverage;
+  operation_id?: string;
+}
+
+export interface ImportOperationProgress {
+  phase?: string;
+  bytes_processed?: number;
+  bytes_total?: number;
+  percent?: number;
+  message?: string;
+  cancel_requested?: boolean;
+  cancel_acknowledged?: boolean;
+}
+
+export interface ImportOperation {
+  operation_id: string;
+  status: "awaiting_upload" | "uploading" | "processing" | "complete" | "failed" | "cancelled";
+  phase: string;
+  declared_byte_size: number;
+  bytes_received: number;
+  bytes_committed: number;
+  content_hash?: string | null;
+  source_id?: string | null;
+  filename?: string | null;
+  cancel_requested: boolean;
+  progress: ImportOperationProgress;
+  preflight?: Record<string, unknown>;
+  result?: ImportResult | ImportWireLike | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+/** Wire shape returned inside operation.result before dashboard mapping. */
+export interface ImportWireLike {
+  source?: { id: string; duplicate?: boolean };
+  candidate_ids?: string[];
+  observation_ids?: string[];
+  provider?: string;
+  export_format?: string;
+  stats?: IngestionStats;
+  outcomes?: ImportResult["outcomes"];
+  warnings?: string[];
+  coverage?: IngestionCoverage;
 }
 
 export interface ContextDeletion {
