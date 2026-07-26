@@ -269,6 +269,13 @@ unavailable rather than persisting private content. `local_only` is
 categorically excluded. The durable
 `always_available` projection remains independently usable while Core is off.
 
+Core-approved `context_scopes` are capability boundaries on every forwarded
+record from search, bootstrap, and direct `get_context_item` requests. `*`
+explicitly grants every record scope; an empty grant exposes only records with
+no context scope, matching Relay visibility semantics. Out-of-grant records are
+reported as not found or omitted, and they do not contribute to forwarded
+search counts or bootstrap character totals.
+
 The Render handoff carries only a 24-hour claim reference and Core public keys.
 The deployed Edge stays inert until Core signs an origin-bound challenge. Edge
 generates durable credentials locally and encrypts them to Core; acknowledgement

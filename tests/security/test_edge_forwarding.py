@@ -149,21 +149,34 @@ def test_core_executes_only_authorized_core_available_records(
         )
 
     core.store.approve_remote_edge_client(
-        "edge:allowed", name="Approved remote client", scopes=["context:read"]
+        "edge:allowed",
+        name="Approved remote client",
+        scopes=["context:read"],
+        context_scopes=["*"],
     )
 
-    def envelope(client_id: str, *, payload: dict[str, object] | None = None) -> dict[str, object]:
+    def envelope(
+        client_id: str,
+        *,
+        operation: str = "search_context",
+        payload: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         broker.enqueue(
             client_id=client_id,
             # Deliberately attacker-controlled; Core ignores this assertion.
             client_scopes=["*", "admin", "context:read"],
-            operation="search_context",
+            operation=operation,
             payload=payload or {"query": "atlas", "limit": 20},
         )
         return broker.claim()[0]
 
-    def execute(client_id: str, *, payload: dict[str, object] | None = None) -> dict[str, object]:
-        claimed = envelope(client_id, payload=payload)
+    def execute(
+        client_id: str,
+        *,
+        operation: str = "search_context",
+        payload: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        claimed = envelope(client_id, operation=operation, payload=payload)
         result = manager._execute_forward_request(claimed)
         broker.cancel(str(claimed["request_id"]))
         return result
@@ -194,8 +207,163 @@ def test_core_executes_only_authorized_core_available_records(
         },
     )
     assert [item["id"] for item in local_probe["items"]] == [records[Availability.CORE].id]
+    wildcard_probe = execute(
+        "edge:allowed",
+        payload={"query": "atlas", "scopes": ["*"], "limit": 20},
+    )
+    assert [item["id"] for item in wildcard_probe["items"]] == [records[Availability.CORE].id]
+    fetched = execute(
+        "edge:allowed",
+        operation="get_context_item",
+        payload={"record_id": records[Availability.CORE].id},
+    )
+    assert fetched["found"] is True
+    assert fetched["item"]["id"] == records[Availability.CORE].id
+
+    scoped_atlas_candidate = core.store.add_candidate(
+        CandidateInput(
+            kind="project",
+            content="core scoped atlas",
+            scopes=["project:atlas"],
+            availability=Availability.CORE,
+            allowed_clients=["edge:scoped", "edge:empty"],
+            idempotency_key="private-retry-scoped-atlas",
+        )
+    )
+    scoped_atlas = core.store.approve_candidate(
+        scoped_atlas_candidate.id, ApprovalRequest(), actor="test"
+    )
+    secret_candidate = core.store.add_candidate(
+        CandidateInput(
+            kind="project",
+            content="core secret",
+            scopes=["project:secret"],
+            availability=Availability.CORE,
+            allowed_clients=["edge:scoped"],
+            idempotency_key="private-retry-secret",
+        )
+    )
+    secret = core.store.approve_candidate(secret_candidate.id, ApprovalRequest(), actor="test")
+    core.store.approve_remote_edge_client(
+        "edge:scoped",
+        name="Scoped remote client",
+        scopes=["context:read"],
+        context_scopes=["project:atlas"],
+    )
+    scoped_search = execute(
+        "edge:scoped",
+        payload={"query": "core", "limit": 20},
+    )
+    assert [item["id"] for item in scoped_search["items"]] == [scoped_atlas.id]
+    assert scoped_search["total"] == 1
+    denied_scope_search = execute(
+        "edge:scoped",
+        payload={"query": "core", "scopes": ["project:secret"], "limit": 20},
+    )
+    assert denied_scope_search == {"state": "available", "items": [], "total": 0}
+    scoped_bootstrap = execute(
+        "edge:scoped",
+        operation="bootstrap_context",
+        payload={
+            "task_description": "core",
+            "requested_scopes": [],
+            "character_budget": 12_000,
+        },
+    )
+    scoped_bootstrap_ids = [item["id"] for item in scoped_bootstrap["items"]]
+    assert scoped_atlas.id in scoped_bootstrap_ids
+    assert secret.id not in scoped_bootstrap_ids
+    assert scoped_bootstrap["used_chars"] == sum(
+        len(item["content"]) + 64 for item in scoped_bootstrap["items"]
+    )
+    denied_scope_bootstrap = execute(
+        "edge:scoped",
+        operation="bootstrap_context",
+        payload={
+            "task_description": "core",
+            "requested_scopes": ["project:secret"],
+            "character_budget": 12_000,
+        },
+    )
+    assert denied_scope_bootstrap == {
+        "state": "available",
+        "items": [],
+        "context_mode": "core_via_edge",
+        "omitted_scopes": ["project:secret"],
+        "used_chars": 0,
+    }
+    scoped_fetch_allowed = execute(
+        "edge:scoped",
+        operation="get_context_item",
+        payload={"record_id": scoped_atlas.id},
+    )
+    assert scoped_fetch_allowed["found"] is True
+    assert scoped_fetch_allowed["item"]["id"] == scoped_atlas.id
+    scoped_fetch = execute(
+        "edge:scoped",
+        operation="get_context_item",
+        payload={"record_id": secret.id},
+    )
+    assert scoped_fetch == {"state": "available", "found": False}
+
+    unscoped_candidate = core.store.add_candidate(
+        CandidateInput(
+            kind="project",
+            content="core unscoped",
+            scopes=[],
+            availability=Availability.CORE,
+            allowed_clients=["edge:empty"],
+            idempotency_key="private-retry-unscoped",
+        )
+    )
+    unscoped = core.store.approve_candidate(unscoped_candidate.id, ApprovalRequest(), actor="test")
+    core.store.approve_remote_edge_client(
+        "edge:empty",
+        name="Empty-scope remote client",
+        scopes=["context:read"],
+        context_scopes=[],
+    )
+    empty_scope_search = execute(
+        "edge:empty",
+        payload={"query": "core", "limit": 20},
+    )
+    assert [item["id"] for item in empty_scope_search["items"]] == [unscoped.id]
+    assert empty_scope_search["total"] == 1
+    empty_scope_fetch_denied = execute(
+        "edge:empty",
+        operation="get_context_item",
+        payload={"record_id": scoped_atlas.id},
+    )
+    assert empty_scope_fetch_denied == {"state": "available", "found": False}
+    empty_scope_fetch_unscoped = execute(
+        "edge:empty",
+        operation="get_context_item",
+        payload={"record_id": unscoped.id},
+    )
+    assert empty_scope_fetch_unscoped["found"] is True
+    assert empty_scope_fetch_unscoped["item"]["id"] == unscoped.id
+
     core.store.revoke_remote_edge_client("edge:allowed")
     assert execute("edge:allowed") == {"state": "unavailable"}
+
+
+@pytest.mark.parametrize(
+    ("record", "approved", "expected"),
+    [
+        ({"scopes": ["project:atlas"]}, frozenset(), False),
+        ({"scopes": ["project:atlas"]}, frozenset({"*"}), True),
+        ({"scopes": ["project:atlas"]}, frozenset({"project:atlas"}), True),
+        ({"scopes": ["project:secret"]}, frozenset({"project:atlas"}), False),
+        ({"scopes": []}, frozenset(), True),
+        ({"scopes": "project:atlas"}, frozenset({"project:atlas"}), False),
+    ],
+)
+def test_forwarding_record_scope_matching_matches_relay_semantics(
+    record: dict[str, object],
+    approved: frozenset[str],
+    expected: bool,
+) -> None:
+    assert EdgeSyncManager._record_matches_approved_context_scopes(record, approved) is expected
 
 
 def test_wait_timeout_cancels_request(tmp_path: Path) -> None:

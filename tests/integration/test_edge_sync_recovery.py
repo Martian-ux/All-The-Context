@@ -339,7 +339,12 @@ def test_online_core_services_forwarding_via_outbound_edge_poll(
 
     with _edge_host(database, connections) as (_edge, client, broker):
         connections.connect(PUBLIC_URL, client=client)
-        core.store.approve_remote_edge_client("edge:claude", name="Claude", scopes=["context:read"])
+        core.store.approve_remote_edge_client(
+            "edge:claude",
+            name="Claude",
+            scopes=["context:read"],
+            context_scopes=["*"],
+        )
         assert manager.sync_now(http_client=client)["state"] == "ready"
         request_id = broker.enqueue(
             client_id="edge:claude",

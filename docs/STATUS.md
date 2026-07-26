@@ -53,6 +53,15 @@ and `hdiutil` diagnostics plus one 30-second managed-Core readiness window. It
 does not relax a gate, retry a failed launch, or change updater/release
 behavior.
 
+## Security maintenance
+
+On 2026-07-25, dormant Core forwarding compatibility code was tightened so
+Core-approved remote Edge `context_scopes` apply to every record returned by
+direct fetch, search, or bootstrap. `*` explicitly grants every record scope;
+an empty grant exposes only unscoped records. Out-of-grant records are omitted
+without contributing to forwarded search counts or bootstrap character totals.
+This is defense in depth and does not restore Edge to normal V1 operation.
+
 ## AI-memory research direction
 
 ADR-042 establishes a post-beta, benchmark-driven research direction without
