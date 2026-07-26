@@ -938,19 +938,38 @@ class EdgeSyncManager:
             return {"state": "unavailable"}
         if not isinstance(payload, dict):
             return {"state": "unavailable"}
-        requested_scopes = payload.get("scopes", payload.get("requested_scopes", []))
-        if not isinstance(requested_scopes, list):
-            return {"state": "unavailable"}
-        if approved_context_scopes:
-            payload_scopes = [
-                str(scope) for scope in requested_scopes if str(scope) in approved_context_scopes
-            ]
-            if requested_scopes and not payload_scopes:
-                return {"state": "available", "items": []}
-            if "scopes" in payload:
-                payload["scopes"] = payload_scopes
-            if "requested_scopes" in payload:
-                payload["requested_scopes"] = payload_scopes
+        request_is_context_scope_bounded = "*" in approved_context_scopes
+        if operation in {"search_context", "bootstrap_context"}:
+            scope_field = "scopes" if operation == "search_context" else "requested_scopes"
+            unexpected_scope_field = (
+                "requested_scopes" if operation == "search_context" else "scopes"
+            )
+            if unexpected_scope_field in payload:
+                return {"state": "unavailable"}
+            requested_scopes = payload.get(scope_field, [])
+            if not isinstance(requested_scopes, list):
+                return {"state": "unavailable"}
+            if "*" in approved_context_scopes:
+                if "*" in {str(scope) for scope in requested_scopes}:
+                    payload[scope_field] = []
+            elif approved_context_scopes:
+                payload_scopes = [
+                    str(scope)
+                    for scope in requested_scopes
+                    if str(scope) in approved_context_scopes
+                ]
+                if requested_scopes and not payload_scopes:
+                    if operation == "search_context":
+                        return {"state": "available", "items": [], "total": 0}
+                    return {
+                        "state": "available",
+                        "items": [],
+                        "context_mode": "core_via_edge",
+                        "omitted_scopes": sorted({str(scope) for scope in requested_scopes}),
+                        "used_chars": 0,
+                    }
+                request_is_context_scope_bounded = bool(payload_scopes)
+                payload[scope_field] = payload_scopes
         if operation == "search_context":
             search_request = SearchRequest(
                 query=str(payload.get("query", "")),
@@ -967,11 +986,20 @@ class EdgeSyncManager:
                 self._forward_record(item)
                 for item in result.get("items", [])
                 if isinstance(item, dict)
+                and self._record_matches_approved_context_scopes(item, approved_context_scopes)
             ]
+            if not request_is_context_scope_bounded:
+                result["total"] = len(result["items"])
             return self._bounded_forward_response({"state": "available", **result})
         if operation == "get_context_item":
             record = self.retrieval.get(str(payload.get("record_id", "")), principal)
-            if record is None or record.availability != Availability.CORE:
+            if (
+                record is None
+                or record.availability != Availability.CORE
+                or not self._record_matches_approved_context_scopes(
+                    record.model_dump(mode="json"), approved_context_scopes
+                )
+            ):
                 return {"state": "available", "found": False}
             return self._bounded_forward_response(
                 {
@@ -988,11 +1016,34 @@ class EdgeSyncManager:
             result["items"] = [
                 self._forward_record(item)
                 for item in result.get("items", [])
-                if isinstance(item, dict) and item.get("availability") == Availability.CORE.value
+                if (
+                    isinstance(item, dict)
+                    and item.get("availability") == Availability.CORE.value
+                    and self._record_matches_approved_context_scopes(item, approved_context_scopes)
+                )
             ]
+            result["used_chars"] = sum(
+                len(str(item.get("content", ""))) + 64 for item in result["items"]
+            )
             result["context_mode"] = "core_via_edge"
             return self._bounded_forward_response({"state": "available", **result})
         return {"state": "unavailable"}
+
+    @staticmethod
+    def _record_matches_approved_context_scopes(
+        record: dict[str, Any], approved_context_scopes: frozenset[str]
+    ) -> bool:
+        """Return whether a Core record may leave Core for a scoped remote Edge."""
+
+        scopes = record.get("scopes", [])
+        if not isinstance(scopes, list):
+            return False
+        record_scopes = {str(scope) for scope in scopes}
+        return (
+            not record_scopes
+            or "*" in approved_context_scopes
+            or not record_scopes.isdisjoint(approved_context_scopes)
+        )
 
     @staticmethod
     def _forward_record(record: dict[str, Any]) -> dict[str, Any]:

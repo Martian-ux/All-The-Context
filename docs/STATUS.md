@@ -44,7 +44,7 @@ requires exact-boundary and boundary-plus-one behavior, disk preflight,
 durable progress/cancel/retry, bounded resource use, interruption recovery,
 complete source integrity, source-inclusive encrypted export, and restore.
 
-Current main `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine jobs in
+Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine jobs in
 [hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472)
 on 2026-07-25. The exact diagnostic/startup branch SHA `f3496df` also passed
 all nine jobs in both its
@@ -62,6 +62,16 @@ deadline. The integrated hardening adds bounded retrieval, rollback-journal,
 and `hdiutil` diagnostics plus one 30-second managed-Core readiness window. It
 does not relax a gate, retry a failed launch, or change updater/release
 behavior.
+
+## Security maintenance
+
+On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
+tightened so Core-approved remote Edge `context_scopes` apply to every record
+returned by direct fetch, search, or bootstrap. `*` explicitly grants every
+record scope; an empty grant exposes only unscoped records. Out-of-grant records
+are omitted without contributing to forwarded search counts or bootstrap
+character totals. This is defense in depth on a still-callable surface; B-103
+must remove or build-gate it from supported beta artifacts.
 
 ## AI-memory research direction
 
@@ -118,6 +128,12 @@ provider-neutral memory-object and read-only retrieval-adapter contracts.
 current ATC Retrieval V3 against the same sanitized, frozen task fixture and
 reports task-level sufficiency, abstention, forbidden output, disclosure,
 determinism, latency, storage, and adapter-declared model/token/cost usage.
+
+The 2026-07-24 security hardening requires `context:read` for Core search,
+including Retrieval V3 `as_of` historical search, so `context:status`
+credentials cannot retrieve current, expired, or superseded context content
+through `/v1/context/search`. The status endpoint remains available to those
+credentials without granting access to context payloads.
 
 The adapter input is an already-authorized immutable snapshot. Results contain
 aggregate counts, ordinal-derived ranking fingerprints, and accounting—not
@@ -532,7 +548,7 @@ state is already noncurrent and creates no user queue.
 - GitHub private vulnerability reporting was enabled and verified on
   2026-07-25. Branch, dependency, secret, and code-scanning controls still need
   their own acceptance.
-- Current main `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
+- Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
   Windows/macOS/Linux Python, Node 20/22 dashboard, and native-package jobs in
   [hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472).
   This is baseline evidence, not the still-unfrozen beta release candidate.

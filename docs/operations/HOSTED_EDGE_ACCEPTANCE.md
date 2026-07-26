@@ -12,5 +12,5 @@ client-management, CLI, and mutation-trigger paths before candidate freeze.
 Any retained decommissioning path must be isolated from ordinary Core
 operation.
 
-ADR-052 supersedes ADR-032's earlier remote-client scope. The first usable beta
+ADR-053 supersedes ADR-032's earlier remote-client scope. The first usable beta
 is same-device only; direct-Core mobile and other-computer access are post-V1.

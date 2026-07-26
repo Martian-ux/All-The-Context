@@ -269,6 +269,13 @@ unavailable rather than persisting private content. `local_only` is
 categorically excluded. The durable
 `always_available` projection remains independently usable while Core is off.
 
+Core-approved `context_scopes` are capability boundaries on every forwarded
+record from search, bootstrap, and direct `get_context_item` requests. `*`
+explicitly grants every record scope; an empty grant exposes only records with
+no context scope, matching Relay visibility semantics. Out-of-grant records are
+reported as not found or omitted, and they do not contribute to forwarded
+search counts or bootstrap character totals.
+
 The Render handoff carries only a 24-hour claim reference and Core public keys.
 The deployed Edge stays inert until Core signs an origin-bound challenge. Edge
 generates durable credentials locally and encrypts them to Core; acknowledgement
@@ -462,13 +469,13 @@ no provider resource is created without an operator decision.
 ## ADR-032: V1 is single-Core and has no hosted runtime
 
 **Status:** accepted 2026-07-22; supersedes the hosted-Edge portions of
-ADR-030 and ADR-031. Its remote-client scope was superseded by ADR-052 on
+ADR-030 and ADR-031. Its remote-client scope was superseded by ADR-053 on
 2026-07-25; the active beta is same-device only.
 
 The decision established one authoritative Core and rejected a hosted Edge,
 cloud replica, Render account, GHCR runtime image, provider bill, or other
 third-party context service. It originally contemplated future direct mobile
-and other-computer clients. ADR-052 narrowed the first usable beta to
+and other-computer clients. ADR-053 narrowed the first usable beta to
 same-device desktop clients; remote and mobile access are post-V1.
 
 Core continues to bind only to `127.0.0.1` by default. Removing Edge does not
@@ -480,7 +487,7 @@ limitation rather than offering an unsafe shortcut.
 The `always_available` schema value and experimental Relay modules remain
 temporarily for import/history compatibility and safe cleanup of engineering
 setups. Newly applied context uses only `local_only` and `core_available`.
-ADR-052 and B-103 strengthen the beta boundary: current callable Edge/Relay
+ADR-053 and B-103 strengthen the beta boundary: current callable Edge/Relay
 paths must be removed or build-gated from supported artifacts, with any
 retained cleanup path isolated from ordinary Core operation.
 
@@ -1198,7 +1205,19 @@ journal/WAL, database growth, and any source-inclusive export. Existing
 expanded-text, archive-entry, compression, and per-item parser bounds remain
 independent safety controls.
 
-## ADR-052: Govern V1 as the first usable public beta
+## ADR-052: Search result content requires read scope
+
+**Status:** accepted 2026-07-25.
+
+Core context search returns full context record payloads, including content, for
+both current and `as_of` historical retrieval. The `/v1/context/search`
+endpoint therefore requires `context:read`; `context:status` is not sufficient
+for any search path, including offset-aware historical requests that can
+surface expired or superseded personal context. The separate
+`/v1/context/status` endpoint continues to require `context:status`, preserving
+a non-content monitoring permission.
+
+## ADR-053: Govern V1 as the first usable public beta
 
 **Status:** accepted as the planning and release-governance baseline on
 2026-07-25. The product-scope decisions are closed; implementation,
