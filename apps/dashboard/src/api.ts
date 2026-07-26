@@ -133,7 +133,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError("Core is not reachable on this device.", 0);
   }
   if (response.status === 204) return undefined as T;
-  if (response.status === 401) window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
+  if (response.status === 401) {
+    window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
+  }
   const body = await response.json().catch(() => undefined) as unknown;
   if (!response.ok) {
     let detail = body && typeof body === "object" && "detail" in body ? body.detail : undefined;
@@ -290,4 +292,12 @@ export const api = {
   deferUpdate: () => request<UpdateStatus>("/admin/updates/defer", { method: "POST" }),
   cancelUpdate: () => request<UpdateStatus>("/admin/updates/cancel", { method: "POST" }),
   clearUpdateError: () => request<UpdateStatus>("/admin/updates/error", { method: "DELETE" }),
+  /** Server-side revoke of the short-lived browser capability; clears tab storage. */
+  revokeBrowserSession: async (): Promise<{ revoked: boolean }> => {
+    const result = await request<{ revoked: boolean }>("/browser/session/revoke", {
+      method: "POST",
+    });
+    window.sessionStorage.removeItem(BROWSER_SESSION_KEY);
+    return result;
+  },
 };

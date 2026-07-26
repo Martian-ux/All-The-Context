@@ -19,6 +19,7 @@ from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
+    UNKEYED_CONFLICT_KINDS,
     AutomaticMemoryPolicy,
     MemoryPolicy,
     ObservationOrigin,
@@ -2142,20 +2143,64 @@ class CoreStore:
             return record if record is None or self._record_is_allowed(record, principal) else None
         entity_key = cast(str | None, observation["entity_key"])
         attribute_key = cast(str | None, observation["attribute_key"])
-        if entity_key is None or attribute_key is None:
+        if entity_key is not None and attribute_key is not None:
+            rows = cast(
+                list[sqlite3.Row],
+                connection.execute(
+                    "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
+                    "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                    "ORDER BY observed_at DESC,updated_at DESC,id",
+                    (observation["vault_id"], entity_key, attribute_key),
+                ).fetchall(),
+            )
+            return next(
+                (record for record in rows if self._record_is_allowed(record, principal)),
+                None,
+            )
+        # Beta minimum conflict safety (B-102): unkeyed historical preferences,
+        # goals, projects, decisions, workflows, and constraints share one
+        # current lineage per kind so contradictory imports cannot all stay
+        # confident current truth. Provenance remains on version history.
+        kind = str(observation["kind"]).casefold()
+        if kind not in UNKEYED_CONFLICT_KINDS:
             return None
         rows = cast(
             list[sqlite3.Row],
             connection.execute(
-                "SELECT * FROM context_records WHERE vault_id=? AND entity_key=? "
-                "AND attribute_key=? AND approval_status='approved' AND deleted_at IS NULL "
+                "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
+                "AND entity_key IS NULL AND attribute_key IS NULL "
+                "AND approval_status='approved' AND deleted_at IS NULL "
                 "ORDER BY observed_at DESC,updated_at DESC,id",
-                (observation["vault_id"], entity_key, attribute_key),
+                (observation["vault_id"], kind),
             ).fetchall(),
         )
         return next(
             (record for record in rows if self._record_is_allowed(record, principal)),
             None,
+        )
+
+    def _principal_for_client_id_tx(
+        self,
+        connection: sqlite3.Connection,
+        client_id: str | None,
+    ) -> ClientPrincipal | None:
+        if client_id is None:
+            return None
+        row = cast(
+            sqlite3.Row | None,
+            connection.execute(
+                "SELECT id,name,scopes_json,auto_approve FROM client_registrations "
+                "WHERE id=? AND revoked_at IS NULL",
+                (client_id,),
+            ).fetchone(),
+        )
+        if row is None:
+            return ClientPrincipal(client_id, "Stored client", frozenset())
+        return ClientPrincipal(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            scopes=frozenset(cast(list[str], _loads(row["scopes_json"], []))),
+            auto_approve=bool(row["auto_approve"]),
         )
 
     @staticmethod
@@ -2569,6 +2614,7 @@ class CoreStore:
         decision = AutomaticMemoryPolicy(policy).evaluate(
             self._candidate_out(observation),
             origin=origin,
+            principal=principal,
         )
         if str(observation["kind"]).casefold() == "context_forget":
             target = self._target_record_tx(connection, observation, principal)
@@ -2780,15 +2826,7 @@ class CoreStore:
                     if origin == ObservationOrigin.RELAY_QUEUE
                     else submitted_by
                 )
-                principal = (
-                    ClientPrincipal(
-                        id=effective_client_id,
-                        name="Stored client",
-                        scopes=frozenset(),
-                    )
-                    if effective_client_id is not None
-                    else None
-                )
+                principal = self._principal_for_client_id_tx(connection, effective_client_id)
                 self._evaluate_observation_tx(
                     connection,
                     str(row["id"]),

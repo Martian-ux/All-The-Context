@@ -66,6 +66,9 @@ AI_CLIENT_SCOPES = [
     "context:propose",
     "context:read",
     "context:status",
+    # Explicit local trust grant for A-09 / B-102. Authentication alone is not
+    # enough; only ATC-configured same-device AI principals receive this class.
+    "witness:explicit_user_statement",
 ]
 ProgressCallback = Callable[[str, str], None]
 

@@ -22,7 +22,7 @@ from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import messagebox
-from typing import Any
+from typing import Any, Literal
 
 from platformdirs import user_data_path
 
@@ -470,6 +470,8 @@ def diagnostics() -> dict[str, Any]:
         "update_channels": sorted(update_config.manifest_urls),
         "mcp_helper_bundled": runtime.mcp_executable is not None,
         "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
+        "recovery_admin_mode": True,
+        "recovery_python_checkout_required": False,
         "core_data_directory": str(CoreConfig.default().data_dir),
     }
 
@@ -835,12 +837,115 @@ def _parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     mode.add_argument("--uninstall", action="store_true", help=argparse.SUPPRESS)
+    # Packaged recovery/admin (B-109): deliberately hidden native modes.
+    mode.add_argument("--recovery-help", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-export", metavar="DESTINATION", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-restore", metavar="SOURCE", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-rollback", metavar="ROLLBACK_DIR", help=argparse.SUPPRESS)
+    mode.add_argument(
+        "--recovery-purge",
+        nargs=2,
+        metavar=("TYPE", "ID"),
+        help=argparse.SUPPRESS,
+    )
+    mode.add_argument("--recovery-purge-resume", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--recovery-doctor", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--vault-name", default="My Context", help=argparse.SUPPRESS)
     parser.add_argument("--timezone", help=argparse.SUPPRESS)
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-claude", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-startup", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-data-dir", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-destination", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-rollback-path", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-confirmation", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-dry-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-cutover", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-no-compact", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--recovery-passphrase-env",
+        default="ATC_EXPORT_PASSPHRASE",
+        help=argparse.SUPPRESS,
+    )
     return parser
+
+
+def _run_recovery(args: argparse.Namespace) -> int:
+    from .recovery_admin import (
+        RecoveryError,
+        doctor,
+        dump_json,
+        export_active_vault,
+        passphrase_from_env,
+        purge_target,
+        recovery_help_text,
+        restore_isolated,
+        resume_purge_jobs,
+        rollback_active_vault,
+    )
+
+    data_dir = args.recovery_data_dir
+    try:
+        if args.recovery_help:
+            print(recovery_help_text())
+            return 0
+        if args.recovery_doctor:
+            dump_json(doctor(data_dir=data_dir))
+            return 0
+        if args.recovery_export:
+            dump_json(
+                export_active_vault(
+                    Path(args.recovery_export),
+                    data_dir=data_dir,
+                    passphrase=passphrase_from_env(args.recovery_passphrase_env),
+                )
+            )
+            return 0
+        if args.recovery_restore:
+            dump_json(
+                restore_isolated(
+                    Path(args.recovery_restore),
+                    data_dir=data_dir,
+                    destination=args.recovery_destination,
+                    passphrase=passphrase_from_env(args.recovery_passphrase_env),
+                    dry_run=args.recovery_dry_run,
+                    cutover=args.recovery_cutover,
+                    rollback_path=args.recovery_rollback_path,
+                )
+            )
+            return 0
+        if args.recovery_rollback:
+            dump_json(rollback_active_vault(Path(args.recovery_rollback), data_dir=data_dir))
+            return 0
+        if args.recovery_purge is not None:
+            raw_type, target_id = args.recovery_purge
+            if raw_type not in {"record", "source"}:
+                raise RecoveryError("purge type must be record or source")
+            target_type: Literal["record", "source"] = (
+                "record" if raw_type == "record" else "source"
+            )
+            if not args.recovery_confirmation:
+                raise RecoveryError("--recovery-confirmation is required for purge")
+            dump_json(
+                purge_target(
+                    target_type,
+                    target_id,
+                    confirmation=args.recovery_confirmation,
+                    data_dir=data_dir,
+                    compact=not args.recovery_no_compact,
+                )
+            )
+            return 0
+        if args.recovery_purge_resume:
+            dump_json(resume_purge_jobs(data_dir=data_dir))
+            return 0
+    except RecoveryError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    except Exception as error:  # pragma: no cover - defensive packaging boundary
+        print(f"Recovery failed: {error}", file=sys.stderr)
+        return 1
+    return 1
 
 
 def _run_graphical(args: argparse.Namespace) -> int:
@@ -881,6 +986,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.diagnostics:
         write_diagnostics(args.diagnostics)
         return 0
+    if (
+        args.recovery_help
+        or args.recovery_export
+        or args.recovery_restore
+        or args.recovery_rollback
+        or args.recovery_purge is not None
+        or args.recovery_purge_resume
+        or args.recovery_doctor
+    ):
+        return _run_recovery(args)
     if args.headless_setup:
         return _headless_setup(args, RuntimeCommand.current())
     if args.packaged_credential_acceptance:

@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "description": "Fictional chronological provider contradictions for B-102 minimum conflict safety. Synthetic only; no personal content.",
+  "scenarios": [
+    {
+      "id": "preference_style",
+      "kind": "interaction_preference",
+      "statements": [
+        {
+          "content": "Prefer short answers for fiction scenario Alpha.",
+          "observed_at": "2024-01-10T12:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "Prefer detailed answers for fiction scenario Alpha.",
+          "observed_at": "2025-06-15T09:30:00+00:00",
+          "expected_current": true
+        }
+      ]
+    },
+    {
+      "id": "goal_focus",
+      "kind": "goal",
+      "statements": [
+        {
+          "content": "My goal is to ship fiction project Orion by March.",
+          "observed_at": "2024-02-01T08:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "My goal is to ship fiction project Orion by September.",
+          "observed_at": "2024-08-01T08:00:00+00:00",
+          "expected_current": true
+        }
+      ]
+    },
+    {
+      "id": "project_active",
+      "kind": "project",
+      "statements": [
+        {
+          "content": "I am working on fiction project Nebula.",
+          "observed_at": "2023-11-01T10:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "I am working on fiction project Quasar.",
+          "observed_at": "2025-01-20T10:00:00+00:00",
+          "expected_current": true
+        }
+      ]
+    },
+    {
+      "id": "project_decision_stack",
+      "kind": "project_decision",
+      "statements": [
+        {
+          "content": "I decided to use fiction stack Ruby for the demo.",
+          "observed_at": "2024-03-05T14:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "I decided to use fiction stack Rust for the demo.",
+          "observed_at": "2024-09-12T14:00:00+00:00",
+          "expected_current": true
+        }
+      ]
+    },
+    {
+      "id": "workflow_shell",
+      "kind": "workflow",
+      "statements": [
+        {
+          "content": "I use fiction-shell Alpha for local automation.",
+          "observed_at": "2024-04-01T11:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "I use fiction-shell Beta for local automation.",
+          "observed_at": "2025-02-02T11:00:00+00:00",
+          "expected_current": true
+        }
+      ]
+    },
+    {
+      "id": "constraint_boundary",
+      "kind": "constraint",
+      "statements": [
+        {
+          "content": "We must keep fiction data under one gigabyte.",
+          "observed_at": "2024-05-01T16:00:00+00:00",
+          "expected_current": false
+        },
+        {
+          "content": "We must keep fiction data under two gigabytes.",
+          "observed_at": "2025-03-01T16:00:00+00:00",
+          "expected_current": true
+        }
+      ]
+    }
+  ]
+}

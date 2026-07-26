@@ -13,6 +13,11 @@ from dataclasses import dataclass
 
 _ITERATIONS = 310_000
 
+# Capability grant (not an operation scope): only ATC-configured same-device
+# principals with this class may attest that text was an explicit user statement.
+# Authentication and context:propose alone are insufficient (A-09 / B-102).
+WITNESS_EXPLICIT_USER_STATEMENT = "witness:explicit_user_statement"
+
 
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
@@ -47,6 +52,20 @@ class ClientPrincipal:
     name: str
     scopes: frozenset[str]
     auto_approve: bool = False
+
+    def may_attest_explicit_user_statement(self) -> bool:
+        """Return whether Core trusts this principal as an explicit-statement witness."""
+        return (
+            WITNESS_EXPLICIT_USER_STATEMENT in self.scopes
+            or "admin" in self.scopes
+            or "*" in self.scopes
+        )
+
+
+def principal_may_attest_explicit_user_statement(
+    principal: ClientPrincipal | None,
+) -> bool:
+    return principal is not None and principal.may_attest_explicit_user_statement()
 
 
 def record_is_allowed(

@@ -143,10 +143,13 @@ def test_core_delete_restore_resumes_relay_projection_stream(tmp_path: Path) -> 
                     kind="preference",
                     content="Use descriptive variable names.",
                     scopes=["personal"],
+                    entity_key="user",
+                    attribute_key="variable_naming",
                     explicit_user_statement=True,
                 )
             )
             assert later.record_id is not None
+            assert later.record_id != record_id
             core.change_availability(later.record_id, Availability.ALWAYS)
             assert dispatcher.dispatch_pending().delivered == 1
             assert relay.get(identity, later.record_id) is not None

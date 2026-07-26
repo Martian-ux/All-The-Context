@@ -295,6 +295,29 @@ def create_app(
         response.delete_cookie(LEGACY_BROWSER_COOKIE, path="/", samesite="strict")
         return response
 
+    @app.post("/v1/browser/session/revoke")
+    def revoke_browser_session(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Revoke the short-lived browser capability for this tab session."""
+        if authorization is None:
+            raise HTTPException(status_code=401, detail="Credential required")
+        scheme, _, token = authorization.partition(" ")
+        token = token.strip()
+        if scheme != BROWSER_AUTH_SCHEME or not token:
+            raise HTTPException(
+                status_code=400,
+                detail="Browser session revocation requires Browser authorization",
+            )
+        if request.headers.get(DASHBOARD_REQUEST_HEADER) != "1":
+            raise HTTPException(
+                status_code=403,
+                detail="Same-origin dashboard request required",
+            )
+        browser_sessions.revoke(token)
+        return {"revoked": True}
+
     @app.post("/v1/setup")
     def setup(request: ClientCreate, http_request: Request) -> dict[str, Any]:
         if core.store.client_count() != 0:

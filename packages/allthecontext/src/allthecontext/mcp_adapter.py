@@ -252,7 +252,7 @@ def build_mcp() -> FastMCP:
         sensitivity: str = "normal",
         source_reference: str | None = None,
         evidence: str | None = None,
-        explicit_user_statement: bool = True,
+        explicit_user_statement: bool = False,
         entity_key: str | None = None,
         attribute_key: str | None = None,
         supersedes: str | None = None,
