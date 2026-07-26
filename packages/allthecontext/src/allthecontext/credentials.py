@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Protocol
@@ -12,7 +13,8 @@ from filelock import FileLock
 from keyring.errors import KeyringError
 
 OS_CREDENTIAL_STORAGE = "operating-system credential store"
-FALLBACK_CREDENTIAL_STORAGE = "local app-data fallback"
+FALLBACK_CREDENTIAL_STORAGE = "insecure development credential file"
+DEVELOPMENT_FALLBACK_ENV = "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE"
 
 
 class CredentialStore(Protocol):
@@ -92,9 +94,34 @@ class DevelopmentFileCredentialStore:
 
     def delete(self, name: str) -> None:
         with self._lock():
+            if not self.path.exists():
+                return
             values = self._read()
             values.pop(name, None)
-            self._write(values)
+            if values:
+                self._write(values)
+            else:
+                self.path.unlink(missing_ok=True)
+
+
+def development_file_credentials_enabled() -> bool:
+    """Return whether the operator deliberately enabled the plaintext development store."""
+
+    return os.environ.get(DEVELOPMENT_FALLBACK_ENV, "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def require_development_file_credentials() -> None:
+    """Fail closed unless the insecure development-only store was explicitly enabled."""
+
+    if not development_file_credentials_enabled():
+        raise RuntimeError(
+            "the operating-system credential store is unavailable; plaintext credential "
+            f"storage is disabled (development only: set {DEVELOPMENT_FALLBACK_ENV}=1)"
+        )
 
 
 def verify_isolated_os_credential_round_trip() -> None:

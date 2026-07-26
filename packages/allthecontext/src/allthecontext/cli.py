@@ -8,12 +8,17 @@ import json
 import os
 import shlex
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
-from allthecontext.credentials import DevelopmentFileCredentialStore, KeyringCredentialStore
+from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
+    DevelopmentFileCredentialStore,
+    KeyringCredentialStore,
+)
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import (
     AI_CLIENT_SCOPES,
@@ -115,7 +120,42 @@ def _render_cli_command(command: str) -> str:
     return f"{shlex.quote(str(executable))} {command}"
 
 
+def _persist_cli_client_credential(
+    store: CoreStore,
+    config: CoreConfig,
+    client_id: str,
+    token: str,
+    *,
+    insecure_development_file: bool,
+) -> bool:
+    """Persist a new CLI credential or revoke its principal before returning failure."""
+
+    name = f"client:{client_id}"
+    try:
+        if insecure_development_file:
+            DevelopmentFileCredentialStore(
+                config.data_dir / "credentials.development.json"
+            ).set(name, token)
+            return False
+        credential_store = KeyringCredentialStore()
+        credential_store.set(name, token)
+        if credential_store.get(name) != token:
+            raise RuntimeError("the operating-system credential did not round trip")
+        return True
+    except BaseException:
+        store.revoke_client(client_id)
+        with suppress(RuntimeError):
+            KeyringCredentialStore().delete(name)
+        with suppress(OSError, RuntimeError, ValueError):
+            DevelopmentFileCredentialStore(
+                config.data_dir / "credentials.development.json"
+            ).delete(name)
+        raise
+
+
 def _cmd_init(args: argparse.Namespace) -> None:
+    if args.no_keyring:
+        os.environ[DEVELOPMENT_FALLBACK_ENV] = "1"
     config = _config(args)
     config.prepare()
     store = CoreStore(config.database_path)
@@ -134,17 +174,13 @@ def _cmd_init(args: argparse.Namespace) -> None:
                 ],
             )
         )
-        stored_in_keyring = False
-        if not args.no_keyring:
-            try:
-                KeyringCredentialStore().set(f"client:{principal.id}", token)
-                stored_in_keyring = True
-            except RuntimeError:
-                pass
-        if not stored_in_keyring:
-            DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json").set(
-                f"client:{principal.id}", token
-            )
+        stored_in_keyring = _persist_cli_client_credential(
+            store,
+            config,
+            principal.id,
+            token,
+            insecure_development_file=args.no_keyring,
+        )
         mcp_access = ensure_client_access(
             store,
             config,
@@ -329,16 +365,18 @@ def _cmd_clients(args: argparse.Namespace) -> None:
 
 
 def _cmd_client_add(args: argparse.Namespace) -> None:
-    principal, token = _store(args).create_client(
+    store = _store(args)
+    config = _config(args)
+    principal, token = store.create_client(
         ClientCreate(name=args.name, scopes=args.scope, auto_approve=args.auto_approve)
     )
-    stored_in_keyring = False
-    if not args.no_keyring:
-        try:
-            KeyringCredentialStore().set(f"client:{principal.id}", token)
-            stored_in_keyring = True
-        except RuntimeError:
-            pass
+    stored_in_keyring = _persist_cli_client_credential(
+        store,
+        config,
+        principal.id,
+        token,
+        insecure_development_file=args.no_keyring,
+    )
     _dump(
         {
             "client": {
@@ -554,7 +592,11 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--name", default="My Context")
     init.add_argument("--timezone")
     init.add_argument("--client-name", default=DESKTOP_CLIENT_NAME)
-    init.add_argument("--no-keyring", action="store_true")
+    init.add_argument(
+        "--no-keyring",
+        action="store_true",
+        help="development only: store credentials in an insecure plaintext app-data file",
+    )
     init.add_argument("--json-only", action="store_true", help="omit the copyable MCP block")
     init.set_defaults(handler=_cmd_init)
 
@@ -799,7 +841,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated compatibility flag; Core's automatic policy owns decisions",
     )
-    client_add.add_argument("--no-keyring", action="store_true")
+    client_add.add_argument(
+        "--no-keyring",
+        action="store_true",
+        help="development only: store credentials in an insecure plaintext app-data file",
+    )
     client_add.set_defaults(handler=_cmd_client_add)
 
     client_revoke = commands.add_parser("client-revoke", help="Revoke a client")

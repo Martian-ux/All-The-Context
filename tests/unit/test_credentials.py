@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
     DevelopmentFileCredentialStore,
+    development_file_credentials_enabled,
+    require_development_file_credentials,
     verify_isolated_os_credential_round_trip,
 )
 
@@ -17,6 +20,17 @@ def test_explicit_development_credential_store_round_trip(tmp_path: Path) -> Non
     assert store.get("client") == "secret"
     store.delete("client")
     assert store.get("client") is None
+
+
+def test_development_credential_file_requires_deliberate_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+
+    assert development_file_credentials_enabled() is False
+    with pytest.raises(RuntimeError, match="plaintext credential storage is disabled"):
+        require_development_file_credentials()
+
+    monkeypatch.setenv(DEVELOPMENT_FALLBACK_ENV, "yes")
+    require_development_file_credentials()
 
 
 def test_isolated_os_credential_acceptance_removes_unique_value(monkeypatch) -> None:

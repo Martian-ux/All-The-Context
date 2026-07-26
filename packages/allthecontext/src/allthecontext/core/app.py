@@ -57,8 +57,8 @@ from ..desktop_setup import (
     AI_CLIENT_SCOPES,
     CLAUDE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
+    configure_client_access_transactionally,
     delete_client_credential,
-    ensure_client_access,
     recover_client_access,
     retire_other_named_clients,
 )
@@ -1034,39 +1034,48 @@ def create_app(
                 status_code=409,
                 detail=f"{name} is not installed on this computer.",
             )
-        client_access = ensure_client_access(
-            core.store,
-            active_config,
-            name=CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME,
-            scopes=AI_CLIENT_SCOPES,
-        )
-        embedded_token = (
-            None
-            if client_access.credential_storage == "operating-system credential store"
-            else client_access.token
-        )
         runtime = RuntimeCommand.current()
         target_url = f"http://{active_config.host}:{active_config.port}"
+        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
         try:
             if integration_id == "chatgpt_codex":
-                result = configure_codex(
-                    runtime,
-                    client_access.client_id,
-                    token=embedded_token,
-                    target_url=target_url,
-                    core_data_dir=active_config.data_dir,
+                client_access, result = configure_client_access_transactionally(
+                    core.store,
+                    active_config,
+                    name=name,
+                    scopes=AI_CLIENT_SCOPES,
+                    configure=lambda access: configure_codex(
+                        runtime,
+                        access.client_id,
+                        token=(
+                            None
+                            if access.credential_storage == "operating-system credential store"
+                            else access.token
+                        ),
+                        target_url=target_url,
+                        core_data_dir=active_config.data_dir,
+                    ),
                 )
             else:
-                result = configure_claude(
-                    runtime,
-                    client_access.client_id,
-                    token=embedded_token,
-                    target_url=target_url,
-                    core_data_dir=active_config.data_dir,
+                client_access, result = configure_client_access_transactionally(
+                    core.store,
+                    active_config,
+                    name=name,
+                    scopes=AI_CLIENT_SCOPES,
+                    configure=lambda access: configure_claude(
+                        runtime,
+                        access.client_id,
+                        token=(
+                            None
+                            if access.credential_storage == "operating-system credential store"
+                            else access.token
+                        ),
+                        target_url=target_url,
+                        core_data_dir=active_config.data_dir,
+                    ),
                 )
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
         retire_other_named_clients(
             core.store,
             active_config,

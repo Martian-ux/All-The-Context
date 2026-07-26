@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from allthecontext import client_config
 from allthecontext.client_config import (
     MANAGED_BEGIN,
     apply_managed_client_cleanup,
@@ -169,6 +170,63 @@ def test_configure_codex_never_overwrites_invalid_toml(tmp_path: Path) -> None:
     with pytest.raises(tomllib.TOMLDecodeError):
         configure_codex(RuntimeCommand(Path("python")), "client", token="secret", path=config)
 
+    assert config.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "configure", "suffix", "original"),
+    [
+        (
+            "Windows Credential Manager",
+            configure_codex,
+            "config.toml",
+            'theme = "light"\n',
+        ),
+        (
+            "macOS Keychain",
+            configure_claude,
+            "claude_desktop_config.json",
+            '{"theme": "light"}\n',
+        ),
+        (
+            "Linux Secret Service",
+            configure_codex,
+            "config.toml",
+            'theme = "light"\n',
+        ),
+    ],
+)
+def test_client_config_write_fault_restores_exact_prior_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    configure,
+    suffix: str,
+    original: str,
+) -> None:
+    config = tmp_path / suffix
+    config.write_text(original, encoding="utf-8")
+    real_atomic_write = client_config._atomic_write
+    attempts = 0
+
+    def replace_then_fail(path: Path, content: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        real_atomic_write(path, content)
+        if attempts == 1:
+            raise OSError(f"{platform_name} injected replacement failure")
+
+    monkeypatch.setattr(client_config, "_atomic_write", replace_then_fail)
+
+    with pytest.raises(OSError, match="injected replacement failure"):
+        configure(
+            RuntimeCommand(Path("python")),
+            "new-client",
+            token=None,
+            path=config,
+        )
+
+    assert attempts == 2
     assert config.read_text(encoding="utf-8") == original
 
 
