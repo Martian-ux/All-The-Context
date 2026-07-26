@@ -135,6 +135,7 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
     operation = ops.start_operation(declared_byte_size=size, filename="large.jsonl")
     operation_id = operation["operation_id"]
     seen_phases: list[str] = []
+    uploading_observed = threading.Event()
     stop = threading.Event()
 
     def poller() -> None:
@@ -147,6 +148,8 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
             phase = str(current["phase"])
             if not seen_phases or seen_phases[-1] != phase:
                 seen_phases.append(phase)
+            if phase == "uploading":
+                uploading_observed.set()
             # Committed progress never leads received by more than one chunk.
             assert (
                 int(current["bytes_committed"])
@@ -154,15 +157,21 @@ def test_concurrent_progress_polling_during_upload(tmp_path: Path) -> None:
             )
             time.sleep(0.01)
 
+    def synchronized_chunks() -> Iterator[bytes]:
+        # The iterator is entered only after the durable upload claim. Hold the
+        # worker there until the concurrent reader has observed that state.
+        assert uploading_observed.wait(timeout=5), "poller did not observe uploading"
+        yield payload
+
     thread = threading.Thread(target=poller, daemon=True)
     thread.start()
     try:
-        finished = ops.accept_upload(operation_id, io.BytesIO(payload), expected_size=size)
+        finished = ops.accept_upload(operation_id, synchronized_chunks(), expected_size=size)
     finally:
         stop.set()
         thread.join(timeout=5)
     assert finished["status"] == "complete"
-    assert "uploading" in seen_phases or "staging" in seen_phases or "hashing" in seen_phases
+    assert "uploading" in seen_phases
     assert finished["source_id"]
     assert core.store.get_source(str(finished["source_id"])).byte_size == size
 
@@ -1016,6 +1025,7 @@ def test_phase_evidence_upload_stage_parse_ingest_verify_publish(tmp_path: Path)
     )
     operation_id = operation["operation_id"]
     seen: list[str] = []
+    uploading_observed = threading.Event()
     stop = threading.Event()
 
     def poller() -> None:
@@ -1028,14 +1038,20 @@ def test_phase_evidence_upload_stage_parse_ingest_verify_publish(tmp_path: Path)
             phase = str(current["phase"])
             if not seen or seen[-1] != phase:
                 seen.append(phase)
+            if phase == "uploading":
+                uploading_observed.set()
             time.sleep(0.005)
+
+    def synchronized_chunks() -> Iterator[bytes]:
+        assert uploading_observed.wait(timeout=5), "poller did not observe uploading"
+        yield payload
 
     thread = threading.Thread(target=poller, daemon=True)
     thread.start()
     try:
         finished = ops.accept_upload(
             operation_id,
-            io.BytesIO(payload),
+            synchronized_chunks(),
             expected_size=len(payload),
         )
     finally:
@@ -1044,13 +1060,16 @@ def test_phase_evidence_upload_stage_parse_ingest_verify_publish(tmp_path: Path)
     assert finished["status"] == "complete"
     assert finished["phase"] == "complete"
     # Upload and terminal completeness are required; intermediate phases may be brief.
-    assert "uploading" in seen or "hashing" in seen or "staging" in seen
+    assert "uploading" in seen
     assert "complete" in seen or finished["phase"] == "complete"
     assert finished["result"]["source"]["import_status"] == "complete"
     assert core.store.get_source_content(str(finished["source_id"])) == payload
 
 
-def test_concurrent_status_polling_during_retry(tmp_path: Path) -> None:
+def test_concurrent_status_polling_during_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     core, ops = _ops(tmp_path)
     payload = b'{"kind":"fact","content":"Concurrent status during retry"}\n'
     operation = ops.start_operation(declared_byte_size=len(payload), filename="poll.jsonl")
@@ -1075,7 +1094,9 @@ def test_concurrent_status_polling_during_retry(tmp_path: Path) -> None:
         parser_warnings=(),
     )
     seen_status: list[str] = [str(ops.get_operation(operation_id)["status"])]
+    processing_observed = threading.Event()
     stop = threading.Event()
+    original_reprocess = ops.imports.reprocess_source
 
     def poller() -> None:
         while not stop.is_set():
@@ -1083,8 +1104,16 @@ def test_concurrent_status_polling_during_retry(tmp_path: Path) -> None:
             status = str(state["status"])
             if not seen_status or seen_status[-1] != status:
                 seen_status.append(status)
+            if status == "processing":
+                processing_observed.set()
             time.sleep(0.01)
 
+    def synchronized_reprocess(source_id_arg: str, *, progress_tracker=None):  # type: ignore[no-untyped-def]
+        # Retry is durably claimed as processing before reprocess begins.
+        assert processing_observed.wait(timeout=5), "poller did not observe processing"
+        return original_reprocess(source_id_arg, progress_tracker=progress_tracker)
+
+    monkeypatch.setattr(ops.imports, "reprocess_source", synchronized_reprocess)
     thread = threading.Thread(target=poller, daemon=True)
     thread.start()
     try:
@@ -1094,4 +1123,4 @@ def test_concurrent_status_polling_during_retry(tmp_path: Path) -> None:
         thread.join(timeout=5)
     assert retried["status"] == "complete"
     assert "failed" in seen_status
-    assert "processing" in seen_status or "complete" in seen_status
+    assert "processing" in seen_status
