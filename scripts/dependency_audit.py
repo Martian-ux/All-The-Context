@@ -4,17 +4,78 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import importlib.util
 import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from types import ModuleType
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+# Keep the audited tool pin aligned with pyproject optional-dependencies.dev.
+REQUIRED_PIP_AUDIT_VERSION = "2.10.1"
+# V1 scopes that participate in release composition and packaging.
+PYTHON_AUDIT_EXTRAS = ("dev", "packaging")
+
+
+def _load_install_locked() -> ModuleType:
+    path = Path(__file__).resolve().parent / "install_locked_python.py"
+    spec = importlib.util.spec_from_file_location("install_locked_python", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load {path.name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _export_frozen_requirements(repository_root: Path, output: Path) -> None:
+    """Write a hashed requirements export of the reviewed uv.lock (no re-resolve)."""
+
+    install_locked = _load_install_locked()
+    uv = install_locked.ensure_pinned_uv(sys.executable)
+    command = [
+        uv,
+        "export",
+        "--frozen",
+        "--no-emit-project",
+        "--output-file",
+        str(output),
+    ]
+    for extra in PYTHON_AUDIT_EXTRAS:
+        command.extend(["--extra", extra])
+    subprocess.run(
+        command,
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    text = output.read_text(encoding="utf-8")
+    if "--hash=" not in text and "sha256:" not in text:
+        raise RuntimeError("uv export did not produce hash-pinned requirements for audit")
+
+
+def pip_audit_command(python: str, requirements: Path) -> list[str]:
+    """Exact pip-audit argv for the frozen hashed export (no dependency resolution)."""
+
+    return [
+        python,
+        "-m",
+        "pip_audit",
+        "--requirement",
+        str(requirements),
+        "--disable-pip",
+        "--progress-spinner",
+        "off",
+        "--desc",
+        "off",
+    ]
 
 
 def audit_python(repository_root: Path) -> dict[str, object]:
-    """Run the lock-installed pip-audit tool; never bootstrap a version range."""
+    """Audit the exact frozen lock export; never bootstrap tools or re-resolve ranges."""
 
     python = sys.executable
     try:
@@ -24,28 +85,32 @@ def audit_python(repository_root: Path) -> dict[str, object]:
             "pip-audit is not installed in the active environment; "
             "install the reviewed dev lock via scripts/install_locked_python.py --extra dev"
         ) from exc
-    # Audit the project's declared/locked dependency set, not the ambient
-    # environment (which may contain unrelated global packages).
-    completed = subprocess.run(
-        [
-            python,
-            "-m",
-            "pip_audit",
-            str(repository_root),
-            "--progress-spinner",
-            "off",
-            "--desc",
-            "off",
-        ],
-        cwd=repository_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
+    if version != REQUIRED_PIP_AUDIT_VERSION:
         raise RuntimeError(
-            f"pip-audit {version} failed (exit {completed.returncode}); "
-            "fix or justify dependencies before candidate freeze"
+            f"pip-audit {version} is not the reviewed pin {REQUIRED_PIP_AUDIT_VERSION}; "
+            "install the reviewed dev lock via scripts/install_locked_python.py --extra dev"
+        )
+    lock = repository_root / "uv.lock"
+    if not lock.is_file():
+        raise RuntimeError("uv.lock is missing; cannot audit the reviewed lock")
+
+    with tempfile.TemporaryDirectory(prefix="atc-dep-audit-") as temporary_name:
+        requirements = Path(temporary_name) / "locked-requirements.txt"
+        _export_frozen_requirements(repository_root, requirements)
+        command = pip_audit_command(python, requirements)
+        completed = subprocess.run(
+            command,
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"pip-audit {version} failed (exit {completed.returncode}) while auditing "
+            f"the frozen uv.lock export{suffix}"
         )
     return {
         "ecosystem": "python",

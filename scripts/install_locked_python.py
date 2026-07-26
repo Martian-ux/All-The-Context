@@ -36,7 +36,12 @@ def _uv_version(uv_path: str) -> str | None:
 
 
 def ensure_pinned_uv(python: str) -> str:
-    """Return a uv executable at PINNED_UV_VERSION, installing only that pin when needed."""
+    """Return an already-available uv at PINNED_UV_VERSION; never network-bootstrap.
+
+    Candidate workflows install the reviewed binary via the SHA-pinned setup-uv
+    action. Local operators must provide the same pin. This helper fails closed
+    when that binary is missing rather than running an unhashed pip install.
+    """
 
     candidates: list[str] = []
     which = shutil.which("uv")
@@ -51,16 +56,11 @@ def ensure_pinned_uv(python: str) -> str:
         version = _uv_version(candidate)
         if version == PINNED_UV_VERSION:
             return candidate
-    _run([python, "-m", "pip", "install", "--upgrade", f"uv=={PINNED_UV_VERSION}"])
-    installed = shutil.which("uv") or str(
-        Path(python).with_name("uv.exe" if sys.platform == "win32" else "uv")
+    raise RuntimeError(
+        f"pinned uv=={PINNED_UV_VERSION} is unavailable; install the reviewed "
+        "binary (for example via the SHA-pinned astral-sh/setup-uv action) "
+        "before running install_locked_python"
     )
-    version = _uv_version(installed)
-    if version != PINNED_UV_VERSION:
-        raise RuntimeError(
-            f"uv bootstrap did not yield pinned {PINNED_UV_VERSION} (found {version!r})"
-        )
-    return installed
 
 
 def _hash_requirement_from_lock(lock: dict[str, object], name: str) -> str | None:
@@ -97,17 +97,28 @@ def _hash_requirement_from_lock(lock: dict[str, object], name: str) -> str | Non
 
 
 def _install_locked_build_backends(python: str, root: Path, temporary: Path) -> None:
-    """Install setuptools/wheel from uv.lock digests for --no-build-isolation."""
+    """Install every declared build backend from uv.lock digests.
+
+    Both setuptools and wheel must be present with hashes; partial success would
+    let --no-build-isolation borrow an ambient unreviewed wheel/setuptools.
+    """
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
     lines: list[str] = []
+    missing: list[str] = []
     for name in BUILD_BACKEND_PACKAGES:
         requirement = _hash_requirement_from_lock(lock, name)
-        if requirement is not None:
+        if requirement is None:
+            missing.append(name)
+        else:
             lines.append(requirement)
-    if not lines:
-        # setuptools is required for the setuptools.build_meta backend.
-        raise RuntimeError("uv.lock is missing hashed setuptools for locked builds")
+    if missing:
+        raise RuntimeError(
+            "uv.lock is missing hashed build backends required for locked builds: "
+            + ", ".join(missing)
+        )
+    if len(lines) != len(BUILD_BACKEND_PACKAGES):
+        raise RuntimeError("uv.lock did not yield exact hashed requirements for all build backends")
     requirements = temporary / "build-backends.txt"
     requirements.write_text("\n".join(lines) + "\n", encoding="utf-8")
     _run(

@@ -42,15 +42,25 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     install_script = _read(ROOT / "scripts" / "install_locked_python.py")
     audit_script = _read(ROOT / "scripts" / "dependency_audit.py")
     assert 'PINNED_UV_VERSION = "0.11.32"' in install_script
-    assert "uv==" in install_script
+    assert "pip install" not in install_script or "--require-hashes" in install_script
+    assert 'f"uv=={PINNED_UV_VERSION}"' not in install_script
+    assert "pip\", \"install\", \"--upgrade\"" not in install_script
+    assert "pinned uv==" in install_script
     assert "--no-hashes" not in install_script
     assert "--require-hashes" in install_script
     assert "--no-deps" in install_script
     assert "--no-build-isolation" in install_script
+    assert "BUILD_BACKEND_PACKAGES = (\"setuptools\", \"wheel\")" in install_script
+    assert "missing hashed build backends" in install_script
     assert "pip-audit>=" not in audit_script
-    assert "pip install" not in audit_script or "pip_audit" in audit_script
+    assert "pip install" not in audit_script
     assert "importlib.metadata.version" in audit_script
+    assert "--disable-pip" in audit_script
+    assert "uv export" in audit_script or '"export"' in audit_script
     assert "pip-audit==2.10.1" in _read(ROOT / "pyproject.toml")
+    pyproject = _read(ROOT / "pyproject.toml")
+    assert "setuptools>=75" in pyproject
+    assert '"wheel"' in pyproject
 
     for name in (
         "ci.yml",

@@ -30,12 +30,16 @@ dev = [
   "hypothesis>=6.135,<7",
   "mypy>=1.16,<2",
   "pip-audit==2.10.1",
-  "pytest>=8.4,<9",
+  # PYSEC-2026-1845: lock-export audit requires >=9.0.3 (8.4.x is vulnerable).
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6.2,<7",
   "ruff>=0.12,<1",
 ]
 packaging = [
   "pyinstaller>=6.21,<7",
+  # Reviewed build backends for --no-build-isolation installs from uv.lock.
+  "setuptools>=75",
+  "wheel",
 ]
 
 [project.scripts]

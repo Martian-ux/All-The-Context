@@ -65,6 +65,17 @@ behavior.
 
 ## Security maintenance
 
+On 2026-07-26, a narrow exact-lock correction closed three release-install
+holes without broadening release engineering: the reviewed `uv.lock` now
+contains hashed `setuptools` and `wheel` and the locked installer fails closed
+unless both are installed before `--no-build-isolation`; `ensure_pinned_uv`
+no longer network-bootstraps unhashed `uv` and requires the already pinned
+`0.11.32` binary; and `dependency_audit.py` audits a frozen hashed export of
+`uv.lock` (dev and packaging) with lock-installed `pip-audit==2.10.1` and
+`--disable-pip` rather than re-resolving project ranges. The export audit
+required bumping the dev pin of `pytest` to `>=9.0.3,<10` (locked `9.1.1`)
+for PYSEC-2026-1845.
+
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every

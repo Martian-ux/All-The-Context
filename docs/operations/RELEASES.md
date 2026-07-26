@@ -52,6 +52,13 @@ Before native packaging, the validate job fail-closes unless:
 
 Python installs use `scripts/install_locked_python.py` so composition comes from
 the reviewed `uv.lock` rather than independently resolving broad ranges.
+Build backends (`setuptools`, `wheel`) must be present as hashed lock entries and
+installed before `--no-build-isolation`; the installer fails closed if either is
+missing. `ensure_pinned_uv` never network-bootstraps `uv` without digests—the
+reviewed `0.11.32` binary must already be available (for example via the
+SHA-pinned setup-uv action). The Python dependency vulnerability gate audits a
+frozen hashed export of `uv.lock` (dev and packaging extras) with lock-installed
+`pip-audit==2.10.1` and `--disable-pip`, not a fresh resolve of declared ranges.
 Repository security and receipt scaffolding are documented in
 [REPOSITORY_SECURITY.md](REPOSITORY_SECURITY.md).
 
