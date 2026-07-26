@@ -36,6 +36,7 @@ UNKEYED_CONFLICT_KINDS = frozenset(
     }
 )
 
+
 class ObservationOrigin(StrEnum):
     ONGOING_CLIENT = "ongoing_client"
     ARCHIVE_IMPORT = "archive_import"

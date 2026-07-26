@@ -71,9 +71,7 @@ def test_install_locked_build_backends_fail_closed_when_wheel_missing(
         tempfile.TemporaryDirectory() as temporary_name,
         pytest.raises(RuntimeError, match=r"missing hashed build backends.*wheel"),
     ):
-        install._install_locked_build_backends(
-            sys.executable, tmp_path, Path(temporary_name)
-        )
+        install._install_locked_build_backends(sys.executable, tmp_path, Path(temporary_name))
     assert calls == []
 
 

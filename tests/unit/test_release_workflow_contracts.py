@@ -44,13 +44,13 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     assert 'PINNED_UV_VERSION = "0.11.32"' in install_script
     assert "pip install" not in install_script or "--require-hashes" in install_script
     assert 'f"uv=={PINNED_UV_VERSION}"' not in install_script
-    assert "pip\", \"install\", \"--upgrade\"" not in install_script
+    assert 'pip", "install", "--upgrade"' not in install_script
     assert "pinned uv==" in install_script
     assert "--no-hashes" not in install_script
     assert "--require-hashes" in install_script
     assert "--no-deps" in install_script
     assert "--no-build-isolation" in install_script
-    assert "BUILD_BACKEND_PACKAGES = (\"setuptools\", \"wheel\")" in install_script
+    assert 'BUILD_BACKEND_PACKAGES = ("setuptools", "wheel")' in install_script
     assert "missing hashed build backends" in install_script
     assert "pip-audit>=" not in audit_script
     assert "pip install" not in audit_script
@@ -153,11 +153,17 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     """Stale asset/helper/migration lists must not silently drop integrated surfaces."""
 
     pyproject = _read(ROOT / "pyproject.toml")
-    assert 'migrations/**/*.sql' in pyproject or "migrations/**/*.sql" in pyproject
+    assert "migrations/**/*.sql" in pyproject or "migrations/**/*.sql" in pyproject
     assert "web/**/*" in pyproject
     assert (ROOT / "scripts" / "recovery_entry.py").is_file()
     assert (
-        ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "migrations" / "core"
+        ROOT
+        / "packages"
+        / "allthecontext"
+        / "src"
+        / "allthecontext"
+        / "migrations"
+        / "core"
         / "009_import_operations.sql"
     ).is_file()
     web = ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "web"
@@ -199,7 +205,6 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
 
     artifact_smoke = _read(ROOT / "scripts" / "smoke_desktop_artifact.py")
     assert (
-        "009_import_operations" in artifact_smoke
-        or "import_operations_migration" in artifact_smoke
+        "009_import_operations" in artifact_smoke or "import_operations_migration" in artifact_smoke
     )
     assert "dashboard_import_operations" in artifact_smoke
