@@ -98,6 +98,22 @@ Human key custody, protected publication, offline signing, and public channel
 smoke remain explicit blockers. Focused release/receipt/workflow tests, Ruff,
 mypy, and docs checks pass on this worktree.
 
+On 2026-07-26, candidate convergence added one deliberately small provider
+execution surface to the desktop binary:
+`--packaged-provider-acceptance` creates a fresh disposable Core vault, imports
+one nonempty ChatGPT/Claude/Grok export through the production durable
+import-operation path, requires loopback configuration and reconciled parser,
+coverage, candidate, and outcome identities, emits only a bounded content-free
+report, and verifies cleanup before returning success. It does not itself
+satisfy BETA-P04: all three fresh real exports still have to run inside exact
+downloaded candidates and bind their receipts to inventory-declared package
+digests. The same convergence pass hardened the internal Core-store boundary
+so direct and Relay secret-like candidates fail before payload/hash writes,
+expanded high-confidence token/credential-URI detection, and redacts
+secret-like reject/delete reasons. Fifty-eight focused provider, desktop,
+pre-ledger, policy, and storage tests pass locally, with touched-source Ruff
+and mypy clean. Full-suite and exact-candidate validation remain pending.
+
 On 2026-07-26, a narrow exact-lock correction closed three release-install
 holes without broadening release engineering: the reviewed `uv.lock` now
 contains hashed `setuptools` and `wheel` and the locked installer fails closed

@@ -48,6 +48,7 @@ from .secret_boundary import (
     contains_direct_secret,
     contains_secret_like_value,
     opaque_operation_id,
+    redact_secret_reason,
 )
 from .security import (
     ClientPrincipal,
@@ -2260,6 +2261,13 @@ class CoreStore:
         session_id: str | None = None,
         client: ClientPrincipal | None = None,
     ) -> CandidateOut:
+        # Defense in depth for internal callers: no direct secret-like payload is
+        # written before the public ingestion service can issue a refusal receipt.
+        # Archive batches use submit_batch/_insert_candidate and remain inert data.
+        if contains_direct_secret(candidate):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
         policy_principal = self._policy_principal_tx(connection, client)
         candidate_id = self._insert_candidate(connection, candidate, session_id, client)
         row = connection.execute(
@@ -2295,6 +2303,16 @@ class CoreStore:
     ) -> CandidateOut:
         """Atomically evaluate an error observation and retain its report provenance."""
 
+        if contains_secret_like_value(
+            {
+                "candidate": candidate.model_dump(mode="json"),
+                "description": description,
+                "evidence": evidence,
+            }
+        ):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
         with self.transaction() as connection:
             created = self._add_candidate_tx(connection, candidate, client=client)
             existing = connection.execute(
@@ -2342,6 +2360,10 @@ class CoreStore:
             raise InvalidStateError("Edge proposal ID is invalid")
         if not client_id.strip() or len(client_id) > 256:
             raise InvalidStateError("Edge client ID is invalid")
+        if contains_direct_secret(candidate):
+            raise InvalidStateError(
+                "direct secret-like content cannot enter the observation ledger"
+            )
         candidate = candidate.model_copy(
             update={
                 "source_service": client_id,
@@ -3633,6 +3655,7 @@ class CoreStore:
         self, candidate_id: str, *, reason: str | None = None, actor: str = "local-user"
     ) -> CandidateOut:
         now = utc_now()
+        safe_reason = None if reason is None else redact_secret_reason(reason)
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -3649,8 +3672,8 @@ class CoreStore:
                     ApprovalStatus.REJECTED.value,
                     now,
                     actor,
-                    reason,
-                    reason or "manually ignored through compatibility endpoint",
+                    safe_reason,
+                    safe_reason or "manually ignored through compatibility endpoint",
                     now,
                     AUTOMATIC_POLICY_VERSION,
                     ObservationOrigin.LOCAL_ADMIN.value,
@@ -3855,9 +3878,10 @@ class CoreStore:
             if existing is not None:
                 return dict(existing)
             raise NotFoundError("context record not found")
+        safe_reason = redact_secret_reason(reason)
         now = utc_now()
         version = int(record["version"]) + 1
-        tombstone_hash = _hash_text(f"{record_id}:{version}:{reason}:{now}")
+        tombstone_hash = _hash_text(f"{record_id}:{version}:{now}")
         connection.execute(
             "UPDATE context_records SET deleted_at=?,updated_at=?,version=? WHERE id=?",
             (now, now, version, record_id),
@@ -3866,13 +3890,13 @@ class CoreStore:
             "SELECT * FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         assert deleted is not None
-        self._insert_version(connection, deleted, reason)
+        self._insert_version(connection, deleted, safe_reason)
         connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
         connection.execute(
             "INSERT INTO deletion_tombstones"
             "(record_id,vault_id,deleted_version,reason,content_hash,deleted_at) "
             "VALUES(?,?,?,?,?,?)",
-            (record_id, record["vault_id"], version, reason, tombstone_hash, now),
+            (record_id, record["vault_id"], version, safe_reason, tombstone_hash, now),
         )
         self._emit_event(
             connection,
@@ -3886,7 +3910,7 @@ class CoreStore:
         return {
             "record_id": record_id,
             "deleted_version": version,
-            "reason": reason,
+            "reason": safe_reason,
             "content_hash": tombstone_hash,
             "deleted_at": now,
         }

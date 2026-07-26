@@ -652,6 +652,26 @@ def _packaged_credential_acceptance(report_value: str) -> int:
     return 0
 
 
+def _packaged_provider_acceptance(args: argparse.Namespace) -> int:
+    """Run a real provider import inside the shipped desktop binary."""
+
+    smoke_ok = os.environ.get("ATC_PACKAGED_SMOKE") == "1"
+    if not getattr(sys, "frozen", False) and not smoke_ok:
+        raise RuntimeError("Packaged provider acceptance requires a frozen package")
+    if args.provider_accept_provider is None or args.provider_accept_export is None:
+        raise RuntimeError("provider and export are required for packaged provider acceptance")
+    from .packaged_provider_acceptance import run_packaged_provider_acceptance
+
+    data_dir_value = os.environ.get("ATC_CORE_DATA_DIR")
+    data_dir = Path(data_dir_value).expanduser() if data_dir_value else None
+    return run_packaged_provider_acceptance(
+        report_path=Path(args.packaged_provider_acceptance),
+        export_path=args.provider_accept_export,
+        provider=args.provider_accept_provider,
+        data_dir=data_dir,
+    )
+
+
 def _headless_setup_error_code(error: Exception) -> str:
     """Map arbitrary setup failures to the closed automation diagnostic vocabulary."""
 
@@ -966,6 +986,21 @@ def _parser() -> argparse.ArgumentParser:
         metavar="REPORT_PATH",
         help=argparse.SUPPRESS,
     )
+    mode.add_argument(
+        "--packaged-provider-acceptance",
+        metavar="REPORT_PATH",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--provider-accept-provider",
+        choices=["chatgpt", "claude", "grok"],
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--provider-accept-export",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     mode.add_argument("--apply-update", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument("--update-health-check", metavar="REPORT_PATH", help=argparse.SUPPRESS)
     mode.add_argument(
@@ -1137,6 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _headless_setup(args, RuntimeCommand.current())
     if args.packaged_credential_acceptance:
         return _packaged_credential_acceptance(args.packaged_credential_acceptance)
+    if args.packaged_provider_acceptance:
+        return _packaged_provider_acceptance(args)
     if args.apply_update:
         return _apply_packaged_update(args.apply_update)
     if args.update_health_check:

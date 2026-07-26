@@ -87,7 +87,7 @@ def test_direct_secret_refusal_is_content_free_and_replayable(tmp_path: Path) ->
             "refused": True,
             "disposition": "ignored",
             "reason_code": "direct_secret_like_content",
-            "detector_version": "direct-secret-v1",
+            "detector_version": "direct-secret-v2",
             "created_at": first.json()["created_at"],
             "replayed": False,
             "user_action_required": True,

@@ -1502,3 +1502,29 @@ evidence files fail closed. Hosted CI still must not deploy Edge or a
 third-party runtime. Human key custody, protected-environment promotion,
 private-key signing, repository-control enablement, and public channel smoke
 remain explicit operator blockers and are not fabricated in source.
+
+## ADR-060: Candidate convergence accepts executable product paths, not acceptance-shaped volume
+
+**Status:** accepted 2026-07-26.
+
+V1 convergence freezes broad acceptance-framework growth. A change advances a
+candidate only when the shipped application executes the claimed behavior or
+when a focused regression protects that executable path. Schema-only
+aggregators, caller-authored lifecycle primitives, and subprocess doubles that
+require fictitious flags on a named client cannot satisfy exact-artifact gates,
+regardless of their test volume.
+
+The desktop binary therefore carries a narrow hidden provider-acceptance mode.
+It creates a disposable loopback Core, invokes the production durable import
+operation on one mandatory-provider export, reconciles parser/coverage/outcome
+counts, emits no export content or path, and fails if cleanup is incomplete.
+This is an execution control surface, not a BETA-P04 receipt generator. Exact
+downloaded-candidate identity, three current nonempty real exports, and
+inventory-bound receipt aggregation remain separate mandatory evidence.
+
+The same rule permits compact defense-in-depth fixes discovered during
+acceptance work: direct Core-store and Relay candidate paths now reject
+secret-like material before payload-derived writes, and durable free-text
+reject/delete reasons are redacted. Large provider/client/secret/security
+harness branches are not integration dependencies; any later salvage must be
+justified by a concrete failure from the built candidate.
