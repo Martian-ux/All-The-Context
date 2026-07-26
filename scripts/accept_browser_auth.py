@@ -85,15 +85,9 @@ class _BrowserHandoffParser(HTMLParser):
         if self._active_token is not None:
             self.ambiguous = True
             return
-        if (
-            self._inert_depth
-            or len(names) != len(set(names))
-            or set(names) != _HANDOFF_ATTRIBUTES
-        ):
+        if self._inert_depth or len(names) != len(set(names)) or set(names) != _HANDOFF_ATTRIBUTES:
             return
-        attributes = {
-            name.casefold(): value for name, value in attrs if value is not None
-        }
+        attributes = {name.casefold(): value for name, value in attrs if value is not None}
         nonce = attributes.get("nonce", "")
         token = attributes.get("data-browser-token", "")
         target = attributes.get("data-dashboard-target", "")
@@ -222,10 +216,13 @@ def run_against_core(base_url: str) -> list[dict[str, Any]]:
 
     conn_code, conn_headers, conn_body = _http_json("GET", f"{base}{connect_path}")
     body_text = conn_body if isinstance(conn_body, str) else str(conn_body)
-    browser_token = browser_session_from_handoff_html(
-        body_text,
-        conn_headers.get("content-security-policy", ""),
-    ) or ""
+    browser_token = (
+        browser_session_from_handoff_html(
+            body_text,
+            conn_headers.get("content-security-policy", ""),
+        )
+        or ""
+    )
     checks.append(
         _check(
             "handoff_html_safety",
