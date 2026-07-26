@@ -113,17 +113,18 @@ Embeddings remain an optional future index and can never override policy.
 
 ## Synchronization boundary
 
-The intended V1 beta has no synchronization service or database-file
-replication. The current pre-beta baseline still constructs experimental Edge
-managers and exposes enrollment, connection, synchronization, client-management,
-CLI, and mutation-trigger surfaces. Those paths are part of the current runtime
-and threat surface; they are not dormant merely because the beta must not ship
-them.
+The V1 beta has no synchronization service or database-file replication.
+Ordinary Core routes and CLI commands for Edge enrollment, deployment,
+connection, synchronization, remote-client management, mutation-triggered
+sync, and Relay serving are removed or return explicit 404 tombstones. Core
+does not start the legacy network worker.
 
-Before candidate freeze, B-103 must remove or build-gate those paths from every
-supported artifact and prove that ordinary Core operation cannot reach them.
-Only an isolated compatibility cleanup path may remain. If that narrow path is
-exercised, Relay may accept signed ordered projections from Core and queue
+Only isolated residual cleanup remains under `/v1/admin/legacy-edge` and
+`atc legacy-edge`. Its status path is local-only, and decommission refuses
+unless a pre-existing paired service and credential are present, so it cannot
+create a second authority by default. Experimental Relay modules remain for
+compatibility and regression tests; if exercised outside the supported V1
+surface, Relay may accept signed ordered projections from Core and queue
 observations for Core, but it can never evaluate an observation or create
 current context. Any future supported synchronization design requires a new
 product decision, architecture decision, and threat model.
@@ -136,5 +137,7 @@ Shared runtime code does not rely on Bash, systemd, POSIX permissions, symlinks,
 Unix sockets, case-sensitive paths, or Docker. Public beta support is limited to
 the platform and package matrix frozen in the V1 roadmap. Service installation
 and credential storage remain behind platform abstractions for Windows
-Credential Manager, macOS Keychain, and Linux secret storage with an explicit
-development fallback.
+Credential Manager, macOS Keychain, and Linux Secret Service. Normal setup
+fails closed when protected storage is unavailable. A plaintext development
+file requires deliberate opt-in and is excluded from the normal beta setup
+path.

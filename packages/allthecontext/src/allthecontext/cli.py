@@ -507,6 +507,9 @@ def _cmd_legacy_edge_forget(args: argparse.Namespace) -> None:
 
 def _cmd_export(args: argparse.Namespace) -> None:
     config = _config(args)
+    store = CoreStore(config.database_path)
+    store.migrate()
+    store.repair_preledger_secrets()
     _dump(
         create_export(
             config.database_path,

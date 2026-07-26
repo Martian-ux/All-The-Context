@@ -98,6 +98,15 @@ def _has_secret_boundary(database_path: Path) -> bool:
     return {"vaults", "context_candidates", "secret_refusal_receipts"}.issubset(tables)
 
 
+def _repair_secret_boundary(database_path: Path) -> None:
+    """Repair a migrated Core ledger before moving its durable bytes."""
+
+    if not _has_secret_boundary(database_path):
+        return
+    store = CoreStore(database_path)
+    store.repair_preledger_secrets()
+
+
 def _without_source_reference(
     table: str,
     document: dict[str, Any],
@@ -259,9 +268,7 @@ def create_export(
     """Create an encrypted portable package without placing plaintext beside it."""
     database_path = database_path.resolve()
     destination = destination.resolve()
-    if _has_secret_boundary(database_path):
-        export_store = CoreStore(database_path)
-        export_store.repair_preledger_secrets()
+    _repair_secret_boundary(database_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="atc-export-") as temporary:
         archive_path = Path(temporary) / "payload.zip"
@@ -831,7 +838,5 @@ def restore_export(
                         )
             finally:
                 connection.close()
-    if _has_secret_boundary(database_path):
-        restored_store = CoreStore(database_path)
-        restored_store.repair_preledger_secrets()
+    _repair_secret_boundary(database_path)
     return {"valid": True, "dry_run": False, "manifest": manifest}

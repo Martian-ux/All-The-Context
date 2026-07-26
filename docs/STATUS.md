@@ -74,6 +74,28 @@ character totals. That experimental module remains for residual cleanup and
 security regressions only; B-103 has removed the ordinary Core product routes
 that would call it.
 
+The integrated beta-safety implementation now also closes the source-level
+parts of B-101 and B-104:
+
+- direct secret-like proposals, batches, corrections/errors, and Relay queue
+  submissions are refused before payload persistence; forget reasons are
+  redacted before storage;
+- refusal receipts retain only opaque UUIDv4 operation identity and closed
+  detector/reason metadata, never an unkeyed payload hash or fingerprint;
+- startup, export, and restore migrate and repair affected live Core ledgers,
+  rebuild FTS, checkpoint WAL, enable secure deletion, and compact SQLite;
+  synthetic tests scan database pages, WAL/freelists, temp state, diagnostics,
+  and encrypted export/restore bytes;
+- normal credential setup now requires Windows Credential Manager, macOS
+  Keychain, or Linux Secret Service, while plaintext development storage
+  requires explicit opt-in; and
+- failed credential or managed-client configuration revokes any new principal,
+  removes the credential, and restores the prior client configuration bytes.
+
+Historical external backups and device remanence are not called repaired.
+Real OS credential services and the secret boundary still require exact
+downloaded-artifact acceptance on the frozen candidate.
+
 ## AI-memory research direction
 
 ADR-042 establishes a post-beta, benchmark-driven research direction without
@@ -521,10 +543,10 @@ state is already noncurrent and creates no user queue.
 - GitHub private vulnerability reporting is enabled. Keep detailed credential,
   secret-boundary, and client-witness findings there and verify that public
   security guidance routes reporters to it.
-- Prevent direct secret-like payload content from entering durable observation
-  history or encrypted backups; preserve no unkeyed content hash or other
-  guessable verifier, and repair affected SQLite pages/freelists, WAL/journal,
-  FTS, temp state, diagnostics, and new exports with byte-level canary proof.
+- Repeat the implemented B-101 pre-ledger refusal, repair/compaction, and
+  byte-level SQLite/WAL/freelist/FTS/export/restore proofs on the exact frozen
+  candidate; retire or replace historical external backups according to the
+  runbook rather than claiming they were rewritten.
 - Implement the accepted trust grant for explicitly authorized, ATC-configured
   same-device Codex/Claude clients and prevent contradictory unkeyed imported
   history from simultaneously becoming confident current truth.
@@ -537,8 +559,9 @@ state is already noncurrent and creates no user queue.
   every input to a closed recognized/excluded/skipped/unavailable/failed
   outcome. All three are mandatory; missing evidence leaves the release in
   draft.
-- Resolve credential fallback so a missing OS keyring does not silently become
-  plaintext storage, and prove setup failure leaves no orphaned principal.
+- Repeat B-104 against real Windows Credential Manager, macOS Keychain, and
+  Linux Secret Service from exact packages, including unavailable/locked
+  backend and partial-write rollback receipts.
 - Freeze exact Windows/macOS build/patch and supported Codex/Claude variants
   for the mandatory Windows 11 x86-64, macOS 26 ARM64/x86-64, and Ubuntu 24.04
   LTS x86-64 GNOME/Secret-Service floor. Before measuring candidates, use the

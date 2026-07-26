@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sqlite3
@@ -8,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from allthecontext import cli
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
@@ -181,6 +183,45 @@ def test_batch_correction_and_forget_keep_direct_canary_out_of_storage(
     _assert_absent_from_paths(tmp_path, (CANARY.encode(),))
 
 
+def test_secret_batch_rejects_content_derived_retry_verifier_before_storage(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    content_derived_key = hashlib.sha256(SECRET_TEXT.encode()).hexdigest()
+    with TestClient(create_app(config)) as client:
+        session = client.post(
+            "/v1/ingestion/begin",
+            json={
+                "mode": "ongoing",
+                "accessible_sources": ["synthetic"],
+                "unavailable_sources": [],
+            },
+        ).json()
+        response = client.post(
+            "/v1/ingestion/batch",
+            json={
+                "session_id": session["session_id"],
+                "idempotency_key": content_derived_key,
+                "candidates": [
+                    {
+                        "kind": "fact",
+                        "content": SECRET_TEXT,
+                        "explicit_user_statement": True,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_state"
+        assert client.get("/v1/admin/observations").json()["total"] == 0
+
+    _assert_absent_from_paths(
+        tmp_path,
+        (CANARY.encode(), content_derived_key.encode()),
+    )
+
+
 def test_startup_repair_compacts_legacy_sqlite_wal_fts_and_export_restore(
     tmp_path: Path,
 ) -> None:
@@ -274,6 +315,76 @@ def test_restore_repairs_legacy_export_before_returning(tmp_path: Path) -> None:
 
     assert CANARY not in "\n".join(_database_text_values(destination.config.database_path))
     _assert_absent_from_paths(destination_dir, (CANARY.encode(),))
+
+
+def test_export_repairs_a_migrated_core_before_writing_package_bytes(tmp_path: Path) -> None:
+    source_dir = tmp_path / "export-repair"
+    source = CoreService(CoreConfig.in_directory(source_dir, require_auth=False))
+    candidate = source.store.add_candidate(
+        CandidateInput(kind="fact", content="Temporary synthetic row.")
+    )
+    with sqlite3.connect(source.config.database_path) as connection:
+        connection.execute(
+            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' "
+            "WHERE id=?",
+            (SECRET_TEXT, SECRET_TEXT, candidate.id),
+        )
+        connection.commit()
+
+    package = tmp_path / "repaired-before-export.atcexp"
+    create_export(source.config.database_path, package, PASSPHRASE, include_audit=True)
+
+    with sqlite3.connect(source.config.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
+        ).fetchone()[0] == 0
+        assert connection.execute("PRAGMA freelist_count").fetchone()[0] == 0
+    _assert_absent_from_paths(source_dir, (CANARY.encode(),))
+    assert CANARY.encode() not in package.read_bytes()
+
+
+def test_supported_cli_migrates_pre_boundary_core_before_export(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_dir = tmp_path / "pre-boundary"
+    source = CoreService(CoreConfig.in_directory(source_dir, require_auth=False))
+    candidate = source.store.add_candidate(
+        CandidateInput(kind="fact", content="Temporary synthetic row.")
+    )
+    with sqlite3.connect(source.config.database_path) as connection:
+        connection.execute(
+            "UPDATE context_candidates SET content=?,evidence=?,disposition='ignored' "
+            "WHERE id=?",
+            (SECRET_TEXT, SECRET_TEXT, candidate.id),
+        )
+        connection.execute("DROP TABLE secret_refusal_receipts")
+        connection.execute("DELETE FROM schema_migrations WHERE version=8")
+        connection.execute("UPDATE vaults SET schema_version=7")
+        connection.commit()
+
+    package = tmp_path / "migrated-before-export.atcexp"
+    passphrase_env = "ATC_SYNTHETIC_EXPORT_PASSPHRASE"
+    monkeypatch.setenv(passphrase_env, PASSPHRASE)
+    cli._cmd_export(
+        argparse.Namespace(
+            data_dir=str(source_dir),
+            destination=str(package),
+            passphrase_env=passphrase_env,
+            include_sources=False,
+            include_audit=True,
+        )
+    )
+
+    with sqlite3.connect(source.config.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version=8"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_candidates WHERE id=?", (candidate.id,)
+        ).fetchone()[0] == 0
+    _assert_absent_from_paths(source_dir, (CANARY.encode(),))
+    assert CANARY.encode() not in package.read_bytes()
 
 
 def test_relay_refuses_direct_secret_before_encrypted_queue_or_hash(

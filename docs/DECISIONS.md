@@ -1328,3 +1328,43 @@ limitations may be accepted with public disclosure and a follow-up issue.
 and immutable release receipts will record the exact candidate results. An
 earlier green commit, synthetic result, roadmap checkbox, or elapsed date cannot
 promote the beta.
+
+## ADR-055: Refuse direct secret-like payloads before the durable ledger
+
+**Status:** accepted 2026-07-25.
+
+Direct observation paths inspect caller-controlled proposal, batch,
+correction/error, and Relay-queue material before any payload write. Detected
+secret-like content is refused or, for forget reasons, replaced with a fixed
+content-free statement. A durable refusal receipt may contain only a random
+UUIDv4 operation identity, route/principal identity, closed reason and detector
+version, and timestamps. It may not retain an unkeyed payload hash,
+deterministic fingerprint, prefix, or other offline-guessing verifier.
+
+Migration 008 adds the refusal ledger and batch refusal count. Core startup,
+new export creation, and restore repair affected direct-observation rows,
+rebuild FTS, checkpoint WAL, enable secure deletion, and vacuum the live
+database. Imported raw archives remain governed by the separate inert-source
+contract. Synthetic byte scans cover SQLite pages/freelists, WAL, FTS, temp
+state, diagnostics, and encrypted export/restore. Historical external backups,
+user copies, and device remanence are outside the live-store repair claim and
+require explicit retirement or replacement.
+
+## ADR-056: Normal client setup fails closed without protected credential storage
+
+**Status:** accepted 2026-07-25.
+
+Normal V1 setup stores client credentials in Windows Credential Manager, macOS
+Keychain, or Linux Secret Service and verifies each write by reading it back.
+When protected storage is unavailable or fails, setup stops; it does not
+silently write a plaintext app-data fallback. The plaintext development file
+requires deliberate operator opt-in and is excluded from the normal beta
+journey.
+
+Managed Codex and Claude configurations carry the client identity and protected
+credential lookup, not a bearer token, when the OS store is used. A failed
+credential or configuration transaction revokes a newly created principal,
+removes its credential, and restores the exact prior configuration bytes.
+Backend errors are surfaced without credential values. Exact-package real
+credential-service receipts on every mandatory OS remain a release-acceptance
+gate.

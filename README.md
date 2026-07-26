@@ -26,11 +26,11 @@ LAN/public port, upload context, or pretend that plain HTTP is safe remote
 access. The beta makes no mobile or remote-access claim.
 
 The repository still contains experimental Relay/Edge protocol code from an
-earlier design. Its UI, automatic worker, and deployment workflow are removed,
-but callable compatibility API/CLI surfaces remain in the current baseline.
-Removing or build-gating active operation while retaining a narrow legacy
-cleanup path is a public-beta blocker; Relay/Edge is not a supported V1
-deployment path.
+earlier design for compatibility tests and cleanup of pre-V1 installations.
+The supported Core surface has no enrollment, deployment, connect, sync,
+remote-client-management, mutation-trigger, or routine Relay CLI path, and it
+never starts the legacy network worker. Residual cleanup is isolated under
+`atc legacy-edge`; Relay/Edge is not a supported V1 deployment path.
 
 ## Install
 

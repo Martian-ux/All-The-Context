@@ -1334,7 +1334,12 @@ class CoreStore:
             ]
             refused_count = len(candidates) - len(accepted_candidates)
             if refused_count:
-                safe_idempotency_key = opaque_operation_id(idempotency_key) or new_id()
+                opaque_idempotency_key = opaque_operation_id(idempotency_key)
+                if opaque_idempotency_key is None:
+                    raise InvalidStateError(
+                        "A secret-like batch requires an opaque UUIDv4 idempotency key"
+                    )
+                safe_idempotency_key = opaque_idempotency_key
         canonical_request = _json(
             [candidate.model_dump(mode="json") for candidate in accepted_candidates]
         )
