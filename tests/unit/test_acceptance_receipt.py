@@ -315,7 +315,7 @@ def test_bundle_rejects_duplicate_gate_and_conflicting_digests() -> None:
         )
 
 
-def test_recompute_refuses_mixed_inventory_digests() -> None:
+def test_recompute_refuses_mixed_and_undeclared_inventory_digests() -> None:
     receipt = _receipt(
         gate_id="BETA-R03",
         receipt_id="artifact-r03",
@@ -328,11 +328,37 @@ def test_recompute_refuses_mixed_inventory_digests() -> None:
             inventory_digests={"all-the-context-linux-x86_64.zip": "e" * 64},
             candidate_sha256=DIGEST,
         )
-    with pytest.raises(ManifestError, match="undeclared release asset"):
+    with pytest.raises(ManifestError, match="not declared by the candidate inventory"):
         recompute_receipt_artifact_bindings(
             [receipt],
-            inventory_digests={},
+            inventory_digests={"other-declared.bin": "c" * 64},
             candidate_sha256=DIGEST,
+        )
+    # Arbitrary safe basenames never satisfy an exact gate.
+    loose = _receipt(
+        gate_id="BETA-P04",
+        receipt_id="provider-p04",
+        evidence_kind="exact_downloaded_artifact",
+        artifact_digests={"acceptance-smoke-fixture.bin": "c" * 64},
+    )
+    with pytest.raises(ManifestError, match="not declared by the candidate inventory"):
+        recompute_receipt_artifact_bindings(
+            [loose],
+            inventory_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+            candidate_sha256=DIGEST,
+        )
+
+
+def test_beta_p04_is_exact_artifact_gate() -> None:
+    assert "BETA-P04" in EXACT_ARTIFACT_PUBLICATION_GATES
+    with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
+        validate_receipt(
+            _receipt(
+                gate_id="BETA-P04",
+                receipt_id="source-provider-p04",
+                evidence_kind="source",
+                status="pass",
+            )
         )
 
 

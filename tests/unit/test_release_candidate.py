@@ -7,7 +7,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from allthecontext.exact_source_gate import REQUIRED_CI_JOBS
+from allthecontext.exact_source_gate import (
+    CANONICAL_CI_WORKFLOW_NAME,
+    CANONICAL_CI_WORKFLOW_PATH,
+    REQUIRED_CI_JOBS,
+)
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
     CANDIDATE_PROVENANCE_FILE_NAME,
@@ -99,10 +103,21 @@ def _source_evidence(release_dir: Path) -> None:
             {
                 "schema_version": 1,
                 "source_commit": SOURCE_COMMIT,
+                "workflow_path": CANONICAL_CI_WORKFLOW_PATH,
+                "workflow_name": CANONICAL_CI_WORKFLOW_NAME,
                 "workflow_run_id": 42,
-                "workflow_name": "CI",
-                "conclusion": "success",
-                "jobs": list(REQUIRED_CI_JOBS),
+                "run_status": "completed",
+                "run_conclusion": "success",
+                "job_records": [
+                    {
+                        "name": name,
+                        "run_id": 42,
+                        "head_sha": SOURCE_COMMIT,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                    for name in REQUIRED_CI_JOBS
+                ],
                 "required_jobs": list(REQUIRED_CI_JOBS),
                 "ok": True,
             },

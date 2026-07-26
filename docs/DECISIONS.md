@@ -1456,31 +1456,49 @@ lie.
 
 ## ADR-059: Exact candidate and publication gates recompute fail-closed source evidence
 
-**Status:** accepted 2026-07-26.
+**Status:** accepted 2026-07-26; revised 2026-07-26 after independent false-pass
+audit.
 
 The release-candidate path binds one exact 40-character source commit. Hosted
-preflight must observe a completed successful `ci.yml` run for that SHA whose
-jobs include the full nine-slot matrix **and** the repository-security and
+preflight must observe a completed successful run of the **canonical** workflow
+path `.github/workflows/ci.yml` (not suffix-matched paths such as
+`evilci.yml`) for that SHA, with workflow name `CI` when the API supplies it.
+Required jobs are the nine-slot matrix **plus** repository-security and
 dashboard-parity jobs. Branch names, short SHAs, merge-queue mismatches,
-skipped/cancelled/neutral required jobs, partial job sets, and jobs from a
-different workflow run never satisfy the gate. Durable `matrix-evidence.json`
-must recompute with `ok` as boolean true, the frozen required-job set, and the
-same source commit; forged truthy strings or incomplete job lists are refused.
+skipped/cancelled/neutral required jobs, partial job sets, duplicate required
+job names / re-run shadows, jobs missing `run_id`/`head_sha`, jobs bound to
+another run or SHA, and incomplete paginated job payloads (`total_count` >
+returned) never satisfy the gate.
+
+Durable `matrix-evidence.json` stores recomputable primitives: canonical
+workflow path/name, selected run ID, exact head SHA, run status/conclusion, and
+one job record per required name with `name`/`run_id`/`head_sha`/`status`/
+`conclusion`. The stored `ok` boolean is recomputed from those primitives and
+is never trusted as authority. Forged truthy strings, name-only job lists,
+bool-as-int IDs/schema values, and partial/extra shadow records are refused.
 
 Candidate assembly and verification revalidate bound source evidence: matrix
-evidence semantics, component-inventory checksum binding to inventory bytes,
-source/version identity, nonempty locked components and lock digests, and
-notices that reference the exact commit. Inventory verification still rejects
-extra, missing, or substituted release files.
+evidence primitives, component-inventory schema matching
+`build_component_inventory` (exact keys, unique components/locks, count
+consistency, lowercase digests), required inventory and candidate checksum
+sidecars, source/version identity, and notices that reference the exact commit.
+Descriptor/file duplication is rejected rather than last-write-wins. Inventory
+verification still rejects extra, missing, or substituted release files.
+Cryptographic provenance/Sigstore trust and live operator GitHub controls remain
+outside what source bytes alone can recompute; those stay honest human/hosted
+boundaries.
 
 Publication and receipt aggregation recompute relationships from receipts and
-inventories. Required package/platform gates pass only with
-`exact_downloaded_artifact` evidence, non-empty artifact digests, and matching
-candidate inventory digests where names are declared. Source-scaffolding gates
-(`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be labeled exact artifact.
-Duplicate `gate_id` values, conflicting digests across receipts, incomplete
-required-gate sets, forged maintainer booleans, and overwrite of immutable
-evidence files fail closed. Hosted CI still must not deploy Edge or a third-party
-runtime. Human key custody, protected-environment promotion, private-key
-signing, repository-control enablement, and public channel smoke remain explicit
-operator blockers and are not fabricated in source.
+inventories. Required package/platform gates (including **BETA-P04**) pass only
+with `exact_downloaded_artifact` evidence whose every `artifact_digests` key is
+a filename declared by the verified candidate inventory with an exact matching
+digest. Arbitrary safe basenames (for example `foo.bin`) never satisfy an exact
+gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be
+labeled exact artifact; provider source-preparation fragments cannot pass as
+BETA-P04. Duplicate `gate_id`/`receipt_id` values, conflicting digests, incomplete
+required-gate sets, non-pass statuses, open P0/P1 limitations, forged maintainer
+booleans, post-publication BETA-R05 before release, and overwrite of immutable
+evidence files fail closed. Hosted CI still must not deploy Edge or a
+third-party runtime. Human key custody, protected-environment promotion,
+private-key signing, repository-control enablement, and public channel smoke
+remain explicit operator blockers and are not fabricated in source.

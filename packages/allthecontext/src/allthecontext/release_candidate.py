@@ -104,7 +104,13 @@ def _descriptor(path: Path) -> dict[str, Any]:
     return {"name": path.name, "sha256": digest, "size": size}
 
 
-def _descriptor_path(directory: Path, descriptor: object, field: str) -> Path:
+def _descriptor_path(
+    directory: Path,
+    descriptor: object,
+    field: str,
+    *,
+    seen_names: set[str] | None = None,
+) -> Path:
     if not isinstance(descriptor, dict) or set(descriptor) != {"name", "sha256", "size"}:
         raise ManifestError(f"candidate {field} descriptor is malformed")
     name = descriptor.get("name")
@@ -116,6 +122,10 @@ def _descriptor_path(directory: Path, descriptor: object, field: str) -> Path:
         raise ManifestError(f"candidate {field} digest is malformed")
     if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
         raise ManifestError(f"candidate {field} size is malformed")
+    if seen_names is not None:
+        if name in seen_names or name.casefold() in {item.casefold() for item in seen_names}:
+            raise ManifestError(f"candidate descriptor file is duplicated: {name}")
+        seen_names.add(name)
     path = directory / name
     if not path.is_file() or path.is_symlink():
         raise ManifestError(f"candidate {field} file is missing or unsafe: {name}")
@@ -337,6 +347,34 @@ def attach_attestation_bundles(
     return outputs
 
 
+INVENTORY_ALLOWED_KEYS = frozenset(
+    {
+        "schema_version",
+        "version",
+        "source_commit",
+        "project_version",
+        "locks",
+        "component_count",
+        "components",
+    }
+)
+INVENTORY_COMPONENT_ALLOWED_KEYS = frozenset(
+    {
+        "ecosystem",
+        "name",
+        "version",
+        "license",
+        "locked",
+        "source_kind",
+        "scope",
+    }
+)
+INVENTORY_LOCK_ALLOWED_KEYS = frozenset({"sha256"})
+INVENTORY_ECOSYSTEMS = frozenset({"python", "npm"})
+INVENTORY_SCOPES = frozenset({"runtime", "build", "dev"})
+CANONICAL_INVENTORY_LOCK_NAMES = frozenset({"uv.lock", "apps/dashboard/package-lock.json"})
+
+
 def _validate_component_inventory_pair(
     inventory_path: Path,
     checksum_path: Path,
@@ -344,16 +382,24 @@ def _validate_component_inventory_pair(
     source_commit: str,
     version: str,
 ) -> None:
-    """Require inventory checksum binding and source/version identity."""
+    """Require inventory checksum binding and schema matching the builder."""
 
+    if not checksum_path.is_file() or checksum_path.is_symlink():
+        raise ManifestError("component inventory checksum sidecar is required")
     _validate_checksum(inventory_path, checksum_path)
     inventory = _read_json_object(inventory_path)
-    if inventory.get("schema_version") != 1:
-        raise ManifestError("component inventory schema_version must be 1")
+    if set(inventory) != INVENTORY_ALLOWED_KEYS:
+        raise ManifestError("component inventory fields or schema are invalid")
+    schema_version = inventory.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != 1:
+        raise ManifestError("component inventory schema_version must be integer 1")
     if inventory.get("source_commit") != source_commit:
         raise ManifestError("component inventory source_commit does not match the candidate")
     if inventory.get("version") != version:
         raise ManifestError("component inventory version does not match the candidate")
+    project_version = inventory.get("project_version")
+    if not isinstance(project_version, str) or not project_version.strip():
+        raise ManifestError("component inventory project_version is invalid")
     components = inventory.get("components")
     count = inventory.get("component_count")
     if not isinstance(components, list):
@@ -365,12 +411,47 @@ def _validate_component_inventory_pair(
     locks = inventory.get("locks")
     if not isinstance(locks, dict) or not locks:
         raise ManifestError("component inventory must declare reviewed lock digests")
+    if set(locks) != CANONICAL_INVENTORY_LOCK_NAMES:
+        raise ManifestError("component inventory locks must declare the reviewed lock files")
     for lock_name, lock_value in locks.items():
         if not isinstance(lock_name, str) or not isinstance(lock_value, dict):
             raise ManifestError("component inventory locks entry is malformed")
+        if set(lock_value) != INVENTORY_LOCK_ALLOWED_KEYS:
+            raise ManifestError(f"component inventory lock entry is malformed: {lock_name}")
         digest = lock_value.get("sha256")
         if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
             raise ManifestError("component inventory lock digest is malformed")
+    seen_components: set[tuple[str, str, str]] = set()
+    for item in components:
+        if not isinstance(item, dict) or set(item) != INVENTORY_COMPONENT_ALLOWED_KEYS:
+            raise ManifestError("component inventory component entry is malformed")
+        ecosystem = item.get("ecosystem")
+        name = item.get("name")
+        component_version = item.get("version")
+        license_id = item.get("license")
+        locked = item.get("locked")
+        source_kind = item.get("source_kind")
+        scope = item.get("scope")
+        if ecosystem not in INVENTORY_ECOSYSTEMS:
+            raise ManifestError("component inventory ecosystem is invalid")
+        if not isinstance(name, str) or not name.strip():
+            raise ManifestError("component inventory component name is invalid")
+        if not isinstance(component_version, str) or not component_version.strip():
+            raise ManifestError("component inventory component version is invalid")
+        if not isinstance(license_id, str) or not license_id.strip() or len(license_id) > 120:
+            raise ManifestError("component inventory license is invalid")
+        if locked is not True:
+            raise ManifestError("component inventory components must be locked=true")
+        if not isinstance(source_kind, str) or not source_kind.strip():
+            raise ManifestError("component inventory source_kind is invalid")
+        if scope not in INVENTORY_SCOPES:
+            raise ManifestError("component inventory scope is invalid")
+        identity = (str(ecosystem), name.casefold(), component_version)
+        if identity in seen_components:
+            raise ManifestError(
+                f"component inventory contains duplicate component: {name}@{component_version}"
+            )
+        seen_components.add(identity)
 
 
 def _validate_source_evidence_contents(
@@ -542,7 +623,12 @@ def verify_candidate(
         "unsigned_community_build",
         "artifacts",
     }
-    if set(candidate) != required or candidate.get("schema_version") != CANDIDATE_SCHEMA_VERSION:
+    schema_version = candidate.get("schema_version")
+    if (
+        set(candidate) != required
+        or isinstance(schema_version, bool)
+        or schema_version != (CANDIDATE_SCHEMA_VERSION)
+    ):
         raise ManifestError("release candidate inventory fields or schema are invalid")
     version = candidate.get("version")
     channel = candidate.get("channel")
@@ -563,13 +649,15 @@ def verify_candidate(
         raise ManifestError("release candidate source_evidence is malformed")
     seen_files: set[str] = set()
     for field in SOURCE_EVIDENCE_FIELDS:
-        path = _descriptor_path(release_dir, source_evidence.get(field), f"source_evidence.{field}")
+        path = _descriptor_path(
+            release_dir,
+            source_evidence.get(field),
+            f"source_evidence.{field}",
+            seen_names=seen_files,
+        )
         expected_name = SOURCE_EVIDENCE_FILE_NAMES[field]
         if path.name != expected_name:
             raise ManifestError(f"source evidence file name is wrong for {field}")
-        if path.name in seen_files:
-            raise ManifestError("release candidate files must be uniquely assigned")
-        seen_files.add(path.name)
     # Recompute semantic relationships; digest match alone is not enough.
     _validate_source_evidence_contents(release_dir, source_commit=source_commit, version=version)
     artifact_values = candidate.get("artifacts")
@@ -607,13 +695,14 @@ def verify_candidate(
         if not isinstance(artifact.get("ota_manifest_eligible"), bool):
             raise ManifestError("release candidate OTA eligibility must be a boolean")
         paths = {
-            field: _descriptor_path(release_dir, artifact.get(field), field)
+            field: _descriptor_path(
+                release_dir,
+                artifact.get(field),
+                field,
+                seen_names=seen_files,
+            )
             for field in fields - {"platform", "architecture", "ota_manifest_eligible"}
         }
-        for path in paths.values():
-            if path.name in seen_files:
-                raise ManifestError("release candidate files must be uniquely assigned")
-            seen_files.add(path.name)
         expected_archive = archive_name(version, target)
         expected_provenance, expected_sbom_bundle = attestation_names(expected_archive)
         direct_names = direct_package_names(version, target)
@@ -661,8 +750,9 @@ def verify_candidate(
     if expected_ota_targets is not None and eligible_targets != set(expected_ota_targets):
         raise ManifestError("release candidate OTA targets do not match the approved subset")
     checksum_path = candidate_path.with_name(f"{candidate_path.name}.sha256")
-    if checksum_path.is_file():
-        _validate_checksum(candidate_path, checksum_path)
+    if not checksum_path.is_file() or checksum_path.is_symlink():
+        raise ManifestError("release candidate checksum sidecar is required")
+    _validate_checksum(candidate_path, checksum_path)
     return candidate
 
 

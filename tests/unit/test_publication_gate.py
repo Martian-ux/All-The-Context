@@ -9,8 +9,13 @@ from allthecontext.acceptance_receipt import (
     EXACT_ARTIFACT_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
+    candidate_inventory_digests,
 )
-from allthecontext.exact_source_gate import REQUIRED_CI_JOBS
+from allthecontext.exact_source_gate import (
+    CANONICAL_CI_WORKFLOW_NAME,
+    CANONICAL_CI_WORKFLOW_PATH,
+    REQUIRED_CI_JOBS,
+)
 from allthecontext.publication_gate import evaluate_publication_gate
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
@@ -91,10 +96,21 @@ def _source_evidence(release_dir: Path) -> None:
             {
                 "schema_version": 1,
                 "source_commit": SOURCE,
+                "workflow_path": CANONICAL_CI_WORKFLOW_PATH,
+                "workflow_name": CANONICAL_CI_WORKFLOW_NAME,
                 "workflow_run_id": 7,
-                "workflow_name": "CI",
-                "conclusion": "success",
-                "jobs": list(REQUIRED_CI_JOBS),
+                "run_status": "completed",
+                "run_conclusion": "success",
+                "job_records": [
+                    {
+                        "name": name,
+                        "run_id": 7,
+                        "head_sha": SOURCE,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                    for name in REQUIRED_CI_JOBS
+                ],
                 "required_jobs": list(REQUIRED_CI_JOBS),
                 "ok": True,
             },
@@ -169,7 +185,12 @@ def _candidate_dir(tmp_path: Path) -> Path:
     return release_dir
 
 
-def _pass_receipt(gate_id: str, *, candidate_sha256: str) -> dict[str, Any]:
+def _pass_receipt(
+    gate_id: str,
+    *,
+    candidate_sha256: str,
+    inventory_digests: dict[str, str] | None = None,
+) -> dict[str, Any]:
     if gate_id in EXACT_ARTIFACT_PUBLICATION_GATES:
         evidence_kind = "exact_downloaded_artifact"
     elif gate_id in SOURCE_ALLOWED_PUBLICATION_GATES:
@@ -189,14 +210,23 @@ def _pass_receipt(gate_id: str, *, candidate_sha256: str) -> dict[str, Any]:
         "attempts": [{"attempt": 1, "status": "pass"}],
     }
     if evidence_kind == "exact_downloaded_artifact":
-        # Content-free fixture digest; not a controlled inventory asset name.
-        body["artifact_digests"] = {"acceptance-smoke-fixture.bin": "c" * 64}
+        if not inventory_digests:
+            raise AssertionError("exact artifact receipts require inventory digests in tests")
+        # Bind one real inventory-declared package name and digest.
+        name = next(iter(inventory_digests))
+        body["artifact_digests"] = {name: inventory_digests[name]}
     return body
 
 
-def _full_bundle(digest: str, *, decision: str | None = "approve") -> dict[str, Any]:
+def _full_bundle(
+    digest: str,
+    *,
+    decision: str | None = "approve",
+    inventory_digests: dict[str, str] | None = None,
+) -> dict[str, Any]:
     receipts = [
-        _pass_receipt(gate, candidate_sha256=digest) for gate in sorted(REQUIRED_PUBLICATION_GATES)
+        _pass_receipt(gate, candidate_sha256=digest, inventory_digests=inventory_digests)
+        for gate in sorted(REQUIRED_PUBLICATION_GATES)
     ]
     body: dict[str, Any] = {
         "schema_version": 1,
@@ -224,6 +254,11 @@ def _promotion_extras(release_dir: Path) -> None:
     )
 
 
+def _inventory_digests(release_dir: Path) -> dict[str, str]:
+    candidate = json.loads((release_dir / CANDIDATE_FILE_NAME).read_text(encoding="utf-8"))
+    return candidate_inventory_digests(candidate)
+
+
 def test_publication_gate_fails_without_approve(tmp_path: Path) -> None:
     release_dir = _candidate_dir(tmp_path)
     candidate = release_dir / CANDIDATE_FILE_NAME
@@ -231,7 +266,11 @@ def test_publication_gate_fails_without_approve(tmp_path: Path) -> None:
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
-        json.dumps(_full_bundle(digest, decision=None), indent=2) + "\n",
+        json.dumps(
+            _full_bundle(digest, decision=None, inventory_digests=_inventory_digests(release_dir)),
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ManifestError, match="approve"):
@@ -254,7 +293,11 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
-        json.dumps(_full_bundle(digest), indent=2) + "\n",
+        json.dumps(
+            _full_bundle(digest, inventory_digests=_inventory_digests(release_dir)),
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     record = evaluate_publication_gate(
@@ -283,7 +326,10 @@ def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
     digest, _ = sha256_file(candidate)
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
-    bundle_path.write_text(json.dumps(_full_bundle(digest)), encoding="utf-8")
+    bundle_path.write_text(
+        json.dumps(_full_bundle(digest, inventory_digests=_inventory_digests(release_dir))),
+        encoding="utf-8",
+    )
     with pytest.raises(ManifestError, match="public-key identity"):
         evaluate_publication_gate(
             release_dir=release_dir,
@@ -302,7 +348,7 @@ def test_publication_gate_rejects_incomplete_gate_set(tmp_path: Path) -> None:
     candidate = release_dir / CANDIDATE_FILE_NAME
     digest, _ = sha256_file(candidate)
     _promotion_extras(release_dir)
-    incomplete = _full_bundle(digest)
+    incomplete = _full_bundle(digest, inventory_digests=_inventory_digests(release_dir))
     incomplete["receipts"] = incomplete["receipts"][:3]
     incomplete["maintainer_decision"]["reviewed_receipt_ids"] = [
         item["receipt_id"] for item in incomplete["receipts"]
@@ -327,16 +373,16 @@ def test_publication_gate_rejects_forged_matrix_evidence(tmp_path: Path) -> None
     candidate = release_dir / CANDIDATE_FILE_NAME
     digest, _ = sha256_file(candidate)
     _promotion_extras(release_dir)
-    # Byte-substitute matrix evidence after assembly would change candidate digests;
-    # instead mutate the on-disk matrix file and re-point is impossible without
-    # breaking inventory, so overwrite the file under a fresh verify path fails.
     matrix_path = release_dir / MATRIX_EVIDENCE_FILE_NAME
     forged = json.loads(matrix_path.read_text(encoding="utf-8"))
     forged["ok"] = True
-    forged["jobs"] = list(REQUIRED_CI_JOBS)[:9]
+    forged["job_records"] = forged["job_records"][:9]
     matrix_path.write_text(json.dumps(forged) + "\n", encoding="utf-8")
     bundle_path = tmp_path / "bundle.json"
-    bundle_path.write_text(json.dumps(_full_bundle(digest)), encoding="utf-8")
+    bundle_path.write_text(
+        json.dumps(_full_bundle(digest, inventory_digests=_inventory_digests(release_dir))),
+        encoding="utf-8",
+    )
     with pytest.raises(ManifestError, match=r"matrix evidence|digest|source_evidence"):
         evaluate_publication_gate(
             release_dir=release_dir,
@@ -358,7 +404,7 @@ def test_publication_gate_rejects_mixed_inventory_artifact_digest(tmp_path: Path
     inventory = json.loads(candidate.read_text(encoding="utf-8"))
     package_name = inventory["artifacts"][0]["direct_package"]["name"]
     real_digest = inventory["artifacts"][0]["direct_package"]["sha256"]
-    bundle = _full_bundle(digest)
+    bundle = _full_bundle(digest, inventory_digests=_inventory_digests(release_dir))
     for receipt in bundle["receipts"]:
         if receipt["gate_id"] == "BETA-R03":
             receipt["artifact_digests"] = {package_name: "f" * 64}
@@ -376,3 +422,49 @@ def test_publication_gate_rejects_mixed_inventory_artifact_digest(tmp_path: Path
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
+
+
+def test_publication_gate_rejects_arbitrary_safe_key_as_exact_binding(tmp_path: Path) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    bundle = _full_bundle(digest, inventory_digests=_inventory_digests(release_dir))
+    for receipt in bundle["receipts"]:
+        if receipt["gate_id"] in EXACT_ARTIFACT_PUBLICATION_GATES:
+            receipt["artifact_digests"] = {"acceptance-smoke-fixture.bin": "c" * 64}
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    with pytest.raises(ManifestError, match="not declared by the candidate inventory"):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
+            asset_stage="promotion",
+        )
+
+
+def test_beta_p04_source_provider_preparation_cannot_pass() -> None:
+    """Provider-lane source preparation fragments must never validate as BETA-P04 pass."""
+
+    provider_source_fragment = {
+        "schema_version": 1,
+        "receipt_id": "provider-prep-beta-p04",
+        "gate_id": "BETA-P04",
+        "evidence_kind": "source",
+        "status": "pass",
+        "source_commit": SOURCE,
+        "candidate_sha256": "e" * 64,
+        "content_free": True,
+        "limitations": [],
+        "attempts": [{"attempt": 1, "status": "pass"}],
+        "notes": "source parser freeze only",
+    }
+    from allthecontext.acceptance_receipt import validate_receipt
+
+    with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
+        validate_receipt(provider_source_fragment)

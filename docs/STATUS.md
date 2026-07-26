@@ -84,17 +84,19 @@ silently.
 
 On 2026-07-26, source-side exact-candidate and publication aggregation gaps
 for BETA-R01/R03/R04/R05/O01 and B-107/B-108/B-201/B-206 scaffolding were
-closed without claiming a frozen release or fabricating receipts (ADR-059):
-hosted matrix evidence now requires the nine CI matrix jobs **plus** repository
-security and dashboard production-parity jobs on the same 40-hex SHA; skipped,
-cancelled, neutral, branch-name, short-SHA, wrong-run, and partial job sets are
-refused; candidate verification recomputes matrix evidence, inventory
-checksums/identity, and notices; receipt bundles refuse duplicate gate_ids,
-source-only labels on exact-artifact gates, conflicting digests, and inventory
-mismatches; publication recomputes those relationships before promotion. Human
-key custody, protected publication, offline signing, and public channel smoke
-remain explicit blockers. Focused release/receipt/workflow tests, Ruff, mypy,
-and docs checks pass on this worktree.
+closed without claiming a frozen release or fabricating receipts (ADR-059),
+then re-audited against remaining false-pass paths: hosted matrix selection
+requires the exact `.github/workflows/ci.yml` path (not suffix matches), every
+required job must bind `run_id`/`head_sha` with completed success and no
+duplicate/shadow names, incomplete job pagination fails closed, and durable
+matrix evidence stores primitive job records with recomputed `ok`. Exact
+receipt `artifact_digests` must name inventory-declared files with matching
+digests (arbitrary safe keys cannot pass); BETA-P04 cannot be satisfied by
+source-only provider preparation; inventory/candidate checksum sidecars and
+full inventory schema are required; bool-as-int schema values are refused.
+Human key custody, protected publication, offline signing, and public channel
+smoke remain explicit blockers. Focused release/receipt/workflow tests, Ruff,
+mypy, and docs checks pass on this worktree.
 
 On 2026-07-26, a narrow exact-lock correction closed three release-install
 holes without broadening release engineering: the reviewed `uv.lock` now

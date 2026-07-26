@@ -326,8 +326,9 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     if not required.issubset(value):
         missing = sorted(required - set(value))
         raise ManifestError(f"acceptance receipt is missing fields: {', '.join(missing)}")
-    if value.get("schema_version") != RECEIPT_SCHEMA_VERSION:
-        raise ManifestError("acceptance receipt schema_version must be 1")
+    schema_version = value.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != RECEIPT_SCHEMA_VERSION:
+        raise ManifestError("acceptance receipt schema_version must be integer 1")
     if value.get("content_free") is not True:
         raise ManifestError("acceptance receipt must declare content_free=true")
     receipt_id = value.get("receipt_id")
@@ -453,8 +454,9 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
     if not required.issubset(value):
         missing = sorted(required - set(value))
         raise ManifestError(f"acceptance receipt bundle is missing fields: {', '.join(missing)}")
-    if value.get("schema_version") != RECEIPT_SCHEMA_VERSION:
-        raise ManifestError("acceptance receipt bundle schema_version must be 1")
+    bundle_schema = value.get("schema_version")
+    if isinstance(bundle_schema, bool) or bundle_schema != RECEIPT_SCHEMA_VERSION:
+        raise ManifestError("acceptance receipt bundle schema_version must be integer 1")
     source_commit = value.get("source_commit")
     candidate_sha256 = value.get("candidate_sha256")
     if not isinstance(source_commit, str) or COMMIT.fullmatch(source_commit) is None:
@@ -561,6 +563,7 @@ def missing_required_gates(
     receipts: Sequence[Mapping[str, Any]],
     *,
     required_gates: Iterable[str] = REQUIRED_PUBLICATION_GATES,
+    inventory_digests: Mapping[str, str] | None = None,
 ) -> list[str]:
     required = set(required_gates)
     satisfied: set[str] = set()
@@ -580,6 +583,13 @@ def missing_required_gates(
                 digests = receipt.get("artifact_digests")
                 if not isinstance(digests, dict) or not digests:
                     continue
+                if inventory_digests is not None:
+                    try:
+                        _require_exact_artifact_digest_bindings(
+                            digests, inventory_digests=inventory_digests
+                        )
+                    except ManifestError:
+                        continue
             elif gate_id in SOURCE_ALLOWED_PUBLICATION_GATES:
                 if evidence_kind != "source":
                     continue
@@ -588,18 +598,25 @@ def missing_required_gates(
 
 
 def candidate_inventory_digests(candidate: Mapping[str, Any]) -> dict[str, str]:
-    """Collect name→sha256 pairs declared by a verified candidate inventory."""
+    """Collect unique name→sha256 pairs declared by a verified candidate inventory."""
 
     digests: dict[str, str] = {}
+
+    def _add(name: object, digest: object) -> None:
+        if not isinstance(name, str) or not isinstance(digest, str):
+            return
+        if name in digests:
+            if digests[name] != digest:
+                raise ManifestError(f"candidate inventory declares conflicting digests for {name}")
+            raise ManifestError(f"candidate inventory declares duplicate file name: {name}")
+        digests[name] = digest
+
     source_evidence = candidate.get("source_evidence")
     if isinstance(source_evidence, dict):
         for descriptor in source_evidence.values():
             if not isinstance(descriptor, Mapping):
                 continue
-            name = descriptor.get("name")
-            digest = descriptor.get("sha256")
-            if isinstance(name, str) and isinstance(digest, str):
-                digests[name] = digest
+            _add(descriptor.get("name"), descriptor.get("sha256"))
     artifacts = candidate.get("artifacts")
     if isinstance(artifacts, list):
         for artifact in artifacts:
@@ -610,11 +627,35 @@ def candidate_inventory_digests(candidate: Mapping[str, Any]) -> dict[str, str]:
                     continue
                 if not isinstance(descriptor, Mapping):
                     continue
-                name = descriptor.get("name")
-                digest = descriptor.get("sha256")
-                if isinstance(name, str) and isinstance(digest, str):
-                    digests[name] = digest
+                _add(descriptor.get("name"), descriptor.get("sha256"))
+    if not digests:
+        raise ManifestError("candidate inventory declares no artifact digests")
     return digests
+
+
+def _require_exact_artifact_digest_bindings(
+    digests: Mapping[str, str],
+    *,
+    inventory_digests: Mapping[str, str],
+) -> None:
+    """Every exact-artifact binding key must be declared by the candidate inventory."""
+
+    if not digests:
+        raise ManifestError("exact downloaded-artifact pass receipts require artifact_digests")
+    if not inventory_digests:
+        raise ManifestError("candidate inventory digests are required for exact artifact binding")
+    for name, digest in digests.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ManifestError("artifact_digests keys must be non-empty declared filenames")
+        expected = inventory_digests.get(name)
+        if expected is None:
+            raise ManifestError(
+                f"receipt artifact_digests key is not declared by the candidate inventory: {name}"
+            )
+        if expected != digest:
+            raise ManifestError(
+                f"receipt artifact digest does not match candidate inventory: {name}"
+            )
 
 
 def recompute_receipt_artifact_bindings(
@@ -623,7 +664,13 @@ def recompute_receipt_artifact_bindings(
     inventory_digests: Mapping[str, str],
     candidate_sha256: str,
 ) -> None:
-    """Refuse mixed inventory/artifact digests that do not recompute from inventory."""
+    """Refuse mixed inventory/artifact digests that do not recompute from inventory.
+
+    For every exact_downloaded_artifact pass receipt, every artifact_digests key
+    must be declared by the verified candidate inventory and match its digest.
+    Arbitrary safe basenames that are not inventory members never satisfy a
+    gate. ``candidate_sha256`` binding remains a separate exact-candidate check.
+    """
 
     if SHA256.fullmatch(candidate_sha256) is None:
         raise ManifestError("candidate_sha256 must be a lowercase SHA-256 digest")
@@ -633,23 +680,28 @@ def recompute_receipt_artifact_bindings(
         if receipt.get("candidate_sha256") != candidate_sha256:
             raise ManifestError("pass receipt candidate digest does not recompute")
         digests = receipt.get("artifact_digests")
-        if not isinstance(digests, dict):
-            continue
-        for name, digest in digests.items():
-            expected = inventory_digests.get(name)
-            if expected is not None and expected != digest:
+        evidence_kind = receipt.get("evidence_kind")
+        gate_id = receipt.get("gate_id")
+        if evidence_kind == "exact_downloaded_artifact" or (
+            isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        ):
+            if not isinstance(digests, dict):
                 raise ManifestError(
-                    f"receipt artifact digest does not match candidate inventory: {name}"
+                    "exact downloaded-artifact pass receipts require artifact_digests"
                 )
-            # Names that look like controlled release assets must exist in inventory.
-            controlled = name.startswith("all-the-context-") or name in {
-                "release-candidate-v1.json",
-                "matrix-evidence.json",
-                "component-inventory-v1.json",
-                "NOTICES.txt",
-            }
-            if controlled and expected is None:
-                raise ManifestError(f"receipt references undeclared release asset digest: {name}")
+            _require_exact_artifact_digest_bindings(digests, inventory_digests=inventory_digests)
+        elif isinstance(digests, dict) and digests:
+            for name, digest in digests.items():
+                expected = inventory_digests.get(name)
+                if expected is None:
+                    raise ManifestError(
+                        "receipt artifact_digests key is not declared by the "
+                        f"candidate inventory: {name}"
+                    )
+                if expected != digest:
+                    raise ManifestError(
+                        f"receipt artifact digest does not match candidate inventory: {name}"
+                    )
 
 
 def write_template_receipt(path: Path, *, source_commit: str, gate_id: str) -> None:

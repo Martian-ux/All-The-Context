@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .acceptance_receipt import (
+    POST_PUBLICATION_GATES,
     RECEIPT_BUNDLE_FILE_NAME,
     REQUIRED_PUBLICATION_GATES,
     candidate_inventory_digests,
@@ -157,24 +158,37 @@ def evaluate_publication_gate(
     if decision.get("independent_human_review_claimed") is not False:
         raise ManifestError("publication rejects false independent-review claims")
 
-    missing = missing_required_gates(bundle["receipts"], required_gates=REQUIRED_PUBLICATION_GATES)
+    missing = missing_required_gates(
+        bundle["receipts"],
+        required_gates=REQUIRED_PUBLICATION_GATES,
+        inventory_digests=inventory_digests,
+    )
     if missing:
         raise ManifestError(
             "publication fails closed; required receipt gates are not pass: " + ", ".join(missing)
         )
+    # BETA-R05 is post-publication public smoke and must not be required here.
     for receipt in bundle["receipts"]:
         gate_id = receipt.get("gate_id")
         status = receipt.get("status")
+        if isinstance(gate_id, str) and gate_id in POST_PUBLICATION_GATES:
+            raise ManifestError(
+                f"publication rejects post-publication gate {gate_id} before release"
+            )
         if gate_id in REQUIRED_PUBLICATION_GATES and status != "pass":
             raise ManifestError(f"required gate {gate_id} is not pass (status={status})")
-        if status == "not_run":
+        if status in {"not_run", "skipped", "unavailable", "fail"}:
             raise ManifestError(
-                f"publication rejects not_run receipt {receipt.get('receipt_id')}; "
-                "do not claim evidence that has not executed"
+                f"publication rejects non-pass receipt {receipt.get('receipt_id')} "
+                f"(status={status}); do not claim incomplete evidence"
             )
         if status == "pass" and receipt.get("candidate_sha256") != candidate_sha256:
             raise ManifestError(
                 f"pass receipt {receipt.get('receipt_id')} is not bound to the candidate digest"
+            )
+        if status == "pass" and receipt.get("source_commit") != source_commit:
+            raise ManifestError(
+                f"pass receipt {receipt.get('receipt_id')} is not bound to the source commit"
             )
 
     keyring = load_keyring(keyring_path)

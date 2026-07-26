@@ -1,4 +1,4 @@
-"""Enforce exact-SHA quality and optional hosted nine-job matrix evidence."""
+"""Enforce exact-SHA quality and optional hosted matrix evidence."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +17,8 @@ from allthecontext.exact_source_gate import (
     REQUIRED_CI_JOBS,
     REQUIRED_CI_MATRIX_JOBS,
     REQUIRED_SECURITY_PARITY_JOBS,
+    JobRecord,
+    MatrixEvidence,
     matrix_evidence_from_github,
     run_local_quality_gates,
     write_matrix_evidence,
@@ -62,7 +65,6 @@ def verify_hosted_matrix(
     runs_payload = _get_json(f"{base}/actions/runs?{query}", token)
     if not isinstance(runs_payload, dict):
         raise ManifestError("GitHub actions runs response is malformed")
-    # Select run first so jobs are fetched for the exact successful CI run.
     from allthecontext.exact_source_gate import select_successful_ci_run
 
     runs = runs_payload.get("workflow_runs")
@@ -73,15 +75,44 @@ def verify_hosted_matrix(
         source_commit=source_commit,
     )
     run_id = run.get("id")
-    if not isinstance(run_id, int):
+    if isinstance(run_id, bool) or not isinstance(run_id, int):
         raise ManifestError("selected CI run is missing an id")
-    jobs_payload = _get_json(f"{base}/actions/runs/{run_id}/jobs?per_page=50", token)
+    # Request more than the current 11-job set so incomplete pagination fails closed.
+    jobs_payload = _get_json(f"{base}/actions/runs/{run_id}/jobs?per_page=100", token)
     evidence = matrix_evidence_from_github(
         source_commit=source_commit,
         runs_payload=runs_payload,
         jobs_payload=cast(dict[str, Any], jobs_payload),
     )
     return evidence.as_dict()
+
+
+def _matrix_evidence_from_dict(value: Mapping[str, Any]) -> MatrixEvidence:
+    records_raw = value.get("job_records")
+    if not isinstance(records_raw, list):
+        raise ManifestError("matrix evidence job_records missing for write")
+    records: list[JobRecord] = []
+    for item in records_raw:
+        if not isinstance(item, dict):
+            raise ManifestError("matrix evidence job record is malformed")
+        records.append(
+            JobRecord(
+                name=str(item["name"]),
+                run_id=int(item["run_id"]),
+                head_sha=str(item["head_sha"]),
+                status=str(item["status"]),
+                conclusion=str(item["conclusion"]),
+            )
+        )
+    return MatrixEvidence(
+        source_commit=str(value["source_commit"]),
+        workflow_run_id=int(value["workflow_run_id"]),
+        workflow_name=str(value["workflow_name"]),
+        workflow_path=str(value["workflow_path"]),
+        run_status=str(value["run_status"]),
+        run_conclusion=str(value["run_conclusion"]),
+        job_records=tuple(records),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -162,18 +193,10 @@ def main() -> int:
                     "required_jobs": list(REQUIRED_CI_JOBS),
                 }
             if arguments.output is not None:
-                if "workflow_run_id" in evidence:
-                    from allthecontext.exact_source_gate import MatrixEvidence
-
+                if evidence.get("ok") is True and "job_records" in evidence:
                     write_matrix_evidence(
                         arguments.output,
-                        MatrixEvidence(
-                            source_commit=str(evidence["source_commit"]),
-                            workflow_run_id=int(evidence["workflow_run_id"]),
-                            workflow_name=str(evidence["workflow_name"]),
-                            conclusion=str(evidence["conclusion"]),
-                            jobs=tuple(evidence["jobs"]),
-                        ),
+                        _matrix_evidence_from_dict(evidence),
                     )
                 else:
                     arguments.output.parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +205,7 @@ def main() -> int:
                         encoding="utf-8",
                     )
             if evidence.get("ok") is not True and not arguments.allow_missing:
-                raise ManifestError("hosted nine-job matrix evidence is not green")
+                raise ManifestError("hosted matrix/security/parity evidence is not green")
             print(json.dumps({"ok": evidence.get("ok", False)}, sort_keys=True))
         return 0
     except (ManifestError, OSError) as exc:
