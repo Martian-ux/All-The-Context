@@ -327,3 +327,118 @@ def test_relay_queued_writes_preserve_client_acl_at_core(tmp_path: Path) -> None
     assert core.store.get_observation(correction.id).submitted_by_client_id == ("denied-client")
     assert core.store.get_observation(forgotten.id).submitted_by_client_id == ("denied-client")
     assert core.store.get_record(created.record_id).content == "Prefer concise answers."
+
+
+def test_http_non_witness_cannot_smuggle_provider_archive_or_force_explicit(
+    tmp_path: Path,
+) -> None:
+    """HTTP propose/batch/finish without witness stay tentative; admin witness still applies."""
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with TestClient(create_app(config)) as client:
+        setup = client.post("/v1/setup", json={"name": "Owner", "scopes": []})
+        assert setup.status_code == 200, setup.text
+        owner_headers = _bearer(str(setup.json()["token"]))
+        _plain_id, plain_headers = _create_client(
+            client,
+            owner_headers,
+            name="NoWitness HTTP",
+            scopes=["context:ingest", "context:propose", "context:read", "context:status"],
+        )
+        from allthecontext.security import WITNESS_EXPLICIT_USER_STATEMENT
+
+        _witness_id, witness_headers = _create_client(
+            client,
+            owner_headers,
+            name="Witness HTTP",
+            scopes=[
+                "context:ingest",
+                "context:propose",
+                "context:read",
+                "context:status",
+                WITNESS_EXPLICIT_USER_STATEMENT,
+            ],
+        )
+
+        plain_propose = client.post(
+            "/v1/ingestion/propose",
+            headers=plain_headers,
+            json={
+                "kind": "goal",
+                "content": "My goal is fiction HTTP non-witness propose.",
+                "explicit_user_statement": True,
+                "confidence": 1.0,
+            },
+        )
+        assert plain_propose.status_code == 200, plain_propose.text
+        assert plain_propose.json()["disposition"] == "tentative"
+        assert plain_propose.json()["record_id"] is None
+        assert "witness" in str(plain_propose.json().get("decision_reason", "")).casefold()
+
+        begun = client.post(
+            "/v1/ingestion/begin",
+            headers=plain_headers,
+            json={
+                "mode": "archive_import",
+                "accessible_sources": ["fiction-http"],
+                "unavailable_sources": [],
+                "idempotency_key": "http-archive-smuggle",
+            },
+        )
+        assert begun.status_code == 200, begun.text
+        session_id = str(begun.json()["session_id"])
+        batch = client.post(
+            "/v1/ingestion/batch",
+            headers=plain_headers,
+            json={
+                "session_id": session_id,
+                "idempotency_key": "http-archive-batch",
+                "candidates": [
+                    {
+                        "kind": "preference",
+                        "content": "Prefer fiction HTTP archive smuggle.",
+                        "explicit_user_statement": True,
+                        "source_type": "provider_archive",
+                        "source_service": "chatgpt",
+                        "observed_at": "2025-01-01T00:00:00+00:00",
+                    }
+                ],
+            },
+        )
+        assert batch.status_code == 200, batch.text
+        finished = client.post(
+            "/v1/ingestion/finish",
+            headers=plain_headers,
+            json={
+                "session_id": session_id,
+                "coverage_report": {
+                    "available": ["fiction-http"],
+                    "unavailable": [],
+                    "complete": True,
+                },
+            },
+        )
+        assert finished.status_code == 200, finished.text
+        observations = client.get("/v1/admin/observations", headers=owner_headers)
+        assert observations.status_code == 200, observations.text
+        smuggled = next(
+            item
+            for item in observations.json()["items"]
+            if "HTTP archive smuggle" in str(item.get("content", ""))
+        )
+        assert smuggled["disposition"] == "tentative"
+        assert smuggled["record_id"] is None
+
+        witness_propose = client.post(
+            "/v1/ingestion/propose",
+            headers=witness_headers,
+            json={
+                "kind": "interaction_preference",
+                "content": "Prefer fiction HTTP witness applies.",
+                "explicit_user_statement": True,
+                "confidence": 1.0,
+            },
+        )
+        assert witness_propose.status_code == 200, witness_propose.text
+        assert witness_propose.json()["disposition"] == "applied"
+        assert witness_propose.json()["record_id"]

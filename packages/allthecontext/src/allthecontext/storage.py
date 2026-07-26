@@ -2260,6 +2260,7 @@ class CoreStore:
         session_id: str | None = None,
         client: ClientPrincipal | None = None,
     ) -> CandidateOut:
+        policy_principal = self._policy_principal_tx(connection, client)
         candidate_id = self._insert_candidate(connection, candidate, session_id, client)
         row = connection.execute(
             "SELECT disposition FROM context_candidates WHERE id=?", (candidate_id,)
@@ -2274,7 +2275,7 @@ class CoreStore:
                     else ObservationOrigin.LOCAL_ADMIN
                 ),
                 actor=client.id if client is not None else "local-core",
-                principal=client,
+                principal=policy_principal,
             )
         result = connection.execute(
             "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -2515,13 +2516,16 @@ class CoreStore:
                 (session_id,),
             ).fetchall()
             actor = cast(str | None, session["client_id"]) or "local-core"
+            # Re-bind from durable registrations; never trust caller-supplied scopes
+            # for witness / archive explicitness (principal-shape hardening).
+            policy_principal = self._policy_principal_tx(connection, client)
             for item in staged:
                 self._evaluate_observation_tx(
                     connection,
                     str(item["id"]),
                     origin=origin,
                     actor=actor,
-                    principal=client,
+                    principal=policy_principal,
                 )
         result = self.get_session(session_id)
         result["replayed"] = replayed
@@ -2826,6 +2830,22 @@ class CoreStore:
             scopes=frozenset(cast(list[str], _loads(row["scopes_json"], []))),
             auto_approve=bool(row["auto_approve"]),
         )
+
+    def _policy_principal_tx(
+        self,
+        connection: sqlite3.Connection,
+        principal: ClientPrincipal | None,
+    ) -> ClientPrincipal | None:
+        """Re-bind policy authority from durable registration state.
+
+        Callers may pass a ClientPrincipal object; its scopes are never trusted
+        for witness evaluation. ``None`` remains the Core importer / local-admin
+        path. Unknown or revoked IDs resolve to an empty-scope principal so
+        forged or stale shape cannot manufacture witness authority.
+        """
+        if principal is None:
+            return None
+        return self._principal_for_client_id_tx(connection, principal.id)
 
     @staticmethod
     def _record_is_allowed(

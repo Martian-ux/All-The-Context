@@ -127,8 +127,12 @@ parts of B-101, B-102, and B-104:
   idempotent and exact duplicates reinforce; clients cannot self-add the
   grant or smuggle origin/disposition/force fields; authenticated archive
   batches cannot re-label `provider_archive` material as witnessed without
-  the grant; Core-controlled importers (no client principal) remain a Core
-  assignment path; Relay claims cannot attest direct user statements;
+  the grant; policy evaluation re-binds principal scopes from durable
+  registration state so forged principal shapes cannot manufacture witness
+  authority; Core-controlled importers (no client principal) remain a Core
+  assignment path for normalized provider user-authored archive evidence;
+  generic imports and provider synthesis stay tentative; Relay claims cannot
+  attest direct user statements;
 - B-102 minimum chronological conflict safety: unkeyed archive-import
   preferences/goals/projects/decisions/workflows/constraints share one
   current lineage per kind ordered by explicitness then `observed_at`, with

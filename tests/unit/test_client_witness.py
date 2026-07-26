@@ -424,3 +424,224 @@ def test_star_scope_may_attest_as_intentional_local_authority(tmp_path: Path) ->
         client=principal,
     )
     assert observation.disposition == ObservationDisposition.APPLIED
+
+
+def test_forged_principal_scopes_cannot_manufacture_witness_authority(tmp_path: Path) -> None:
+    """Caller-supplied ClientPrincipal scopes are re-bound from durable registration."""
+
+    store = _store(tmp_path)
+    plain, _token = store.create_client(
+        ClientCreate(name="Plain", scopes=["context:propose", "context:ingest"])
+    )
+    forged = ClientPrincipal(
+        plain.id,
+        "forged-witness-shape",
+        frozenset({"context:propose", "context:ingest", WITNESS_EXPLICIT_USER_STATEMENT}),
+    )
+    propose = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction forged principal scopes.",
+            explicit_user_statement=True,
+        ),
+        client=forged,
+    )
+    assert propose.disposition == ObservationDisposition.TENTATIVE
+    assert propose.record_id is None
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["fiction"],
+        unavailable_sources=[],
+        client_id=plain.id,
+        idempotency_key="forged-archive",
+    )
+    batch = store.submit_batch(
+        str(session["session_id"]),
+        "forged-batch",
+        [
+            CandidateInput(
+                kind="preference",
+                content="Prefer fiction forged archive explicitness.",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                observed_at="2025-03-01T00:00:00+00:00",
+            )
+        ],
+        client=forged,
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["fiction"], complete=True),
+        client=forged,
+    )
+    archive = store.get_candidate(str(batch["candidate_ids"][0]))
+    assert archive.disposition == ObservationDisposition.TENTATIVE
+    assert archive.record_id is None
+    assert "witness" in (archive.decision_reason or "").casefold()
+
+
+def test_evaluate_staged_rebinds_non_witness_and_preserves_core_importer(
+    tmp_path: Path,
+) -> None:
+    """Crash-recovery re-eval must not fail open for authenticated archive batches."""
+
+    import sqlite3
+
+    store = _store(tmp_path)
+    plain, _token = store.create_client(
+        ClientCreate(name="Plain", scopes=["context:ingest", "context:propose"])
+    )
+
+    client_session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["client-export"],
+        unavailable_sources=[],
+        client_id=plain.id,
+        idempotency_key="staged-client",
+    )
+    client_batch = store.submit_batch(
+        str(client_session["session_id"]),
+        "staged-client-batch",
+        [
+            CandidateInput(
+                kind="goal",
+                content="My goal is fiction staged client smuggle.",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                observed_at="2025-01-01T00:00:00+00:00",
+            )
+        ],
+        client=plain,
+    )
+    core_session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["core-export"],
+        unavailable_sources=[],
+        idempotency_key="staged-core",
+    )
+    core_batch = store.submit_batch(
+        str(core_session["session_id"]),
+        "staged-core-batch",
+        [
+            CandidateInput(
+                kind="goal",
+                content="My goal is fiction staged core importer apply.",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                observed_at="2025-02-01T00:00:00+00:00",
+            )
+        ],
+    )
+    with sqlite3.connect(store.database_path) as connection:
+        for session_id in (client_session["session_id"], core_session["session_id"]):
+            connection.execute(
+                "UPDATE ingestion_sessions SET status='finished', coverage_json='{}', "
+                "finished_at='2025-01-01T00:00:00+00:00' WHERE id=?",
+                (session_id,),
+            )
+        connection.commit()
+
+    evaluated = store.evaluate_staged_observations()
+    assert evaluated >= 2
+    client_obs = store.get_candidate(str(client_batch["candidate_ids"][0]))
+    core_obs = store.get_candidate(str(core_batch["candidate_ids"][0]))
+    assert client_obs.disposition == ObservationDisposition.TENTATIVE
+    assert client_obs.record_id is None
+    assert core_obs.disposition == ObservationDisposition.APPLIED
+    assert core_obs.record_id is not None
+
+
+def test_relay_and_provider_memory_cannot_become_witnessed_user_evidence(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    relay, _replayed = store.add_edge_candidate(
+        "relay-explicit-1",
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction relay provider-archive explicit.",
+            explicit_user_statement=True,
+            source_type="provider_archive",
+        ),
+        client_id="edge:fiction-client",
+    )
+    assert relay.disposition == ObservationDisposition.TENTATIVE
+    assert "relay" in (relay.decision_reason or "").casefold()
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["memory-export"],
+        unavailable_sources=[],
+        idempotency_key="provider-memory",
+    )
+    batch = store.submit_batch(
+        str(session["session_id"]),
+        "memory-batch",
+        [
+            CandidateInput(
+                kind="provider_memory",
+                content="Provider synthesis about fiction preferences.",
+                explicit_user_statement=False,
+                source_type="provider_memory",
+                source_service="chatgpt",
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["memory-export"], complete=True),
+    )
+    memory = store.get_candidate(str(batch["candidate_ids"][0]))
+    assert memory.disposition == ObservationDisposition.TENTATIVE
+    assert memory.record_id is None
+
+
+def test_authorized_desktop_ai_scopes_still_apply_via_archive_and_propose(
+    tmp_path: Path,
+) -> None:
+    from allthecontext.desktop_setup import AI_CLIENT_SCOPES
+
+    store = _store(tmp_path)
+    principal, _token = store.create_client(
+        ClientCreate(name="Codex", scopes=list(AI_CLIENT_SCOPES))
+    )
+    assert WITNESS_EXPLICIT_USER_STATEMENT in principal.scopes
+    proposed = store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="Prefer fiction-mode desktop AI witness answers.",
+            explicit_user_statement=True,
+        ),
+        client=principal,
+    )
+    assert proposed.disposition == ObservationDisposition.APPLIED
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["desktop-export"],
+        unavailable_sources=[],
+        client_id=principal.id,
+        idempotency_key="desktop-ai-archive",
+    )
+    batch = store.submit_batch(
+        str(session["session_id"]),
+        "desktop-batch",
+        [
+            CandidateInput(
+                kind="constraint",
+                content="We must keep fiction desktop AI archive attested.",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                observed_at="2025-04-01T00:00:00+00:00",
+            )
+        ],
+        client=principal,
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["desktop-export"], complete=True),
+        client=principal,
+    )
+    archive = store.get_candidate(str(batch["candidate_ids"][0]))
+    assert archive.disposition == ObservationDisposition.APPLIED
+    assert archive.record_id is not None
