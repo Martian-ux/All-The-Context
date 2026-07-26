@@ -181,6 +181,8 @@ jobs:
         run: python scripts/build_desktop.py
       - name: Smoke-test bundled resources and packaged OS credential access
         run: python scripts/smoke_desktop_artifact.py
+      - name: Smoke packaged console recovery from built bytes
+        run: python scripts/smoke_packaged_recovery.py
       - name: Clean-install, startup, MCP, restart, and cleanup smoke
         run: python scripts/smoke_packaged_first_run.py
       - id: runtime-version

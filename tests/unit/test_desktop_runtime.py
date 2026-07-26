@@ -248,6 +248,25 @@ def test_macos_bundle_copy_trusts_resolved_base_without_rechecking_alias_ancesto
     assert (target / "Contents" / "MacOS" / "AllTheContext").read_bytes() == b"desktop"
 
 
+def test_macos_runtime_discovers_frameworks_helpers(tmp_path: Path) -> None:
+    from allthecontext.desktop_runtime import _macos_bundle_helper
+
+    app = tmp_path / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
+    recovery = (
+        tmp_path / "AllTheContext.app" / "Contents" / "Frameworks" / "all-the-context-recovery"
+    )
+    mcp = tmp_path / "AllTheContext.app" / "Contents" / "Frameworks" / "all-the-context-mcp"
+    app.parent.mkdir(parents=True)
+    recovery.parent.mkdir(parents=True)
+    app.write_bytes(b"app")
+    recovery.write_bytes(b"recovery")
+    mcp.write_bytes(b"mcp")
+
+    assert _macos_bundle_helper(app, "all-the-context-recovery") == recovery
+    assert _macos_bundle_helper(app, "all-the-context-mcp") == mcp
+    assert _macos_bundle_helper(app, "missing-helper") is None
+
+
 def test_macos_frozen_app_installs_per_user_and_relaunches(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "download" / "AllTheContext.app"
     source_app = source / "Contents" / "MacOS" / "AllTheContext"

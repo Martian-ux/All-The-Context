@@ -465,14 +465,36 @@ def prepare_installed_runtime(
     return installed, False
 
 
+def _dashboard_exposes_import_operations(package_root: Path) -> bool:
+    """True when committed packaged dashboard assets reference durable import ops."""
+
+    web_root = package_root / "web"
+    if not (web_root / "index.html").is_file():
+        return False
+    needles = ("import-operations", "importOperations", "startImportOperation")
+    for path in web_root.rglob("*"):
+        if not path.is_file() or path.suffix.casefold() not in {".js", ".html", ".css", ".map"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if any(needle in text for needle in needles):
+            return True
+    return False
+
+
 def diagnostics() -> dict[str, Any]:
     from .updater import UpdateConfig
 
     package_root = Path(__file__).resolve().parent
     core_migrations = package_root / "migrations" / "core"
     relay_migrations = package_root / "migrations" / "relay"
+    core_migration_names = sorted(path.name for path in core_migrations.glob("*.sql"))
+    relay_migration_names = sorted(path.name for path in relay_migrations.glob("*.sql"))
     runtime = RuntimeCommand.current()
     update_config = UpdateConfig.default()
+    system = platform.system()
     return {
         "application": "All The Context",
         "version": __version__,
@@ -480,27 +502,30 @@ def diagnostics() -> dict[str, Any]:
         "distribution_trust": (
             "unsigned-community" if getattr(sys, "frozen", False) else "source-development"
         ),
-        "platform": platform.system(),
+        "platform": system,
         "python": platform.python_version(),
         "tk": tkinter.TkVersion,
-        "core_migrations": len(tuple(core_migrations.glob("*.sql"))),
-        "relay_migrations": len(tuple(relay_migrations.glob("*.sql"))),
+        "core_migrations": len(core_migration_names),
+        "core_migration_names": core_migration_names,
+        "relay_migrations": len(relay_migration_names),
+        "import_operations_migration": "009_import_operations.sql" in core_migration_names,
         "dashboard_bundled": (package_root / "web" / "index.html").is_file(),
+        "dashboard_import_operations": _dashboard_exposes_import_operations(package_root),
         "update_keyring_bundled": (package_root / "update_keys.json").is_file(),
         "update_helper_bundled": runtime.update_executable is not None,
         "update_channels": sorted(update_config.manifest_urls),
         "mcp_helper_bundled": runtime.mcp_executable is not None,
-        "mcp_stdio_available": runtime.mcp_executable is not None or platform.system() == "Linux",
+        "mcp_stdio_available": runtime.mcp_executable is not None or system == "Linux",
         "recovery_admin_mode": True,
         "recovery_helper_bundled": (
             runtime.recovery_executable is not None
-            if platform.system() in {"Windows", "Darwin"}
-            else True
+            if system in {"Windows", "Darwin"}
+            else True  # Linux recovery modes attach to the console main binary
         ),
         "recovery_console_helper": (
             runtime.recovery_executable.name
             if runtime.recovery_executable is not None
-            else ("all-the-context" if platform.system() == "Linux" else None)
+            else ("all-the-context" if system == "Linux" else None)
         ),
         "recovery_python_checkout_required": False,
         "core_data_directory": str(CoreConfig.default().data_dir),

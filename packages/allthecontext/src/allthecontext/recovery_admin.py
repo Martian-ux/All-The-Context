@@ -89,7 +89,8 @@ def recovery_help_text() -> str:
     elif system == "Darwin":
         reachability = (
             f"macOS (windowed app): run the console helper `{helper}` from Terminal.\n"
-            "  It is bundled beside the app binary inside AllTheContext.app and needs no Python."
+            "  It is bundled inside AllTheContext.app under Contents/MacOS or\n"
+            "  Contents/Frameworks and needs no Python."
         )
     else:
         reachability = (

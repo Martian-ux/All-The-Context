@@ -39,10 +39,14 @@ runs on; artifacts are never cross-compiled.
   wizard and supports `--mcp-stdio`; it does not require Docker, Python, Bash,
   systemd, or an installer script at runtime.
 
-Before beta publication, each artifact must also expose a version-matched
-recovery/admin helper or hidden native mode for documented stopped-Core restore
-and deliberate administrator purge. The current contributor-only `atc restore`
-command and API-only purge surface do not satisfy that packaged-user gate.
+Each native artifact exposes a version-matched recovery/admin surface for
+documented stopped-Core restore and deliberate administrator purge:
+Windows embeds `AllTheContextRecovery.exe`, macOS bundles
+`all-the-context-recovery` inside the app, and Linux attaches recovery modes to
+the console-capable `all-the-context` binary. Contributor-only `atc restore`
+remains available for source development but is not the packaged-user gate.
+Exact downloaded-artifact recovery acceptance receipts remain required before
+publication.
 
 `scripts/package_desktop.py` emits direct downloads named
 `all-the-context-VERSION-PLATFORM-ARCHITECTURE-unsigned` with the appropriate
@@ -115,16 +119,19 @@ required offline Ed25519 manifest signing, stable/beta promotion, key rotation,
 and downgrade rules.
 
 The native updater verifies and stages a versioned ZIP on every platform. The
-packaged Windows application also includes a separate recovery executable, so
-it exposes one-click install when running from the complete per-user
-installation. The helper journals each phase, registers per-user RunOnce
-recovery, waits for Core to stop, refreshes the SQLite backup, verifies the
-replacement and its MCP/updater helpers, runs a real loopback Core health check,
-and either commits or restores all prior binaries and the database. Its frozen
-smoke covers a crash after replacement and a failed-health rollback. The macOS
-app self-installs per user but OTA handoff remains manual. The Linux archive is
-portable and its OTA handoff remains manual. Those are deliberate safety
-states, not missing success messages.
+packaged Windows application also includes separate MCP, recovery
+(`AllTheContextRecovery.exe`), and updater executables, so it exposes one-click
+install when running from the complete per-user installation. The helper
+journals each phase, registers per-user RunOnce recovery, waits for Core to
+stop, refreshes the SQLite backup, verifies the replacement and its
+MCP/recovery/updater helpers, runs a real loopback Core health check, and either
+commits or restores all prior binaries and the database. Its frozen smoke covers
+a crash after replacement and a failed-health rollback that re-verifies the
+recovery helper digest. The macOS app self-installs per user (including the
+bundled console recovery helper) but OTA handoff remains manual. The Linux
+archive is portable with recovery modes on the main console binary, and its OTA
+handoff remains manual. Those are deliberate safety states, not missing success
+messages.
 
 ## Source development installation
 

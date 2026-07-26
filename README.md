@@ -73,8 +73,9 @@ pass.
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
 - one-click local Codex and Claude Desktop configuration;
 - optional local context/activity/search/backup/update dashboard;
-- encrypted portable export and contributor CLI restore; a packaged
-  recovery/admin helper remains a beta blocker;
+- encrypted portable export, contributor CLI restore, and a version-matched
+  packaged recovery/admin helper or console mode on every native artifact;
+  exact downloaded-artifact recovery receipts remain a beta acceptance blocker;
 - cross-platform Windows, macOS, and Linux CI/package paths; and
 - deterministic lexical retrieval with a future embedding interface.
 

@@ -1,8 +1,9 @@
-"""Smoke packaged recovery/admin modes without inventing candidate receipts.
+"""Smoke packaged recovery/admin modes from built bytes only.
 
-Prefer the console recovery helper on Windows/macOS so operator-reachable
-stdout is exercised. Fall back to the Linux console desktop binary or the
-source desktop module when frozen artifacts are absent.
+Fail closed when the platform-required console recovery surface is missing.
+Windows/macOS require the version-matched console helper; Linux uses the
+console-capable main desktop binary. Do not fall back to source checkout or a
+windowed-only desktop binary: those soft-passes cannot prove a candidate.
 """
 
 from __future__ import annotations
@@ -11,48 +12,68 @@ import json
 import os
 import platform
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist" / "desktop"
+BUILD = ROOT / "build" / "desktop"
 
 
 def recovery_command(system: str) -> tuple[list[str], str]:
-    """Return (command_prefix, mode) for the operator-reachable recovery surface."""
+    """Return (command_prefix, mode) for the operator-reachable recovery surface.
+
+    Raises SystemExit when the frozen console surface is absent.
+    """
 
     if system == "Windows":
-        candidates = [
-            DIST / "AllTheContextRecovery.exe",
-            DIST / "AllTheContextSetup.exe",  # windowed; not preferred
-        ]
-        helper = next((path for path in candidates if path.is_file()), None)
-        if helper is not None:
-            mode = (
-                "frozen-console-recovery-helper"
-                if helper.name == "AllTheContextRecovery.exe"
-                else "frozen-windowed-desktop-fallback"
-            )
-            return [str(helper)], mode
-    elif system == "Darwin":
-        console = DIST / "AllTheContext.app" / "Contents" / "MacOS" / "all-the-context-recovery"
-        windowed = DIST / "AllTheContext.app" / "Contents" / "MacOS" / "AllTheContext"
-        # Also accept recovery helper staged next to the app in recovery-helper-dist.
-        staged = ROOT / "build" / "desktop" / "recovery-helper-dist" / "all-the-context-recovery"
-        for path, mode in (
-            (console, "frozen-console-recovery-helper"),
-            (staged, "frozen-staged-console-recovery-helper"),
-            (windowed, "frozen-windowed-desktop-fallback"),
-        ):
+        candidates = (
+            (DIST / "AllTheContextRecovery.exe", "frozen-console-recovery-helper"),
+            (
+                BUILD / "recovery-helper-dist" / "AllTheContextRecovery.exe",
+                "frozen-staged-console-recovery-helper",
+            ),
+        )
+        for path, mode in candidates:
             if path.is_file():
                 return [str(path)], mode
-    else:
-        linux = DIST / "all-the-context"
-        if linux.is_file():
-            return [str(linux)], "frozen-linux-console-desktop"
+        raise SystemExit(
+            "Windows console recovery helper missing; expected dist/desktop/"
+            "AllTheContextRecovery.exe or build/desktop/recovery-helper-dist/"
+            "AllTheContextRecovery.exe (embedded in AllTheContextSetup.exe for install)"
+        )
 
-    return [sys.executable, "-m", "allthecontext.desktop"], "source-desktop-mode"
+    if system == "Darwin":
+        app = DIST / "AllTheContext.app"
+        candidates = (
+            (
+                app / "Contents" / "MacOS" / "all-the-context-recovery",
+                "frozen-console-recovery-helper",
+            ),
+            (
+                app / "Contents" / "Frameworks" / "all-the-context-recovery",
+                "frozen-console-recovery-helper",
+            ),
+            (
+                BUILD / "recovery-helper-dist" / "all-the-context-recovery",
+                "frozen-staged-console-recovery-helper",
+            ),
+        )
+        for path, mode in candidates:
+            if path.is_file():
+                return [str(path)], mode
+        raise SystemExit(
+            "macOS console recovery helper missing; expected all-the-context-recovery "
+            "inside AllTheContext.app (Contents/MacOS or Contents/Frameworks) or "
+            "build/desktop/recovery-helper-dist/"
+        )
+
+    linux = DIST / "all-the-context"
+    if linux.is_file():
+        return [str(linux)], "frozen-linux-console-desktop"
+    raise SystemExit(
+        "Linux console recovery surface missing; expected dist/desktop/all-the-context"
+    )
 
 
 def _require_help_output(command_prefix: list[str], mode: str) -> None:
@@ -78,31 +99,32 @@ def _require_help_output(command_prefix: list[str], mode: str) -> None:
         )
 
 
+def _require_doctor(command_prefix: list[str], mode: str, data_dir: Path) -> None:
+    doctor_proc = subprocess.run(
+        [
+            *command_prefix,
+            "--recovery-doctor",
+            "--recovery-data-dir",
+            str(data_dir),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        cwd=str(ROOT),
+    )
+    if doctor_proc.returncode != 0:
+        raise SystemExit(
+            f"recovery doctor failed ({mode}): rc={doctor_proc.returncode} "
+            f"stdout={doctor_proc.stdout!r} stderr={doctor_proc.stderr!r}"
+        )
+
+
 def main() -> int:
     system = platform.system()
     command_prefix, mode = recovery_command(system)
-    if mode == "source-desktop-mode":
-        print(
-            json.dumps(
-                {
-                    "warning": (
-                        "frozen recovery surface missing; exercising source desktop recovery modes"
-                    ),
-                    "mode": mode,
-                }
-            ),
-            file=sys.stderr,
-        )
-    if mode.endswith("windowed-desktop-fallback"):
-        print(
-            json.dumps(
-                {
-                    "warning": "console recovery helper missing; using windowed desktop fallback",
-                    "mode": mode,
-                }
-            ),
-            file=sys.stderr,
-        )
+    if "windowed" in mode or mode == "source-desktop-mode":
+        raise SystemExit(f"refusing non-console recovery surface: {mode}")
 
     _require_help_output(command_prefix, mode)
 
@@ -122,6 +144,8 @@ def main() -> int:
             )
         )
         assert observation.record_id is not None
+        _require_doctor(command_prefix, mode, data_dir)
+
         passphrase = "fiction-smoke-recovery-passphrase"
         env = os.environ.copy()
         env["ATC_EXPORT_PASSPHRASE"] = passphrase
@@ -198,10 +222,12 @@ def main() -> int:
                 "recovery_smoke": "passed",
                 "mode": mode,
                 "help": "passed",
+                "doctor": "passed",
                 "export_restore_purge": "passed",
                 "integrity": "verified",
                 "python_checkout_required": False,
-                "console_helper_preferred": not mode.endswith("windowed-desktop-fallback"),
+                "console_helper_required": True,
+                "beta_d03_acceptance": "not_claimed",
             },
             indent=2,
         )

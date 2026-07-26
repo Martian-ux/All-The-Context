@@ -134,3 +134,72 @@ def test_component_inventory_scope_and_no_invented_license_text() -> None:
     third_party = [item for item in python if item["name"] != "all-the-context"]
     assert all(item["license"] == "NOASSERTION" for item in third_party)
     assert any(item["name"] == "pip-audit" and item["scope"] == "dev" for item in python)
+
+
+def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
+    """Integrated candidate/CI native matrix must exercise recovery from built bytes."""
+
+    for name in ("ci.yml", "release-candidate.yml"):
+        text = _read(WORKFLOWS / name)
+        assert "scripts/install_locked_python.py" in text
+        assert "scripts/build_desktop.py" in text
+        assert "scripts/smoke_desktop_artifact.py" in text
+        assert "scripts/smoke_packaged_recovery.py" in text
+        assert "scripts/smoke_packaged_first_run.py" in text
+        assert "scripts/package_desktop.py" in text
+
+
+def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
+    """Stale asset/helper/migration lists must not silently drop integrated surfaces."""
+
+    pyproject = _read(ROOT / "pyproject.toml")
+    assert 'migrations/**/*.sql' in pyproject or "migrations/**/*.sql" in pyproject
+    assert "web/**/*" in pyproject
+    assert (ROOT / "scripts" / "recovery_entry.py").is_file()
+    assert (
+        ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "migrations" / "core"
+        / "009_import_operations.sql"
+    ).is_file()
+    web = ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "web"
+    assert (web / "index.html").is_file()
+    dashboard_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in web.rglob("*")
+        if path.is_file() and path.suffix.casefold() in {".js", ".html"}
+    )
+    assert "import-operations" in dashboard_text or "importOperations" in dashboard_text
+
+    build_desktop = _read(ROOT / "scripts" / "build_desktop.py")
+    assert "AllTheContextRecovery" in build_desktop
+    assert "all-the-context-recovery" in build_desktop
+    assert "recovery_entry.py" in build_desktop
+    assert "--collect-data" in build_desktop
+
+    diagnose = _read(ROOT / "scripts" / "diagnose_python_packages.py")
+    assert "009_import_operations.sql" in diagnose
+    assert "web/index.html" in diagnose
+
+    smoke_recovery = _read(ROOT / "scripts" / "smoke_packaged_recovery.py")
+    assert "frozen-windowed-desktop-fallback" not in smoke_recovery
+    assert 'return [sys.executable, "-m", "allthecontext.desktop"]' not in smoke_recovery
+    assert "AllTheContextRecovery.exe" in smoke_recovery
+    assert "all-the-context-recovery" in smoke_recovery
+    assert "SystemExit" in smoke_recovery
+    assert "recovery-helper-dist" in smoke_recovery
+    assert "beta_d03_acceptance" in smoke_recovery
+
+    package_desktop = _read(ROOT / "scripts" / "package_desktop.py")
+    assert "recovery_surface" in package_desktop
+    assert "embedded-console-helper" in package_desktop
+    assert "console-main-binary" in package_desktop
+
+    first_run = _read(ROOT / "scripts" / "smoke_packaged_first_run.py")
+    assert "AllTheContextRecovery.exe" in first_run
+    assert "rollback_recovery" in first_run
+
+    artifact_smoke = _read(ROOT / "scripts" / "smoke_desktop_artifact.py")
+    assert (
+        "009_import_operations" in artifact_smoke
+        or "import_operations_migration" in artifact_smoke
+    )
+    assert "dashboard_import_operations" in artifact_smoke

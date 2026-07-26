@@ -119,6 +119,15 @@ def _verify_macos_unsigned(package: Path) -> None:
             or "unsigned community build" not in notice.read_text(encoding="utf-8").casefold()
         ):
             raise RuntimeError("macOS package is missing its app or unsigned notice")
+        recovery_candidates = (
+            app / "Contents" / "MacOS" / "all-the-context-recovery",
+            app / "Contents" / "Frameworks" / "all-the-context-recovery",
+        )
+        if not any(path.is_file() for path in recovery_candidates):
+            raise RuntimeError(
+                "macOS package is missing its console recovery helper "
+                "(Contents/MacOS or Contents/Frameworks/all-the-context-recovery)"
+            )
         signature = subprocess.run(
             ["codesign", "--display", "--verbose=4", str(app)],
             check=False,
@@ -173,6 +182,18 @@ def verify_package(directory: Path, *, platform_name: str) -> dict[str, Any]:
         "source",
         "sha256",
         "size",
+        "recovery_surface",
+        "recovery_console_helper",
+    }
+    expected_recovery_surface = {
+        "windows": "embedded-console-helper",
+        "macos": "bundled-console-helper",
+        "linux": "console-main-binary",
+    }
+    expected_recovery_helper = {
+        "windows": "AllTheContextRecovery.exe",
+        "macos": "all-the-context-recovery",
+        "linux": "all-the-context",
     }
     if set(report) != expected_keys:
         raise RuntimeError("package report has an unexpected schema")
@@ -180,6 +201,10 @@ def verify_package(directory: Path, *, platform_name: str) -> dict[str, Any]:
         raise RuntimeError("package report identifies the wrong platform")
     if report["trust"] != "unsigned-community":
         raise RuntimeError("package report does not disclose unsigned trust")
+    if report.get("recovery_surface") != expected_recovery_surface.get(platform_name):
+        raise RuntimeError("package report recovery surface does not match platform")
+    if report.get("recovery_console_helper") != expected_recovery_helper.get(platform_name):
+        raise RuntimeError("package report recovery helper name does not match platform")
     package = directory / str(report["package"])
     notice = directory / str(report["notice"])
     if not package.is_file() or not notice.is_file():

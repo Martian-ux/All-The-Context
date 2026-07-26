@@ -93,6 +93,8 @@ def _candidate_dir(tmp_path: Path) -> Path:
                 "notice": notice.name,
                 "package": direct_package.name,
                 "platform": TARGET.platform,
+                "recovery_console_helper": "all-the-context",
+                "recovery_surface": "console-main-binary",
                 "schema_version": 1,
                 "sha256": digest,
                 "size": size,

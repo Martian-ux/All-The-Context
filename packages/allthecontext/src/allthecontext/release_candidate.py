@@ -156,7 +156,19 @@ def _validate_direct_package_report(
         "source",
         "sha256",
         "size",
+        "recovery_surface",
+        "recovery_console_helper",
     }
+    expected_recovery_surface = {
+        "windows": "embedded-console-helper",
+        "macos": "bundled-console-helper",
+        "linux": "console-main-binary",
+    }[target.platform]
+    expected_recovery_helper = {
+        "windows": "AllTheContextRecovery.exe",
+        "macos": "all-the-context-recovery",
+        "linux": "all-the-context",
+    }[target.platform]
     digest, size = sha256_file(direct_package)
     source = value.get("source")
     if (
@@ -171,6 +183,8 @@ def _validate_direct_package_report(
         or value.get("notice") != notice.name
         or value.get("sha256") != digest
         or value.get("size") != size
+        or value.get("recovery_surface") != expected_recovery_surface
+        or value.get("recovery_console_helper") != expected_recovery_helper
         or not isinstance(source, str)
         or SAFE_FILE_NAME.fullmatch(source) is None
     ):

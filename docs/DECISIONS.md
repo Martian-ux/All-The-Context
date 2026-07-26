@@ -1293,10 +1293,11 @@ and quiesces safely within 30 seconds, and import, source-inclusive export, and
 isolated restore each complete within 60 minutes. The full boundary journey
 runs on Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64.
 
-The downloaded packages must expose a version-matched recovery/admin helper or
+The downloaded packages expose a version-matched recovery/admin helper or
 native mode for stopped-Core restore and deliberate administrator purge without
-Python or a source checkout. Contributor-only `atc restore` and an API-only
-purge route do not satisfy the beta user journey.
+Python or a source checkout. Contributor-only `atc restore` remains a
+development path; beta acceptance requires exact downloaded-artifact packaged
+recovery receipts rather than contributor CLI evidence alone.
 
 An ATC-configured same-device Codex or Claude client principal may attest that
 text is an explicit user statement only when Core grants that witness class.
@@ -1388,8 +1389,31 @@ provenance, retry idempotency, and duplicate suppression aligned.
 
 ChatGPT, Claude, and Grok claims carry explicit parser identities, frozen
 fictional shapes, and closed coverage counts. Unknown/unparsed material is a
-visible incomplete-coverage result, not implicit support. This source-level
-decision does not satisfy the beta scale gate: the pre-source upload/hash/blob
-phase still needs a durable operation identifier and cancellable chunk
-heartbeats, and real-provider plus exact-boundary candidate receipts remain
-mandatory.
+visible incomplete-coverage result, not implicit support. Durable import
+operation identifiers and cancellable chunk heartbeats are implemented in
+source; this source-level decision still does not satisfy the beta scale gate:
+real-provider plus exact-boundary candidate receipts remain mandatory.
+
+## ADR-058: Integrated packaged recovery and durable import surfaces are source-complete before exact-artifact acceptance
+
+**Status:** accepted 2026-07-26.
+
+Native candidates must carry a version-matched recovery/admin surface on every
+OS family: Windows and macOS ship a console recovery helper
+(`AllTheContextRecovery.exe` / `all-the-context-recovery`); Linux attaches
+the same stopped-Core modes to the console-capable main binary. Candidate and
+CI native matrices fail closed when that surface is missing and exercise
+content-free `--recovery-help` / doctor from built bytes. Windows OTA
+journals, diagnostics, and rollback inventory include the recovery helper.
+
+Durable import operations (migration `009_import_operations.sql`, runtime,
+and the combined browser+import dashboard) travel through ordinary package-data
+and packaging collect paths. Package-resource diagnose and frozen desktop
+smokes refuse wheels or artifacts that omit the migration or import dashboard
+surface. Candidate source evidence stays content-free: no raw exports, 2 GB
+canaries, or personal data.
+
+This decision does not mark BETA-D03, provider, 2 GB, or browser/client gates
+passed. Exact downloaded-artifact and operator receipts remain mandatory and
+use the existing content-free acceptance-receipt fields without silently
+widening release inventory allowlists.

@@ -511,12 +511,14 @@ state is already noncurrent and creates no user queue.
   generator are implemented. The focused importer/provider slice passes 37
   tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
   pass for the integrated source.
-- B-105 is not accepted yet. The initial HTTP upload, hash pass, and SQLite
-  blob transaction still lack a durable operation identifier with cancellable
-  chunk heartbeats, so the frozen 5-second first-progress/cancel budget remains
-  open. Privacy-safe current real-export receipts for all three providers and
-  the exact 2,000,000,000-byte four-target import/export/restore receipts also
-  remain candidate-controlled acceptance work.
+- B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
+  states, and cancellable chunk heartbeats are implemented in source
+  (`import_operations.py`, migration `009_import_operations.sql`, Core admin
+  routes, and the combined dashboard import flow). Exact-candidate proof of
+  the frozen 5-second first-progress/cancel budget, privacy-safe current
+  real-export receipts for all three providers, and the exact
+  2,000,000,000-byte four-target import/export/restore receipts remain
+  candidate-controlled acceptance work.
 
 ## Retrieval V3 integration
 
@@ -557,6 +559,23 @@ state is already noncurrent and creates no user queue.
   macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
   measurements rather than cross-platform performance claims.
+
+## V1 recovery/import/release integration reconciliation
+
+- Packaged recovery/admin is integrated across native candidates: Windows and
+  macOS ship a version-matched console helper; Linux exposes the same
+  stopped-Core modes on the console-capable main binary. Candidate and CI
+  native jobs run fail-closed `smoke_packaged_recovery.py` against built bytes
+  (`--recovery-help` / doctor plus fiction export/restore/purge). Package reports
+  record `recovery_surface` / `recovery_console_helper`; Windows OTA first-run
+  smoke continues to journal and verify `AllTheContextRecovery.exe`.
+- Durable import operations (migration `009_import_operations.sql`, runtime,
+  combined browser+import dashboard) are required by package-resource diagnose,
+  frozen diagnostics, and desktop artifact smoke. Source-evidence inventory
+  remains content-free (no raw exports, 2 GB canaries, or personal data).
+- Acceptance receipts still use existing content-free fields; exact
+  downloaded-artifact browser/client/provider/2 GB/recovery operator receipts
+  remain honestly pending and are not claimed by this integration work.
 
 ## Remaining beta gates
 
@@ -604,9 +623,11 @@ state is already noncurrent and creates no user queue.
   Prove the inclusive `2,000,000,000`-byte boundary with an allocated
   non-sparse, nonempty canary on Windows x86-64, macOS ARM64, macOS x86-64, and
   Linux x86-64.
-- Ship a version-matched packaged recovery/admin helper or native mode for
-  stopped-Core restore and deliberate purge on Windows, macOS, and Linux; the
-  current contributor CLI/API-only paths do not satisfy the beta journey.
+- Prove the already-shipped version-matched packaged recovery/admin helper
+  (Windows/macOS console helper) and Linux console main-binary recovery modes
+  on exact downloaded candidate artifacts for every OS family; source packaging
+  and fail-closed built-byte recovery smokes are integrated, but
+  downloaded-artifact export/restore/purge acceptance receipts remain open.
 - Freeze the final release commit after review and repeat the exact nine-job
   hosted matrix on that identity: Python Windows/macOS/Ubuntu, dashboard Node
   20/22, and packages on Windows, Ubuntu, macOS ARM64, and macOS x86-64.

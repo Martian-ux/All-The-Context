@@ -78,6 +78,51 @@ def test_linux_desktop_is_console_capable_without_separate_recovery_binary() -> 
     assert "all-the-context" in args
 
 
+def test_package_report_records_platform_recovery_surface(tmp_path: Path) -> None:
+    executable = tmp_path / "all-the-context"
+    executable.write_bytes(b"linux-binary")
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        tmp_path / "out",
+        version="0.1.0-beta.1",
+        platform_name="linux",
+        architecture="x86_64",
+    )
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["recovery_surface"] == "console-main-binary"
+    assert payload["recovery_console_helper"] == "all-the-context"
+
+
+def test_windows_package_report_records_embedded_recovery_helper(tmp_path: Path) -> None:
+    executable = tmp_path / "AllTheContextSetup.exe"
+    executable.write_bytes(b"windows-setup")
+    _package, _checksum, _notice, report = build_platform_package(
+        executable,
+        tmp_path / "out",
+        version="0.1.0",
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["recovery_surface"] == "embedded-console-helper"
+    assert payload["recovery_console_helper"] == "AllTheContextRecovery.exe"
+
+
+def test_smoke_packaged_recovery_fails_closed_without_frozen_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import scripts.smoke_packaged_recovery as smoke
+
+    monkeypatch.setattr(smoke, "DIST", tmp_path / "dist")
+    monkeypatch.setattr(smoke, "BUILD", tmp_path / "build")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Windows")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Darwin")
+    with pytest.raises(SystemExit, match="recovery"):
+        smoke.recovery_command("Linux")
+
+
 def test_native_runner_architecture_labels_fail_closed() -> None:
     assert normalized_architecture("AMD64") == "x86_64"
     assert normalized_architecture("aarch64") == "arm64"

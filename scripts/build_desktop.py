@@ -261,6 +261,12 @@ def build(*, system: str | None = None) -> Path:
         # still sees an unsigned/unnotarized community build, but the bundle is
         # not internally corrupt.
         reseal_macos_bundle(artifact)
+    if recovery_helper is not None and active_system == "Windows":
+        # Stage the console helper next to the setup binary so package smokes and
+        # operator layout checks can invoke built bytes without MEIPASS extraction.
+        # Install still extracts the embedded helper from the setup onefile.
+        staged = DIST_ROOT / recovery_helper.name
+        shutil.copy2(recovery_helper, staged)
     return artifact
 
 

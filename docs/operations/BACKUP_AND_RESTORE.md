@@ -31,13 +31,14 @@ verify the manifest and all hashes, apply migrations transactionally, then run
 retrieval smoke tests before switching the active vault.
 
 This contributor command requires Python/source and is not the public-beta
-recovery surface. Before beta publication, every Windows, macOS, and Linux
-artifact must ship a version-matched recovery/admin helper or native mode with
-installed help. It must perform stopped-Core preflight, isolated restore,
+recovery surface. Every Windows, macOS, and Linux native artifact already
+includes a version-matched recovery/admin helper or native mode with installed
+help (`--recovery-help`). It performs stopped-Core preflight, isolated restore,
 manifest/database/source verification, retrieval checks, explicit cutover, and
 rollback without a Python installation or source checkout. The same packaged
-administrator surface must expose deliberate confirmed purge; scoped AI
-clients cannot invoke it.
+administrator surface exposes deliberate confirmed purge; scoped AI clients
+cannot invoke it. Exact downloaded-artifact acceptance receipts on every
+mandatory OS family remain required before publication.
 
 Exports may contain the complete vault and raw source material. Store them in
 an encrypted location and test restore procedures regularly.

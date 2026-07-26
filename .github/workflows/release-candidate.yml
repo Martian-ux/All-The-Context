@@ -183,6 +183,7 @@ jobs:
           --architecture "${{ matrix.architecture }}"
       - run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
+      - run: python scripts/smoke_packaged_recovery.py
       - run: python scripts/smoke_packaged_first_run.py
       - name: Build direct unsigned native package and disclosure sidecars
         run: >-
