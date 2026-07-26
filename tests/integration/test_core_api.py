@@ -14,7 +14,6 @@ from typing import Any, cast
 from allthecontext import __version__
 from allthecontext.browser_session import (
     BROWSER_AUTH_SCHEME,
-    BROWSER_STORAGE_KEY,
     DASHBOARD_REQUEST_HEADER,
     LEGACY_BROWSER_COOKIE,
 )
@@ -372,9 +371,10 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert LEGACY_BROWSER_COOKIE in connected.headers["set-cookie"]
         assert token not in connected.headers["set-cookie"]
         assert "Max-Age=0" in connected.headers["set-cookie"]
-        assert 'window.location.replace("/?page=connections")' in connected.text
+        assert 'data-dashboard-target="/?page=connections"' in connected.text
+        assert "window.location.replace(handoff.dataset.dashboardTarget)" in connected.text
         session_match = re.search(
-            rf'sessionStorage\.setItem\("{re.escape(BROWSER_STORAGE_KEY)}","([^"]+)"\)',
+            r'data-browser-token="([^"]+)"',
             connected.text,
         )
         assert session_match is not None
@@ -515,10 +515,7 @@ def test_browser_session_cannot_authenticate_to_another_core(tmp_path: Path) -> 
             headers={"Authorization": f"Bearer {first_setup.json()['token']}"},
         )
         html = first.get(handoff.json()["connect_path"]).text
-        session_match = re.search(
-            rf'sessionStorage\.setItem\("{re.escape(BROWSER_STORAGE_KEY)}","([^"]+)"\)',
-            html,
-        )
+        session_match = re.search(r'data-browser-token="([^"]+)"', html)
         assert session_match is not None
 
         response = second.get(

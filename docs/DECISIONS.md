@@ -1575,3 +1575,19 @@ open-dashboard regression also pins and asserts its disposable client paths.
 This is mandatory even for tests whose primary subject is browser handoff:
 launch repair is a production side effect and otherwise rewrites a real
 managed Codex or Claude entry when one exists on the developer host.
+
+## ADR-064: Core transport responses keep dynamic values out of executable code and raw errors
+
+**Status:** accepted 2026-07-26.
+
+The one-time browser handoff keeps its nonce-protected inline script, but the
+script is constant. Dynamic storage keys, browser capabilities, and validated
+dashboard targets cross the HTML boundary only through quoted, HTML-escaped
+data attributes and are consumed as DOM strings. This preserves the
+session-storage handoff and loopback redirect without treating request-derived
+values as JavaScript source.
+
+Authenticated integration diagnostics expose only a stable degraded-state
+repair message when local Codex or Claude configuration parsing fails. Raw
+exception text is neither returned nor logged because it can contain local
+paths, credentials, or personal configuration material.

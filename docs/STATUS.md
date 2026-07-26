@@ -65,6 +65,15 @@ behavior.
 
 ## Security maintenance
 
+On 2026-07-26, Core browser handoff values were removed from executable
+JavaScript literals and are now passed through quoted HTML-escaped data
+attributes to a constant nonce-protected script. The integrations status
+endpoint also replaces local configuration exceptions with a stable repair
+message, so parser errors cannot disclose paths, credentials, or personal
+configuration material. Focused regressions cover both response sinks. GitHub
+alerts #1 and #2 remain open against `main` until an integrated commit is
+rescanned; this worktree does not dismiss or otherwise mutate them.
+
 On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
 credential safety and the Windows windowed artifact can both be meaningful:
 `scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke
