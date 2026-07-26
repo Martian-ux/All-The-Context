@@ -109,6 +109,12 @@ current ATC Retrieval V3 against the same sanitized, frozen task fixture and
 reports task-level sufficiency, abstention, forbidden output, disclosure,
 determinism, latency, storage, and adapter-declared model/token/cost usage.
 
+The 2026-07-24 security hardening requires `context:read` for Core search,
+including Retrieval V3 `as_of` historical search, so `context:status`
+credentials cannot retrieve current, expired, or superseded context content
+through `/v1/context/search`. The status endpoint remains available to those
+credentials without granting access to context payloads.
+
 The adapter input is an already-authorized immutable snapshot. Results contain
 aggregate counts, ordinal-derived ranking fingerprints, and accounting—not
 memory content, object IDs, task names, queries, or policy decisions. The ATC

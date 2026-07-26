@@ -1196,3 +1196,15 @@ the ceiling must provide enough local space for the upload, SQLite transaction
 journal/WAL, database growth, and any source-inclusive export. Existing
 expanded-text, archive-entry, compression, and per-item parser bounds remain
 independent safety controls.
+
+## ADR-052: Search result content requires read scope
+
+**Status:** accepted 2026-07-25.
+
+Core context search returns full context record payloads, including content, for
+both current and `as_of` historical retrieval. The `/v1/context/search`
+endpoint therefore requires `context:read`; `context:status` is not sufficient
+for any search path, including offset-aware historical requests that can
+surface expired or superseded personal context. The separate
+`/v1/context/status` endpoint continues to require `context:status`, preserving
+a non-content monitoring permission.

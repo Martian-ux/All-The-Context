@@ -257,6 +257,40 @@ def test_relay_rejects_tamper_order_mismatch_and_cross_client_access(tmp_path: P
     relay.close()
 
 
+def test_search_context_requires_read_scope_for_current_and_historical_results(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
+    with TestClient(create_core_app(config)) as client:
+        setup = client.post("/v1/setup", json={"name": "Fictional owner", "scopes": []})
+        owner_headers = {"Authorization": f"Bearer {setup.json()['token']}"}
+        created = client.post(
+            "/v1/admin/clients",
+            headers=owner_headers,
+            json={"name": "Status-only monitor", "scopes": ["context:status"]},
+        )
+        assert created.status_code == 200
+        status_headers = {"Authorization": f"Bearer {created.json()['token']}"}
+
+        status_response = client.get("/v1/context/status", headers=status_headers)
+        current_search = client.post(
+            "/v1/context/search",
+            headers=status_headers,
+            json={"query": "fictional"},
+        )
+        historical_search = client.post(
+            "/v1/context/search",
+            headers=status_headers,
+            json={"query": "fictional", "as_of": "2025-02-01T00:00:00Z"},
+        )
+
+    assert status_response.status_code == 200
+    assert current_search.status_code == 403
+    assert historical_search.status_code == 403
+    assert "context:read" in current_search.json()["detail"]
+    assert "context:read" in historical_search.json()["detail"]
+
+
 def test_revoked_core_bearer_token_is_rejected(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
     with TestClient(create_core_app(config)) as client:
@@ -265,7 +299,10 @@ def test_revoked_core_bearer_token_is_rejected(tmp_path: Path) -> None:
         created = client.post(
             "/v1/admin/clients",
             headers=owner_headers,
-            json={"name": "Revocable reader", "scopes": ["context:read"]},
+            json={
+                "name": "Revocable reader",
+                "scopes": ["context:read", "context:status"],
+            },
         )
         assert created.status_code == 200
         token = str(created.json()["token"])
