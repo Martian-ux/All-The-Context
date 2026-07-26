@@ -322,6 +322,105 @@ def test_path_import_streams_raw_source_and_reports_provider_metadata(tmp_path: 
     assert store.get_source_content(result["source"]["id"]) == raw
 
 
+def test_chatgpt_classifiable_empty_and_attachment_nodes_close_without_unparsed() -> None:
+    """Known empty/tool/attachment shells close; only unknown structure stays unparsed."""
+    export = [
+        {
+            "id": "chatgpt-classifiable-1",
+            "title": "Fictional classifiable graph",
+            "mapping": {
+                "sys": {
+                    "message": {
+                        "id": "system-empty",
+                        "author": {"role": "system"},
+                        "content": {"content_type": "text", "parts": [""]},
+                    }
+                },
+                "user": {
+                    "message": {
+                        "id": "user-durable",
+                        "author": {"role": "user"},
+                        "create_time": 1,
+                        "content": {
+                            "content_type": "text",
+                            "parts": ["Preference: Keep fictional demo answers concise."],
+                        },
+                    }
+                },
+                "assistant": {
+                    "message": {
+                        "id": "assistant-text",
+                        "author": {"role": "assistant"},
+                        "create_time": 2,
+                        "content": {"content_type": "text", "parts": ["Fictional assistant."]},
+                    }
+                },
+                "tool-empty": {
+                    "message": {
+                        "id": "tool-empty",
+                        "author": {"role": "tool"},
+                        "content": {"content_type": "code", "parts": []},
+                    }
+                },
+                "user-attachment": {
+                    "message": {
+                        "id": "user-attachment",
+                        "author": {"role": "user"},
+                        "content": {
+                            "content_type": "multimodal_text",
+                            "parts": [
+                                {
+                                    "content_type": "image_asset_pointer",
+                                    "asset_pointer": "file-service://file-fictional",
+                                }
+                            ],
+                        },
+                    }
+                },
+                "user-empty": {
+                    "message": {
+                        "id": "user-empty",
+                        "author": {"role": "user"},
+                        "content": {"content_type": "text", "parts": [""]},
+                    }
+                },
+                "unknown-role": {
+                    "message": {
+                        "id": "plugin-unknown",
+                        "author": {"role": "plugin"},
+                        "content": {"content_type": "text", "parts": ["mystery payload"]},
+                    }
+                },
+                "malformed": {
+                    "message": {
+                        "id": "malformed",
+                        "content": {"parts": [123]},
+                    }
+                },
+            },
+        }
+    ]
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt")
+
+    closed = parsed.closed_coverage
+    assert closed["recognized"] >= 1
+    assert closed["excluded"] >= 3  # system empty + assistant + tool empty
+    assert closed["skipped"] >= 1  # empty user
+    assert closed["unavailable"] >= 1  # attachment-only user
+    assert closed["unparsed"] == 2  # unknown role + malformed only
+    assert closed["failed"] == 0
+    # Classifiable residuals must not keep coverage incomplete by themselves.
+    from allthecontext.provider_shapes import reconcile_closed_coverage
+
+    without_unknown = {
+        **closed,
+        "unparsed": 0,
+    }
+    assert reconcile_closed_coverage(without_unknown)["truthful_success"] is True
+    assert parsed.complete is False  # unparsed keeps fail-closed coverage
+
+
 def test_user_questions_secrets_and_assistant_text_do_not_become_memory() -> None:
     export = [
         {

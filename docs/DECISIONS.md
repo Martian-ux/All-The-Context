@@ -1432,6 +1432,37 @@ passed. Exact downloaded-artifact and operator receipts remain mandatory and
 use the existing content-free acceptance-receipt fields without silently
 widening release inventory allowlists.
 
+## ADR-069: Classifiable provider residuals and staged packaged-acceptance failures
+
+**Status:** accepted 2026-07-26.
+
+Provider conversation graphs may contain structurally valid message
+dictionaries that yield no normalized text. Known, explicitly classifiable
+shells close into existing closed-coverage reasons without weakening fail-closed
+unknown handling:
+
+- empty or non-text assistant/system/tool/developer/function roles → excluded
+- empty user turns without attachment structure → skipped
+- known attachment/non-text-only shells → unavailable
+- unknown roles and malformed structures → unparsed (coverage incomplete)
+
+Packaged `--packaged-provider-acceptance` reports a small content-free stage
+set for failures that previously shared one ambiguous code:
+
+- `import_operation_failed` — operation/import raised before a complete result
+- `import_operation_incomplete` — operation terminal/non-complete status
+- `import_acceptance_reconcile_failed` — acceptance reconciliation refused the
+  terminal result
+
+Reports remain create-once, content-free, and free of exception text, paths,
+dynamic type names, and personal/provider content. Durable import-operation
+committed/received byte counters stay monotonic across raw-archive and later
+staging/member progress domains. Windows packaged-smoke startup cleanup may
+delete only the exact run-owned `Software\AllTheContext\Smoke\...` override key
+after its value is removed; product Run-key behavior is unchanged.
+
+This decision does not satisfy real-provider exact-candidate receipts.
+
 ## ADR-053 implementation note: A-09 / B-102 client witness (source-complete)
 
 **Status:** source-level implementation under ADR-053 A-09; accepted residual

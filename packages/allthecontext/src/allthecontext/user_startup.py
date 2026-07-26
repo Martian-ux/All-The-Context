@@ -133,3 +133,37 @@ def remove_user_startup() -> None:
         return
     config_root = Path(os.environ.get("XDG_CONFIG_HOME", user_config_path("AllTheContext").parent))
     (config_root / "autostart" / "all-the-context.desktop").unlink(missing_ok=True)
+
+
+def remove_smoke_windows_startup_key(*, windows_key: str | None = None) -> None:
+    """Delete the exact run-owned smoke startup override key after its value is gone.
+
+    Ordinary product ``Run`` key behavior is unchanged. Only a packaged-smoke
+    override under ``Software\\AllTheContext\\Smoke\\`` is eligible. Fails closed
+    when the key is nonempty/unexpected or cannot be removed. Never deletes the
+    product ``Run`` key or any broad/user key.
+    """
+    if platform.system() != "Windows":
+        return
+    if windows_key is None:
+        if os.environ.get(PACKAGED_SMOKE_FLAG) != "1":
+            raise OSError("Refusing smoke startup-key cleanup outside packaged smoke")
+        run_key = _windows_run_key()
+    else:
+        run_key = windows_key
+    if run_key == WINDOWS_RUN_KEY or not run_key.startswith("Software\\AllTheContext\\Smoke\\"):
+        raise OSError("Refusing to delete a non-smoke startup registry key")
+    winreg = windows_registry()
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            run_key,
+            0,
+            winreg.KEY_READ | winreg.KEY_SET_VALUE,
+        ) as key:
+            subkey_count, value_count, _ = winreg.QueryInfoKey(key)
+            if value_count != 0 or subkey_count != 0:
+                raise OSError("smoke startup key is nonempty or unexpected")
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, run_key)
+    except FileNotFoundError:
+        return

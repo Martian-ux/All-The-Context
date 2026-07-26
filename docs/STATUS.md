@@ -63,6 +63,34 @@ and `hdiutil` diagnostics plus one 30-second managed-Core readiness window. It
 does not relax a gate, retry a failed launch, or change updater/release
 behavior.
 
+## Provider packaged-acceptance and Windows smoke residue (2026-07-26)
+
+Source-level blocker fixes for V1 convergence (exact base
+`a17b2ff794573750cc1a1df7735a1e3272045466`):
+
+- ChatGPT graph nodes that are known empty system/tool shells, empty users,
+  or attachment/non-text-only structures now close into excluded, skipped, or
+  unavailable rather than unparsed. Genuinely unknown or malformed nodes still
+  remain unparsed and keep coverage incomplete. Synthetic production-shaped
+  ZIP and graph regressions prove a truthful complete aggregate for
+  classifiable material and a precise reconcile-stage failure for unknown
+  residuals.
+- Packaged provider acceptance no longer collapses operation failure,
+  non-complete operation status, and acceptance reconciliation into one
+  ambiguous `import_validation_failed` code. Content-free stage codes are
+  `import_operation_failed`, `import_operation_incomplete`, and
+  `import_acceptance_reconcile_failed`.
+- Durable import-operation `bytes_committed` / `bytes_received` are monotonic
+  so later staging or member-progress domains cannot regress raw-archive
+  commit telemetry.
+- Successful Windows packaged first-run smoke removes the exact run-owned
+  smoke startup override key after the product value is cleared, and fails
+  closed if that key is nonempty or cannot be deleted. Ordinary product Run
+  key behavior is unchanged.
+
+These are source/harness fixes only. Exact downloaded-candidate real-export
+provider receipts and live OTA smoke re-runs remain open.
+
 ## Security maintenance
 
 On 2026-07-26, Core browser handoff values were removed from executable

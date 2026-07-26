@@ -1065,6 +1065,37 @@ def main() -> int:
                 winreg.HKEY_CURRENT_USER,
                 environment["ATC_SMOKE_UPDATE_RUNONCE_KEY"],
             )
+        # Product uninstall removes the startup value only. The run-owned smoke
+        # override key must also disappear on the successful path so independent
+        # cleanup finds zero orphan startup/RunOnce smoke state.
+        try:
+            from allthecontext.user_startup import remove_smoke_windows_startup_key
+
+            remove_smoke_windows_startup_key(
+                windows_key=environment["ATC_SMOKE_STARTUP_WINDOWS_KEY"]
+            )
+        except OSError:
+            raise SystemExit("smoke_startup_key_remove_failed") from None
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                environment["ATC_SMOKE_STARTUP_WINDOWS_KEY"],
+            ):
+                pass
+        except FileNotFoundError:
+            pass
+        else:
+            raise SystemExit("smoke_startup_key_orphan_remaining")
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                environment["ATC_SMOKE_UPDATE_RUNONCE_KEY"],
+            ):
+                pass
+        except FileNotFoundError:
+            pass
+        else:
+            raise SystemExit("smoke_update_runonce_key_orphan_remaining")
 
         cleaned_config = config_path.read_text(encoding="utf-8")
         if "all_the_context" in cleaned_config or token in cleaned_config:
