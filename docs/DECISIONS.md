@@ -1726,9 +1726,9 @@ acceptance parser must treat the response as inert HTML, bind the inline
 script nonce to the response CSP, require the constant handoff script and
 production storage/target attributes, reject external `src`, and reject
 executable credential literals, ambiguous duplicate handoffs, and non-script
-lookalikes. The initial functional extractor correction does not establish
-that adversarial boundary until the independent nonce/CSP/src/target
-hardening is integrated and its regressions pass.
+lookalikes. Independent review added those fail-closed checks after the initial
+functional extractor correction; the exact production handoff/CSP probe and
+focused adversarial regressions pass on the integrated source.
 
 The one-use ticket contract remains the frozen Phase D boundary: the ticket
 expires, cannot replay, leaks through no referrer or cache, and is absent from

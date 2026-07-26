@@ -111,15 +111,15 @@ harness functional correction reads the escaped ADR-064
 clean committed Windows package built locally from this correction passed the
 focused real Edge P06/S05 journey with zero unexpected console/page errors, no
 external requests, the packaged favicon, and the accepted ticket/session
-lifecycle; the repaired happy-path Python control also passed. This proves the
-favicon/product slice, not complete adversarial parser safety. Independent
-review found that nonce/CSP binding, external `src` rejection, and production
-target constraints still require a follow-up before integration and
-authoritative rebuild. A rebuilt official downloaded release candidate is
-still required for release acceptance. Under the frozen S05 contract, consumed
-ticket bytes in browser history files are not a byte-erasure failure when
-current navigation is clean and expiry, non-replay, referrer/cache isolation,
-session termination, and revocation pass.
+lifecycle; the repaired happy-path Python control also passed. Independent
+review then closed the extractor's false-pass paths by binding its nonce to the
+exact response CSP and rejecting external `src`, extra executable markup,
+inert/ambiguous handoffs, and non-production targets. The integrated Python
+suite passes 932 tests with four host-limited skips. A rebuilt official
+downloaded release candidate is still required for release acceptance. Under
+the frozen S05 contract, consumed ticket bytes in browser history files are not
+a byte-erasure failure when current navigation is clean and expiry, non-replay,
+referrer/cache isolation, session termination, and revocation pass.
 
 On 2026-07-26, the live public repository enabled secret scanning and push
 protection, Dependabot alerts and security updates, CodeQL default setup, and
