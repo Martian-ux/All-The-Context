@@ -50,15 +50,17 @@
           "version",
           "license",
           "locked",
-          "source_kind"
+          "source_kind",
+          "scope"
         ],
         "properties": {
           "ecosystem": { "enum": ["python", "npm"] },
           "name": { "type": "string", "minLength": 1 },
           "version": { "type": "string", "minLength": 1 },
-          "license": { "type": "string", "minLength": 1 },
+          "license": { "type": "string", "minLength": 1, "maxLength": 120 },
           "locked": { "const": true },
-          "source_kind": { "type": "string", "minLength": 1 }
+          "source_kind": { "type": "string", "minLength": 1 },
+          "scope": { "enum": ["runtime", "build", "dev"] }
         }
       }
     }

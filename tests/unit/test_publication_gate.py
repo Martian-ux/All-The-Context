@@ -5,10 +5,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from allthecontext.acceptance_receipt import REQUIRED_PUBLICATION_GATES
 from allthecontext.publication_gate import evaluate_publication_gate
 from allthecontext.release_candidate import (
     CANDIDATE_FILE_NAME,
     CANDIDATE_PROVENANCE_FILE_NAME,
+    COMPONENT_INVENTORY_CHECKSUM_FILE_NAME,
+    COMPONENT_INVENTORY_FILE_NAME,
+    MATRIX_EVIDENCE_FILE_NAME,
+    NOTICES_FILE_NAME,
+    PUBLICATION_GATE_RECORD_FILE_NAME,
     ReleaseTarget,
     assemble_candidate,
     direct_package_names,
@@ -39,9 +45,25 @@ def _bundle(path: Path) -> None:
     )
 
 
+def _source_evidence(release_dir: Path) -> None:
+    inventory = release_dir / COMPONENT_INVENTORY_FILE_NAME
+    inventory.write_text(
+        '{"schema_version":1,"component_count":0,"components":[]}\n', encoding="utf-8"
+    )
+    digest, _ = sha256_file(inventory)
+    (release_dir / COMPONENT_INVENTORY_CHECKSUM_FILE_NAME).write_text(
+        f"{digest}  {inventory.name}\n", encoding="ascii", newline="\n"
+    )
+    (release_dir / MATRIX_EVIDENCE_FILE_NAME).write_text(
+        json.dumps({"ok": True, "source_commit": SOURCE}) + "\n", encoding="utf-8"
+    )
+    (release_dir / NOTICES_FILE_NAME).write_text("notices\n", encoding="utf-8")
+
+
 def _candidate_dir(tmp_path: Path) -> Path:
     release_dir = tmp_path / "release"
     release_dir.mkdir()
+    _source_evidence(release_dir)
     source = tmp_path / "all-the-context"
     source.write_bytes(b"portable app\n")
     ota = build_archive(
@@ -96,21 +118,42 @@ def _candidate_dir(tmp_path: Path) -> Path:
     return release_dir
 
 
-def _pass_receipt(gate_id: str, *, candidate_sha256: str | None = None) -> dict[str, Any]:
-    receipt: dict[str, Any] = {
+def _pass_receipt(gate_id: str, *, candidate_sha256: str) -> dict[str, Any]:
+    return {
         "schema_version": 1,
         "receipt_id": f"pass-{gate_id.casefold()}",
         "gate_id": gate_id,
         "evidence_kind": "source" if gate_id != "BETA-R03" else "exact_downloaded_artifact",
         "status": "pass",
         "source_commit": SOURCE,
+        "candidate_sha256": candidate_sha256,
         "content_free": True,
         "limitations": [],
         "attempts": [{"attempt": 1, "status": "pass"}],
     }
-    if candidate_sha256 is not None:
-        receipt["candidate_sha256"] = candidate_sha256
-    return receipt
+
+
+def _full_bundle(digest: str, *, decision: str | None = "approve") -> dict[str, Any]:
+    receipts = [
+        _pass_receipt(gate, candidate_sha256=digest) for gate in sorted(REQUIRED_PUBLICATION_GATES)
+    ]
+    body: dict[str, Any] = {
+        "schema_version": 1,
+        "source_commit": SOURCE,
+        "candidate_sha256": digest,
+        "receipts": receipts,
+        "maintainer_decision": {
+            "decision": decision,
+            "independent_human_review_claimed": False,
+        },
+    }
+    if decision == "approve":
+        body["maintainer_decision"]["approver"] = "sole-maintainer"
+        body["maintainer_decision"]["ai_assisted"] = True
+        body["maintainer_decision"]["reviewed_receipt_ids"] = [
+            item["receipt_id"] for item in receipts
+        ]
+    return body
 
 
 def _promotion_extras(release_dir: Path) -> None:
@@ -127,23 +170,7 @@ def test_publication_gate_fails_without_approve(tmp_path: Path) -> None:
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "source_commit": SOURCE,
-                "candidate_sha256": digest,
-                "receipts": [
-                    _pass_receipt(gate, candidate_sha256=digest)
-                    for gate in ("BETA-R01", "BETA-R02", "BETA-R03", "BETA-S06", "BETA-O01")
-                ],
-                "maintainer_decision": {
-                    "decision": None,
-                    "independent_human_review_claimed": False,
-                },
-            },
-            indent=2,
-        )
-        + "\n",
+        json.dumps(_full_bundle(digest, decision=None), indent=2) + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ManifestError, match="approve"):
@@ -166,25 +193,7 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "source_commit": SOURCE,
-                "candidate_sha256": digest,
-                "receipts": [
-                    _pass_receipt(gate, candidate_sha256=digest)
-                    for gate in ("BETA-R01", "BETA-R02", "BETA-R03", "BETA-S06", "BETA-O01")
-                ],
-                "maintainer_decision": {
-                    "decision": "approve",
-                    "approver": "sole-maintainer",
-                    "independent_human_review_claimed": False,
-                    "ai_assisted": True,
-                },
-            },
-            indent=2,
-        )
-        + "\n",
+        json.dumps(_full_bundle(digest), indent=2) + "\n",
         encoding="utf-8",
     )
     record = evaluate_publication_gate(
@@ -200,6 +209,11 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     assert record["ok"] is True
     assert record["key_id"] == "release-2026-a"
     assert record["maintainer_approver"] == "sole-maintainer"
+    assert set(record["required_gates"]) == REQUIRED_PUBLICATION_GATES
+    assert (release_dir / "acceptance-receipt-bundle-v1.json").is_file()
+    assert (release_dir / PUBLICATION_GATE_RECORD_FILE_NAME).is_file()
+    assert "acceptance-receipt-bundle-v1.json" in record["assets"]
+    assert PUBLICATION_GATE_RECORD_FILE_NAME in record["assets"]
 
 
 def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
@@ -208,25 +222,7 @@ def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
     digest, _ = sha256_file(candidate)
     _promotion_extras(release_dir)
     bundle_path = tmp_path / "bundle.json"
-    bundle_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "source_commit": SOURCE,
-                "candidate_sha256": digest,
-                "receipts": [
-                    _pass_receipt(gate, candidate_sha256=digest)
-                    for gate in ("BETA-R01", "BETA-R02", "BETA-R03", "BETA-S06", "BETA-O01")
-                ],
-                "maintainer_decision": {
-                    "decision": "approve",
-                    "approver": "sole-maintainer",
-                    "independent_human_review_claimed": False,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    bundle_path.write_text(json.dumps(_full_bundle(digest)), encoding="utf-8")
     with pytest.raises(ManifestError, match="public-key identity"):
         evaluate_publication_gate(
             release_dir=release_dir,
@@ -236,5 +232,30 @@ def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
             keyring_path=KEYRING,
             key_id="release-2026-a",
             expected_public_key_sha256="sha256:" + ("0" * 64),
+            asset_stage="promotion",
+        )
+
+
+def test_publication_gate_rejects_incomplete_gate_set(tmp_path: Path) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    incomplete = _full_bundle(digest)
+    incomplete["receipts"] = incomplete["receipts"][:3]
+    incomplete["maintainer_decision"]["reviewed_receipt_ids"] = [
+        item["receipt_id"] for item in incomplete["receipts"]
+    ]
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(incomplete), encoding="utf-8")
+    with pytest.raises(ManifestError, match="required receipt gates"):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )

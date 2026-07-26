@@ -48,7 +48,10 @@
         "additionalProperties": false,
         "required": ["id", "summary"],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
           "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
           "severity": { "enum": ["P0", "P1", "P2", "P3"] },
           "workaround": { "type": "string", "maxLength": 500 },
@@ -73,6 +76,9 @@
     },
     "artifact_digests": {
       "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+      },
       "additionalProperties": {
         "type": "string",
         "pattern": "^[0-9a-f]{64}$"
@@ -80,13 +86,16 @@
     },
     "counts": {
       "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
       "additionalProperties": {
         "type": "integer"
       }
     },
     "notes": {
       "type": "string",
-      "maxLength": 2000
+      "maxLength": 280
     }
   }
 }

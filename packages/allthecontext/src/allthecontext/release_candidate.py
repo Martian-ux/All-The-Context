@@ -28,6 +28,30 @@ CANDIDATE_SCHEMA_VERSION = 1
 CANDIDATE_FILE_NAME = "release-candidate-v1.json"
 CANDIDATE_PROVENANCE_FILE_NAME = f"{CANDIDATE_FILE_NAME}.provenance.sigstore.json"
 CHANNEL_INDEX_FILE_NAME = "index-v1.json"
+MATRIX_EVIDENCE_FILE_NAME = "matrix-evidence.json"
+COMPONENT_INVENTORY_FILE_NAME = "component-inventory-v1.json"
+COMPONENT_INVENTORY_CHECKSUM_FILE_NAME = f"{COMPONENT_INVENTORY_FILE_NAME}.sha256"
+NOTICES_FILE_NAME = "NOTICES.txt"
+ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME = "acceptance-receipt-bundle-v1.json"
+PUBLICATION_GATE_RECORD_FILE_NAME = "publication-gate-record.json"
+SOURCE_EVIDENCE_FIELDS = (
+    "matrix_evidence",
+    "component_inventory",
+    "component_inventory_checksum",
+    "notices",
+)
+SOURCE_EVIDENCE_FILE_NAMES = {
+    "matrix_evidence": MATRIX_EVIDENCE_FILE_NAME,
+    "component_inventory": COMPONENT_INVENTORY_FILE_NAME,
+    "component_inventory_checksum": COMPONENT_INVENTORY_CHECKSUM_FILE_NAME,
+    "notices": NOTICES_FILE_NAME,
+}
+DECISION_ASSET_NAMES = frozenset(
+    {
+        ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME,
+        PUBLICATION_GATE_RECORD_FILE_NAME,
+    }
+)
 COMMIT = re.compile(r"[0-9a-f]{40}")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 SAFE_FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
@@ -37,6 +61,7 @@ DIRECT_PACKAGE_SUFFIXES = {
     "macos": ".dmg",
     "linux": ".tar.gz",
 }
+ASSET_STAGES = frozenset({"draft", "signed", "promotion"})
 
 
 @dataclass(frozen=True, order=True)
@@ -297,6 +322,18 @@ def attach_attestation_bundles(
     return outputs
 
 
+def _source_evidence_descriptors(release_dir: Path) -> dict[str, dict[str, Any]]:
+    descriptors: dict[str, dict[str, Any]] = {}
+    for field, file_name in SOURCE_EVIDENCE_FILE_NAMES.items():
+        path = release_dir / file_name
+        if not path.is_file() or path.is_symlink():
+            raise ManifestError(f"release candidate source evidence is missing: {file_name}")
+        descriptors[field] = _descriptor(path)
+        if descriptors[field]["name"] != file_name:
+            raise ManifestError(f"source evidence name mismatch: {file_name}")
+    return descriptors
+
+
 def assemble_candidate(
     release_dir: Path,
     *,
@@ -320,8 +357,9 @@ def assemble_candidate(
         raise ManifestError("release candidate must contain at least one target")
     if not eligible_ota_targets or not eligible_ota_targets.issubset(unique_targets):
         raise ManifestError("release candidate requires a non-empty OTA target subset")
+    source_evidence = _source_evidence_descriptors(release_dir)
     artifacts: list[dict[str, Any]] = []
-    expected_files: set[str] = set()
+    expected_files: set[str] = set(SOURCE_EVIDENCE_FILE_NAMES.values())
     for target in unique_targets:
         name = archive_name(version, target)
         provenance_name, sbom_bundle_name = attestation_names(name)
@@ -378,6 +416,7 @@ def assemble_candidate(
         "channel": channel,
         "schema_version": CANDIDATE_SCHEMA_VERSION,
         "source_commit": source_commit,
+        "source_evidence": source_evidence,
         "tag": f"v{version}",
         "unsigned_community_build": True,
         "version": version,
@@ -414,6 +453,7 @@ def verify_candidate(
         "channel",
         "tag",
         "source_commit",
+        "source_evidence",
         "unsigned_community_build",
         "artifacts",
     }
@@ -433,11 +473,22 @@ def verify_candidate(
         raise ManifestError("release candidate source commit is invalid")
     if candidate.get("unsigned_community_build") is not True:
         raise ManifestError("release candidate must disclose unsigned community build status")
+    source_evidence = candidate.get("source_evidence")
+    if not isinstance(source_evidence, dict) or set(source_evidence) != set(SOURCE_EVIDENCE_FIELDS):
+        raise ManifestError("release candidate source_evidence is malformed")
+    seen_files: set[str] = set()
+    for field in SOURCE_EVIDENCE_FIELDS:
+        path = _descriptor_path(release_dir, source_evidence.get(field), f"source_evidence.{field}")
+        expected_name = SOURCE_EVIDENCE_FILE_NAMES[field]
+        if path.name != expected_name:
+            raise ManifestError(f"source evidence file name is wrong for {field}")
+        if path.name in seen_files:
+            raise ManifestError("release candidate files must be uniquely assigned")
+        seen_files.add(path.name)
     artifact_values = candidate.get("artifacts")
     if not isinstance(artifact_values, list) or not artifact_values:
         raise ManifestError("release candidate artifact inventory is empty")
     targets: list[ReleaseTarget] = []
-    seen_files: set[str] = set()
     fields = {
         "platform",
         "architecture",
@@ -577,12 +628,19 @@ def signed_manifest_name(channel: str, target: ReleaseTarget) -> str:
 
 
 def expected_release_asset_names(candidate: Mapping[str, Any], *, stage: str) -> set[str]:
-    """Return the exact GitHub Release asset set for a controlled stage."""
+    """Return the exact GitHub Release asset set for a controlled stage.
 
-    if stage not in {"draft", "promotion"}:
-        raise ManifestError("release asset stage must be draft or promotion")
+    Stages:
+    - ``draft``: packages, candidate inventory, provenance, source evidence
+    - ``signed``: draft plus offline-signed OTA manifests
+    - ``promotion``: signed plus acceptance receipt bundle and publication record
+    """
+
+    if stage not in ASSET_STAGES:
+        raise ManifestError("release asset stage must be draft, signed, or promotion")
     artifacts = candidate.get("artifacts")
     channel = candidate.get("channel")
+    source_evidence = candidate.get("source_evidence")
     if not isinstance(artifacts, list) or not isinstance(channel, str):
         raise ManifestError("release candidate cannot define an asset set")
     names = {
@@ -590,6 +648,13 @@ def expected_release_asset_names(candidate: Mapping[str, Any], *, stage: str) ->
         f"{CANDIDATE_FILE_NAME}.sha256",
         CANDIDATE_PROVENANCE_FILE_NAME,
     }
+    if not isinstance(source_evidence, dict):
+        raise ManifestError("release candidate source_evidence is required for asset sets")
+    for field in SOURCE_EVIDENCE_FIELDS:
+        descriptor = source_evidence.get(field)
+        if not isinstance(descriptor, dict) or not isinstance(descriptor.get("name"), str):
+            raise ManifestError(f"release candidate source_evidence.{field} is malformed")
+        names.add(cast(str, descriptor["name"]))
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             raise ManifestError("release candidate artifact entry is malformed")
@@ -599,11 +664,13 @@ def expected_release_asset_names(candidate: Mapping[str, Any], *, stage: str) ->
             if not isinstance(descriptor, dict) or not isinstance(descriptor.get("name"), str):
                 raise ManifestError("release candidate file descriptor is malformed")
             names.add(cast(str, descriptor["name"]))
-        if stage == "promotion" and artifact.get("ota_manifest_eligible") is True:
+        if stage in {"signed", "promotion"} and artifact.get("ota_manifest_eligible") is True:
             target = ReleaseTarget(
                 cast(str, artifact["platform"]), cast(str, artifact["architecture"])
             )
             names.add(signed_manifest_name(channel, target))
+    if stage == "promotion":
+        names.update(DECISION_ASSET_NAMES)
     return names
 
 

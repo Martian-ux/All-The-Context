@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "version", "channel", "tag", "source_commit",
-    "unsigned_community_build", "artifacts"
+    "source_evidence", "unsigned_community_build", "artifacts"
   ],
   "properties": {
     "schema_version": {"const": 1},
@@ -20,6 +20,22 @@
     },
     "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "unsigned_community_build": {"const": true},
+    "source_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matrix_evidence",
+        "component_inventory",
+        "component_inventory_checksum",
+        "notices"
+      ],
+      "properties": {
+        "matrix_evidence": {"$ref": "#/$defs/file"},
+        "component_inventory": {"$ref": "#/$defs/file"},
+        "component_inventory_checksum": {"$ref": "#/$defs/file"},
+        "notices": {"$ref": "#/$defs/file"}
+      }
+    },
     "artifacts": {
       "type": "array",
       "minItems": 1,

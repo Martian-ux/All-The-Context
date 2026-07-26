@@ -6,8 +6,8 @@
   "receipts": [
     {
       "schema_version": 1,
-      "receipt_id": "template-beta-r01",
-      "gate_id": "BETA-R01",
+      "receipt_id": "template-beta-p01",
+      "gate_id": "BETA-P01",
       "evidence_kind": "source",
       "status": "not_run",
       "source_commit": "0000000000000000000000000000000000000000",
@@ -15,27 +15,137 @@
       "severity": null,
       "limitations": [],
       "attempts": [],
-      "notes": "Template only. Replace with executed evidence before publication."
+      "notes": "Template only. Install/start without developer tooling."
     },
     {
       "schema_version": 1,
-      "receipt_id": "template-beta-r02",
-      "gate_id": "BETA-R02",
+      "receipt_id": "template-beta-p02",
+      "gate_id": "BETA-P02",
       "evidence_kind": "source",
       "status": "not_run",
       "source_commit": "0000000000000000000000000000000000000000",
       "content_free": true,
-      "notes": "Key backup and deliberate solo publication controls."
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. One-time Codex/Claude connection survives restart."
     },
     {
       "schema_version": 1,
-      "receipt_id": "template-beta-r03",
-      "gate_id": "BETA-R03",
-      "evidence_kind": "exact_downloaded_artifact",
+      "receipt_id": "template-beta-p03",
+      "gate_id": "BETA-P03",
+      "evidence_kind": "source",
       "status": "not_run",
       "source_commit": "0000000000000000000000000000000000000000",
       "content_free": true,
-      "notes": "Candidate inventory completeness."
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Direct context applies and is later retrieved."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-p04",
+      "gate_id": "BETA-P04",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Provider imports are truthful with full reconciliation."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-p05",
+      "gate_id": "BETA-P05",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Correction, delete/restore, purge administration."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-p06",
+      "gate_id": "BETA-P06",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Basic keyboard/focus/error/narrow-width behavior."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s01",
+      "gate_id": "BETA-S01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Secret-like payload or guessable verifier not retained."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s02",
+      "gate_id": "BETA-S02",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Client witness and conflict handling are explicit."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s03",
+      "gate_id": "BETA-S03",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Credentials use protected storage; setup rolls back."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s04",
+      "gate_id": "BETA-S04",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Supported artifacts expose only the Core boundary."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s05",
+      "gate_id": "BETA-S05",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Browser handoff/session credentials obey design."
     },
     {
       "schema_version": 1,
@@ -45,7 +155,114 @@
       "status": "not_run",
       "source_commit": "0000000000000000000000000000000000000000",
       "content_free": true,
-      "notes": "Repository, dependency, artifact, and private-intake defenses."
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Repository, dependency, artifact, intake defenses."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-d01",
+      "gate_id": "BETA-D01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Inclusive 2 GB import boundary on every frozen target."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-d02",
+      "gate_id": "BETA-D02",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Authorization/deletion/purge survive restart/restore."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-d03",
+      "gate_id": "BETA-D03",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Encrypted backup and packaged recovery work."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r01",
+      "gate_id": "BETA-R01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Candidate derives from exact green locked source."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r02",
+      "gate_id": "BETA-R02",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Key custody and publication are recoverable."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r03",
+      "gate_id": "BETA-R03",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Candidate inventory is complete and immutable."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r04",
+      "gate_id": "BETA-R04",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Windows replacement failure preserves app and vault."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-x01",
+      "gate_id": "BETA-X01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Public platform/client/provider claims match evidence."
     },
     {
       "schema_version": 1,
@@ -55,7 +272,10 @@
       "status": "not_run",
       "source_commit": "0000000000000000000000000000000000000000",
       "content_free": true,
-      "notes": "Known issues, support, security intake, and recovery guidance."
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Known issues, support, security intake, recovery guidance."
     }
   ],
   "maintainer_decision": {
@@ -64,6 +284,7 @@
     "decided_at": "",
     "independent_human_review_claimed": false,
     "ai_assisted": true,
-    "notes": "Decision must remain null until every required receipt is pass and the sole human maintainer explicitly approves. Do not claim independent human review."
+    "notes": "Decision stays null until every required receipt is pass and the sole human maintainer approves. Enumerate every receipt_id. Do not claim independent human review. BETA-R05 is post-publication.",
+    "reviewed_receipt_ids": []
   }
 }

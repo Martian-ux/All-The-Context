@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import shutil
 import subprocess
@@ -13,22 +14,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def audit_python(repository_root: Path) -> dict[str, object]:
-    """Run pip-audit against the active environment; fail on known vulnerabilities."""
+    """Run the lock-installed pip-audit tool; never bootstrap a version range."""
 
     python = sys.executable
-    # Ensure pip-audit is available without adding it as a runtime dependency.
-    subprocess.run(
-        [python, "-m", "pip", "install", "--quiet", "pip-audit>=2.7,<3"],
-        check=True,
-    )
+    try:
+        version = importlib.metadata.version("pip-audit")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError(
+            "pip-audit is not installed in the active environment; "
+            "install the reviewed dev lock via scripts/install_locked_python.py --extra dev"
+        ) from exc
+    # Audit the project's declared/locked dependency set, not the ambient
+    # environment (which may contain unrelated global packages).
     completed = subprocess.run(
         [
             python,
             "-m",
             "pip_audit",
+            str(repository_root),
             "--progress-spinner",
             "off",
-            "--strict",
             "--desc",
             "off",
         ],
@@ -37,13 +42,17 @@ def audit_python(repository_root: Path) -> dict[str, object]:
         capture_output=True,
         text=True,
     )
-    # pip-audit prints vulnerability details; keep stdout/stderr out of our summary.
     if completed.returncode != 0:
         raise RuntimeError(
-            f"pip-audit failed (exit {completed.returncode}); "
+            f"pip-audit {version} failed (exit {completed.returncode}); "
             "fix or justify dependencies before candidate freeze"
         )
-    return {"ecosystem": "python", "tool": "pip-audit", "ok": True}
+    return {
+        "ecosystem": "python",
+        "tool": "pip-audit",
+        "tool_version": version,
+        "ok": True,
+    }
 
 
 def audit_dashboard(repository_root: Path) -> dict[str, object]:
@@ -59,7 +68,6 @@ def audit_dashboard(repository_root: Path) -> dict[str, object]:
         capture_output=True,
         text=True,
     )
-    # npm audit exit 1 means vulnerabilities at or above the level.
     if completed.returncode not in {0, 1}:
         raise RuntimeError(f"npm audit failed unexpectedly (exit {completed.returncode})")
     try:

@@ -14,6 +14,11 @@
       "version": "v4",
       "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020"
     },
+    "astral-sh/setup-uv": {
+      "version": "v8.1.0",
+      "sha": "08807647e7069bb48b6ef5acd8ec9567f424441b",
+      "uv_version": "0.11.32"
+    },
     "actions/upload-artifact": {
       "version": "v4",
       "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02"

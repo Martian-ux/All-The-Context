@@ -10,17 +10,22 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from .acceptance_receipt import (
+    RECEIPT_BUNDLE_FILE_NAME,
     REQUIRED_PUBLICATION_GATES,
     load_receipt_bundle,
     missing_required_gates,
+    validate_receipt_bundle,
 )
 from .release_candidate import (
     CANDIDATE_FILE_NAME,
+    PUBLICATION_GATE_RECORD_FILE_NAME,
+    expected_release_asset_names,
     verify_candidate,
     verify_release_asset_set,
 )
@@ -66,8 +71,17 @@ def evaluate_publication_gate(
     key_id: str,
     expected_public_key_sha256: str,
     asset_stage: str = "promotion",
+    persist_decision_artifacts: bool = True,
 ) -> dict[str, Any]:
-    """Return a content-free publication decision record or raise ManifestError."""
+    """Return a content-free publication decision record or raise ManifestError.
+
+    When ``persist_decision_artifacts`` is true and ``asset_stage`` is
+    ``promotion``, the validated receipt bundle and publication record are
+    written into ``release_dir`` under their canonical names so they become
+    part of the immutable promotion asset set. The record binds the exact
+    candidate digest and receipt-bundle digest; it never embeds private keys
+    or sensitive evidence.
+    """
 
     if COMMIT.fullmatch(source_commit) is None:
         raise ManifestError("publication source_commit must be a full lowercase SHA")
@@ -96,14 +110,23 @@ def evaluate_publication_gate(
     if not isinstance(channel, str):
         raise ManifestError("candidate channel is missing")
 
-    # Exact immutable asset inventory for the controlled stage.
-    assets = verify_release_asset_set(
-        candidate_path,
-        release_dir,
-        stage=asset_stage,
-        expected_sha256=candidate_sha256,
-    )
-    asset_names = sorted(path.name for path in assets)
+    # Pre-decision inventory must already match the signed promotion set minus
+    # the two decision artifacts we are about to persist.
+    if asset_stage == "promotion" and persist_decision_artifacts:
+        pre_stage = "signed"
+        verify_release_asset_set(
+            candidate_path,
+            release_dir,
+            stage=pre_stage,
+            expected_sha256=candidate_sha256,
+        )
+    else:
+        verify_release_asset_set(
+            candidate_path,
+            release_dir,
+            stage=asset_stage,
+            expected_sha256=candidate_sha256,
+        )
 
     bundle = load_receipt_bundle(receipt_bundle_path)
     if bundle["source_commit"] != source_commit:
@@ -118,7 +141,7 @@ def evaluate_publication_gate(
         raise ManifestError(
             "publication fails closed without an explicit maintainer approve decision"
         )
-    if decision.get("independent_human_review_claimed") is True:
+    if decision.get("independent_human_review_claimed") is not False:
         raise ManifestError("publication rejects false independent-review claims")
 
     missing = missing_required_gates(bundle["receipts"], required_gates=REQUIRED_PUBLICATION_GATES)
@@ -126,7 +149,6 @@ def evaluate_publication_gate(
         raise ManifestError(
             "publication fails closed; required receipt gates are not pass: " + ", ".join(missing)
         )
-    # Fail closed on any not_run or fail receipt in the required set.
     for receipt in bundle["receipts"]:
         gate_id = receipt.get("gate_id")
         status = receipt.get("status")
@@ -136,6 +158,10 @@ def evaluate_publication_gate(
             raise ManifestError(
                 f"publication rejects not_run receipt {receipt.get('receipt_id')}; "
                 "do not claim evidence that has not executed"
+            )
+        if status == "pass" and receipt.get("candidate_sha256") != candidate_sha256:
+            raise ManifestError(
+                f"pass receipt {receipt.get('receipt_id')} is not bound to the candidate digest"
             )
 
     keyring = load_keyring(keyring_path)
@@ -149,7 +175,13 @@ def evaluate_publication_gate(
     if actual_digest != candidate_sha256:
         raise ManifestError("candidate digest changed during publication gate evaluation")
 
-    return {
+    receipt_ids = sorted(
+        str(receipt["receipt_id"])
+        for receipt in bundle["receipts"]
+        if isinstance(receipt.get("receipt_id"), str)
+    )
+    expected_assets = sorted(expected_release_asset_names(candidate, stage=asset_stage))
+    record: dict[str, Any] = {
         "schema_version": 1,
         "ok": True,
         "source_commit": source_commit,
@@ -157,22 +189,62 @@ def evaluate_publication_gate(
         "channel": channel,
         "version": candidate.get("version"),
         "asset_stage": asset_stage,
-        "asset_count": len(asset_names),
-        "assets": asset_names,
+        "asset_count": len(expected_assets),
+        "assets": expected_assets,
         "key_id": key_id,
         "public_key_sha256": expected_public_key_sha256,
         "maintainer_approver": decision.get("approver"),
+        "independent_human_review_claimed": False,
         "required_gates": sorted(REQUIRED_PUBLICATION_GATES),
         "receipt_count": len(bundle["receipts"]),
+        "reviewed_receipt_ids": receipt_ids,
+        "receipt_bundle_name": RECEIPT_BUNDLE_FILE_NAME,
+        "publication_record_name": PUBLICATION_GATE_RECORD_FILE_NAME,
     }
+
+    if persist_decision_artifacts and asset_stage == "promotion":
+        bundle_destination = release_dir / RECEIPT_BUNDLE_FILE_NAME
+        record_destination = release_dir / PUBLICATION_GATE_RECORD_FILE_NAME
+        if receipt_bundle_path.resolve() != bundle_destination.resolve():
+            if bundle_destination.exists():
+                raise ManifestError(f"refusing to replace {bundle_destination.name}")
+            shutil.copyfile(receipt_bundle_path, bundle_destination)
+        validate_receipt_bundle(json.loads(bundle_destination.read_text(encoding="utf-8")))
+        bundle_digest, bundle_size = sha256_file(bundle_destination)
+        record["receipt_bundle_sha256"] = bundle_digest
+        record["receipt_bundle_size"] = bundle_size
+        write_publication_record(record_destination, record)
+        record_digest, record_size = sha256_file(record_destination)
+        # Bind the record digest in the return value only; the on-disk record is
+        # content-free and digest-stable without embedding its own hash.
+        record = dict(record)
+        record["publication_record_sha256"] = record_digest
+        record["publication_record_size"] = record_size
+
+    assets = verify_release_asset_set(
+        candidate_path,
+        release_dir,
+        stage=asset_stage,
+        expected_sha256=candidate_sha256,
+    )
+    asset_names = sorted(path.name for path in assets)
+    if asset_names != expected_assets:
+        raise ManifestError("publication asset inventory drifted during gate evaluation")
+    return record
 
 
 def write_publication_record(path: Path, record: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise ManifestError(f"refusing to replace publication record: {path.name}")
+    # Never persist self-referential digests that would force a rewrite loop.
+    serializable = {
+        key: value
+        for key, value in record.items()
+        if key not in {"publication_record_sha256", "publication_record_size"}
+    }
     path.write_text(
-        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        json.dumps(serializable, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
         newline="\n",
     )

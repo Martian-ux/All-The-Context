@@ -32,6 +32,9 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Require deliberate operator preflight phrase
         shell: bash
@@ -47,6 +50,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # pin: actions/setup-node@v4
         with:
           node-version: "22"
@@ -160,6 +167,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
@@ -263,6 +274,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # pin: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
       - name: Install from reviewed lock constraints
         run: python scripts/install_locked_python.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # pin: actions/download-artifact@v4
@@ -304,10 +319,26 @@ jobs:
               --source-digest "$SOURCE_COMMIT" \
               --deny-self-hosted-runners
           done
+      - name: Stage inventory files into the release directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Inventory may land under dist/source-evidence/inventory/ from the upload layout.
+          mkdir -p dist/source-evidence
+          if [[ -f dist/source-evidence/inventory/component-inventory-v1.json ]]; then
+            cp dist/source-evidence/inventory/component-inventory-v1.json dist/source-evidence/
+            cp dist/source-evidence/inventory/component-inventory-v1.json.sha256 dist/source-evidence/
+            cp dist/source-evidence/inventory/NOTICES.txt dist/source-evidence/
+          fi
+          test -f dist/source-evidence/matrix-evidence.json
+          test -f dist/source-evidence/component-inventory-v1.json
+          test -f dist/source-evidence/component-inventory-v1.json.sha256
+          test -f dist/source-evidence/NOTICES.txt
       - name: Assemble and verify the exact candidate inventory
         run: >-
           python scripts/release_candidate.py assemble
           --release-dir dist/release
+          --source-evidence-dir dist/source-evidence
           --version "${{ inputs.version }}"
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
