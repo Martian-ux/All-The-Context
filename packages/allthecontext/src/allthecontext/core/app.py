@@ -28,7 +28,7 @@ from fastapi import (
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -413,7 +413,8 @@ def create_app(
     class StartImportOperationRequest(BaseModel):
         model_config = ConfigDict(extra="forbid")
 
-        declared_byte_size: int
+        # StrictInt rejects bool (True/False) and non-integer coercions.
+        declared_byte_size: StrictInt
         filename: str | None = None
         provider: str | None = None
         source_service: str = "auto"
@@ -447,24 +448,60 @@ def create_app(
     ) -> dict[str, Any]:
         """Stream source bytes into a pre-created operation with chunk heartbeats."""
         require(principal, "admin")
-        content_length = http_request.headers.get("content-length")
-        expected_size = int(content_length) if content_length is not None else None
-
         import asyncio
-        from queue import Empty, Queue
+        from queue import Empty, Full, Queue
+
+        from allthecontext.import_boundary import (
+            CANCEL_POLL_SECONDS,
+            MAX_REQUEST_CHUNK_BYTES,
+            ImportCancelledError,
+            parse_content_length_header,
+        )
+
+        try:
+            expected_size = parse_content_length_header(http_request.headers.get("content-length"))
+        except InvalidStateError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
         # Bounded queue bridges the async request body to the sync Core worker.
+        # maxsize keeps memory within the import RSS envelope.
         chunk_queue: Queue[bytes | None] = Queue(maxsize=8)
         stream_error: list[BaseException] = []
+        stop_pump = threading.Event()
+
+        def _put_bounded(item: bytes | None) -> bool:
+            """Put with timeout so cancellation/disconnect never blocks forever."""
+            while not stop_pump.is_set():
+                try:
+                    chunk_queue.put(item, timeout=CANCEL_POLL_SECONDS)
+                    return True
+                except Full:
+                    continue
+            return False
 
         async def _pump() -> None:
             try:
                 async for chunk in http_request.stream():
-                    await asyncio.to_thread(chunk_queue.put, chunk)
-                await asyncio.to_thread(chunk_queue.put, None)
+                    if stop_pump.is_set():
+                        return
+                    # Bound/slice oversized transport chunks before queueing.
+                    data = bytes(chunk)
+                    step = MAX_REQUEST_CHUNK_BYTES
+                    end = len(data)
+                    for offset in range(0, end, step):
+                        if stop_pump.is_set():
+                            return
+                        piece = data[offset : offset + step]
+                        if not piece:
+                            continue
+                        ok = await asyncio.to_thread(_put_bounded, piece)
+                        if not ok:
+                            return
+                await asyncio.to_thread(_put_bounded, None)
             except BaseException as error:
                 stream_error.append(error)
-                await asyncio.to_thread(chunk_queue.put, None)
+                with suppress(Exception):
+                    await asyncio.to_thread(_put_bounded, None)
 
         pump_task = asyncio.create_task(_pump())
 
@@ -472,29 +509,63 @@ def create_app(
             def iterator() -> Any:
                 while True:
                     try:
-                        item = chunk_queue.get(timeout=30.0)
-                    except Empty as error:
-                        raise InvalidStateError("import upload stream stalled") from error
+                        item = chunk_queue.get(timeout=CANCEL_POLL_SECONDS)
+                    except Empty:
+                        # Observe cancel at least every 250 ms while waiting for bytes.
+                        if core.import_operations.cancel_registry.is_cancelled(operation_id):
+                            raise ImportCancelledError(
+                                "import cancelled by operator request"
+                            ) from None
+                        try:
+                            op = core.import_operations.get_operation(operation_id)
+                        except Exception:
+                            op = None
+                        if op is not None and (
+                            op.get("cancel_requested") or op.get("status") == "cancelled"
+                        ):
+                            core.import_operations.cancel_registry.request_cancel(operation_id)
+                            raise ImportCancelledError(
+                                "import cancelled by operator request"
+                            ) from None
+                        continue
                     if item is None:
                         if stream_error:
                             raise stream_error[0]
                         return
                     yield item
 
-            return core.import_operations.accept_upload(
-                operation_id,
-                iterator(),
-                expected_size=expected_size,
-                process_after=True,
-            )
+            try:
+                return core.import_operations.accept_upload(
+                    operation_id,
+                    iterator(),
+                    expected_size=expected_size,
+                    process_after=True,
+                )
+            finally:
+                # Unblock any pump put waiting on a full queue.
+                stop_pump.set()
+                with suppress(Exception):
+                    while True:
+                        try:
+                            chunk_queue.get_nowait()
+                        except Empty:
+                            break
 
         try:
             return await run_in_threadpool(run_upload)
         finally:
+            stop_pump.set()
             if not pump_task.done():
                 pump_task.cancel()
             with suppress(Exception):
                 await pump_task
+            # Drain so no blocked threadpool put remains after disconnect/cancel.
+            with suppress(Exception):
+                while True:
+                    try:
+                        chunk_queue.get_nowait()
+                    except Empty:
+                        break
 
     @app.post("/v1/admin/import-operations/{operation_id}/cancel")
     def cancel_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:

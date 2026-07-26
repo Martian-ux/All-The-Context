@@ -30,9 +30,12 @@ PROGRESS_HEARTBEAT_SECONDS = 5.0
 PROGRESS_HEARTBEAT_BYTES = 64 * 1024 * 1024
 CANCEL_ACKNOWLEDGE_SECONDS = 5.0
 CANCEL_QUIESCE_SECONDS = 30.0
+CANCEL_POLL_SECONDS = 0.25
 OPERATION_WALL_SECONDS = 60 * 60
 BOUNDARY_BYTES = MAX_IMPORT_BYTES
 BOUNDARY_PLUS_ONE_BYTES = MAX_IMPORT_BYTES + 1
+# Maximum single chunk accepted from an untrusted byte iterator before slicing.
+MAX_REQUEST_CHUNK_BYTES = 1024 * 1024
 
 ImportPhase = Literal[
     "preflight",
@@ -144,6 +147,8 @@ def expected_chunk_count(byte_size: int, *, chunk_bytes: int = SOURCE_BLOB_CHUNK
 
 def refuse_if_over_boundary(byte_size: int, *, limit: int = BOUNDARY_BYTES) -> None:
     """Deterministically refuse sources larger than the inclusive boundary."""
+    if isinstance(byte_size, bool) or not isinstance(byte_size, int):
+        raise InvalidStateError("source size must be a non-boolean integer")
     if byte_size < 0:
         raise InvalidStateError("source size must be non-negative")
     if byte_size > limit:
@@ -151,6 +156,55 @@ def refuse_if_over_boundary(byte_size: int, *, limit: int = BOUNDARY_BYTES) -> N
             f"import exceeds the {limit}-byte size limit "
             f"(received {byte_size} bytes; boundary+1 is refused)"
         )
+
+
+def coerce_declared_byte_size(value: object) -> int:
+    """Reject bool/non-int declared sizes; return a strict non-negative integer."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidStateError("declared_byte_size must be a non-boolean integer")
+    if value < 0:
+        raise InvalidStateError("declared_byte_size must be non-negative")
+    return value
+
+
+def parse_content_length_header(value: str | None) -> int | None:
+    """Parse Content-Length strictly; reject malformed or negative values."""
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw or not raw.isdigit():
+        raise InvalidStateError("Content-Length must be a non-negative integer")
+    size = int(raw)
+    if size < 0:
+        raise InvalidStateError("Content-Length must be a non-negative integer")
+    return size
+
+
+def durable_import_error_code(error: BaseException, *, phase: str | None = None) -> str:
+    """Return a closed, content-free durable error code (never raw exception text)."""
+    del phase  # reserved for future phase-qualified codes
+    if isinstance(error, ImportCancelledError):
+        return "import_cancelled"
+    type_name = type(error).__name__
+    # Trust only the exception type name, never str(error) which may carry content.
+    if type_name == "ConflictError":
+        return "import_conflict"
+    if type_name == "NotFoundError":
+        return "import_not_found"
+    if type_name == "InvalidStateError":
+        return "import_invalid_state"
+    if isinstance(error, OSError):
+        return "import_io_error"
+    if isinstance(error, TimeoutError):
+        return "import_timeout"
+    if isinstance(error, MemoryError):
+        return "import_memory_error"
+    if isinstance(error, ValueError):
+        return "import_value_error"
+    if isinstance(error, RuntimeError):
+        return "import_runtime_error"
+    safe_type = "".join(ch if ch.isalnum() else "_" for ch in type_name)[:64] or "Exception"
+    return f"import_failed:{safe_type}"
 
 
 def preflight_disk_space(
@@ -338,6 +392,20 @@ class ImportProgressTracker:
             target = self._bytes_processed + delta
         self.advance_bytes(target, message=message)
 
+    def heartbeat(self, *, message: str = "", force: bool = False) -> None:
+        """Emit a liveness tick without advancing committed bytes.
+
+        Used when a source is slow or stalled below the byte heartbeat threshold so
+        durable ``updated_at`` advances without a false committed-byte claim.
+        """
+        with self._lock:
+            if message:
+                self._message = message
+            should_emit = force or self._should_emit_locked()
+        if should_emit:
+            self._emit(force=True)
+        self.check_cancelled()
+
     def check_cancelled(self) -> None:
         if not self._cancel_requested():
             return
@@ -425,5 +493,7 @@ def scale_profile() -> dict[str, Any]:
         "progress_heartbeat_bytes": PROGRESS_HEARTBEAT_BYTES,
         "cancel_acknowledge_seconds": CANCEL_ACKNOWLEDGE_SECONDS,
         "cancel_quiesce_seconds": CANCEL_QUIESCE_SECONDS,
+        "cancel_poll_seconds": CANCEL_POLL_SECONDS,
+        "max_request_chunk_bytes": MAX_REQUEST_CHUNK_BYTES,
         "operation_wall_seconds": OPERATION_WALL_SECONDS,
     }

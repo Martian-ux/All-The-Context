@@ -20,6 +20,7 @@ from .import_boundary import (
     ImportCancelRegistry,
     ImportProgress,
     ImportProgressTracker,
+    durable_import_error_code,
     merge_progress_metadata,
     preflight_disk_space,
     refuse_if_over_boundary,
@@ -962,27 +963,37 @@ class ArchiveImportService:
                 source.byte_size,
                 database_path=self.store.database_path,
             )
+        # Preserve the caller's operation-level sink across source-id merges.
+        external_operation_sink = (
+            progress_tracker.durable_sink if progress_tracker is not None else None
+        )
         if progress_tracker is None:
             tracker = ImportProgressTracker(
                 bytes_total=max(source.byte_size, 1),
                 source_id=source.id,
                 registry=self.cancel_registry,
-                durable_sink=self._durable_progress_sink(source.id),
             )
-            tracker.set_phase("storing", message="using preserved raw source")
-            tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
         else:
             tracker = progress_tracker
             tracker.bind_source(source.id)
-            source_sink = self._durable_progress_sink(source.id)
-            external_sink = tracker.durable_sink
+
+        def attach_progress_sinks(bound_source_id: str) -> None:
+            """Bind source telemetry; rebind after reclassify merge may change ids."""
+            source_sink = self._durable_progress_sink(bound_source_id)
+            if external_operation_sink is None:
+                tracker.durable_sink = source_sink
+                return
 
             def combined_sink(progress: ImportProgress) -> None:
                 source_sink(progress)
-                if external_sink is not None:
-                    external_sink(progress)
+                external_operation_sink(progress)
 
             tracker.durable_sink = combined_sink
+
+        attach_progress_sinks(source.id)
+        if progress_tracker is None:
+            tracker.set_phase("storing", message="using preserved raw source")
+            tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
         provider = str(source.metadata.get("provider", source.source_service))
         try:
             with tempfile.TemporaryDirectory(
@@ -1010,8 +1021,8 @@ class ArchiveImportService:
                 source_type=source.source_type,
             )
             tracker.bind_source(source.id)
-            if progress_tracker is None:
-                tracker.durable_sink = self._durable_progress_sink(source.id)
+            # Duplicate merge deletes the provisional source id; rebind sinks.
+            attach_progress_sinks(source.id)
             metadata = _source_metadata(parsed)
             metadata = merge_progress_metadata(metadata, tracker.snapshot())
             self.store.update_source_import(
@@ -1069,15 +1080,12 @@ class ArchiveImportService:
                 "publishing",
             }:
                 status = "processing"
-            try:
-                self.store.update_source_progress(
-                    source_id,
-                    progress=progress.as_dict(),
-                    import_status=status,
-                )
-            except Exception:
-                # Progress is best-effort durable telemetry; never mask import errors.
-                return
+            # Durable progress must commit; silent success would claim false progress.
+            self.store.update_source_progress(
+                source_id,
+                progress=progress.as_dict(),
+                import_status=status,
+            )
 
         return _sink
 
@@ -1102,7 +1110,8 @@ class ArchiveImportService:
         tracker: ImportProgressTracker,
         error: Exception,
     ) -> None:
-        tracker.fail(message=str(error)[:2_000])
+        # Closed content-free code only; never persist raw exception text.
+        tracker.fail(message=durable_import_error_code(error))
         try:
             source = self.store.get_source(source_id, duplicate=True)
             metadata = merge_progress_metadata(source.metadata, tracker.snapshot())

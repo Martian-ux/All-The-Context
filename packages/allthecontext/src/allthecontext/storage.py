@@ -944,6 +944,8 @@ class CoreStore:
         progress: Mapping[str, Any],
     ) -> dict[str, Any]:
         """Persist a new import operation before any source bytes are accepted."""
+        if isinstance(declared_byte_size, bool) or not isinstance(declared_byte_size, int):
+            raise InvalidStateError("declared_byte_size must be a non-boolean integer")
         if declared_byte_size < 0 or declared_byte_size > MAX_IMPORT_BYTES:
             raise InvalidStateError(
                 f"import exceeds the {MAX_IMPORT_BYTES}-byte size limit "
@@ -1042,6 +1044,7 @@ class CoreStore:
         completed: bool = False,
     ) -> dict[str, Any]:
         """Update durable operation telemetry. Incomplete source blobs stay non-canonical."""
+        terminal = frozenset({"complete", "failed", "cancelled"})
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM import_operations WHERE id=?",
@@ -1049,7 +1052,13 @@ class CoreStore:
             ).fetchone()
             if row is None:
                 raise NotFoundError("import operation not found")
-            next_status = status if status is not None else str(row["status"])
+            current_status = str(row["status"])
+            next_status = status if status is not None else current_status
+            # Fail closed: never reactivate a terminal operation via stale writers.
+            if current_status in terminal and next_status not in terminal:
+                raise InvalidStateError(f"import operation is already {current_status}")
+            if current_status in terminal and next_status != current_status:
+                raise InvalidStateError(f"import operation is already {current_status}")
             next_phase = phase if phase is not None else str(row["phase"])
             next_received = (
                 bytes_received if bytes_received is not None else int(row["bytes_received"])
@@ -1087,7 +1096,7 @@ class CoreStore:
                 next_error = row["error_message"]
             now = utc_now()
             completed_at = now if completed else row["completed_at"]
-            if next_status in {"complete", "failed", "cancelled"} and completed_at is None:
+            if next_status in terminal and completed_at is None:
                 completed_at = now
                 completed = True
             connection.execute(
@@ -1114,6 +1123,76 @@ class CoreStore:
             )
         return self.get_import_operation(operation_id)
 
+    def claim_import_operation_upload(self, operation_id: str) -> dict[str, Any]:
+        """Exclusively claim an operation for upload (awaiting_upload -> uploading)."""
+        now = utc_now()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            status = str(row["status"])
+            if status in {"complete", "failed", "cancelled"}:
+                raise InvalidStateError(f"import operation is already {status}")
+            if status != "awaiting_upload":
+                raise ConflictError(f"import operation upload already claimed (status={status})")
+            cursor = connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,updated_at=? "
+                "WHERE id=? AND status=?",
+                ("uploading", "uploading", now, operation_id, "awaiting_upload"),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("import operation upload already claimed")
+        return self.get_import_operation(operation_id)
+
+    def claim_import_operation_retry(self, operation_id: str) -> dict[str, Any]:
+        """Exclusively claim a failed/cancelled operation with preserved source for retry."""
+        now = utc_now()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM import_operations WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("import operation not found")
+            status = str(row["status"])
+            if status == "complete":
+                return self._import_operation_out(row)
+            if row["source_id"] is None:
+                raise InvalidStateError(
+                    "import operation has no preserved source; re-upload is required"
+                )
+            if status not in {"failed", "cancelled"}:
+                raise ConflictError(f"import operation is not retryable (status={status})")
+            loaded = _loads(cast(str | None, row["progress_json"]), {})
+            progress = dict(cast(dict[str, Any], loaded))
+            progress.update(
+                {
+                    "phase": "parsing",
+                    "message": "retry claimed for parse/ingest",
+                    "cancel_requested": False,
+                    "cancel_acknowledged": False,
+                }
+            )
+            cursor = connection.execute(
+                "UPDATE import_operations SET status=?,phase=?,cancel_requested=?,"
+                "progress_json=?,error_message=NULL,completed_at=NULL,updated_at=? "
+                "WHERE id=? AND status IN ('failed','cancelled') AND source_id IS NOT NULL",
+                (
+                    "processing",
+                    "parsing",
+                    0,
+                    _json(progress),
+                    now,
+                    operation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("import operation retry already claimed")
+        return self.get_import_operation(operation_id)
+
     def request_import_operation_cancel(self, operation_id: str) -> dict[str, Any]:
         operation = self.get_import_operation(operation_id)
         if operation["status"] in {"complete", "failed", "cancelled"}:
@@ -1123,6 +1202,34 @@ class CoreStore:
                 "cancel_requested": False,
                 "already_terminal": True,
                 "source_id": operation.get("source_id"),
+            }
+        # No worker consumes awaiting_upload; terminalize immediately.
+        if operation["status"] == "awaiting_upload":
+            bytes_total = max(int(operation.get("declared_byte_size") or 1), 1)
+            progress = {
+                "phase": "cancelled",
+                "bytes_processed": 0,
+                "bytes_total": bytes_total,
+                "percent": 0,
+                "message": "import cancelled",
+                "cancel_requested": True,
+                "cancel_acknowledged": True,
+            }
+            updated = self.update_import_operation(
+                operation_id,
+                status="cancelled",
+                phase="cancelled",
+                cancel_requested=True,
+                progress=progress,
+                completed=True,
+            )
+            return {
+                "operation_id": operation_id,
+                "status": updated["status"],
+                "cancel_requested": True,
+                "already_terminal": False,
+                "source_id": updated.get("source_id"),
+                "immediate": True,
             }
         progress = dict(operation.get("progress") or {})
         progress["cancel_requested"] = True

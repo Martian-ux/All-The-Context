@@ -12,6 +12,7 @@ import hashlib
 import os
 import shutil
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
@@ -21,10 +22,14 @@ from typing import Any, BinaryIO
 from .config import MAX_IMPORT_BYTES
 from .import_boundary import (
     DEFAULT_CANCEL_REGISTRY,
+    MAX_REQUEST_CHUNK_BYTES,
+    PROGRESS_HEARTBEAT_SECONDS,
     ImportCancelledError,
     ImportCancelRegistry,
     ImportProgress,
     ImportProgressTracker,
+    coerce_declared_byte_size,
+    durable_import_error_code,
     merge_progress_metadata,
     preflight_disk_space,
     refuse_if_over_boundary,
@@ -46,7 +51,7 @@ from .storage import (
 )
 
 STAGING_DIR_NAME = "import-staging"
-READ_BUFFER_BYTES = 1024 * 1024
+READ_BUFFER_BYTES = MAX_REQUEST_CHUNK_BYTES
 ACTIVE_OPERATION_STATUSES = frozenset({"awaiting_upload", "uploading", "processing"})
 TERMINAL_OPERATION_STATUSES = frozenset({"complete", "failed", "cancelled"})
 
@@ -108,7 +113,7 @@ class ImportOperationService:
                     status="failed",
                     phase="failed",
                     progress=progress,
-                    error_message="import interrupted by process restart",
+                    error_message="import_interrupted_process_restart",
                     completed=True,
                 )
                 try:
@@ -144,7 +149,7 @@ class ImportOperationService:
                     status="failed",
                     phase="failed",
                     progress=progress,
-                    error_message="import interrupted before raw source preservation",
+                    error_message="import_interrupted_before_source",
                     completed=True,
                 )
             recovered.append(updated)
@@ -155,17 +160,14 @@ class ImportOperationService:
     def start_operation(
         self,
         *,
-        declared_byte_size: int,
+        declared_byte_size: object,
         filename: str | None = None,
         source_service: str = "auto",
         provider: str | None = None,
         media_type: str | None = None,
     ) -> dict[str, Any]:
         """Create a durable operation id after boundary + disk preflight, before bytes."""
-        try:
-            size = int(declared_byte_size)
-        except (TypeError, ValueError) as error:
-            raise InvalidStateError("declared_byte_size must be an integer") from error
+        size = coerce_declared_byte_size(declared_byte_size)
         refuse_if_over_boundary(size, limit=self.max_bytes)
         safe_name = Path(filename or "import.bin").name
         provider_hint = provider
@@ -216,46 +218,52 @@ class ImportOperationService:
     def retry_operation(self, operation_id: str) -> dict[str, Any]:
         """Retry parse/ingest from a preserved raw source without re-upload."""
         operation = self.store.get_import_operation(operation_id)
+        if operation["status"] == "complete":
+            return operation
         source_id = operation.get("source_id")
         if not source_id:
             raise InvalidStateError(
                 "import operation has no preserved source; re-upload is required"
             )
-        if operation["status"] == "complete":
-            return operation
         if operation["status"] in ACTIVE_OPERATION_STATUSES:
-            raise InvalidStateError("import operation is still active")
-        self.cancel_registry.register(operation_id)
-        self.cancel_registry.alias(str(source_id), operation_id)
+            raise ConflictError("import operation is still active")
+
+        claimed: dict[str, Any] | None = None
         with self._active_lock:
+            if operation_id in self._active_workers:
+                raise ConflictError("import operation retry already in progress")
+            # Exclusive durable claim under the process lock so concurrent retries
+            # cannot both reactivate the same failed/cancelled row.
+            claimed = self.store.claim_import_operation_retry(operation_id)
+            if claimed["status"] == "complete":
+                return claimed
             self._active_workers.add(operation_id)
+        assert claimed is not None
+        source_id = str(claimed["source_id"])
+        self.cancel_registry.register(operation_id)
+        self.cancel_registry.alias(source_id, operation_id)
         try:
             tracker = ImportProgressTracker(
-                bytes_total=max(int(operation["declared_byte_size"]), 1),
+                bytes_total=max(int(claimed["declared_byte_size"]), 1),
                 cancel_key=operation_id,
                 registry=self.cancel_registry,
                 durable_sink=self._operation_progress_sink(operation_id),
             )
-            tracker.bind_source(str(source_id))
+            tracker.bind_source(source_id)
             tracker.set_phase("storing", message="using preserved raw source")
             tracker.advance_bytes(
-                int(operation["declared_byte_size"]),
+                int(claimed["declared_byte_size"]),
                 message="preserved raw source ready",
             )
-            self.store.update_import_operation(
-                operation_id,
-                status="processing",
-                phase="parsing",
-                cancel_requested=False,
-                clear_error=True,
-                progress=tracker.snapshot().as_dict(),
-            )
-            result = self.imports.reprocess_source(str(source_id))
+            tracker.set_phase("parsing", message="retry parse/ingest from preserved source")
+            # Pass the operation tracker so phase/progress/cancel heartbeats land
+            # on the durable operation row during long reprocess work.
+            result = self.imports.reprocess_source(source_id, progress_tracker=tracker)
             self.store.update_import_operation(
                 operation_id,
                 status="complete",
                 phase="complete",
-                source_id=str(source_id),
+                source_id=source_id,
                 progress=tracker.snapshot().as_dict()
                 if tracker.phase == "complete"
                 else {
@@ -270,10 +278,10 @@ class ImportOperationService:
             tracker.close()
             return self.get_operation(operation_id)
         except ImportCancelledError:
-            self._mark_cancelled(operation_id, source_id=str(source_id))
+            self._mark_cancelled(operation_id, source_id=source_id)
             raise
         except Exception as error:
-            self._mark_failed(operation_id, error, source_id=str(source_id))
+            self._mark_failed(operation_id, error, source_id=source_id)
             raise
         finally:
             with self._active_lock:
@@ -288,6 +296,8 @@ class ImportOperationService:
         process_after: bool = True,
     ) -> dict[str, Any]:
         """Stream source bytes, stage durably, then optionally parse/ingest."""
+        if expected_size is not None:
+            expected_size = coerce_declared_byte_size(expected_size)
         operation = self.store.get_import_operation(operation_id)
         if operation["status"] in TERMINAL_OPERATION_STATUSES:
             raise InvalidStateError(f"import operation is already {operation['status']}")
@@ -296,15 +306,22 @@ class ImportOperationService:
                 f"import operation is not accepting upload (status={operation['status']})"
             )
         declared = int(operation["declared_byte_size"])
-        if expected_size is not None and int(expected_size) != declared:
+        if expected_size is not None and expected_size != declared:
             raise InvalidStateError(
                 f"upload size mismatch: declared {declared} bytes, content-length {expected_size}"
             )
         with self._active_lock:
             if operation_id in self._active_workers:
                 raise ConflictError("import operation upload already in progress")
+            if operation["status"] != "awaiting_upload":
+                raise ConflictError(
+                    f"import operation upload already claimed (status={operation['status']})"
+                )
+            # Durable exclusive claim prevents concurrent upload writers.
+            self.store.claim_import_operation_upload(operation_id)
             self._active_workers.add(operation_id)
         try:
+            operation = self.store.get_import_operation(operation_id)
             return self._accept_upload_locked(
                 operation,
                 source,
@@ -356,7 +373,10 @@ class ImportOperationService:
             bytes_total=max(declared, 1),
             cancel_key=operation_id,
             registry=self.cancel_registry,
-            durable_sink=self._operation_progress_sink(operation_id),
+            durable_sink=self._operation_progress_sink(
+                operation_id,
+                bytes_received_provider=lambda: received,
+            ),
         )
         self.cancel_registry.register(operation_id)
         digest = hashlib.sha256()
@@ -365,6 +385,7 @@ class ImportOperationService:
         pending = bytearray()
         content_hash: str | None = None
         source_id: str | None = None
+        last_heartbeat_mono = time.monotonic()
         try:
             tracker.set_phase("uploading", message="receiving source bytes")
             self.store.update_import_operation(
@@ -406,6 +427,24 @@ class ImportOperationService:
                             bytes_committed=committed,
                             progress=tracker.snapshot().as_dict(),
                         )
+                        last_heartbeat_mono = time.monotonic()
+                    # Liveness heartbeat: slow/stalled sources below chunk threshold
+                    # must still advance updated_at without a false committed claim.
+                    now = time.monotonic()
+                    if now - last_heartbeat_mono >= PROGRESS_HEARTBEAT_SECONDS:
+                        tracker.heartbeat(
+                            message=f"received {received} source bytes",
+                            force=True,
+                        )
+                        self.store.update_import_operation(
+                            operation_id,
+                            status="uploading",
+                            phase="uploading",
+                            bytes_received=received,
+                            bytes_committed=committed,
+                            progress=tracker.snapshot().as_dict(),
+                        )
+                        last_heartbeat_mono = now
                 # Final partial chunk.
                 destination.flush()
                 _fsync_file(destination)
@@ -634,36 +673,68 @@ class ImportOperationService:
         result = self.imports.reprocess_source(source_id, progress_tracker=tracker)
         return result
 
-    def _operation_progress_sink(self, operation_id: str) -> Callable[[ImportProgress], None]:
+    def _operation_progress_sink(
+        self,
+        operation_id: str,
+        *,
+        bytes_received_provider: Callable[[], int] | None = None,
+    ) -> Callable[[ImportProgress], None]:
         def _sink(progress: ImportProgress) -> None:
-            status = "processing"
-            completed = False
-            if progress.phase == "complete":
-                status = "complete"
-                completed = True
-            elif progress.phase == "cancelled":
+            # Cancel/fail may terminalize from the tracker; complete+result is owned
+            # by the worker so pollers never observe complete without a result payload.
+            if progress.phase == "cancelled":
                 status = "cancelled"
                 completed = True
+                phase: str = "cancelled"
+                progress_payload = progress.as_dict()
             elif progress.phase == "failed":
                 status = "failed"
                 completed = True
-            elif progress.phase in {"awaiting_upload"}:
+                phase = "failed"
+                progress_payload = progress.as_dict()
+            elif progress.phase == "complete":
+                status = "processing"
+                completed = False
+                phase = "publishing"
+                progress_payload = {
+                    **progress.as_dict(),
+                    "phase": "publishing",
+                    "percent": min(99, int(progress.percent)),
+                }
+            elif progress.phase == "awaiting_upload":
                 status = "awaiting_upload"
+                completed = False
+                phase = progress.phase
+                progress_payload = progress.as_dict()
             elif progress.phase == "uploading":
                 status = "uploading"
-            try:
-                allowed = TERMINAL_OPERATION_STATUSES | ACTIVE_OPERATION_STATUSES
-                next_status = status if status in allowed else "processing"
-                self.store.update_import_operation(
-                    operation_id,
-                    status=next_status,
-                    phase=progress.phase,
-                    bytes_committed=progress.bytes_processed,
-                    progress=progress.as_dict(),
-                    completed=completed,
-                )
-            except Exception:
-                return
+                completed = False
+                phase = progress.phase
+                progress_payload = progress.as_dict()
+            else:
+                status = "processing"
+                completed = False
+                phase = progress.phase
+                progress_payload = progress.as_dict()
+            kwargs: dict[str, Any] = {
+                "status": status,
+                "phase": phase,
+                "progress": progress_payload,
+                "completed": completed,
+            }
+            if progress.phase == "failed":
+                # progress.message is already a closed durable code from tracker.fail.
+                kwargs["error_message"] = progress.message or "import_failed"
+            if bytes_received_provider is not None:
+                received = max(bytes_received_provider(), 0)
+                committed = min(progress.bytes_processed, received)
+                kwargs["bytes_received"] = max(received, committed)
+                kwargs["bytes_committed"] = committed
+            else:
+                kwargs["bytes_committed"] = progress.bytes_processed
+            # Durable telemetry must commit or the import fails safely; do not
+            # swallow write failures and claim progress silently.
+            self.store.update_import_operation(operation_id, **kwargs)
 
         return _sink
 
@@ -677,6 +748,8 @@ class ImportOperationService:
         bytes_total = 1
         try:
             current = self.store.get_import_operation(operation_id)
+            if current["status"] == "cancelled":
+                return
             bytes_processed = int(current.get("bytes_committed") or 0)
             bytes_total = max(int(current.get("declared_byte_size") or 1), 1)
         except NotFoundError:
@@ -691,15 +764,16 @@ class ImportOperationService:
             "cancel_requested": True,
             "cancel_acknowledged": True,
         }
-        self.store.update_import_operation(
-            operation_id,
-            status="cancelled",
-            phase="cancelled",
-            source_id=source_id or current.get("source_id"),
-            cancel_requested=True,
-            progress=progress,
-            completed=True,
-        )
+        with suppress(InvalidStateError):
+            self.store.update_import_operation(
+                operation_id,
+                status="cancelled",
+                phase="cancelled",
+                source_id=source_id or current.get("source_id"),
+                cancel_requested=True,
+                progress=progress,
+                completed=True,
+            )
         if source_id:
             try:
                 source = self.store.get_source(source_id, duplicate=True)
@@ -724,7 +798,8 @@ class ImportOperationService:
         *,
         source_id: str | None = None,
     ) -> None:
-        message = str(error)[:2_000]
+        # Never persist raw exception text (may carry provider content/secrets).
+        message = durable_import_error_code(error)
         progress = {
             "phase": "failed",
             "bytes_processed": 0,
@@ -736,19 +811,22 @@ class ImportOperationService:
         }
         try:
             current = self.store.get_import_operation(operation_id)
+            if current["status"] in TERMINAL_OPERATION_STATUSES:
+                return
             progress["bytes_processed"] = int(current.get("bytes_committed") or 0)
             progress["bytes_total"] = max(int(current.get("declared_byte_size") or 1), 1)
         except NotFoundError:
             current = {}
-        self.store.update_import_operation(
-            operation_id,
-            status="failed",
-            phase="failed",
-            source_id=source_id or current.get("source_id"),
-            progress=progress,
-            error_message=message,
-            completed=True,
-        )
+        with suppress(InvalidStateError):
+            self.store.update_import_operation(
+                operation_id,
+                status="failed",
+                phase="failed",
+                source_id=source_id or current.get("source_id"),
+                progress=progress,
+                error_message=message,
+                completed=True,
+            )
 
     def _handle_cancel_cleanup(
         self,
@@ -812,6 +890,7 @@ class ImportOperationService:
 
 
 def _iter_bytes(source: ByteSource) -> Iterator[bytes]:
+    """Yield bounded slices so oversized caller chunks are never buffered whole."""
     read = getattr(source, "read", None)
     if callable(read):
         while True:
@@ -820,10 +899,13 @@ def _iter_bytes(source: ByteSource) -> Iterator[bytes]:
                 break
             yield bytes(chunk)
         return
-    if callable(source):
-        yield from source()
-        return
-    yield from source
+    iterable: Iterator[bytes] = source() if callable(source) else source
+    for raw in iterable:
+        if not raw:
+            continue
+        view = memoryview(bytes(raw))
+        for offset in range(0, len(view), READ_BUFFER_BYTES):
+            yield bytes(view[offset : offset + READ_BUFFER_BYTES])
 
 
 def _fsync_file(handle: BinaryIO) -> None:
