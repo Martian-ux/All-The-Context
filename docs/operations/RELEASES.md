@@ -104,14 +104,15 @@ ambiguous bare 32-byte values, and requires the operator to supply the exact
 independently reviewed `sha256:<hex>` fingerprint. An import adds the base64url
 public key and fingerprint to both `release/keys.json` and packaged
 `allthecontext/update_keys.json`; validation requires the tracked files to be
-byte-for-byte identical. The full two-person/offline checklist is in
+byte-for-byte identical. The offline/key-custody checklist is in
 [Release key ceremony](RELEASE_KEY_CEREMONY.md). The operator generated the
 encrypted `release-2026-a` private key outside the checkout on 2026-07-22 and
 imported only its beta-authorized public half. The reviewed public-key
 fingerprint is
 `sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
 The private key has not entered the repository or GitHub; two recoverable
-encrypted backups must be verified before its first production signature.
+encrypted backups in distinct failure domains must each be restore-tested
+before its first production signature.
 
 ## Offline manifest signing and draft publication
 
@@ -138,15 +139,17 @@ x86_64 OTA ZIP:
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
    macOS or Linux manifests. Record the reviewed candidate-inventory SHA-256.
-5. Configure required reviewers on the `release-promotion` environment. The
-   repository owner repeats the admin-authenticated immutable-setting command
-   above immediately before manually dispatching **Publish verified beta
-   release** with the exact tag, source commit, candidate digest, and phrase
-   `PUBLISH UNSIGNED BETA`. The protected job never receives the admin token. It
-   repeats package, checksum, SPDX, provenance, source, keyring, signature, URL,
-   and supported manifest-set verification before publishing, then requires
-   the resulting release to report immutable and verifies GitHub's release
-   attestation.
+5. Configure the `release-promotion` environment for deliberate maintainer
+   approval. This project currently has one human maintainer, so the release
+   log must describe any self-approval truthfully and must not call AI review
+   or an environment click independent human review. The repository owner
+   repeats the admin-authenticated immutable-setting command above immediately
+   before manually dispatching **Publish verified beta release** with the exact
+   tag, source commit, candidate digest, and phrase `PUBLISH UNSIGNED BETA`.
+   The protected job never receives the admin token. It repeats package,
+   checksum, SPDX, provenance, source, keyring, signature, URL, and supported
+   manifest-set verification before publishing, then requires the resulting
+   release to report immutable and verifies GitHub's release attestation.
 6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new
@@ -157,9 +160,10 @@ x86_64 OTA ZIP:
 GitHub Pages is an explicit operator gate and was enabled with **GitHub
 Actions** as its publishing source on 2026-07-22. No channel content is
 deployed merely by enabling the site. Before the first real promotion, an owner
-adds required reviewers to the `github-pages` environment. This can be done on
-GitHub Free for a public repository and does not require a paid signing
-identity.
+configures deliberate deployment protection on the `github-pages` environment.
+If the sole maintainer approves the deployment, the release receipt records
+that fact without claiming separation of duties. This does not require a paid
+signing identity.
 
 The manual **Promote signed beta update channel** workflow accepts only an exact
 immutable published tag, source commit, reviewed candidate digest, and the
@@ -253,11 +257,13 @@ post-migration health check and verifies resume and rollback.
 macOS and Linux remain direct-package/manual-required and have no Beta 1 OTA
 channel manifest. The Windows evidence is an unsigned
 same-version engineering transaction, not a public promotion. Community
-Windows OTA requires the offline Ed25519 key ceremony, immutable channel
-publication, explicit unsigned-publisher disclosure, and a real signed N-1
-update drill. Paid Authenticode and Apple notarization are out of scope. Do not
-enable automatic macOS or Linux cutover until equivalent journaling, health,
-interruption, and rollback work is implemented and observed on those systems.
+Windows beta1 OTA publication requires the offline Ed25519 key ceremony,
+immutable channel publication, explicit unsigned-publisher disclosure, and the
+exact-candidate same-version transaction. The first beta2 gate is the real
+signed beta1-to-beta2 N-1 update drill. Paid Authenticode and Apple notarization
+are out of scope. Do not enable automatic macOS or Linux cutover until
+equivalent journaling, health, interruption, and rollback work is implemented
+and observed on those systems.
 
 Unknown operating systems, unknown CPU identifiers, and 32-bit application
 runtimes fail closed. Repeated checks and channel changes remove a bounded

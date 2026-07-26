@@ -1,8 +1,21 @@
 # Cross-platform operations and packaging path
 
-Core and the STDIO MCP adapter support Python 3.12+ on Windows 11, current
-macOS, and Linux without Docker. Application data is resolved with
+Contributor source development currently targets Python 3.12+ on Windows 11,
+current macOS, and Linux without Docker. This is not an unbounded public-beta
+Python compatibility claim: normal beta support covers the frozen desktop
+artifacts, and any advertised source-install path must name and test a bounded
+minimum and maximum Python version. Application data is resolved with
 `platformdirs`; operators should not hard-code its location.
+
+Windows, macOS, and Linux are all mandatory `0.1.0-beta.1` OS families. The
+support floor is Windows 11 x86-64, macOS 26 ARM64 and x86-64, and Ubuntu 24.04
+LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring backend. The
+candidate receipt freezes exact Windows/macOS builds and patches. Other Linux
+distributions/desktops are experimental for beta1. Downloaded artifacts must
+pass clean-machine acceptance in every mandatory family; a missing receipt
+leaves the beta in draft. The non-sparse exact-2,000,000,000-byte journey and
+its frozen resource/progress/cancel/recovery budgets run on all four artifact
+targets, not only one representative host.
 
 ## Desktop installation
 
@@ -26,6 +39,11 @@ runs on; artifacts are never cross-compiled.
   wizard and supports `--mcp-stdio`; it does not require Docker, Python, Bash,
   systemd, or an installer script at runtime.
 
+Before beta publication, each artifact must also expose a version-matched
+recovery/admin helper or hidden native mode for documented stopped-Core restore
+and deliberate administrator purge. The current contributor-only `atc restore`
+command and API-only purge surface do not satisfy that packaged-user gate.
+
 `scripts/package_desktop.py` emits direct downloads named
 `all-the-context-VERSION-PLATFORM-ARCHITECTURE-unsigned` with the appropriate
 `.exe`, `.dmg`, or `.tar.gz` extension. Each has an adjacent SHA-256 file,
@@ -43,8 +61,9 @@ migrations, configures Codex and Claude Desktop with separate
 scoped identities, installs per-user startup when selected, starts Core, and
 opens an authenticated dashboard without a token prompt. By default its final
 action opens All The Context; it does not ask for a hosting account or offer an
-Edge deployment. Mobile devices connect directly to Core and therefore require
-Core to be online and securely reachable. Subsequent launches
+Edge deployment. A future mobile product would connect directly to Core and
+therefore require Core to be online and securely reachable; mobile is not
+present beta behavior. Subsequent desktop launches
 recover the desktop credential, start Core if needed, mint a one-use browser
 ticket, and open the dashboard directly. The packaged smoke verifies frozen resources, first-run
 initialization, a stable installed MCP command, a real MCP handshake and Core
@@ -181,10 +200,11 @@ existing parent component must be real directories, never links.
 ## Packaging roadmap
 
 - **Windows:** complete the offline release-key ceremony, verify the immutable
-  unsigned candidate and provenance, run a real Ed25519-signed N-1 transaction,
-  and then evaluate a Windows service only if per-user startup proves
-  insufficient. The per-user installer, transactional updater, and uninstaller
-  paths are implemented.
+  unsigned beta1 candidate and provenance, repeat the exact-candidate
+  same-version rollback transaction, then run the real Ed25519-signed
+  beta1-to-beta2 N-1 transaction as the first beta2 gate. Evaluate a Windows
+  service only if per-user startup proves insufficient. The per-user installer,
+  transactional updater, and uninstaller paths are implemented.
 - **macOS:** exercise the unsigned disk image, stable per-user app copy,
   LaunchAgent, Keychain, and manual OTA handoff on an operator-owned current
   macOS machine; a future paid-signing path remains optional.

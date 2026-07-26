@@ -11,9 +11,10 @@ compilation:
 3. Intersect the request and record scopes.
 4. Deny when the client is listed in `denied_clients`.
 5. When `allowed_clients` is non-empty, require explicit membership.
-6. Apply the V1 availability boundary: same-device `local_only` or direct-Core
-   `core_available`. Legacy `always_available` records carry no offline
-   guarantee and remain subject to the same Core policy.
+6. Apply the V1 availability boundary: same-device `local_only` or
+   `core_available` while the same-device Core is online. Legacy
+   `always_available` records carry no offline guarantee and remain subject to
+   the same Core policy.
 
 An empty allow-list means any non-denied client with the coarse scope may read
 the record. Deny always wins. Search indexes operate only after this filter and

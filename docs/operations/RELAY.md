@@ -1,16 +1,21 @@
-# Relay operations (deferred)
+# Relay operations (pre-beta removal boundary)
 
-V1 has no Relay or hosted Edge service. Core is the only user-facing runtime
-and does not start the legacy Edge synchronization worker.
+The intended V1 beta has no Relay or hosted Edge service. Core is the only
+supported user-facing runtime.
 
-Experimental Relay code and explicit cleanup APIs remain dormant so old
-engineering setups can be decommissioned safely. They are not packaged as a
-supported deployment, advertised in the dashboard, or included in release
-acceptance.
+The current pre-beta baseline is not yet at that boundary. It still constructs
+experimental Edge managers and exposes enrollment, connection, synchronization,
+client-management, CLI, and mutation-trigger surfaces. Because callable paths
+exist, they remain in the runtime and threat surface even when the ordinary
+demo does not use them. B-103 is a beta blocker: every supported package must
+remove or build-gate those paths and acceptance must prove that ordinary Core
+operation cannot reach them.
 
-Even when exercised explicitly for compatibility, Relay accepts signed ordered
-projections from Core and queues encrypted observations for later Core
-evaluation. It never runs `automatic-v1`, changes an observation disposition,
-or creates current context. A future supported synchronization service would
-require a new architecture decision and threat model without weakening that
-sole-authority boundary.
+An isolated cleanup or compatibility path may remain only so old engineering
+setups can be decommissioned deliberately; it must not be reachable during
+ordinary Core operation. When that narrow path is explicitly exercised, Relay
+accepts signed ordered projections from Core and queues encrypted observations
+for later Core evaluation. It never runs `automatic-v1`, changes an observation
+disposition, or creates current context. A future supported synchronization
+service requires a new product decision, architecture decision, and threat
+model without weakening that sole-authority boundary.

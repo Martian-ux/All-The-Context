@@ -469,13 +469,14 @@ no provider resource is created without an operator decision.
 ## ADR-032: V1 is single-Core and has no hosted runtime
 
 **Status:** accepted 2026-07-22; supersedes the hosted-Edge portions of
-ADR-030 and ADR-031.
+ADR-030 and ADR-031. Its remote-client scope was superseded by ADR-053 on
+2026-07-25; the active beta is same-device only.
 
-V1 exposes one authoritative Core. Desktop, mobile, and other-computer clients
-all connect directly to it, so Core must be online for access away from the
-installation computer. The product does not deploy or require a hosted Edge,
+The decision established one authoritative Core and rejected a hosted Edge,
 cloud replica, Render account, GHCR runtime image, provider bill, or other
-third-party context service.
+third-party context service. It originally contemplated future direct mobile
+and other-computer clients. ADR-053 narrowed the first usable beta to
+same-device desktop clients; remote and mobile access are post-V1.
 
 Core continues to bind only to `127.0.0.1` by default. Removing Edge does not
 authorize automatic LAN/public exposure: secure direct-Core mobile access
@@ -485,10 +486,10 @@ limitation rather than offering an unsafe shortcut.
 
 The `always_available` schema value and experimental Relay modules remain
 temporarily for import/history compatibility and safe cleanup of engineering
-setups. Newly applied context uses only `local_only` and `core_available`; Core
-does not start the Edge network worker; deployment workflows/templates are
-removed from V1. Deleting dormant protocol code is a later cleanup after
-compatibility and migration requirements are known.
+setups. Newly applied context uses only `local_only` and `core_available`.
+ADR-053 and B-103 strengthen the beta boundary: current callable Edge/Relay
+paths must be removed or build-gated from supported artifacts, with any
+retained cleanup path isolated from ordinary Core operation.
 
 ## ADR-033: Provider history is preserved completely but evaluated selectively
 
@@ -1215,3 +1216,91 @@ for any search path, including offset-aware historical requests that can
 surface expired or superseded personal context. The separate
 `/v1/context/status` endpoint continues to require `context:status`, preserving
 a non-content monitoring permission.
+
+## ADR-053: Govern V1 as the first usable public beta
+
+**Status:** accepted as the planning and release-governance baseline on
+2026-07-25. The product-scope decisions are closed; implementation,
+exact-artifact acceptance, and publication remain open.
+
+For the active roadmap, V1 means the first usable public beta,
+`0.1.0-beta.1`, not stable `1.0.0`. The active execution plan is
+[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). It contains no calendar or effort
+estimates. Readiness follows dependency order and exact-artifact evidence.
+
+The beta critical path is one user-owned authoritative Core, same-device
+desktop use, automatic reversible context maintenance, truthful local provider
+import, deterministic retrieval, encrypted backup with a packaged
+version-matched stopped-Core helper/mode, and immutable beta publication.
+Phone/remote access, real beta1-to-beta2 N-1 evidence, one-click graphical
+restore, stable 1.x contracts and channels, Project Context Capsules, Memory
+Lab mechanisms, hosted Edge/Relay operation, and other research proposals
+remain post-V1 unless a later decision expands a public beta claim.
+
+Beta1 must support all three desktop OS families—Windows, macOS, and
+Linux—and current account-history exports from all three providers—ChatGPT,
+Claude, and Grok. The platform floor is Windows 11 x86-64, macOS 26 ARM64 and
+x86-64, and Ubuntu 24.04 LTS x86-64 GNOME with a working Secret Service/GNOME
+Keyring backend; other Linux distributions/desktops are experimental. Phase A
+freezes the exact Windows/macOS build/patch, client variants, and
+parser/format shapes. Source installs remain contributor-only rather than an
+unbounded public `Python 3.12+` claim. Provider evidence must use nonempty exports
+acquired after parser freeze and within 30 days of acceptance, exercise frozen
+fictional canary shapes, and reconcile every input to a closed outcome. Missing
+acceptance evidence for any mandatory target leaves the release in draft; it
+does not silently narrow the beta scope.
+
+The inclusive raw-source boundary remains `2,000,000,000` bytes. The existing
+chunked SQLite representation and configuration boundary establish structural
+support, not usable beta acceptance. Publication requires an exact-boundary
+success on every frozen OS/architecture target, boundary-plus-one refusal, disk
+preflight, durable progress and cancellation/retry, bounded resource evidence,
+interruption recovery, complete source integrity, packaged source-inclusive
+encrypted export, and restore. Before implementation measurements, Phase A
+freezes a reference machine/disk profile, numeric budgets, and a deterministic
+physically allocated/non-sparse fixture with a known digest and nonzero
+publication result; candidate outcomes cannot relax them. An operator may
+still configure a lower local limit without reducing the advertised and tested
+beta maximum. The beta1 scale profile is 4 logical cores, 8 GiB RAM, local
+SSD, and 16 GiB free; Core plus import-worker RSS is capped at 1 GiB and
+incremental import storage at four times raw size plus 1 GiB. Progress begins
+and heartbeats within 5 seconds, cancellation is acknowledged within 5 seconds
+and quiesces safely within 30 seconds, and import, source-inclusive export, and
+isolated restore each complete within 60 minutes. The full boundary journey
+runs on Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64.
+
+The downloaded packages must expose a version-matched recovery/admin helper or
+native mode for stopped-Core restore and deliberate administrator purge without
+Python or a source checkout. Contributor-only `atc restore` and an API-only
+purge route do not satisfy the beta user journey.
+
+An ATC-configured same-device Codex or Claude client principal may attest that
+text is an explicit user statement only when Core grants that witness class.
+This is an explicit local trust decision, not cryptographic proof that the
+human authored each statement. Authentication alone does not grant it,
+unattested inference remains tentative, imported material does not inherit it,
+and an authorized malicious client remains a documented residual risk.
+
+One human maintainer remains accountable and may use AI tools for
+implementation, inspection, and adversarial review. The project must not call
+AI review independent human approval or imply separation of duties that does
+not exist. GitHub private vulnerability reporting was enabled and verified on
+2026-07-25; detailed sensitive defects use that intake, while public tracking
+is sanitized.
+
+The release advances through claim/trust lock, beta safety fixes, release
+controls and candidate freeze, exact downloaded-artifact acceptance, and
+publication. A later behavior or packaging change invalidates earlier browser,
+client, platform, provider, recovery, and security receipts.
+
+Authentication/authorization bypass, secret persistence contrary to policy,
+credential or context leakage, data loss, purge resurrection, unsafe update or
+signature behavior, unintended Edge/network operation, an untraceable
+candidate, and any open P0/P1 are non-waivable beta failures. Only P2/P3
+limitations may be accepted with public disclosure and a follow-up issue.
+
+`STATUS.md` records current evidence,
+`REQUIREMENTS_TRACEABILITY.md` maps requirements to implementation and proof,
+and immutable release receipts will record the exact candidate results. An
+earlier green commit, synthetic result, roadmap checkbox, or elapsed date cannot
+promote the beta.

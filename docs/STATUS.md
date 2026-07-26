@@ -2,15 +2,20 @@
 
 ## Current milestone
 
-The target remains an unsigned `0.1.0-beta.1` community release. No beta release
-has been published. The encrypted `release-2026-a` private key exists outside
-the checkout and cloud-synchronized workspace; only its reviewed public half is
-tracked.
+As of 2026-07-25, the immediate target remains an unsigned
+`0.1.0-beta.1` community release. This first usable public beta is the active
+V1 target; stable `1.0.0` is post-V1. No beta release has been published. The
+dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
+work packages are in
+[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-a` private
+key exists outside the checkout and cloud-synchronized workspace; only its
+reviewed public half is tracked.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
-hosting setup are no longer part of the V1 product or acceptance gate. Mobile
-means connecting directly to Core while Core is online.
+hosting setup are no longer part of the V1 beta product or acceptance gate.
+The first beta is same-device only. A future mobile path would connect directly
+to Core while Core is online and must pass a separate security decision.
 
 On 2026-07-23 ADR-039 superseded the review-first memory design. The confirmed
 product contract is now one-time setup plus automatic, reversible,
@@ -24,7 +29,7 @@ SHA. The final frozen release identity has not yet been validated. Earlier
 approval-based evidence remains historical and must not be presented as proof
 of ADR-039.
 
-The current integration worktree also raises the raw provider-import default
+Current main also raises the raw provider-import default
 and ceiling to 2,000,000,000 bytes without placing a two-billion-byte value in
 SQLite. Migration 007 keeps Core authoritative while moving large source
 content into ordered 8 MiB-or-smaller rows; streamed copies and
@@ -32,10 +37,15 @@ source-inclusive encrypted restores validate the reconstructed size and
 SHA-256 identity. Focused configuration, migration, storage, export, importer,
 and CLI regressions pass locally, and the full Python suite passes 662 tests
 with four host-limited symlink skips. Exact integration commit `03a266f` also
-passed all nine jobs in both its hosted push and draft-PR matrices.
+passed all nine jobs in both its hosted push and draft-PR matrices. The
+two-billion-byte value is an implemented configuration boundary, not yet an
+accepted beta support claim. It is now a mandatory beta boundary: publication
+requires exact-boundary and boundary-plus-one behavior, disk preflight,
+durable progress/cancel/retry, bounded resource use, interruption recovery,
+complete source integrity, source-inclusive encrypted export, and restore.
 
-Current main `e7ccd5d` passed all nine jobs in
-[hosted CI run](https://github.com/Martian-ux/All-The-Context/actions/runs/30168387478)
+Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine jobs in
+[hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472)
 on 2026-07-25. The exact diagnostic/startup branch SHA `f3496df` also passed
 all nine jobs in both its
 [push run](https://github.com/Martian-ux/All-The-Context/actions/runs/30062427719)
@@ -55,12 +65,13 @@ behavior.
 
 ## Security maintenance
 
-On 2026-07-25, dormant Core forwarding compatibility code was tightened so
-Core-approved remote Edge `context_scopes` apply to every record returned by
-direct fetch, search, or bootstrap. `*` explicitly grants every record scope;
-an empty grant exposes only unscoped records. Out-of-grant records are omitted
-without contributing to forwarded search counts or bootstrap character totals.
-This is defense in depth and does not restore Edge to normal V1 operation.
+On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
+tightened so Core-approved remote Edge `context_scopes` apply to every record
+returned by direct fetch, search, or bootstrap. `*` explicitly grants every
+record scope; an empty grant exposes only unscoped records. Out-of-grant records
+are omitted without contributing to forwarded search counts or bootstrap
+character totals. This is defense in depth on a still-callable surface; B-103
+must remove or build-gate it from supported beta artifacts.
 
 ## AI-memory research direction
 
@@ -346,10 +357,11 @@ accepted.
   source head, unused release slot, artifact evidence, and final immutable
   published state.
 
-## Automatic context maintenance in the current worktree
+## Automatic context maintenance baseline
 
-The following implementation is visible locally; verification is still in
-progress:
+The following implementation is integrated on current main. Its local and
+hosted source/package matrices are green; the final packaged fresh-user browser
+receipt and frozen release identity remain open:
 
 - Core migration `005_automatic_context_policy.sql` adds per-vault
   `automatic-v1` policy, observation origin/time/disposition/decision fields,
@@ -409,13 +421,13 @@ progress:
 Still missing or not yet verified:
 
 - the end-to-end browser smoke;
-- cross-platform/package evidence on the integrated automatic-policy commit.
+- repetition of the complete evidence set on the final frozen release commit.
 
 Tentative-observation expiry/decay is intentionally not implemented in
 `automatic-v1`. It is a possible later versioned-policy extension; tentative
 state is already noncurrent and creates no user queue.
 
-## V1 Edge removal
+## V1 Edge UI and worker removal
 
 - Edge navigation and setup were removed from the dashboard.
 - First run no longer offers or opens hosted web/mobile setup.
@@ -424,9 +436,15 @@ state is already noncurrent and creates no user queue.
 - Core no longer starts the legacy Edge network worker.
 - The GHCR Edge workflow, Render templates, and Relay container CI job were
   removed from the V1 path.
-- Experimental Relay/Edge modules and explicit cleanup APIs remain dormant so
-  earlier engineering state can be inspected/decommissioned without data loss.
-  They are not a supported V1 feature.
+- Core still constructs Edge compatibility state and sync managers, exposes
+  authenticated enrollment/connect/sync/client-management routes, and can
+  trigger that manager after mutations. The CLI also retains explicit
+  Relay/Edge operation paths. The background worker is disabled, but these
+  callable surfaces are not dormant.
+- The V1 beta therefore still needs to remove or build-gate active Edge/Relay
+  operation from supported artifacts while retaining a narrow, separately
+  tested legacy decommission path. This is roadmap gate `BETA-S04` and work
+  package `B-103`.
 
 ## Retrieval V3 integration
 
@@ -474,18 +492,66 @@ state is already noncurrent and creates no user queue.
   main and the exact diagnostic/startup branch SHA have passed the hosted
   Python 3.12 Windows/macOS/Linux and native-package matrices, but that does
   not substitute for validation of the final frozen release identity.
-- Create and verify two recoverable encrypted backups of the operator-held
-  release private key before its first production signature.
-- Add required reviewers to the release-promotion and `github-pages`
-  environments; no live channel or public release exists yet.
-- Freeze the final release commit after review and repeat the full hosted
-  Windows/macOS/Linux and dashboard matrix on that release identity.
-- Exercise a real signed beta1-to-beta2 Windows update and rollback.
-- Design and test secure direct-Core mobile pairing before claiming one-click
-  mobile access. Core remains `127.0.0.1` by default in the meantime.
+- Create and restore-test two recoverable encrypted backups of the
+  operator-held release private key in distinct failure domains before its
+  first production signature.
+- Configure the release-promotion and `github-pages` paths for deliberate
+  sole-maintainer approval and record that AI-assisted review is not
+  independent human review; no live channel or public release exists yet.
+- Protect the release branch and enable the available repository
+  secret/dependency/code-scanning controls, or record a narrower accepted
+  security posture before publication.
+- GitHub private vulnerability reporting is enabled. Keep detailed credential,
+  secret-boundary, and client-witness findings there and verify that public
+  security guidance routes reporters to it.
+- Prevent direct secret-like payload content from entering durable observation
+  history or encrypted backups; preserve no unkeyed content hash or other
+  guessable verifier, and repair affected SQLite pages/freelists, WAL/journal,
+  FTS, temp state, diagnostics, and new exports with byte-level canary proof.
+- Implement the accepted trust grant for explicitly authorized, ATC-configured
+  same-device Codex/Claude clients and prevent contradictory unkeyed imported
+  history from simultaneously becoming confident current truth.
+- Remove or build-gate the active Edge/Relay operation surface from the
+  supported Core-only artifact and prove the isolated legacy cleanup path.
+- Complete privacy-safe acceptance against current real ChatGPT, Claude, and
+  Grok exports acquired after parser freeze and within 30 days of acceptance.
+  Each must be nonempty, exercise the frozen fictional shape set, and reconcile
+  every input to a closed recognized/excluded/skipped/unavailable/failed
+  outcome. All three are mandatory; missing evidence leaves the release in
+  draft.
+- Resolve credential fallback so a missing OS keyring does not silently become
+  plaintext storage, and prove setup failure leaves no orphaned principal.
+- Freeze exact Windows/macOS build/patch and supported Codex/Claude variants
+  for the mandatory Windows 11 x86-64, macOS 26 ARM64/x86-64, and Ubuntu 24.04
+  LTS x86-64 GNOME/Secret-Service floor. Before measuring candidates, use the
+  frozen 4-core/8-GiB/SSD/16-GiB-free profile, 1-GiB RSS cap,
+  four-times-source-plus-1-GiB storage cap, 5-second progress/cancel budgets,
+  30-second safe quiescence, and 60-minute import/export/restore ceilings.
+  Prove the inclusive `2,000,000,000`-byte boundary with an allocated
+  non-sparse, nonempty canary on Windows x86-64, macOS ARM64, macOS x86-64, and
+  Linux x86-64.
+- Ship a version-matched packaged recovery/admin helper or native mode for
+  stopped-Core restore and deliberate purge on Windows, macOS, and Linux; the
+  current contributor CLI/API-only paths do not satisfy the beta journey.
+- Freeze the final release commit after review and repeat the exact nine-job
+  hosted matrix on that identity: Python Windows/macOS/Ubuntu, dashboard Node
+  20/22, and packages on Windows, Ubuntu, macOS ARM64, and macOS x86-64.
+- Publish beta1 only after the applicable gates above. Exercise a real signed
+  beta1-to-beta2 Windows update and rollback as the first beta2 gate; beta1
+  instead repeats the existing same-version transactional interruption and
+  rollback smoke on the exact candidate.
+- Keep mobile and remote-computer copy out of V1 beta. Core remains
+  `127.0.0.1` by default.
 
 ## Current evidence
 
+- GitHub private vulnerability reporting was enabled and verified on
+  2026-07-25. Branch, dependency, secret, and code-scanning controls still need
+  their own acceptance.
+- Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
+  Windows/macOS/Linux Python, Node 20/22 dashboard, and native-package jobs in
+  [hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472).
+  This is baseline evidence, not the still-unfrozen beta release candidate.
 - Current 2 GB import integration on Windows Python 3.14.3: 47 focused
   configuration, migration, storage, encrypted export/restore, importer, and
   CLI tests pass; Ruff, strict mypy across 68 source files, and the full
@@ -494,14 +560,13 @@ state is already noncurrent and creates no user queue.
   release identity remains pending.
 - Release-CI integration replay on Windows Python 3.14.3: 46 focused packaging,
   updater, retrieval-gate, and MCP contract tests pass. The exact functional
-  source at `f3496df` passed both complete hosted CI matrices, and current main
-  `e7ccd5d` independently passed all nine hosted jobs.
-- Current Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
+  source at `f3496df` passed both complete hosted CI matrices.
+- Historical Wave 4 coordinator worktree on Windows Python 3.14.3: Ruff passes;
   strict mypy passes across 68 source files; 49 focused Wave 4 tests pass;
   decisive M3/M1 reports reproduce byte-for-byte and E02 reproduces
   semantically; documentation links and `git diff --check` pass; and the full
   suite passes 652 tests with four host-limited symlink skips.
-- Current Wave 2 integration worktree on Windows Python 3.12.10: Ruff passes;
+- Historical Wave 2 integration worktree on Windows Python 3.12.10: Ruff passes;
   strict mypy passes across 62 source files; the full suite passes 560 tests
   with four host-limited symlink skips; 35 focused
   Memory Lab/governance/documentation tests pass; documentation links and
@@ -529,8 +594,9 @@ state is already noncurrent and creates no user queue.
   approved item out of review, emitted no browser warnings/errors, and rendered
   correctly at desktop and 390-pixel mobile widths. It does not satisfy the
   new automatic-policy browser gate.
-- The packaged dashboard contains the direct-Core mobile boundary and contains
-  no Edge setup copy or `/admin/edge` request path.
+- The historical packaged dashboard contained no Edge setup copy or
+  `/admin/edge` request path. That smoke is not evidence for B-103, and the
+  active beta claim now excludes mobile and remote-computer use entirely.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
   deploy only from Actions. The canonical beta metadata URL currently returns
   HTTP 404 because no channel artifact or beta release has been deployed. The

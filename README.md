@@ -18,18 +18,19 @@ or deleted later.
 ## V1 product boundary
 
 V1 has no hosted Edge, cloud replica, hosting provider, or paid runtime
-dependency. Desktop clients connect locally. A phone or another computer must
-connect directly to the same Core, and Core must be online.
+dependency. The first usable beta is same-device only: desktop clients connect
+locally while Core is online. Phone and remote-computer access are post-V1.
 
 Core binds only to `127.0.0.1` by default. The beta does not silently open a
 LAN/public port, upload context, or pretend that plain HTTP is safe remote
-access. Guided secure remote pairing is a remaining acceptance item before the
-project claims one-click mobile access. Until then, the dashboard states that
-boundary plainly.
+access. The beta makes no mobile or remote-access claim.
 
-The repository still contains isolated experimental Relay/Edge protocol code
-from an earlier design. It is not started automatically, exposed in onboarding,
-included in the V1 release gate, or supported as a V1 deployment path.
+The repository still contains experimental Relay/Edge protocol code from an
+earlier design. Its UI, automatic worker, and deployment workflow are removed,
+but callable compatibility API/CLI surfaces remain in the current baseline.
+Removing or build-gating active operation while retaining a narrow legacy
+cleanup path is a public-beta blocker; Relay/Edge is not a supported V1
+deployment path.
 
 ## Install
 
@@ -72,7 +73,8 @@ pass.
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
 - one-click local Codex and Claude Desktop configuration;
 - optional local context/activity/search/backup/update dashboard;
-- encrypted portable export and deliberate CLI restore;
+- encrypted portable export and contributor CLI restore; a packaged
+  recovery/admin helper remains a beta blocker;
 - cross-platform Windows, macOS, and Linux CI/package paths; and
 - deterministic lexical retrieval with a future embedding interface.
 
@@ -124,7 +126,9 @@ python scripts/smoke_packaged_first_run.py
 See [architecture](docs/architecture/ARCHITECTURE.md),
 [provider history import](docs/integrations/PROVIDER_IMPORTS.md),
 [platform support](docs/operations/PLATFORMS.md),
-[project status](docs/STATUS.md), and [security](SECURITY.md).
+[project status](docs/STATUS.md),
+[the roadmap to the first usable V1 beta](docs/ROADMAP_TO_V1.md), and
+[security](SECURITY.md).
 
 ## Privacy boundary
 

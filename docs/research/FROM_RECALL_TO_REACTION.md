@@ -169,8 +169,8 @@ All The Context already begins from a stronger security and authority model than
 The present baseline has several important properties:
 
 - A local Core is authoritative for canonical records, provenance, review state, history, permission filtering, and retrieval.
-- V1 is single-Core: clients require the authoritative Core to be reachable, and there is no hosted or offline-authoritative Edge.
-- Models and dormant experimental Relay code may queue observations or transport Core-produced projections, but they do not create canonical truth, compile current high-force context, or issue effect guards.
+- V1 beta is single-Core and same-device: supported clients require the authoritative local Core to be reachable, and there is no hosted or offline-authoritative Edge.
+- Experimental pre-beta Relay code is still callable and must be removed or build-gated before beta. When explicitly exercised for compatibility, it may queue observations or transport Core-produced projections, but it does not create canonical truth, compile current high-force context, or issue effect guards.
 - Imported text is untrusted data, never executable instruction.
 - Temporal validity, supersession, scopes, client allow/deny rules, source evidence, sensitivity, and audit state are first-class.
 - Retrieval V3 performs authorization and temporal filtering before deterministic candidate admission and set-level compilation.
@@ -326,7 +326,7 @@ The memory graph remains useful for meaning and temporal state. The dependency g
 - **Core:** the local authoritative store, compiler, policy engine, and audit boundary.
 - **Client:** an authorized application or agent integration such as Codex, Claude, or a desktop assistant.
 - **Adapter:** a provider-specific renderer and protocol bridge.
-- **Relay:** dormant experimental transport code for signed ordered Core projections and queued proposals; not a V1 runtime and never an origin of canonical truth.
+- **Relay:** experimental pre-beta transport code for signed ordered Core projections and queued proposals; currently callable, required to be removed or build-gated from beta artifacts, and never an origin of canonical truth.
 - **Tool host:** the component that knows when an external effect is planned and can request pre-effect context.
 
 ### 7.2 Canonical record
@@ -591,7 +591,7 @@ The design adds five logical components to the existing Core:
 4. **Reverse dependency index** mapping data, negative-decision, policy, compiler, schema, resolver, and mapping versions to live capsules and optional artifacts.
 5. **Invalidation notice queue** that durably orders, deduplicates, retries, acknowledges, expires, audits, and coalesces invalidations while preserving their underlying causal lineage.
 
-All five belong in or under the authority of the Core. If dormant Relay transport is studied later, it may carry signed opaque Core events or queue proposals, but it cannot originate records, activation contracts, invalidation notices, or guards.
+All five belong in or under the authority of the Core. If the experimental Relay transport is studied through an isolated compatibility path, it may carry signed opaque Core events or queue proposals, but it cannot originate records, activation contracts, invalidation notices, or guards.
 
 ---
 
@@ -1170,9 +1170,9 @@ Deleting a canonical record prevents future Core projection and invalidates live
 
 ### 14.6 Authority and transport scope
 
-The formal model assumes the accepted V1 architecture: one authoritative Core with one total commit order. Multiple devices may submit idempotent proposals with predecessor versions, but only Core assigns canonical order, resolves conflicts, compiles current capsules, and issues guards. A concurrent correction that no longer matches its predecessor is rejected or returned for clarification rather than silently merged.
+The formal model assumes one authoritative Core with one total commit order. The beta instantiates only same-device clients. A future multi-device design may submit idempotent proposals with predecessor versions, but only Core assigns canonical order, resolves conflicts, compiles current capsules, and issues guards. A concurrent correction that no longer matches its predecessor is rejected or returned for clarification rather than silently merged.
 
-V1 does not claim authoritative offline Edge operation or access while Core is unavailable. Dormant Relay code may queue proposals or carry signed Core-produced projections for research and compatibility, but it cannot issue current high-force capsules, advance canonical revision, or consume effect guards. Relay delay counts against any future delivery bound; a client that can reach only a replica must fail closed for guarded effects. A future multi-authority or offline-first design would require a different consistency model and is outside this paper.
+V1 beta does not claim remote access, authoritative offline Edge operation, or access while Core is unavailable. Experimental Relay code must be removed or build-gated from supported artifacts. An isolated compatibility path may queue proposals or carry signed Core-produced projections, but it cannot issue current high-force capsules, advance canonical revision, or consume effect guards. Relay delay counts against any future delivery bound; a future client that can reach only a replica must fail closed for guarded effects. A future multi-authority or offline-first design would require a different consistency model and is outside this paper.
 
 ---
 
@@ -1526,7 +1526,7 @@ Private personal data is unnecessary for the first study. Synthetic scenarios ca
 - Recompile possibly affected capsules and suppress unchanged client-relevant semantic state.
 - Implement patch, rebase, and stop-and-confirm notices while preserving full causal history beneath coalesced delivery.
 - Support next-interaction delivery first; add subscribed push only after the polling property is proven.
-- Keep all ordering and guard issuance at the single authoritative Core; do not reactivate dormant Relay/Edge code as a shortcut.
+- Keep all ordering and guard issuance at the single authoritative Core; do not preserve or reactivate experimental Relay/Edge runtime paths as a shortcut.
 
 ### Phase 6: Low-friction authority policy
 

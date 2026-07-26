@@ -5,12 +5,21 @@
 V1 has one user and one authoritative local Core. In scope: Core, its SQLite
 vault, automatic context policy, dashboard, archive import, MCP HTTP/STDIO
 transports, desktop setup, credentials, export/restore, and updates. There is no
-supported hosted Edge, cloud replica, or third-party runtime.
+supported hosted Edge, cloud replica, or third-party runtime. The current
+pre-beta Core still constructs Edge compatibility managers and exposes callable
+enrollment/connect/sync/client-management routes and CLI triggers. Those
+surfaces are in this threat model until the frozen supported artifacts prove
+their removal/build-gating; only a narrow isolated cleanup mechanism may remain
+afterward.
 
 The operating-system user account is trusted to own the vault. AI clients and
 imported content are not trusted to choose a disposition, create current
 context directly, or expand permissions. The live SQLite database is not
 application-encrypted; OS account/disk protection is part of the boundary.
+An ATC-configured same-device client principal may be granted authority to
+attest that specific text was explicitly stated by the user. This is a scoped
+local trust grant, not cryptographic authorship proof; authentication alone
+does not confer it and imported content never inherits it.
 
 ## Assets
 
@@ -47,6 +56,8 @@ transport, revocation, discovery, and recovery acceptance.
 ## Attacker capabilities
 
 - submit malicious archives or model observations;
+- submit a low-entropy secret-like value and use any retained hash/fingerprint
+  as an offline guessing oracle;
 - operate an authorized or stolen client credential and lie in submitted
   content or basis fields;
 - exploit a provider archive with incorrect or adversarial role labels;
@@ -65,21 +76,22 @@ vault and is outside the application-encryption boundary.
 |---|---|---|---|---|
 | TM-001 | Imported/model text is treated as instruction | Poisoned current context or code execution | Treat text as inert data; bounded parsers; normalize and exclude assistant/system/tool/attachment roles; keep generic instruction-bearing observations tentative; Core-owned policy | Parser or provider role-label defects may misclassify plausible user prose |
 | TM-002 | Client exceeds scopes or record allowlist | Personal-context disclosure | Per-client credentials; applied/current, policy, validity, and deletion filters before every ranker; indistinguishable denied/missing results | Authorized client/provider sees returned content |
-| TM-003 | Model or importer forces an applied disposition | Integrity loss | Inputs create observations only; Core derives origin and runs hard policy; inference/provider synthesis remains tentative by default; decision is versioned and reversible | An authorized malicious client can lie about user intent; deterministic policy can contain a defect |
+| TM-003 | Model or importer forces an applied disposition | Integrity loss | Inputs create observations only; Core derives origin and runs hard policy; only an ATC-configured same-device principal explicitly granted the direct-user-statement witness class may attest it; authentication alone is insufficient; inference/provider synthesis remains tentative; imported content never inherits the grant; decisions are versioned and reversible | The trust grant is not cryptographic authorship proof; an authorized malicious client can lie about user intent and deterministic policy can contain a defect |
 | TM-004 | Browser ticket/token leaks or CSRF mutates Core | Administrative compromise | One-use expiring ticket; opaque memory/tab session; no admin token in URL/cookie/storage; custom dashboard mutation header | Malicious code in the authenticated tab remains powerful |
 | TM-005 | Unknown loopback listener impersonates Core | Credential theft/wrong-vault access | Installation-bound challenge proof; exact vault/port binding; refuse unknown listener | Compromised local account can replace binaries/state |
 | TM-006 | Core is exposed on LAN/Internet without transport security | Full reachable-vault disclosure | Loopback default; no automatic exposure; UI warning; mobile gate requires pairing and encryption | Operator can still deliberately override configuration |
-| TM-007 | Credential backend drops or exposes tokens | Client takeover | Read-after-write verification; OS keyring abstraction; explicit fallback warning; redacted logs | Development fallback is weaker than OS storage |
+| TM-007 | Credential backend drops or exposes tokens | Client takeover | Read-after-write verification; OS keyring abstraction; beta setup must fail closed or use an explicitly accepted protected platform fallback; plaintext development fallback requires deliberate opt-in and is excluded from normal artifacts; partial configuration rolls back principals and config; redacted logs | Current baseline can select plaintext fallback automatically, so B-104 remains an open non-accepted blocker |
 | TM-008 | Interrupted migration/export/update or observation transaction corrupts vault | Availability, partial context publication, or data loss | SQLite transactions/backups; idempotent policy/batches; portable locks; bounded temp files; update journal, health check, and rollback | Hardware/filesystem failure can defeat local recovery |
 | TM-009 | Malicious update or mutable URL executes | Code execution | No-redirect metadata fetch; strict Ed25519 manifest; immutable version URL; one pinned GitHub release-CDN redirect; size/hash/platform/version checks; offline key custody | Community package lacks publisher identity |
 | TM-010 | Deletion/purge leaves recoverable live content | Privacy expectation failure | Reversible delete/history semantics; explicit irreversible purge state; secure-delete/checkpoint/VACUUM; resurrection barriers and byte scans | Backups, SSD remanence, and user copies remain outside live-store claims |
-| TM-011 | Large requests/imports or ZIP bombs cause denial of service | Core unavailable/disk exhaustion | Chunked upload/blob writes; raw, entry, expanded-text, per-conversation, and compression bounds; in-place ZIP reads; resumable ingestion; temporary-file cleanup | Valid large local archives can still consume time and local disk |
-| TM-012 | Dormant experimental Edge code contacts a service or becomes an authority | Unexpected third-party disclosure or split-brain context | No Edge UI/workflow/template/console entry; background worker disabled; Relay queues observations and accepts signed ordered Core projections only | Manual use of internal APIs remains possible to a local administrator |
+| TM-011 | Large requests/imports or ZIP bombs cause denial of service | Core unavailable/disk exhaustion | Chunked upload/blob writes; raw, entry, expanded-text, per-conversation, and compression bounds; in-place ZIP reads; resumable ingestion; temporary-file cleanup; mandatory 2,000,000,000-byte acceptance uses a physically allocated non-sparse canary, predeclared RSS/disk/progress/cancel/retry/wall-time budgets, and every frozen target | Valid large local archives still consume substantial time and disk within the disclosed support profile |
+| TM-012 | Active Edge compatibility API/CLI/triggers contact a service or create a second authority | Unexpected third-party disclosure or split-brain context | B-103 removes/build-gates enrollment, deployment, connect, sync, client management, mutation triggers, and routine CLI paths from supported artifacts; negative route/CLI/package/network proof is required; any retained cleanup path is isolated and cannot connect or canonize | Current baseline exposes active callable surfaces, so warning, hidden UI, or a disabled background worker is not an accepted beta mitigation |
 | TM-013 | Provider output is mistaken for direct user context | False current context without a review checkpoint | Provider role normalization; only eligible user-authored durable statements may apply after successful session finish; provider synthesis stays tentative; provenance, bounded decision reasons, correction, and undo | A provider can mislabel roles; automatic policy can apply a plausible false statement |
 | TM-014 | Provider schema drift silently omits conversations | Incomplete portable context | Preserve byte-exact raw source; report recognized files/messages, warnings, unavailable material, and limitations; version parser sessions for reprocessing | Provider schemas are not contractual, especially Grok |
 | TM-015 | Routine review is removed but tentative state leaks into retrieval | Unverified inference reaches clients | Treat disposition as a hard retrieval predicate before indexing/ranking; test tentative/ignored isolation across restart, restore, and migration | A migration or index bug could violate the predicate |
 | TM-016 | Automatic conflict resolution destroys the earlier truth | Stale or incorrect current context with lost evidence | Advisory slots; targeted correction, explicitness, and `observed_at` precedence; immutable versions and evidence links; reversible correction/restore; purge remains separate | Policy precedence cannot infer every real-world nuance |
 | TM-017 | Compromised proposal client abuses `forget_context` | Current context becomes temporarily unavailable | Require `context:propose`, exact record ID, explicit-user tool instructions, reason, audit, and a reversible tombstone; keep restore and purge outside model-facing MCP | A stolen authorized credential can hide records until the user restores them |
+| TM-018 | Refused secret payload leaves durable bytes or a guessable verifier | Credential disclosure or offline guessing | Enforce refusal/redaction before durable payload storage; forbid unkeyed content hashes/fingerprints; use opaque operation IDs or reviewed keyed derivation; rebuild/compact affected stores; scan synthetic canaries across SQLite pages/freelists, WAL/journal/SHM, FTS, temp state, diagnostics, export, and restore | Historical external backups and storage-device remanence cannot be silently repaired and require explicit operator retirement/warning |
 
 ## Security invariants
 
@@ -97,13 +109,22 @@ vault and is outside the application-encryption boundary.
 10. A partial or unhealthy update cannot be committed as successful.
 11. Mobile access is not called complete until its new network boundary has
     dedicated acceptance evidence.
+12. Normal beta setup never silently falls back to plaintext credential
+    storage.
+13. Refused secret-like content leaves no durable payload or unkeyed
+    content-derived verifier.
+14. Supported beta artifacts expose no active Edge/Relay operation path; any
+    retained cleanup path is isolated and nonauthoritative.
 
-## Deferred experimental code
+## Pre-beta compatibility code
 
-The Relay/Edge modules retain their earlier protocol tests as defense against
-regressions while compatibility/cleanup requirements are evaluated. They are
-not part of the V1 runtime threat surface because Core does not start the worker
-and no supported deployment artifact is published. If exercised explicitly,
-Relay remains a transport/projection and observation queue, never a current
-context authority. Re-enabling any hosted component requires a new threat-model
-revision and architecture decision.
+The Relay/Edge modules retain earlier protocol tests as defense against
+regressions while compatibility cleanup is implemented. Because current Core
+constructs managers and exposes callable routes and CLI paths, this code is
+part of the pre-beta runtime threat surface even though the background worker
+does not start and no supported hosted artifact is published. Beta acceptance
+must prove those operation paths absent or build-gated in the downloaded
+artifacts. If a narrow cleanup mechanism remains, Relay is still only a
+transport/projection and observation queue, never a current-context authority,
+and it cannot make an outbound hosted connection. Re-enabling any hosted
+component requires a new threat-model revision and architecture decision.

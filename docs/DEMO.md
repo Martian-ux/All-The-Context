@@ -43,8 +43,10 @@ automatic-policy unit/integration gates additionally cover staged isolation,
 duplicate reinforcement, tentative corroboration, same-slot precedence,
 secret/sensitivity policy, deletion undo, and historical-version restoration.
 
-The demonstration intentionally does not start the dormant experimental Relay
-or claim access while Core is offline. If Relay is exercised separately, it may
-queue observations and accept signed Core projections only; it cannot create
-current context. Mobile follows the same direct-Core authority and therefore
-requires Core to be online.
+The demonstration does not exercise the current pre-beta Edge/Relay
+compatibility surface or claim access while Core is offline. Passing the demo
+is therefore not evidence that B-103's removal and isolation gate has passed.
+If the narrow compatibility path is exercised separately, Relay may queue
+observations and accept signed Core projections only; it cannot create current
+context. The beta has no supported mobile journey. Any future mobile or remote
+client requires separate pairing, security, and release evidence.

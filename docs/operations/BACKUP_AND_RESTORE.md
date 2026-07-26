@@ -17,7 +17,8 @@ The status value labeled **Core database** is the durable SQLite footprint: the
 main database file plus its write-ahead log (`-wal`) when present. The transient
 shared-memory (`-shm`) coordination file is intentionally excluded.
 
-The CLI remains available for scripted exports, selective packages, and restore:
+The current contributor CLI supports scripted exports, selective packages, and
+restore:
 
 ```text
 python -m allthecontext.cli export PATH_TO_EXPORT --include-sources --include-audit
@@ -29,6 +30,15 @@ shell. Stop Core before destructive recovery. Restore into a new empty vault,
 verify the manifest and all hashes, apply migrations transactionally, then run
 retrieval smoke tests before switching the active vault.
 
+This contributor command requires Python/source and is not the public-beta
+recovery surface. Before beta publication, every Windows, macOS, and Linux
+artifact must ship a version-matched recovery/admin helper or native mode with
+installed help. It must perform stopped-Core preflight, isolated restore,
+manifest/database/source verification, retrieval checks, explicit cutover, and
+rollback without a Python installation or source checkout. The same packaged
+administrator surface must expose deliberate confirmed purge; scoped AI
+clients cannot invoke it.
+
 Exports may contain the complete vault and raw source material. Store them in
 an encrypted location and test restore procedures regularly.
 
@@ -39,7 +49,8 @@ current tombstone-bearing vault and then expect a pre-purge export to remember a
 purge it predates. Existing backups remain external copies outside Core's purge
 boundary and must be expired or destroyed under the operator's backup policy.
 
-One-click restore is intentionally not part of this release candidate. Safe
-restore needs a separate stopped-Core workflow with destination selection,
-preflight validation, rollback, post-restore verification, and an explicit
-vault cutover. The dashboard does not upload or restore export files.
+A one-click dashboard restore is not a beta requirement. The required packaged
+helper may remain a documented CLI/native mode, but it must implement the safe
+stopped-Core workflow above and pass exact downloaded-artifact acceptance on
+every mandatory OS family. The dashboard does not upload or restore export
+files.
