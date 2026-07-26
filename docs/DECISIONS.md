@@ -1708,3 +1708,31 @@ After publication, the control returns to tag-addressed verification and
 requires the published-by-tag release, the exact source-bound tag ref,
 immutable state, and `gh release verify`. Promotion consumes only published
 releases and remains tag-addressed.
+
+## ADR-070: Browser acceptance uses a packaged favicon and the accepted handoff boundary
+
+**Status:** accepted 2026-07-26.
+
+The packaged dashboard declares and ships a same-origin SVG favicon. It never
+uses an external icon URL. This closes the implicit browser request that
+otherwise reached `/favicon.ico`, returned JSON 404, and produced a console
+error during an otherwise healthy exact-candidate handoff. A production build
+and bundled-serving regression must keep the icon present before a browser
+receipt can claim zero unexpected console errors.
+
+Browser acceptance reads the opaque capability only from the HTML-escaped
+`data-browser-token` attribute on the nonce-protected ADR-064 script. The
+acceptance parser must treat the response as inert HTML, bind the inline
+script nonce to the response CSP, require the constant handoff script and
+production storage/target attributes, reject external `src`, and reject
+executable credential literals, ambiguous duplicate handoffs, and non-script
+lookalikes. The initial functional extractor correction does not establish
+that adversarial boundary until the independent nonce/CSP/src/target
+hardening is integrated and its regressions pass.
+
+The one-use ticket contract remains the frozen Phase D boundary: the ticket
+expires, cannot replay, leaks through no referrer or cache, and is absent from
+current navigation after exchange. Browser history implementation files are
+not required to erase every byte of an already consumed ticket. The
+long-lived Core credential and short-lived browser capability retain their
+separate, stricter ADR-009 storage and revocation requirements.
