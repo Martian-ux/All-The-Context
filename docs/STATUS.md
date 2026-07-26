@@ -696,6 +696,18 @@ state is already noncurrent and creates no user queue.
   as unparsed. Focused regressions exercise a blocked synchronous parser and
   all five scaled-canary checkpoint records without inventing byte progress or
   treating unparsed material as complete.
+- Exact Linux-package diagnosis under Ubuntu 24.04 WSL2 then observed seven
+  operation-row heartbeat gaps beyond five seconds despite the background
+  tracker. Operation-owned reprocess had serialized a source-metadata
+  transaction before every authoritative operation transaction, so source
+  telemetry latency could consume the observer budget. Operation-owned
+  reprocess now writes periodic progress only to the queryable operation row;
+  source-only imports retain source heartbeats, and explicit processing,
+  complete, cancelled, and failed source writes retain terminal metadata.
+  Adversarial regressions block the source sink while proving fresh unchanged-
+  byte operation heartbeats, direct source-only liveness, monotonic phases,
+  cancellation, and closed failure propagation. A rebuilt exact Linux
+  candidate rerun remains required.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

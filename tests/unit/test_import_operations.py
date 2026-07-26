@@ -551,6 +551,8 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from allthecontext import importers as importers_module
+
     core, ops = _ops(tmp_path)
     payload = b'{"kind":"fact","content":"Cancel during no-upload retry"}\n'
     operation = ops.start_operation(declared_byte_size=len(payload), filename="retry-cancel.jsonl")
@@ -578,9 +580,9 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
 
     entered = threading.Event()
 
-    def blocking_reprocess(source_id_arg: str, *, progress_tracker=None):  # type: ignore[no-untyped-def]
-        assert progress_tracker is not None
-        progress_tracker.set_phase("parsing", message="awaiting cancel")
+    def blocking_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        progress_tracker = kwargs["progress"]
         entered.set()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -588,7 +590,7 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
             time.sleep(0.05)
         raise AssertionError("cancel was not acknowledged within budget")
 
-    monkeypatch.setattr(ops.imports, "reprocess_source", blocking_reprocess)
+    monkeypatch.setattr(importers_module, "parse_archive_path", blocking_parse)
 
     def canceller() -> None:
         entered.wait(timeout=5)
@@ -602,6 +604,61 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     final = ops.get_operation(operation_id)
     assert final["status"] == "cancelled"
     assert final["progress"]["cancel_acknowledged"] is True
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "cancelled"
+    assert source.metadata["import_progress"]["phase"] == "cancelled"
+
+
+def test_operation_owned_reprocess_failure_updates_operation_and_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import importers as importers_module
+
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Retry failure remains terminal"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-failure.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=core.store.get_source(source_id, duplicate=True).metadata,
+        parser_warnings=(),
+    )
+
+    def fail_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise InvalidStateError("synthetic closed parser failure")
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", fail_parse)
+    with pytest.raises(InvalidStateError, match="synthetic closed parser failure"):
+        ops.retry_operation(operation_id)
+
+    failed = ops.get_operation(operation_id)
+    assert failed["status"] == "failed"
+    assert failed["phase"] == "failed"
+    assert failed["error_message"] == "import_invalid_state"
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "failed"
+    assert source.metadata["import_progress"]["phase"] == "failed"
+    assert source.metadata["import_progress"]["message"] == "import_invalid_state"
 
 
 def test_concurrent_retry_claims_fail_closed(tmp_path: Path) -> None:
@@ -860,6 +917,192 @@ def test_parse_stall_heartbeats_durably_without_false_byte_progress(
     assert not thread.is_alive()
     assert failures == []
     assert outcomes[0]["status"] == "complete"
+
+
+def test_operation_reprocess_heartbeats_ignore_blocking_source_progress_sink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import import_operations as ops_module
+    from allthecontext import importers as importers_module
+
+    tracker_type = ops_module.ImportProgressTracker
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.04
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", fast_tracker)
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Operation heartbeat owns retry liveness"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="operation-heartbeat.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=core.store.get_source(source_id, duplicate=True).metadata,
+        parser_warnings=(),
+    )
+
+    source_sink_entered = threading.Event()
+    release_source_sink = threading.Event()
+
+    def blocking_source_sink(_source_id: str):  # type: ignore[no-untyped-def]
+        def sink(_progress):  # type: ignore[no-untyped-def]
+            source_sink_entered.set()
+            assert release_source_sink.wait(timeout=5), "test did not release source sink"
+
+        return sink
+
+    monkeypatch.setattr(ops.imports, "_durable_progress_sink", blocking_source_sink)
+    original_parse = importers_module.parse_archive_path
+    parser_entered = threading.Event()
+    release_parser = threading.Event()
+
+    def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        parser_entered.set()
+        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            outcomes.append(ops.retry_operation(operation_id))
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    phases: list[str] = []
+    try:
+        assert parser_entered.wait(timeout=5), (
+            "operation-owned reprocess did not enter parser; "
+            f"source_sink_entered={source_sink_entered.is_set()}, "
+            f"failures={[type(error).__name__ for error in failures]}, "
+            f"operation={ops.get_operation(operation_id)['phase']}"
+        )
+        stamps: list[str] = []
+        committed: list[int] = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            current = ops.get_operation(operation_id)
+            phases.append(str(current["phase"]))
+            if current["phase"] == "parsing":
+                stamps.append(str(current["updated_at"]))
+                committed.append(int(current["bytes_committed"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+        assert committed and set(committed) == {len(payload)}
+        assert source_sink_entered.is_set() is False
+    finally:
+        release_source_sink.set()
+        release_parser.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["status"] == "complete"
+    phase_order = {
+        "storing": 0,
+        "parsing": 1,
+        "ingesting": 2,
+        "verifying": 3,
+        "publishing": 4,
+        "complete": 5,
+    }
+    observed = [phase_order[phase] for phase in phases if phase in phase_order]
+    assert observed == sorted(observed)
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "complete"
+    assert source.metadata["import_progress"]["phase"] == "complete"
+
+
+def test_source_only_reprocess_keeps_source_heartbeats_and_terminal_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import importers as importers_module
+
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    payload = b'{"kind":"goal","content":"Source-only progress remains durable"}\n'
+    first = service.import_bytes("source-only-heartbeat.jsonl", payload)
+    source_id = str(first["source"]["id"])
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=first["source"]["metadata"],
+        parser_warnings=first["source"]["parser_warnings"],
+    )
+    tracker_type = importers_module.ImportProgressTracker
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.04
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "ImportProgressTracker", fast_tracker)
+    original_parse = importers_module.parse_archive_path
+    parser_entered = threading.Event()
+    release_parser = threading.Event()
+
+    def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        parser_entered.set()
+        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            outcomes.append(service.reprocess_source(source_id))
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert parser_entered.wait(timeout=5)
+        stamps: list[str] = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            source = core.store.get_source(source_id, duplicate=True)
+            progress = source.metadata.get("import_progress") or {}
+            if progress.get("phase") == "parsing":
+                stamps.append(str(progress["updated_at"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+    finally:
+        release_parser.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["source"]["import_status"] == "complete"
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.metadata["import_progress"]["phase"] == "complete"
+    assert source.metadata["import_progress"]["percent"] == 100
 
 
 def test_durable_telemetry_never_persists_raw_exception_text(
