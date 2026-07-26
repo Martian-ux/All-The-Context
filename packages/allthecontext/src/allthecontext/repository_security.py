@@ -683,8 +683,7 @@ def scan_artifact_directory(
                         relative_path=relative,
                         findings=findings,
                         allow_absolute_paths=not (
-                            _should_scan_text(path)
-                            or suffix in {".sha256", ".json", ".txt", ".md"}
+                            _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}
                         ),
                         maximum_bytes=MAX_ARTIFACT_BYTES,
                     )

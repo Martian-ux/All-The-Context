@@ -290,9 +290,7 @@ def test_unattested_unkeyed_client_contradictions_do_not_become_current(
     """Non-witness explicit claims stay tentative; contradictions never both apply."""
 
     store = _store(tmp_path)
-    plain, _ = store.create_client(
-        ClientCreate(name="plain", scopes=["context:propose"])
-    )
+    plain, _ = store.create_client(ClientCreate(name="plain", scopes=["context:propose"]))
     first = store.add_candidate(
         CandidateInput(
             kind="goal",

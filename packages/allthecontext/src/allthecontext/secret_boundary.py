@@ -38,9 +38,7 @@ _WELL_KNOWN_TOKEN = re.compile(
     r"AKIA[0-9A-Z]{16}"
     r")\b"
 )
-_CREDENTIAL_URI = re.compile(
-    r"(?i)\b(?:[a-z][a-z0-9+.-]*)://[^\s/@:?#]+:[^\s/@?#]+@"
-)
+_CREDENTIAL_URI = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*)://[^\s/@:?#]+:[^\s/@?#]+@")
 
 
 def contains_secret_like_text(value: str) -> bool:
