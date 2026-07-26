@@ -852,9 +852,7 @@ def normalize_github_release_state(
             isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1
         ):
             raise ManifestError("GitHub release asset ID is invalid")
-        if size is not None and (
-            isinstance(size, bool) or not isinstance(size, int) or size < 0
-        ):
+        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
             raise ManifestError("GitHub release asset size is invalid")
         if digest is not None and (
             not isinstance(digest, str)
@@ -865,9 +863,7 @@ def normalize_github_release_state(
         if require_asset_api_metadata and (
             asset_id is None or size is None or not isinstance(digest, str)
         ):
-            raise ManifestError(
-                "GitHub release asset API metadata requires ID, size, and SHA-256"
-            )
+            raise ManifestError("GitHub release asset API metadata requires ID, size, and SHA-256")
         normalized_assets.append(
             {
                 "id": asset_id,
@@ -917,8 +913,7 @@ def select_github_release_from_api_listing(value: object, *, tag: str) -> dict[s
     matches = [release for release in releases if release.get("tag_name") == tag]
     if len(matches) != 1:
         raise ManifestError(
-            f"GitHub release listing requires exactly one release for {tag!r}; "
-            f"found {len(matches)}"
+            f"GitHub release listing requires exactly one release for {tag!r}; found {len(matches)}"
         )
     return normalize_github_release_state(
         matches[0],

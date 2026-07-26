@@ -138,7 +138,7 @@ def test_unpublished_release_workflows_use_unique_numeric_release_identity() -> 
     candidate = _read(WORKFLOWS / "release-candidate.yml")
     assert "gh api --paginate --slurp" in candidate
     assert "resolve-release" in candidate
-    assert 'repos/$GITHUB_REPOSITORY/releases/$release_id' in candidate
+    assert "repos/$GITHUB_REPOSITORY/releases/$release_id" in candidate
     assert 'gh release view "$TAG"' not in candidate
     assert "git/ref/tags/$TAG" not in candidate
 

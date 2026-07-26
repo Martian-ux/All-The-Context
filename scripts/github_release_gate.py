@@ -69,9 +69,7 @@ class GitHubReader:
             with urllib.request.urlopen(request, timeout=20) as response:
                 value = json.load(response)
         except urllib.error.HTTPError as exc:
-            raise ManifestError(
-                f"GitHub release preflight failed with HTTP {exc.code}"
-            ) from exc
+            raise ManifestError(f"GitHub release preflight failed with HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ManifestError(
                 "GitHub release preflight could not read trusted repository state"
