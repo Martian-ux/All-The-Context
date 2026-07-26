@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "receipt_id": "template-beta-r01",
+  "gate_id": "BETA-R01",
+  "evidence_kind": "source",
+  "status": "not_run",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "content_free": true,
+  "severity": null,
+  "limitations": [],
+  "attempts": [],
+  "notes": "Template only. This receipt has not run and claims no evidence. Copy it, set a real source_commit, execute the gate, and only then change status away from not_run."
+}

@@ -8,6 +8,13 @@ which was enabled and verified on 2026-07-25. If the form is unavailable,
 contact the repository owner without putting sensitive details in a public
 issue.
 
+Public issues may carry only sanitized, content-free summaries (impact class,
+gate ID, versions, digests). Keep exploit steps, credentials, tokens, private
+keys, raw conversations, and exports in the private reporting path. Emergency
+handling, sole-maintainer residuals, and operator repository-control checklists
+are in
+[docs/operations/REPOSITORY_SECURITY.md](docs/operations/REPOSITORY_SECURITY.md).
+
 Core is loopback-only by default. V1 has no supported hosted Relay/Edge or
 automatic remote-exposure path. Do not bind Core to a public interface without
 an independently reviewed encrypted transport and authentication boundary.

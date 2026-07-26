@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "All The Context Acceptance Receipt Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_commit",
+    "candidate_sha256",
+    "receipts",
+    "maintainer_decision"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-beta\\.[1-9][0-9]*)?$"
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "acceptance-receipt.schema.json" }
+    },
+    "maintainer_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "independent_human_review_claimed"],
+      "properties": {
+        "decision": {
+          "type": ["string", "null"],
+          "enum": ["approve", "reject", null]
+        },
+        "approver": { "type": "string", "maxLength": 200 },
+        "decided_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:.+-Z]+)?$"
+        },
+        "independent_human_review_claimed": { "const": false },
+        "ai_assisted": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 2000 }
+      }
+    }
+  }
+}

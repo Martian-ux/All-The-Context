@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "source_commit": "0000000000000000000000000000000000000000",
+  "candidate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "version": "0.1.0-beta.1",
+  "receipts": [
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r01",
+      "gate_id": "BETA-R01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Replace with executed evidence before publication."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r02",
+      "gate_id": "BETA-R02",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "notes": "Key backup and deliberate solo publication controls."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r03",
+      "gate_id": "BETA-R03",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "notes": "Candidate inventory completeness."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s06",
+      "gate_id": "BETA-S06",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "notes": "Repository, dependency, artifact, and private-intake defenses."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-o01",
+      "gate_id": "BETA-O01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "notes": "Known issues, support, security intake, and recovery guidance."
+    }
+  ],
+  "maintainer_decision": {
+    "decision": null,
+    "approver": "",
+    "decided_at": "",
+    "independent_human_review_claimed": false,
+    "ai_assisted": true,
+    "notes": "Decision must remain null until every required receipt is pass and the sole human maintainer explicitly approves. Do not claim independent human review."
+  }
+}
