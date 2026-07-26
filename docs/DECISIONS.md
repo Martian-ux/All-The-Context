@@ -1591,3 +1591,26 @@ Authenticated integration diagnostics expose only a stable degraded-state
 repair message when local Codex or Claude configuration parsing fails. Raw
 exception text is neither returned nor logged because it can contain local
 paths, credentials, or personal configuration material.
+
+## ADR-065: Public beta repository controls preserve deliberate solo-maintainer release gates
+
+**Status:** accepted 2026-07-26.
+
+The public repository protects `main` with a strict up-to-date pull-request
+gate, conversation resolution, the eleven canonical CI contexts, and the
+three CodeQL language contexts. Force pushes and branch deletion are disabled,
+and repository Actions must use immutable SHA pins. Administrator enforcement
+remains off as an explicit sole-maintainer recovery residual; using that
+bypass must be recorded and cannot be described as independent review.
+
+Private vulnerability reporting, secret scanning, push protection, Dependabot
+alerts and security updates, and CodeQL default setup are enabled. Findings
+must be fixed and rescanned rather than dismissed to manufacture a clean gate.
+Optional secret-scanning validity checks and non-provider patterns remain
+disabled and are not claimed.
+
+The `release-promotion` and `github-pages` environments require the repository
+owner as reviewer and disallow administrator bypass. Self-review remains
+available because there is one human maintainer, and release records must state
+that truthfully. The Pages environment accepts only `main`; neither environment
+turns AI-assisted implementation or review into a second human approval.
