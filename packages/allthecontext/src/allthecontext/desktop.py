@@ -652,14 +652,34 @@ def _packaged_credential_acceptance(report_value: str) -> int:
     return 0
 
 
+def _headless_setup_error_code(error: Exception) -> str:
+    """Map arbitrary setup failures to the closed automation diagnostic vocabulary."""
+
+    message = str(error).casefold()
+    if "credential store" in message or "credential storage" in message:
+        return "credential_store_unavailable"
+    if isinstance(error, OSError):
+        return "setup_io_error"
+    if isinstance(error, ValueError):
+        return "setup_invalid_value"
+    return "setup_failed"
+
+
 def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path | None:
     """Write a redacted headless failure report when the windowed app has no console."""
 
-    diagnostics_path = _write_failure_diagnostics(error)
+    error_code = _headless_setup_error_code(error)
+    # The general graphical diagnostic path accepts a human-facing exception
+    # message. Headless setup is automation-facing, so persist only a closed
+    # code even if a lower layer accidentally embeds a token, path, or imported
+    # text in its exception.
+    diagnostics_path = _write_failure_diagnostics(RuntimeError(error_code))
     report: dict[str, Any] = {
         "setup": "failed",
-        "error_type": type(error).__name__,
-        "error": _redact_failure_message(error),
+        "error_type": type(error).__name__
+        if type(error).__name__ in {"RuntimeError", "OSError", "ValueError"}
+        else "Exception",
+        "error_code": error_code,
         # Never embed absolute developer paths; only a presence/basename signal.
         "diagnostics_written": diagnostics_path is not None,
         "diagnostics_name": diagnostics_path.name if diagnostics_path is not None else None,
@@ -705,14 +725,14 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         # packaged smoke and operators can diagnose fail-closed setup without
         # relying on hidden stderr.
         report_path = _write_headless_setup_failure_report(target, exc)
-        message = _redact_failure_message(exc)
+        error_code = _headless_setup_error_code(exc)
         if report_path is not None:
             print(
-                f"Headless setup failed: {message}\nReport: {report_path.name}",
+                f"Headless setup failed: {error_code}\nReport: {report_path.name}",
                 file=sys.stderr,
             )
         else:
-            print(f"Headless setup failed: {message}", file=sys.stderr)
+            print(f"Headless setup failed: {error_code}", file=sys.stderr)
         return 1
 
 

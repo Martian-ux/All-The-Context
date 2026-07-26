@@ -437,7 +437,7 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["setup"] == "failed"
     assert payload["error_type"] == "RuntimeError"
-    assert "plaintext credential storage is disabled" in payload["error"]
+    assert payload["error_code"] == "credential_store_unavailable"
     assert payload["diagnostics_written"] is True
     assert payload["diagnostics_name"] == diagnostics_path.name
     assert "diagnostics_path" not in payload
@@ -450,7 +450,6 @@ def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
         str(diagnostics_path),
     )
     for evidence in evidence_values:
-        assert evidence not in payload["error"]
         assert evidence not in json.dumps(payload)
         assert evidence not in captured.err
         assert evidence not in captured.out

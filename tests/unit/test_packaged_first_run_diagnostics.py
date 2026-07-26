@@ -74,6 +74,7 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
         {
             "setup": "failed",
             "error_type": "RuntimeError",
+            "error_code": "credential_store_unavailable",
             "error": (
                 f"token={TOKEN_CANARY}; {DASHBOARD_CANARY}; "
                 f"client={CLIENT_CANARY}; path={PATH_CANARY}; {RAW_STATEMENT}"
@@ -84,11 +85,10 @@ def test_project_failed_setup_report_redacts_error_canaries() -> None:
     serialized = json.dumps(projected)
     assert projected["setup"] == "failed"
     assert projected["error_type"] == "RuntimeError"
-    assert "token=" in projected["error"]
-    assert "[redacted]" in projected["error"] or "[redacted url]" in projected["error"]
+    assert projected["error_code"] == "credential_store_unavailable"
+    assert "error" not in projected
     for canary in (TOKEN_CANARY, TICKET_CANARY, CLIENT_CANARY, PATH_CANARY):
         assert canary not in serialized
-        assert canary not in projected["error"]
 
 
 def test_failure_summary_never_embeds_raw_streams_or_absolute_work_paths(
@@ -136,6 +136,7 @@ def test_failure_summary_never_embeds_raw_streams_or_absolute_work_paths(
     assert summary["artifacts_present"]["data/credentials.development.json"] is True
     assert summary["stdout_present"] is True
     assert summary["stderr_present"] is True
+    assert summary["detail_code"] == "diagnostic_failure"
     assert "stdout" not in summary
     assert "stderr" not in summary
     assert summary["setup_report"]["setup"] == "passed"
@@ -200,14 +201,53 @@ def test_remove_work_tree_deletes_credential_bearing_tree(tmp_path: Path) -> Non
     assert not work.exists()
 
 
+def test_cleanup_recovers_token_then_scrubs_sensitive_state_first(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    data = work / "data"
+    codex = work / "codex"
+    config = work / "config"
+    data.mkdir(parents=True)
+    codex.mkdir()
+    config.mkdir()
+    client_id = "11111111-2222-4333-a444-555555555555"
+    (work / "setup-report.json").write_text(
+        json.dumps({"client_id": client_id, "dashboard_url": DASHBOARD_CANARY}),
+        encoding="utf-8",
+    )
+    (data / "credentials.development.json").write_text(
+        json.dumps({f"client:{client_id}": TOKEN_CANARY}),
+        encoding="utf-8",
+    )
+    (data / "core.sqlite3").write_bytes(b"fictional vault")
+    (codex / "config.toml").write_text(f'token = "{TOKEN_CANARY}"\n', encoding="utf-8")
+    (config / "autostart.desktop").write_text("fictional\n", encoding="utf-8")
+    (work / "mcp-stderr.log").write_text(RAW_STATEMENT, encoding="utf-8")
+    sentinel = work / "installed" / "AllTheContextSetup.exe"
+    sentinel.parent.mkdir()
+    sentinel.write_bytes(b"MZ")
+
+    assert smoke.recover_disposable_admin_token(work) == TOKEN_CANARY
+    smoke.scrub_sensitive_work_tree(work)
+
+    assert not data.exists()
+    assert not codex.exists()
+    assert not config.exists()
+    assert not (work / "setup-report.json").exists()
+    assert not (work / "mcp-stderr.log").exists()
+    assert sentinel.is_file()
+
+
 def test_source_contract_never_retains_full_work_tree() -> None:
     text = (ROOT / "scripts" / "smoke_packaged_first_run.py").read_text(encoding="utf-8")
     assert "retain_work_on_failure" not in text
     assert "kept work directory for diagnosis" not in text
     assert "build_failure_diagnostic_summary" in text
+    assert "recover_disposable_admin_token" in text
+    assert "scrub_sensitive_work_tree" in text
     assert "remove_work_tree" in text
+    assert "raise SystemExit(str(exc))" not in text
     assert "packaged-first-run-diagnostics" in text
     # Must not print raw subprocess streams.
     assert "completed.stdout" not in text or "stdout_present" in text
-    assert "print(f\"{label} stdout" not in text
-    assert "print(f\"{label} stderr" not in text
+    assert 'print(f"{label} stdout' not in text
+    assert 'print(f"{label} stderr' not in text
