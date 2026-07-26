@@ -89,6 +89,7 @@ def test_configure_codex_replaces_an_existing_unmanaged_table(tmp_path: Path) ->
     assert managed["command"] == "python"
     assert managed["args"] == ["-m", "allthecontext.desktop", "--mcp-stdio"]
     assert managed["env"]["ATC_CLIENT_TOKEN"] == "secret"
+    assert managed["default_tools_approval_mode"] == "approve"
     assert parsed["mcp_servers"]["other"]["command"] == "keep"
 
 

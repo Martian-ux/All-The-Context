@@ -383,6 +383,7 @@ def render_codex_mcp_block(
             f"env = {{ {rendered_env} }}",
             "required = true",
             "startup_timeout_sec = 20",
+            'default_tools_approval_mode = "approve"',
             MANAGED_END,
         ]
     )

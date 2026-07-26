@@ -1544,3 +1544,27 @@ result. Native package files and ZIP members use bounded chunk streaming so
 normal release sizes do not fail solely for exceeding the in-memory history
 blob ceiling. This deliberately excludes the broader multi-format scanner
 redesign; tar.gz and DMG content coverage is not claimed.
+
+## ADR-062: Managed Codex connections explicitly approve the scoped ATC tool set
+
+**Status:** accepted 2026-07-26.
+
+Generated Codex MCP entries set the documented
+`default_tools_approval_mode = "approve"` server policy. Codex CLI 0.144.0
+otherwise reports ATC calls as user-cancelled when the client runs
+noninteractively with `approval_policy = "never"`, even though the managed
+principal is already scoped by Core. This setting removes repeated
+client-side prompts only for the named ATC server; it does not bypass the Codex
+sandbox, broaden the principal's durable Core scopes, grant administrator
+operations, or weaken Core's explicit-user and purge boundaries.
+
+## ADR-063: Automated tests never inherit real AI-client configuration roots
+
+**Status:** accepted 2026-07-26.
+
+The pytest harness assigns every test its own temporary `CODEX_HOME` and Claude
+configuration path, in addition to the existing null keyring. The
+open-dashboard regression also pins and asserts its disposable client paths.
+This is mandatory even for tests whose primary subject is browser handoff:
+launch repair is a production side effect and otherwise rewrites a real
+managed Codex or Claude entry when one exists on the developer host.

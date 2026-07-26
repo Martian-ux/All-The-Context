@@ -714,6 +714,35 @@ state is already noncurrent and creates no user queue.
 
 ## Current evidence
 
+- A real installed Codex CLI 0.144.0 process on Windows, using an ephemeral
+  session, ignored user config/rules, a read-only empty workspace, a disposable
+  loopback Core, Windows Credential Manager, and only supported MCP config
+  overrides, applied and then retrieved a fictional explicit-user canary. A
+  second Codex process auto-started the stopped disposable Core and retrieved
+  the same canary. The first attempt exposed a concrete compatibility defect:
+  with global `approval_policy = "never"` and no explicit server tool policy,
+  Codex returned `user cancelled`; the documented managed-server
+  `default_tools_approval_mode = "approve"` made the journey succeed without
+  disabling the sandbox. This is source-runtime, installed-client evidence,
+  not an exact downloaded-ATC-artifact BETA-P02/P03 receipt.
+- Claude Desktop MSIX 1.24012.1.0 was launched against an isolated
+  `CLAUDE_USER_DATA_DIR`. Its real packaged executable read
+  `claude_desktop_config.json` from that root (a malformed synthetic probe
+  produced the native settings error), and
+  `--force-renderer-accessibility` exposed the real Windows sign-in UI through
+  UI Automation. The isolated client stopped at **Get started** without an
+  authorized user sign-in, so no Claude MCP call or BETA-P02/P03 claim was
+  made. This build rejects Electron remote-debugging flags unless supplied an
+  Anthropic-signed, path-bound CDP authorization token.
+- The first post-fix full-suite replay exposed that
+  `test_open_dashboard_starts_core_and_uses_authenticated_handoff` reached the
+  production launch-repair path without an isolated Codex/Claude configuration
+  root. On this host it created a real ATC backup and rewrote the live managed
+  Codex block. The test now pins and asserts disposable paths, and the autouse
+  harness assigns every test a temporary `CODEX_HOME`, temporary Claude config,
+  and null keyring. The live file was not blindly restored while Codex was
+  active; its timestamped backups and semantic, secret-free differences were
+  recorded for operator review.
 - GitHub private vulnerability reporting was enabled and verified on
   2026-07-25. Branch, dependency, secret, and code-scanning controls still need
   their own acceptance.

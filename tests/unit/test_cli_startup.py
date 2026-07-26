@@ -79,6 +79,10 @@ def test_init_keyring_failure_does_not_create_plaintext_or_usable_orphan(
 def test_open_dashboard_starts_core_and_uses_authenticated_handoff(
     tmp_path: Path, monkeypatch, capsys: object
 ) -> None:
+    codex_config = tmp_path / "client-config" / "codex" / "config.toml"
+    claude_config = tmp_path / "client-config" / "claude" / "claude_desktop_config.json"
+    monkeypatch.setenv("CODEX_HOME", str(codex_config.parent))
+    monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(claude_config))
     init_args = argparse.Namespace(
         data_dir=str(tmp_path),
         name="Dashboard test",
@@ -106,3 +110,5 @@ def test_open_dashboard_starts_core_and_uses_authenticated_handoff(
     output = capsys.readouterr().out  # type: ignore[attr-defined]
     assert launched
     assert output.strip().endswith("/v1/browser/connect?ticket=safe")
+    assert not codex_config.exists()
+    assert not claude_config.exists()
