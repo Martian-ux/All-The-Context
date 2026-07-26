@@ -265,8 +265,13 @@ def test_scaled_boundary_canary_imports_exports_and_restores(tmp_path: Path) -> 
     assert result["source"]["import_status"] == "complete"
     assert result["source"]["byte_size"] == size
     assert result["source"]["content_hash"] == spec.expected_sha256
-    assert len(result["candidate_ids"]) >= spec.expected_min_candidates
-    assert result["coverage"]["closed_coverage"]["recognized"] >= 1
+    assert len(result["candidate_ids"]) == spec.expected_min_candidates
+    coverage = result["coverage"]
+    assert coverage["complete"] is True
+    assert coverage["closed_coverage"]["recognized"] == spec.expected_min_candidates
+    assert coverage["closed_coverage"]["skipped"] > 0
+    assert coverage["closed_coverage"]["unparsed"] == 0
+    assert not any("invalid JSON" in warning for warning in result["warnings"])
 
     export_path = tmp_path / "export.atcexp"
     create_export(
@@ -285,6 +290,23 @@ def test_scaled_boundary_canary_imports_exports_and_restores(tmp_path: Path) -> 
     assert restored_source.byte_size == size
     assert restored_source.content_hash == spec.expected_sha256
     assert len(destination.get_source_content(restored_source.id)) == size
+
+
+def test_generic_jsonl_invalid_values_are_closed_as_unparsed() -> None:
+    parsed = importers_module.parse_jsonl(
+        (
+            '{"kind":"fact","content":"Recognized coverage checkpoint"}\n'
+            '{"kind":"canary_filler","blob":"ignored filler"}\n'
+            "not-json\n"
+        ),
+        source_name="coverage.jsonl",
+    )
+
+    assert len(parsed.candidates) == 1
+    assert parsed.closed_coverage["recognized"] == 1
+    assert parsed.closed_coverage["skipped"] == 1
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.complete is False
 
 
 def test_cancel_request_is_visible_on_source_metadata(tmp_path: Path) -> None:

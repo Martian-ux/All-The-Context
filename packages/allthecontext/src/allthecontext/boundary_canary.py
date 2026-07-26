@@ -25,7 +25,7 @@ from .import_boundary import (
 )
 from .storage import SOURCE_BLOB_CHUNK_BYTES, InvalidStateError
 
-BOUNDARY_CANARY_GENERATOR_VERSION = "boundary-canary-v1"
+BOUNDARY_CANARY_GENERATOR_VERSION = "boundary-canary-v2"
 BOUNDARY_CANARY_MEDIA_TYPE = "application/x-ndjson"
 BOUNDARY_CANARY_FILENAME = "atc-boundary-canary.jsonl"
 BOUNDARY_CANARY_SIZE_BYTES = BOUNDARY_BYTES
@@ -36,7 +36,7 @@ BOUNDARY_CANARY_PLUS_ONE_BYTES = BOUNDARY_PLUS_ONE_BYTES
 _CHECKPOINT_FRACTIONS: tuple[float, ...] = (0.0, 0.25, 0.50, 0.75, 0.99)
 
 # Fixed high-entropy stream seed material (not a secret).
-_STREAM_LABEL = b"allthecontext-boundary-canary-v1"
+_STREAM_LABEL = b"allthecontext-boundary-canary-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,20 +131,13 @@ def _checkpoint_line(checkpoint_index: int, absolute_offset: int) -> bytes:
 
 
 def _pad_bytes(start_offset: int, length: int) -> bytes:
-    """High-entropy pad that never injects raw newlines into the JSONL stream."""
+    """JSONL-safe structural padding between deterministic records."""
     if length <= 0:
         return b""
-    # Hex expansion stays printable and newline-free so later JSONL lines remain intact.
-    parts: list[bytes] = []
-    block = 20_000_000 + start_offset
-    while sum(len(item) for item in parts) < length:
-        parts.append(_block_bytes(block).hex().encode("ascii"))
-        block += 1
-    pad = b"".join(parts)[:length]
-    # Prefer ending on a newline when there is room so the next record starts cleanly.
-    if length >= 2 and not pad.endswith(b"\n"):
-        pad = pad[:-1] + b"\n"
-    return pad
+    del start_offset
+    # Whitespace is a valid empty JSONL line. The ordinary filler records retain
+    # the canary's high-entropy allocation without inventing malformed records.
+    return (b" " * (length - 1)) + b"\n"
 
 
 def _iter_canary_bytes(size_bytes: int) -> Iterator[bytes]:

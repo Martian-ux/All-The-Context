@@ -1614,3 +1614,23 @@ owner as reviewer and disallow administrator bypass. Self-review remains
 available because there is one human maintainer, and release records must state
 that truthfully. The Pages environment accepts only `main`; neither environment
 turns AI-assisted implementation or review into a second human approval.
+
+## ADR-066: Import liveness and canary coverage remain closed under synchronous parsing
+
+**Status:** accepted 2026-07-26.
+
+Once raw bytes are durably committed, long synchronous parser work reports
+liveness through a serialized background operation heartbeat. The heartbeat
+persists the current phase and unchanged committed-byte count at one quarter of
+the public five-second budget. It never advances bytes, and serialized sink
+writes prevent an older heartbeat from overwriting a newer phase. A durable
+sink failure remains an import failure rather than an invisible telemetry gap.
+
+`boundary-canary-v2` replaces v1's short raw-hex alignment fragments with JSONL
+whitespace. Its normal filler records retain deterministic high-entropy
+allocation, and its five checkpoint objects remain the only expected
+candidates. Generic JSON/JSONL parsing now assigns every successfully decoded
+noncandidate value to `skipped` and every malformed value to `unparsed`;
+unparsed input keeps coverage incomplete. The generator version changes
+because changing deterministic bytes without changing their declared identity
+would invalidate SHA-bound acceptance evidence.

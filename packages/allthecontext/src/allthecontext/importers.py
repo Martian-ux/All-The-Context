@@ -93,6 +93,14 @@ class ParsedArchive:
     parser_identity: str = PARSER_VERSION
 
 
+@dataclass(slots=True)
+class _GenericCoverage:
+    """Closed accounting for generic JSON values outside provider schemas."""
+
+    skipped: int = 0
+    unparsed: int = 0
+
+
 def _candidate(kind: str, content: str, *, evidence: str | None = None) -> CandidateInput | None:
     normalized = " ".join(content.split()).strip()
     if not normalized or len(normalized) > 64_000:
@@ -175,8 +183,9 @@ def parse_json(
         ) from error
     builder = _builder(provider)
     generic: list[CandidateInput] = []
-    _consume_json_value(builder, source_name, value, generic)
-    return _combine(builder.finish(), generic)
+    coverage = _GenericCoverage()
+    _consume_json_value(builder, source_name, value, generic, coverage)
+    return _combine(builder.finish(), generic, generic_coverage=coverage)
 
 
 def parse_jsonl(
@@ -188,6 +197,7 @@ def parse_jsonl(
     builder = _builder(provider)
     candidates: list[CandidateInput] = []
     warnings: list[str] = []
+    coverage = _GenericCoverage()
     for line_number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -195,9 +205,10 @@ def parse_jsonl(
             value = json.loads(line)
         except json.JSONDecodeError:
             _append_warning(warnings, f"line {line_number}: invalid JSON skipped")
+            coverage.unparsed += 1
             continue
-        _consume_json_value(builder, source_name, value, candidates)
-    return _combine(builder.finish(), candidates, warnings)
+        _consume_json_value(builder, source_name, value, candidates, coverage)
+    return _combine(builder.finish(), candidates, warnings, coverage)
 
 
 def parse_text(
@@ -238,25 +249,29 @@ def _consume_json_value(
     source_name: str,
     value: Any,
     generic: list[CandidateInput],
+    coverage: _GenericCoverage,
 ) -> None:
     if isinstance(value, list):
         if not value:
             builder.note_file(source_name)
+            coverage.skipped += 1
             return
         for item in value:
-            recognized = builder.consume_json(source_name, item)
-            if not recognized:
-                _extract_json(item, generic)
+            _consume_json_value(builder, source_name, item, generic, coverage)
         return
     recognized = builder.consume_json(source_name, value)
+    candidate_count = len(generic)
     if not recognized:
         _extract_json(value, generic)
+    if not recognized and len(generic) == candidate_count:
+        coverage.skipped += 1
 
 
 def _combine(
     provider_result: ProviderExtraction,
     generic: Iterable[CandidateInput],
     warnings: Sequence[str] = (),
+    generic_coverage: _GenericCoverage | None = None,
 ) -> ParsedArchive:
     combined_warnings = _deduplicate_strings([*warnings, *provider_result.warnings])[:512]
     generic_list = list(generic)
@@ -297,6 +312,14 @@ def _combine(
     closed["recognized"] = max(int(closed.get("recognized", 0)), len(candidates))
     if generic_list and not provider_result.recognized:
         closed["recognized"] = max(closed["recognized"], len(candidates))
+    if generic_coverage is not None:
+        closed["skipped"] = int(closed.get("skipped", 0)) + generic_coverage.skipped
+        closed["unparsed"] = int(closed.get("unparsed", 0)) + generic_coverage.unparsed
+        stats["generic_skipped"] = generic_coverage.skipped
+        stats["generic_unparsed"] = generic_coverage.unparsed
+        if generic_coverage.unparsed:
+            complete = False
+    stats["closed_coverage"] = dict(closed)
     return ParsedArchive(
         candidates=candidates,
         warnings=combined_warnings,
@@ -396,15 +419,16 @@ def parse_archive_path(
     if suffix == ".json":
         builder = _builder(provider)
         generic: list[CandidateInput] = []
+        coverage = _GenericCoverage()
         try:
             with path.open("rb") as stream:
                 for document in _iter_json_documents(stream):
                     if progress is not None:
                         progress.check_cancelled()
-                    _consume_json_value(builder, safe_name, document, generic)
+                    _consume_json_value(builder, safe_name, document, generic, coverage)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise _invalid_json_error(error) from error
-        return _combine(builder.finish(), generic)
+        return _combine(builder.finish(), generic, generic_coverage=coverage)
     if suffix == ".jsonl":
         return _parse_jsonl_stream(path, safe_name, provider, progress=progress)
     if suffix in {".md", ".markdown", ".txt", ""}:
@@ -446,6 +470,7 @@ def _parse_jsonl_stream(
     builder = _builder(provider)
     generic: list[CandidateInput] = []
     warnings: list[str] = []
+    coverage = _GenericCoverage()
     processed = 0
     next_progress = 0
     with path.open("rb") as stream:
@@ -460,11 +485,12 @@ def _parse_jsonl_stream(
                 value = json.loads(raw_line.decode("utf-8-sig"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 _append_warning(warnings, f"line {line_number}: invalid JSON skipped")
+                coverage.unparsed += 1
                 continue
-            _consume_json_value(builder, source_name, value, generic)
+            _consume_json_value(builder, source_name, value, generic, coverage)
     if progress is not None:
         progress.advance_bytes(processed, message="raw source parsing complete")
-    return _combine(builder.finish(), generic, warnings)
+    return _combine(builder.finish(), generic, warnings, coverage)
 
 
 def parse_zip_bundle(
@@ -481,6 +507,7 @@ def parse_zip_bundle(
     builder = _builder(provider)
     generic: list[CandidateInput] = []
     warnings: list[str] = []
+    coverage = _GenericCoverage()
     unsupported_entries = 0
     source: io.BytesIO | Path = io.BytesIO(content) if isinstance(content, bytes) else content
     try:
@@ -541,7 +568,13 @@ def parse_zip_bundle(
                             for document in _iter_json_documents(
                                 stream, max_item_chars=max_json_item_chars
                             ):
-                                _consume_json_value(builder, safe_name, document, generic)
+                                _consume_json_value(
+                                    builder,
+                                    safe_name,
+                                    document,
+                                    generic,
+                                    coverage,
+                                )
                     elif suffix == ".jsonl":
                         _consume_zip_jsonl(
                             archive,
@@ -550,6 +583,7 @@ def parse_zip_bundle(
                             builder,
                             generic,
                             warnings,
+                            coverage,
                             progress=progress,
                         )
                     else:
@@ -567,6 +601,7 @@ def parse_zip_bundle(
                         if not recognized:
                             generic.extend(_labeled_text_candidates(text))
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    coverage.unparsed += 1
                     _append_warning(warnings, f"{safe_name}: {_invalid_json_error(error)}")
                 except InvalidStateError as error:
                     _append_warning(warnings, f"{safe_name}: {error}")
@@ -579,7 +614,7 @@ def parse_zip_bundle(
             f"{unsupported_entries} non-text archive entries were retained raw and skipped "
             "during memory extraction",
         )
-    return _combine(builder.finish(), generic, warnings)
+    return _combine(builder.finish(), generic, warnings, coverage)
 
 
 def _consume_zip_jsonl(
@@ -589,6 +624,7 @@ def _consume_zip_jsonl(
     builder: ProviderArchiveBuilder,
     generic: list[CandidateInput],
     warnings: list[str],
+    coverage: _GenericCoverage,
     *,
     progress: ImportProgressTracker | None = None,
 ) -> None:
@@ -609,8 +645,9 @@ def _consume_zip_jsonl(
                     warnings,
                     f"{source_name}: line {line_number}: invalid JSON skipped",
                 )
+                coverage.unparsed += 1
                 continue
-            _consume_json_value(builder, source_name, value, generic)
+            _consume_json_value(builder, source_name, value, generic, coverage)
 
 
 def _iter_json_documents(
@@ -799,8 +836,9 @@ class ArchiveImportService:
         )
         tracker.bind_source(source.id)
         tracker.durable_sink = self._durable_progress_sink(source.id)
-        tracker.advance_bytes(size, message="raw source preserved")
         try:
+            tracker.start_durable_heartbeats()
+            tracker.advance_bytes(size, message="raw source preserved")
             with tempfile.TemporaryDirectory(
                 prefix="atc-import-parse-", dir=self.store.database_path.parent
             ) as temporary_directory:
@@ -873,8 +911,9 @@ class ArchiveImportService:
         )
         tracker.bind_source(source.id)
         tracker.durable_sink = self._durable_progress_sink(source.id)
-        tracker.advance_bytes(len(content), message="raw source preserved")
         try:
+            tracker.start_durable_heartbeats()
+            tracker.advance_bytes(len(content), message="raw source preserved")
             tracker.set_phase("parsing", message="parsing preserved raw source")
             tracker.check_cancelled()
             parsed = (
@@ -991,11 +1030,12 @@ class ArchiveImportService:
             tracker.durable_sink = combined_sink
 
         attach_progress_sinks(source.id)
-        if progress_tracker is None:
-            tracker.set_phase("storing", message="using preserved raw source")
-            tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
         provider = str(source.metadata.get("provider", source.source_service))
         try:
+            tracker.start_durable_heartbeats()
+            if progress_tracker is None:
+                tracker.set_phase("storing", message="using preserved raw source")
+                tracker.advance_bytes(source.byte_size, message="preserved raw source ready")
             with tempfile.TemporaryDirectory(
                 prefix="atc-reprocess-", dir=self.store.database_path.parent
             ) as temporary_directory:
