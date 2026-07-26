@@ -85,6 +85,20 @@ administrator branch bypass and self-review capability remain explicit
 sole-maintainer residuals, not independent review. Optional secret-scanning
 validity checks and non-provider patterns remain disabled and are not claimed.
 
+Release-candidate run `30200529010` on exact main
+`8ec093ada6c5342417b850793aac7d81b9667810` passed validation and all four
+native builds, then stopped before draft creation when the artifact scanner
+reported three absolute-path findings. Content-free inspection of only the
+three POSIX artifact bundles localized all findings to opaque third-party
+compiled extensions inside the two macOS candidate ZIPs. ZIP scanning had
+applied human-readable developer-home detection to every member, unlike the
+existing top-level binary policy. The corrected scanner applies that P1 check
+only to text/sidecar members while retaining private-key, credential-canary,
+and raw-context-canary scans for every binary member. The 36 exact downloaded
+artifact files rescan clean locally, and adversarial regressions prove both
+sides of the boundary. The release workflow has not been rerun and no draft
+release was created.
+
 On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
 credential safety and the Windows windowed artifact can both be meaningful:
 `scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke
