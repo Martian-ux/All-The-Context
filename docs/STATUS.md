@@ -485,6 +485,28 @@ state is already noncurrent and creates no user queue.
   frozen release identity, release-key ceremony, and deliberate publication
   remain separate human-controlled gates.
 
+## V1 provider/import boundary / B-105
+
+- ChatGPT, Claude, and Grok now have versioned parser identities, a frozen
+  fictional shape manifest, and closed recognized/excluded/skipped/
+  unavailable/failed/unparsed coverage accounting. Unknown material keeps
+  coverage incomplete rather than silently widening a provider claim.
+- Core preflights the database volume, preserves and integrity-checks the raw
+  source before parsing, and parses path imports from a reconstructed
+  authoritative copy. Parser failure or cancellation retains inert raw bytes
+  for no-upload retry and does not partially publish current context.
+- Source-record progress, cancellation, parser-versioned retry, duplicate
+  suppression, and a versioned deterministic non-sparse boundary-canary
+  generator are implemented. The focused importer/provider slice passes 37
+  tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
+  pass for the integrated source.
+- B-105 is not accepted yet. The initial HTTP upload, hash pass, and SQLite
+  blob transaction still lack a durable operation identifier with cancellable
+  chunk heartbeats, so the frozen 5-second first-progress/cancel budget remains
+  open. Privacy-safe current real-export receipts for all three providers and
+  the exact 2,000,000,000-byte four-target import/export/restore receipts also
+  remain candidate-controlled acceptance work.
+
 ## Retrieval V3 integration
 
 - The frozen V2 comparator is pinned to `70a4808` with checked fixture hashes
@@ -599,6 +621,12 @@ state is already noncurrent and creates no user queue.
   662-test suite pass with four host-limited symlink skips. Exact commit
   `03a266f` passed all nine jobs in both hosted matrices. The final frozen
   release identity remains pending.
+- The B-105 provider/import implementation plus coordinator lifecycle
+  hardening passes Ruff, strict mypy across 72 source files, and 37 focused
+  raw-first recovery, cancellation, preflight, provider-shape, path-provenance,
+  and ingestion tests on Windows Python 3.14.3. This is source-level evidence;
+  the initial operation-progress gap and exact candidate receipts above remain
+  open.
 - Release-CI integration replay on Windows Python 3.14.3: 46 focused packaging,
   updater, retrieval-gate, and MCP contract tests pass. The exact functional
   source at `f3496df` passed both complete hosted CI matrices.

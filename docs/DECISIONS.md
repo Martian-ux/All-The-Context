@@ -1368,3 +1368,28 @@ removes its credential, and restores the exact prior configuration bytes.
 Backend errors are surfaced without credential values. Exact-package real
 credential-service receipts on every mandatory OS remain a release-acceptance
 gate.
+
+## ADR-057: Preserve imported bytes before making parser claims
+
+**Status:** accepted 2026-07-26.
+
+Core commits an inert raw import and verifies its content-addressed identity
+before a provider parser may create observations. Path imports are parsed from
+a bounded temporary reconstruction of that authoritative blob, not from the
+caller-owned path after storage. A parser failure or acknowledged cancellation
+marks the source terminal without publishing current context and leaves the raw
+bytes available for no-upload, parser-versioned retry.
+
+Auto-detection may initially store a provisional provider label. After parsing,
+Core reclassifies that source transactionally to the versioned parser-derived
+identity; a collision may reuse an existing identical source only when the
+provisional source has no observations. This keeps content identity,
+provenance, retry idempotency, and duplicate suppression aligned.
+
+ChatGPT, Claude, and Grok claims carry explicit parser identities, frozen
+fictional shapes, and closed coverage counts. Unknown/unparsed material is a
+visible incomplete-coverage result, not implicit support. This source-level
+decision does not satisfy the beta scale gate: the pre-source upload/hash/blob
+phase still needs a durable operation identifier and cancellable chunk
+heartbeats, and real-provider plus exact-boundary candidate receipts remain
+mandatory.

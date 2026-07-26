@@ -82,17 +82,28 @@ parser version to reprocess the source.
   exact multi-platform candidate receipts remain acceptance work. The frozen
   reference floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free.
   Core plus import-worker RSS is capped at 1 GiB; incremental import storage is
-  capped at four times raw size plus 1 GiB. Progress starts within 5 seconds and
-  advances every 5 seconds or 64 MiB; cancellation is acknowledged within 5
-  seconds and quiesces safely within 30 seconds; import, source-inclusive
-  export, and isolated restore each have a 60-minute ceiling.
+  capped at four times raw size plus 1 GiB. The beta acceptance contract
+  requires progress to start within 5 seconds and advance every 5 seconds or
+  64 MiB, cancellation to be acknowledged within 5 seconds and quiesce safely
+  within 30 seconds, and import, source-inclusive export, and isolated restore
+  each to finish within 60 minutes.
 - Disk preflight requires the greater of four-times-source-plus-1-GiB or any
-  measured durable high-water plus 25 percent before accepting a raw source.
-  Durable progress is stored on the source record (`import_progress`), reaches
-  100 percent only after integrity verification and atomic publication, and is
-  queryable via CLI/API. Cancel requests mark an in-flight import without
-  publishing current context; retries use the preserved raw blob and
-  parser-versioned idempotency keys so decisions are not duplicated.
+  measured durable high-water plus 25 percent on the Core database volume
+  before accepting a raw source. Once the source record exists, durable
+  progress is stored on it (`import_progress`), reaches 100 percent only after
+  integrity verification and atomic publication, and is queryable via CLI/API.
+  Cancel requests mark an in-flight import without publishing current context;
+  retries use the preserved raw blob and parser-versioned idempotency keys so
+  decisions are not duplicated.
+- Core commits and integrity-checks the inert raw source before parsing it.
+  Parser failure or cancellation therefore leaves a failed/cancelled source
+  available for no-upload retry and publishes no partial current context.
+  Path imports parse a temporary copy reconstructed from that authoritative
+  blob, not the caller-owned path.
+- The initial HTTP upload, source hash, and SQLite blob transaction do not yet
+  expose a durable operation identifier or cancellable chunk heartbeat. The
+  exact-candidate 5-second first-progress/cancel budget is therefore still an
+  implementation blocker, not satisfied by later source-record telemetry.
 - A deterministic physically allocated/non-sparse boundary canary generator
   (`boundary-canary-v1`) publishes version, SHA-256, 8 MiB chunk-count
   expectations, nonzero parse/publication material, and interruption

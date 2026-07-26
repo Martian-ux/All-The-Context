@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -101,6 +102,7 @@ class ImportProgress:
             "message": self.message,
             "cancel_requested": self.cancel_requested,
             "cancel_acknowledged": self.cancel_acknowledged_at_monotonic is not None,
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
 
@@ -236,9 +238,24 @@ class ImportCancelRegistry:
             event = self._events.get(key)
             return bool(event is not None and event.is_set())
 
+    def alias(self, alias: str, key: str) -> None:
+        """Bind another public identifier to the same cancellation event."""
+
+        with self._lock:
+            event = self._events.get(key)
+            if event is None:
+                event = threading.Event()
+                self._events[key] = event
+            self._events[alias] = event
+
     def clear(self, key: str) -> None:
         with self._lock:
-            self._events.pop(key, None)
+            event = self._events.get(key)
+            if event is None:
+                return
+            for candidate, registered in list(self._events.items()):
+                if registered is event:
+                    self._events.pop(candidate, None)
 
 
 DEFAULT_CANCEL_REGISTRY = ImportCancelRegistry()
@@ -302,11 +319,6 @@ class ImportProgressTracker:
             if processed < self._bytes_processed:
                 # Monotonic: never report less committed progress.
                 processed = self._bytes_processed
-            # Stay within one committed storage chunk of true progress.
-            if self.bytes_total > 0:
-                max_ahead = self._bytes_processed + SOURCE_BLOB_CHUNK_BYTES
-                if processed > max_ahead and self._phase == "storing":
-                    processed = max_ahead
             self._bytes_processed = processed
             if message:
                 self._message = message
@@ -352,6 +364,9 @@ class ImportProgressTracker:
             self.registry.clear(key)
 
     def bind_source(self, source_id: str) -> None:
+        current_key = self.cancel_key or self.source_id
+        if current_key is not None and current_key != source_id:
+            self.registry.alias(source_id, current_key)
         self.source_id = source_id
         if self.cancel_key is None:
             self.cancel_key = source_id

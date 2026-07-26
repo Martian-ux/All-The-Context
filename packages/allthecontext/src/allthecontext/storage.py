@@ -792,6 +792,67 @@ class CoreStore:
             if result.rowcount != 1:
                 raise NotFoundError("source not found")
 
+    def reclassify_source(
+        self,
+        source_id: str,
+        *,
+        source_service: str,
+        source_type: str,
+    ) -> SourceOut:
+        """Apply parser-derived source identity after the raw blob is durable."""
+
+        with self.transaction() as connection:
+            row = self._source_row_tx(connection, source_id, include_deleted=False)
+            if row is None:
+                raise NotFoundError("source not found")
+            if (
+                str(row["source_service"]) == source_service
+                and str(row["source_type"]) == source_type
+            ):
+                return self._source_out(row)
+            existing = connection.execute(
+                "SELECT sr.*,sb.byte_size,sb.media_type,"
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                "WHERE sr.vault_id=? AND sr.content_hash=? AND sr.source_service=? "
+                "AND sr.source_type=? AND sr.id<>?",
+                (
+                    row["vault_id"],
+                    row["content_hash"],
+                    source_service,
+                    source_type,
+                    source_id,
+                ),
+            ).fetchone()
+            if existing is not None:
+                if int(row["candidate_count"]) != 0:
+                    raise InvalidStateError(
+                        "cannot merge a reclassified source that already has observations"
+                    )
+                if existing["deleted_at"] is not None:
+                    self._restore_source_tx(
+                        connection,
+                        str(existing["id"]),
+                        reason="restored by duplicate re-import",
+                        actor="local-import",
+                    )
+                    existing = self._source_row_tx(
+                        connection,
+                        str(existing["id"]),
+                        include_deleted=False,
+                    )
+                    assert existing is not None
+                connection.execute("DELETE FROM source_records WHERE id=?", (source_id,))
+                return self._source_out(existing, duplicate=True)
+            connection.execute(
+                "UPDATE source_records SET source_service=?,source_type=? WHERE id=?",
+                (source_service, source_type, source_id),
+            )
+            updated = self._source_row_tx(connection, source_id, include_deleted=False)
+            assert updated is not None
+            return self._source_out(updated)
+
     def update_source_progress(
         self,
         source_id: str,

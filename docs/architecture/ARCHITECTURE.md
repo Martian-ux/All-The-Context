@@ -87,18 +87,21 @@ retrieved as current context.
 versioned policy may add configurable retention/decay without making tentative
 state current or turning it into user work.
 
-Raw imported source material may be stored immediately, but imported text is
-untrusted data, never instructions. Provider archives are preserved
-byte-for-byte while recognized conversation arrays are normalized one
-conversation at a time. Only explicit user-authored durable statements from a
-normalized provider archive are eligible for automatic application; generic
-document observations remain tentative untrusted evidence. Provider
-memory/profile summaries are tentative by default. Provider adapters exclude
-assistant, tool, system, and attachment roles; generic instruction-bearing text
-remains tentative and is never executed. A source does not publish policy
-decisions to current context until its
-extraction session completes successfully. Batches and sessions are idempotent
-and resumable, and every session records available and unavailable coverage.
+Raw imported source material is committed and integrity-checked before parsing;
+imported text is untrusted data, never instructions. Path imports parse a
+reconstructed copy of the authoritative Core blob rather than trusting the
+caller-owned path after storage. Provider archives are preserved byte-for-byte
+while recognized conversation arrays are normalized one conversation at a
+time. Only explicit user-authored durable statements from a normalized
+provider archive are eligible for automatic application; generic document
+observations remain tentative untrusted evidence. Provider memory/profile
+summaries are tentative by default. Provider adapters exclude assistant, tool,
+system, and attachment roles; generic instruction-bearing text remains
+tentative and is never executed. A source does not publish policy decisions to
+current context until its extraction session completes successfully. Parser
+failure or cancellation retains the inert raw blob for retry. Batches and
+sessions are idempotent and resumable, and every session records available and
+unavailable coverage.
 
 Ordinary deletion and restoration are reversible, provenance-backed current
 context changes. Irreversible purge remains an explicit administrator state

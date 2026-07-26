@@ -4,6 +4,8 @@ import threading
 from pathlib import Path
 
 import pytest
+from allthecontext import import_boundary as import_boundary_module
+from allthecontext import importers as importers_module
 from allthecontext.boundary_canary import (
     BOUNDARY_CANARY_GENERATOR_VERSION,
     write_boundary_canary,
@@ -75,7 +77,9 @@ def test_progress_is_monotonic_and_reserves_100_for_completion() -> None:
     assert first.percent < 100
     assert second.percent < 100
     tracker.complete()
-    assert tracker.snapshot().percent == 100
+    completed = tracker.snapshot()
+    assert completed.percent == 100
+    assert completed.as_dict()["updated_at"].endswith("+00:00")
 
 
 def test_cancel_registry_acknowledges_in_flight_import() -> None:
@@ -140,6 +144,110 @@ def test_retry_from_preserved_source_is_idempotent(tmp_path: Path) -> None:
     third = service.reprocess_source(source_id)
     assert third["session"]["status"] == "duplicate"
     assert third["candidate_ids"] == first["candidate_ids"]
+
+
+def test_parser_failure_keeps_raw_source_for_no_upload_retry(tmp_path: Path) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    invalid = b'{"kind":"fact","content":'
+
+    with pytest.raises(InvalidStateError, match="invalid JSON"):
+        service.import_bytes("broken.json", invalid)
+
+    sources, total = core.store.list_sources()
+    assert total == 1
+    source = sources[0]
+    assert source["import_status"] == "failed"
+    assert source["byte_size"] == len(invalid)
+    assert core.store.get_source_content(source["id"]) == invalid
+    assert core.store.candidate_ids_for_source(source["id"]) == []
+
+
+def test_path_preflight_measures_the_core_database_volume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "incoming" / "notes.jsonl"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(
+        '{"kind":"goal","content":"Keep preflight on the Core volume"}\n',
+        encoding="utf-8",
+    )
+    core = CoreService.in_directory(tmp_path / "core-volume")
+    measured: list[Path] = []
+    real_disk_usage = import_boundary_module.shutil.disk_usage
+
+    def record_disk_usage(path: Path):
+        measured.append(Path(path).resolve())
+        return real_disk_usage(path)
+
+    monkeypatch.setattr(import_boundary_module.shutil, "disk_usage", record_disk_usage)
+    ArchiveImportService(core.store).import_path(source_path)
+
+    assert measured
+    assert measured[0] == core.store.database_path.parent.resolve()
+    assert measured[0] != source_path.parent.resolve()
+
+
+def test_path_import_parses_the_preserved_raw_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "mutable.jsonl"
+    original = b'{"kind":"fact","content":"Original preserved fact"}\n'
+    replacement = b'{"kind":"fact","content":"Mutated path fact"}\n'
+    source_path.write_bytes(original)
+    core = CoreService.in_directory(tmp_path / "core")
+    real_add_source_file = core.store.add_source_file
+
+    def store_then_mutate(*args, **kwargs):  # type: ignore[no-untyped-def]
+        stored = real_add_source_file(*args, **kwargs)
+        source_path.write_bytes(replacement)
+        return stored
+
+    monkeypatch.setattr(core.store, "add_source_file", store_then_mutate)
+    result = ArchiveImportService(core.store).import_path(source_path)
+
+    assert core.store.get_source_content(result["source"]["id"]) == original
+    observations = [
+        core.store.get_candidate(candidate_id) for candidate_id in result["candidate_ids"]
+    ]
+    assert [item.content for item in observations] == ["Original preserved fact"]
+
+
+def test_cancel_during_jsonl_parse_preserves_raw_without_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ImportCancelRegistry()
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store, cancel_registry=registry)
+    original_consume = importers_module._consume_json_value
+    consumed = 0
+
+    def consume_and_cancel(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal consumed
+        original_consume(*args, **kwargs)
+        consumed += 1
+        if consumed == 1:
+            sources, _total = core.store.list_sources()
+            assert len(sources) == 1
+            registry.request_cancel(sources[0]["id"])
+
+    monkeypatch.setattr(importers_module, "_consume_json_value", consume_and_cancel)
+    content = (
+        b'{"kind":"fact","content":"Synthetic parse cancellation one"}\n'
+        b'{"kind":"fact","content":"Synthetic parse cancellation two"}\n'
+    )
+
+    with pytest.raises(ImportCancelledError):
+        service.import_bytes("cancel-during-parse.jsonl", content)
+
+    sources, total = core.store.list_sources()
+    assert total == 1
+    assert sources[0]["import_status"] == "cancelled"
+    assert core.store.get_source_content(sources[0]["id"]) == content
+    assert core.store.status()["counts"]["active_records"] == 0
 
 
 def test_scaled_boundary_canary_imports_exports_and_restores(tmp_path: Path) -> None:
