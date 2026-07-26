@@ -75,11 +75,7 @@ def test_artifact_zip_keeps_p0_scans_but_ignores_binary_build_roots(tmp_path: Pa
     archive = tmp_path / "compiled-wheel.zip"
     token = _synthetic("TOKEN", "OPAQUEBINARY1").encode()
     raw_context = _synthetic("RAW_CONTEXT", "OPAQUEBINARY2").encode()
-    private_key = (
-        b"-----BEGIN "
-        + b"PRIVATE KEY-----\nfixture\n-----END "
-        + b"PRIVATE KEY-----"
-    )
+    private_key = b"-----BEGIN " + b"PRIVATE KEY-----\nfixture\n-----END " + b"PRIVATE KEY-----"
     build_root = b"/Users/" + b"upstream-builder/" + b"wheel-source"
     member = "Frameworks/vendor/native-extension.so"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
@@ -98,9 +94,7 @@ def test_artifact_zip_keeps_p0_scans_but_ignores_binary_build_roots(tmp_path: Pa
     report = scan_artifact_directory(tmp_path)
 
     member_path = f"{archive.name}:{member}"
-    p0_classes = {
-        item.finding_class for item in report.findings if item.path == member_path
-    }
+    p0_classes = {item.finding_class for item in report.findings if item.path == member_path}
     assert p0_classes >= {
         "private_key_marker",
         "credential_canary",
