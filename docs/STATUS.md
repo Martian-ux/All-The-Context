@@ -103,7 +103,7 @@ security regressions only; B-103 has removed the ordinary Core product routes
 that would call it.
 
 The integrated beta-safety implementation now also closes the source-level
-parts of B-101 and B-104:
+parts of B-101, B-102, and B-104:
 
 - direct secret-like proposals, batches, corrections/errors, and Relay queue
   submissions are refused before payload persistence; forget reasons are
@@ -116,13 +116,34 @@ parts of B-101 and B-104:
   and encrypted export/restore bytes;
 - normal credential setup now requires Windows Credential Manager, macOS
   Keychain, or Linux Secret Service, while plaintext development storage
-  requires explicit opt-in; and
+  requires explicit opt-in;
 - failed credential or managed-client configuration revokes any new principal,
-  removes the credential, and restores the prior client configuration bytes.
+  removes the credential, and restores the prior client configuration bytes;
+- A-09 / B-102 client witness: only ATC-configured same-device Codex/Claude
+  principals with the closed `witness:explicit_user_statement` grant (plus
+  intentional local `admin`/`*`) may force applied current context from an
+  explicit-user claim; authentication and `context:propose` alone stay
+  tentative; omission/default false stays tentative; exact retry is
+  idempotent and exact duplicates reinforce; clients cannot self-add the
+  grant or smuggle origin/disposition/force fields; authenticated archive
+  batches cannot re-label `provider_archive` material as witnessed without
+  the grant; Core-controlled importers (no client principal) remain a Core
+  assignment path; Relay claims cannot attest direct user statements;
+- B-102 minimum chronological conflict safety: unkeyed archive-import
+  preferences/goals/projects/decisions/workflows/constraints share one
+  current lineage per kind ordered by explicitness then `observed_at`, with
+  synthetic fixture `tests/fixtures/b102_chronological_conflicts.json` and
+  reverse-order coverage; direct unkeyed client goals remain independent
+  current records; decision reason/time/policy version remain inspectable
+  without persisting credentials; residual truth is an explicit local trust
+  grant, not cryptographic authorship proof—an authorized malicious witness
+  client can lie.
 
 Historical external backups and device remanence are not called repaired.
-Real OS credential services and the secret boundary still require exact
-downloaded-artifact acceptance on the frozen candidate.
+Real OS credential services, the secret boundary, and exact Codex/Claude
+client artifacts still require exact downloaded-artifact acceptance on the
+frozen candidate. Source-level BETA-P03/BETA-S02 evidence is content-free
+unit/integration coverage, not fabricated exact-client receipts.
 
 ## AI-memory research direction
 

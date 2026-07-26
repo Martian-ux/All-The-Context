@@ -7,6 +7,7 @@ from pathlib import Path
 
 from allthecontext.models import (
     CandidateInput,
+    ClientCreate,
     CoverageReport,
     IngestionMode,
     ObservationDisposition,
@@ -227,3 +228,92 @@ def test_different_kinds_do_not_collide(tmp_path: Path) -> None:
     assert goal.disposition == ObservationDisposition.APPLIED
     assert constraint.disposition == ObservationDisposition.APPLIED
     assert goal.record_id != constraint.record_id
+
+
+def test_reverse_chronological_archive_import_keeps_newer_current(tmp_path: Path) -> None:
+    """Older statements arriving after newer ones must not become concurrent truth."""
+
+    store = _store(tmp_path)
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=["fiction-archive"],
+        unavailable_sources=[],
+        idempotency_key="reverse-chrono-begin",
+    )
+    newer = store.submit_batch(
+        str(session["session_id"]),
+        "batch-newer",
+        [
+            CandidateInput(
+                kind="preference",
+                content="Prefer detailed answers for fiction reverse chrono.",
+                observed_at="2025-06-15T09:30:00+00:00",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                source_service="fiction-provider",
+            )
+        ],
+    )
+    older = store.submit_batch(
+        str(session["session_id"]),
+        "batch-older",
+        [
+            CandidateInput(
+                kind="preference",
+                content="Prefer short answers for fiction reverse chrono.",
+                observed_at="2024-01-10T12:00:00+00:00",
+                explicit_user_statement=True,
+                source_type="provider_archive",
+                source_service="fiction-provider",
+            )
+        ],
+    )
+    store.finish_ingestion(
+        str(session["session_id"]),
+        CoverageReport(available=["fiction-archive"], complete=True),
+    )
+    newer_obs = store.get_candidate(str(newer["candidate_ids"][0]))
+    older_obs = store.get_candidate(str(older["candidate_ids"][0]))
+    assert newer_obs.disposition == ObservationDisposition.APPLIED
+    assert newer_obs.record_id is not None
+    assert older_obs.disposition == ObservationDisposition.IGNORED
+    assert older_obs.record_id == newer_obs.record_id
+    assert (
+        store.get_record(newer_obs.record_id).content
+        == "Prefer detailed answers for fiction reverse chrono."
+    )
+
+
+def test_unattested_unkeyed_client_contradictions_do_not_become_current(
+    tmp_path: Path,
+) -> None:
+    """Non-witness explicit claims stay tentative; contradictions never both apply."""
+
+    store = _store(tmp_path)
+    plain, _ = store.create_client(
+        ClientCreate(name="plain", scopes=["context:propose"])
+    )
+    first = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction unattested Alpha.",
+            explicit_user_statement=True,
+            observed_at="2024-01-01T00:00:00+00:00",
+        ),
+        client=plain,
+    )
+    second = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction unattested Beta.",
+            explicit_user_statement=True,
+            observed_at="2025-01-01T00:00:00+00:00",
+            idempotency_key="unattested-beta",
+        ),
+        client=plain,
+    )
+    assert first.disposition == ObservationDisposition.TENTATIVE
+    assert second.disposition == ObservationDisposition.TENTATIVE
+    assert first.record_id is None
+    assert second.record_id is None
+    assert store.status()["counts"]["active_records"] == 0

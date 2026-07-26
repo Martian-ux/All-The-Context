@@ -73,20 +73,32 @@ def effective_explicit_user_statement(
 ) -> tuple[bool, str | None]:
     """Derive Core-authoritative explicitness from origin and witness grant.
 
-    Clients may *claim* explicit_user_statement in a payload. Only an
-    ATC-configured same-device principal with the explicit-statement witness
-    grant (or admin/*) may make that claim force applied current context.
-    Authentication and ``context:propose`` alone are insufficient. Archive and
-    local-admin paths assign explicitness from Core, not client self-escalation.
+    Clients may *claim* ``explicit_user_statement`` in a payload. Only an
+    ATC-configured same-device principal with the closed
+    ``witness:explicit_user_statement`` grant (or intentional ``admin``/``*``)
+    may make that claim force applied current context on authenticated
+    ongoing-client routes. Authentication and ``context:propose`` alone are
+    insufficient.
+
+    Local-admin and legacy-migration paths assign explicitness from Core.
+    Core-controlled archive importers (no client principal) may also assign it
+    for trusted parser output. Authenticated non-admin clients cannot re-label
+    batch, provider, import, or Relay material as witnessed user evidence by
+    smuggling origin, role, force, or ``source_type`` fields.
     """
     if not claimed:
         return False, None
     if origin in {
         ObservationOrigin.LOCAL_ADMIN,
         ObservationOrigin.LEGACY_MIGRATION,
-        ObservationOrigin.ARCHIVE_IMPORT,
     }:
         return True, None
+    if origin == ObservationOrigin.ARCHIVE_IMPORT:
+        # Principal is None only on the Core importer path. Authenticated
+        # clients still need the closed witness grant (or admin/*).
+        if principal is None or principal_may_attest_explicit_user_statement(principal):
+            return True, None
+        return False, "explicit claim reduced to tentative: principal lacks witness grant"
     if origin == ObservationOrigin.RELAY_QUEUE:
         return False, "remote relay proposals cannot attest direct user statements"
     if principal_may_attest_explicit_user_statement(principal):

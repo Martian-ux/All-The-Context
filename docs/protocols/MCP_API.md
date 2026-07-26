@@ -35,9 +35,16 @@ state separately.
 Clients cannot request a disposition or write a current record. Core derives
 origin from the authenticated route and ingestion session, evaluates the
 client-asserted basis and evidence with hard policy, then records the result
-under its versioned memory policy. An explicit correction that is eligible
-under this policy updates current context before the successful tool call
-returns. `forget_context` requires a record ID and reason, creates a reversible
+under its versioned memory policy. `propose_memory` defaults
+`explicit_user_statement` to false. Setting it true is effective only when
+the authenticated principal holds the closed
+`witness:explicit_user_statement` grant (or intentional local `admin`/`*`);
+authentication and propose scope alone reduce the claim to tentative.
+Inference, summaries, and provider/import/Relay text must leave the flag
+false. Payload fields cannot select origin, disposition, or force current
+state. An explicit correction that is eligible under this policy updates
+current context before the successful tool call returns.
+`forget_context` requires a record ID and reason, creates a reversible
 tombstone before returning, and is not a purge. When routed through dormant
 Relay compatibility, it remains a staged observation until Core evaluates it.
 Administrative permission, availability, restoration, and irreversible purge

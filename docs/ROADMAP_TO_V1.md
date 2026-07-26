@@ -99,7 +99,7 @@ Current main is a strong implementation baseline, not a release candidate.
 
 | Area | Existing strength | Beta gap |
 |---|---|---|
-| Core and policy | One authoritative Core; automatic dispositions; correction; reversible delete/restore; purge barriers | Secret-like direct content can enter durable observation history before it is ignored; the accepted configured-client witness grant and minimum imported-conflict behavior still need implementation proof |
+| Core and policy | One authoritative Core; automatic dispositions; correction; reversible delete/restore; purge barriers; source-level B-102 witness grant and unkeyed archive conflict collapse | Exact packaged Codex/Claude witness E2E receipts and generalized multi-slot conflict normalization remain open |
 | Retrieval | Authorization/time-first Retrieval V3, bounded FTS5, deterministic selection, 1k/10k gates | Repeat safety and quality gates on the exact candidate |
 | Imports | Generic and ChatGPT/Claude/Grok parsers, raw preservation, atomic finish, retry, bounded chunks | Current real exports for all three providers plus exact-boundary, progress/cancel, resource, interruption, export, and restore evidence at 2,000,000,000 bytes |
 | Desktop | Windows/macOS/Linux packages, setup flow, managed MCP adapter, dashboard | Downloaded-artifact browser/client acceptance in all three mandatory OS families |
@@ -511,12 +511,12 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 |---|---|---|---|
 | BETA-P01 | Install/start without developer tooling on every claimed platform | Earlier hosted/package evidence | Exact downloaded-artifact clean-machine receipts |
 | BETA-P02 | One-time claimed Codex/Claude connection survives restart | Earlier tests | Real-client exact-artifact receipt |
-| BETA-P03 | Direct context applies and is later retrieved without review | Earlier tests | Accepted witness model plus exact-client E2E |
+| BETA-P03 | Direct context applies and is later retrieved without review | Source-level automatic apply/retrieve and witness policy tests pass; residual is exact-client E2E | Exact packaged Codex/Claude observe-to-retrieve receipt |
 | BETA-P04 | Current mandatory provider imports are truthful | Synthetic/parser evidence | Fresh nonempty real-export receipts, frozen shape canaries, and complete count reconciliation |
 | BETA-P05 | Correction, record/source delete/restore, provenance, history, and deliberate purge are reachable | Earlier API/tests; packaged recovery/admin purge surface integrated in source packaging | Exact-artifact UI/MCP plus packaged administrator receipt |
 | BETA-P06 | Basic keyboard/focus/error/narrow-width behavior | Partial tests | Real browser receipt |
 | BETA-S01 | Direct secret-like payload or guessable verifier is not durably retained | Open | Pre-ledger refusal, no unkeyed fingerprint, repair/compaction, raw SQLite/WAL/freelist/export/diagnostic scans |
-| BETA-S02 | Client witness and minimum conflict handling are safe and explicit | Trust decision accepted; implementation/fixtures partial | Authorized configured-client contract and chronological fixtures |
+| BETA-S02 | Client witness and minimum conflict handling are safe and explicit | Source implementation and chronological fixtures integrated; residual exact-client evidence open | Exact packaged authorized-client witness and conflict receipts |
 | BETA-S03 | Credentials use accepted protected storage and setup rolls back | Partial | Real OS stores; no silent plaintext; orphan-free failure |
 | BETA-S04 | Supported artifacts expose only the Core product boundary | Open | No active Edge operation path; isolated cleanup proof |
 | BETA-S05 | Browser handoff/session credentials obey the accepted design | Partial | URL/ticket/session/referrer/cache/revocation browser tests |

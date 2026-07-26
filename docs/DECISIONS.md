@@ -1431,3 +1431,25 @@ This decision does not mark BETA-D03, provider, 2 GB, or browser/client gates
 passed. Exact downloaded-artifact and operator receipts remain mandatory and
 use the existing content-free acceptance-receipt fields without silently
 widening release inventory allowlists.
+
+## ADR-053 implementation note: A-09 / B-102 client witness (source-complete)
+
+**Status:** source-level implementation under ADR-053 A-09; accepted residual
+risks unchanged. Does not satisfy exact packaged Codex/Claude receipts.
+
+Core enforces the closed capability `witness:explicit_user_statement` on
+authenticated ongoing-client and authenticated archive-batch paths. Desktop
+setup assigns that class only to ATC-configured same-device Codex and Claude
+principals; authentication, `context:propose`, and `context:ingest` alone do
+not. Intentional local `admin`/`*` remain local authorities. Payload schemas
+forbid smuggled origin/disposition/force fields. Relay proposals cannot attest
+direct user statements. Core-controlled importers with no client principal may
+still assign archive explicitness for trusted parser output. Unkeyed
+archive-import preference/goal/project/decision/workflow/constraint lineages
+collapse conservatively by explicitness then `observed_at` so contradictory
+imported history cannot all remain confident current truth. Exact duplicate
+retries are idempotent; matching content reinforces rather than duplicates.
+Decision reason, decided_at, and policy_version remain inspectable without
+persisting credentials. Residual honesty: this is a local trust grant, not
+cryptographic authorship proof, and an authorized malicious witness client can
+lie.
