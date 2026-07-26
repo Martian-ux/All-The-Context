@@ -7,7 +7,6 @@ turns the resulting decision into current context.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -17,15 +16,9 @@ from .models import (
     ObservationDisposition,
     Sensitivity,
 )
+from .secret_boundary import contains_direct_secret
 
 AUTOMATIC_POLICY_VERSION = "automatic-v1"
-
-_SECRET_HINT = re.compile(
-    r"(?:api[_ -]?key|password|passphrase|private[_ -]?key|access[_ -]?token|"
-    r"refresh[_ -]?token|client[_ -]?secret|secret)\b\s*(?::|=|\bis\b|\bwas\b)",
-    flags=re.IGNORECASE,
-)
-
 
 class ObservationOrigin(StrEnum):
     ONGOING_CLIENT = "ongoing_client"
@@ -53,24 +46,6 @@ class PolicyDecision:
 
 def normalized_observation_text(value: str) -> str:
     return " ".join(value.casefold().split())
-
-
-def _contains_secret_like_material(candidate: CandidateInput) -> bool:
-    def structured_contains(value: object) -> bool:
-        if isinstance(value, dict):
-            return any(
-                _SECRET_HINT.search(f"{key}:") is not None or structured_contains(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(structured_contains(item) for item in value)
-        return isinstance(value, str) and _SECRET_HINT.search(value) is not None
-
-    return (
-        _SECRET_HINT.search(candidate.content) is not None
-        or _SECRET_HINT.search(candidate.evidence or "") is not None
-        or structured_contains(candidate.structured_value)
-    )
 
 
 class AutomaticMemoryPolicy:
@@ -115,7 +90,7 @@ class AutomaticMemoryPolicy:
                 "automatic context maintenance is disabled",
                 availability,
             )
-        if _contains_secret_like_material(candidate):
+        if contains_direct_secret(candidate):
             return PolicyDecision(
                 ObservationDisposition.IGNORED,
                 "secret-like content is never promoted to current context",

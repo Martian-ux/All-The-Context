@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import uuid
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -22,6 +22,11 @@ from allthecontext.relay.oauth import (
 )
 from allthecontext.relay.service import ClientIdentity, RelayService
 from allthecontext.replication import JsonValue
+from allthecontext.secret_boundary import (
+    SECRET_DETECTOR_VERSION,
+    SECRET_REFUSAL_REASON,
+    contains_secret_like_value,
+)
 
 
 def _annotations(
@@ -83,10 +88,23 @@ def _public_record(record: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if key in allowed}
 
 
-def _automatic_proposal_key(payload: object) -> str:
-    """Make exact retries stable while allowing corrected metadata to be proposed."""
+def _automatic_proposal_key(_payload: object | None = None) -> str:
+    """Create an opaque operation ID unrelated to queued proposal content."""
 
-    return hashlib.sha256(json_for_hash(payload).encode("utf-8")).hexdigest()
+    return str(uuid.uuid4())
+
+
+def _secret_refusal() -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "refused": True,
+        "canonical": False,
+        "authority": "core",
+        "disposition": "ignored",
+        "reason_code": SECRET_REFUSAL_REASON,
+        "detector_version": SECRET_DETECTOR_VERSION,
+        "user_action_required": True,
+    }
 
 
 def build_edge_mcp(
@@ -411,6 +429,8 @@ def build_edge_mcp(
             "source_service": identity.client_id,
             "provenance": provenance,
         }
+        if contains_secret_like_value(proposal):
+            return _secret_refusal()
         key = idempotency_key or _automatic_proposal_key(proposal)
         queued, replayed = service.propose(
             identity,
@@ -455,10 +475,12 @@ def build_edge_mcp(
                 "explicit_user_statement": bool(suggested_correction),
             },
         }
-        key = hashlib.sha256(json_for_hash(payload).encode()).hexdigest()
+        if contains_secret_like_value(payload):
+            return _secret_refusal()
+        key = _automatic_proposal_key()
         queued, replayed = service.propose(
             identity,
-            idempotency_key=f"context-error:{key}",
+            idempotency_key=key,
             proposal=payload,
         )
         return {
@@ -480,7 +502,11 @@ def build_edge_mcp(
         identity = _identity(vault_id, required_scope=PROPOSE_SCOPE)
         payload: dict[str, JsonValue] = {
             "kind": "context_forget",
-            "content": reason,
+            "content": (
+                "Explicit user forget request"
+                if contains_secret_like_value(reason)
+                else reason
+            ),
             "scope": [],
             "confidence": 1.0,
             "sensitivity": "sensitive",
@@ -491,10 +517,10 @@ def build_edge_mcp(
                 "explicit_user_statement": True,
             },
         }
-        key = hashlib.sha256(json_for_hash(payload).encode()).hexdigest()
+        key = _automatic_proposal_key()
         queued, replayed = service.propose(
             identity,
-            idempotency_key=f"forget:{key}",
+            idempotency_key=key,
             proposal=payload,
         )
         return {

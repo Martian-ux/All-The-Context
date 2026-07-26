@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import os
 import sys
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import replace
@@ -30,7 +30,6 @@ from allthecontext.credentials import KeyringCredentialStore
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import CoreProbe, launch_core, probe_core
 from allthecontext.http_client import ContextApiError, ContextHttpClient
-from allthecontext.replication import canonical_json
 
 MANAGED_CORE_STARTUP_SECONDS = 30.0
 
@@ -117,10 +116,10 @@ def _safe(call: Callable[[], Any]) -> dict[str, Any]:
         return exc.as_dict()
 
 
-def _automatic_proposal_key(payload: dict[str, Any]) -> str:
-    """Make retries stable while treating metadata corrections as new proposals."""
+def _automatic_proposal_key(_payload: dict[str, Any] | None = None) -> str:
+    """Create an opaque operation ID with no relationship to proposal content."""
 
-    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return str(uuid.uuid4())
 
 
 def build_mcp() -> FastMCP:
@@ -277,7 +276,7 @@ def build_mcp() -> FastMCP:
             "supersedes": supersedes,
             "observed_at": observed_at,
         }
-        payload["idempotency_key"] = idempotency_key or _automatic_proposal_key(payload)
+        payload["idempotency_key"] = idempotency_key or _automatic_proposal_key()
         return _safe(lambda: _client().propose_memory(payload))
 
     @server.tool()

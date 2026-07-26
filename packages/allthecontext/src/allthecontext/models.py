@@ -327,6 +327,19 @@ class ObservationOut(CandidateInput):
     policy_version: str | None = None
 
 
+class SecretRefusalOut(StrictModel):
+    """Content-free receipt for a direct payload stopped before the ledger."""
+
+    id: str
+    refused: Literal[True] = True
+    disposition: Literal["ignored"] = "ignored"
+    reason_code: Literal["direct_secret_like_content"] = "direct_secret_like_content"
+    detector_version: str
+    created_at: str
+    replayed: bool = False
+    user_action_required: Literal[True] = True
+
+
 class ContextRecordOut(CandidateInput):
     id: str
     approval_status: Literal[ApprovalStatus.APPROVED] = ApprovalStatus.APPROVED

@@ -72,12 +72,12 @@ After the selected client restarts, normal operation requires no recurring
 memory setup or approval work. MCP instructions require automatic
 `bootstrap_context` for relevant tasks and automatic `propose_memory` when
 durable user context changes. They require `forget_context` only when the user
-explicitly asks to forget or remove a particular memory. The current baseline
-generates an unkeyed SHA-256 idempotency value from the normalized proposal
-payload. That makes exact retries convenient but can leave an offline-guessing
-verifier for low-entropy refused secrets. B-101 must replace it before beta
-with an opaque client operation ID or reviewed keyed construction and prove
-that refused payloads leave neither content nor an unkeyed fingerprint.
+explicitly asks to forget or remove a particular memory. The adapter generates
+a random UUIDv4 operation ID independent of proposal content. Direct
+secret-like payloads are refused before the observation ledger. Their durable
+receipt contains only opaque IDs, a closed reason code, detector version,
+route, time, and replay identity. It contains no raw content, content-derived
+hash, prefix, or other offline-guessing verifier.
 
 V1 beta has no hosted MCP endpoint and is same-device only. Core remains
 loopback-only by default. A future phone or remote-computer path would use the

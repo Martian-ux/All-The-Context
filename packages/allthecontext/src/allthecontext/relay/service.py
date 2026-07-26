@@ -29,6 +29,7 @@ from allthecontext.replication import (
     canonical_json,
     verify_event,
 )
+from allthecontext.secret_boundary import contains_secret_like_value
 
 
 class RelayError(RuntimeError):
@@ -64,6 +65,10 @@ class AuthorizationError(RelayError):
 
 class ProposalConflictError(RelayError):
     """An idempotency key was reused for a different proposal."""
+
+
+class SecretLikeProposalRefused(RelayError):
+    """A direct proposal was stopped before the durable Relay queue."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1299,6 +1304,10 @@ class RelayService:
         proposal: Mapping[str, JsonValue],
     ) -> tuple[Mapping[str, Any], bool]:
         self._authorize(identity, "proposal:write")
+        if contains_secret_like_value(proposal):
+            raise SecretLikeProposalRefused(
+                "direct secret-like proposal was refused before durable queueing"
+            )
         if not idempotency_key or len(idempotency_key) > 200:
             raise ValueError("idempotency_key must contain 1 to 200 characters")
         if len(canonical_json(proposal).encode("utf-8")) > 64 * 1024:

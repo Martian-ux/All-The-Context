@@ -36,10 +36,18 @@ from .models import (
     IngestionMode,
     ObservationDisposition,
     ObservationOut,
+    SecretRefusalOut,
     Sensitivity,
     SourceOut,
 )
 from .replication import MAX_REPLICATION_PAYLOAD_BYTES
+from .secret_boundary import (
+    SECRET_DETECTOR_VERSION,
+    SECRET_REFUSAL_REASON,
+    contains_direct_secret,
+    contains_secret_like_value,
+    opaque_operation_id,
+)
 from .security import (
     ClientPrincipal,
     generate_token,
@@ -305,6 +313,173 @@ class CoreStore:
                 ),
             )
             return vault_id
+
+    def repair_preledger_secrets(self) -> dict[str, Any]:
+        """Remove legacy direct secret observations and physically rebuild SQLite.
+
+        Imported source archives remain governed by their separate inert-source
+        contract. This repair targets direct observations only and emits counts
+        and closed codes, never copied content or content-derived fingerprints.
+        """
+
+        repaired_candidates = 0
+        repaired_records = 0
+        with self.transaction() as connection:
+            affected_record_ids: list[str] = []
+            for record in connection.execute(
+                "SELECT r.*,"
+                "(SELECT json_group_array(v.snapshot_json) "
+                "FROM context_record_versions v WHERE v.record_id=r.id) AS history_material "
+                "FROM context_records r WHERE r.source_id IS NULL ORDER BY r.created_at,r.id"
+            ).fetchall():
+                record_material = {
+                    "content": record["content"],
+                    "structured_value": _loads(record["structured_value_json"], None),
+                    "source_reference": record["source_reference"],
+                    "evidence": record["evidence"],
+                    "history": _loads(record["history_material"], []),
+                }
+                if contains_secret_like_value(record_material):
+                    affected_record_ids.append(str(record["id"]))
+
+            rows = connection.execute(
+                "SELECT c.*,s.mode AS ingestion_mode,"
+                "(SELECT json_group_array(json_object('description',e.description,"
+                "'evidence',e.evidence)) FROM context_errors e WHERE e.candidate_id=c.id) "
+                "AS error_material "
+                "FROM context_candidates c "
+                "LEFT JOIN ingestion_sessions s ON s.id=c.session_id "
+                "WHERE c.source_id IS NULL AND COALESCE(s.mode,'') != ? "
+                "ORDER BY c.created_at,c.id",
+                (IngestionMode.ARCHIVE.value,),
+            ).fetchall()
+            affected_ids: list[str] = []
+            for row in rows:
+                material = {
+                    "kind": row["kind"],
+                    "content": row["content"],
+                    "structured_value": _loads(row["structured_value_json"], None),
+                    "entity_key": row["entity_key"],
+                    "attribute_key": row["attribute_key"],
+                    "scopes": _loads(row["scopes_json"], []),
+                    "tags": _loads(row["tags_json"], []),
+                    "source_reference": row["source_reference"],
+                    "source_service": row["source_service"],
+                    "source_type": row["source_type"],
+                    "evidence": row["evidence"],
+                    "allowed_clients": _loads(row["allowed_clients_json"], []),
+                    "denied_clients": _loads(row["denied_clients_json"], []),
+                    "idempotency_key": row["idempotency_key"],
+                    "context_errors": _loads(row["error_material"], []),
+                }
+                if contains_secret_like_value(material):
+                    affected_ids.append(str(row["id"]))
+
+            for record_id in affected_record_ids:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM context_records WHERE id=?", (record_id,)
+                    ).fetchone()
+                    is not None
+                ):
+                    self._purge_record_tx(
+                        connection,
+                        record_id,
+                        purge_scope="secret_boundary_repair",
+                        purged_at=utc_now(),
+                    )
+                    repaired_records += 1
+
+            for candidate_id in affected_ids:
+                record_ids = {
+                    str(row["id"])
+                    for row in connection.execute(
+                        "SELECT id FROM context_records WHERE candidate_id=? OR id=("
+                        "SELECT record_id FROM context_candidates WHERE id=?)",
+                        (candidate_id, candidate_id),
+                    ).fetchall()
+                }
+                record_ids.update(
+                    str(row["record_id"])
+                    for row in connection.execute(
+                        "SELECT record_id FROM context_observation_links "
+                        "WHERE observation_id=?",
+                        (candidate_id,),
+                    ).fetchall()
+                )
+                for record_id in sorted(record_ids):
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM context_records WHERE id=?", (record_id,)
+                        ).fetchone()
+                        is not None
+                    ):
+                        self._purge_record_tx(
+                            connection,
+                            record_id,
+                            purge_scope="secret_boundary_repair",
+                            purged_at=utc_now(),
+                        )
+                        repaired_records += 1
+                candidate = connection.execute(
+                    "SELECT session_id FROM context_candidates WHERE id=?", (candidate_id,)
+                ).fetchone()
+                if candidate is None:
+                    repaired_candidates += 1
+                    continue
+                self._detach_candidate_from_batches(connection, candidate_id)
+                connection.execute(
+                    "DELETE FROM edge_proposal_receipts WHERE candidate_id=?", (candidate_id,)
+                )
+                connection.execute(
+                    "DELETE FROM context_errors WHERE candidate_id=?", (candidate_id,)
+                )
+                connection.execute(
+                    "DELETE FROM context_observation_links WHERE observation_id=?",
+                    (candidate_id,),
+                )
+                connection.execute("DELETE FROM context_candidates WHERE id=?", (candidate_id,))
+                if candidate["session_id"] is not None:
+                    connection.execute(
+                        "UPDATE ingestion_sessions SET candidate_count=("
+                        "SELECT COUNT(*) FROM context_candidates WHERE session_id=?) WHERE id=?",
+                        (candidate["session_id"], candidate["session_id"]),
+                    )
+                repaired_candidates += 1
+            if repaired_candidates or repaired_records:
+                connection.execute("DELETE FROM context_fts")
+                for record in connection.execute(
+                    "SELECT * FROM context_records "
+                    "WHERE approval_status='approved' AND deleted_at IS NULL ORDER BY id"
+                ).fetchall():
+                    self._replace_fts(connection, record)
+
+        if repaired_candidates or repaired_records:
+            self._compact_secret_repair()
+        return {
+            "reason_code": "preledger_secret_repair",
+            "repaired_candidates": repaired_candidates,
+            "repaired_records": repaired_records,
+            "compacted": repaired_candidates > 0 or repaired_records > 0,
+            "external_backup_action": "retire_or_replace_historical_backups",
+        }
+
+    def _compact_secret_repair(self) -> None:
+        """Checkpoint and rebuild the affected live SQLite storage boundary."""
+
+        database_size = self.database_path.stat().st_size
+        required_free = database_size * 2 + 16_777_216
+        if shutil.disk_usage(self.database_path.parent).free < required_free:
+            raise InvalidStateError("insufficient disk space for secret-boundary compaction")
+        with self._write_lock, self.connect() as connection:
+            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if checkpoint is not None and int(checkpoint[0]) != 0:
+                raise InvalidStateError(
+                    "secret-boundary compaction requires exclusive database access"
+                )
+            connection.execute("PRAGMA secure_delete = ON")
+            connection.execute("VACUUM")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def vault_id(self) -> str:
         with self.connect() as connection:
@@ -1146,7 +1321,23 @@ class CoreStore:
         *,
         client: ClientPrincipal | None = None,
     ) -> dict[str, Any]:
-        canonical_request = _json([candidate.model_dump(mode="json") for candidate in candidates])
+        accepted_candidates = list(candidates)
+        refused_count = 0
+        safe_idempotency_key = idempotency_key
+        with self.connect() as connection:
+            session_mode = connection.execute(
+                "SELECT mode FROM ingestion_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        if session_mode is not None and str(session_mode["mode"]) != IngestionMode.ARCHIVE.value:
+            accepted_candidates = [
+                candidate for candidate in candidates if not contains_direct_secret(candidate)
+            ]
+            refused_count = len(candidates) - len(accepted_candidates)
+            if refused_count:
+                safe_idempotency_key = opaque_operation_id(idempotency_key) or new_id()
+        canonical_request = _json(
+            [candidate.model_dump(mode="json") for candidate in accepted_candidates]
+        )
         request_hash = _hash_text(canonical_request)
         created_ids: list[str] = []
         with self.transaction() as connection:
@@ -1161,7 +1352,7 @@ class CoreStore:
                 raise NotFoundError("ingestion session not found")
             existing = connection.execute(
                 "SELECT * FROM ingestion_batches WHERE session_id=? AND idempotency_key=?",
-                (session_id, idempotency_key),
+                (session_id, safe_idempotency_key),
             ).fetchone()
             if existing is not None:
                 if str(existing["request_hash"]) != request_hash:
@@ -1169,33 +1360,140 @@ class CoreStore:
                 return {
                     "batch_id": str(existing["id"]),
                     "candidate_ids": _loads(existing["candidate_ids_json"], []),
+                    "refused_count": int(existing["refused_count"]),
+                    "refusal_reason": (
+                        SECRET_REFUSAL_REASON if int(existing["refused_count"]) else None
+                    ),
                     "replayed": True,
                 }
             if str(session["status"]) != "open":
                 raise InvalidStateError("ingestion session is already finished")
-            for candidate in candidates:
+            for candidate in accepted_candidates:
                 created_ids.append(
                     self._insert_candidate(connection, candidate, session_id, client)
+                )
+            if refused_count:
+                self._secret_refusal_tx(
+                    connection,
+                    route="ingestion_batch",
+                    operation_id=safe_idempotency_key,
+                    client=client,
                 )
             batch_id = new_id()
             connection.execute(
                 "INSERT INTO ingestion_batches"
-                "(id,session_id,idempotency_key,request_hash,candidate_ids_json,created_at) "
-                "VALUES(?,?,?,?,?,?)",
+                "(id,session_id,idempotency_key,request_hash,candidate_ids_json,created_at,"
+                "refused_count) VALUES(?,?,?,?,?,?,?)",
                 (
                     batch_id,
                     session_id,
-                    idempotency_key,
+                    safe_idempotency_key,
                     request_hash,
                     _json(created_ids),
                     utc_now(),
+                    refused_count,
                 ),
             )
             connection.execute(
                 "UPDATE ingestion_sessions SET candidate_count=candidate_count+? WHERE id=?",
                 (len(created_ids), session_id),
             )
-        return {"batch_id": batch_id, "candidate_ids": created_ids, "replayed": False}
+        return {
+            "batch_id": batch_id,
+            "candidate_ids": created_ids,
+            "refused_count": refused_count,
+            "refusal_reason": SECRET_REFUSAL_REASON if refused_count else None,
+            "replayed": False,
+        }
+
+    def refuse_direct_candidate(
+        self,
+        candidate: CandidateInput,
+        *,
+        route: str,
+        client: ClientPrincipal | None = None,
+    ) -> SecretRefusalOut | None:
+        """Persist only an opaque receipt when a direct candidate contains a secret."""
+
+        if not contains_direct_secret(candidate):
+            return None
+        operation_id = opaque_operation_id(candidate.idempotency_key) or new_id()
+        with self.transaction() as connection:
+            return self._secret_refusal_tx(
+                connection,
+                route=route,
+                operation_id=operation_id,
+                client=client,
+            )
+
+    def refuse_direct_value(
+        self,
+        value: object,
+        *,
+        route: str,
+        operation_id: str | None,
+        client: ClientPrincipal | None = None,
+    ) -> SecretRefusalOut | None:
+        """Apply the same boundary to direct request shapes other than candidates."""
+
+        if not contains_secret_like_value(value):
+            return None
+        safe_operation_id = opaque_operation_id(operation_id) or new_id()
+        with self.transaction() as connection:
+            return self._secret_refusal_tx(
+                connection,
+                route=route,
+                operation_id=safe_operation_id,
+                client=client,
+            )
+
+    def _secret_refusal_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        route: str,
+        operation_id: str,
+        client: ClientPrincipal | None,
+    ) -> SecretRefusalOut:
+        principal_key = client.id if client is not None else "local-core"
+        existing = connection.execute(
+            "SELECT * FROM secret_refusal_receipts "
+            "WHERE vault_id=? AND principal_key=? AND route=? AND operation_id=?",
+            (self.vault_id(), principal_key, route, operation_id),
+        ).fetchone()
+        if existing is not None:
+            return self._secret_refusal_out(existing, replayed=True)
+        receipt_id = new_id()
+        created_at = utc_now()
+        connection.execute(
+            "INSERT INTO secret_refusal_receipts"
+            "(id,vault_id,principal_key,route,operation_id,reason_code,detector_version,"
+            "created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                receipt_id,
+                self.vault_id(),
+                principal_key,
+                route,
+                operation_id,
+                SECRET_REFUSAL_REASON,
+                SECRET_DETECTOR_VERSION,
+                created_at,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM secret_refusal_receipts WHERE id=?", (receipt_id,)
+        ).fetchone()
+        assert row is not None
+        return self._secret_refusal_out(row, replayed=False)
+
+    @staticmethod
+    def _secret_refusal_out(row: sqlite3.Row, *, replayed: bool) -> SecretRefusalOut:
+        return SecretRefusalOut(
+            id=str(row["id"]),
+            detector_version=str(row["detector_version"]),
+            created_at=str(row["created_at"]),
+            replayed=replayed,
+        )
 
     def add_candidate(
         self,
@@ -2387,6 +2685,8 @@ class CoreStore:
         actor: str = "local-user",
     ) -> ContextRecordOut:
         request = request or ApprovalRequest()
+        if contains_secret_like_value(request.model_dump(mode="json")):
+            raise InvalidStateError("direct secret-like approval content was refused")
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -2617,6 +2917,16 @@ class CoreStore:
     ) -> ContextRecordOut:
         if (entity_key is None) != (attribute_key is None):
             raise InvalidStateError("entity_key and attribute_key must be supplied together")
+        if contains_secret_like_value(
+            {
+                "content": content,
+                "reason": reason,
+                "structured_value": structured_value,
+                "entity_key": entity_key,
+                "attribute_key": attribute_key,
+            }
+        ):
+            raise InvalidStateError("direct secret-like correction content was refused")
         with self.transaction() as connection:
             previous = connection.execute(
                 "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)

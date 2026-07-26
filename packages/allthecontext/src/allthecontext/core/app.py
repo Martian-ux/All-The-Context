@@ -490,6 +490,14 @@ def create_app(
         candidate_id: str, request: ApprovalRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        refusal = core.store.refuse_direct_value(
+            request.model_dump(mode="json"),
+            route="approve_candidate",
+            operation_id=None,
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal.model_dump(mode="json")
         result = core.store.approve_candidate(candidate_id, request, actor=principal.id)
         return result.model_dump(mode="json")
 
@@ -511,6 +519,14 @@ def create_app(
         record_id: str, request: CorrectionRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        refusal = core.store.refuse_direct_value(
+            request.model_dump(mode="json"),
+            route="correct_record",
+            operation_id=None,
+            client=principal,
+        )
+        if refusal is not None:
+            return refusal.model_dump(mode="json")
         result = core.store.correct_record(
             record_id,
             content=request.content,
