@@ -488,6 +488,7 @@ class PlatformInstaller:
         application_path: Path | None = None,
         helper_path: Path | None = None,
         mcp_path: Path | None = None,
+        recovery_path: Path | None = None,
     ) -> None:
         self.system = system or platform.system()
         self.frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
@@ -495,6 +496,9 @@ class PlatformInstaller:
         self.application_path = (application_path or runtime.executable).resolve()
         self.helper_path = helper_path or runtime.update_executable
         self.mcp_path = mcp_path or self.application_path.with_name("AllTheContextMCP.exe")
+        self.recovery_path = recovery_path or self.application_path.with_name(
+            "AllTheContextRecovery.exe"
+        )
         self.stable_update_helper_path = self.application_path.with_name("AllTheContextUpdater.exe")
 
     @property
@@ -506,6 +510,7 @@ class PlatformInstaller:
             and self.helper_path is not None
             and self.helper_path.is_file()
             and self.stable_update_helper_path.is_file()
+            and self.recovery_path.is_file()
         )
 
     @property
@@ -513,8 +518,13 @@ class PlatformInstaller:
         if self.system == "Windows":
             if not self.frozen:
                 return "Automatic Windows updates require the installed desktop application"
+            if not self.recovery_path.is_file():
+                return (
+                    "The installed Windows recovery/admin helper is unavailable; reinstall the "
+                    "current desktop package before applying updates"
+                )
             return (
-                "The installed Windows recovery helper is unavailable; reinstall the current "
+                "The installed Windows update helper is unavailable; reinstall the current "
                 "desktop package before applying updates"
             )
         if self.system == "Darwin":
@@ -607,6 +617,14 @@ class PlatformInstaller:
                 rollback_mcp_digest, rollback_mcp_size = self._copy_verified(
                     self.mcp_path, rollback_mcp
                 )
+            rollback_recovery: Path | None = None
+            rollback_recovery_digest: str | None = None
+            rollback_recovery_size: int | None = None
+            if self.recovery_path.is_file():
+                rollback_recovery = plan.transaction_dir / "rollback" / "AllTheContextRecovery.exe"
+                rollback_recovery_digest, rollback_recovery_size = self._copy_verified(
+                    self.recovery_path, rollback_recovery
+                )
             rollback_update_helper = plan.transaction_dir / "rollback" / "AllTheContextUpdater.exe"
             rollback_update_digest, rollback_update_size = self._copy_verified(
                 self.stable_update_helper_path, rollback_update_helper
@@ -633,6 +651,10 @@ class PlatformInstaller:
                 rollback_mcp_path=str(rollback_mcp) if rollback_mcp else None,
                 rollback_mcp_sha256=rollback_mcp_digest,
                 rollback_mcp_size=rollback_mcp_size,
+                recovery_path=str(self.recovery_path),
+                rollback_recovery_path=str(rollback_recovery) if rollback_recovery else None,
+                rollback_recovery_sha256=rollback_recovery_digest,
+                rollback_recovery_size=rollback_recovery_size,
                 stable_update_helper_path=str(self.stable_update_helper_path),
                 rollback_update_helper_path=str(rollback_update_helper),
                 rollback_update_helper_sha256=rollback_update_digest,

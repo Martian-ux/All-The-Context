@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shutil
 import sqlite3
+import tempfile
+import zipfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -59,7 +61,9 @@ class RecoveryPaths:
             if data_dir is not None
             else CoreConfig.default()
         )
-        recovery_root = config.data_dir / "recovery"
+        # Sibling of the active data directory on the same volume — never nested
+        # under active — so default restore/rollback destinations stay usable.
+        recovery_root = config.data_dir.parent / f"{config.data_dir.name}-recovery"
         return cls(config=config, active_database=config.database_path, recovery_root=recovery_root)
 
 
@@ -112,10 +116,12 @@ environment variable ATC_EXPORT_PASSPHRASE (or --recovery-passphrase-env).
   --recovery-restore SOURCE
       Validate and restore into an isolated destination vault.
       Options:
-        --recovery-destination DIR   isolated restore directory (default under data/recovery)
+        --recovery-destination DIR   isolated restore directory
+                                     (default: sibling <data-dir>-recovery/restore-<pid>)
         --recovery-dry-run           integrity verification only
         --recovery-cutover           after successful isolated restore, cut over active vault
         --recovery-rollback-path DIR when cutting over, keep prior vault here for rollback
+                                     (default: sibling <data-dir>-recovery/rollback-<pid>)
 
   --recovery-rollback ROLLBACK_DIR
       Restore the previous active vault from a cutover rollback directory.
@@ -196,6 +202,53 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
+def active_vault_identity(active_database: Path) -> dict[str, Any]:
+    """Return content-free active vault identity and purge-tombstone presence."""
+
+    if not active_database.is_file():
+        return {"active_present": False, "vault_id": None, "purge_tombstone_count": 0}
+    active = sqlite3.connect(str(active_database), timeout=30)
+    try:
+        active.row_factory = sqlite3.Row
+        vault_id: str | None = None
+        if _table_exists(active, "vaults"):
+            row = active.execute("SELECT id FROM vaults LIMIT 1").fetchone()
+            if row is not None:
+                vault_id = str(row["id"])
+        tomb_count = 0
+        if _table_exists(active, "purge_tombstones"):
+            tomb_count = int(active.execute("SELECT COUNT(*) FROM purge_tombstones").fetchone()[0])
+        return {
+            "active_present": True,
+            "vault_id": vault_id,
+            "purge_tombstone_count": tomb_count,
+        }
+    finally:
+        active.close()
+
+
+def export_package_vault_ids(source: Path, passphrase: str) -> set[str]:
+    """Read vault identities from an encrypted export without mutating the vault."""
+
+    from .export import _decrypt_file, _iter_jsonl
+
+    source = source.expanduser().resolve()
+    vault_ids: set[str] = set()
+    with tempfile.TemporaryDirectory(prefix="atc-export-vault-") as temporary:
+        archive_path = Path(temporary) / "payload.zip"
+        _decrypt_file(source, archive_path, passphrase)
+        with zipfile.ZipFile(archive_path) as archive:
+            names = set(archive.namelist())
+            if "tables/vaults.jsonl" not in names:
+                return vault_ids
+            with archive.open("tables/vaults.jsonl") as stream:
+                for row in _iter_jsonl(stream):
+                    vault_id = row.get("id")
+                    if vault_id is not None:
+                        vault_ids.add(str(vault_id))
+    return vault_ids
+
+
 def carry_forward_purge_tombstones(
     active_database: Path, isolated_database: Path
 ) -> dict[str, Any]:
@@ -206,14 +259,23 @@ def carry_forward_purge_tombstones(
     """
 
     if not active_database.is_file():
-        return {"carried_purge_tombstones": 0, "active_present": False}
+        return {"carried_purge_tombstones": 0, "active_present": False, "vault_id": None}
     # sqlite3 Connection context managers do not close handles; close explicitly
-    # so Windows can rename/move the active vault during cutover.
+    # so Windows can rename the active vault during cutover.
     active = sqlite3.connect(str(active_database), timeout=30)
     try:
         active.row_factory = sqlite3.Row
         if not _table_exists(active, "purge_tombstones"):
-            return {"carried_purge_tombstones": 0, "active_present": True}
+            vault_id = None
+            if _table_exists(active, "vaults"):
+                row = active.execute("SELECT id FROM vaults LIMIT 1").fetchone()
+                if row is not None:
+                    vault_id = str(row["id"])
+            return {
+                "carried_purge_tombstones": 0,
+                "active_present": True,
+                "vault_id": vault_id,
+            }
         vault = active.execute(
             "SELECT id,name,display_timezone,created_at,schema_version FROM vaults LIMIT 1"
         ).fetchone()
@@ -223,8 +285,13 @@ def carry_forward_purge_tombstones(
         ).fetchall()
     finally:
         active.close()
+    vault_id = str(vault["id"]) if vault is not None else None
     if not tombs:
-        return {"carried_purge_tombstones": 0, "active_present": True}
+        return {
+            "carried_purge_tombstones": 0,
+            "active_present": True,
+            "vault_id": vault_id,
+        }
     isolated = sqlite3.connect(str(isolated_database), timeout=30)
     try:
         isolated.execute("PRAGMA foreign_keys = ON")
@@ -259,7 +326,11 @@ def carry_forward_purge_tombstones(
         isolated.commit()
     finally:
         isolated.close()
-    return {"carried_purge_tombstones": carried, "active_present": True}
+    return {
+        "carried_purge_tombstones": carried,
+        "active_present": True,
+        "vault_id": vault_id,
+    }
 
 
 def verify_vault_integrity(database_path: Path) -> dict[str, Any]:
@@ -448,47 +519,74 @@ def _materialize_single_file_database(source_db: Path, destination_db: Path) -> 
         temporary.unlink(missing_ok=True)
 
 
-def _list_present_vault_files(directory: Path) -> list[str]:
-    return [name for name in VAULT_FILE_NAMES if (directory / name).exists()]
+def _sidecar_paths(database_path: Path) -> list[Path]:
+    return [
+        database_path.with_name(f"{database_path.name}-wal"),
+        database_path.with_name(f"{database_path.name}-shm"),
+        database_path.with_name(f"{database_path.name}-journal"),
+    ]
 
 
-def _move_vault_files(source_dir: Path, destination_dir: Path) -> list[str]:
-    moved: list[str] = []
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    for name in VAULT_FILE_NAMES:
-        current = source_dir / name
-        if not current.exists():
-            continue
-        target = destination_dir / name
-        if target.exists():
-            raise RecoveryError(f"Cannot move {name}; destination already has that file: {target}")
-        shutil.move(str(current), str(target))
-        moved.append(name)
-    return moved
-
-
-def _restore_vault_files_from(source_dir: Path, destination_dir: Path) -> list[str]:
-    restored: list[str] = []
-    for name in VAULT_FILE_NAMES:
-        candidate = source_dir / name
-        if not candidate.exists():
-            continue
-        target = destination_dir / name
-        if target.exists():
-            if target.is_dir():
-                shutil.rmtree(target)
-            else:
-                target.unlink()
-        shutil.copy2(candidate, target)
-        restored.append(name)
-    return restored
+def _clear_database_sidecars(database_path: Path) -> None:
+    for path in _sidecar_paths(database_path):
+        if path.is_file():
+            path.unlink()
 
 
 def _clear_active_sidecars(active_dir: Path) -> None:
-    for name in ("core.sqlite3-wal", "core.sqlite3-shm", "core.sqlite3-journal"):
-        path = active_dir / name
-        if path.is_file():
-            path.unlink()
+    _clear_database_sidecars(active_dir / ACTIVE_DB_NAME)
+
+
+def _normalize_to_single_file(database_path: Path) -> None:
+    """Checkpoint/normalize a SQLite database so only the main file remains."""
+
+    if not database_path.is_file():
+        return
+    connection = sqlite3.connect(str(database_path), timeout=30)
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.commit()
+    finally:
+        connection.close()
+    _clear_database_sidecars(database_path)
+
+
+def _inject_boundary(inject_failure: str | None, boundary: str, *, label: str) -> None:
+    """Deterministic fault injection at cutover/rollback boundaries.
+
+    Soft failures raise OSError so in-process exception handlers run.
+    ``crash_<boundary>`` exits immediately without cleanup so subprocess
+    tests can prove the old-or-new active invariant under hard process loss.
+    """
+
+    if inject_failure is None:
+        return
+    if inject_failure == boundary:
+        raise OSError(f"injected {label} failure {boundary}")
+    if inject_failure in {f"crash_{boundary}", f"crash-{boundary}"}:
+        os._exit(87)
+
+
+def _restore_active_from_preserve(
+    preserve_db: Path,
+    active_db: Path,
+    *,
+    staging_name: str,
+) -> None:
+    """Same-volume materialize + atomic replace of the active main database."""
+
+    if not preserve_db.is_file():
+        raise RecoveryError(f"Preserve vault database not found: {preserve_db}")
+    stage = active_db.with_name(staging_name)
+    stage.unlink(missing_ok=True)
+    try:
+        _materialize_single_file_database(preserve_db, stage)
+        stage.replace(active_db)
+        _clear_database_sidecars(active_db)
+    finally:
+        stage.unlink(missing_ok=True)
 
 
 def cutover_active_vault(
@@ -498,11 +596,13 @@ def cutover_active_vault(
     rollback_path: Path | None = None,
     inject_failure: str | None = None,
 ) -> dict[str, Any]:
-    """Atomically replace the active vault from an isolated restore.
+    """Replace the active vault from an isolated restore without a missing gap.
 
-    Stages a single-file candidate on the active volume, preserves the prior
-    active set in a rollback directory, performs deliberate replacements, and
-    automatically restores the prior active set on any failure.
+    Stages and verifies a single-file candidate, copies (never moves) the prior
+    active vault to a same-volume rollback directory, normalizes SQLite sidecars,
+    then performs a same-volume atomic replacement of the main database file.
+    At every interruptible boundary the active database is a complete verified
+    old vault or a complete verified new vault — never absent or mixed.
     """
 
     paths = RecoveryPaths.for_data_dir(data_dir)
@@ -529,9 +629,6 @@ def cutover_active_vault(
     _refuse_nonempty_directory(rollback_dir, label="Rollback directory")
     rollback_dir.mkdir(parents=True, exist_ok=True)
 
-    if not _same_volume(isolated_db, active_dir):
-        # Still stage under active_dir so the final rename is same-volume.
-        pass
     if not _same_volume(rollback_dir, active_dir):
         raise RecoveryError(
             "Rollback directory must be on the same volume as the active data directory "
@@ -545,30 +642,39 @@ def cutover_active_vault(
             "refusing to replace active."
         )
 
+    active_db = active_dir / ACTIVE_DB_NAME
+    rollback_db = rollback_dir / ACTIVE_DB_NAME
     staged = active_dir / STAGED_DB_NAME
-    preserved: list[str] = []
+    preserved = False
     replaced = False
     try:
         if staged.exists():
             staged.unlink()
+        # 1. Materialize + verify the new vault on the active volume.
         _materialize_single_file_database(isolated_db, staged)
-        if inject_failure == "after_stage":
-            raise OSError("injected cutover failure after_stage")
+        _inject_boundary(inject_failure, "after_stage", label="cutover")
         staged_check = verify_vault_integrity(staged)
         if not staged_check.get("ok"):
             raise RecoveryError("Staged cutover candidate failed integrity verification.")
 
-        preserved = _move_vault_files(active_dir, rollback_dir)
-        if inject_failure == "after_preserve":
-            raise OSError("injected cutover failure after_preserve")
+        # 2. Copy (never move) the prior active vault; active stays complete.
+        if active_db.is_file():
+            _materialize_single_file_database(active_db, rollback_db)
+            preserved = True
+            _inject_boundary(inject_failure, "after_preserve", label="cutover")
+            rollback_check = verify_vault_integrity(rollback_db)
+            if not rollback_check.get("ok"):
+                raise RecoveryError(
+                    "Rollback preserve of the prior active vault failed integrity verification."
+                )
+            # Normalize active so replace cannot mix old WAL with a new main file.
+            _normalize_to_single_file(active_db)
 
-        active_db = active_dir / ACTIVE_DB_NAME
-        # Deliberate same-volume atomic replacement of the main database file.
+        # 3. Same-volume atomic replacement of the single main database file.
         staged.replace(active_db)
         replaced = True
         _clear_active_sidecars(active_dir)
-        if inject_failure == "after_replace":
-            raise OSError("injected cutover failure after_replace")
+        _inject_boundary(inject_failure, "after_replace", label="cutover")
 
         postcheck = verify_vault_integrity(active_db)
         if not postcheck.get("ok"):
@@ -576,25 +682,27 @@ def cutover_active_vault(
         return {
             "active_database": str(paths.active_database),
             "rollback_directory": str(rollback_dir),
-            "preserved_from_active": preserved,
+            "preserved_from_active": [ACTIVE_DB_NAME] if preserved else [],
             "status": "cutover_complete",
             "integrity": postcheck,
         }
     except Exception as error:
-        # Automatic restore of the prior active set whenever cutover fails mid-flight.
+        # Soft-failure path only. Hard process exit never runs this handler;
+        # crash safety comes from never moving active away before replace.
         try:
-            if replaced or (active_dir / ACTIVE_DB_NAME).exists():
+            if replaced and preserved and rollback_db.is_file():
                 failed_root = paths.recovery_root / f"failed-cutover-{os.getpid()}"
                 failed_root.mkdir(parents=True, exist_ok=True)
-                for name in _list_present_vault_files(active_dir):
-                    current = active_dir / name
-                    target = failed_root / name
-                    if current.exists():
-                        shutil.move(str(current), str(target))
-            if any((rollback_dir / name).exists() for name in VAULT_FILE_NAMES):
-                _restore_vault_files_from(rollback_dir, active_dir)
-            if (active_dir / ACTIVE_DB_NAME).is_file():
-                verify_vault_integrity(active_dir / ACTIVE_DB_NAME)
+                if active_db.is_file():
+                    with suppress(OSError, sqlite3.Error):
+                        _materialize_single_file_database(active_db, failed_root / ACTIVE_DB_NAME)
+                _restore_active_from_preserve(
+                    rollback_db,
+                    active_db,
+                    staging_name=f"{STAGED_DB_NAME}.cutover-restore",
+                )
+            if active_db.is_file():
+                verify_vault_integrity(active_db)
         except Exception as restore_error:
             raise RecoveryError(
                 f"Cutover failed ({error}); automatic restore of prior active vault "
@@ -614,6 +722,13 @@ def rollback_active_vault(
     data_dir: Path | None = None,
     inject_failure: str | None = None,
 ) -> dict[str, Any]:
+    """Restore a prior active vault from a cutover rollback preserve.
+
+    Uses copy/materialize-and-verify of the current active vault, then same-
+    volume atomic replacement. Active is never moved away before replace, so
+    process loss cannot leave the active database missing.
+    """
+
     paths = RecoveryPaths.for_data_dir(data_dir)
     require_core_stopped(paths.config)
     rollback_dir = rollback_dir.expanduser().resolve()
@@ -637,9 +752,10 @@ def rollback_active_vault(
     failed_root = paths.recovery_root / f"failed-cutover-{os.getpid()}"
     _refuse_nonempty_directory(failed_root, label="Failed-cutover preserve directory")
     failed_root.mkdir(parents=True, exist_ok=True)
+    active_db = active_dir / ACTIVE_DB_NAME
+    failed_db = failed_root / ACTIVE_DB_NAME
     staged = active_dir / STAGED_DB_NAME
-    moved_failed: list[str] = []
-    restored: list[str] = []
+    preserved_failed = False
     replaced = False
     try:
         if staged.exists():
@@ -648,43 +764,51 @@ def rollback_active_vault(
         staged_check = verify_vault_integrity(staged)
         if not staged_check.get("ok"):
             raise RecoveryError("Staged rollback candidate failed integrity verification.")
-        if inject_failure == "after_stage":
-            raise OSError("injected rollback failure after_stage")
+        _inject_boundary(inject_failure, "after_stage", label="rollback")
 
-        moved_failed = _move_vault_files(active_dir, failed_root)
-        if inject_failure == "after_preserve":
-            raise OSError("injected rollback failure after_preserve")
+        # Copy current active aside for forensics/restore; do not move it.
+        if active_db.is_file():
+            _materialize_single_file_database(active_db, failed_db)
+            preserved_failed = True
+            _inject_boundary(inject_failure, "after_preserve", label="rollback")
+            failed_check = verify_vault_integrity(failed_db)
+            if not failed_check.get("ok"):
+                raise RecoveryError(
+                    "Preserve of the current active vault failed integrity verification."
+                )
+            _normalize_to_single_file(active_db)
 
-        staged.replace(active_dir / ACTIVE_DB_NAME)
+        staged.replace(active_db)
         replaced = True
         _clear_active_sidecars(active_dir)
-        if inject_failure == "after_replace":
-            raise OSError("injected rollback failure after_replace")
+        _inject_boundary(inject_failure, "after_replace", label="rollback")
 
-        postcheck = verify_vault_integrity(active_dir / ACTIVE_DB_NAME)
+        postcheck = verify_vault_integrity(active_db)
         if not postcheck.get("ok"):
             raise RecoveryError("Active vault failed integrity verification after rollback.")
-        restored = [ACTIVE_DB_NAME]
         return {
             "status": "rollback_complete",
             "rollback_directory": str(rollback_dir),
             "failed_cutover_preserved_at": str(failed_root),
-            "restored": restored,
-            "displaced_failed_cutover": moved_failed,
+            "restored": [ACTIVE_DB_NAME],
+            "displaced_failed_cutover": [ACTIVE_DB_NAME] if preserved_failed else [],
             "integrity": postcheck,
         }
     except Exception as error:
         try:
-            if replaced or (active_dir / ACTIVE_DB_NAME).exists():
-                # Put the just-failed candidate aside if present, then restore displaced active.
+            if replaced and preserved_failed and failed_db.is_file():
                 emergency = paths.recovery_root / f"failed-rollback-{os.getpid()}"
                 emergency.mkdir(parents=True, exist_ok=True)
-                for name in _list_present_vault_files(active_dir):
-                    current = active_dir / name
-                    if current.exists():
-                        shutil.move(str(current), str(emergency / name))
-            if any((failed_root / name).exists() for name in VAULT_FILE_NAMES):
-                _restore_vault_files_from(failed_root, active_dir)
+                if active_db.is_file():
+                    with suppress(OSError, sqlite3.Error):
+                        _materialize_single_file_database(active_db, emergency / ACTIVE_DB_NAME)
+                _restore_active_from_preserve(
+                    failed_db,
+                    active_db,
+                    staging_name=f"{STAGED_DB_NAME}.rollback-restore",
+                )
+            if active_db.is_file():
+                verify_vault_integrity(active_db)
         except Exception as restore_error:
             raise RecoveryError(
                 f"Rollback failed ({error}); restoring displaced active also failed "
@@ -736,6 +860,24 @@ def restore_isolated(
     _refuse_nonempty_directory(isolated_root, label="Isolated restore destination")
     isolated_root.mkdir(parents=True, exist_ok=True)
     isolated_db = isolated_root / ACTIVE_DB_NAME
+
+    # Fail closed when active purge tombstones exist and the export belongs to a
+    # different vault: never blend vault identities or drop the non-resurrection boundary.
+    active_identity = active_vault_identity(paths.active_database)
+    if (
+        active_identity.get("active_present")
+        and int(active_identity.get("purge_tombstone_count") or 0) > 0
+        and active_identity.get("vault_id")
+    ):
+        export_vaults = export_package_vault_ids(source, passphrase)
+        active_vault = str(active_identity["vault_id"])
+        if export_vaults and active_vault not in export_vaults:
+            raise RecoveryError(
+                "Refusing to restore an export from a different vault while the active "
+                "vault has purge tombstones. That would blend vault identities and "
+                "weaken the non-resurrection boundary."
+            )
+
     store = CoreStore(isolated_db)
     store.migrate()
     purge_carry = carry_forward_purge_tombstones(paths.active_database, isolated_db)

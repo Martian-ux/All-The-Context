@@ -97,16 +97,19 @@ def prepare_packaged_update_transaction(
     transaction_helper = transaction_dir / "AllTheContextUpdater.exe"
     stable_helper = installed_app.with_name("AllTheContextUpdater.exe")
     stable_mcp = installed_app.with_name("AllTheContextMCP.exe")
-    if not stable_helper.is_file() or not stable_mcp.is_file():
-        raise RuntimeError("installed update or MCP helper is missing")
+    stable_recovery = installed_app.with_name("AllTheContextRecovery.exe")
+    if not stable_helper.is_file() or not stable_mcp.is_file() or not stable_recovery.is_file():
+        raise RuntimeError("installed update, MCP, or recovery helper is missing")
     shutil.copy2(stable_helper, transaction_helper)
     replacement = replacement_dir / "AllTheContextSetup.exe"
     rollback_app = rollback_dir / "AllTheContext.exe"
     rollback_mcp = rollback_dir / "AllTheContextMCP.exe"
+    rollback_recovery = rollback_dir / "AllTheContextRecovery.exe"
     rollback_update_helper = rollback_dir / "AllTheContextUpdater.exe"
     shutil.copy2(release_app, replacement)
     shutil.copy2(installed_app, rollback_app)
     shutil.copy2(stable_mcp, rollback_mcp)
+    shutil.copy2(stable_recovery, rollback_recovery)
     shutil.copy2(stable_helper, rollback_update_helper)
 
     database = data_dir / "core.sqlite3"
@@ -145,6 +148,7 @@ def prepare_packaged_update_transaction(
     replacement_digest, replacement_size = sha256_file(replacement)
     rollback_digest, rollback_size = sha256_file(rollback_app)
     rollback_mcp_digest, rollback_mcp_size = sha256_file(rollback_mcp)
+    rollback_recovery_digest, rollback_recovery_size = sha256_file(rollback_recovery)
     rollback_update_digest, rollback_update_size = sha256_file(rollback_update_helper)
     backup_digest, backup_size = sha256_file(backup)
     now = "2026-07-22T12:00:00+00:00"
@@ -165,6 +169,10 @@ def prepare_packaged_update_transaction(
         rollback_mcp_path=str(rollback_mcp),
         rollback_mcp_sha256=rollback_mcp_digest,
         rollback_mcp_size=rollback_mcp_size,
+        recovery_path=str(stable_recovery),
+        rollback_recovery_path=str(rollback_recovery),
+        rollback_recovery_sha256=rollback_recovery_digest,
+        rollback_recovery_size=rollback_recovery_size,
         stable_update_helper_path=str(stable_helper),
         rollback_update_helper_path=str(rollback_update_helper),
         rollback_update_helper_sha256=rollback_update_digest,
@@ -550,6 +558,11 @@ def main() -> int:
                 Path(str(rollback_status["mcp_path"])),
                 str(rollback_status["rollback_mcp_sha256"]),
                 int(rollback_status["rollback_mcp_size"]),
+            ),
+            (
+                Path(str(rollback_status["recovery_path"])),
+                str(rollback_status["rollback_recovery_sha256"]),
+                int(rollback_status["rollback_recovery_size"]),
             ),
             (
                 Path(str(rollback_status["stable_update_helper_path"])),

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +14,7 @@ from allthecontext.desktop import main as desktop_main
 from allthecontext.models import CandidateInput
 from allthecontext.recovery_admin import (
     RecoveryError,
+    RecoveryPaths,
     cutover_active_vault,
     doctor,
     export_active_vault,
@@ -38,6 +43,50 @@ def _seed_vault(data_dir: Path, *, content: str = "Prefer fiction recovery short
     )
     assert observation.record_id is not None
     return observation.record_id
+
+
+def _logical_vault_fingerprint(database: Path) -> str:
+    """Content-derived fingerprint of vault identity + durable rows (no raw text)."""
+
+    connection = sqlite3.connect(str(database), timeout=30)
+    try:
+        connection.row_factory = sqlite3.Row
+        vault = connection.execute(
+            "SELECT id,name,schema_version FROM vaults ORDER BY id LIMIT 1"
+        ).fetchone()
+        records = connection.execute(
+            "SELECT id,kind,content,approval_status,deleted_at FROM context_records ORDER BY id"
+        ).fetchall()
+        tombs = connection.execute(
+            "SELECT stable_id,target_type FROM purge_tombstones ORDER BY stable_id"
+        ).fetchall()
+        payload = {
+            "vault": dict(vault) if vault is not None else None,
+            "records": [dict(row) for row in records],
+            "tombs": [dict(row) for row in tombs],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+    finally:
+        connection.close()
+
+
+def _assert_active_intact(
+    active: Path,
+    *,
+    record_id: str,
+    content: str,
+    pre_fingerprint: str | None = None,
+) -> None:
+    active_db = active / "core.sqlite3"
+    assert active_db.is_file(), "active/core.sqlite3 must exist"
+    if pre_fingerprint is not None:
+        assert _logical_vault_fingerprint(active_db) == pre_fingerprint
+    integrity = verify_vault_integrity(active_db)
+    assert integrity["ok"] is True
+    assert integrity["label"] == "verified"
+    store = CoreStore(active_db)
+    assert store.get_record(record_id).content == content
 
 
 def test_recovery_help_is_installed_and_versioned() -> None:
@@ -143,9 +192,213 @@ def test_isolated_restore_cutover_preserves_purge_non_resurrection(
     assert all(item["id"] != source_id for item in listed)
 
 
-def test_cutover_and_rollback_verify_integrity_and_restore_on_failure(
+def test_default_recovery_paths_are_outside_active_and_usable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Operators may omit --recovery-destination and --recovery-rollback-path."""
+
+    passphrase = "fiction-default-path-passphrase"
+    monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
+    active = tmp_path / "active"
+    content = "Default-path fiction vault content."
+    record_id = _seed_vault(active, content=content)
+    export_path = tmp_path / "backup.atcexp"
+    export_active_vault(export_path, data_dir=active, passphrase=passphrase)
+
+    paths = RecoveryPaths.for_data_dir(active)
+    assert not paths.recovery_root.is_relative_to(paths.config.data_dir)
+    assert paths.recovery_root.parent == paths.config.data_dir.parent
+    assert paths.recovery_root.name == f"{paths.config.data_dir.name}-recovery"
+
+    restored = restore_isolated(
+        export_path,
+        data_dir=active,
+        passphrase=passphrase,
+        dry_run=False,
+        cutover=True,
+        # deliberately omit destination and rollback_path
+    )
+    assert restored["cutover"] is True
+    assert restored["cutover_result"]["status"] == "cutover_complete"
+    isolated = Path(str(restored["isolated_destination"]))
+    rollback = Path(str(restored["cutover_result"]["rollback_directory"]))
+    assert isolated.is_relative_to(paths.recovery_root)
+    assert rollback.is_relative_to(paths.recovery_root)
+    assert not isolated.is_relative_to(paths.config.data_dir)
+    assert not rollback.is_relative_to(paths.config.data_dir)
+    assert (active / "core.sqlite3").is_file()
+    assert verify_vault_integrity(active / "core.sqlite3")["ok"] is True
+    assert CoreStore(active / "core.sqlite3").get_record(record_id).content == content
+
+
+@pytest.mark.parametrize("boundary", ["after_stage", "after_preserve", "after_replace"])
+def test_cutover_soft_failures_preserve_active_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    passphrase = "fiction-cutover-boundary-pass"
+    monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
+    active = tmp_path / "active"
+    content = f"Active fiction vault content for cutover {boundary}."
+    record_id = _seed_vault(active, content=content)
+    pre_fingerprint = _logical_vault_fingerprint(active / "core.sqlite3")
+    export_path = tmp_path / "backup.atcexp"
+    export_active_vault(export_path, data_dir=active, passphrase=passphrase)
+    isolated = tmp_path / "isolated"
+    restore_isolated(
+        export_path,
+        data_dir=active,
+        destination=isolated,
+        passphrase=passphrase,
+        dry_run=False,
+        cutover=False,
+    )
+    # Mutate isolated so a successful cutover would change active content identity.
+    other = CoreStore(isolated / "core.sqlite3")
+    other.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content=f"Isolated-only fiction goal for {boundary}.",
+            explicit_user_statement=True,
+        )
+    )
+
+    with pytest.raises(RecoveryError, match="prior active vault was restored"):
+        cutover_active_vault(
+            isolated,
+            data_dir=active,
+            rollback_path=tmp_path / f"rollback-{boundary}",
+            inject_failure=boundary,
+        )
+    _assert_active_intact(
+        active,
+        record_id=record_id,
+        content=content,
+        pre_fingerprint=pre_fingerprint,
+    )
+
+
+@pytest.mark.parametrize("boundary", ["after_stage", "after_preserve", "after_replace"])
+def test_rollback_soft_failures_preserve_active_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    passphrase = "fiction-rollback-boundary-pass"
+    monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
+    active = tmp_path / "active"
+    content = f"Active fiction vault content for rollback {boundary}."
+    record_id = _seed_vault(active, content=content)
+    export_path = tmp_path / "backup.atcexp"
+    export_active_vault(export_path, data_dir=active, passphrase=passphrase)
+    isolated = tmp_path / "isolated"
+    restore_isolated(
+        export_path,
+        data_dir=active,
+        destination=isolated,
+        passphrase=passphrase,
+        dry_run=False,
+        cutover=False,
+    )
+    rollback_ok = tmp_path / "rollback-ok"
+    cutover_active_vault(isolated, data_dir=active, rollback_path=rollback_ok)
+    current_content = CoreStore(active / "core.sqlite3").get_record(record_id).content
+    pre_fingerprint = _logical_vault_fingerprint(active / "core.sqlite3")
+
+    with pytest.raises(RecoveryError, match="prior active vault was restored"):
+        rollback_active_vault(
+            rollback_ok,
+            data_dir=active,
+            inject_failure=boundary,
+        )
+    _assert_active_intact(
+        active,
+        record_id=record_id,
+        content=current_content,
+        pre_fingerprint=pre_fingerprint,
+    )
+
+
+@pytest.mark.parametrize(
+    ("operation", "boundary"),
+    [
+        ("cutover", "after_stage"),
+        ("cutover", "after_preserve"),
+        ("cutover", "after_replace"),
+        ("rollback", "after_stage"),
+        ("rollback", "after_preserve"),
+        ("rollback", "after_replace"),
+    ],
+)
+def test_subprocess_crash_keeps_complete_active_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, boundary: str
+) -> None:
+    """Hard process exit must leave a complete verified old or new vault, never missing."""
+
+    passphrase = "fiction-crash-boundary-pass"
+    monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
+    active = tmp_path / "active"
+    content = f"Crash-boundary fiction vault {operation} {boundary}."
+    record_id = _seed_vault(active, content=content)
+    pre_fingerprint = _logical_vault_fingerprint(active / "core.sqlite3")
+    export_path = tmp_path / "backup.atcexp"
+    export_active_vault(export_path, data_dir=active, passphrase=passphrase)
+    isolated = tmp_path / "isolated"
+    restore_isolated(
+        export_path,
+        data_dir=active,
+        destination=isolated,
+        passphrase=passphrase,
+        dry_run=False,
+        cutover=False,
+    )
+    rollback_path = tmp_path / "rollback-crash"
+    if operation == "rollback":
+        cutover_active_vault(isolated, data_dir=active, rollback_path=rollback_path)
+        pre_fingerprint = _logical_vault_fingerprint(active / "core.sqlite3")
+        expected_content = CoreStore(active / "core.sqlite3").get_record(record_id).content
+    else:
+        expected_content = content
+
+    script = f"""
+from pathlib import Path
+from allthecontext.recovery_admin import cutover_active_vault, rollback_active_vault
+if {operation!r} == "cutover":
+    cutover_active_vault(
+        Path({str(isolated)!r}),
+        data_dir=Path({str(active)!r}),
+        rollback_path=Path({str(rollback_path)!r}),
+        inject_failure="crash_{boundary}",
+    )
+else:
+    rollback_active_vault(
+        Path({str(rollback_path)!r}),
+        data_dir=Path({str(active)!r}),
+        inject_failure="crash_{boundary}",
+    )
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 87, completed.stderr
+    active_db = active / "core.sqlite3"
+    assert active_db.is_file(), "process crash must not leave active missing"
+    if boundary in {"after_stage", "after_preserve"}:
+        # Replace never happened: logical pre-operation content remains.
+        assert _logical_vault_fingerprint(active_db) == pre_fingerprint
+    integrity = verify_vault_integrity(active_db)
+    assert integrity["ok"] is True
+    store = CoreStore(active_db)
+    if boundary in {"after_stage", "after_preserve"}:
+        assert store.get_record(record_id).content == expected_content
+    else:
+        # after_replace crash: complete candidate vault, never missing/partial.
+        recovered = store.get_record(record_id)
+        assert recovered is not None
+        assert recovered.content
+
+
+def test_cutover_and_rollback_success_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     passphrase = "fiction-cutover-passphrase"
     monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
 
@@ -167,19 +420,6 @@ def test_cutover_and_rollback_verify_integrity_and_restore_on_failure(
     assert integrity["ok"] is True
     assert integrity["label"] == "verified"
 
-    # Injected failure after preserving active must restore prior active vault.
-    with pytest.raises(RecoveryError, match="prior active vault was restored"):
-        cutover_active_vault(
-            isolated,
-            data_dir=active,
-            rollback_path=tmp_path / "rollback-fail",
-            inject_failure="after_preserve",
-        )
-    assert (active / "core.sqlite3").is_file()
-    restored_active = CoreStore(active / "core.sqlite3")
-    assert restored_active.get_record(record_id).content == "Active fiction vault content A."
-
-    # Successful cutover then rollback both verify integrity.
     cutover_active_vault(
         isolated,
         data_dir=active,
@@ -193,9 +433,77 @@ def test_cutover_and_rollback_verify_integrity_and_restore_on_failure(
         "Active fiction vault content A."
     )
 
-    # Overlapping / nonempty targets refuse closed.
     with pytest.raises(RecoveryError, match=r"not empty|overlap"):
         cutover_active_vault(isolated, data_dir=active, rollback_path=tmp_path / "rollback-ok")
+
+
+def test_restore_from_different_vault_with_purge_tombstones_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    passphrase = "fiction-cross-vault-passphrase"
+    monkeypatch.setenv("ATC_EXPORT_PASSPHRASE", passphrase)
+
+    active = tmp_path / "active"
+    store = CoreStore(active / "core.sqlite3")
+    store.initialize_vault("Active fiction vault")
+    record = store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="Active fiction purge target.",
+            explicit_user_statement=True,
+        )
+    )
+    assert record.record_id is not None
+    active_vault_id = store.vault_id()
+    purge_target(
+        "record",
+        record.record_id,
+        confirmation=f"PURGE RECORD {record.record_id}",
+        data_dir=active,
+        compact=False,
+    )
+    tombs = (
+        sqlite3.connect(active / "core.sqlite3")
+        .execute("SELECT COUNT(*) FROM purge_tombstones")
+        .fetchone()
+    )
+    assert tombs is not None and int(tombs[0]) >= 1
+
+    other = tmp_path / "other"
+    other_store = CoreStore(other / "core.sqlite3")
+    other_store.initialize_vault("Other fiction vault")
+    other_store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="Other vault fiction goal that must not blend.",
+            explicit_user_statement=True,
+        )
+    )
+    other_vault_id = other_store.vault_id()
+    assert other_vault_id != active_vault_id
+    export_path = tmp_path / "other.atcexp"
+    export_active_vault(export_path, data_dir=other, passphrase=passphrase)
+
+    with pytest.raises(RecoveryError, match="different vault"):
+        restore_isolated(
+            export_path,
+            data_dir=active,
+            destination=tmp_path / "isolated-cross",
+            passphrase=passphrase,
+            dry_run=False,
+            cutover=False,
+        )
+    # Active identity and non-resurrection boundary remain intact.
+    live = CoreStore(active / "core.sqlite3")
+    assert live.vault_id() == active_vault_id
+    with pytest.raises(NotFoundError):
+        live.get_record(record.record_id)
+    remaining = (
+        sqlite3.connect(active / "core.sqlite3")
+        .execute("SELECT COUNT(*) FROM purge_tombstones")
+        .fetchone()
+    )
+    assert remaining is not None and int(remaining[0]) >= 1
 
 
 def test_export_restore_cutover_rollback_and_purge(

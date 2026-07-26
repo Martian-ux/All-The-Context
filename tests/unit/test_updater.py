@@ -881,15 +881,7 @@ def test_windows_archive_rejects_unsafe_member_paths(tmp_path: Path, member_name
         PlatformInstaller._extract_windows_setup(archive, tmp_path / "extracted")
 
 
-def test_windows_adapter_requires_the_packaged_recovery_helper() -> None:
-    installer = PlatformInstaller(system="Windows", frozen=True)
-    assert installer.supported is False
-    assert "recovery helper" in installer.unsupported_reason
-
-
-def test_windows_adapter_enables_automatic_install_with_independent_helper(
-    tmp_path: Path,
-) -> None:
+def test_windows_adapter_requires_the_packaged_recovery_helper(tmp_path: Path) -> None:
     application = tmp_path / "AllTheContext.exe"
     helper = tmp_path / "AllTheContextUpdater.exe"
     application.write_bytes(b"application")
@@ -899,6 +891,26 @@ def test_windows_adapter_enables_automatic_install_with_independent_helper(
         frozen=True,
         application_path=application,
         helper_path=helper,
+    )
+    assert installer.supported is False
+    assert "recovery/admin helper" in installer.unsupported_reason
+
+
+def test_windows_adapter_enables_automatic_install_with_independent_helper(
+    tmp_path: Path,
+) -> None:
+    application = tmp_path / "AllTheContext.exe"
+    helper = tmp_path / "AllTheContextUpdater.exe"
+    recovery = tmp_path / "AllTheContextRecovery.exe"
+    application.write_bytes(b"application")
+    helper.write_bytes(b"helper")
+    recovery.write_bytes(b"recovery")
+    installer = PlatformInstaller(
+        system="Windows",
+        frozen=True,
+        application_path=application,
+        helper_path=helper,
+        recovery_path=recovery,
     )
     assert installer.supported is True
 
@@ -912,11 +924,13 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     install_dir.mkdir()
     application = install_dir / "AllTheContext.exe"
     mcp = install_dir / "AllTheContextMCP.exe"
+    recovery = install_dir / "AllTheContextRecovery.exe"
     stable_update_helper = install_dir / "AllTheContextUpdater.exe"
     packaged_helper = tmp_path / "bundle" / "AllTheContextUpdater.exe"
     packaged_helper.parent.mkdir()
     application.write_bytes(b"old application")
     mcp.write_bytes(b"old mcp")
+    recovery.write_bytes(b"old recovery")
     stable_update_helper.write_bytes(b"old update helper")
     packaged_helper.write_bytes(b"helper")
     database = data_dir / "core.sqlite3"
@@ -971,6 +985,7 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
         application_path=application,
         helper_path=packaged_helper,
         mcp_path=mcp,
+        recovery_path=recovery,
     )
     plan = InstallPlan(
         artifact=artifact,
@@ -992,6 +1007,7 @@ def test_windows_adapter_prepares_strict_journal_before_detached_handoff(
     assert journal.phase is HelperPhase.PREPARED
     assert Path(journal.rollback_application_path).read_bytes() == b"old application"
     assert Path(journal.rollback_mcp_path or "").read_bytes() == b"old mcp"
+    assert Path(journal.rollback_recovery_path or "").read_bytes() == b"old recovery"
     assert Path(journal.rollback_update_helper_path).read_bytes() == b"old update helper"
     assert Path(journal.replacement_path).read_bytes() == b"new application"
     assert registrations == [(Path(journal.helper_path), journal_path, operation_id)]

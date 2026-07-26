@@ -539,6 +539,10 @@ def _apply_packaged_update(report_value: str) -> int:
     if update_helper is None or not update_helper.is_file():
         raise RuntimeError("The installed update helper is unavailable after update")
     update_helper_digest, update_helper_size = _file_digest(update_helper)
+    recovery = installed.recovery_executable
+    if recovery is None or not recovery.is_file():
+        raise RuntimeError("The installed recovery helper is unavailable after update")
+    recovery_digest, recovery_size = _file_digest(recovery)
     payload = {
         "status": "installed",
         "version": __version__,
@@ -548,6 +552,9 @@ def _apply_packaged_update(report_value: str) -> int:
         "mcp": str(helper),
         "mcp_sha256": helper_digest,
         "mcp_size": helper_size,
+        "recovery": str(recovery),
+        "recovery_sha256": recovery_digest,
+        "recovery_size": recovery_size,
         "update_helper": str(update_helper),
         "update_helper_sha256": update_helper_digest,
         "update_helper_size": update_helper_size,
