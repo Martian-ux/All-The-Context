@@ -188,7 +188,9 @@ def test_successful_smoke_startup_path_leaves_zero_orphan_registry_key(
 
     # Fail closed: product Run key and nonempty smoke keys are never deleted.
     with pytest.raises(OSError, match="non-smoke"):
-        remove_smoke_windows_startup_key(windows_key=r"Software\Microsoft\Windows\CurrentVersion\Run")
+        remove_smoke_windows_startup_key(
+            windows_key=r"Software\Microsoft\Windows\CurrentVersion\Run"
+        )
     keys_present.add(smoke_key)
     values[STARTUP_NAME] = (STARTUP_NAME, 1, "still-present")
     with pytest.raises(OSError, match="nonempty"):
