@@ -1,4 +1,15 @@
-"""Exercise frozen first-run setup, installed MCP, retrieval, and graceful shutdown."""
+"""Exercise frozen first-run setup, installed MCP, retrieval, and graceful shutdown.
+
+This smoke deliberately isolates credential storage from the host OS keyring:
+it forces the null keyring backend and explicitly enables the insecure
+development credential file. That proves packaged first-run install, MCP,
+startup, and recovery paths under a non-secret isolated store.
+
+It is not BETA-P03 / real OS credential acceptance. Real Windows Credential
+Manager and macOS Keychain round-trips are exercised separately by
+``scripts/smoke_desktop_artifact.py --packaged-credential-acceptance`` and
+``scripts/smoke_platform_acceptance.py``.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +34,10 @@ from typing import Any, TextIO
 
 import anyio
 from allthecontext import __version__
+from allthecontext.credentials import (
+    DEVELOPMENT_FALLBACK_ENV,
+    FALLBACK_CREDENTIAL_STORAGE,
+)
 from allthecontext.release_manifest import sha256_file
 from allthecontext.windows_update_helper import (
     HelperPhase,
@@ -32,6 +47,9 @@ from allthecontext.windows_update_helper import (
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from smoke_desktop_artifact import ROOT, artifact_executable
+
+# Explicit, isolated, non-secret smoke only. Production installs never set this.
+ISOLATED_SMOKE_CREDENTIAL_BACKEND = "keyring.backends.null.Keyring"
 
 
 def available_port() -> int:
@@ -210,6 +228,76 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
             raise RuntimeError(f"packaged MCP did not reach Core: {status.structuredContent}")
 
 
+def _print_retained_failure_artifacts(work: Path, report_path: Path) -> None:
+    """Surface redacted failure evidence without deleting the work directory."""
+
+    print(f"packaged first-run smoke retained diagnostics under: {work}", flush=True)
+    for candidate in (
+        report_path,
+        work / "setup-report.json",
+        work / "reopen-report.json",
+        work / "mcp-stderr.log",
+        work / "mcp-restart-stderr.log",
+        work / "uninstall-report.json",
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"  could not read {candidate.name}: {exc}", flush=True)
+            continue
+        # Never dump credential files or large opaque blobs.
+        if "credential" in candidate.name.casefold() and candidate.suffix == ".json":
+            continue
+        preview = text if len(text) <= 4_000 else f"{text[:4_000]}\n...[truncated]..."
+        print(f"--- {candidate.name} ---\n{preview}", flush=True)
+
+
+def _run_headless_setup(
+    *,
+    executable: Path,
+    report_path: Path,
+    environment: dict[str, str],
+    extra_args: list[str],
+    work: Path,
+    label: str,
+) -> dict[str, Any]:
+    """Run packaged headless setup and keep failure diagnostics when it exits non-zero."""
+
+    completed = subprocess.run(
+        [
+            str(executable),
+            "--headless-setup",
+            str(report_path),
+            *extra_args,
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    if completed.returncode != 0:
+        if completed.stdout.strip():
+            print(f"{label} stdout:\n{completed.stdout}", flush=True)
+        if completed.stderr.strip():
+            print(f"{label} stderr:\n{completed.stderr}", flush=True)
+        _print_retained_failure_artifacts(work, report_path)
+        raise SystemExit(
+            f"{label} exited {completed.returncode}; "
+            f"see retained diagnostics under {work} "
+            f"(windowed packages may only write the setup report)"
+        )
+    if not report_path.is_file():
+        raise SystemExit(f"{label} did not write a setup report at {report_path}")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("setup") == "failed":
+        _print_retained_failure_artifacts(work, report_path)
+        raise SystemExit(f"{label} reported setup failure: {report}")
+    return report
+
+
 def main() -> int:
     system = os.environ.get("ATC_SMOKE_PLATFORM") or platform.system()
     executable = artifact_executable(system)
@@ -231,7 +319,10 @@ def main() -> int:
             "ATC_CORE_PORT": str(port),
             "ATC_CORE_HOST": "127.0.0.1",
             "CODEX_HOME": str(codex_home),
-            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            # Isolate non-secret smoke credentials from the host OS store.
+            "PYTHON_KEYRING_BACKEND": ISOLATED_SMOKE_CREDENTIAL_BACKEND,
+            # Explicit opt-in only for this disposable smoke; never production default.
+            DEVELOPMENT_FALLBACK_ENV: "1",
         }
     )
     if system == "Windows":
@@ -259,6 +350,8 @@ def main() -> int:
 
     base_url = f"http://127.0.0.1:{port}"
     cleanup_admin_token = ""
+    # Keep work/dir diagnostics on any failure path; clear only after success.
+    retain_work_on_failure = True
 
     def cleanup_failed_smoke() -> None:
         if cleanup_admin_token:
@@ -274,6 +367,14 @@ def main() -> int:
             ):
                 with suppress(OSError):
                     winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
+        if retain_work_on_failure and work.exists():
+            # Keep redacted setup reports and logs for the operator; do not
+            # print credential file contents.
+            print(
+                f"packaged first-run smoke kept work directory for diagnosis: {work}",
+                flush=True,
+            )
+            return
         deadline = time.monotonic() + 10
         while work.exists() and time.monotonic() < deadline:
             try:
@@ -285,22 +386,32 @@ def main() -> int:
 
     atexit.register(cleanup_failed_smoke)
 
-    subprocess.run(
-        [
-            str(executable),
-            "--headless-setup",
-            str(report_path),
+    report = _run_headless_setup(
+        executable=executable,
+        report_path=report_path,
+        environment=environment,
+        extra_args=[
             "--no-claude",
             "--vault-name",
             "Packaged smoke vault",
         ],
-        env=environment,
-        check=True,
-        timeout=90,
+        work=work,
+        label="headless first-run setup",
     )
-    report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("core_url") != f"http://127.0.0.1:{port}":
         raise SystemExit(f"unexpected setup report: {report}")
+    # Contract: this smoke uses the explicit isolated development store only.
+    # Real OS credential acceptance remains a separate packaged gate.
+    if report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
+        raise SystemExit(
+            "packaged first-run smoke must use the explicit isolated development "
+            f"credential store, not OS-keyring acceptance; got {report.get('credential_storage')!r}"
+        )
+    warnings = report.get("warnings") or []
+    if not any("insecure development credential file" in str(item).casefold() for item in warnings):
+        raise SystemExit(
+            "isolated packaged smoke did not surface the insecure development credential warning"
+        )
     startup_report = report.get("startup")
     expected_startup = {
         "Windows": "HKCU Run",
@@ -456,25 +567,28 @@ def main() -> int:
     # Reopen the stable installed copy and run the idempotent setup/upgrade
     # path; the same vault and desktop authority must survive.
     reopen_report_path = work / "reopen-report.json"
-    subprocess.run(
-        [
-            str(installed_app),
-            "--headless-setup",
-            str(reopen_report_path),
+    reopen_report = _run_headless_setup(
+        executable=installed_app,
+        report_path=reopen_report_path,
+        environment=environment,
+        extra_args=[
             "--no-startup",
             "--no-claude",
             "--vault-name",
             "Packaged smoke vault",
         ],
-        env=environment,
-        check=True,
-        timeout=90,
+        work=work,
+        label="installed reopen headless setup",
     )
-    reopen_report = json.loads(reopen_report_path.read_text(encoding="utf-8"))
     if reopen_report.get("vault_id") != report.get("vault_id") or reopen_report.get(
         "client_id"
     ) != report.get("client_id"):
         raise SystemExit(f"installed reopen changed vault authority: {reopen_report}")
+    if reopen_report.get("credential_storage") != FALLBACK_CREDENTIAL_STORAGE:
+        raise SystemExit(
+            "installed reopen left the isolated development credential contract: "
+            f"{reopen_report.get('credential_storage')!r}"
+        )
     if api_request(f"{base_url}/v1/context/status", token).get("core_online") is not True:
         raise SystemExit("reopened installed Core was not ready")
     stop_core(base_url, admin_token)
@@ -659,6 +773,7 @@ def main() -> int:
             raise SystemExit("packaged uninstaller did not revoke the Codex principal")
         uninstall_result = "passed"
 
+    retain_work_on_failure = False
     cleanup_deadline = time.monotonic() + 10
     while True:
         try:
@@ -673,6 +788,9 @@ def main() -> int:
         json.dumps(
             {
                 "setup": "passed",
+                "credential_storage": FALLBACK_CREDENTIAL_STORAGE,
+                "credential_mode": "explicit-isolated-development-file",
+                "os_credential_acceptance": "not_this_smoke",
                 "browser_handoff": "passed",
                 "stable_mcp_command": True,
                 "mcp_handshake": "passed",

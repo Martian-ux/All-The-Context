@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import urllib.request
 from pathlib import Path
 
@@ -399,6 +400,39 @@ def test_windows_uninstall_retries_self_removal_after_bootloader_exits(
     assert "Start-Sleep -Milliseconds 100" in script
     assert kwargs["env"]["ATC_UNINSTALL_DIR"] == str(install_dir.resolve())  # type: ignore[index]
     assert kwargs["cwd"] == install_dir.resolve().parent
+
+
+def test_headless_setup_failure_writes_redacted_report_and_exits_nonzero(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Windowed packages hide stderr; headless setup must leave a redacted report."""
+
+    report_path = tmp_path / "setup-report.json"
+    diagnostics_path = tmp_path / "desktop-error.json"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    monkeypatch.setattr("allthecontext.desktop.RuntimeCommand.current", lambda: runtime)
+    monkeypatch.setattr(
+        "allthecontext.desktop.prepare_installed_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "the operating-system credential store is unavailable; "
+                "plaintext credential storage is disabled "
+                "(development only: set ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1)"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop._write_failure_diagnostics",
+        lambda _error: diagnostics_path,
+    )
+
+    assert main(["--headless-setup", str(report_path), "--no-claude"]) == 1
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["setup"] == "failed"
+    assert payload["error_type"] == "RuntimeError"
+    assert "plaintext credential storage is disabled" in payload["error"]
+    assert payload["diagnostics_path"] == str(diagnostics_path)
+    assert "ATC_CLIENT_TOKEN" not in payload["error"]
 
 
 def test_graphical_install_failure_is_reported_with_retry_and_diagnostics(

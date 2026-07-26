@@ -202,9 +202,25 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     first_run = _read(ROOT / "scripts" / "smoke_packaged_first_run.py")
     assert "AllTheContextRecovery.exe" in first_run
     assert "rollback_recovery" in first_run
+    # Isolated first-run smoke must opt into the development credential file
+    # while forcing a null OS keyring, assert the fallback store, and never
+    # claim real OS credential acceptance (that is a separate gate).
+    assert "DEVELOPMENT_FALLBACK_ENV" in first_run
+    assert "FALLBACK_CREDENTIAL_STORAGE" in first_run
+    assert "keyring.backends.null.Keyring" in first_run
+    assert "credential_storage" in first_run
+    assert "os_credential_acceptance" in first_run
+    assert "not_this_smoke" in first_run
+    assert "retained diagnostics" in first_run or "kept work directory" in first_run
+    assert "packaged-credential-acceptance" in first_run
+    # Never silently treat first-run smoke as production OS-store proof.
+    assert "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE" in first_run or (
+        "DEVELOPMENT_FALLBACK_ENV" in first_run
+    )
 
     artifact_smoke = _read(ROOT / "scripts" / "smoke_desktop_artifact.py")
     assert (
         "009_import_operations" in artifact_smoke or "import_operations_migration" in artifact_smoke
     )
     assert "dashboard_import_operations" in artifact_smoke
+    assert "--packaged-credential-acceptance" in artifact_smoke

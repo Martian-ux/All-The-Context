@@ -639,27 +639,63 @@ def _packaged_credential_acceptance(report_value: str) -> int:
     return 0
 
 
+def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path | None:
+    """Write a redacted headless failure report when the windowed app has no console."""
+
+    diagnostics_path = _write_failure_diagnostics(error)
+    report: dict[str, Any] = {
+        "setup": "failed",
+        "error_type": type(error).__name__,
+        "error": _redact_failure_message(error),
+        "diagnostics_path": str(diagnostics_path) if diagnostics_path is not None else None,
+    }
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{secrets.token_hex(6)}.atc-new")
+        try:
+            temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return target
+    except OSError:
+        return None
+
+
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
-    installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
-    result = perform_setup(
-        SetupOptions(
-            vault_name=args.vault_name,
-            timezone=args.timezone or local_timezone(),
-            configure_codex=not args.no_codex,
-            configure_claude=not args.no_claude,
-            start_at_login=not args.no_startup,
-        ),
-        installed,
-    )
-    report = asdict(result)
-    report["log_path"] = str(result.log_path)
-    report["codex"] = asdict(result.codex) if result.codex else None
-    report["claude"] = asdict(result.claude) if result.claude else None
-    report["startup"] = asdict(result.startup) if result.startup else None
     target = Path(args.headless_setup).expanduser().resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
-    return 0
+    try:
+        installed, _ = prepare_installed_runtime(runtime, relaunch_args=None)
+        result = perform_setup(
+            SetupOptions(
+                vault_name=args.vault_name,
+                timezone=args.timezone or local_timezone(),
+                configure_codex=not args.no_codex,
+                configure_claude=not args.no_claude,
+                start_at_login=not args.no_startup,
+            ),
+            installed,
+        )
+        report = asdict(result)
+        report["setup"] = "passed"
+        report["log_path"] = str(result.log_path)
+        report["codex"] = asdict(result.codex) if result.codex else None
+        report["claude"] = asdict(result.claude) if result.claude else None
+        report["startup"] = asdict(result.startup) if result.startup else None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+        return 0
+    except Exception as exc:
+        # Windowed Windows packages have no console; persist a redacted report so
+        # packaged smoke and operators can diagnose fail-closed setup without
+        # relying on hidden stderr.
+        report_path = _write_headless_setup_failure_report(target, exc)
+        message = _redact_failure_message(exc)
+        if report_path is not None:
+            print(f"Headless setup failed: {message}\nReport: {report_path}", file=sys.stderr)
+        else:
+            print(f"Headless setup failed: {message}", file=sys.stderr)
+        return 1
 
 
 def _open_existing(runtime: RuntimeCommand) -> bool:

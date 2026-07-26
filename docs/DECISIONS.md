@@ -1353,7 +1353,7 @@ require explicit retirement or replacement.
 
 ## ADR-056: Normal client setup fails closed without protected credential storage
 
-**Status:** accepted 2026-07-25.
+**Status:** accepted 2026-07-25; packaged first-run isolation clarified 2026-07-26.
 
 Normal V1 setup stores client credentials in Windows Credential Manager, macOS
 Keychain, or Linux Secret Service and verifies each write by reading it back.
@@ -1369,6 +1369,16 @@ removes its credential, and restores the exact prior configuration bytes.
 Backend errors are surfaced without credential values. Exact-package real
 credential-service receipts on every mandatory OS remain a release-acceptance
 gate.
+
+Packaged first-run smoke (`scripts/smoke_packaged_first_run.py`) is intentionally
+**not** that OS-credential receipt. It isolates non-secret smoke credentials with
+the null keyring backend plus explicit
+`ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1`, asserts the setup report's
+`credential_storage` is the insecure development file, and labels the result as
+outside real OS acceptance. Real OS credential round-trips stay with
+`--packaged-credential-acceptance` / platform acceptance. Headless setup writes
+a redacted failure report when windowed packages hide stderr, and the smoke
+retains work-directory diagnostics on failure without logging credential values.
 
 ## ADR-057: Preserve imported bytes before making parser claims
 

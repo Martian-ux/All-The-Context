@@ -65,6 +65,20 @@ behavior.
 
 ## Security maintenance
 
+On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
+credential safety and the Windows windowed artifact can both be meaningful:
+`scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke
+credentials with the null keyring backend **and** explicit
+`ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1`, asserts
+`credential_storage` is the insecure development file, and does **not** claim
+real OS credential acceptance. Real Windows Credential Manager / macOS Keychain
+round-trips remain the separate `--packaged-credential-acceptance` /
+`smoke_platform_acceptance.py` gates. Headless setup now writes a redacted
+failure report when setup exits non-zero, and the smoke retains its work
+directory on failure so windowed packages no longer hide diagnostics by
+deleting evidence at exit. Production installs still never enable plaintext
+credential storage silently.
+
 On 2026-07-26, a narrow exact-lock correction closed three release-install
 holes without broadening release engineering: the reviewed `uv.lock` now
 contains hashed `setuptools` and `wheel` and the locked installer fails closed

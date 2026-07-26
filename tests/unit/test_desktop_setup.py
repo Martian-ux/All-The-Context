@@ -159,6 +159,58 @@ def test_revoked_client_cleanup_tolerates_missing_linux_secret_service(
     assert fallback.get(f"client:{stale.id}") is None
 
 
+def test_null_keyring_without_explicit_fallback_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Packaged smoke isolation must not silently weaken production credential safety."""
+
+    config = CoreConfig.in_directory(tmp_path / "null-keyring")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    monkeypatch.delenv(DEVELOPMENT_FALLBACK_ENV, raising=False)
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+
+    with pytest.raises(RuntimeError, match="plaintext credential storage is disabled"):
+        ensure_client_access(
+            store,
+            config,
+            name=CODEX_CLIENT_NAME,
+            scopes=AI_CLIENT_SCOPES,
+        )
+
+    clients = store.list_clients()
+    assert len(clients) == 1
+    assert clients[0]["revoked"] is True
+    assert not (config.data_dir / "credentials.development.json").exists()
+
+
+def test_null_keyring_with_explicit_fallback_uses_development_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Isolated non-secret smokes may opt into the development file deliberately."""
+
+    config = CoreConfig.in_directory(tmp_path / "null-keyring-fallback")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    monkeypatch.setenv(DEVELOPMENT_FALLBACK_ENV, "1")
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+
+    access = ensure_client_access(
+        store,
+        config,
+        name=CODEX_CLIENT_NAME,
+        scopes=AI_CLIENT_SCOPES,
+    )
+
+    assert access.credential_storage == "insecure development credential file"
+    credential_path = config.data_dir / "credentials.development.json"
+    assert credential_path.is_file()
+    payload = json.loads(credential_path.read_text(encoding="utf-8"))
+    assert payload.get(f"client:{access.client_id}") == access.token
+
+
 @pytest.mark.parametrize(
     ("platform_name", "backend_error"),
     [
