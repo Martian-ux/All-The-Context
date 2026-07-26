@@ -101,7 +101,10 @@ def test_artifact_scan_reads_large_zip_members_and_complete_private_keys(tmp_pat
     begin = b"-----BEGIN " + b"PRIVATE KEY-----"
     end = b"-----END " + b"PRIVATE KEY-----"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        bundle.writestr("nested/key.pem", b"x" * (300 * 1024) + begin + b"\nbody\n" + end)
+        bundle.writestr(
+            "nested/key.pem",
+            b"x" * (17 * 1024 * 1024) + begin + b"\nbody\n" + end,
+        )
 
     report = scan_artifact_directory(tmp_path)
 

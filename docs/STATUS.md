@@ -812,5 +812,8 @@ state is already noncurrent and creates no user queue.
   than unrelated refs or marker-only diffs.
 - ZIP members and complete private-key blocks are scanned through explicit
   member, expanded-size, object-count, and per-payload ceilings. Oversized or
-  unreadable inputs fail closed. Current `dist/` artifacts were unavailable in
-  this worktree, so exact built-artifact scanning remains pending.
+  unreadable inputs fail closed. The existing Windows desktop directory
+  (including the 97 MB installer and 29 MB recovery helper) and 61 MB direct
+  ZIP directory scan clean with bounded streaming. These are prior build
+  artifacts, not the still-unfrozen exact candidate; Linux tar.gz and macOS DMG
+  contents are not claimed as inspected by this scanner.

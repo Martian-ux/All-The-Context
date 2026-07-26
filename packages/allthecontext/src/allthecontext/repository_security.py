@@ -138,10 +138,14 @@ SKIP_DIR_NAMES = frozenset(
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_SCAN_BYTES = 16 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 10_000
-MAX_ARCHIVE_EXPANDED_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_EXPANDED_BYTES = 1024 * 1024 * 1024
 MAX_HISTORY_BLOBS = 100_000
 MAX_FINDINGS = 200
+SCAN_CHUNK_BYTES = 256 * 1024
+SCAN_CARRY_BYTES = 256
 
 
 class SecurityScanError(Exception):
@@ -290,6 +294,92 @@ def _is_unexpected_executable(path: Path, *, allow_packaged_binaries: bool) -> b
     return path.name.casefold() not in allowed_names
 
 
+class _StreamScanner:
+    """Incrementally scan secrets with bounded carry and PEM state."""
+
+    def __init__(
+        self,
+        *,
+        relative_path: str,
+        findings: list[SecurityFinding],
+        allow_absolute_paths: bool,
+    ) -> None:
+        self.relative_path = relative_path
+        self.findings = findings
+        self.allow_absolute_paths = allow_absolute_paths
+        self.carry = b""
+        self.open_end: bytes | None = None
+        self.seen: set[FindingClass] = set()
+
+    def _add(self, finding_class: FindingClass, location: str) -> None:
+        if finding_class in self.seen or len(self.findings) >= MAX_FINDINGS:
+            return
+        self.seen.add(finding_class)
+        self.findings.append(
+            SecurityFinding(
+                finding_class=finding_class,
+                path=self.relative_path,
+                location=location,
+                severity=SEVERITY[finding_class],
+            )
+        )
+
+    def feed(self, chunk: bytes) -> None:
+        window = self.carry + chunk
+        if self.open_end is not None:
+            if self.open_end in window:
+                self._add("private_key_marker", "binary-or-text-block")
+                self.open_end = None
+        else:
+            for begin_marker in PRIVATE_KEY_MARKERS:
+                offset = window.find(begin_marker)
+                if offset >= 0:
+                    end_marker = begin_marker.replace(b"BEGIN", b"END", 1)
+                    if end_marker in window[offset + len(begin_marker) :]:
+                        self._add("private_key_marker", "binary-or-text-block")
+                    else:
+                        self.open_end = end_marker
+                    break
+        for pattern in CREDENTIAL_CANARY_PATTERNS:
+            if pattern.search(window) is not None:
+                self._add("credential_canary", "stream")
+                break
+        for pattern in RAW_CONTEXT_CANARY_PATTERNS:
+            if pattern.search(window) is not None:
+                self._add("raw_context_canary", "stream")
+                break
+        if not self.allow_absolute_paths:
+            for pattern in ABSOLUTE_PATH_PATTERNS:
+                if pattern.search(window) is not None:
+                    self._add("absolute_developer_path", "stream")
+                    break
+        self.carry = window[-SCAN_CARRY_BYTES:]
+
+
+def _scan_stream(
+    handle: Any,
+    *,
+    relative_path: str,
+    findings: list[SecurityFinding],
+    allow_absolute_paths: bool,
+    maximum_bytes: int,
+) -> None:
+    scanner = _StreamScanner(
+        relative_path=relative_path,
+        findings=findings,
+        allow_absolute_paths=allow_absolute_paths,
+    )
+    total = 0
+    while True:
+        chunk = handle.read(SCAN_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > maximum_bytes:
+            raise SecurityScanError(f"artifact payload exceeds scan ceiling: {relative_path}")
+        scanner.feed(chunk)
+
+
 def _scan_zip(
     bundle: zipfile.ZipFile,
     *,
@@ -308,24 +398,23 @@ def _scan_zip(
             raise SecurityScanError(f"unsafe ZIP member path in artifact: {relative_path}")
         if info.flag_bits & 0x1:
             raise SecurityScanError(f"encrypted ZIP member cannot be scanned: {relative_path}")
-        if info.file_size > MAX_SCAN_BYTES:
+        if info.file_size > MAX_ARCHIVE_MEMBER_BYTES:
             raise SecurityScanError(f"ZIP member exceeds scan ceiling: {relative_path}")
         expanded += info.file_size
         if expanded > MAX_ARCHIVE_EXPANDED_BYTES:
             raise SecurityScanError(f"ZIP expanded size exceeds scan ceiling: {relative_path}")
+        member_path = f"{relative_path}:{name}"
         try:
-            payload = bundle.read(info)
+            with bundle.open(info, "r") as handle:
+                _scan_stream(
+                    handle,
+                    relative_path=member_path,
+                    findings=findings,
+                    allow_absolute_paths=False,
+                    maximum_bytes=MAX_ARCHIVE_MEMBER_BYTES,
+                )
         except (RuntimeError, zipfile.BadZipFile, OSError) as exc:
             raise SecurityScanError(f"could not scan ZIP member: {relative_path}") from exc
-        if len(payload) != info.file_size:
-            raise SecurityScanError(f"ZIP member size mismatch: {relative_path}")
-        member_path = f"{relative_path}:{name}"
-        _scan_bytes(
-            payload,
-            relative_path=member_path,
-            findings=findings,
-            allow_absolute_paths=False,
-        )
 
 
 def _scan_complete_payload(
@@ -571,9 +660,11 @@ def scan_artifact_directory(
                 raise SecurityScanError(f"artifact is not a valid ZIP: {relative}") from exc
             continue
         size = path.stat().st_size
-        if size > MAX_SCAN_BYTES:
+        if size > MAX_ARTIFACT_BYTES:
             raise SecurityScanError(f"artifact exceeds scan ceiling: {relative}")
-        if _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}:
+        if size <= MAX_SCAN_BYTES and (
+            _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}
+        ):
             try:
                 value = path.read_bytes()
             except OSError as exc:
@@ -584,15 +675,21 @@ def scan_artifact_directory(
                 findings=findings,
                 allow_absolute_paths=False,
             )
-        elif contains_private_key_block(path.read_bytes()):
-            findings.append(
-                SecurityFinding(
-                    finding_class="private_key_marker",
-                    path=relative,
-                    location="file-head",
-                    severity=SEVERITY["private_key_marker"],
-                )
-            )
+        else:
+            try:
+                with path.open("rb") as handle:
+                    _scan_stream(
+                        handle,
+                        relative_path=relative,
+                        findings=findings,
+                        allow_absolute_paths=not (
+                            _should_scan_text(path)
+                            or suffix in {".sha256", ".json", ".txt", ".md"}
+                        ),
+                        maximum_bytes=MAX_ARTIFACT_BYTES,
+                    )
+            except OSError as exc:
+                raise SecurityScanError(f"could not read artifact: {relative}") from exc
     return SecurityScanReport(
         scope="artifacts",
         source_commit=source_commit,

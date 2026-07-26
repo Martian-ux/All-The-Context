@@ -1540,5 +1540,7 @@ with the same complete private-key and shaped-canary rules, including content
 inside ZIP members and archives later deleted or renamed. Per-blob, member,
 expanded-archive, and object-count ceilings bound memory and work; exceeding a
 ceiling or failing to read an object/member is a gate error, never a clean
-result. This deliberately excludes the broader multi-format scanner redesign
-until those formats are part of an exact release artifact contract.
+result. Native package files and ZIP members use bounded chunk streaming so
+normal release sizes do not fail solely for exceeding the in-memory history
+blob ceiling. This deliberately excludes the broader multi-format scanner
+redesign; tar.gz and DMG content coverage is not claimed.
