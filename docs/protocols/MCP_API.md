@@ -72,13 +72,14 @@ After the selected client restarts, normal operation requires no recurring
 memory setup or approval work. MCP instructions require automatic
 `bootstrap_context` for relevant tasks and automatic `propose_memory` when
 durable user context changes. They require `forget_context` only when the user
-explicitly asks to forget or remove a particular memory. Generated observation
-idempotency keys hash the entire normalized payload, so exact retries replay
-cleanly while a genuine correction produces a distinct observation and policy
-decision.
+explicitly asks to forget or remove a particular memory. The current baseline
+generates an unkeyed SHA-256 idempotency value from the normalized proposal
+payload. That makes exact retries convenient but can leave an offline-guessing
+verifier for low-entropy refused secrets. B-101 must replace it before beta
+with an opaque client operation ID or reviewed keyed construction and prove
+that refused payloads leave neither content nor an unkeyed fingerprint.
 
-V1 has no hosted MCP endpoint. A phone or another computer uses the same
-provider-neutral tools by connecting directly to Core while Core is online.
-Core remains loopback-only by default; secure guided device pairing and
-encrypted remote transport are required before that path is advertised as
-complete.
+V1 beta has no hosted MCP endpoint and is same-device only. Core remains
+loopback-only by default. A future phone or remote-computer path would use the
+same provider-neutral tools but requires separately accepted guided pairing and
+encrypted transport before it is advertised.

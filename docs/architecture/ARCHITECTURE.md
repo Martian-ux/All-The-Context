@@ -14,9 +14,10 @@ lightweight STDIO adapter. Each managed adapter is bound to an exact vault,
 client identity, scopes, and credential so it can self-heal a stopped local
 Core without attaching to another installation.
 
-V1 has no hosted data plane. Phones and other computers are direct Core clients,
-not clients of a replica. Core must be online for them to retrieve or submit
-observations.
+The V1 beta is same-device only. It has no supported phone or other-computer
+client, hosted data plane, or replica. A future remote or mobile client would
+need a separate product and security decision; it is not part of the beta
+contract or current supported behavior.
 
 ## Data flow
 
@@ -33,19 +34,19 @@ flowchart LR
   Observations --> DB["Complete per-user SQLite vault"]
   Policy --> DB
   Current --> UI["Optional dashboard"]
-  Mobile["Phone or another computer"] -. "direct; Core must be online" .-> Policy
 ```
 
-The dotted path is a product contract, not a claim that public exposure is
-already safe. Core binds to `127.0.0.1` by default. A future guided direct-Core
-pairing flow must add authenticated device enrollment, encrypted transport,
-revocation, endpoint discovery, and recovery before the product enables remote
-listening automatically.
+Every supported beta path is local to the same device, and Core binds to
+`127.0.0.1` by default. A future guided direct-Core pairing flow would require
+authenticated device enrollment, encrypted transport, revocation, endpoint
+discovery, recovery, and independent release acceptance before the product
+could enable remote listening.
 
 ## Availability
 
 - `local_only`: only same-device clients that pass policy.
-- `core_available`: permitted direct clients while Core is online.
+- `core_available`: permitted authenticated clients while the local Core is
+  online. Beta package support is limited to same-device clients.
 - `always_available`: legacy experimental replication value retained for
   schema/import compatibility. The V1 UI does not offer it for new current
   context, and the automatic hosted replication worker is disabled.
@@ -112,19 +113,28 @@ Embeddings remain an optional future index and can never override policy.
 
 ## Synchronization boundary
 
-There is no V1 synchronization service and no database-file replication. The
-repository retains experimental signed ordered event/Relay modules solely as
-dormant compatibility and research code. Relay can accept signed ordered
-projections from Core and queue observations for Core; it can never evaluate an
-observation or create current context. The modules are not started by Core,
-published as a container, offered in the dashboard, or included in release
-acceptance. Any future synchronization design requires a new product decision.
+The intended V1 beta has no synchronization service or database-file
+replication. The current pre-beta baseline still constructs experimental Edge
+managers and exposes enrollment, connection, synchronization, client-management,
+CLI, and mutation-trigger surfaces. Those paths are part of the current runtime
+and threat surface; they are not dormant merely because the beta must not ship
+them.
+
+Before candidate freeze, B-103 must remove or build-gate those paths from every
+supported artifact and prove that ordinary Core operation cannot reach them.
+Only an isolated compatibility cleanup path may remain. If that narrow path is
+exercised, Relay may accept signed ordered projections from Core and queue
+observations for Core, but it can never evaluate an observation or create
+current context. Any future supported synchronization design requires a new
+product decision, architecture decision, and threat model.
 
 ## Cross-platform rules
 
-Shared runtime code uses Python 3.12+, `pathlib`, `platformdirs`, TCP loopback,
-portable locking, lifespan handling, and SQLite transactions. It does not rely
-on Bash, systemd, POSIX permissions, symlinks, Unix sockets, case-sensitive
-paths, or Docker. Service installation and credential storage remain behind
-platform abstractions for Windows Credential Manager, macOS Keychain, and Linux
-secret storage with an explicit development fallback.
+Contributor source installations use Python 3.12+, `pathlib`, `platformdirs`,
+TCP loopback, portable locking, lifespan handling, and SQLite transactions.
+Shared runtime code does not rely on Bash, systemd, POSIX permissions, symlinks,
+Unix sockets, case-sensitive paths, or Docker. Public beta support is limited to
+the platform and package matrix frozen in the V1 roadmap. Service installation
+and credential storage remain behind platform abstractions for Windows
+Credential Manager, macOS Keychain, and Linux secret storage with an explicit
+development fallback.

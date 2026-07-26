@@ -26,11 +26,19 @@ administration; it is not an inbox. Clients call `forget_context` only for an
 explicit user request naming a particular memory; Core records a reversible
 deletion, never a purge.
 
+For beta1, an ATC-configured same-device Codex or Claude principal may attest
+that text was explicitly stated by the user only when Core grants that witness
+class. This is an explicit local trust grant, not cryptographic authorship
+proof, and authentication by itself is insufficient. Unattested model
+inference remains tentative, imported history does not inherit the grant, and
+an authorized malicious client that lies about user intent remains a
+documented residual risk.
+
 Other local MCP clients use the provider-neutral adapter contract and examples
 in [`integrations/`](../../integrations/README.md). The packaged smoke performs
 a real initialize/list/call exchange through the installed executable.
 
-V1 does not configure hosted provider connectors. A phone or another computer
-must connect directly to Core while Core is online. Core remains loopback-only
-by default, and secure guided remote pairing is pending; no Edge or cloud copy
-is offered as a workaround.
+V1 beta does not configure hosted provider connectors and is same-device only.
+Core remains loopback-only by default. Phone or remote-computer access requires
+a separately accepted post-V1 pairing and encrypted-transport design; no Edge
+or cloud copy is offered as a workaround.

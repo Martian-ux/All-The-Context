@@ -17,9 +17,8 @@ user must continually curate.
    exports.
 4. Let extraction complete. The dashboard reports truthful source coverage and
    the total observations processed. Core's import response also returns
-   per-disposition `outcomes` and affected `record_ids`; richer outcome
-   presentation in the dashboard remains pending. There is no extracted-memory
-   review queue.
+   per-disposition `outcomes` and affected `record_ids`; the dashboard presents
+   those disposition counts. There is no extracted-memory review queue.
 
 The same importer accepts JSON, JSONL, Markdown, and text. A copied provider
 memory summary can therefore be saved as a text or Markdown file, its provider
@@ -76,8 +75,25 @@ parser version to reprocess the source.
 - JSON conversation arrays are decoded one conversation at a time. The HTTP
   upload and Core source write use bounded chunks rather than loading the
   complete archive into memory.
-- The default and maximum raw-source limit is 2,000,000,000 bytes. An operator
-  can lower it with `ATC_MAX_IMPORT_BYTES`.
+- The current implementation default and maximum raw-source limit is
+  2,000,000,000 bytes, and an operator can lower it with
+  `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the
+  mandatory beta maximum. The current implementation establishes a structural
+  storage boundary, not yet an accepted V1 beta claim. The frozen reference
+  floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free. Core plus
+  import-worker RSS is capped at 1 GiB; incremental import storage is capped at
+  four times raw size plus 1 GiB. Progress starts within 5 seconds and advances
+  every 5 seconds or 64 MiB; cancellation is acknowledged within 5 seconds and
+  quiesces safely within 30 seconds; import, source-inclusive export, and
+  isolated restore each have a 60-minute ceiling. Before publication, a
+  deterministic physically
+  allocated/non-sparse exact-boundary canary with a known generator, SHA-256,
+  chunk count, nonzero publication result, and interruption checkpoints must
+  pass on Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64 candidate
+  artifacts; a 2,000,000,001-byte source must fail deterministically. Each
+  receipt also covers disk preflight, durable
+  progress, cancellation/retry, temporary/WAL/database space, interruption
+  recovery, complete integrity, packaged source-inclusive export, and restore.
 - Core stores large raw sources as ordered 8 MiB-or-smaller SQLite rows instead
   of one oversized BLOB. Reads, retries, and source-inclusive portable restores
   verify the complete source size and SHA-256 identity.
@@ -90,6 +106,15 @@ parser version to reprocess the source.
   dashboard can retry directly from the preserved raw blob without another
   upload or duplicate decisions.
 - Raw source text and credentials are never logged.
+
+ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each must
+pass a privacy-safe nonempty real-export receipt acquired after parser freeze
+and within 30 days of candidate acceptance. The receipt records a content-free
+structural fingerprint, exercises the frozen fictional canary shapes, and
+reconciles every item to a recognized, excluded, skipped, unavailable, or
+failed count with a closed reason. Unknown/unparsed material is a visible
+coverage warning, not parser success. Missing evidence for any provider keeps
+beta1 in draft rather than narrowing the provider list.
 
 ## Contributor CLI
 

@@ -1,5 +1,10 @@
 # Implementation plan
 
+> This is the completed historical execution plan for the ADR-039 automatic
+> policy transition. The active path from the integrated beta baseline to
+> the first usable public beta is
+> [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
+
 ## Product transition
 
 ADR-039 replaces the review-first lifecycle with one-time setup and automatic,

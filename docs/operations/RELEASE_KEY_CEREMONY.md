@@ -27,7 +27,8 @@ easier.
 ## Public-key inspection
 
 1. The custodian generates the key using the separately reviewed offline tool,
-   with a strong unique password, and makes two recoverable encrypted backups.
+   with a strong unique password, and makes two recoverable encrypted backups
+   in distinct failure domains outside the checkout and synchronized workspace.
 2. Export only the public key to removable media. Confirm it starts with
    `-----BEGIN PUBLIC KEY-----` or `ssh-ed25519`, never `PRIVATE KEY`.
 3. On a clean online checkout, inspect the public half:
@@ -88,8 +89,9 @@ fingerprint: sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98
 
 `release/keys.json` and the packaged `update_keys.json` contain the same active
 public entry. The encrypted private key remains outside the checkout. Creating
-and verifying two recoverable encrypted backups remains required before the
-first production signature.
+and independently restore-testing two recoverable encrypted backups in distinct
+failure domains, both outside the checkout and synchronized workspace, remains
+required before the first production signature.
 
 ## Signing day
 
