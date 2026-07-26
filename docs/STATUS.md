@@ -99,6 +99,24 @@ artifact files rescan clean locally, and adversarial regressions prove both
 sides of the boundary. The release workflow has not been rerun and no draft
 release was created.
 
+Release-candidate run `30202272772` on exact main
+`48815077544f9defb78d0e6b9c8022319888dfed` subsequently passed validation,
+all native builds, scanning, attestations, and the exact 55-file draft
+inventory. GitHub created unpublished prerelease draft ID `360008392` for
+`v0.1.0-beta.1`, but immutable-release mode does not expose that draft through
+the published-by-tag release endpoint and does not create the tag ref until
+publication. The workflow therefore failed only when its post-create
+verification assumed both routes already existed. The corrected source
+enumerates authenticated releases, requires exactly one matching tag, binds
+the numeric release ID, target commit, state, and exact asset names,
+SHA-256 digests, and sizes, and uses release-ID REST operations through
+publication. The unused-version preflight now also rejects any matching draft
+from the full release listing before consulting the published-only tag routes.
+Post-publication verification still requires the by-tag release, exact tag
+ref, immutable state, and GitHub release attestation. The existing live draft
+was not changed, deleted, published, or reused; a rebuilt candidate from the
+corrected source remains pending.
+
 On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
 credential safety and the Windows windowed artifact can both be meaningful:
 `scripts/smoke_packaged_first_run.py` deliberately isolates non-secret smoke

@@ -23,7 +23,9 @@ from allthecontext.release_candidate import (
     archive_name,
     assemble_candidate,
     direct_package_names,
+    normalize_github_release_state,
     prepare_beta_channel,
+    select_github_release_from_api_listing,
     signed_manifest_name,
     validate_github_release_state,
     verify_beta_channel_site,
@@ -474,6 +476,175 @@ def test_release_state_requires_exact_draft_or_immutable_beta() -> None:
             draft=True,
             immutable=False,
         )
+
+
+def test_unpublished_draft_resolves_uniquely_from_paginated_api_listing() -> None:
+    state = {
+        "id": 360008392,
+        "assets": [
+            {
+                "id": 41,
+                "name": CANDIDATE_FILE_NAME,
+                "size": 123,
+                "digest": f"sha256:{'c' * 64}",
+            }
+        ],
+        "draft": True,
+        "immutable": False,
+        "prerelease": True,
+        "tag_name": f"v{VERSION}",
+        "target_commitish": SOURCE_COMMIT,
+    }
+
+    normalized = select_github_release_from_api_listing([[state]], tag=f"v{VERSION}")
+
+    assert normalized == {
+        "releaseId": 360008392,
+        "assets": [
+            {
+                "id": 41,
+                "name": CANDIDATE_FILE_NAME,
+                "size": 123,
+                "digest": f"sha256:{'c' * 64}",
+            }
+        ],
+        "isDraft": True,
+        "isImmutable": False,
+        "isPrerelease": True,
+        "tagName": f"v{VERSION}",
+        "targetCommitish": SOURCE_COMMIT,
+    }
+    validate_github_release_state(
+        normalized,
+        tag=f"v{VERSION}",
+        source_commit=SOURCE_COMMIT,
+        draft=True,
+        immutable=False,
+        expected_asset_descriptors={CANDIDATE_FILE_NAME: ("c" * 64, 123)},
+    )
+
+
+def test_draft_listing_rejects_duplicate_tag_and_incomplete_asset_metadata() -> None:
+    state = {
+        "id": 1,
+        "assets": [
+            {
+                "id": 2,
+                "name": CANDIDATE_FILE_NAME,
+                "size": 10,
+                "digest": f"sha256:{'d' * 64}",
+            }
+        ],
+        "draft": True,
+        "immutable": False,
+        "prerelease": True,
+        "tag_name": f"v{VERSION}",
+        "target_commitish": SOURCE_COMMIT,
+    }
+    with pytest.raises(ManifestError, match="exactly one"):
+        select_github_release_from_api_listing([state, state], tag=f"v{VERSION}")
+
+    incomplete = dict(state)
+    incomplete["assets"] = [{"id": 2, "name": CANDIDATE_FILE_NAME, "size": 10}]
+    with pytest.raises(ManifestError, match="ID, size, and SHA-256"):
+        select_github_release_from_api_listing([incomplete], tag=f"v{VERSION}")
+
+
+def test_release_asset_descriptor_mismatch_is_rejected() -> None:
+    state = normalize_github_release_state(
+        {
+            "assets": [
+                {
+                    "name": CANDIDATE_FILE_NAME,
+                    "size": 123,
+                    "digest": f"sha256:{'e' * 64}",
+                }
+            ],
+            "draft": True,
+            "immutable": False,
+            "prerelease": True,
+            "tag_name": f"v{VERSION}",
+            "target_commitish": SOURCE_COMMIT,
+        }
+    )
+    with pytest.raises(ManifestError, match="digest or size"):
+        validate_github_release_state(
+            state,
+            tag=f"v{VERSION}",
+            source_commit=SOURCE_COMMIT,
+            draft=True,
+            immutable=False,
+            expected_asset_descriptors={CANDIDATE_FILE_NAME: ("f" * 64, 123)},
+        )
+
+
+def test_release_cli_resolves_draft_id_and_lists_safe_asset_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    listing = tmp_path / "release-list.json"
+    state = tmp_path / "release-state.json"
+    listing.write_text(
+        json.dumps(
+            [
+                [
+                    {
+                        "id": 360008392,
+                        "assets": [
+                            {
+                                "id": 7,
+                                "name": CANDIDATE_FILE_NAME,
+                                "size": 1,
+                                "digest": f"sha256:{'a' * 64}",
+                            }
+                        ],
+                        "draft": True,
+                        "immutable": False,
+                        "prerelease": True,
+                        "tag_name": f"v{VERSION}",
+                        "target_commitish": SOURCE_COMMIT,
+                    }
+                ]
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "release_candidate.py",
+            "resolve-release",
+            "--input",
+            str(listing),
+            "--tag",
+            f"v{VERSION}",
+            "--source-commit",
+            SOURCE_COMMIT,
+            "--draft",
+            "true",
+            "--immutable",
+            "false",
+            "--output",
+            str(state),
+        ],
+    )
+    assert release_candidate_script.main() == 0
+    assert capsys.readouterr().out == "360008392\n"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "release_candidate.py",
+            "list-release-assets",
+            "--input",
+            str(state),
+        ],
+    )
+    assert release_candidate_script.main() == 0
+    assert capsys.readouterr().out == f"7\t{CANDIDATE_FILE_NAME}\n"
 
 
 @pytest.mark.parametrize("field", ["sha256", "size", "trust", "format"])

@@ -1652,3 +1652,28 @@ member regardless of suffix, and archive size/count/encryption/path ceilings
 remain fail-closed. The policy is type-based rather than an allowlist for the
 three extension names that exposed the inconsistency, while text sidecars
 cannot bypass the gate.
+
+## ADR-068: Unpublished immutable-release drafts use numeric release identity
+
+**Status:** accepted 2026-07-26.
+
+GitHub immutable-release mode does not expose an unpublished draft through the
+published-by-tag release route and does not create its tag ref until
+publication. Candidate and publication controls therefore discover drafts
+through the authenticated, paginated release listing, require exactly one
+release with the requested `tag_name`, and bind its numeric release ID,
+target commit, draft/prerelease state, and exact asset names, sizes, and
+SHA-256 digests. All pre-publication reads, asset downloads, asset uploads,
+state rechecks, and the final `draft=false` transition use release-ID REST
+routes.
+
+The unused-version gate enumerates every authenticated release page before
+checking the published-by-tag release and tag ref. Any draft or published
+release with the requested tag closes the slot, including when both tag routes
+return 404. This preserves single-use semantics and prevents a failed
+post-create check from enabling a duplicate candidate race.
+
+After publication, the control returns to tag-addressed verification and
+requires the published-by-tag release, the exact source-bound tag ref,
+immutable state, and `gh release verify`. Promotion consumes only published
+releases and remains tag-addressed.

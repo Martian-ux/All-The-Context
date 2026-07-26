@@ -21,6 +21,25 @@ def _responses(*, immutable: bool = True, release_exists: bool = False) -> dict[
     }
 
 
+def _patch_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: dict[str, Any],
+    *,
+    releases: list[dict[str, Any]] | None = None,
+) -> None:
+    def fake_get(self: GitHubReader, endpoint: str, *, missing_ok: bool = False) -> Any:
+        del self, missing_ok
+        return responses[endpoint]
+
+    def fake_get_list(self: GitHubReader, endpoint: str) -> list[dict[str, Any]]:
+        del self
+        assert endpoint == "releases?per_page=100&page=1"
+        return releases or []
+
+    monkeypatch.setattr(GitHubReader, "get", fake_get)
+    monkeypatch.setattr(GitHubReader, "get_list", fake_get_list)
+
+
 def test_repository_metadata_request_has_no_trailing_slash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -41,12 +60,7 @@ def test_release_preflight_requires_immutable_unused_default_head(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses = _responses()
-
-    def fake_get(self: GitHubReader, endpoint: str, *, missing_ok: bool = False) -> Any:
-        del self, missing_ok
-        return responses[endpoint]
-
-    monkeypatch.setattr(GitHubReader, "get", fake_get)
+    _patch_reader(monkeypatch, responses)
     preflight_candidate(
         repository="example/all-the-context",
         version="0.1.0-beta.1",
@@ -70,12 +84,7 @@ def test_release_preflight_rejects_reused_version_and_can_recheck_after_main_adv
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses = _responses(release_exists=True)
-
-    def fake_get(self: GitHubReader, endpoint: str, *, missing_ok: bool = False) -> Any:
-        del self, missing_ok
-        return responses[endpoint]
-
-    monkeypatch.setattr(GitHubReader, "get", fake_get)
+    _patch_reader(monkeypatch, responses)
     with pytest.raises(ManifestError, match="cannot be reused"):
         preflight_candidate(
             repository="example/all-the-context",
@@ -97,6 +106,41 @@ def test_release_preflight_rejects_reused_version_and_can_recheck_after_main_adv
     )
 
 
+def test_release_preflight_rejects_unpublished_draft_when_tag_routes_are_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = _responses()
+    assert responses["releases/tags/v0.1.0-beta.1"] is None
+    assert responses["git/ref/tags/v0.1.0-beta.1"] is None
+    _patch_reader(monkeypatch, responses)
+
+    def fake_get_list(self: GitHubReader, endpoint: str) -> list[dict[str, Any]]:
+        del self
+        if endpoint.endswith("page=1"):
+            return [{"tag_name": f"v9.9.9-beta.{index}"} for index in range(1, 101)]
+        assert endpoint.endswith("page=2")
+        return [
+            {
+                "id": 360008392,
+                "tag_name": "v0.1.0-beta.1",
+                "target_commitish": SOURCE_COMMIT,
+                "draft": True,
+                "prerelease": True,
+            }
+        ]
+
+    monkeypatch.setattr(GitHubReader, "get_list", fake_get_list)
+
+    with pytest.raises(ManifestError, match="cannot be reused"):
+        preflight_candidate(
+            repository="example/all-the-context",
+            version="0.1.0-beta.1",
+            source_commit=SOURCE_COMMIT,
+            token="test-only-token",
+            api_url="https://api.github.test",
+        )
+
+
 def test_release_preflight_can_use_external_operator_immutability_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -109,6 +153,7 @@ def test_release_preflight_can_use_external_operator_immutability_evidence(
         return responses[endpoint]
 
     monkeypatch.setattr(GitHubReader, "get", fake_get)
+    monkeypatch.setattr(GitHubReader, "get_list", lambda self, endpoint: [])
     preflight_candidate(
         repository="example/all-the-context",
         version="0.1.0-beta.1",

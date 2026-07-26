@@ -17,6 +17,8 @@ from allthecontext.release_candidate import (
     ReleaseTarget,
     assemble_candidate,
     attach_attestation_bundles,
+    normalize_github_release_state,
+    select_github_release_from_api_listing,
     validate_github_release_state,
     verify_candidate,
     verify_release_asset_set,
@@ -118,6 +120,21 @@ def _targets(values: list[str]) -> list[ReleaseTarget]:
     return [ReleaseTarget.parse(value) for value in values]
 
 
+def _release_asset_descriptors(paths: list[Path]) -> dict[str, tuple[str, int]]:
+    return {path.name: sha256_file(path) for path in paths}
+
+
+def _write_release_state(path: Path, state: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        raise ManifestError("refusing to replace existing GitHub release state")
+    path.write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -168,6 +185,18 @@ def _parser() -> argparse.ArgumentParser:
     state.add_argument("--release-dir", type=Path)
     state.add_argument("--candidate", type=Path)
     state.add_argument("--asset-stage", choices=("draft", "signed", "promotion"))
+    resolve = commands.add_parser("resolve-release")
+    resolve.add_argument("--input", type=Path, required=True)
+    resolve.add_argument("--tag", required=True)
+    resolve.add_argument("--source-commit", required=True)
+    resolve.add_argument("--draft", choices=("true", "false"), required=True)
+    resolve.add_argument("--immutable", choices=("true", "false"), required=True)
+    resolve.add_argument("--output", type=Path, required=True)
+    resolve.add_argument("--release-dir", type=Path)
+    resolve.add_argument("--candidate", type=Path)
+    resolve.add_argument("--asset-stage", choices=("draft", "signed", "promotion"))
+    list_release_assets = commands.add_parser("list-release-assets")
+    list_release_assets.add_argument("--input", type=Path, required=True)
     notes = commands.add_parser("write-notes")
     notes.add_argument("--release-dir", type=Path, required=True)
     notes.add_argument("--candidate", type=Path)
@@ -304,16 +333,16 @@ def main() -> int:
                     "release state asset verification requires both release-dir and asset-stage"
                 )
             expected_asset_names = None
+            expected_asset_descriptors = None
             if arguments.release_dir is not None:
                 candidate = arguments.candidate or arguments.release_dir / CANDIDATE_FILE_NAME
-                expected_asset_names = {
-                    path.name
-                    for path in verify_release_asset_set(
-                        candidate,
-                        arguments.release_dir,
-                        stage=arguments.asset_stage,
-                    )
-                }
+                paths = verify_release_asset_set(
+                    candidate,
+                    arguments.release_dir,
+                    stage=arguments.asset_stage,
+                )
+                expected_asset_names = {path.name for path in paths}
+                expected_asset_descriptors = _release_asset_descriptors(paths)
             validate_github_release_state(
                 value,
                 tag=arguments.tag,
@@ -321,8 +350,50 @@ def main() -> int:
                 draft=arguments.draft == "true",
                 immutable=arguments.immutable == "true",
                 expected_asset_names=expected_asset_names,
+                expected_asset_descriptors=expected_asset_descriptors,
             )
             print(f"validated GitHub release state {arguments.tag}")
+        elif arguments.command == "resolve-release":
+            value = json.loads(arguments.input.read_text(encoding="utf-8"))
+            normalized = select_github_release_from_api_listing(value, tag=arguments.tag)
+            if (arguments.release_dir is None) != (arguments.asset_stage is None):
+                raise ManifestError(
+                    "release resolution asset verification requires both release-dir "
+                    "and asset-stage"
+                )
+            expected_asset_names = None
+            expected_asset_descriptors = None
+            if arguments.release_dir is not None:
+                candidate = arguments.candidate or arguments.release_dir / CANDIDATE_FILE_NAME
+                paths = verify_release_asset_set(
+                    candidate,
+                    arguments.release_dir,
+                    stage=arguments.asset_stage,
+                )
+                expected_asset_names = {path.name for path in paths}
+                expected_asset_descriptors = _release_asset_descriptors(paths)
+            validate_github_release_state(
+                normalized,
+                tag=arguments.tag,
+                source_commit=arguments.source_commit,
+                draft=arguments.draft == "true",
+                immutable=arguments.immutable == "true",
+                expected_asset_names=expected_asset_names,
+                expected_asset_descriptors=expected_asset_descriptors,
+            )
+            _write_release_state(arguments.output, normalized)
+            print(normalized["releaseId"])
+        elif arguments.command == "list-release-assets":
+            value = json.loads(arguments.input.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ManifestError("GitHub release state must be a JSON object")
+            normalized = normalize_github_release_state(
+                value,
+                require_release_id=True,
+                require_asset_api_metadata=True,
+            )
+            assets = sorted(normalized["assets"], key=lambda asset: asset["name"])
+            print("\n".join(f"{asset['id']}\t{asset['name']}" for asset in assets))
         else:
             candidate = arguments.candidate or arguments.release_dir / CANDIDATE_FILE_NAME
             _write_notes(candidate, arguments.release_dir, arguments.output)

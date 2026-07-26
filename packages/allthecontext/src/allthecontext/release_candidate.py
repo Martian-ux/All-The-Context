@@ -764,20 +764,23 @@ def validate_github_release_state(
     draft: bool,
     immutable: bool,
     expected_asset_names: Iterable[str] | None = None,
+    expected_asset_descriptors: Mapping[str, tuple[str, int]] | None = None,
 ) -> None:
-    """Validate the small `gh release view --json` result used by release gates."""
+    """Validate normalized GitHub CLI or REST release state used by release gates."""
+
+    normalized = normalize_github_release_state(state)
 
     if (
-        state.get("tagName") != tag
-        or state.get("targetCommitish") != source_commit
-        or state.get("isDraft") is not draft
-        or state.get("isImmutable") is not immutable
-        or state.get("isPrerelease") is not True
+        normalized.get("tagName") != tag
+        or normalized.get("targetCommitish") != source_commit
+        or normalized.get("isDraft") is not draft
+        or normalized.get("isImmutable") is not immutable
+        or normalized.get("isPrerelease") is not True
     ):
         raise ManifestError(
             "GitHub beta release state does not match the reviewed promotion inputs"
         )
-    assets = state.get("assets")
+    assets = normalized.get("assets")
     if not isinstance(assets, list) or not assets:
         raise ManifestError("GitHub beta release has no attached assets")
     actual_asset_names: list[str] = []
@@ -796,6 +799,132 @@ def validate_github_release_state(
                 "GitHub beta release asset set differs from the controlled inventory "
                 f"(missing={sorted(expected - actual)}, extra={sorted(actual - expected)})"
             )
+    if expected_asset_descriptors is not None:
+        actual_assets = {cast(str, asset["name"]): asset for asset in assets}
+        expected_names = set(expected_asset_descriptors)
+        if set(actual_assets) != expected_names:
+            raise ManifestError("GitHub beta release asset descriptors do not match inventory")
+        for name, (expected_digest, expected_size) in expected_asset_descriptors.items():
+            asset = actual_assets[name]
+            size = asset.get("size")
+            digest = asset.get("digest")
+            if (
+                isinstance(size, bool)
+                or not isinstance(size, int)
+                or size != expected_size
+                or digest != f"sha256:{expected_digest}"
+            ):
+                raise ManifestError(
+                    f"GitHub beta release asset digest or size differs from inventory: {name}"
+                )
+
+
+def normalize_github_release_state(
+    state: Mapping[str, Any],
+    *,
+    require_release_id: bool = False,
+    require_asset_api_metadata: bool = False,
+) -> dict[str, Any]:
+    """Normalize GitHub REST or ``gh release view --json`` release metadata."""
+
+    rest_shape = "tag_name" in state or "target_commitish" in state
+    release_id = state.get("id") if rest_shape else state.get("releaseId")
+    if release_id is not None and (
+        isinstance(release_id, bool) or not isinstance(release_id, int) or release_id < 1
+    ):
+        raise ManifestError("GitHub release ID is invalid")
+    if require_release_id and release_id is None:
+        raise ManifestError("GitHub release ID is required for an unpublished draft")
+    assets = state.get("assets")
+    if not isinstance(assets, list):
+        raise ManifestError("GitHub beta release assets are malformed")
+    normalized_assets: list[dict[str, Any]] = []
+    for asset in assets:
+        if not isinstance(asset, Mapping):
+            raise ManifestError("GitHub beta release asset metadata is malformed")
+        name = asset.get("name")
+        if not isinstance(name, str) or SAFE_FILE_NAME.fullmatch(name) is None:
+            raise ManifestError("GitHub beta release contains an invalid asset name")
+        asset_id = asset.get("id")
+        size = asset.get("size")
+        digest = asset.get("digest")
+        if asset_id is not None and (
+            isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1
+        ):
+            raise ManifestError("GitHub release asset ID is invalid")
+        if size is not None and (
+            isinstance(size, bool) or not isinstance(size, int) or size < 0
+        ):
+            raise ManifestError("GitHub release asset size is invalid")
+        if digest is not None and (
+            not isinstance(digest, str)
+            or not digest.startswith("sha256:")
+            or SHA256.fullmatch(digest.removeprefix("sha256:")) is None
+        ):
+            raise ManifestError("GitHub release asset digest is invalid")
+        if require_asset_api_metadata and (
+            asset_id is None or size is None or not isinstance(digest, str)
+        ):
+            raise ManifestError(
+                "GitHub release asset API metadata requires ID, size, and SHA-256"
+            )
+        normalized_assets.append(
+            {
+                "id": asset_id,
+                "name": name,
+                "size": size,
+                "digest": digest,
+            }
+        )
+    if len(normalized_assets) != len(
+        {cast(str, asset["name"]).casefold() for asset in normalized_assets}
+    ):
+        raise ManifestError("GitHub beta release contains duplicate asset names")
+    normalized = {
+        "releaseId": release_id,
+        "tagName": state.get("tag_name") if rest_shape else state.get("tagName"),
+        "targetCommitish": (
+            state.get("target_commitish") if rest_shape else state.get("targetCommitish")
+        ),
+        "isDraft": state.get("draft") if rest_shape else state.get("isDraft"),
+        "isImmutable": state.get("immutable") if rest_shape else state.get("isImmutable"),
+        "isPrerelease": state.get("prerelease") if rest_shape else state.get("isPrerelease"),
+        "assets": normalized_assets,
+    }
+    return normalized
+
+
+def select_github_release_from_api_listing(value: object, *, tag: str) -> dict[str, Any]:
+    """Select one draft/published release by tag from paginated REST list output."""
+
+    if not isinstance(value, list):
+        raise ManifestError("GitHub release listing must be an array")
+    releases: list[Mapping[str, Any]] = []
+    for item in value:
+        if isinstance(item, list):
+            if any(not isinstance(release, Mapping) for release in item):
+                raise ManifestError("GitHub release listing page is malformed")
+            releases.extend(cast(list[Mapping[str, Any]], item))
+        elif isinstance(item, Mapping):
+            releases.append(item)
+        else:
+            raise ManifestError("GitHub release listing entry is malformed")
+    if any(
+        not isinstance(release.get("tag_name"), str) or not release.get("tag_name")
+        for release in releases
+    ):
+        raise ManifestError("GitHub release listing contains an invalid tag name")
+    matches = [release for release in releases if release.get("tag_name") == tag]
+    if len(matches) != 1:
+        raise ManifestError(
+            f"GitHub release listing requires exactly one release for {tag!r}; "
+            f"found {len(matches)}"
+        )
+    return normalize_github_release_state(
+        matches[0],
+        require_release_id=True,
+        require_asset_api_metadata=True,
+    )
 
 
 def signed_manifest_name(channel: str, target: ReleaseTarget) -> str:
