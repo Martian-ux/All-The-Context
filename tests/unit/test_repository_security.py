@@ -71,6 +71,65 @@ def test_artifact_scan_reads_zip_entries(tmp_path: Path) -> None:
     assert token not in str(report.as_dict())
 
 
+def test_artifact_zip_keeps_p0_scans_but_ignores_binary_build_roots(tmp_path: Path) -> None:
+    archive = tmp_path / "compiled-wheel.zip"
+    token = _synthetic("TOKEN", "OPAQUEBINARY1").encode()
+    raw_context = _synthetic("RAW_CONTEXT", "OPAQUEBINARY2").encode()
+    private_key = (
+        b"-----BEGIN "
+        + b"PRIVATE KEY-----\nfixture\n-----END "
+        + b"PRIVATE KEY-----"
+    )
+    build_root = b"/Users/" + b"upstream-builder/" + b"wheel-source"
+    member = "Frameworks/vendor/native-extension.so"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(
+            member,
+            b"\x00compiled\x00"
+            + build_root
+            + b"\x00"
+            + token
+            + b"\x00"
+            + raw_context
+            + b"\x00"
+            + private_key,
+        )
+
+    report = scan_artifact_directory(tmp_path)
+
+    member_path = f"{archive.name}:{member}"
+    p0_classes = {
+        item.finding_class for item in report.findings if item.path == member_path
+    }
+    assert p0_classes >= {
+        "private_key_marker",
+        "credential_canary",
+        "raw_context_canary",
+    }
+    assert not any(
+        item.finding_class == "absolute_developer_path" and item.path == member_path
+        for item in report.findings
+    )
+    assert token.decode() not in str(report.as_dict())
+    assert raw_context.decode() not in str(report.as_dict())
+
+
+def test_artifact_zip_still_rejects_text_member_developer_paths(tmp_path: Path) -> None:
+    archive = tmp_path / "candidate.zip"
+    build_root = "/Users/" + "developer-account/" + "private-build"
+    member = "metadata/build-report.json"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(member, f'{{"build_root": "{build_root}"}}\n')
+
+    report = scan_artifact_directory(tmp_path)
+
+    member_path = f"{archive.name}:{member}"
+    assert any(
+        item.finding_class == "absolute_developer_path" and item.path == member_path
+        for item in report.findings
+    )
+
+
 def test_clean_tree_passes(tmp_path: Path) -> None:
     (tmp_path / "readme.md").write_text("# safe\n", encoding="utf-8")
     report = scan_tree(tmp_path)

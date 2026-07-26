@@ -1634,3 +1634,21 @@ noncandidate value to `skipped` and every malformed value to `unparsed`;
 unparsed input keeps coverage incomplete. The generator version changes
 because changing deterministic bytes without changing their declared identity
 would invalidate SHA-bound acceptance evidence.
+
+## ADR-067: Artifact home-path detection follows payload type inside archives
+
+**Status:** accepted 2026-07-26.
+
+Absolute developer-home paths remain a release-blocking finding in
+human-readable artifacts and ZIP members, including JSON metadata, checksum
+sidecars, configuration, scripts, and documentation. Opaque compiled ZIP
+members use the same policy already applied to top-level native binaries:
+incidental upstream build/debug roots are not treated as developer-data
+leakage.
+
+This distinction changes only absolute-path detection. Complete private-key
+blocks, credential canaries, and raw-context canaries remain scanned in every
+member regardless of suffix, and archive size/count/encryption/path ceilings
+remain fail-closed. The policy is type-based rather than an allowlist for the
+three extension names that exposed the inconsistency, while text sidecars
+cannot bypass the gate.

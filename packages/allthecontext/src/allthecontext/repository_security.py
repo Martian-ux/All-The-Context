@@ -280,6 +280,12 @@ def _should_scan_text(path: Path) -> bool:
     }
 
 
+def _should_scan_absolute_artifact_paths(path: Path) -> bool:
+    """Return whether an artifact payload is expected to carry human-readable paths."""
+
+    return _should_scan_text(path) or path.suffix.casefold() == ".sha256"
+
+
 def _is_unexpected_executable(path: Path, *, allow_packaged_binaries: bool) -> bool:
     suffix = path.suffix.casefold()
     if suffix not in EXECUTABLE_SUFFIXES:
@@ -404,13 +410,17 @@ def _scan_zip(
         if expanded > MAX_ARCHIVE_EXPANDED_BYTES:
             raise SecurityScanError(f"ZIP expanded size exceeds scan ceiling: {relative_path}")
         member_path = f"{relative_path}:{name}"
+        member = Path(name)
         try:
             with bundle.open(info, "r") as handle:
                 _scan_stream(
                     handle,
                     relative_path=member_path,
                     findings=findings,
-                    allow_absolute_paths=False,
+                    # Compiled extensions can retain upstream wheel build roots.
+                    # Keep every P0 scan active, but reserve developer-home
+                    # detection for human-readable members and sidecars.
+                    allow_absolute_paths=not _should_scan_absolute_artifact_paths(member),
                     maximum_bytes=MAX_ARCHIVE_MEMBER_BYTES,
                 )
         except (RuntimeError, zipfile.BadZipFile, OSError) as exc:
@@ -662,9 +672,8 @@ def scan_artifact_directory(
         size = path.stat().st_size
         if size > MAX_ARTIFACT_BYTES:
             raise SecurityScanError(f"artifact exceeds scan ceiling: {relative}")
-        if size <= MAX_SCAN_BYTES and (
-            _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}
-        ):
+        scan_absolute_paths = _should_scan_absolute_artifact_paths(path)
+        if size <= MAX_SCAN_BYTES and scan_absolute_paths:
             try:
                 value = path.read_bytes()
             except OSError as exc:
@@ -682,9 +691,7 @@ def scan_artifact_directory(
                         handle,
                         relative_path=relative,
                         findings=findings,
-                        allow_absolute_paths=not (
-                            _should_scan_text(path) or suffix in {".sha256", ".json", ".txt", ".md"}
-                        ),
+                        allow_absolute_paths=not scan_absolute_paths,
                         maximum_bytes=MAX_ARTIFACT_BYTES,
                     )
             except OSError as exc:
