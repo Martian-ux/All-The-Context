@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, cast
@@ -77,6 +77,12 @@ class InvalidStateError(StorageError):
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
+# Import-operation liveness must never sit on the full 10s busy budget: qualified
+# Linux gaps clustered near that ceiling when BEGIN IMMEDIATE waited out a lock.
+# Fail-fast and let the heartbeat scheduler retry within the public 5s allowance.
+LIVENESS_BUSY_TIMEOUT_MS = 250
+LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
+LIVENESS_WRITE_LOCK_TIMEOUT_SECONDS = 0.25
 
 
 def durable_sqlite_footprint(database_path: Path) -> int:
@@ -230,6 +236,27 @@ class CoreStore:
         connection.execute("PRAGMA temp_store = MEMORY")
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA journal_mode = WAL")
+        return connection
+
+    def _connect_import_operation_liveness(self) -> sqlite3.Connection:
+        """Open the telemetry-only writer without the lifecycle fsync/busy budget."""
+        connection = sqlite3.connect(
+            self.database_path,
+            timeout=LIVENESS_CONNECT_TIMEOUT_SECONDS,
+            isolation_level=None,
+            check_same_thread=False,
+            factory=_ClosingConnection,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute(f"PRAGMA busy_timeout = {LIVENESS_BUSY_TIMEOUT_MS}")
+        mode = connection.execute("PRAGMA journal_mode").fetchone()
+        if mode is None or str(mode[0]).casefold() != "wal":
+            connection.close()
+            raise InvalidStateError("import-operation liveness requires WAL mode")
+        # This connection writes only an observer timestamp. NORMAL remains safe
+        # from corruption and process crashes in WAL mode while avoiding a FULL
+        # virtual-disk flush for every unchanged-byte heartbeat.
+        connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
     @contextmanager
@@ -1136,6 +1163,71 @@ class CoreStore:
                 ),
             )
         return self.get_import_operation(operation_id)
+
+    def touch_import_operation_liveness(
+        self,
+        operation_id: str,
+    ) -> bool:
+        """Refresh observer-visible operation liveness without lifecycle rewrites.
+
+        Periodic unchanged-byte heartbeats need only ``updated_at`` to advance.
+        They must not:
+
+        - rewrite status, phase, bytes, source, result, error, or progress JSON
+        - re-enter the full lifecycle updater or re-fetch the full row
+        - hold the store write lock while waiting out the 10s lifecycle busy budget
+        - turn SQLite lock latency into a multi-second observer gap
+
+        Returns True when a non-terminal row was touched. Returns False when the
+        row is terminal, the write lock cannot be taken quickly, or SQLite is
+        busy/locked; callers retry on the next heartbeat tick. Missing rows still
+        raise ``NotFoundError`` (configuration/use error, not lock pressure).
+        """
+        acquired = self._write_lock.acquire(timeout=LIVENESS_WRITE_LOCK_TIMEOUT_SECONDS)
+        if not acquired:
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self._connect_import_operation_liveness()
+            connection.execute("BEGIN IMMEDIATE")
+            now = utc_now()
+            try:
+                cursor = connection.execute(
+                    "UPDATE import_operations SET updated_at=? "
+                    "WHERE id=? AND status NOT IN ('complete','failed','cancelled')",
+                    (now, operation_id),
+                )
+                if cursor.rowcount != 1:
+                    row = connection.execute(
+                        "SELECT status FROM import_operations WHERE id=?",
+                        (operation_id,),
+                    ).fetchone()
+                    connection.rollback()
+                    if row is None:
+                        raise NotFoundError("import operation not found")
+                    return False
+                connection.commit()
+                return True
+            except NotFoundError:
+                raise
+            except BaseException:
+                with suppress(sqlite3.Error):
+                    connection.rollback()
+                raise
+        except sqlite3.OperationalError as error:
+            with suppress(sqlite3.Error):
+                if connection is not None:
+                    connection.rollback()
+            code = getattr(error, "sqlite_errorcode", None)
+            primary_code = code & 0xFF if isinstance(code, int) else None
+            if primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                return False
+            raise
+        finally:
+            if connection is not None:
+                with suppress(sqlite3.Error):
+                    connection.close()
+            self._write_lock.release()
 
     def claim_import_operation_upload(self, operation_id: str) -> dict[str, Any]:
         """Exclusively claim an operation for upload (awaiting_upload -> uploading)."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sqlite3
 import threading
 import time
 import zipfile
@@ -1474,6 +1475,104 @@ def test_source_only_reprocess_keeps_source_heartbeats_and_terminal_metadata(
     source = core.store.get_source(source_id, duplicate=True)
     assert source.metadata["import_progress"]["phase"] == "complete"
     assert source.metadata["import_progress"]["percent"] == 100
+
+
+def test_operation_liveness_touch_is_fail_fast_and_semantically_neutral(
+    tmp_path: Path,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Liveness is not semantic progress"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="liveness-neutral.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    before = ops.get_operation(operation_id)
+    assert before["status"] == "processing"
+    assert before["source_id"] == staged["source_id"]
+
+    liveness_connection = core.store._connect_import_operation_liveness()
+    try:
+        assert int(liveness_connection.execute("PRAGMA synchronous").fetchone()[0]) == 1
+        assert str(liveness_connection.execute("PRAGMA journal_mode").fetchone()[0]) == "wal"
+    finally:
+        liveness_connection.close()
+
+    blocker = sqlite3.connect(
+        core.store.database_path,
+        timeout=10.0,
+        isolation_level=None,
+        check_same_thread=False,
+    )
+    blocker.execute("PRAGMA busy_timeout = 10000")
+    blocker.execute("PRAGMA journal_mode = WAL")
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        assert core.store.touch_import_operation_liveness(operation_id) is False
+        assert time.monotonic() - started < 1.0
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    assert core.store.touch_import_operation_liveness(operation_id) is True
+    after = ops.get_operation(operation_id)
+    assert after["updated_at"] > before["updated_at"]
+    semantic_fields = (
+        "status",
+        "phase",
+        "bytes_received",
+        "bytes_committed",
+        "content_hash",
+        "source_id",
+        "cancel_requested",
+        "progress",
+        "result",
+        "error_message",
+    )
+    for field in semantic_fields:
+        assert after[field] == before[field]
+
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    terminal = ops.get_operation(operation_id)
+    assert core.store.touch_import_operation_liveness(operation_id) is False
+    assert ops.get_operation(operation_id) == terminal
+    with pytest.raises(NotFoundError, match="import operation not found"):
+        core.store.touch_import_operation_liveness("missing-operation")
+
+
+def test_operation_liveness_touch_retries_only_sqlite_lock_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    operation = ops.start_operation(declared_byte_size=1, filename="io-failure.bin")
+    operation_id = str(operation["operation_id"])
+    before = ops.get_operation(operation_id)
+
+    def fail_connection() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(
+        core.store,
+        "_connect_import_operation_liveness",
+        fail_connection,
+    )
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        core.store.touch_import_operation_liveness(operation_id)
+    assert ops.get_operation(operation_id) == before
 
 
 def test_durable_telemetry_never_persists_raw_exception_text(
