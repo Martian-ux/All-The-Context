@@ -150,13 +150,23 @@ def create_app(
         ),
         database_path=active_config.database_path,
     )
-    operation_observer_executor = ThreadPoolExecutor(
-        max_workers=1,
-        thread_name_prefix="atc-operation-observer",
-    )
+    operation_observer_executor: ThreadPoolExecutor | None = None
+    operation_observer_executor_lock = threading.Lock()
+
+    def get_operation_observer_executor() -> ThreadPoolExecutor:
+        nonlocal operation_observer_executor
+        with operation_observer_executor_lock:
+            if operation_observer_executor is None:
+                operation_observer_executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="atc-operation-observer",
+                )
+            return operation_observer_executor
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal operation_observer_executor
+        observer_executor = get_operation_observer_executor()
         try:
             await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
             update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
@@ -175,11 +185,18 @@ def create_app(
             # already-configured residual connection.
             yield
         finally:
-            await asyncio.get_running_loop().run_in_executor(
-                operation_observer_executor,
-                core.store.close_import_operation_observer,
-            )
-            operation_observer_executor.shutdown(wait=True, cancel_futures=True)
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    observer_executor,
+                    core.store.close_import_operation_observer,
+                )
+            finally:
+                try:
+                    observer_executor.shutdown(wait=True, cancel_futures=True)
+                finally:
+                    with operation_observer_executor_lock:
+                        if operation_observer_executor is observer_executor:
+                            operation_observer_executor = None
 
     app = FastAPI(
         title="All The Context Core",
@@ -273,11 +290,12 @@ def create_app(
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
     ) -> tuple[ClientPrincipal, dict[str, Any] | None]:
+        observer_executor = get_operation_observer_executor()
         credential_parts = _credential_from_header(request, authorization)
         if credential_parts is None:
             assert development_principal is not None
             operation = await asyncio.get_running_loop().run_in_executor(
-                operation_observer_executor,
+                observer_executor,
                 core.import_operations.get_operation,
                 operation_id,
             )
@@ -289,7 +307,7 @@ def create_app(
             operation_id,
         )
         observation = await asyncio.get_running_loop().run_in_executor(
-            operation_observer_executor,
+            observer_executor,
             observe,
         )
         if observation is None:

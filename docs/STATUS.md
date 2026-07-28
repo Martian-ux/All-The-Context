@@ -752,7 +752,9 @@ state is already noncurrent and creates no user queue.
   `revoked_at IS NULL` state on every poll and is cleared with the connection on
   application shutdown. This status route does not turn every high-frequency
   poll into a durable `last_used_at` activity write; all other routes retain
-  ordinary authentication activity semantics. Lightweight operation touches
+  ordinary authentication activity semantics. The dedicated observer worker
+  and connection are recreated for each sequential application lifespan.
+  Lightweight operation touches
   run at one tenth of the five-second budget for observer margin; full
   source-only metadata heartbeats keep the original one-quarter cadence.
   Authorization still precedes missing-operation disclosure, and generic

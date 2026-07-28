@@ -101,7 +101,8 @@ operation in one fresh statement. A process-keyed, worker-local HMAC cache
 avoids repeated PBKDF without caching raw tokens or skipping durable revocation
 checks. Only this high-frequency status observer omits per-poll durable
 `last_used_at` activity writes; other routes retain ordinary authentication
-activity semantics. Regressions cover cross-thread writer contention, source-only cadence,
+activity semantics. Its worker is recreated for each sequential application
+lifespan. Regressions cover cross-thread writer contention, source-only cadence,
 async routing, cache mismatch/revocation/non-persistence, executor-thread
 cleanup, and authorization-before-not-found ordering. A content-free WSL2
 timing discriminator completed the exact 2,000,000,000-byte straight import

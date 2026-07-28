@@ -1835,7 +1835,9 @@ PBKDF through a single-entry, process-keyed HMAC fingerprint kept only in
 worker memory; each poll still matches the durable client id and token-hash
 identity with `revoked_at IS NULL`. Mismatch, revocation, and application
 shutdown clear the cache; shutdown also closes the connection on its owner
-thread. Scope is enforced before missing-operation disclosure, and ordinary
+thread. The worker is recreated for each sequential application lifespan so a
+later lifespan never reuses a shut-down executor. Scope is enforced before
+missing-operation disclosure, and ordinary
 authentication/activity writes remain unchanged on all other routes. This
 high-frequency status route authenticates and rechecks revocation without
 treating every poll as durable client activity. Generic internal operation

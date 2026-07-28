@@ -1611,6 +1611,33 @@ def test_operation_status_route_does_not_queue_as_sync_threadpool_work(tmp_path:
     assert inspect.iscoroutinefunction(observer_dependency)
 
 
+def test_operation_status_executor_is_recreated_for_each_app_lifespan(
+    tmp_path: Path,
+) -> None:
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+    from allthecontext.models import ClientCreate
+    from fastapi.testclient import TestClient
+
+    app = create_app(CoreConfig.in_directory(tmp_path, require_auth=True))
+    _principal, token = app.state.core.store.create_client(
+        ClientCreate(name="reused lifespan observer", scopes=["admin"])
+    )
+    operation = app.state.core.import_operations.start_operation(
+        declared_byte_size=1,
+        filename="reused-lifespan.bin",
+    )
+    path = f"/v1/admin/import-operations/{operation['operation_id']}"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with TestClient(app) as client:
+        first = client.get(path, headers=headers)
+        assert first.status_code == 200, first.text
+    with TestClient(app) as client:
+        second = client.get(path, headers=headers)
+        assert second.status_code == 200, second.text
+
+
 def test_lightweight_operation_heartbeat_has_margin_without_accelerating_source_writes() -> None:
     from allthecontext.import_boundary import ImportProgressTracker
 
