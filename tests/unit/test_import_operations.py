@@ -1553,6 +1553,282 @@ def test_operation_liveness_touch_is_fail_fast_and_semantically_neutral(
         core.store.touch_import_operation_liveness("missing-operation")
 
 
+def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryable(
+    tmp_path: Path,
+) -> None:
+    core, ops = _ops(tmp_path)
+    operation = ops.start_operation(declared_byte_size=1, filename="contended.bin")
+    operation_id = str(operation["operation_id"])
+    before = ops.get_operation(operation_id)
+
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_writer_lock() -> None:
+        with core.store._write_lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_writer_lock, daemon=True)
+    holder.start()
+    assert lock_held.wait(timeout=1.0)
+    try:
+        started = time.monotonic()
+        assert core.store.touch_import_operation_liveness(operation_id) is True
+        assert time.monotonic() - started < 1.0
+        observed = ops.get_operation(operation_id)
+        assert time.monotonic() - started < 1.0
+        assert holder.is_alive()
+    finally:
+        release_lock.set()
+        holder.join(timeout=1.0)
+
+    assert not holder.is_alive()
+    assert observed["updated_at"] > before["updated_at"]
+    assert observed["bytes_committed"] == before["bytes_committed"]
+    assert observed["progress"] == before["progress"]
+
+
+def test_operation_status_route_does_not_queue_as_sync_threadpool_work(tmp_path: Path) -> None:
+    import inspect
+
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+
+    app = create_app(CoreConfig.in_directory(tmp_path, require_auth=False))
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", "") == "/v1/admin/import-operations/{operation_id}"
+        and "GET" in getattr(route, "methods", set())
+    )
+    assert inspect.iscoroutinefunction(route.endpoint)
+    observer_dependency = next(
+        dependency.call
+        for dependency in route.dependant.dependencies
+        if getattr(dependency.call, "__name__", "") == "operation_observer_from_header"
+    )
+    assert inspect.iscoroutinefunction(observer_dependency)
+
+
+def test_lightweight_operation_heartbeat_has_margin_without_accelerating_source_writes() -> None:
+    from allthecontext.import_boundary import ImportProgressTracker
+
+    source_only = ImportProgressTracker(
+        bytes_total=1,
+        heartbeat_seconds=1.0,
+        durable_sink=lambda _progress: None,
+    )
+    operation_owned = ImportProgressTracker(
+        bytes_total=1,
+        heartbeat_seconds=1.0,
+        durable_sink=lambda _progress: None,
+        liveness_sink=lambda _progress: True,
+    )
+
+    assert source_only._durable_heartbeat_interval() == pytest.approx(0.25)
+    assert operation_owned._durable_heartbeat_interval() == pytest.approx(0.1)
+
+
+def test_authenticated_operation_status_bypasses_cross_thread_writer_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import allthecontext.storage as storage_module
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+    from allthecontext.models import ClientCreate
+    from fastapi.testclient import TestClient
+
+    app = create_app(CoreConfig.in_directory(tmp_path, require_auth=True))
+    core = app.state.core
+    _principal, token = core.store.create_client(
+        ClientCreate(name="operation observer", scopes=["admin"])
+    )
+    operation = core.import_operations.start_operation(
+        declared_byte_size=1,
+        filename="authenticated-contended.bin",
+    )
+    operation_id = str(operation["operation_id"])
+    verify_calls = {"count": 0}
+    original_verify = storage_module.verify_token
+    original_digest = storage_module.hmac.digest
+    fingerprints: list[bytes] = []
+
+    def counting_verify(token_value: str, encoded: str) -> bool:
+        verify_calls["count"] += 1
+        return original_verify(token_value, encoded)
+
+    def recording_digest(key: bytes, message: bytes, digest: str) -> bytes:
+        fingerprint = original_digest(key, message, digest)
+        fingerprints.append(fingerprint)
+        return fingerprint
+
+    monkeypatch.setattr(storage_module, "verify_token", counting_verify)
+    monkeypatch.setattr(storage_module.hmac, "digest", recording_digest)
+    observer_cleanup: dict[str, object] = {}
+    original_close_observer = core.store.close_import_operation_observer
+
+    def record_observer_cleanup() -> None:
+        observer_cleanup["thread"] = threading.current_thread().name
+        observer_cleanup["had_connection"] = hasattr(
+            core.store._operation_observer_local,
+            "connection",
+        )
+        original_close_observer()
+        observer_cleanup["cleared"] = not any(
+            hasattr(core.store._operation_observer_local, attribute)
+            for attribute in ("connection", "credential", "fingerprint_key")
+        )
+
+    monkeypatch.setattr(
+        core.store,
+        "close_import_operation_observer",
+        record_observer_cleanup,
+    )
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_writer_lock() -> None:
+        with core.store._write_lock:
+            lock_held.set()
+            assert release_lock.wait(timeout=5.0)
+
+    with TestClient(app) as client:
+        holder = threading.Thread(target=hold_writer_lock, daemon=True)
+        holder.start()
+        assert lock_held.wait(timeout=1.0)
+        try:
+            started = time.monotonic()
+            response = client.get(
+                f"/v1/admin/import-operations/{operation_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert time.monotonic() - started < 1.0
+            assert response.status_code == 200, response.text
+            assert response.json()["operation_id"] == operation_id
+            assert holder.is_alive()
+        finally:
+            release_lock.set()
+            holder.join(timeout=1.0)
+
+        assert not holder.is_alive()
+        repeated = client.get(
+            f"/v1/admin/import-operations/{operation_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert repeated.status_code == 200, repeated.text
+        assert verify_calls["count"] == 1
+
+        missing = client.get(
+            "/v1/admin/import-operations/00000000-0000-4000-8000-000000000000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert missing.status_code == 404
+        assert verify_calls["count"] == 1
+
+        invalid_token = f"{token}-mismatch"
+        verify_count_before_invalid = verify_calls["count"]
+        invalid = client.get(
+            f"/v1/admin/import-operations/{operation_id}",
+            headers={"Authorization": f"Bearer {invalid_token}"},
+        )
+        assert invalid.status_code == 401
+        assert verify_calls["count"] > verify_count_before_invalid
+
+        other_principal, other_token = core.store.create_client(
+            ClientCreate(name="other operation observer", scopes=["admin"])
+        )
+        verify_count_before_other = verify_calls["count"]
+        other = client.get(
+            f"/v1/admin/import-operations/{operation_id}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert other.status_code == 200, other.text
+        assert verify_calls["count"] > verify_count_before_other
+        verify_count_after_other = verify_calls["count"]
+        other_repeated = client.get(
+            f"/v1/admin/import-operations/{operation_id}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert other_repeated.status_code == 200, other_repeated.text
+        assert verify_calls["count"] == verify_count_after_other
+
+        core.store.revoke_client(other_principal.id)
+        revoked = client.get(
+            f"/v1/admin/import-operations/{operation_id}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert revoked.status_code == 401
+        assert verify_calls["count"] == verify_count_after_other
+        assert fingerprints[0] == fingerprints[1] == fingerprints[2]
+        assert fingerprints[2] != fingerprints[3]
+        assert fingerprints[4] == fingerprints[5] == fingerprints[6]
+
+        durable_bytes = core.config.database_path.read_bytes()
+        response_bytes = b"".join(
+            (
+                response.content,
+                repeated.content,
+                missing.content,
+                invalid.content,
+                other.content,
+                other_repeated.content,
+                revoked.content,
+            )
+        )
+        for secret in (
+            token.encode(),
+            invalid_token.encode(),
+            other_token.encode(),
+            *fingerprints,
+        ):
+            assert secret not in durable_bytes
+            assert secret not in response_bytes
+            assert secret.hex().encode() not in durable_bytes
+            assert secret.hex().encode() not in response_bytes
+
+    assert str(observer_cleanup["thread"]).startswith("atc-operation-observer")
+    assert observer_cleanup["had_connection"] is True
+    assert observer_cleanup["cleared"] is True
+
+
+def test_operation_status_enforces_scope_before_not_found(tmp_path: Path) -> None:
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+    from allthecontext.models import ClientCreate
+    from fastapi.testclient import TestClient
+
+    app = create_app(CoreConfig.in_directory(tmp_path, require_auth=True))
+    core = app.state.core
+    _reader, reader_token = core.store.create_client(
+        ClientCreate(name="non-admin observer", scopes=["context:read"])
+    )
+    _admin, admin_token = core.store.create_client(
+        ClientCreate(name="admin observer", scopes=["admin"])
+    )
+    operation = core.import_operations.start_operation(
+        declared_byte_size=1,
+        filename="authorization-order.bin",
+    )
+    operation_id = str(operation["operation_id"])
+    missing_id = "00000000-0000-4000-8000-000000000000"
+
+    with TestClient(app) as client:
+        for observed_id in (operation_id, missing_id):
+            forbidden = client.get(
+                f"/v1/admin/import-operations/{observed_id}",
+                headers={"Authorization": f"Bearer {reader_token}"},
+            )
+            assert forbidden.status_code == 403
+            assert operation_id not in forbidden.text
+        missing = client.get(
+            f"/v1/admin/import-operations/{missing_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert missing.status_code == 404
+
+
 def test_operation_liveness_touch_retries_only_sqlite_lock_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

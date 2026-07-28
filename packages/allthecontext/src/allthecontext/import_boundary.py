@@ -471,10 +471,10 @@ class ImportProgressTracker:
         """Keep durable liveness fresh while synchronous work makes no byte progress.
 
         The worker emits the current snapshot, including unchanged committed bytes.
-        It runs at one quarter of the public heartbeat budget so durable sink latency
-        cannot consume the entire five-second observer-visible allowance. When a
-        ``liveness_sink`` is bound, heartbeats use that path exclusively so full
-        lifecycle rewrites cannot starve the observer-visible ``updated_at``.
+        A lightweight ``liveness_sink`` runs at one tenth of the public heartbeat
+        budget so durable sink and observer latency retain fail-closed margin.
+        Source-only trackers retain the original one-quarter cadence because their
+        heartbeat performs a full source-metadata transaction.
         """
         self._raise_heartbeat_error()
         if self.durable_sink is None and self.liveness_sink is None:
@@ -554,12 +554,14 @@ class ImportProgressTracker:
             # committed bytes, so byte-threshold emits still fire on real growth.
 
     def _run_durable_heartbeats(self) -> None:
-        interval = max(self.heartbeat_seconds / 4, 0.001)
+        interval = self._durable_heartbeat_interval()
         deadline = time.monotonic() + interval
         while not self._heartbeat_stop.wait(max(deadline - time.monotonic(), 0.0)):
             try:
                 # Always tick: do not re-check time throttle here. Callers schedule
-                # at one quarter of the public budget so sink latency has margin.
+                # lightweight touches at one tenth of the public budget so sink
+                # and observer latency retain margin. Full source-only writes keep
+                # the original one-quarter cadence.
                 # Fail-fast busy skips do not kill the worker; the next interval
                 # retries so free windows still refresh the durable row.
                 self._emit_liveness()
@@ -571,6 +573,10 @@ class ImportProgressTracker:
             # Fixed-rate scheduling avoids adding a full interval after a slow
             # durable commit. If a sink consumed the interval, retry promptly.
             deadline = max(deadline + interval, time.monotonic())
+
+    def _durable_heartbeat_interval(self) -> float:
+        divisor = 10 if self.liveness_sink is not None else 4
+        return max(self.heartbeat_seconds / divisor, 0.001)
 
     def _raise_heartbeat_error(self) -> None:
         with self._lock:

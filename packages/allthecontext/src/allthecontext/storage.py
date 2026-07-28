@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
+import secrets
 import shutil
 import sqlite3
 import threading
@@ -82,7 +84,6 @@ SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 # Fail-fast and let the heartbeat scheduler retry within the public 5s allowance.
 LIVENESS_BUSY_TIMEOUT_MS = 250
 LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
-LIVENESS_WRITE_LOCK_TIMEOUT_SECONDS = 0.25
 
 
 def durable_sqlite_footprint(database_path: Path) -> int:
@@ -221,6 +222,7 @@ class CoreStore:
         self.database_path = database_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = threading.RLock()
+        self._operation_observer_local = threading.local()
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -1026,6 +1028,21 @@ class CoreStore:
             raise NotFoundError("import operation not found")
         return self._import_operation_out(row)
 
+    def _connect_import_operation_reader(self) -> sqlite3.Connection:
+        """Open a bounded read-only WAL observer for the operation status route."""
+        connection = sqlite3.connect(
+            f"{self.database_path.as_uri()}?mode=ro",
+            uri=True,
+            timeout=LIVENESS_CONNECT_TIMEOUT_SECONDS,
+            isolation_level=None,
+            check_same_thread=False,
+            factory=_ClosingConnection,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute(f"PRAGMA busy_timeout = {LIVENESS_BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA query_only = ON")
+        return connection
+
     def list_import_operations(
         self,
         *,
@@ -1175,17 +1192,14 @@ class CoreStore:
 
         - rewrite status, phase, bytes, source, result, error, or progress JSON
         - re-enter the full lifecycle updater or re-fetch the full row
-        - hold the store write lock while waiting out the 10s lifecycle busy budget
+        - wait behind the store's Python lifecycle-write lock
         - turn SQLite lock latency into a multi-second observer gap
 
         Returns True when a non-terminal row was touched. Returns False when the
-        row is terminal, the write lock cannot be taken quickly, or SQLite is
-        busy/locked; callers retry on the next heartbeat tick. Missing rows still
+        row is terminal or SQLite is busy/locked; callers retry on the next
+        heartbeat tick. Missing rows still
         raise ``NotFoundError`` (configuration/use error, not lock pressure).
         """
-        acquired = self._write_lock.acquire(timeout=LIVENESS_WRITE_LOCK_TIMEOUT_SECONDS)
-        if not acquired:
-            return False
         connection: sqlite3.Connection | None = None
         try:
             connection = self._connect_import_operation_liveness()
@@ -1227,7 +1241,6 @@ class CoreStore:
             if connection is not None:
                 with suppress(sqlite3.Error):
                     connection.close()
-            self._write_lock.release()
 
     def claim_import_operation_upload(self, operation_id: str) -> dict[str, Any]:
         """Exclusively claim an operation for upload (awaiting_upload -> uploading)."""
@@ -2096,6 +2109,108 @@ class CoreStore:
                         auto_approve=bool(row["auto_approve"]),
                     )
         return None
+
+    def authenticate_import_operation_observer(
+        self,
+        token: str,
+        operation_id: str,
+    ) -> tuple[ClientPrincipal, dict[str, Any] | None] | None:
+        """Authenticate and read one operation without joining the writer queue.
+
+        The high-frequency import-operation status route must remain queryable
+        while a long import owns the normal lifecycle writer lock. It therefore
+        verifies current revocation state and reads the operation in one freshest
+        joined statement on a bounded read-only WAL connection. It intentionally
+        does not update ``last_used_at`` on every progress poll.
+        """
+        connection = getattr(self._operation_observer_local, "connection", None)
+        if connection is None:
+            connection = self._connect_import_operation_reader()
+            self._operation_observer_local.connection = connection
+        fingerprint_key = getattr(
+            self._operation_observer_local,
+            "fingerprint_key",
+            None,
+        )
+        if fingerprint_key is None:
+            fingerprint_key = secrets.token_bytes(32)
+            self._operation_observer_local.fingerprint_key = fingerprint_key
+        fingerprint = hmac.digest(
+            fingerprint_key,
+            token.encode("utf-8"),
+            "sha256",
+        )
+        cached = getattr(self._operation_observer_local, "credential", None)
+        if cached is None or not hmac.compare_digest(fingerprint, cached[0]):
+            if cached is not None:
+                del self._operation_observer_local.credential
+            rows = connection.execute(
+                "SELECT * FROM client_registrations WHERE revoked_at IS NULL"
+            ).fetchall()
+            registration = next(
+                (
+                    row
+                    for row in rows
+                    if verify_token(token, str(row["token_hash"]))
+                ),
+                None,
+            )
+            if registration is None:
+                return None
+            cached = (
+                fingerprint,
+                str(registration["id"]),
+                str(registration["token_hash"]),
+            )
+            self._operation_observer_local.credential = cached
+        try:
+            connection.execute("BEGIN")
+            joined = connection.execute(
+                "SELECT operation.*, operation.id AS observer_operation_id,"
+                "registration.id AS observer_client_id,"
+                "registration.name AS observer_client_name,"
+                "registration.scopes_json AS observer_scopes_json,"
+                "registration.auto_approve AS observer_auto_approve "
+                "FROM client_registrations AS registration "
+                "LEFT JOIN import_operations AS operation ON operation.id=? "
+                "WHERE registration.id=? AND registration.token_hash=? "
+                "AND registration.revoked_at IS NULL",
+                (operation_id, cached[1], cached[2]),
+            ).fetchone()
+            if joined is not None:
+                principal = ClientPrincipal(
+                    id=str(joined["observer_client_id"]),
+                    name=str(joined["observer_client_name"]),
+                    scopes=frozenset(
+                        cast(list[str], _loads(joined["observer_scopes_json"], []))
+                    ),
+                    auto_approve=bool(joined["observer_auto_approve"]),
+                )
+                connection.commit()
+                operation = (
+                    self._import_operation_out(joined)
+                    if joined["observer_operation_id"] is not None
+                    else None
+                )
+                return principal, operation
+            del self._operation_observer_local.credential
+            connection.rollback()
+            return None
+        except BaseException:
+            with suppress(sqlite3.Error):
+                connection.rollback()
+            raise
+
+    def close_import_operation_observer(self) -> None:
+        """Close the current worker thread's persistent operation observer."""
+        connection = getattr(self._operation_observer_local, "connection", None)
+        if connection is not None:
+            connection.close()
+            del self._operation_observer_local.connection
+        if hasattr(self._operation_observer_local, "credential"):
+            del self._operation_observer_local.credential
+        if hasattr(self._operation_observer_local, "fingerprint_key"):
+            del self._operation_observer_local.fingerprint_key
 
     def revoke_client(self, client_id: str) -> None:
         with self.transaction() as connection:

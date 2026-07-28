@@ -1,5 +1,6 @@
 """FastAPI transport for the local authoritative Core."""
 
+import asyncio
 import html
 import json
 import os
@@ -11,7 +12,9 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -147,25 +150,36 @@ def create_app(
         ),
         database_path=active_config.database_path,
     )
+    operation_observer_executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="atc-operation-observer",
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
-        update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
-        if not update_health_process:
-            if (
-                updates.preferences.enabled
-                and updates.preferences.channel in updates.config.manifest_urls
-            ):
-                threading.Thread(target=updates.scheduled_check, daemon=True).start()
-            if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
-                recovery = threading.Timer(1.0, updates.recover_after_restart)
-                recovery.daemon = True
-                recovery.start()
-        # Never start the legacy Edge network worker. Cleanup routes construct
-        # outbound contacts only when an operator explicitly decommissions an
-        # already-configured residual connection.
-        yield
+        try:
+            await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
+            update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
+            if not update_health_process:
+                if (
+                    updates.preferences.enabled
+                    and updates.preferences.channel in updates.config.manifest_urls
+                ):
+                    threading.Thread(target=updates.scheduled_check, daemon=True).start()
+                if updates.state.phase in {UpdatePhase.INSTALLING, UpdatePhase.RESTART_REQUIRED}:
+                    recovery = threading.Timer(1.0, updates.recover_after_restart)
+                    recovery.daemon = True
+                    recovery.start()
+            # Never start the legacy Edge network worker. Cleanup routes construct
+            # outbound contacts only when an operator explicitly decommissions an
+            # already-configured residual connection.
+            yield
+        finally:
+            await asyncio.get_running_loop().run_in_executor(
+                operation_observer_executor,
+                core.store.close_import_operation_observer,
+            )
+            operation_observer_executor.shutdown(wait=True, cancel_futures=True)
 
     app = FastAPI(
         title="All The Context Core",
@@ -206,13 +220,13 @@ def create_app(
             status_code=status, content={"error": {"code": code, "message": str(error)}}
         )
 
-    def principal_from_header(
+    def _credential_from_header(
         request: Request,
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> ClientPrincipal:
+        authorization: str | None,
+    ) -> tuple[str, str, str] | None:
         if authorization is None and development_principal is not None:
             request.state.atc_credential = None
-            return development_principal
+            return None
         if authorization is None:
             raise HTTPException(status_code=401, detail="Credential required")
         scheme, _, token = authorization.partition(" ")
@@ -236,6 +250,17 @@ def create_app(
             raise HTTPException(status_code=401, detail="Unsupported authorization scheme")
         if not credential:
             raise HTTPException(status_code=401, detail="Credential expired or unavailable")
+        return scheme, token, credential
+
+    def principal_from_header(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> ClientPrincipal:
+        credential_parts = _credential_from_header(request, authorization)
+        if credential_parts is None:
+            assert development_principal is not None
+            return development_principal
+        scheme, token, credential = credential_parts
         principal = core.store.authenticate(credential)
         if principal is None:
             if scheme == BROWSER_AUTH_SCHEME:
@@ -243,7 +268,41 @@ def create_app(
             raise HTTPException(status_code=401, detail="Invalid or revoked credential")
         return principal
 
+    async def operation_observer_from_header(
+        operation_id: str,
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> tuple[ClientPrincipal, dict[str, Any] | None]:
+        credential_parts = _credential_from_header(request, authorization)
+        if credential_parts is None:
+            assert development_principal is not None
+            operation = await asyncio.get_running_loop().run_in_executor(
+                operation_observer_executor,
+                core.import_operations.get_operation,
+                operation_id,
+            )
+            return development_principal, operation
+        scheme, token, credential = credential_parts
+        observe = partial(
+            core.store.authenticate_import_operation_observer,
+            credential,
+            operation_id,
+        )
+        observation = await asyncio.get_running_loop().run_in_executor(
+            operation_observer_executor,
+            observe,
+        )
+        if observation is None:
+            if scheme == BROWSER_AUTH_SCHEME:
+                browser_sessions.revoke(token)
+            raise HTTPException(status_code=401, detail="Invalid or revoked credential")
+        return observation
+
     Principal = Annotated[ClientPrincipal, Depends(principal_from_header)]
+    OperationObserver = Annotated[
+        tuple[ClientPrincipal, dict[str, Any] | None],
+        Depends(operation_observer_from_header),
+    ]
 
     def require(principal: ClientPrincipal, scope: str) -> None:
         if (
@@ -440,9 +499,15 @@ def create_app(
         )
 
     @app.get("/v1/admin/import-operations/{operation_id}")
-    def get_import_operation(operation_id: str, principal: Principal) -> dict[str, Any]:
+    async def get_import_operation(
+        operation_id: str,
+        observation: OperationObserver,
+    ) -> dict[str, Any]:
+        principal, operation = observation
         require(principal, "admin")
-        return core.import_operations.get_operation(operation_id)
+        if operation is None:
+            raise NotFoundError("import operation not found")
+        return operation
 
     @app.put("/v1/admin/import-operations/{operation_id}/content")
     async def upload_import_operation_content(
@@ -452,7 +517,6 @@ def create_app(
     ) -> dict[str, Any]:
         """Stream source bytes into a pre-created operation with chunk heartbeats."""
         require(principal, "admin")
-        import asyncio
         from queue import Empty, Full, Queue
 
         from allthecontext.import_boundary import (

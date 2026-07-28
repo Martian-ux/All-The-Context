@@ -1812,3 +1812,31 @@ field. They also prove terminal/missing behavior and that non-lock I/O errors
 propagate. Existing operation parse, retry, cancellation/failure, and source-
 only tests retain end-to-end coverage. A rebuilt exact artifact on the frozen
 Linux target is still required; source tests do not satisfy BETA-D01.
+
+**Amendment 2026-07-28.** A content-free WSL2 discriminator separated the
+remaining symptom into writer and observer causes. The global Python store lock
+starved timestamp-only commits even when SQLite could arbitrate independently.
+The synchronous status dependency then joined the shared application
+threadpool and performed an activity-writing authentication transaction before
+the status read; later stage timing also showed that separate registration and
+operation reads could establish a stale snapshot across a scheduler delay.
+
+Timestamp-only operation touches therefore bypass the Python lifecycle lock and
+retain bounded SQLite busy handling. Only trackers with this lightweight sink
+run at one tenth of the five-second public budget (two timestamp-only attempts
+per second, 2.5 times the former attempt rate); source-only trackers retain the
+one-quarter cadence so full source-metadata writes do not increase.
+
+The operation status dependency is async and delegates to one dedicated
+single-worker observer. That worker owns a persistent read-only/query-only WAL
+connection and performs current-revocation plus operation lookup in one
+freshest joined statement and explicit read transaction. Repeated polls avoid
+PBKDF through a single-entry, process-keyed HMAC fingerprint kept only in
+worker memory; each poll still matches the durable client id and token-hash
+identity with `revoked_at IS NULL`. Mismatch, revocation, and application
+shutdown clear the cache; shutdown also closes the connection on its owner
+thread. Scope is enforced before missing-operation disclosure, and ordinary
+authentication/activity writes remain unchanged on all other routes. This
+high-frequency status route authenticates and rechecks revocation without
+treating every poll as durable client activity. Generic internal operation
+reads, semantic progress, and lifecycle writes remain unchanged.
