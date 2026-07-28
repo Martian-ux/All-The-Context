@@ -332,6 +332,10 @@ class ImportProgressTracker:
     registry: ImportCancelRegistry = field(default_factory=lambda: DEFAULT_CANCEL_REGISTRY)
     on_progress: ProgressCallback | None = None
     durable_sink: Callable[[ImportProgress], None] | None = None
+    # Optional lightweight path for unchanged-byte liveness (operation-row touch).
+    # When set, periodic heartbeats and non-advancing time-based emits use it so
+    # full lifecycle rewrites cannot become the observer-visible bottleneck.
+    liveness_sink: Callable[[ImportProgress], bool | None] | None = None
     heartbeat_seconds: float = PROGRESS_HEARTBEAT_SECONDS
     heartbeat_bytes: int = PROGRESS_HEARTBEAT_BYTES
     _phase: ImportPhase = "preflight"
@@ -384,6 +388,7 @@ class ImportProgressTracker:
     def advance_bytes(self, absolute_processed: int, *, message: str = "") -> None:
         self._raise_heartbeat_error()
         with self._lock:
+            previous = self._bytes_processed
             processed = max(0, min(absolute_processed, max(self.bytes_total, 0)))
             if processed < self._bytes_processed:
                 # Monotonic: never report less committed progress.
@@ -391,9 +396,15 @@ class ImportProgressTracker:
             self._bytes_processed = processed
             if message:
                 self._message = message
+            bytes_advanced = processed > previous
             should_emit = self._should_emit_locked()
         if should_emit:
-            self._emit(force=True)
+            # Unchanged-byte time-based emits are pure liveness: do not force the
+            # full lifecycle sink while a lightweight touch path is available.
+            if bytes_advanced:
+                self._emit(force=True)
+            else:
+                self._emit_liveness()
         self.check_cancelled()
 
     def add_bytes(self, delta: int, *, message: str = "") -> None:
@@ -415,7 +426,7 @@ class ImportProgressTracker:
                 self._message = message
             should_emit = force or self._should_emit_locked()
         if should_emit:
-            self._emit(force=True)
+            self._emit_liveness()
         self.check_cancelled()
 
     def check_cancelled(self) -> None:
@@ -461,10 +472,12 @@ class ImportProgressTracker:
 
         The worker emits the current snapshot, including unchanged committed bytes.
         It runs at one quarter of the public heartbeat budget so durable sink latency
-        cannot consume the entire five-second observer-visible allowance.
+        cannot consume the entire five-second observer-visible allowance. When a
+        ``liveness_sink`` is bound, heartbeats use that path exclusively so full
+        lifecycle rewrites cannot starve the observer-visible ``updated_at``.
         """
         self._raise_heartbeat_error()
-        if self.durable_sink is None:
+        if self.durable_sink is None and self.liveness_sink is None:
             return
         with self._lock:
             if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
@@ -507,20 +520,49 @@ class ImportProgressTracker:
             with self._lock:
                 if not force and not self._should_emit_locked():
                     return
-                self._last_emit_monotonic = time.monotonic()
-                self._last_emit_bytes = self._bytes_processed
             if self.on_progress is not None:
                 self.on_progress(progress)
             sink = self.durable_sink
             if sink is not None:
                 sink(progress)
+            with self._lock:
+                self._last_emit_monotonic = time.monotonic()
+                self._last_emit_bytes = self._bytes_processed
+
+    def _emit_liveness(self) -> None:
+        """Persist observer-visible liveness without a full lifecycle rewrite.
+
+        A dedicated ``liveness_sink`` does not hold ``_emit_lock`` across SQLite:
+        a blocked lifecycle write must not queue pure liveness ticks. Source-only
+        imports have no dedicated sink and retain the serialized full durable path.
+        Only a successful durable touch advances the time throttle.
+        """
+        if self.liveness_sink is None:
+            self._emit(force=True)
+            return
+        progress = self.snapshot()
+        if self.on_progress is not None:
+            self.on_progress(progress)
+        result = self.liveness_sink(progress)
+        # False means SQLite was busy/locked or the row already terminal; retry
+        # on the next scheduled tick without claiming a durable refresh.
+        if result is False:
+            return
+        with self._lock:
+            self._last_emit_monotonic = time.monotonic()
+            # Preserve last emitted byte watermark: liveness never claims new
+            # committed bytes, so byte-threshold emits still fire on real growth.
 
     def _run_durable_heartbeats(self) -> None:
         interval = max(self.heartbeat_seconds / 4, 0.001)
         deadline = time.monotonic() + interval
         while not self._heartbeat_stop.wait(max(deadline - time.monotonic(), 0.0)):
             try:
-                self._emit(force=True)
+                # Always tick: do not re-check time throttle here. Callers schedule
+                # at one quarter of the public budget so sink latency has margin.
+                # Fail-fast busy skips do not kill the worker; the next interval
+                # retries so free windows still refresh the durable row.
+                self._emit_liveness()
             except BaseException as error:
                 with self._lock:
                     self._heartbeat_error = error

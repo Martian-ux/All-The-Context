@@ -1773,3 +1773,42 @@ still observe fresh operation-row heartbeats with unchanged bytes, while also
 proving source-only liveness, terminal source state, and post-merge operation
 source rebinding on success, failure, and cancellation. Exact rebuilt-candidate
 evidence remains required; source tests do not satisfy BETA-D01.
+
+## ADR-072: Unchanged-byte operation liveness uses a bounded telemetry commit
+
+**Status:** accepted 2026-07-28.
+
+The authoritative import-operation row must remain observer-visible within the
+frozen five-second heartbeat budget even when committed bytes do not change.
+Exact candidate `4257e40` completed the 2,000,000,000-byte import correctly on
+a qualified Ubuntu 24.04 QEMU/WHPX target, but 15 of 17 parsing intervals
+exceeded five seconds and the maximum was 10.196354 seconds. The remaining
+periodic path still used the full lifecycle transaction: it could spend the
+10-second SQLite busy budget acquiring a writer and required a FULL-synchronous
+commit for a noncanonical timestamp.
+
+Operation trackers therefore have a dedicated liveness sink. A liveness tick
+updates only `import_operations.updated_at`; it never rewrites status, phase,
+progress JSON, received or committed bytes, source identity, result, error, or
+terminal state. The connection requires the existing WAL database and uses
+`synchronous=NORMAL`, which remains consistent and durable across application
+process crashes while avoiding a virtual-disk FULL flush for each unchanged-
+byte timestamp. Store-lock acquisition, SQLite connection timeout, and SQLite
+busy timeout are each bounded to 250 ms. SQLITE_BUSY and SQLITE_LOCKED return a
+retry signal without advancing the tracker's successful-emit clock; missing
+rows and every other SQLite error still fail closed.
+
+The liveness sink does not wait behind the tracker's lifecycle emit lock.
+Byte-advancing, phase-changing, cancellation, failure, completion, and source-
+rebind writes retain the original serialized lifecycle sink and its stronger
+durability. Source-only imports have no dedicated liveness sink and retain the
+existing serialized source progress path. Because a timestamp-only update is
+semantically neutral, concurrent liveness cannot regress progress or overwrite
+a newer phase snapshot.
+
+Focused regressions hold an external WAL writer to prove the touch returns
+within the bounded wait, then prove it recovers without changing any semantic
+field. They also prove terminal/missing behavior and that non-lock I/O errors
+propagate. Existing operation parse, retry, cancellation/failure, and source-
+only tests retain end-to-end coverage. A rebuilt exact artifact on the frozen
+Linux target is still required; source tests do not satisfy BETA-D01.

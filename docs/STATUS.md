@@ -719,6 +719,21 @@ state is already noncurrent and creates no user queue.
   sink terminalized first. Focused adversarial regressions cover initial and
   retry success, failure, and cancellation after a real merge. Exact rebuilt-
   candidate evidence is still required and is not claimed here.
+- Exact candidate `4257e40` then reproduced the remaining liveness failure on a
+  qualified Ubuntu 24.04 x86-64 QEMU/WHPX target with the frozen 4-vCPU,
+  8-GiB, ext4-on-SSD profile: the 2,000,000,000-byte import completed with
+  correct hash, coverage, memory, and storage, but 15 of 17 unchanged-byte
+  parsing heartbeat intervals exceeded five seconds and the maximum was
+  10.196354 seconds. The operation heartbeat still used the full lifecycle
+  transaction path, whose SQLite writer may wait for the 10-second busy budget
+  and requires a FULL-synchronous commit. Operation trackers now route only
+  unchanged-byte liveness through a bounded telemetry writer: it updates only
+  `import_operations.updated_at`, uses WAL `synchronous=NORMAL` for process-
+  crash-safe noncanonical telemetry, gives lock/busy attempts 250 ms, and
+  retries without advancing the heartbeat clock. Status, phase, progress JSON,
+  bytes, source, result, error, and terminal transitions remain on the original
+  serialized lifecycle writer; non-lock SQLite errors still fail the import.
+  A rebuilt exact Linux artifact must rerun the full journey before BETA-D01.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

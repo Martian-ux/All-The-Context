@@ -261,6 +261,7 @@ class ImportOperationService:
                 cancel_key=operation_id,
                 registry=self.cancel_registry,
                 durable_sink=self._operation_progress_sink(operation_id),
+                liveness_sink=self._operation_liveness_sink(operation_id),
             )
             tracker.bind_source(source_id)
             tracker.set_phase("storing", message="using preserved raw source")
@@ -394,6 +395,7 @@ class ImportOperationService:
                 operation_id,
                 bytes_received_provider=lambda: received,
             ),
+            liveness_sink=self._operation_liveness_sink(operation_id),
         )
         self.cancel_registry.register(operation_id)
         digest = hashlib.sha256()
@@ -754,6 +756,28 @@ class ImportOperationService:
             # Durable telemetry must commit or the import fails safely; do not
             # swallow write failures and claim progress silently.
             self.store.update_import_operation(operation_id, **kwargs)
+
+        return _sink
+
+    def _operation_liveness_sink(
+        self,
+        operation_id: str,
+    ) -> Callable[[ImportProgress], bool | None]:
+        """Observer-visible heartbeat path that cannot become a lifecycle rewrite.
+
+        Qualified Linux evidence clustered operation-row gaps near the 10s SQLite
+        busy/connect budget when periodic ticks used ``transaction()`` +
+        ``BEGIN IMMEDIATE`` under concurrent lock pressure. Liveness uses the
+        fail-fast touch (short busy/lock waits, no row re-fetch) and returns
+        False so the tracker retries without advancing its emit throttle.
+        Terminal and byte-advancing transitions keep the full sink.
+        """
+
+        def _sink(progress: ImportProgress) -> bool:
+            if progress.phase in {"cancelled", "failed", "complete"}:
+                # The serialized full sink owns terminal transitions.
+                return False
+            return self.store.touch_import_operation_liveness(operation_id)
 
         return _sink
 
