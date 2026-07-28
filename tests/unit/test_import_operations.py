@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import threading
 import time
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -490,6 +492,375 @@ def _write(path: Path, content: bytes) -> Path:
     return path
 
 
+def _chatgpt_zip_payload() -> bytes:
+    export = [
+        {
+            "id": "merge-conversation",
+            "mapping": {
+                "user": {
+                    "message": {
+                        "id": "merge-message",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["I prefer concise technical answers."]},
+                    }
+                }
+            },
+        }
+    ]
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("conversations.json", json.dumps(export))
+    return bundle.getvalue()
+
+
+def _capture_reclassify_provisional(
+    store: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    """Record the pre-merge source id while still running real reclassification."""
+    captured: dict[str, str] = {}
+    original = store.reclassify_source  # type: ignore[attr-defined]
+
+    def wrapped(source_id: str, **kwargs):  # type: ignore[no-untyped-def]
+        captured["provisional_id"] = source_id
+        return original(source_id, **kwargs)
+
+    monkeypatch.setattr(store, "reclassify_source", wrapped)
+    return captured
+
+
+def test_operation_completion_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+
+    def reject_duplicate_reingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise AssertionError("complete canonical source must not be re-ingested")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", reject_duplicate_reingest)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="automatic.zip",
+    )
+    finished = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+    )
+
+    provisional_id = captured["provisional_id"]
+    assert provisional_id != canonical_id
+    assert finished["status"] == "complete"
+    assert finished["source_id"] == canonical_id
+    assert finished["result"]["source"]["id"] == canonical_id
+    assert finished["phase"] == "complete"
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    assert canonical_source.id == canonical_id
+    assert canonical_source.import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_completion_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="automatic-retry.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+
+    canonical = ops.imports.import_bytes(
+        "canonical-retry.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def reject_duplicate_reingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise AssertionError("complete canonical source must not be re-ingested")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", reject_duplicate_reingest)
+    retried = ops.retry_operation(operation_id)
+
+    assert retried["status"] == "complete"
+    assert retried["source_id"] == canonical_id
+    assert retried["result"]["source"]["id"] == canonical_id
+    assert retried["phase"] == "complete"
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_operation_failure_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical-fail.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    # Merge into a non-complete canonical so real _ingest runs (not the complete short-circuit).
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    core.store.update_source_import(
+        canonical_id,
+        import_status="failed",
+        metadata=canonical_source.metadata,
+        parser_warnings=canonical_source.parser_warnings,
+    )
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+
+    def fail_begin_after_merge(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        # Raise from inside the real _ingest try path so tracker.fail terminalizes first.
+        raise RuntimeError("forced post-merge failure")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", fail_begin_after_merge)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="fail-merge.zip",
+    )
+    with pytest.raises(RuntimeError, match="forced post-merge failure"):
+        ops.accept_upload(
+            operation["operation_id"],
+            io.BytesIO(payload),
+            expected_size=len(payload),
+        )
+
+    provisional_id = captured["provisional_id"]
+    final = ops.get_operation(str(operation["operation_id"]))
+    assert provisional_id != canonical_id
+    assert final["status"] == "failed"
+    assert final["phase"] == "failed"
+    # Outer rebind after tracker.fail terminalized with the provisional source_id.
+    assert final["source_id"] == canonical_id
+    assert final["error_message"] == "import_runtime_error"
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "failed"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_operation_cancel_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical-cancel.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="cancel-merge.zip",
+    )
+    operation_id = str(operation["operation_id"])
+
+    def cancel_after_merge(source, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        assert source.id == canonical_id
+        tracker = kwargs.get("tracker")
+        assert tracker is not None
+        ops.cancel_operation(operation_id)
+        tracker.check_cancelled()
+        raise AssertionError("cancel should have been acknowledged")
+
+    monkeypatch.setattr(ops.imports, "_ingest", cancel_after_merge)
+    with pytest.raises(ImportCancelledError):
+        ops.accept_upload(
+            operation_id,
+            io.BytesIO(payload),
+            expected_size=len(payload),
+        )
+
+    provisional_id = captured["provisional_id"]
+    final = ops.get_operation(operation_id)
+    assert provisional_id != canonical_id
+    assert final["status"] == "cancelled"
+    assert final["phase"] == "cancelled"
+    assert final["source_id"] == canonical_id
+    assert final["result"] is None
+    # Already-complete canonical must not be cancelled by a later merge cancel.
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_failure_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-fail-merge.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+    canonical = ops.imports.import_bytes(
+        "canonical-retry-fail.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    # Non-complete canonical forces the real _ingest path after merge.
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    core.store.update_source_import(
+        canonical_id,
+        import_status="failed",
+        metadata=canonical_source.metadata,
+        parser_warnings=canonical_source.parser_warnings,
+    )
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def fail_begin_after_merge(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise RuntimeError("forced retry post-merge failure")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", fail_begin_after_merge)
+    with pytest.raises(RuntimeError, match="forced retry post-merge failure"):
+        ops.retry_operation(operation_id)
+
+    final = ops.get_operation(operation_id)
+    assert final["status"] == "failed"
+    assert final["phase"] == "failed"
+    # Outer rebind after tracker.fail terminalized with the provisional source_id.
+    assert final["source_id"] == canonical_id
+    assert final["error_message"] == "import_runtime_error"
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "failed"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_cancel_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-cancel-merge.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+    canonical = ops.imports.import_bytes(
+        "canonical-retry-cancel.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def cancel_after_merge(source, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        assert source.id == canonical_id
+        tracker = kwargs.get("tracker")
+        assert tracker is not None
+        ops.cancel_operation(operation_id)
+        tracker.check_cancelled()
+        raise AssertionError("cancel should have been acknowledged")
+
+    monkeypatch.setattr(ops.imports, "_ingest", cancel_after_merge)
+    with pytest.raises(ImportCancelledError):
+        ops.retry_operation(operation_id)
+
+    final = ops.get_operation(operation_id)
+    assert final["status"] == "cancelled"
+    assert final["phase"] == "cancelled"
+    assert final["source_id"] == canonical_id
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
 def test_retry_passes_progress_tracker_and_records_phases(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -551,6 +922,8 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from allthecontext import importers as importers_module
+
     core, ops = _ops(tmp_path)
     payload = b'{"kind":"fact","content":"Cancel during no-upload retry"}\n'
     operation = ops.start_operation(declared_byte_size=len(payload), filename="retry-cancel.jsonl")
@@ -578,9 +951,9 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
 
     entered = threading.Event()
 
-    def blocking_reprocess(source_id_arg: str, *, progress_tracker=None):  # type: ignore[no-untyped-def]
-        assert progress_tracker is not None
-        progress_tracker.set_phase("parsing", message="awaiting cancel")
+    def blocking_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        progress_tracker = kwargs["progress"]
         entered.set()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -588,7 +961,7 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
             time.sleep(0.05)
         raise AssertionError("cancel was not acknowledged within budget")
 
-    monkeypatch.setattr(ops.imports, "reprocess_source", blocking_reprocess)
+    monkeypatch.setattr(importers_module, "parse_archive_path", blocking_parse)
 
     def canceller() -> None:
         entered.wait(timeout=5)
@@ -602,6 +975,61 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     final = ops.get_operation(operation_id)
     assert final["status"] == "cancelled"
     assert final["progress"]["cancel_acknowledged"] is True
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "cancelled"
+    assert source.metadata["import_progress"]["phase"] == "cancelled"
+
+
+def test_operation_owned_reprocess_failure_updates_operation_and_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import importers as importers_module
+
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Retry failure remains terminal"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-failure.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=core.store.get_source(source_id, duplicate=True).metadata,
+        parser_warnings=(),
+    )
+
+    def fail_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise InvalidStateError("synthetic closed parser failure")
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", fail_parse)
+    with pytest.raises(InvalidStateError, match="synthetic closed parser failure"):
+        ops.retry_operation(operation_id)
+
+    failed = ops.get_operation(operation_id)
+    assert failed["status"] == "failed"
+    assert failed["phase"] == "failed"
+    assert failed["error_message"] == "import_invalid_state"
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "failed"
+    assert source.metadata["import_progress"]["phase"] == "failed"
+    assert source.metadata["import_progress"]["message"] == "import_invalid_state"
 
 
 def test_concurrent_retry_claims_fail_closed(tmp_path: Path) -> None:
@@ -860,6 +1288,192 @@ def test_parse_stall_heartbeats_durably_without_false_byte_progress(
     assert not thread.is_alive()
     assert failures == []
     assert outcomes[0]["status"] == "complete"
+
+
+def test_operation_reprocess_heartbeats_ignore_blocking_source_progress_sink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import import_operations as ops_module
+    from allthecontext import importers as importers_module
+
+    tracker_type = ops_module.ImportProgressTracker
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.04
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", fast_tracker)
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Operation heartbeat owns retry liveness"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="operation-heartbeat.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=core.store.get_source(source_id, duplicate=True).metadata,
+        parser_warnings=(),
+    )
+
+    source_sink_entered = threading.Event()
+    release_source_sink = threading.Event()
+
+    def blocking_source_sink(_source_id: str):  # type: ignore[no-untyped-def]
+        def sink(_progress):  # type: ignore[no-untyped-def]
+            source_sink_entered.set()
+            assert release_source_sink.wait(timeout=5), "test did not release source sink"
+
+        return sink
+
+    monkeypatch.setattr(ops.imports, "_durable_progress_sink", blocking_source_sink)
+    original_parse = importers_module.parse_archive_path
+    parser_entered = threading.Event()
+    release_parser = threading.Event()
+
+    def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        parser_entered.set()
+        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            outcomes.append(ops.retry_operation(operation_id))
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    phases: list[str] = []
+    try:
+        assert parser_entered.wait(timeout=5), (
+            "operation-owned reprocess did not enter parser; "
+            f"source_sink_entered={source_sink_entered.is_set()}, "
+            f"failures={[type(error).__name__ for error in failures]}, "
+            f"operation={ops.get_operation(operation_id)['phase']}"
+        )
+        stamps: list[str] = []
+        committed: list[int] = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            current = ops.get_operation(operation_id)
+            phases.append(str(current["phase"]))
+            if current["phase"] == "parsing":
+                stamps.append(str(current["updated_at"]))
+                committed.append(int(current["bytes_committed"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+        assert committed and set(committed) == {len(payload)}
+        assert source_sink_entered.is_set() is False
+    finally:
+        release_source_sink.set()
+        release_parser.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["status"] == "complete"
+    phase_order = {
+        "storing": 0,
+        "parsing": 1,
+        "ingesting": 2,
+        "verifying": 3,
+        "publishing": 4,
+        "complete": 5,
+    }
+    observed = [phase_order[phase] for phase in phases if phase in phase_order]
+    assert observed == sorted(observed)
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.import_status == "complete"
+    assert source.metadata["import_progress"]["phase"] == "complete"
+
+
+def test_source_only_reprocess_keeps_source_heartbeats_and_terminal_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import importers as importers_module
+
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    payload = b'{"kind":"goal","content":"Source-only progress remains durable"}\n'
+    first = service.import_bytes("source-only-heartbeat.jsonl", payload)
+    source_id = str(first["source"]["id"])
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=first["source"]["metadata"],
+        parser_warnings=first["source"]["parser_warnings"],
+    )
+    tracker_type = importers_module.ImportProgressTracker
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.04
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "ImportProgressTracker", fast_tracker)
+    original_parse = importers_module.parse_archive_path
+    parser_entered = threading.Event()
+    release_parser = threading.Event()
+
+    def stalled_parse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        parser_entered.set()
+        assert release_parser.wait(timeout=5), "test did not release stalled parser"
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", stalled_parse)
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            outcomes.append(service.reprocess_source(source_id))
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert parser_entered.wait(timeout=5)
+        stamps: list[str] = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            source = core.store.get_source(source_id, duplicate=True)
+            progress = source.metadata.get("import_progress") or {}
+            if progress.get("phase") == "parsing":
+                stamps.append(str(progress["updated_at"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+    finally:
+        release_parser.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["source"]["import_status"] == "complete"
+    source = core.store.get_source(source_id, duplicate=True)
+    assert source.metadata["import_progress"]["phase"] == "complete"
+    assert source.metadata["import_progress"]["percent"] == 100
 
 
 def test_durable_telemetry_never_persists_raw_exception_text(

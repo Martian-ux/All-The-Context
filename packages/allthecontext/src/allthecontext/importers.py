@@ -1018,16 +1018,13 @@ class ArchiveImportService:
 
         def attach_progress_sinks(bound_source_id: str) -> None:
             """Bind source telemetry; rebind after reclassify merge may change ids."""
-            source_sink = self._durable_progress_sink(bound_source_id)
-            if external_operation_sink is None:
-                tracker.durable_sink = source_sink
+            if external_operation_sink is not None:
+                # The operation row is the queryable progress authority. Do not
+                # delay its heartbeat behind a second source-metadata transaction;
+                # explicit processing/terminal writes below still close the source.
+                tracker.durable_sink = external_operation_sink
                 return
-
-            def combined_sink(progress: ImportProgress) -> None:
-                source_sink(progress)
-                external_operation_sink(progress)
-
-            tracker.durable_sink = combined_sink
+            tracker.durable_sink = self._durable_progress_sink(bound_source_id)
 
         attach_progress_sinks(source.id)
         provider = str(source.metadata.get("provider", source.source_service))
@@ -1063,15 +1060,20 @@ class ArchiveImportService:
             tracker.bind_source(source.id)
             # Duplicate merge deletes the provisional source id; rebind sinks.
             attach_progress_sinks(source.id)
-            metadata = _source_metadata(parsed)
-            metadata = merge_progress_metadata(metadata, tracker.snapshot())
-            self.store.update_source_import(
-                source.id,
-                import_status="processing",
-                metadata=metadata,
-                parser_warnings=parsed.warnings,
-            )
-            processing = self.store.get_source(source.id, duplicate=True)
+            if source.duplicate and source.import_status == "complete":
+                # A reclassification merge can land on an already-complete
+                # canonical source. Do not downgrade or re-ingest that source.
+                processing = source
+            else:
+                metadata = _source_metadata(parsed)
+                metadata = merge_progress_metadata(metadata, tracker.snapshot())
+                self.store.update_source_import(
+                    source.id,
+                    import_status="processing",
+                    metadata=metadata,
+                    parser_warnings=parsed.warnings,
+                )
+                processing = self.store.get_source(source.id, duplicate=True)
         except ImportCancelledError:
             self._mark_cancelled(source.id, tracker)
             raise

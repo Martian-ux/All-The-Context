@@ -1736,3 +1736,40 @@ current navigation after exchange. Browser history implementation files are
 not required to erase every byte of an already consumed ticket. The
 long-lived Core credential and short-lived browser capability retain their
 separate, stricter ADR-009 storage and revocation requirements.
+
+## ADR-071: Import-operation rows own operation-scoped reprocess liveness
+
+**Status:** accepted 2026-07-26; amended 2026-07-27.
+
+The durable import-operation ID is the queryable progress authority for an
+operation-owned parse or retry. Its periodic unchanged-byte heartbeat must not
+wait behind a source-metadata heartbeat transaction. Reprocess therefore keeps
+the caller's operation sink as the tracker's sole periodic durable sink when
+an operation tracker is supplied.
+
+This authority split does not remove source lifecycle state. Direct
+source-only imports and reprocess calls retain their source progress sink.
+Operation-owned parsing still writes explicit source processing metadata after
+parse and explicit complete, cancelled, or failed metadata at terminal
+boundaries. Operation sink failures remain import failures, phase and byte
+progress remain monotonic, and closed error codes continue to propagate to
+both durable lifecycle views.
+
+Parser-driven reclassification may delete a provisional source and bind the
+tracker to an existing canonical source. Operation completion, failure, and
+cancellation must then rebind the durable operation row to that canonical
+`source_id`. When the merge lands on an already-complete canonical source,
+do not downgrade it to processing or re-ingest it. If the operation sink has
+already terminalized the row under the pre-merge source id, the outer terminal
+handler may rebind only `source_id` without changing terminal status, phase,
+result, or closed error code.
+
+The decision follows an exact Linux-package WSL2 observation where the prior
+combined sink performed source and operation transactions serially under one
+tracker emission lock and the store write lock. The source transaction could
+delay the authoritative operation update beyond the frozen five-second
+observer budget. Adversarial tests must block the source progress sink and
+still observe fresh operation-row heartbeats with unchanged bytes, while also
+proving source-only liveness, terminal source state, and post-merge operation
+source rebinding on success, failure, and cancellation. Exact rebuilt-candidate
+evidence remains required; source tests do not satisfy BETA-D01.

@@ -696,6 +696,29 @@ state is already noncurrent and creates no user queue.
   as unparsed. Focused regressions exercise a blocked synchronous parser and
   all five scaled-canary checkpoint records without inventing byte progress or
   treating unparsed material as complete.
+- Exact Linux-package diagnosis under Ubuntu 24.04 WSL2 then observed seven
+  operation-row heartbeat gaps beyond five seconds despite the background
+  tracker. Operation-owned reprocess had serialized a source-metadata
+  transaction before every authoritative operation transaction, so source
+  telemetry latency could consume the observer budget. Operation-owned
+  reprocess now writes periodic progress only to the queryable operation row;
+  source-only imports retain source heartbeats, and explicit processing,
+  complete, cancelled, and failed source writes retain terminal metadata.
+  Adversarial regressions block the source sink while proving fresh unchanged-
+  byte operation heartbeats, direct source-only liveness, monotonic phases,
+  cancellation, and closed failure propagation. A rebuilt exact Linux
+  candidate rerun remains required.
+- Independent review of that heartbeat fix then reproduced two parser-
+  reclassification merge defects: operations could complete with the deleted
+  provisional `source_id` while `result.source.id` pointed at the canonical
+  row, and merging into an already-complete canonical source could downgrade
+  it to processing and re-ingest. Source now rebinds the durable operation to
+  the canonical source on success, failure, and cancellation; preserves an
+  already-complete canonical source without downgrade or re-ingestion; and
+  allows same-status terminal rows to rebind only `source_id` when the tracker
+  sink terminalized first. Focused adversarial regressions cover initial and
+  retry success, failure, and cancellation after a real merge. Exact rebuilt-
+  candidate evidence is still required and is not claimed here.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

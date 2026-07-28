@@ -58,6 +58,18 @@ TERMINAL_OPERATION_STATUSES = frozenset({"complete", "failed", "cancelled"})
 ByteSource = BinaryIO | Iterator[bytes] | Callable[[], Iterator[bytes]]
 
 
+def _result_source_id(result: Mapping[str, Any]) -> str:
+    """Return the canonical source id after parser-driven reclassification."""
+
+    source = result.get("source")
+    if not isinstance(source, Mapping):
+        raise InvalidStateError("import result is missing its canonical source")
+    source_id = source.get("id")
+    if not isinstance(source_id, str) or not source_id:
+        raise InvalidStateError("import result has an invalid canonical source id")
+    return source_id
+
+
 def new_import_operation_id() -> str:
     """Return an opaque random UUIDv4 operation identifier."""
     return str(uuid.uuid4())
@@ -242,6 +254,7 @@ class ImportOperationService:
         source_id = str(claimed["source_id"])
         self.cancel_registry.register(operation_id)
         self.cancel_registry.alias(source_id, operation_id)
+        tracker: ImportProgressTracker | None = None
         try:
             tracker = ImportProgressTracker(
                 bytes_total=max(int(claimed["declared_byte_size"]), 1),
@@ -259,6 +272,7 @@ class ImportOperationService:
             # Pass the operation tracker so phase/progress/cancel heartbeats land
             # on the durable operation row during long reprocess work.
             result = self.imports.reprocess_source(source_id, progress_tracker=tracker)
+            source_id = _result_source_id(result)
             self.store.update_import_operation(
                 operation_id,
                 status="complete",
@@ -278,10 +292,13 @@ class ImportOperationService:
             tracker.close()
             return self.get_operation(operation_id)
         except ImportCancelledError:
-            self._mark_cancelled(operation_id, source_id=source_id)
+            # After parser reclassification merges, the tracker holds the canonical id.
+            terminal_source = (tracker.source_id if tracker is not None else None) or source_id
+            self._mark_cancelled(operation_id, source_id=terminal_source)
             raise
         except Exception as error:
-            self._mark_failed(operation_id, error, source_id=source_id)
+            terminal_source = (tracker.source_id if tracker is not None else None) or source_id
+            self._mark_failed(operation_id, error, source_id=terminal_source)
             raise
         finally:
             with self._active_lock:
@@ -494,6 +511,7 @@ class ImportOperationService:
                 operation=operation,
                 tracker=tracker,
             )
+            source_id = _result_source_id(result)
             self.store.update_import_operation(
                 operation_id,
                 status="complete",
@@ -517,11 +535,12 @@ class ImportOperationService:
             tracker.close()
             return self.get_operation(operation_id)
         except ImportCancelledError:
+            # Prefer the tracker's post-merge source id when reclassification rebound it.
             self._handle_cancel_cleanup(
                 operation_id,
                 staging_name=staging_name,
                 content_hash=content_hash,
-                source_id=source_id,
+                source_id=tracker.source_id or source_id,
             )
             raise
         except Exception as error:
@@ -530,7 +549,7 @@ class ImportOperationService:
                 error,
                 staging_name=staging_name,
                 content_hash=content_hash,
-                source_id=source_id,
+                source_id=tracker.source_id or source_id,
             )
             raise
 
@@ -738,6 +757,29 @@ class ImportOperationService:
 
         return _sink
 
+    def _rebind_terminal_operation_source(
+        self,
+        operation_id: str,
+        *,
+        status: str,
+        source_id: str | None,
+        current: Mapping[str, Any],
+    ) -> None:
+        """Rebind a same-status terminal operation to the post-merge source id.
+
+        The tracker sink may terminalize first while the row still points at a
+        deleted provisional source. Outer cleanup may then rebind only source_id
+        without changing terminal status, phase, result, or closed error code.
+        """
+        if source_id is None or current.get("source_id") == source_id:
+            return
+        with suppress(InvalidStateError, NotFoundError):
+            self.store.update_import_operation(
+                operation_id,
+                status=status,
+                source_id=source_id,
+            )
+
     def _mark_cancelled(
         self,
         operation_id: str,
@@ -749,6 +791,12 @@ class ImportOperationService:
         try:
             current = self.store.get_import_operation(operation_id)
             if current["status"] == "cancelled":
+                self._rebind_terminal_operation_source(
+                    operation_id,
+                    status="cancelled",
+                    source_id=source_id,
+                    current=current,
+                )
                 return
             bytes_processed = int(current.get("bytes_committed") or 0)
             bytes_total = max(int(current.get("declared_byte_size") or 1), 1)
@@ -777,6 +825,10 @@ class ImportOperationService:
         if source_id:
             try:
                 source = self.store.get_source(source_id, duplicate=True)
+                # Never cancel an already-complete canonical after a merge rebind;
+                # only non-terminal processing sources are cancelled here.
+                if source.import_status != "processing":
+                    return
                 metadata = merge_progress_metadata(
                     source.metadata,
                     _progress_from_dict(progress),
@@ -812,6 +864,13 @@ class ImportOperationService:
         try:
             current = self.store.get_import_operation(operation_id)
             if current["status"] in TERMINAL_OPERATION_STATUSES:
+                if current["status"] == "failed":
+                    self._rebind_terminal_operation_source(
+                        operation_id,
+                        status="failed",
+                        source_id=source_id,
+                        current=current,
+                    )
                 return
             progress["bytes_processed"] = int(current.get("bytes_committed") or 0)
             progress["bytes_total"] = max(int(current.get("declared_byte_size") or 1), 1)
