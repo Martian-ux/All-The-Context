@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import threading
 import time
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -488,6 +490,375 @@ def test_multipart_compat_still_returns_import_result(tmp_path: Path) -> None:
 def _write(path: Path, content: bytes) -> Path:
     path.write_bytes(content)
     return path
+
+
+def _chatgpt_zip_payload() -> bytes:
+    export = [
+        {
+            "id": "merge-conversation",
+            "mapping": {
+                "user": {
+                    "message": {
+                        "id": "merge-message",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["I prefer concise technical answers."]},
+                    }
+                }
+            },
+        }
+    ]
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("conversations.json", json.dumps(export))
+    return bundle.getvalue()
+
+
+def _capture_reclassify_provisional(
+    store: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    """Record the pre-merge source id while still running real reclassification."""
+    captured: dict[str, str] = {}
+    original = store.reclassify_source  # type: ignore[attr-defined]
+
+    def wrapped(source_id: str, **kwargs):  # type: ignore[no-untyped-def]
+        captured["provisional_id"] = source_id
+        return original(source_id, **kwargs)
+
+    monkeypatch.setattr(store, "reclassify_source", wrapped)
+    return captured
+
+
+def test_operation_completion_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+
+    def reject_duplicate_reingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise AssertionError("complete canonical source must not be re-ingested")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", reject_duplicate_reingest)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="automatic.zip",
+    )
+    finished = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+    )
+
+    provisional_id = captured["provisional_id"]
+    assert provisional_id != canonical_id
+    assert finished["status"] == "complete"
+    assert finished["source_id"] == canonical_id
+    assert finished["result"]["source"]["id"] == canonical_id
+    assert finished["phase"] == "complete"
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    assert canonical_source.id == canonical_id
+    assert canonical_source.import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_completion_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="automatic-retry.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+
+    canonical = ops.imports.import_bytes(
+        "canonical-retry.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def reject_duplicate_reingest(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise AssertionError("complete canonical source must not be re-ingested")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", reject_duplicate_reingest)
+    retried = ops.retry_operation(operation_id)
+
+    assert retried["status"] == "complete"
+    assert retried["source_id"] == canonical_id
+    assert retried["result"]["source"]["id"] == canonical_id
+    assert retried["phase"] == "complete"
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_operation_failure_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical-fail.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    # Merge into a non-complete canonical so real _ingest runs (not the complete short-circuit).
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    core.store.update_source_import(
+        canonical_id,
+        import_status="failed",
+        metadata=canonical_source.metadata,
+        parser_warnings=canonical_source.parser_warnings,
+    )
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+
+    def fail_begin_after_merge(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        # Raise from inside the real _ingest try path so tracker.fail terminalizes first.
+        raise RuntimeError("forced post-merge failure")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", fail_begin_after_merge)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="fail-merge.zip",
+    )
+    with pytest.raises(RuntimeError, match="forced post-merge failure"):
+        ops.accept_upload(
+            operation["operation_id"],
+            io.BytesIO(payload),
+            expected_size=len(payload),
+        )
+
+    provisional_id = captured["provisional_id"]
+    final = ops.get_operation(str(operation["operation_id"]))
+    assert provisional_id != canonical_id
+    assert final["status"] == "failed"
+    assert final["phase"] == "failed"
+    # Outer rebind after tracker.fail terminalized with the provisional source_id.
+    assert final["source_id"] == canonical_id
+    assert final["error_message"] == "import_runtime_error"
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "failed"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_operation_cancel_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    canonical = ops.imports.import_bytes(
+        "canonical-cancel.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    captured = _capture_reclassify_provisional(core.store, monkeypatch)
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="cancel-merge.zip",
+    )
+    operation_id = str(operation["operation_id"])
+
+    def cancel_after_merge(source, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        assert source.id == canonical_id
+        tracker = kwargs.get("tracker")
+        assert tracker is not None
+        ops.cancel_operation(operation_id)
+        tracker.check_cancelled()
+        raise AssertionError("cancel should have been acknowledged")
+
+    monkeypatch.setattr(ops.imports, "_ingest", cancel_after_merge)
+    with pytest.raises(ImportCancelledError):
+        ops.accept_upload(
+            operation_id,
+            io.BytesIO(payload),
+            expected_size=len(payload),
+        )
+
+    provisional_id = captured["provisional_id"]
+    final = ops.get_operation(operation_id)
+    assert provisional_id != canonical_id
+    assert final["status"] == "cancelled"
+    assert final["phase"] == "cancelled"
+    assert final["source_id"] == canonical_id
+    assert final["result"] is None
+    # Already-complete canonical must not be cancelled by a later merge cancel.
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_failure_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-fail-merge.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+    canonical = ops.imports.import_bytes(
+        "canonical-retry-fail.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    # Non-complete canonical forces the real _ingest path after merge.
+    canonical_source = core.store.get_source(canonical_id, duplicate=True)
+    core.store.update_source_import(
+        canonical_id,
+        import_status="failed",
+        metadata=canonical_source.metadata,
+        parser_warnings=canonical_source.parser_warnings,
+    )
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def fail_begin_after_merge(*args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        raise RuntimeError("forced retry post-merge failure")
+
+    monkeypatch.setattr(ops.imports.ingestion, "begin", fail_begin_after_merge)
+    with pytest.raises(RuntimeError, match="forced retry post-merge failure"):
+        ops.retry_operation(operation_id)
+
+    final = ops.get_operation(operation_id)
+    assert final["status"] == "failed"
+    assert final["phase"] == "failed"
+    # Outer rebind after tracker.fail terminalized with the provisional source_id.
+    assert final["source_id"] == canonical_id
+    assert final["error_message"] == "import_runtime_error"
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "failed"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
+
+
+def test_retry_cancel_rebinds_parser_reclassification_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = _chatgpt_zip_payload()
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="retry-cancel-merge.zip",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    operation_id = str(operation["operation_id"])
+    provisional_id = str(staged["source_id"])
+    canonical = ops.imports.import_bytes(
+        "canonical-retry-cancel.zip",
+        payload,
+        provider="chatgpt",
+    )
+    canonical_id = str(canonical["source"]["id"])
+    assert canonical_id != provisional_id
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    provisional = core.store.get_source(provisional_id, duplicate=True)
+    core.store.update_source_import(
+        provisional_id,
+        import_status="failed",
+        metadata=provisional.metadata,
+        parser_warnings=provisional.parser_warnings,
+    )
+
+    def cancel_after_merge(source, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        assert source.id == canonical_id
+        tracker = kwargs.get("tracker")
+        assert tracker is not None
+        ops.cancel_operation(operation_id)
+        tracker.check_cancelled()
+        raise AssertionError("cancel should have been acknowledged")
+
+    monkeypatch.setattr(ops.imports, "_ingest", cancel_after_merge)
+    with pytest.raises(ImportCancelledError):
+        ops.retry_operation(operation_id)
+
+    final = ops.get_operation(operation_id)
+    assert final["status"] == "cancelled"
+    assert final["phase"] == "cancelled"
+    assert final["source_id"] == canonical_id
+    assert final["result"] is None
+    assert core.store.get_source(canonical_id, duplicate=True).import_status == "complete"
+    with pytest.raises(NotFoundError, match="source not found"):
+        core.store.get_source(provisional_id, duplicate=True)
 
 
 def test_retry_passes_progress_tracker_and_records_phases(

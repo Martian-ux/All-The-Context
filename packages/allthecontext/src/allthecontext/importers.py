@@ -1060,15 +1060,20 @@ class ArchiveImportService:
             tracker.bind_source(source.id)
             # Duplicate merge deletes the provisional source id; rebind sinks.
             attach_progress_sinks(source.id)
-            metadata = _source_metadata(parsed)
-            metadata = merge_progress_metadata(metadata, tracker.snapshot())
-            self.store.update_source_import(
-                source.id,
-                import_status="processing",
-                metadata=metadata,
-                parser_warnings=parsed.warnings,
-            )
-            processing = self.store.get_source(source.id, duplicate=True)
+            if source.duplicate and source.import_status == "complete":
+                # A reclassification merge can land on an already-complete
+                # canonical source. Do not downgrade or re-ingest that source.
+                processing = source
+            else:
+                metadata = _source_metadata(parsed)
+                metadata = merge_progress_metadata(metadata, tracker.snapshot())
+                self.store.update_source_import(
+                    source.id,
+                    import_status="processing",
+                    metadata=metadata,
+                    parser_warnings=parsed.warnings,
+                )
+                processing = self.store.get_source(source.id, duplicate=True)
         except ImportCancelledError:
             self._mark_cancelled(source.id, tracker)
             raise

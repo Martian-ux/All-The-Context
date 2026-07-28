@@ -708,6 +708,17 @@ state is already noncurrent and creates no user queue.
   byte operation heartbeats, direct source-only liveness, monotonic phases,
   cancellation, and closed failure propagation. A rebuilt exact Linux
   candidate rerun remains required.
+- Independent review of that heartbeat fix then reproduced two parser-
+  reclassification merge defects: operations could complete with the deleted
+  provisional `source_id` while `result.source.id` pointed at the canonical
+  row, and merging into an already-complete canonical source could downgrade
+  it to processing and re-ingest. Source now rebinds the durable operation to
+  the canonical source on success, failure, and cancellation; preserves an
+  already-complete canonical source without downgrade or re-ingestion; and
+  allows same-status terminal rows to rebind only `source_id` when the tracker
+  sink terminalized first. Focused adversarial regressions cover initial and
+  retry success, failure, and cancellation after a real merge. Exact rebuilt-
+  candidate evidence is still required and is not claimed here.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
