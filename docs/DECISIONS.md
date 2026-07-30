@@ -1842,3 +1842,40 @@ authentication/activity writes remain unchanged on all other routes. This
 high-frequency status route authenticates and rechecks revocation without
 treating every poll as durable client activity. Generic internal operation
 reads, semantic progress, and lifecycle writes remain unchanged.
+
+## ADR-073: Operation-owned streaming JSONL parsing yields at durable progress checkpoints
+
+**Decision.** Streaming JSONL parsing with an operation-owned liveness sink
+performs a one-millisecond cooperative scheduler handoff at each existing
+one-MiB parse-progress checkpoint. Plain source-only parsing and parser paths
+that do not own the queryable operation heartbeat do not add this handoff.
+
+**Reason.** Qualified exact-candidate evidence separated durable liveness from
+API receive liveness during a 2,000,000,000-byte cancel/no-upload retry. The
+operation timestamp advanced within 4.936978 seconds and direct SQLite
+observation remained within 3.731520 seconds, but authenticated API receipt
+reached 5.735102 seconds. API query latency reached 3.428642 seconds and first
+delivery lagged direct visibility by 3.986875 seconds. Client stage timing
+placed as much as 2.699178 seconds before response headers and another
+0.846243 seconds between headers and the completed body. Functional result,
+source hash, chunk identity, coverage, SQLite integrity, and foreign keys all
+remained correct. The remaining loss was therefore scheduling and delivery
+inside the CPU-busy Core process, not a stale or frozen durable row.
+
+The boundary canary is millions of small JSONL objects. That parser previously
+kept its worker continuously runnable between automatic interpreter and
+platform scheduler decisions even though it already crossed a progress
+checkpoint about once per MiB. A positive one-millisecond pause at those
+existing checkpoints provides a cross-platform scheduling turn to the
+dedicated observer and ASGI loop. A zero-duration pause was rejected because
+the deterministic Windows regression proved that it does not reliably
+schedule a waiting observer.
+
+No status data is cached or synthesized. The observer still authenticates the
+credential, checks durable revocation, selects the operation from the
+read-only WAL connection, preserves scope-before-NotFound behavior, and
+returns only durable state. The heartbeat cadence and five-second threshold
+are unchanged. At the inclusive plain-JSONL boundary, the added pauses total
+less than two seconds across the operation rather than adding latency to each
+API request. A new immutable candidate and qualified rerun are required; this
+source decision is not acceptance evidence.

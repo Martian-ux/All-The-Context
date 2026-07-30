@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import io
 import json
+import sys
+import threading
+import time
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from allthecontext.core.service import CoreService
+from allthecontext.import_boundary import ImportProgressTracker
 from allthecontext.importers import (
     ArchiveImportService,
     parse_json,
@@ -14,6 +19,7 @@ from allthecontext.importers import (
     parse_text,
     parse_zip_bundle,
 )
+from allthecontext.models import ClientCreate
 from allthecontext.storage import InvalidStateError
 
 
@@ -44,6 +50,129 @@ def test_jsonl_skips_malformed_rows_and_extracts_obvious_items() -> None:
         "interaction_preference",
     ]
     assert parsed.warnings == ["line 2: invalid JSON skipped"]
+
+
+def test_streaming_jsonl_yields_to_operation_observer_under_cpu_pressure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import allthecontext.importers as importers_module
+
+    line = b'{"kind":"fact","blob":"' + (b"x" * 4030) + b'"}\n'
+    payload = line * 1024
+
+    class MemoryPath:
+        def open(self, *_args: object, **_kwargs: object) -> io.BytesIO:
+            return io.BytesIO(payload)
+
+    parser_entered = threading.Event()
+    observer_ready = threading.Event()
+    observer_timings: dict[str, float] = {}
+    observer_failures: list[BaseException] = []
+    core = CoreService.in_directory(tmp_path)
+    _principal, token = core.store.create_client(
+        ClientCreate(name="cooperative parser observer", scopes=["admin"])
+    )
+    operation = core.import_operations.start_operation(
+        declared_byte_size=1,
+        filename="cooperative-parser.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+
+    def cpu_heavy_consume(*_args: Any, **_kwargs: Any) -> None:
+        parser_entered.set()
+        deadline = time.perf_counter() + 0.001
+        while time.perf_counter() < deadline:
+            pass
+
+    monkeypatch.setattr(importers_module, "_consume_json_value", cpu_heavy_consume)
+
+    def observe_operation() -> None:
+        try:
+            # Warm the worker-local credential cache and persistent reader just
+            # as repeated authenticated status polling does in production.
+            assert (
+                core.store.authenticate_import_operation_observer(token, operation_id) is not None
+            )
+            observer_ready.set()
+            assert parser_entered.wait(timeout=5.0)
+            observer_timings["worker_start"] = time.perf_counter()
+            observation = core.store.authenticate_import_operation_observer(
+                token,
+                operation_id,
+            )
+            observer_timings["selected"] = time.perf_counter()
+            assert observation is not None
+            assert observation[1] is not None
+            json.dumps(observation[1])
+            observer_timings["serialized"] = time.perf_counter()
+        except BaseException as error:
+            observer_failures.append(error)
+        finally:
+            core.store.close_import_operation_observer()
+
+    observer = threading.Thread(target=observe_operation, daemon=True)
+    previous_switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(10.0)
+    observer.start()
+    assert observer_ready.wait(timeout=5.0)
+    started = time.perf_counter()
+    try:
+        importers_module._parse_jsonl_stream(
+            MemoryPath(),
+            "bounded.jsonl",
+            "generic",
+            progress=ImportProgressTracker(
+                bytes_total=len(payload),
+                liveness_sink=lambda _progress: True,
+            ),
+        )
+        completed = time.perf_counter()
+    finally:
+        sys.setswitchinterval(previous_switch_interval)
+        observer.join(timeout=2.0)
+
+    assert not observer.is_alive()
+    assert observer_failures == []
+    assert completed - started > 0.8
+    assert set(observer_timings) == {"worker_start", "selected", "serialized"}
+    # Without the parser's checkpoint yield, the observer starts only after the
+    # roughly one-second parse completes under this deterministic scheduler.
+    assert observer_timings["worker_start"] - started < 0.6
+    assert observer_timings["selected"] - observer_timings["worker_start"] < 0.25
+    assert observer_timings["serialized"] - observer_timings["selected"] < 0.1
+
+
+def test_streaming_jsonl_does_not_pause_source_only_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import allthecontext.importers as importers_module
+
+    line = b'{"kind":"fact","blob":"' + (b"x" * 4030) + b'"}\n'
+    payload = line * 300
+    pauses: list[float] = []
+
+    class MemoryPath:
+        def open(self, *_args: object, **_kwargs: object) -> io.BytesIO:
+            return io.BytesIO(payload)
+
+    monkeypatch.setattr(importers_module.time, "sleep", pauses.append)
+    monkeypatch.setattr(
+        importers_module,
+        "_consume_json_value",
+        lambda *_args, **_kwargs: None,
+    )
+    importers_module._parse_jsonl_stream(
+        MemoryPath(),
+        "source-only.jsonl",
+        "generic",
+        progress=ImportProgressTracker(
+            bytes_total=len(payload),
+            durable_sink=lambda _progress: None,
+        ),
+    )
+
+    assert pauses == []
 
 
 def test_import_size_limit(tmp_path: Path) -> None:

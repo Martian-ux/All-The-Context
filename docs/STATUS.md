@@ -765,6 +765,30 @@ state is already noncurrent and creates no user queue.
   monotonic receipt respectively). This clears the strict source diagnostic
   but is not frozen-target or packaged-candidate acceptance.
   Qualified QEMU and rebuilt-candidate evidence remain required.
+- Exact candidate `628797d` then passed the qualified 2,000,000,000-byte
+  straight journey but failed the cancel/no-upload retry's authenticated
+  receive-liveness gate. A 1,338-record fsynced trace
+  (`75adc4e24f0a2ec09c10c9e598d57fb6e21ca75e98a9d1fc33033e35f88a8ce7`)
+  measured a 5.735102-second API receipt gap while the operation's durable
+  `updated_at` gap was 4.936978 seconds and direct SQLite timestamp/receipt
+  gaps were 3.701321/3.731520 seconds. API requests took as long as 3.428642
+  seconds, first delivery lagged direct visibility by as much as 3.986875
+  seconds, response headers could take 2.699178 seconds, and the final body
+  could follow headers by another 0.846243 seconds. The exact retry remained
+  functionally complete with clean integrity, foreign keys, coverage, chunks,
+  and candidate identity, so this is scheduling/delivery loss inside the Core
+  process rather than a durable-heartbeat freeze.
+  Streaming JSONL operation imports now make a one-millisecond cooperative
+  scheduling handoff at their existing one-MiB progress checkpoints. The
+  change is limited to trackers with the operation liveness sink; source-only
+  imports, auth/revocation, the joined WAL observer, response semantics, and
+  durable progress remain unchanged. A deterministic adverse-scheduler
+  regression previously held the authenticated observer until a roughly
+  one-second parse completed; it now starts with more than 400 ms of test
+  margin and separately bounds cached auth/joined SELECT and serialization.
+  This is source validation only. A new immutable candidate must rerun the
+  qualified Linux cancel/retry slice, followed by the still-unrun interruption
+  slice; BETA-D01 remains open.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
