@@ -92,8 +92,7 @@ def test_streaming_jsonl_yields_to_operation_observer_under_cpu_pressure(
             # Warm the worker-local credential cache and persistent reader just
             # as repeated authenticated status polling does in production.
             assert (
-                core.store.authenticate_import_operation_observer(token, operation_id)
-                is not None
+                core.store.authenticate_import_operation_observer(token, operation_id) is not None
             )
             observer_ready.set()
             assert parser_entered.wait(timeout=5.0)
