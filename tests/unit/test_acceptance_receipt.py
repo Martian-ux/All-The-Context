@@ -148,6 +148,7 @@ def test_postpublication_gates_require_exact_candidate_operational_evidence(
         receipt_id=f"source-{gate_id.casefold()}",
         gate_id=gate_id,
         evidence_kind="source",
+        artifact_digests=inventory,
     )
     with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
         validate_receipt(source_receipt)
@@ -156,7 +157,10 @@ def test_postpublication_gates_require_exact_candidate_operational_evidence(
         required_gates={gate_id},
         inventory_digests=inventory,
     ) == [gate_id]
-    with pytest.raises(ManifestError, match="artifact_digests"):
+    with pytest.raises(
+        ManifestError,
+        match=rf"gate {gate_id} pass requires exact_downloaded_artifact evidence",
+    ):
         recompute_receipt_artifact_bindings(
             [source_receipt],
             inventory_digests=inventory,
@@ -388,6 +392,21 @@ def test_recompute_refuses_mixed_and_undeclared_inventory_digests() -> None:
         recompute_receipt_artifact_bindings(
             [receipt],
             inventory_digests={"other-declared.bin": "c" * 64},
+            candidate_sha256=DIGEST,
+        )
+    source_labeled_exact_gate = _receipt(
+        gate_id="BETA-R03",
+        receipt_id="source-labeled-r03",
+        evidence_kind="source",
+        artifact_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+    )
+    with pytest.raises(
+        ManifestError,
+        match="gate BETA-R03 pass requires exact_downloaded_artifact evidence",
+    ):
+        recompute_receipt_artifact_bindings(
+            [source_labeled_exact_gate],
+            inventory_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
             candidate_sha256=DIGEST,
         )
     # Arbitrary safe basenames never satisfy an exact gate.

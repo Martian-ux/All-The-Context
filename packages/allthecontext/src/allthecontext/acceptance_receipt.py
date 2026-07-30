@@ -669,10 +669,11 @@ def recompute_receipt_artifact_bindings(
 ) -> None:
     """Refuse mixed inventory/artifact digests that do not recompute from inventory.
 
-    For every exact_downloaded_artifact pass receipt, every artifact_digests key
-    must be declared by the verified candidate inventory and match its digest.
-    Arbitrary safe basenames that are not inventory members never satisfy a
-    gate. ``candidate_sha256`` binding remains a separate exact-candidate check.
+    Every exact gate must first declare exact_downloaded_artifact evidence. For
+    every such pass receipt, every artifact_digests key must be declared by the
+    verified candidate inventory and match its digest. Arbitrary safe basenames
+    that are not inventory members never satisfy a gate. ``candidate_sha256``
+    binding remains a separate exact-candidate check.
     """
 
     if SHA256.fullmatch(candidate_sha256) is None:
@@ -685,9 +686,13 @@ def recompute_receipt_artifact_bindings(
         digests = receipt.get("artifact_digests")
         evidence_kind = receipt.get("evidence_kind")
         gate_id = receipt.get("gate_id")
-        if evidence_kind == "exact_downloaded_artifact" or (
-            isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
-        ):
+        exact_gate = isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        if exact_gate and evidence_kind != "exact_downloaded_artifact":
+            raise ManifestError(
+                f"gate {gate_id} pass requires exact_downloaded_artifact evidence "
+                "during recomputation"
+            )
+        if evidence_kind == "exact_downloaded_artifact" or exact_gate:
             if not isinstance(digests, dict):
                 raise ManifestError(
                     "exact downloaded-artifact pass receipts require artifact_digests"
