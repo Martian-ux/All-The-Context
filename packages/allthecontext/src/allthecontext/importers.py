@@ -6,6 +6,7 @@ import io
 import json
 import re
 import tempfile
+import time
 import zipfile
 from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
@@ -46,6 +47,7 @@ from .storage import CoreStore, InvalidStateError
 
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
+_PARSER_COOPERATIVE_YIELD_SECONDS = 0.001
 
 _KIND_MAP = {
     "preference": "interaction_preference",
@@ -478,6 +480,13 @@ def _parse_jsonl_stream(
             processed += len(raw_line)
             if progress is not None and processed >= next_progress:
                 progress.advance_bytes(processed, message=f"parsed line {line_number}")
+                if progress.liveness_sink is not None:
+                    # Parsing millions of small JSON objects can keep this Core
+                    # process continuously runnable. Operation-owned imports
+                    # yield at the existing 1 MiB checkpoint so their dedicated
+                    # observer and ASGI loop get a scheduling turn without
+                    # changing durable progress semantics.
+                    time.sleep(_PARSER_COOPERATIVE_YIELD_SECONDS)
                 next_progress = processed + 1024 * 1024
             if not raw_line.strip():
                 continue
