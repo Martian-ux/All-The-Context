@@ -89,3 +89,24 @@ the first usable public beta is governed by
 - production vector embeddings; and
 - automatic secure remote-Core exposure until device pairing and encrypted
   transport are designed and accepted.
+
+### 2026-07-28 import-operation liveness amendment
+
+Queryable import-operation liveness now maps to timestamp-only WAL commits that
+bypass the Python lifecycle lock and, only for lightweight operation liveness,
+run at one tenth of the public five-second budget. The async status dependency
+uses a dedicated single-worker with a persistent bounded read-only/query-only
+WAL connection; each poll joins current non-revoked registration state and the
+operation in one fresh statement. A process-keyed, worker-local HMAC cache
+avoids repeated PBKDF without caching raw tokens or skipping durable revocation
+checks. Only this high-frequency status observer omits per-poll durable
+`last_used_at` activity writes; other routes retain ordinary authentication
+activity semantics. Its worker is recreated for each sequential application
+lifespan. Regressions cover cross-thread writer contention, source-only cadence,
+async routing, cache mismatch/revocation/non-persistence, executor-thread
+cleanup, and authorization-before-not-found ordering. A content-free WSL2
+timing discriminator completed the exact 2,000,000,000-byte straight import
+with maximum unchanged-byte `updated_at` intervals of 3.590 seconds by direct
+SQLite observation and 4.774 seconds through the authenticated API. This
+supports the source behavior only. Qualified QEMU and rebuilt exact-candidate
+proof remain required.

@@ -734,6 +734,37 @@ state is already noncurrent and creates no user queue.
   bytes, source, result, error, and terminal transitions remain on the original
   serialized lifecycle writer; non-lock SQLite errors still fail the import.
   A rebuilt exact Linux artifact must rerun the full journey before BETA-D01.
+- A content-free WSL2 discriminator then sampled scheduler wake, Python lock,
+  SQLite begin/update/commit, direct WAL reads, and API reads concurrently.
+  The Python store lock produced a 5.395-second direct-row gap; bypassing only
+  that lock reduced the direct maximum to 3.604 seconds despite bounded SQLite
+  retries. API observations still reached 8.504 seconds while direct reads
+  stayed below five, isolating observer delay. Stage timing later decomposed a
+  4.011-second API response into 1.136 seconds before observer-worker execution,
+  2.078 seconds in the authenticated read, and 0.796 seconds in response
+  delivery; direct timestamps advanced within 2.875 seconds in that window, so
+  faster writes alone were not treated as the observer fix.
+  Timestamp-only touches now rely on bounded SQLite arbitration directly.
+  Operation GET uses an async dependency plus a dedicated single-worker,
+  persistent read-only/query-only WAL observer; active registration and
+  operation state come from one freshest joined statement. A worker-local,
+  process-keyed HMAC cache avoids repeated PBKDF but rechecks durable
+  `revoked_at IS NULL` state on every poll and is cleared with the connection on
+  application shutdown. This status route does not turn every high-frequency
+  poll into a durable `last_used_at` activity write; all other routes retain
+  ordinary authentication activity semantics. The dedicated observer worker
+  and connection are recreated for each sequential application lifespan.
+  Lightweight operation touches
+  run at one tenth of the five-second budget for observer margin; full
+  source-only metadata heartbeats keep the original one-quarter cadence.
+  Authorization still precedes missing-operation disclosure, and generic
+  internal read semantics are unchanged. With the final production interval selector, the exact
+  2,000,000,000-byte WSL2 diagnostic completed with a 3.590-second maximum
+  direct `updated_at` interval and 4.774-second maximum API-returned
+  `updated_at` interval at unchanged committed bytes (3.306/4.344 seconds by
+  monotonic receipt respectively). This clears the strict source diagnostic
+  but is not frozen-target or packaged-candidate acceptance.
+  Qualified QEMU and rebuilt-candidate evidence remain required.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
