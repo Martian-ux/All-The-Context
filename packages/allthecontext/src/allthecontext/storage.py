@@ -2148,11 +2148,7 @@ class CoreStore:
                 "SELECT * FROM client_registrations WHERE revoked_at IS NULL"
             ).fetchall()
             registration = next(
-                (
-                    row
-                    for row in rows
-                    if verify_token(token, str(row["token_hash"]))
-                ),
+                (row for row in rows if verify_token(token, str(row["token_hash"]))),
                 None,
             )
             if registration is None:
@@ -2181,9 +2177,7 @@ class CoreStore:
                 principal = ClientPrincipal(
                     id=str(joined["observer_client_id"]),
                     name=str(joined["observer_client_name"]),
-                    scopes=frozenset(
-                        cast(list[str], _loads(joined["observer_scopes_json"], []))
-                    ),
+                    scopes=frozenset(cast(list[str], _loads(joined["observer_scopes_json"], []))),
                     auto_approve=bool(joined["observer_auto_approve"]),
                 )
                 connection.commit()
