@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -980,6 +981,174 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     source = core.store.get_source(source_id, duplicate=True)
     assert source.import_status == "cancelled"
     assert source.metadata["import_progress"]["phase"] == "cancelled"
+
+
+def test_http_cancel_acknowledges_during_preserved_blob_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Copy staging must not become an unbounded cancellation blind spot."""
+    from allthecontext.config import CoreConfig
+    from allthecontext.core.app import create_app
+    from allthecontext.core.service import CoreService
+    from fastapi.testclient import TestClient
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    core = CoreService(config)
+    ops = core.import_operations
+    payload = b'{"kind":"fact","content":"Controlled copy cancellation"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="copy-cancel.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    core.store.update_import_operation(
+        operation_id,
+        status="failed",
+        phase="failed",
+        completed=True,
+        error_message="import_interrupted_process_restart",
+    )
+    core.store.update_source_import(
+        source_id,
+        import_status="failed",
+        metadata=core.store.get_source(source_id, duplicate=True).metadata,
+        parser_warnings=(),
+    )
+
+    copy_started = threading.Event()
+    original_chunks = core.store._source_content_chunks_tx
+
+    def delayed_copy_chunks(connection, row):  # type: ignore[no-untyped-def]
+        for chunk in original_chunks(connection, row):
+            # A no-checkpoint copy takes well over the scaled 2.5-second
+            # acknowledgment budget; a checkpointed copy cancels after one piece.
+            piece_bytes = max(1, len(chunk) // 40)
+            for offset in range(0, len(chunk), piece_bytes):
+                copy_started.set()
+                time.sleep(0.1)
+                yield chunk[offset : offset + piece_bytes]
+
+    monkeypatch.setattr(core.store, "_source_content_chunks_tx", delayed_copy_chunks)
+    retry_result: dict[str, object] = {}
+    timing_path = tmp_path / "cancel-copy-timing.json"
+
+    with TestClient(create_app(config, service=core)) as client:
+
+        def retry() -> None:
+            retry_result["response"] = client.post(
+                f"/v1/admin/import-operations/{operation_id}/retry"
+            )
+            retry_result["returned"] = time.monotonic()
+
+        retry_thread = threading.Thread(target=retry, daemon=True)
+        retry_thread.start()
+        assert copy_started.wait(timeout=5.0)
+
+        cancel_started = time.monotonic()
+        cancel_response = client.post(f"/v1/admin/import-operations/{operation_id}/cancel")
+        cancel_returned = time.monotonic()
+        cancel_body = cancel_response.json()
+        durable_terminal_at: float | None = None
+        samples: list[dict[str, object]] = []
+        deadline = cancel_started + 2.5
+        while time.monotonic() < deadline:
+            observed = client.get(f"/v1/admin/import-operations/{operation_id}")
+            received = time.monotonic()
+            assert observed.status_code == 200
+            body = observed.json()
+            samples.append(
+                {
+                    "received_seconds": received - cancel_started,
+                    "status": body["status"],
+                    "phase": body["phase"],
+                    "updated_at": body["updated_at"],
+                }
+            )
+            if body["status"] == "cancelled":
+                durable_terminal_at = received
+                break
+            time.sleep(0.01)
+
+        retry_thread.join(timeout=5.0)
+        final = client.get(f"/v1/admin/import-operations/{operation_id}").json()
+        retry_response = retry_result.get("response")
+        timing = {
+            "content_free": True,
+            "cancel_http_return_seconds": cancel_returned - cancel_started,
+            "cancel_http_status": cancel_response.status_code,
+            "cancel_response_status": cancel_body["status"],
+            "cancel_requested": cancel_body["cancel_requested"],
+            "durable_terminal_seconds": (
+                None if durable_terminal_at is None else durable_terminal_at - cancel_started
+            ),
+            "worker_quiesce_seconds": (
+                None
+                if "returned" not in retry_result
+                else float(retry_result["returned"]) - cancel_started
+            ),
+            "samples": samples,
+            "final_status": final["status"],
+            "retry_http_status": getattr(retry_response, "status_code", None),
+        }
+        with timing_path.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump(timing, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        persisted = json.loads(timing_path.read_text(encoding="utf-8"))
+        assert persisted["cancel_http_status"] == 200
+        assert persisted["cancel_response_status"] == "processing"
+        assert persisted["cancel_requested"] is True
+        assert persisted["cancel_http_return_seconds"] < 2.5
+        assert persisted["durable_terminal_seconds"] is not None
+        assert persisted["durable_terminal_seconds"] < 2.5
+        assert persisted["worker_quiesce_seconds"] is not None
+        assert persisted["worker_quiesce_seconds"] < 5.0
+        assert persisted["retry_http_status"] == 422
+        assert not retry_thread.is_alive()
+        assert final["status"] == "cancelled"
+        assert final["progress"]["cancel_acknowledged"] is True
+        assert core.store.get_source(source_id, duplicate=True).import_status == "cancelled"
+        assert not list(config.data_dir.glob("atc-reprocess-*"))
+
+
+def test_source_copy_checkpoint_failure_removes_partial_file(tmp_path: Path) -> None:
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Checkpoint cleanup"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="checkpoint-cleanup.jsonl",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    destination = tmp_path / "partial-source-copy"
+    calls = 0
+
+    def cancel_checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        raise ImportCancelledError("controlled cancellation")
+
+    with pytest.raises(ImportCancelledError, match="controlled cancellation"):
+        core.store.copy_source_content_to_path(
+            str(staged["source_id"]),
+            destination,
+            checkpoint=cancel_checkpoint,
+        )
+    assert calls == 1
+    assert not destination.exists()
 
 
 def test_operation_owned_reprocess_failure_updates_operation_and_source(

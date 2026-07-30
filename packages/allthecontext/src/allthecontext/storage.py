@@ -11,7 +11,7 @@ import shutil
 import sqlite3
 import threading
 import unicodedata
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from types import TracebackType
@@ -1698,8 +1698,14 @@ class CoreStore:
             raise InvalidStateError("stored source blob hash does not match its identity")
         return content
 
-    def copy_source_content_to_path(self, source_id: str, destination: Path) -> int:
-        """Copy a raw source blob to a caller-owned path using bounded memory."""
+    def copy_source_content_to_path(
+        self,
+        source_id: str,
+        destination: Path,
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> int:
+        """Copy a raw source blob with a callback after every bounded chunk."""
         target = destination.expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -1719,6 +1725,8 @@ class CoreStore:
                         output.write(chunk)
                         digest.update(chunk)
                         written += len(chunk)
+                        if checkpoint is not None:
+                            checkpoint()
             except BaseException:
                 target.unlink(missing_ok=True)
                 raise
