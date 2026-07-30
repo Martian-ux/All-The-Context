@@ -1527,19 +1527,21 @@ backend packages is insufficient because modern wheel itself depends on
 fails CI or tempts an unreviewed ambient dependency.
 
 Publication and receipt aggregation recompute relationships from receipts and
-inventories. Required package/platform gates (including **BETA-P04**) pass only
-with `exact_downloaded_artifact` evidence whose every `artifact_digests` key is
-a filename declared by the verified candidate inventory with an exact matching
+inventories. Required package/platform gates (including **BETA-P04**) and the
+postpublication `BETA-R05`/`BETA-O01` operational gates pass only with
+`exact_downloaded_artifact` evidence whose every `artifact_digests` key is a
+filename declared by the verified candidate inventory with an exact matching
 digest. Arbitrary safe basenames (for example `foo.bin`) never satisfy an exact
-gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be
-labeled exact artifact; provider source-preparation fragments cannot pass as
-BETA-P04. Duplicate `gate_id`/`receipt_id` values, conflicting digests, incomplete
-required-gate sets, non-pass statuses, open P0/P1 limitations, forged maintainer
-booleans, post-publication BETA-R05 before release, and overwrite of immutable
-evidence files fail closed. Hosted CI still must not deploy Edge or a
-third-party runtime. Human key custody, protected-environment promotion,
-private-key signing, repository-control enablement, and public channel smoke
-remain explicit operator blockers and are not fabricated in source.
+gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`) cannot be labeled exact
+artifact; provider source-preparation fragments cannot pass as BETA-P04.
+Duplicate `gate_id`/`receipt_id` values, conflicting digests, a prepublication
+bundle containing anything other than exactly the 20 required gate IDs,
+non-pass statuses, open P0/P1 limitations, forged maintainer booleans,
+postpublication O01/R05 before release, and overwrite of immutable evidence
+files fail closed. Hosted CI still must not deploy Edge or a third-party
+runtime. Human key custody, protected-environment promotion, private-key
+signing, repository-control enablement, and public channel smoke remain
+explicit operator blockers and are not fabricated in source.
 
 ## ADR-060: Candidate convergence accepts executable product paths, not acceptance-shaped volume
 
@@ -1933,7 +1935,9 @@ if included in that bundle. The sole maintainer reviews every prepublication
 receipt ID without claiming independent human review. Public-download/channel
 smoke, live release/documentation/support/security/recovery paths, and a
 triaged launch watch cannot be truthfully asserted while the release is still
-an unpublished draft.
+an unpublished draft. Their eventual pass receipts require exact
+downloaded-artifact evidence bound to the candidate inventory; source-only
+preparation cannot satisfy either gate.
 
 This sequencing does not defer documentation readiness. Existing exact-source
 candidate validation fails closed unless `SUPPORT.md`,

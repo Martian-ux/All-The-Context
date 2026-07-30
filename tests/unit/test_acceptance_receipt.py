@@ -139,18 +139,56 @@ def test_bundle_missing_required_gates() -> None:
     assert "BETA-O01" not in missing
 
 
-def test_postpublication_receipts_remain_schema_valid_but_not_prepublication_required() -> None:
-    for gate_id in sorted(POST_PUBLICATION_GATES):
-        receipt = validate_receipt(
-            _receipt(
-                receipt_id=f"post-{gate_id.casefold()}",
-                gate_id=gate_id,
-                evidence_kind="source",
-            )
+@pytest.mark.parametrize("gate_id", sorted(POST_PUBLICATION_GATES))
+def test_postpublication_gates_require_exact_candidate_operational_evidence(
+    gate_id: str,
+) -> None:
+    inventory = {"all-the-context-beta-package.bin": "c" * 64}
+    source_receipt = _receipt(
+        receipt_id=f"source-{gate_id.casefold()}",
+        gate_id=gate_id,
+        evidence_kind="source",
+    )
+    with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
+        validate_receipt(source_receipt)
+    assert missing_required_gates(
+        [source_receipt],
+        required_gates={gate_id},
+        inventory_digests=inventory,
+    ) == [gate_id]
+    with pytest.raises(ManifestError, match="artifact_digests"):
+        recompute_receipt_artifact_bindings(
+            [source_receipt],
+            inventory_digests=inventory,
+            candidate_sha256=DIGEST,
         )
-        assert receipt["status"] == "pass"
-        assert gate_id not in REQUIRED_PUBLICATION_GATES
-        assert gate_id not in missing_required_gates([receipt], required_gates={gate_id})
+
+    exact_receipt = validate_receipt(
+        _receipt(
+            receipt_id=f"exact-{gate_id.casefold()}",
+            gate_id=gate_id,
+            evidence_kind="exact_downloaded_artifact",
+            artifact_digests=inventory,
+        )
+    )
+    recompute_receipt_artifact_bindings(
+        [exact_receipt],
+        inventory_digests=inventory,
+        candidate_sha256=DIGEST,
+    )
+    assert not missing_required_gates(
+        [exact_receipt],
+        required_gates={gate_id},
+        inventory_digests=inventory,
+    )
+    assert gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+    assert gate_id not in REQUIRED_PUBLICATION_GATES
+
+
+def test_postpublication_classification_is_exact_and_disjoint_from_source_scaffolding() -> None:
+    for gate_id in sorted(POST_PUBLICATION_GATES):
+        assert gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        assert gate_id not in SOURCE_ALLOWED_PUBLICATION_GATES
 
 
 def test_bundle_rejects_independent_review_claim() -> None:

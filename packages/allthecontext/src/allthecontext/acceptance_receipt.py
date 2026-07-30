@@ -74,7 +74,8 @@ REQUIRED_PUBLICATION_GATES = frozenset(
 )
 POST_PUBLICATION_GATES = frozenset({"BETA-R05", "BETA-O01"})
 
-# Gates whose pass claims must be exact downloaded-artifact evidence, not source-only.
+# Gates whose pass claims require candidate-bound downloaded-artifact or
+# operational evidence, including postpublication public smoke/watch closure.
 EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
     {
         "BETA-P01",
@@ -94,7 +95,9 @@ EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
         "BETA-D03",
         "BETA-R03",
         "BETA-R04",
+        "BETA-R05",
         "BETA-X01",
+        "BETA-O01",
     }
 )
 # Source-level publication scaffolding only (never label these as exact artifact).

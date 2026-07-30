@@ -220,7 +220,9 @@ After immutable publication and protected channel promotion, collect
 `BETA-O01` only after the public release, documentation, known-issues, support,
 security-intake, and recovery URLs have remained healthy through the initial
 launch watch and every received report has been triaged. These receipts close
-B-206; they do not retroactively enter the 20-receipt publication bundle.
+B-206, require exact downloaded-artifact operational evidence bound to the
+candidate inventory, and do not retroactively enter the 20-receipt publication
+bundle.
 
 Candidate creation fails closed before this sequence unless
 [support](../../SUPPORT.md), [known issues](../KNOWN_ISSUES.md),

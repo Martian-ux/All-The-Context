@@ -181,5 +181,7 @@ Missing prepublication gates leave the release as a draft.
 
 `BETA-R05` public download/channel smoke and `BETA-O01` live public-path and
 triaged launch-watch proof are recorded only after the immutable release exists.
-The prepublication gate rejects either receipt if it is inserted into the
-approval bundle.
+Both require exact downloaded-artifact operational evidence bound to the
+candidate inventory; source-only receipts cannot satisfy them. The
+prepublication gate rejects either receipt if it is inserted into the approval
+bundle.

@@ -534,9 +534,9 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-R02 | Key custody and publication are recoverable and deliberate | Open | Two restore-tested backups in distinct failure domains, protected workflows, sole-maintainer decision record |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
-| BETA-R05 | Public beta and channel reference the approved bytes | Open | Public download/install/channel smoke |
+| BETA-R05 | Public beta and channel reference the approved bytes | Open | Exact-candidate public download/install/channel smoke |
 | BETA-X01 | Public platform/client/provider claims match observed evidence | Open | Frozen support table and receipts for every claim |
-| BETA-O01 | Known issues, support, security intake, and recovery guidance exist | Source readiness required before candidate creation; post-publication gate open | Live public paths and triaged launch-watch receipt after publication |
+| BETA-O01 | Known issues, support, security intake, and recovery guidance exist | Source readiness required before candidate creation; post-publication gate open | Exact-candidate live public paths and triaged launch-watch receipt after publication |
 
 ## Work packages
 

@@ -139,6 +139,29 @@ def evaluate_publication_gate(
     if bundle["candidate_sha256"] != candidate_sha256:
         raise ManifestError("receipt bundle candidate_sha256 does not match publication input")
 
+    gate_ids = [str(receipt["gate_id"]) for receipt in bundle["receipts"]]
+    # Preserve the more useful sequencing diagnostic before the generic exact-set
+    # check. These gates can exist only after immutable publication.
+    for gate_id in gate_ids:
+        if gate_id in POST_PUBLICATION_GATES:
+            raise ManifestError(
+                f"publication rejects post-publication gate {gate_id} before release"
+            )
+    required_gate_ids = set(REQUIRED_PUBLICATION_GATES)
+    unexpected = sorted(set(gate_ids) - required_gate_ids)
+    missing_gate_ids = sorted(required_gate_ids - set(gate_ids))
+    if unexpected or missing_gate_ids or len(gate_ids) != len(required_gate_ids):
+        details: list[str] = []
+        if missing_gate_ids:
+            details.append("missing=" + ",".join(missing_gate_ids))
+        if unexpected:
+            details.append("unexpected=" + ",".join(unexpected))
+        if len(gate_ids) != len(required_gate_ids):
+            details.append(f"receipt_count={len(gate_ids)}")
+        raise ManifestError(
+            "publication receipt gate IDs must equal the exact required set: " + "; ".join(details)
+        )
+
     # Candidate inventory already verified; recompute matrix evidence identity.
     load_matrix_evidence(release_dir / MATRIX_EVIDENCE_FILE_NAME, source_commit=source_commit)
     inventory_digests = candidate_inventory_digests(candidate)
@@ -167,15 +190,9 @@ def evaluate_publication_gate(
         raise ManifestError(
             "publication fails closed; required receipt gates are not pass: " + ", ".join(missing)
         )
-    # Public-release smoke and launch-watch closure cannot be claimed before
-    # the immutable release exists.
     for receipt in bundle["receipts"]:
         gate_id = receipt.get("gate_id")
         status = receipt.get("status")
-        if isinstance(gate_id, str) and gate_id in POST_PUBLICATION_GATES:
-            raise ManifestError(
-                f"publication rejects post-publication gate {gate_id} before release"
-            )
         if gate_id in REQUIRED_PUBLICATION_GATES and status != "pass":
             raise ManifestError(f"required gate {gate_id} is not pass (status={status})")
         if status in {"not_run", "skipped", "unavailable", "fail"}:

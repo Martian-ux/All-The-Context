@@ -885,7 +885,9 @@ state is already noncurrent and creates no user queue.
 - The protected publication decision requires exactly 20 prepublication gates.
   `BETA-R05` public-download/channel smoke and `BETA-O01` live public-path and
   triaged launch-watch proof are postpublication gates; either is rejected if
-  inserted into the prepublication bundle.
+  inserted into the prepublication bundle. Their eventual pass receipts require
+  exact downloaded-artifact operational evidence bound to the candidate
+  inventory; source-only receipts remain insufficient.
 - Candidate source validation now fails closed unless stable support,
   known-issues, security-intake, and recovery guidance exists and remains
   linked from the README. This source readiness does not claim either
