@@ -18,15 +18,20 @@ are in
 Core is loopback-only by default. V1 has no supported hosted Relay/Edge or
 automatic remote-exposure path. Do not bind Core to a public interface without
 an independently reviewed encrypted transport and authentication boundary.
-The current pre-beta baseline still constructs Edge compatibility managers and
-exposes callable API/CLI operation paths. Their removal/build-gating and
-negative packaged network proof are beta blockers; a hidden UI or disabled
-background worker is not sufficient isolation.
-Clients use scoped credentials. The file credential fallback is for
-development only; normal installations should use the OS credential backend.
-The current baseline can still select that fallback automatically when keyring
-operations fail. Preventing silent plaintext fallback and rolling back partial
-client setup are public-beta blockers, not accepted security behavior.
+The supported Core product does not construct or start the legacy Edge worker.
+Ordinary Edge/Relay product API and CLI operation paths are removed or
+tombstoned with HTTP 404 responses. Local-only legacy cleanup remains isolated
+under explicit administrator surfaces and cannot create a second authority by
+default. Exact downloaded-artifact isolation evidence remains required before
+publication; source implementation alone is not a platform claim.
+
+Clients use scoped credentials. Normal setup writes to the operating-system
+credential backend and verifies the round trip. If protected storage is
+unavailable or fails, setup stops, revokes newly created access, and restores
+prior configuration; it does not silently select a plaintext fallback. The
+plaintext file store is development-only and requires deliberate environment
+opt-in. Exact-package Windows, macOS, and Linux protected-store receipts remain
+release gates and are not implied by this source contract.
 
 An ATC-configured same-device Codex or Claude principal may receive the
 explicit-statement witness grant. That grant lets the client attest that

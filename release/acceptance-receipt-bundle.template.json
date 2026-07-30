@@ -263,19 +263,6 @@
       "limitations": [],
       "attempts": [],
       "notes": "Template only. Public platform/client/provider claims match evidence."
-    },
-    {
-      "schema_version": 1,
-      "receipt_id": "template-beta-o01",
-      "gate_id": "BETA-O01",
-      "evidence_kind": "source",
-      "status": "not_run",
-      "source_commit": "0000000000000000000000000000000000000000",
-      "content_free": true,
-      "severity": null,
-      "limitations": [],
-      "attempts": [],
-      "notes": "Template only. Known issues, support, security intake, recovery guidance."
     }
   ],
   "maintainer_decision": {
@@ -284,7 +271,7 @@
     "decided_at": "",
     "independent_human_review_claimed": false,
     "ai_assisted": true,
-    "notes": "Decision stays null until every required receipt is pass and the sole human maintainer approves. Enumerate every receipt_id. Do not claim independent human review. BETA-R05 is post-publication.",
+    "notes": "Decision stays null until all 20 prepublication receipts pass and the sole human maintainer approves. Enumerate exactly those 20 receipt_id values. Do not claim independent human review. BETA-R05 and BETA-O01 are post-publication.",
     "reviewed_receipt_ids": []
   }
 }

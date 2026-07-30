@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from allthecontext.acceptance_receipt import (
     EXACT_ARTIFACT_PUBLICATION_GATES,
+    POST_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
     load_receipt,
@@ -111,10 +112,12 @@ def test_required_publication_gates_are_complete() -> None:
         "BETA-R03",
         "BETA-R04",
         "BETA-X01",
-        "BETA-O01",
     }
     assert expected == REQUIRED_PUBLICATION_GATES
-    assert "BETA-R05" not in REQUIRED_PUBLICATION_GATES
+    assert len(REQUIRED_PUBLICATION_GATES) == 20
+    assert {"BETA-R05", "BETA-O01"} == POST_PUBLICATION_GATES
+    assert REQUIRED_PUBLICATION_GATES.isdisjoint(POST_PUBLICATION_GATES)
+    assert {"BETA-R01", "BETA-R02"} == SOURCE_ALLOWED_PUBLICATION_GATES
 
 
 def test_bundle_missing_required_gates() -> None:
@@ -133,6 +136,21 @@ def test_bundle_missing_required_gates() -> None:
     assert "BETA-R02" in missing
     assert "BETA-P01" in missing
     assert "BETA-R01" not in missing
+    assert "BETA-O01" not in missing
+
+
+def test_postpublication_receipts_remain_schema_valid_but_not_prepublication_required() -> None:
+    for gate_id in sorted(POST_PUBLICATION_GATES):
+        receipt = validate_receipt(
+            _receipt(
+                receipt_id=f"post-{gate_id.casefold()}",
+                gate_id=gate_id,
+                evidence_kind="source",
+            )
+        )
+        assert receipt["status"] == "pass"
+        assert gate_id not in REQUIRED_PUBLICATION_GATES
+        assert gate_id not in missing_required_gates([receipt], required_gates={gate_id})
 
 
 def test_bundle_rejects_independent_review_claim() -> None:
@@ -370,6 +388,8 @@ def test_template_bundle_loads() -> None:
     validated = validate_receipt_bundle(raw)
     assert validated["maintainer_decision"]["decision"] is None
     assert all(item["status"] == "not_run" for item in validated["receipts"])
-    assert {item["gate_id"] for item in validated["receipts"]} >= REQUIRED_PUBLICATION_GATES
-    assert "BETA-R05" not in {item["gate_id"] for item in validated["receipts"]}
+    gate_ids = {item["gate_id"] for item in validated["receipts"]}
+    assert gate_ids == REQUIRED_PUBLICATION_GATES
+    assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
+    assert len(validated["receipts"]) == 20
     assert all(item["status"] != "pass" for item in validated["receipts"])

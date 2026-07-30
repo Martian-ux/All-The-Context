@@ -26,6 +26,32 @@ from allthecontext.release_candidate import (
 from allthecontext.release_manifest import ManifestError, ReleaseVersion, sha256_file
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_READINESS_DOCUMENTS = {
+    Path("SUPPORT.md"): (
+        "github.com/martian-ux/all-the-context/issues/new",
+        "security/advisories/new",
+        "triage",
+    ),
+    Path("docs/KNOWN_ISSUES.md"): (
+        "severity",
+        "impact",
+        "workaround",
+        "owner",
+        "post-v1",
+    ),
+    Path("SECURITY.md"): (
+        "private vulnerability reporting",
+        "http 404",
+        "does not silently",
+    ),
+    Path("docs/operations/RUNBOOK.md"): ("restore", "backup"),
+}
+PUBLIC_READINESS_LINKS = (
+    "[support](SUPPORT.md)",
+    "[known issues](docs/KNOWN_ISSUES.md)",
+    "[security](SECURITY.md)",
+    "[recovery runbook](docs/operations/RUNBOOK.md)",
+)
 
 
 def _stage_into_release(release_dir: Path, source_evidence_dir: Path) -> None:
@@ -48,6 +74,28 @@ def canonical_python_version(version: str) -> str:
 
     ReleaseVersion.parse(version)
     return re.sub(r"-beta\.([1-9][0-9]*)$", r"b\1", version)
+
+
+def validate_public_readiness_docs(project_root: Path) -> None:
+    """Require stable source-level support, safety, and recovery guidance."""
+
+    for relative, required_markers in PUBLIC_READINESS_DOCUMENTS.items():
+        path = project_root / relative
+        if not path.is_file() or path.is_symlink():
+            raise ManifestError(f"release readiness document is missing: {relative.as_posix()}")
+        text = path.read_text(encoding="utf-8").casefold()
+        missing = [marker for marker in required_markers if marker.casefold() not in text]
+        if missing:
+            raise ManifestError(
+                "release readiness document is incomplete: "
+                f"{relative.as_posix()} missing {', '.join(missing)}"
+            )
+    readme = (project_root / "README.md").read_text(encoding="utf-8")
+    missing_links = [link for link in PUBLIC_READINESS_LINKS if link not in readme]
+    if missing_links:
+        raise ManifestError(
+            "README release-readiness links are incomplete: " + ", ".join(missing_links)
+        )
 
 
 def validate_runner_target(expected_platform: str, expected_architecture: str) -> None:
@@ -114,6 +162,7 @@ def validate_source_metadata(
     ]
     if len(locked_project) != 1 or locked_project[0].get("version") not in accepted_versions:
         raise ManifestError("release version does not match the Python dependency lock")
+    validate_public_readiness_docs(project_root)
 
 
 def _targets(values: list[str]) -> list[ReleaseTarget]:

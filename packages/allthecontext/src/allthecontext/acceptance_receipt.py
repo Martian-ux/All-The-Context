@@ -46,7 +46,8 @@ ALLOWED_STATUSES = frozenset({"pass", "fail", "skipped", "unavailable", "not_run
 ALLOWED_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
 ALLOWED_DECISIONS = frozenset({"approve", "reject"})
 
-# Pre-publication V1 gates. BETA-R05 is post-publication public-download smoke.
+# Pre-publication V1 gates. Public-release smoke and launch-watch closure happen
+# only after the immutable release exists.
 REQUIRED_PUBLICATION_GATES = frozenset(
     {
         "BETA-P01",
@@ -69,10 +70,9 @@ REQUIRED_PUBLICATION_GATES = frozenset(
         "BETA-R03",
         "BETA-R04",
         "BETA-X01",
-        "BETA-O01",
     }
 )
-POST_PUBLICATION_GATES = frozenset({"BETA-R05"})
+POST_PUBLICATION_GATES = frozenset({"BETA-R05", "BETA-O01"})
 
 # Gates whose pass claims must be exact downloaded-artifact evidence, not source-only.
 EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
@@ -98,7 +98,7 @@ EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
     }
 )
 # Source-level publication scaffolding only (never label these as exact artifact).
-SOURCE_ALLOWED_PUBLICATION_GATES = frozenset({"BETA-R01", "BETA-R02", "BETA-O01"})
+SOURCE_ALLOWED_PUBLICATION_GATES = frozenset({"BETA-R01", "BETA-R02"})
 
 RECEIPT_ALLOWED_KEYS = frozenset(
     {

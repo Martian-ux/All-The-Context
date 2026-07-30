@@ -167,7 +167,8 @@ def evaluate_publication_gate(
         raise ManifestError(
             "publication fails closed; required receipt gates are not pass: " + ", ".join(missing)
         )
-    # BETA-R05 is post-publication public smoke and must not be required here.
+    # Public-release smoke and launch-watch closure cannot be claimed before
+    # the immutable release exists.
     for receipt in bundle["receipts"]:
         gate_id = receipt.get("gate_id")
         status = receipt.get("status")

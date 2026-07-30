@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from allthecontext.acceptance_receipt import REQUIRED_PUBLICATION_GATES
+from allthecontext.acceptance_receipt import POST_PUBLICATION_GATES, REQUIRED_PUBLICATION_GATES
 from allthecontext.release_candidate import (
     ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME,
     COMPONENT_INVENTORY_FILE_NAME,
@@ -106,14 +106,15 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
         assert "pip-audit>=" not in text
 
 
-def test_required_publication_gates_appear_in_templates_not_r05() -> None:
+def test_prepublication_template_is_exact_and_excludes_postpublication_gates() -> None:
     import json
 
     template_path = ROOT / "release" / "acceptance-receipt-bundle.template.json"
     template = json.loads(template_path.read_text(encoding="utf-8"))
     gate_ids = {item["gate_id"] for item in template["receipts"]}
     assert gate_ids == REQUIRED_PUBLICATION_GATES
-    assert "BETA-R05" not in gate_ids
+    assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
+    assert len(template["receipts"]) == 20
     assert all(item["status"] == "not_run" for item in template["receipts"])
     assert all(item["status"] != "pass" for item in template["receipts"])
     assert template["maintainer_decision"]["independent_human_review_claimed"] is False
@@ -131,7 +132,10 @@ def test_publish_workflow_persists_decision_artifacts_before_final_recheck() -> 
     # Upload happens before the pre-publish recheck.
     upload_at = text.index("https://uploads.github.com/repos/")
     recheck_at = text.index("Recheck the exact promotion asset set")
+    gate_at = text.index("python scripts/publication_gate.py")
+    publish_at = text.index("-F draft=false")
     assert upload_at < recheck_at
+    assert gate_at < publish_at
 
 
 def test_unpublished_release_workflows_use_unique_numeric_release_identity() -> None:

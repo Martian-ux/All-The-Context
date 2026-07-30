@@ -43,7 +43,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts import release_candidate as release_candidate_script
 from scripts.build_release_assets import build_archive, write_metadata, write_subject_sbom
-from scripts.release_candidate import canonical_python_version, validate_source_metadata
+from scripts.release_candidate import (
+    canonical_python_version,
+    validate_public_readiness_docs,
+    validate_source_metadata,
+)
 
 TEST_ONLY_SEED = bytes(range(32))
 VERSION = "0.1.0-beta.1"
@@ -364,6 +368,30 @@ def _version_tree(root: Path, *, python_version: str, dashboard_version: str) ->
         f'[[package]]\nname = "all-the-context"\nversion = "{python_version}"\n',
         encoding="utf-8",
     )
+    (root / "docs/operations").mkdir(parents=True)
+    (root / "SUPPORT.md").write_text(
+        "Triage at https://github.com/Martian-ux/All-The-Context/issues/new. "
+        "Security uses https://github.com/Martian-ux/All-The-Context/security/advisories/new.\n",
+        encoding="utf-8",
+    )
+    (root / "docs/KNOWN_ISSUES.md").write_text(
+        "Severity P3. Impact. Workaround. Owner. Post-V1.\n",
+        encoding="utf-8",
+    )
+    (root / "SECURITY.md").write_text(
+        "Private vulnerability reporting. Removed routes return HTTP 404. "
+        "Credential setup does not silently use plaintext.\n",
+        encoding="utf-8",
+    )
+    (root / "docs/operations/RUNBOOK.md").write_text(
+        "Backup before restore.\n",
+        encoding="utf-8",
+    )
+    (root / "README.md").write_text(
+        "[support](SUPPORT.md) [known issues](docs/KNOWN_ISSUES.md) "
+        "[security](SECURITY.md) [recovery runbook](docs/operations/RUNBOOK.md)\n",
+        encoding="utf-8",
+    )
 
 
 def test_source_gate_accepts_python_canonical_beta_but_requires_raw_web_semver(
@@ -391,6 +419,28 @@ def test_source_gate_accepts_python_canonical_beta_but_requires_raw_web_semver(
             source_commit=SOURCE_COMMIT,
             checked_out_commit=SOURCE_COMMIT,
         )
+
+
+def test_source_gate_requires_linked_public_readiness_documents(tmp_path: Path) -> None:
+    _version_tree(
+        tmp_path,
+        python_version=canonical_python_version(VERSION),
+        dashboard_version=VERSION,
+    )
+    validate_public_readiness_docs(tmp_path)
+
+    (tmp_path / "SUPPORT.md").unlink()
+    with pytest.raises(ManifestError, match=r"release readiness document is missing: SUPPORT\.md"):
+        validate_public_readiness_docs(tmp_path)
+
+    (tmp_path / "SUPPORT.md").write_text(
+        "Triage at https://github.com/Martian-ux/All-The-Context/issues/new. "
+        "Security uses https://github.com/Martian-ux/All-The-Context/security/advisories/new.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text("[support](SUPPORT.md)\n", encoding="utf-8")
+    with pytest.raises(ManifestError, match="README release-readiness links are incomplete"):
+        validate_public_readiness_docs(tmp_path)
 
 
 def test_validate_source_cli_reads_the_actual_checked_out_commit(

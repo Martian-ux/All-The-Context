@@ -186,10 +186,11 @@ x86_64 OTA ZIP:
    manifest-set verification before publishing. It also runs
    `scripts/publication_gate.py` against the reviewed candidate digest, the
    exact promotion asset inventory, a content-free acceptance receipt bundle
-   with an explicit maintainer `approve` decision, and the reviewed public-key
-   identity. The private signing key never enters Actions. The job then requires
-   the resulting release to report immutable and verifies GitHub's release
-   attestation.
+   containing exactly the 20 prepublication gates with an explicit maintainer
+   `approve` decision, and the reviewed public-key identity. `BETA-R05` and
+   `BETA-O01` are postpublication gates and are rejected from this bundle. The
+   private signing key never enters Actions. The job then requires the resulting
+   release to report immutable and verifies GitHub's release attestation.
 6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new
@@ -213,6 +214,19 @@ the build/SBOM attestations, and accepts exactly the signed manifests identified
 as OTA-eligible by the candidate inventory. It then builds a link-free Pages
 artifact and pauses at the protected `github-pages` deployment environment.
 There is no push-triggered or release-triggered channel promotion.
+
+After immutable publication and protected channel promotion, collect
+`BETA-R05` from fresh public downloads and channel verification. Collect
+`BETA-O01` only after the public release, documentation, known-issues, support,
+security-intake, and recovery URLs have remained healthy through the initial
+launch watch and every received report has been triaged. These receipts close
+B-206; they do not retroactively enter the 20-receipt publication bundle.
+
+Candidate creation fails closed before this sequence unless
+[support](../../SUPPORT.md), [known issues](../KNOWN_ISSUES.md),
+[security intake](../../SECURITY.md), and the
+[recovery runbook](RUNBOOK.md) exist and remain linked from the repository
+README. That is source readiness, not postpublication execution evidence.
 
 The Beta 1 pointer is therefore only:
 

@@ -167,9 +167,19 @@ On the exact release commit:
 
 Before publication, record the commit, CI and draft-release URLs, asset and
 manifest digests, public-key fingerprint, real-platform results, unsigned
-warning acknowledgement, and explicit release approve/reject decision. This is
-a software-release decision, not a context-review queue. The sole human
-maintainer may use AI-assisted review but must not call it independent human
-approval. GitHub private vulnerability reporting must remain enabled and the
-public security policy must route sensitive reports to it. Missing gates leave
-the release as a draft.
+warning acknowledgement, and explicit release approve/reject decision against
+exactly the 20 prepublication receipts. The decision must enumerate every one
+of those receipt IDs and no postpublication receipt. This is a software-release
+decision, not a context-review queue. The sole human maintainer may use
+AI-assisted review but must not call it independent human approval.
+
+GitHub private vulnerability reporting must remain enabled, the public security
+policy must route sensitive reports to it, and source validation must require
+linked support, known-issues, security-intake, and recovery guidance before a
+candidate is built. Those source prerequisites do not satisfy `BETA-O01`.
+Missing prepublication gates leave the release as a draft.
+
+`BETA-R05` public download/channel smoke and `BETA-O01` live public-path and
+triaged launch-watch proof are recorded only after the immutable release exists.
+The prepublication gate rejects either receipt if it is inserted into the
+approval bundle.
