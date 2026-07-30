@@ -1879,3 +1879,46 @@ are unchanged. At the inclusive plain-JSONL boundary, the added pauses total
 less than two seconds across the operation rather than adding latency to each
 API request. A new immutable candidate and qualified rerun are required; this
 source decision is not acceptance evidence.
+
+## ADR-074: Preserved-source reconstruction checks cancellation at bounded chunks
+
+**Status:** accepted 2026-07-30.
+
+An operation may expose `parsing` before `reprocess_source` reconstructs the
+preserved raw blob into its caller-owned temporary file. That reconstruction
+is part of the cancellable worker lifecycle. The storage copy helper therefore
+accepts an optional checkpoint and invokes it after every bounded source
+chunk. Operation-owned and source-only reprocess pass the tracker's
+`check_cancelled` callback. Stored chunks are at most 8 MiB; cancellation no
+longer waits for the complete source copy. If a checkpoint raises, the
+existing fail-closed path removes the partial target before propagating the
+exception.
+
+The three cancellation clocks remain distinct:
+
+1. `POST .../cancel` durably records intent and may return the current
+   `processing` status with `cancel_requested=true`.
+2. The worker acknowledges at its next checkpoint, and the lifecycle sink
+   commits terminal `cancelled` state for the operation and processing source.
+3. Quiescence is reached only when the active upload/retry request and its
+   producer or parser work have unwound.
+
+The frozen contract remains strict: durable acknowledgment must be observed in
+less than five seconds and worker quiescence within 30 seconds. The response is
+not relabeled as terminal before the worker acknowledges, no synthetic state
+is returned, and no threshold is relaxed.
+
+Exact candidate `7ffb1a4` exposed the missing checkpoint on Windows after its
+straight 2,000,000,000-byte import and repeat passed. The cancel request
+returned, authenticated GET remained responsive, and timestamp-only liveness
+continued to commit, but semantic status stayed processing beyond five
+seconds. A production-path controlled-copy regression reproduced the causal
+ordering without personal content: before the fix, HTTP intent returned in
+0.021 seconds, durable terminal state missed a scaled 0.75-second bound, and
+worker quiescence arrived at 1.560 seconds only after reconstruction. With the
+chunk checkpoint, the same fsynced evidence records 0.022-second HTTP return,
+0.113-second durable acknowledgment, and 0.135-second quiescence. This rules
+out the API observer, liveness writer, and SQLite/Python writer lock as the
+observed cause. A new immutable candidate must rerun the full Windows
+boundary/cancel/retry/interruption/export/restore journey; source evidence does
+not satisfy BETA-D01.

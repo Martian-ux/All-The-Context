@@ -1046,7 +1046,11 @@ class ArchiveImportService:
                 prefix="atc-reprocess-", dir=self.store.database_path.parent
             ) as temporary_directory:
                 raw_path = Path(temporary_directory) / "preserved-source"
-                self.store.copy_source_content_to_path(source.id, raw_path)
+                self.store.copy_source_content_to_path(
+                    source.id,
+                    raw_path,
+                    checkpoint=tracker.check_cancelled,
+                )
                 tracker.set_phase("parsing", message="parsing preserved raw source")
                 tracker.check_cancelled()
                 parsed = parse_archive_path(

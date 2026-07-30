@@ -789,6 +789,31 @@ state is already noncurrent and creates no user queue.
   This is source validation only. A new immutable candidate must rerun the
   qualified Linux cancel/retry slice, followed by the still-unrun interruption
   slice; BETA-D01 remains open.
+- Replacement candidate `7ffb1a4` passed the exact Windows x86-64
+  2,000,000,000-byte straight import and idempotent repeat, including separate
+  top-level operation timestamp and authenticated API receipt liveness, but
+  failed the frozen cancellation gate. The cancel HTTP request returned while
+  the operation remained processing, and durable `cancelled` was not observed
+  before the strict five-second deadline. The run stopped before retry,
+  interruption, export, or restore and issued no receipt; the candidate is
+  invalidated.
+  A deterministic production-path HTTP reproduction separated the clocks:
+  before the fix, cancel intent returned in 0.021 seconds, observer-visible
+  liveness timestamps continued to advance, durable terminal state missed a
+  scaled 0.75-second bound, and the worker quiesced only after the controlled
+  preserved-source copy completed at 1.560 seconds. The operation advertises
+  `parsing` before reconstructing the preserved blob, but that bounded-memory
+  copy had no cancellation checkpoint. API delivery, the read-only observer,
+  the timestamp-only writer, and SQLite/Python write-lock acquisition were
+  therefore not the cause.
+  Preserved-source reconstruction now calls the operation tracker's
+  cancellation check after every stored chunk (at most 8 MiB in production).
+  The copy helper removes its partial target if the checkpoint raises. The same
+  fsynced regression now measures 0.022-second HTTP return, 0.113-second durable
+  acknowledgment, and 0.135-second worker quiescence; a separate regression
+  proves partial-copy cleanup. No budget or response meaning changed. A new
+  immutable candidate must rerun the complete Windows journey; source tests do
+  not satisfy BETA-D01.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
