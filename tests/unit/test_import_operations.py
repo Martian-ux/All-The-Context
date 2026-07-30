@@ -16,6 +16,7 @@ import pytest
 from allthecontext.core.service import CoreService
 from allthecontext.import_boundary import (
     BOUNDARY_PLUS_ONE_BYTES,
+    PROGRESS_HEARTBEAT_SECONDS,
     ImportCancelledError,
     ImportCancelRegistry,
 )
@@ -1516,7 +1517,10 @@ def test_operation_liveness_touch_is_fail_fast_and_semantically_neutral(
     try:
         started = time.monotonic()
         assert core.store.touch_import_operation_liveness(operation_id) is False
-        assert time.monotonic() - started < 1.0
+        # SQLite enforces the 250 ms busy timeout. Allow hosted-runner scheduling
+        # jitter while proving one failed touch consumes less than half of the
+        # frozen five-second observer heartbeat budget.
+        assert time.monotonic() - started < PROGRESS_HEARTBEAT_SECONDS / 2
     finally:
         blocker.rollback()
         blocker.close()
