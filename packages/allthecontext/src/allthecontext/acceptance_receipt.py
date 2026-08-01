@@ -46,7 +46,8 @@ ALLOWED_STATUSES = frozenset({"pass", "fail", "skipped", "unavailable", "not_run
 ALLOWED_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
 ALLOWED_DECISIONS = frozenset({"approve", "reject"})
 
-# Pre-publication V1 gates. BETA-R05 is post-publication public-download smoke.
+# Pre-publication V1 gates. Public-release smoke and launch-watch closure happen
+# only after the immutable release exists.
 REQUIRED_PUBLICATION_GATES = frozenset(
     {
         "BETA-P01",
@@ -69,12 +70,12 @@ REQUIRED_PUBLICATION_GATES = frozenset(
         "BETA-R03",
         "BETA-R04",
         "BETA-X01",
-        "BETA-O01",
     }
 )
-POST_PUBLICATION_GATES = frozenset({"BETA-R05"})
+POST_PUBLICATION_GATES = frozenset({"BETA-R05", "BETA-O01"})
 
-# Gates whose pass claims must be exact downloaded-artifact evidence, not source-only.
+# Gates whose pass claims require candidate-bound downloaded-artifact or
+# operational evidence, including postpublication public smoke/watch closure.
 EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
     {
         "BETA-P01",
@@ -94,11 +95,13 @@ EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
         "BETA-D03",
         "BETA-R03",
         "BETA-R04",
+        "BETA-R05",
         "BETA-X01",
+        "BETA-O01",
     }
 )
 # Source-level publication scaffolding only (never label these as exact artifact).
-SOURCE_ALLOWED_PUBLICATION_GATES = frozenset({"BETA-R01", "BETA-R02", "BETA-O01"})
+SOURCE_ALLOWED_PUBLICATION_GATES = frozenset({"BETA-R01", "BETA-R02"})
 
 RECEIPT_ALLOWED_KEYS = frozenset(
     {
@@ -666,10 +669,11 @@ def recompute_receipt_artifact_bindings(
 ) -> None:
     """Refuse mixed inventory/artifact digests that do not recompute from inventory.
 
-    For every exact_downloaded_artifact pass receipt, every artifact_digests key
-    must be declared by the verified candidate inventory and match its digest.
-    Arbitrary safe basenames that are not inventory members never satisfy a
-    gate. ``candidate_sha256`` binding remains a separate exact-candidate check.
+    Every exact gate must first declare exact_downloaded_artifact evidence. For
+    every such pass receipt, every artifact_digests key must be declared by the
+    verified candidate inventory and match its digest. Arbitrary safe basenames
+    that are not inventory members never satisfy a gate. ``candidate_sha256``
+    binding remains a separate exact-candidate check.
     """
 
     if SHA256.fullmatch(candidate_sha256) is None:
@@ -682,9 +686,13 @@ def recompute_receipt_artifact_bindings(
         digests = receipt.get("artifact_digests")
         evidence_kind = receipt.get("evidence_kind")
         gate_id = receipt.get("gate_id")
-        if evidence_kind == "exact_downloaded_artifact" or (
-            isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
-        ):
+        exact_gate = isinstance(gate_id, str) and gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        if exact_gate and evidence_kind != "exact_downloaded_artifact":
+            raise ManifestError(
+                f"gate {gate_id} pass requires exact_downloaded_artifact evidence "
+                "during recomputation"
+            )
+        if evidence_kind == "exact_downloaded_artifact" or exact_gate:
             if not isinstance(digests, dict):
                 raise ManifestError(
                     "exact downloaded-artifact pass receipts require artifact_digests"

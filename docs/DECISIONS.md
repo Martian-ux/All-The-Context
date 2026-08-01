@@ -1527,19 +1527,21 @@ backend packages is insufficient because modern wheel itself depends on
 fails CI or tempts an unreviewed ambient dependency.
 
 Publication and receipt aggregation recompute relationships from receipts and
-inventories. Required package/platform gates (including **BETA-P04**) pass only
-with `exact_downloaded_artifact` evidence whose every `artifact_digests` key is
-a filename declared by the verified candidate inventory with an exact matching
+inventories. Required package/platform gates (including **BETA-P04**) and the
+postpublication `BETA-R05`/`BETA-O01` operational gates pass only with
+`exact_downloaded_artifact` evidence whose every `artifact_digests` key is a
+filename declared by the verified candidate inventory with an exact matching
 digest. Arbitrary safe basenames (for example `foo.bin`) never satisfy an exact
-gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`, `BETA-O01`) cannot be
-labeled exact artifact; provider source-preparation fragments cannot pass as
-BETA-P04. Duplicate `gate_id`/`receipt_id` values, conflicting digests, incomplete
-required-gate sets, non-pass statuses, open P0/P1 limitations, forged maintainer
-booleans, post-publication BETA-R05 before release, and overwrite of immutable
-evidence files fail closed. Hosted CI still must not deploy Edge or a
-third-party runtime. Human key custody, protected-environment promotion,
-private-key signing, repository-control enablement, and public channel smoke
-remain explicit operator blockers and are not fabricated in source.
+gate. Source-scaffolding gates (`BETA-R01`, `BETA-R02`) cannot be labeled exact
+artifact; provider source-preparation fragments cannot pass as BETA-P04.
+Duplicate `gate_id`/`receipt_id` values, conflicting digests, a prepublication
+bundle containing anything other than exactly the 20 required gate IDs,
+non-pass statuses, open P0/P1 limitations, forged maintainer booleans,
+postpublication O01/R05 before release, and overwrite of immutable evidence
+files fail closed. Hosted CI still must not deploy Edge or a third-party
+runtime. Human key custody, protected-environment promotion, private-key
+signing, repository-control enablement, and public channel smoke remain
+explicit operator blockers and are not fabricated in source.
 
 ## ADR-060: Candidate convergence accepts executable product paths, not acceptance-shaped volume
 
@@ -1922,3 +1924,32 @@ out the API observer, liveness writer, and SQLite/Python writer lock as the
 observed cause. A new immutable candidate must rerun the full Windows
 boundary/cancel/retry/interruption/export/restore journey; source evidence does
 not satisfy BETA-D01.
+
+## ADR-075: Public-path and launch-watch gates close only after publication
+
+**Status:** accepted 2026-07-30.
+
+The protected beta publication decision requires exactly 20 prepublication
+receipts. `BETA-R05` and `BETA-O01` are postpublication gates and are rejected
+if included in that bundle. The sole maintainer reviews every prepublication
+receipt ID without claiming independent human review. Public-download/channel
+smoke, live release/documentation/support/security/recovery paths, and a
+triaged launch watch cannot be truthfully asserted while the release is still
+an unpublished draft. Their eventual pass receipts require exact
+downloaded-artifact evidence bound to the candidate inventory; source-only
+preparation cannot satisfy either gate.
+
+This sequencing does not defer documentation readiness. Existing exact-source
+candidate validation fails closed unless `SUPPORT.md`,
+`docs/KNOWN_ISSUES.md`, `SECURITY.md`, and the recovery runbook exist, contain
+their required operational contracts, and remain linked from `README.md`.
+Private vulnerability intake and Core-only/fail-closed credential guidance
+must therefore be present before candidate creation. Source readiness is not
+laundered into an O01 receipt; O01 closes only against live postpublication
+evidence.
+
+The earlier contract required O01 before `draft=false` even though Phase E and
+B-206 require public release, channel, URL, and launch-watch evidence. That
+cycle made truthful publication impossible. Moving O01 beside R05 resolves the
+cycle without weakening any product, platform, provider, security, recovery,
+inventory, key-custody, or maintainer-approval gate.

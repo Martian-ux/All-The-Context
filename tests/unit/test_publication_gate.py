@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from allthecontext.acceptance_receipt import (
     EXACT_ARTIFACT_PUBLICATION_GATES,
+    POST_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
     candidate_inventory_digests,
@@ -314,10 +315,53 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     assert record["key_id"] == "release-2026-a"
     assert record["maintainer_approver"] == "sole-maintainer"
     assert set(record["required_gates"]) == REQUIRED_PUBLICATION_GATES
+    assert len(record["required_gates"]) == 20
+    assert record["receipt_count"] == 20
+    assert len(record["reviewed_receipt_ids"]) == 20
     assert (release_dir / "acceptance-receipt-bundle-v1.json").is_file()
     assert (release_dir / PUBLICATION_GATE_RECORD_FILE_NAME).is_file()
     assert "acceptance-receipt-bundle-v1.json" in record["assets"]
     assert PUBLICATION_GATE_RECORD_FILE_NAME in record["assets"]
+
+
+@pytest.mark.parametrize("gate_id", sorted(POST_PUBLICATION_GATES))
+def test_publication_gate_rejects_postpublication_receipts(
+    tmp_path: Path,
+    gate_id: str,
+) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    inventory_digests = _inventory_digests(release_dir)
+    bundle = _full_bundle(
+        digest,
+        decision=None,
+        inventory_digests=inventory_digests,
+    )
+    receipt = _pass_receipt(
+        gate_id,
+        candidate_sha256=digest,
+        inventory_digests=inventory_digests,
+    )
+    bundle["receipts"].append(receipt)
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        ManifestError,
+        match=rf"rejects post-publication gate {gate_id} before release",
+    ):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
+            asset_stage="promotion",
+        )
 
 
 def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
@@ -355,7 +399,70 @@ def test_publication_gate_rejects_incomplete_gate_set(tmp_path: Path) -> None:
     ]
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(json.dumps(incomplete), encoding="utf-8")
-    with pytest.raises(ManifestError, match="required receipt gates"):
+    with pytest.raises(ManifestError, match="must equal the exact required set"):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
+            asset_stage="promotion",
+        )
+
+
+def test_publication_gate_rejects_arbitrary_extra_gate_before_approval(tmp_path: Path) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    inventory_digests = _inventory_digests(release_dir)
+    bundle = _full_bundle(
+        digest,
+        decision=None,
+        inventory_digests=inventory_digests,
+    )
+    extra = _pass_receipt(
+        "BETA-Z99",
+        candidate_sha256=digest,
+        inventory_digests=inventory_digests,
+    )
+    bundle["receipts"].append(extra)
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    with pytest.raises(
+        ManifestError,
+        match=r"must equal the exact required set: unexpected=BETA-Z99; receipt_count=21",
+    ):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
+            asset_stage="promotion",
+        )
+
+
+def test_publication_gate_rejects_duplicate_required_gate_receipt(tmp_path: Path) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    inventory_digests = _inventory_digests(release_dir)
+    bundle = _full_bundle(digest, inventory_digests=inventory_digests)
+    duplicate = dict(bundle["receipts"][0])
+    duplicate["receipt_id"] = "duplicate-required-gate"
+    bundle["receipts"].append(duplicate)
+    bundle["maintainer_decision"]["reviewed_receipt_ids"].append(duplicate["receipt_id"])
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="duplicate gate_id in receipt bundle"):
         evaluate_publication_gate(
             release_dir=release_dir,
             candidate_sha256=digest,

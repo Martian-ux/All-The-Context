@@ -880,6 +880,26 @@ state is already noncurrent and creates no user queue.
   downloaded-artifact browser/client/provider/2 GB/recovery operator receipts
   remain honestly pending and are not claimed by this integration work.
 
+## Publication sequencing and public readiness
+
+- The protected publication decision requires exactly 20 prepublication gates.
+  `BETA-R05` public-download/channel smoke and `BETA-O01` live public-path and
+  triaged launch-watch proof are postpublication gates; either is rejected if
+  inserted into the prepublication bundle. Their eventual pass receipts require
+  exact downloaded-artifact operational evidence bound to the candidate
+  inventory; source-only receipts remain insufficient.
+- Candidate source validation now fails closed unless stable support,
+  known-issues, security-intake, and recovery guidance exists and remains
+  linked from the README. This source readiness does not claim either
+  postpublication gate.
+- `SUPPORT.md` defines content-free public intake, private security routing, and
+  launch-watch triage. `docs/KNOWN_ISSUES.md` records the accepted beta-scope
+  P2/P3 impacts, workarounds, owner, and post-V1 follow-up without converting a
+  missing mandatory receipt into a limitation.
+- `SECURITY.md` now matches the implemented Core-only tombstones and
+  fail-closed protected-credential setup. Exact platform/client/package
+  receipts remain required; documentation truth is not execution evidence.
+
 ## Remaining beta gates
 
 - Complete the fresh-user browser smoke on the exact release candidate. Current

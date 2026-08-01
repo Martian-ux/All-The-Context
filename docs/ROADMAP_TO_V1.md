@@ -491,6 +491,10 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 
 ## Phase E: Publish and verify
 
+- Before publication, require the exact 20-receipt prepublication bundle and
+  explicit sole-maintainer approve decision. Known issues, support, security
+  intake, and recovery guidance must already exist and remain linked in the
+  candidate source, but source readiness is not a `BETA-O01` pass.
 - Publish the exact immutable beta assets through the protected workflow.
 - Promote only the signed metadata that references the approved candidate.
 - Verify public release, checksum, SBOM/provenance, install, update-channel,
@@ -504,6 +508,8 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 - Close the launch watch only when public URLs, install/start, client
   connection, backup guidance, support/security intake, and channel
   verification remain healthy and every report is triaged.
+- Record `BETA-R05` and `BETA-O01` only after publication. Neither receipt may
+  appear in or satisfy the prepublication maintainer-decision bundle.
 
 ## V1 beta acceptance matrix
 
@@ -528,9 +534,9 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-R02 | Key custody and publication are recoverable and deliberate | Open | Two restore-tested backups in distinct failure domains, protected workflows, sole-maintainer decision record |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
-| BETA-R05 | Public beta and channel reference the approved bytes | Open | Public download/install/channel smoke |
+| BETA-R05 | Public beta and channel reference the approved bytes | Open | Exact-candidate public download/install/channel smoke |
 | BETA-X01 | Public platform/client/provider claims match observed evidence | Open | Frozen support table and receipts for every claim |
-| BETA-O01 | Known issues, support, security intake, and recovery guidance exist | Partial | Live public paths and triaged launch-watch receipt |
+| BETA-O01 | Known issues, support, security intake, and recovery guidance exist | Source readiness required before candidate creation; post-publication gate open | Exact-candidate live public paths and triaged launch-watch receipt after publication |
 
 ## Work packages
 
@@ -555,7 +561,7 @@ make the mapping explicit.
 | [B-203 Client and platform acceptance](https://github.com/Martian-ux/All-The-Context/issues/26) | D | B-201 | BETA-P01, BETA-P02, BETA-S03, BETA-X01 | clean-machine and real-client receipts |
 | [B-204 Provider and scale acceptance](https://github.com/Martian-ux/All-The-Context/issues/27) | D | B-201 | BETA-P04, BETA-D01, BETA-X01 | real-export and accepted-boundary receipts |
 | [B-205 Data, security, and recovery acceptance](https://github.com/Martian-ux/All-The-Context/issues/28) | D | B-201 | BETA-S01..BETA-S06, BETA-D02, BETA-D03, BETA-R04 | exact-candidate adversarial/recovery matrix |
-| [B-206 Publish, public smoke, and go/no-go](https://github.com/Martian-ux/All-The-Context/issues/29) | E | B-202..B-205 | BETA-R05, BETA-O01 | immutable publication and explicit human decision |
+| [B-206 Publish, public smoke, and go/no-go](https://github.com/Martian-ux/All-The-Context/issues/29) | E | B-202..B-205 | BETA-R05, BETA-O01 | publish after the 20-receipt approval, then close public smoke and launch watch |
 
 GitHub tracking is organized under
 [V1 Beta — Product & Safety](https://github.com/Martian-ux/All-The-Context/milestone/1),

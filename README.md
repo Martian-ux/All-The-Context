@@ -127,6 +127,9 @@ python scripts/smoke_packaged_first_run.py
 See [architecture](docs/architecture/ARCHITECTURE.md),
 [provider history import](docs/integrations/PROVIDER_IMPORTS.md),
 [platform support](docs/operations/PLATFORMS.md),
+[support](SUPPORT.md),
+[known issues](docs/KNOWN_ISSUES.md),
+[recovery runbook](docs/operations/RUNBOOK.md),
 [project status](docs/STATUS.md),
 [the roadmap to the first usable V1 beta](docs/ROADMAP_TO_V1.md), and
 [security](SECURITY.md).

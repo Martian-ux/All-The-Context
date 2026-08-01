@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from allthecontext.acceptance_receipt import (
     EXACT_ARTIFACT_PUBLICATION_GATES,
+    POST_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
     load_receipt,
@@ -111,10 +112,12 @@ def test_required_publication_gates_are_complete() -> None:
         "BETA-R03",
         "BETA-R04",
         "BETA-X01",
-        "BETA-O01",
     }
     assert expected == REQUIRED_PUBLICATION_GATES
-    assert "BETA-R05" not in REQUIRED_PUBLICATION_GATES
+    assert len(REQUIRED_PUBLICATION_GATES) == 20
+    assert {"BETA-R05", "BETA-O01"} == POST_PUBLICATION_GATES
+    assert REQUIRED_PUBLICATION_GATES.isdisjoint(POST_PUBLICATION_GATES)
+    assert {"BETA-R01", "BETA-R02"} == SOURCE_ALLOWED_PUBLICATION_GATES
 
 
 def test_bundle_missing_required_gates() -> None:
@@ -133,6 +136,63 @@ def test_bundle_missing_required_gates() -> None:
     assert "BETA-R02" in missing
     assert "BETA-P01" in missing
     assert "BETA-R01" not in missing
+    assert "BETA-O01" not in missing
+
+
+@pytest.mark.parametrize("gate_id", sorted(POST_PUBLICATION_GATES))
+def test_postpublication_gates_require_exact_candidate_operational_evidence(
+    gate_id: str,
+) -> None:
+    inventory = {"all-the-context-beta-package.bin": "c" * 64}
+    source_receipt = _receipt(
+        receipt_id=f"source-{gate_id.casefold()}",
+        gate_id=gate_id,
+        evidence_kind="source",
+        artifact_digests=inventory,
+    )
+    with pytest.raises(ManifestError, match="exact_downloaded_artifact"):
+        validate_receipt(source_receipt)
+    assert missing_required_gates(
+        [source_receipt],
+        required_gates={gate_id},
+        inventory_digests=inventory,
+    ) == [gate_id]
+    with pytest.raises(
+        ManifestError,
+        match=rf"gate {gate_id} pass requires exact_downloaded_artifact evidence",
+    ):
+        recompute_receipt_artifact_bindings(
+            [source_receipt],
+            inventory_digests=inventory,
+            candidate_sha256=DIGEST,
+        )
+
+    exact_receipt = validate_receipt(
+        _receipt(
+            receipt_id=f"exact-{gate_id.casefold()}",
+            gate_id=gate_id,
+            evidence_kind="exact_downloaded_artifact",
+            artifact_digests=inventory,
+        )
+    )
+    recompute_receipt_artifact_bindings(
+        [exact_receipt],
+        inventory_digests=inventory,
+        candidate_sha256=DIGEST,
+    )
+    assert not missing_required_gates(
+        [exact_receipt],
+        required_gates={gate_id},
+        inventory_digests=inventory,
+    )
+    assert gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+    assert gate_id not in REQUIRED_PUBLICATION_GATES
+
+
+def test_postpublication_classification_is_exact_and_disjoint_from_source_scaffolding() -> None:
+    for gate_id in sorted(POST_PUBLICATION_GATES):
+        assert gate_id in EXACT_ARTIFACT_PUBLICATION_GATES
+        assert gate_id not in SOURCE_ALLOWED_PUBLICATION_GATES
 
 
 def test_bundle_rejects_independent_review_claim() -> None:
@@ -334,6 +394,21 @@ def test_recompute_refuses_mixed_and_undeclared_inventory_digests() -> None:
             inventory_digests={"other-declared.bin": "c" * 64},
             candidate_sha256=DIGEST,
         )
+    source_labeled_exact_gate = _receipt(
+        gate_id="BETA-R03",
+        receipt_id="source-labeled-r03",
+        evidence_kind="source",
+        artifact_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+    )
+    with pytest.raises(
+        ManifestError,
+        match="gate BETA-R03 pass requires exact_downloaded_artifact evidence",
+    ):
+        recompute_receipt_artifact_bindings(
+            [source_labeled_exact_gate],
+            inventory_digests={"all-the-context-linux-x86_64.zip": "c" * 64},
+            candidate_sha256=DIGEST,
+        )
     # Arbitrary safe basenames never satisfy an exact gate.
     loose = _receipt(
         gate_id="BETA-P04",
@@ -370,6 +445,8 @@ def test_template_bundle_loads() -> None:
     validated = validate_receipt_bundle(raw)
     assert validated["maintainer_decision"]["decision"] is None
     assert all(item["status"] == "not_run" for item in validated["receipts"])
-    assert {item["gate_id"] for item in validated["receipts"]} >= REQUIRED_PUBLICATION_GATES
-    assert "BETA-R05" not in {item["gate_id"] for item in validated["receipts"]}
+    gate_ids = {item["gate_id"] for item in validated["receipts"]}
+    assert gate_ids == REQUIRED_PUBLICATION_GATES
+    assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
+    assert len(validated["receipts"]) == 20
     assert all(item["status"] != "pass" for item in validated["receipts"])

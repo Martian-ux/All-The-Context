@@ -4,6 +4,8 @@ import json
 import tomllib
 from pathlib import Path
 
+from scripts.release_candidate import validate_public_readiness_docs
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -49,6 +51,15 @@ def test_cross_platform_workflow_and_operations_are_present() -> None:
     assert "Windows Credential Manager" in platforms
     assert "macOS Keychain" in platforms
     assert "127.0.0.1" in runbook
+
+
+def test_public_release_readiness_documents_are_linked_and_truthful() -> None:
+    validate_public_readiness_docs(REPOSITORY_ROOT)
+    security = (REPOSITORY_ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    assert "HTTP 404" in security
+    assert "does not silently select a plaintext fallback" in security
+    assert "still constructs Edge compatibility managers" not in security
+    assert "can still select that fallback automatically" not in security
 
 
 def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> None:
