@@ -2016,3 +2016,38 @@ reservation. The production retry regression proves that the constructor is
 seeded with the preserved payload size. Source tests are not BETA-D01 evidence;
 the invalidated candidate must be replaced and the complete exact-artifact
 journey rerun.
+
+## ADR-078: Blob finalization keeps operation liveness queryable
+
+**Status:** accepted 2026-08-02.
+
+Operation-owned durable heartbeats begin immediately after the upload claim is
+published, before staging or source-blob finalization, and stop
+unconditionally when the upload worker exits. A later reprocess call may ask
+to start the same tracker again; tracker startup remains idempotent.
+
+Chunked source-blob finalization continues to serialize every lifecycle writer
+under CoreStore's re-entrant Python write lock. Its potentially cold
+chunk-index and byte-total validation now runs in a deferred WAL read
+transaction. The timestamp-only operation liveness writer deliberately
+bypasses that Python lock and can therefore commit while validation reads a
+stable source-blob snapshot. After validation, a fresh short immediate
+transaction rechecks blob identity, size, completeness, and storage kind before
+marking it complete. Inline and zero-byte integrity rules are unchanged.
+
+Exact candidate source 7afc46b completed one Windows boundary straight/repeat
+probe within the liveness budget, then an evidence-complete fresh straight run
+reproduced an intermittent failure. At unchanged 2,000,000,000 committed bytes,
+top-level operation timestamps were 6.325973 seconds apart through the
+authenticated API and 6.253638 seconds apart through direct SQLite. Functional
+import identity, closed coverage, SQLite integrity, and foreign keys remained
+correct, but the frozen five-second gate failed and no receipt was emitted.
+
+The operation scheduler previously began only inside reprocess_source, after
+promotion. A content-free source discriminator also proved that the
+chunk-layout scan itself occupied SQLite's writer transaction: during a
+1.253978-second scan, independent liveness touches failed and the first
+post-commit touch succeeded 0.013890 seconds later. Deterministic regressions
+now hold that scan open and prove a liveness commit remains possible, and hold
+promotion before parser entry while proving multiple durable timestamps plus
+unconditional heartbeat shutdown.

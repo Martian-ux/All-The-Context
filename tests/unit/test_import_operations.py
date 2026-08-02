@@ -12,6 +12,7 @@ import threading
 import time
 import zipfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -1488,6 +1489,173 @@ def test_upload_heartbeat_without_false_committed_bytes(
     assert committed_while_uploading, "poller should observe uploading heartbeats"
     assert all(value == 0 for value in committed_while_uploading)
     assert len(set(stamps)) >= 2, "heartbeats must advance durable updated_at"
+
+
+def test_chunk_finalize_scan_keeps_operation_liveness_writable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = b"x" * 4096
+    content_hash = hashlib.sha256(payload).hexdigest()
+    assert (
+        core.store.begin_incomplete_source_blob(
+            content_hash=content_hash,
+            byte_size=len(payload),
+            media_type="application/octet-stream",
+        )
+        == "created"
+    )
+    core.store.write_source_blob_chunk(
+        content_hash=content_hash,
+        chunk_index=0,
+        content=payload,
+    )
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="finalize-liveness.bin",
+    )
+    operation_id = str(operation["operation_id"])
+    scan_entered = threading.Event()
+    release_scan = threading.Event()
+    original_transaction = core.store.transaction
+
+    class DelayedRows:
+        def __init__(self, rows):  # type: ignore[no-untyped-def]
+            self._rows = iter(rows)
+            self._blocked = False
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __next__(self):  # type: ignore[no-untyped-def]
+            if not self._blocked:
+                self._blocked = True
+                scan_entered.set()
+                assert release_scan.wait(timeout=5), "test did not release chunk scan"
+            return next(self._rows)
+
+    class ConnectionProxy:
+        def __init__(self, connection):  # type: ignore[no-untyped-def]
+            self._connection = connection
+
+        def execute(self, sql, parameters=()):  # type: ignore[no-untyped-def]
+            rows = self._connection.execute(sql, parameters)
+            if sql.startswith("SELECT chunk_index,byte_size FROM source_blob_chunks"):
+                return DelayedRows(rows)
+            return rows
+
+        def __getattr__(self, name):  # type: ignore[no-untyped-def]
+            return getattr(self._connection, name)
+
+    @contextmanager
+    def delayed_transaction(*, immediate: bool = True):  # type: ignore[no-untyped-def]
+        with original_transaction(immediate=immediate) as connection:
+            yield ConnectionProxy(connection)
+
+    monkeypatch.setattr(core.store, "transaction", delayed_transaction)
+    failures: list[BaseException] = []
+
+    def finalize() -> None:
+        try:
+            core.store.finalize_source_blob(
+                content_hash=content_hash,
+                expected_byte_size=len(payload),
+                media_type="application/octet-stream",
+            )
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=finalize, daemon=True)
+    thread.start()
+    try:
+        assert scan_entered.wait(timeout=5), "chunk validation did not start"
+        started = time.monotonic()
+        assert core.store.touch_import_operation_liveness(operation_id) is True
+        assert time.monotonic() - started < 1.0
+    finally:
+        release_scan.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert failures == []
+    source = core.store.create_source_record_for_blob(
+        content_hash=content_hash,
+        source_service="generic",
+        source_type="file",
+        filename="finalize-liveness.bin",
+    )
+    assert source.byte_size == len(payload)
+
+
+def test_upload_promotion_starts_and_closes_operation_heartbeats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import import_operations as ops_module
+
+    tracker_type = ops_module.ImportProgressTracker
+    trackers: list[object] = []
+
+    def fast_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.1
+        tracker = tracker_type(*args, **kwargs)
+        trackers.append(tracker)
+        return tracker
+
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", fast_tracker)
+    core, ops = _ops(tmp_path)
+    original_finalize = core.store.finalize_source_blob
+    finalize_entered = threading.Event()
+    release_finalize = threading.Event()
+
+    def blocked_finalize(**kwargs):  # type: ignore[no-untyped-def]
+        finalize_entered.set()
+        assert release_finalize.wait(timeout=5), "test did not release finalization"
+        return original_finalize(**kwargs)
+
+    monkeypatch.setattr(core.store, "finalize_source_blob", blocked_finalize)
+    payload = b'{"kind":"fact","content":"Promotion heartbeat coverage"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="promotion-heartbeat.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    outcomes: list[dict[str, object]] = []
+    failures: list[BaseException] = []
+
+    def upload() -> None:
+        try:
+            outcomes.append(
+                ops.accept_upload(
+                    operation_id,
+                    io.BytesIO(payload),
+                    expected_size=len(payload),
+                    process_after=False,
+                )
+            )
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=upload, daemon=True)
+    thread.start()
+    try:
+        assert finalize_entered.wait(timeout=5), "source finalization did not start"
+        stamps: list[str] = []
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(set(stamps)) < 3:
+            stamps.append(str(ops.get_operation(operation_id)["updated_at"]))
+            time.sleep(0.01)
+        assert len(set(stamps)) >= 3
+    finally:
+        release_finalize.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert outcomes[0]["status"] == "processing"
+    assert trackers
+    assert all(tracker._heartbeat_thread is None for tracker in trackers)
 
 
 def test_parse_stall_heartbeats_durably_without_false_byte_progress(

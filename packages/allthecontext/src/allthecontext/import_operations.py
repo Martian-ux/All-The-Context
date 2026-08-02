@@ -411,6 +411,7 @@ class ImportOperationService:
                 phase="uploading",
                 progress=tracker.snapshot().as_dict(),
             )
+            tracker.start_durable_heartbeats()
             staging_path.parent.mkdir(parents=True, exist_ok=True)
             if staging_path.exists():
                 staging_path.unlink()
@@ -532,7 +533,6 @@ class ImportOperationService:
                 result=result,
                 completed=True,
             )
-            tracker.close()
             return self.get_operation(operation_id)
         except ImportCancelledError:
             # Prefer the tracker's post-merge source id when reclassification rebound it.
@@ -552,6 +552,8 @@ class ImportOperationService:
                 source_id=tracker.source_id or source_id,
             )
             raise
+        finally:
+            tracker.close()
 
     def _promote_staging_to_source(
         self,
