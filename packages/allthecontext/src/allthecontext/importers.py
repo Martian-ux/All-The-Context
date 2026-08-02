@@ -47,7 +47,7 @@ from .storage import CoreStore, InvalidStateError
 
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
-_PARSER_COOPERATIVE_YIELD_SECONDS = 0.001
+_OPERATION_COOPERATIVE_YIELD_SECONDS = 0.001
 
 _KIND_MAP = {
     "preference": "interaction_preference",
@@ -486,7 +486,7 @@ def _parse_jsonl_stream(
                     # yield at the existing 1 MiB checkpoint so their dedicated
                     # observer and ASGI loop get a scheduling turn without
                     # changing durable progress semantics.
-                    time.sleep(_PARSER_COOPERATIVE_YIELD_SECONDS)
+                    time.sleep(_OPERATION_COOPERATIVE_YIELD_SECONDS)
                 next_progress = processed + 1024 * 1024
             if not raw_line.strip():
                 continue
@@ -1036,6 +1036,16 @@ class ArchiveImportService:
             tracker.durable_sink = self._durable_progress_sink(bound_source_id)
 
         attach_progress_sinks(source.id)
+
+        def checkpoint_preserved_source_copy() -> None:
+            """Keep cancellation and operation liveness schedulable per chunk."""
+            tracker.check_cancelled()
+            if tracker.liveness_sink is not None:
+                # Reconstructing a multi-gigabyte preserved blob can otherwise
+                # keep the worker continuously runnable and starve its dedicated
+                # heartbeat thread. Source-only reprocess keeps its prior path.
+                time.sleep(_OPERATION_COOPERATIVE_YIELD_SECONDS)
+
         provider = str(source.metadata.get("provider", source.source_service))
         try:
             tracker.start_durable_heartbeats()
@@ -1049,7 +1059,7 @@ class ArchiveImportService:
                 self.store.copy_source_content_to_path(
                     source.id,
                     raw_path,
-                    checkpoint=tracker.check_cancelled,
+                    checkpoint=checkpoint_preserved_source_copy,
                 )
                 tracker.set_phase("parsing", message="parsing preserved raw source")
                 tracker.check_cancelled()
