@@ -338,6 +338,7 @@ class ImportProgressTracker:
     liveness_sink: Callable[[ImportProgress], bool | None] | None = None
     heartbeat_seconds: float = PROGRESS_HEARTBEAT_SECONDS
     heartbeat_bytes: int = PROGRESS_HEARTBEAT_BYTES
+    initial_bytes_processed: int = 0
     _phase: ImportPhase = "preflight"
     _bytes_processed: int = 0
     _message: str = ""
@@ -353,6 +354,12 @@ class ImportProgressTracker:
     def __post_init__(self) -> None:
         if self.heartbeat_seconds <= 0:
             raise ValueError("heartbeat_seconds must be positive")
+        if self.initial_bytes_processed < 0:
+            raise ValueError("initial_bytes_processed must be non-negative")
+        if self.initial_bytes_processed > max(self.bytes_total, 0):
+            raise ValueError("initial_bytes_processed exceeds bytes_total")
+        self._bytes_processed = self.initial_bytes_processed
+        self._last_emit_bytes = self.initial_bytes_processed
         key = self.cancel_key or self.source_id
         if key is not None:
             self.registry.register(key)

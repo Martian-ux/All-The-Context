@@ -82,6 +82,18 @@ def test_progress_is_monotonic_and_reserves_100_for_completion() -> None:
     assert completed.as_dict()["updated_at"].endswith("+00:00")
 
 
+def test_progress_can_start_from_preserved_committed_bytes() -> None:
+    tracker = ImportProgressTracker(bytes_total=1_000, initial_bytes_processed=1_000)
+    progress = tracker.snapshot()
+
+    assert progress.bytes_processed == 1_000
+    assert progress.percent == 99
+    with pytest.raises(ValueError, match="non-negative"):
+        ImportProgressTracker(bytes_total=1_000, initial_bytes_processed=-1)
+    with pytest.raises(ValueError, match="exceeds bytes_total"):
+        ImportProgressTracker(bytes_total=1_000, initial_bytes_processed=1_001)
+
+
 def test_cancel_registry_acknowledges_in_flight_import() -> None:
     registry = ImportCancelRegistry()
     tracker = ImportProgressTracker(

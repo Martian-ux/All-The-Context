@@ -256,19 +256,17 @@ class ImportOperationService:
         self.cancel_registry.alias(source_id, operation_id)
         tracker: ImportProgressTracker | None = None
         try:
+            declared_byte_size = max(int(claimed["declared_byte_size"]), 0)
             tracker = ImportProgressTracker(
-                bytes_total=max(int(claimed["declared_byte_size"]), 1),
+                bytes_total=max(declared_byte_size, 1),
+                initial_bytes_processed=declared_byte_size,
                 cancel_key=operation_id,
                 registry=self.cancel_registry,
                 durable_sink=self._operation_progress_sink(operation_id),
                 liveness_sink=self._operation_liveness_sink(operation_id),
             )
             tracker.bind_source(source_id)
-            tracker.set_phase("storing", message="using preserved raw source")
-            tracker.advance_bytes(
-                int(claimed["declared_byte_size"]),
-                message="preserved raw source ready",
-            )
+            tracker.set_phase("storing", message="preserved raw source ready")
             tracker.set_phase("parsing", message="retry parse/ingest from preserved source")
             # Pass the operation tracker so phase/progress/cancel heartbeats land
             # on the durable operation row during long reprocess work.
