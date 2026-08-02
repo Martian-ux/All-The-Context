@@ -182,3 +182,33 @@ production repeat path; the source-only negative test proves no added pause,
 and existing cancellation/partial-copy tests retain fail-closed coverage.
 Cadence, durable semantics, and the frozen five-second threshold are unchanged.
 A new immutable candidate must rerun the complete Windows journey.
+
+### 2026-08-02 source-blob finalization-liveness amendment
+
+Replacement candidate source 7afc46b completed one Windows boundary
+straight/repeat probe within budget, but a fresh evidence-complete straight run
+failed closed. At unchanged 2,000,000,000 committed bytes, the maximum
+top-level operation updated_at interval was 6.325973 seconds through the
+authenticated API and 6.253638 seconds through direct SQLite. The import still
+completed with exact hash, five candidates, closed coverage, clean SQLite, and
+zero foreign-key violations. No receipt was emitted and the remaining journey
+stopped.
+
+The operation tracker had a liveness sink from construction, but its background
+scheduler did not start until reprocess_source entered parsing. Source-blob
+promotion therefore depended only on synchronous phase/chunk writes. A bounded
+source-level 2 GB discriminator isolated the remaining lock behavior:
+chunk-layout validation held SQLite's writer transaction for 1.253978 seconds;
+independent timestamp-only touches returned busy while it was open and first
+succeeded 0.013890 seconds after commit.
+
+ImportOperationService now starts the operation-owned scheduler before staging
+and closes it in a finally block across success, cancellation, failure, and
+process-after-false return. CoreStore retains its Python lifecycle lock across
+finalization but validates ordered chunk indexes and total bytes in a deferred
+WAL read transaction. Timestamp-only liveness bypasses that Python lock and can
+write concurrently; a fresh bounded immediate transaction rechecks immutable
+blob fields before setting complete. Regressions prove the long validation
+scan no longer owns SQLite's writer slot and that pre-parser promotion advances
+and closes its background heartbeat. Integrity, phase/byte monotonicity,
+thresholds, and source-only behavior remain unchanged. A replacement immutable

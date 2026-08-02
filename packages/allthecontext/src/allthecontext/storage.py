@@ -1451,45 +1451,70 @@ class CoreStore:
         inline_content: bytes | None = None,
     ) -> None:
         """Mark a blob complete only after size integrity checks pass."""
-        with self.transaction() as connection:
-            blob = connection.execute(
-                "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
-                "WHERE content_hash=?",
-                (content_hash,),
-            ).fetchone()
-            if blob is None:
-                raise NotFoundError("source blob not found")
-            if int(blob["byte_size"]) != expected_byte_size:
-                raise InvalidStateError("source blob size mismatch during finalize")
-            if int(blob["blob_complete"]) == 1:
-                return
-            if expected_byte_size == 0 or str(blob["storage_kind"]) == "inline":
-                payload = inline_content if inline_content is not None else b""
-                if len(payload) != expected_byte_size:
-                    raise InvalidStateError("inline source blob payload size mismatch")
-                connection.execute(
-                    "UPDATE source_blobs SET content=?,media_type=?,blob_complete=1 "
+        # Lifecycle writes remain serialized across validation and completion.
+        # The potentially cold chunk-index scan is a WAL reader, though, so the
+        # operation-only liveness writer can keep updated_at queryable while
+        # validating a multi-gigabyte blob. Only the final bounded state change
+        # owns SQLite's single writer slot.
+        with self._write_lock:
+            with self.transaction(immediate=False) as connection:
+                blob = connection.execute(
+                    "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
                     "WHERE content_hash=?",
-                    (payload, media_type, content_hash),
-                )
-                return
-            total = 0
-            for expected_index, chunk_row in enumerate(
-                connection.execute(
-                    "SELECT chunk_index,byte_size FROM source_blob_chunks "
-                    "WHERE content_hash=? ORDER BY chunk_index",
                     (content_hash,),
-                )
-            ):
-                if int(chunk_row["chunk_index"]) != expected_index:
-                    raise InvalidStateError("source blob chunks are not contiguous")
-                total += int(chunk_row["byte_size"])
-            if total != expected_byte_size:
-                raise InvalidStateError("source blob chunks do not match declared size")
-            connection.execute(
-                "UPDATE source_blobs SET media_type=?,blob_complete=1 WHERE content_hash=?",
-                (media_type, content_hash),
-            )
+                ).fetchone()
+                if blob is None:
+                    raise NotFoundError("source blob not found")
+                if int(blob["byte_size"]) != expected_byte_size:
+                    raise InvalidStateError("source blob size mismatch during finalize")
+                if int(blob["blob_complete"]) == 1:
+                    return
+                storage_kind = str(blob["storage_kind"])
+                inline = expected_byte_size == 0 or storage_kind == "inline"
+                payload = inline_content if inline_content is not None else b""
+                if inline:
+                    if len(payload) != expected_byte_size:
+                        raise InvalidStateError("inline source blob payload size mismatch")
+                else:
+                    total = 0
+                    for expected_index, chunk_row in enumerate(
+                        connection.execute(
+                            "SELECT chunk_index,byte_size FROM source_blob_chunks "
+                            "WHERE content_hash=? ORDER BY chunk_index",
+                            (content_hash,),
+                        )
+                    ):
+                        if int(chunk_row["chunk_index"]) != expected_index:
+                            raise InvalidStateError("source blob chunks are not contiguous")
+                        total += int(chunk_row["byte_size"])
+                    if total != expected_byte_size:
+                        raise InvalidStateError("source blob chunks do not match declared size")
+
+            with self.transaction() as connection:
+                current = connection.execute(
+                    "SELECT byte_size,blob_complete,storage_kind FROM source_blobs "
+                    "WHERE content_hash=?",
+                    (content_hash,),
+                ).fetchone()
+                if current is None:
+                    raise NotFoundError("source blob not found")
+                if int(current["byte_size"]) != expected_byte_size:
+                    raise InvalidStateError("source blob size mismatch during finalize")
+                if int(current["blob_complete"]) == 1:
+                    return
+                if str(current["storage_kind"]) != storage_kind:
+                    raise InvalidStateError("source blob storage kind changed during finalize")
+                if inline:
+                    connection.execute(
+                        "UPDATE source_blobs SET content=?,media_type=?,blob_complete=1 "
+                        "WHERE content_hash=?",
+                        (payload, media_type, content_hash),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE source_blobs SET media_type=?,blob_complete=1 WHERE content_hash=?",
+                        (media_type, content_hash),
+                    )
 
     def create_source_record_for_blob(
         self,

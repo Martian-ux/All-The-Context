@@ -844,6 +844,27 @@ state is already noncurrent and creates no user queue.
   retain their zero-byte default. Deterministic regressions prove both the
   tracker invariant and the production retry constructor. The candidate is
   invalidated; a replacement exact artifact must rerun the complete journey.
+- Replacement exact candidate source 7afc46b passed one Windows
+  2,000,000,000-byte straight/repeat probe, but an evidence-complete fresh
+  straight run then failed closed on observer-visible top-level operation
+  liveness. Authenticated API timestamps were 6.325973 seconds apart and
+  direct SQLite timestamps were 6.253638 seconds apart at unchanged
+  2,000,000,000 committed bytes. The operation still completed with its exact
+  hash, five candidates, closed coverage, clean SQLite, and zero foreign-key
+  violations; no D01 receipt was emitted and later slices did not run.
+  The first attempt's corresponding maximum was 1.335203 seconds, proving an
+  intermittent timing failure rather than a deterministic data failure.
+- Exact source inspection found that operation-owned background heartbeats
+  started only when reprocess entered parsing, after raw-blob promotion.
+  A bounded source-level discriminator further showed the chunk-layout scan
+  holding SQLite's writer slot for 1.253978 seconds: independent liveness
+  touches failed while that transaction was open and succeeded 0.013890
+  seconds after commit. Raw-blob finalization now scans chunk metadata in a
+  deferred WAL read transaction while the Python lifecycle lock prevents
+  competing source writes; the final complete-bit update remains a short
+  immediate write. The operation heartbeat starts before staging and closes
+  unconditionally on every upload exit. Focused regressions prove both
+  pre-parse scheduling coverage and writer-free chunk validation. Candidate
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
