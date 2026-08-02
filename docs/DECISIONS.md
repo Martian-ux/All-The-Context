@@ -1953,3 +1953,31 @@ B-206 require public release, channel, URL, and launch-watch evidence. That
 cycle made truthful publication impossible. Moving O01 beside R05 resolves the
 cycle without weakening any product, platform, provider, security, recovery,
 inventory, key-custody, or maintainer-approval gate.
+
+## ADR-076: Operation-owned reconstruction yields at bounded copy checkpoints
+
+**Status:** accepted 2026-08-01.
+
+Preserved-source reconstruction retains ADR-074's cancellation checkpoint and,
+only for a tracker with queryable operation liveness, adds a one-millisecond
+cooperative scheduling handoff after every stored source chunk. Chunks are at
+most 8 MiB. Source-only reprocess retains its previous cadence.
+
+Candidate descriptor
+`b00297d19080d0a3252a48fe5d7ac3ad78d5395909612f86eb2ef1f2e851bc16`
+on source `905efe5631ebf2fee77fafa5d8694f77df17b8bb` completed straight and
+repeat data work but exposed a 5.448395-second durable `updated_at` interval
+during unchanged-byte repeat `parsing`. The repeat path exposes `parsing`,
+reconstructs its preserved blob, and exposes `parsing` again before parser
+entry; parser checkpoints already yielded, but copy checkpoints only checked
+cancellation.
+
+A content-free production-path regression on untouched `905efe5` reproduced
+the missing scheduling opportunity without large data: first successful
+liveness touch arrived 0.964490 seconds after reconstruction began versus a
+scaled less-than-0.4-second requirement, while repeat completion and candidate
+IDs remained correct. The corrected checkpoint checks cancellation first and
+then yields only for operation-owned work. No durable field, response meaning,
+heartbeat cadence, or five-second threshold changes. Source-only negative and
+existing cancellation/partial-copy regressions close the scope. Source tests
+are not BETA-D01 acceptance; a new immutable candidate must rerun Windows.

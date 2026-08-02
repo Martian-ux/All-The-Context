@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 import zipfile
@@ -1118,6 +1119,95 @@ def test_http_cancel_acknowledges_during_preserved_blob_copy(
         assert final["progress"]["cancel_acknowledged"] is True
         assert core.store.get_source(source_id, duplicate=True).import_status == "cancelled"
         assert not list(config.data_dir.glob("atc-reprocess-*"))
+
+
+def test_repeat_copy_yields_to_operation_heartbeat_under_cpu_pressure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Duplicate-source reconstruction must not starve operation liveness."""
+    from allthecontext import import_operations as ops_module
+
+    core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"' + (b"x" * 448) + b'"}\n'
+    fixture = _write(tmp_path / "repeat-copy.jsonl", payload)
+    first = ops.import_path_via_operation(fixture)
+    assert first["status"] == "complete"
+
+    tracker_type = ops_module.ImportProgressTracker
+
+    def scaled_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["heartbeat_seconds"] = 0.5
+        return tracker_type(*args, **kwargs)
+
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", scaled_tracker)
+    original_chunks = core.store._source_content_chunks_tx
+    copy_started_at: list[float] = []
+
+    def cpu_bound_copy_chunks(connection, row):  # type: ignore[no-untyped-def]
+        for chunk in original_chunks(connection, row):
+            copy_started_at.append(time.perf_counter())
+            for value in chunk:
+                deadline = time.perf_counter() + 0.002
+                while time.perf_counter() < deadline:
+                    pass
+                yield bytes((value,))
+
+    monkeypatch.setattr(core.store, "_source_content_chunks_tx", cpu_bound_copy_chunks)
+    original_touch = core.store.touch_import_operation_liveness
+    successful_touches: list[float] = []
+
+    def record_touch(operation_id: str) -> bool:
+        result = original_touch(operation_id)
+        if result:
+            successful_touches.append(time.perf_counter())
+        return result
+
+    monkeypatch.setattr(core.store, "touch_import_operation_liveness", record_touch)
+    previous_switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(10.0)
+    try:
+        repeated = ops.import_path_via_operation(fixture)
+    finally:
+        sys.setswitchinterval(previous_switch_interval)
+
+    assert repeated["status"] == "complete"
+    assert repeated["result"]["candidate_ids"] == first["result"]["candidate_ids"]
+    assert len(copy_started_at) == 1
+    first_copy_touch = next(
+        (item for item in successful_touches if item >= copy_started_at[0]),
+        None,
+    )
+    assert first_copy_touch is not None
+    # Scaled from the frozen five-second gate with 20% timing margin.
+    assert first_copy_touch - copy_started_at[0] < 0.4
+
+
+def test_source_only_reprocess_copy_does_not_add_scheduler_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from allthecontext import importers as importers_module
+
+    _core, ops = _ops(tmp_path)
+    payload = b'{"kind":"fact","content":"Source-only copy cadence"}\n'
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="source-only-copy.jsonl",
+    )
+    staged = ops.accept_upload(
+        operation["operation_id"],
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    pauses: list[float] = []
+    monkeypatch.setattr(importers_module.time, "sleep", pauses.append)
+
+    result = ops.imports.reprocess_source(str(staged["source_id"]))
+
+    assert result["source"]["import_status"] == "complete"
+    assert pauses == []
 
 
 def test_source_copy_checkpoint_failure_removes_partial_file(tmp_path: Path) -> None:

@@ -157,3 +157,28 @@ partial-copy cleanup. The frozen five-second acknowledgment and 30-second
 quiescence contracts are unchanged. Candidate `7ffb1a4` is invalidated, and a
 new exact Windows artifact must rerun the entire journey; this source result is
 not acceptance evidence.
+
+### 2026-08-01 Windows repeat reconstruction-liveness amendment
+
+Candidate descriptor
+`b00297d19080d0a3252a48fe5d7ac3ad78d5395909612f86eb2ef1f2e851bc16`
+on source `905efe5631ebf2fee77fafa5d8694f77df17b8bb` completed straight and
+repeat data work but failed the repeat liveness gate. Consecutive durable
+top-level timestamps during unchanged-byte `parsing` were 5.448395 seconds
+apart; direct observations received them 5.447142 seconds apart. No receipt
+was emitted.
+
+The operation-owned repeat path exposes `parsing` before preserved-source
+reconstruction and again before parser entry. A scaled, content-free
+production-path regression reproduced the uncovered copy interval on
+untouched `905efe5`: first successful liveness touch arrived 0.964490 seconds
+after reconstruction start against a less-than-0.4-second gate, while
+idempotent candidate identity remained correct.
+
+`importers.py` now keeps the per-chunk cancellation check and adds a
+one-millisecond handoff only when the tracker owns operation liveness.
+`test_repeat_copy_yields_to_operation_heartbeat_under_cpu_pressure` covers the
+production repeat path; the source-only negative test proves no added pause,
+and existing cancellation/partial-copy tests retain fail-closed coverage.
+Cadence, durable semantics, and the frozen five-second threshold are unchanged.
+A new immutable candidate must rerun the complete Windows journey.

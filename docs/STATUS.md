@@ -814,6 +814,22 @@ state is already noncurrent and creates no user queue.
   proves partial-copy cleanup. No budget or response meaning changed. A new
   immutable candidate must rerun the complete Windows journey; source tests do
   not satisfy BETA-D01.
+- Candidate descriptor
+  `b00297d19080d0a3252a48fe5d7ac3ad78d5395909612f86eb2ef1f2e851bc16`
+  on source `905efe5631ebf2fee77fafa5d8694f77df17b8bb` completed the
+  Windows straight import and functionally idempotent repeat, but the repeat
+  failed closed on a 5.448395-second durable top-level `updated_at` interval.
+  Both endpoints remained at `parsing`, 2,000,000,000 committed bytes, and
+  99 percent; direct receipt observations were 5.447142 seconds apart. No
+  receipt was emitted and later slices did not run.
+  A content-free production-path regression reproduced the reconstruction
+  blind spot on untouched `905efe5`: first successful liveness touch arrived
+  0.964490 seconds after copy start against a scaled less-than-0.4-second gate,
+  while repeat completion and candidate identity remained correct.
+  Operation-owned reconstruction now yields one millisecond after each
+  at-most-8-MiB cancellation checkpoint. Source-only reconstruction does not
+  pause, cancellation remains checked first, and no heartbeat or acceptance
+  threshold changed. A new immutable candidate must rerun the full journey.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin
