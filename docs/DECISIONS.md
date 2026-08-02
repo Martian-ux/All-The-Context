@@ -1981,3 +1981,38 @@ then yields only for operation-owned work. No durable field, response meaning,
 heartbeat cadence, or five-second threshold changes. Source-only negative and
 existing cancellation/partial-copy regressions close the scope. Source tests
 are not BETA-D01 acceptance; a new immutable candidate must rerun Windows.
+
+## ADR-077: Preserved-source retries begin at the durable committed boundary
+
+**Status:** accepted 2026-08-02.
+
+A no-upload retry operates on a source whose raw bytes are already durably
+stored and integrity-checked. Its operation tracker must therefore begin at the
+preserved source's declared byte size rather than replaying the upload progress
+domain from zero.
+
+Exact candidate source `65612cc` passed the corrected Windows straight,
+repeat, and cancellation timing slices. During the subsequent no-upload retry,
+a direct SQLite observer caught a committed-byte/percent regression. The retry
+claim retained the full source, but `_run_retry` constructed
+`ImportProgressTracker` with its default zero position, then forced a `storing`
+phase write before calling `advance_bytes` with the declared size. Those two
+durable lifecycle writes made the operation briefly report zero committed
+bytes and zero percent after it had already reported the complete preserved
+source.
+
+`ImportProgressTracker` now accepts a validated `initial_bytes_processed`
+position. Initialization rejects negative values and values above
+`bytes_total`, and sets both the monotonic byte counter and the last-emitted
+byte watermark to that position. `_run_retry` supplies the preserved declared
+size at construction and removes the redundant post-construction advance. Its
+first forced `storing` write therefore preserves full committed bytes and the
+nonterminal 99-percent ceiling. All other tracker callers retain the zero-byte
+default; phase ordering, liveness cadence, cancellation, completion, and the
+five-second acceptance budget are unchanged.
+
+A tracker regression proves the validated initial position and 99-percent
+reservation. The production retry regression proves that the constructor is
+seeded with the preserved payload size. Source tests are not BETA-D01 evidence;
+the invalidated candidate must be replaced and the complete exact-artifact
+journey rerun.

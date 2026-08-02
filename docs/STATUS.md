@@ -830,6 +830,20 @@ state is already noncurrent and creates no user queue.
   at-most-8-MiB cancellation checkpoint. Source-only reconstruction does not
   pause, cancellation remains checked first, and no heartbeat or acceptance
   threshold changed. A new immutable candidate must rerun the full journey.
+- Exact candidate source `65612cc` passed the corrected Windows straight,
+  repeat, and cancellation timing slices, but its no-upload retry exposed a
+  semantic progress regression before parser work. The preserved source was
+  already fully committed, yet `_run_retry` created a zero-byte tracker and
+  forced a `storing` lifecycle write before advancing it to the declared size.
+  A direct SQLite observer could therefore see committed bytes and percent
+  fall from the preserved boundary to zero and then return to full. The
+  tracker now accepts a validated initial committed-byte position, initializes
+  both its monotonic value and byte-emission watermark there, and retry starts
+  at the preserved source's declared size. Its first forced phase write remains
+  at full committed bytes and 99 percent; fresh uploads and source-only work
+  retain their zero-byte default. Deterministic regressions prove both the
+  tracker invariant and the production retry constructor. The candidate is
+  invalidated; a replacement exact artifact must rerun the complete journey.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

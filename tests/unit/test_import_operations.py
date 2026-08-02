@@ -893,9 +893,17 @@ def test_retry_passes_progress_tracker_and_records_phases(
         parser_warnings=(),
     )
 
+    from allthecontext import import_operations as ops_module
+
     seen_phases: list[str] = []
+    retry_initial_bytes: list[int | None] = []
     tracker_passed = {"ok": False}
     original = ops.imports.reprocess_source
+    tracker_type = ops_module.ImportProgressTracker
+
+    def recording_tracker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        retry_initial_bytes.append(kwargs.get("initial_bytes_processed"))
+        return tracker_type(*args, **kwargs)
 
     def tracked_reprocess(source_id_arg: str, *, progress_tracker=None):  # type: ignore[no-untyped-def]
         assert progress_tracker is not None, "retry must pass progress_tracker"
@@ -914,12 +922,14 @@ def test_retry_passes_progress_tracker_and_records_phases(
         }
         return original(source_id_arg, progress_tracker=progress_tracker)
 
+    monkeypatch.setattr(ops_module, "ImportProgressTracker", recording_tracker)
     monkeypatch.setattr(ops.imports, "reprocess_source", tracked_reprocess)
     retried = ops.retry_operation(operation["operation_id"])
     assert tracker_passed["ok"] is True
     assert retried["status"] == "complete"
     assert retried["phase"] == "complete"
     assert "parsing" in seen_phases
+    assert retry_initial_bytes == [len(payload)]
 
 
 def test_retry_cancel_acknowledged_via_operation_tracker(
