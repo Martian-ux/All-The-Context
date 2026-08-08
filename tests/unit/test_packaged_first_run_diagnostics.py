@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -212,6 +213,124 @@ def test_remove_work_tree_deletes_credential_bearing_tree(tmp_path: Path) -> Non
     secret.write_text(json.dumps({"client:x": TOKEN_CANARY}), encoding="utf-8")
     smoke.remove_work_tree(work)
     assert not work.exists()
+
+
+def test_packaged_rollback_smoke_reenters_exact_retry_state_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = tmp_path / "AllTheContextUpdater.exe"
+    journal = tmp_path / "journal.json"
+    helper.write_bytes(b"helper")
+    journal.write_text("{}", encoding="utf-8")
+    calls = 0
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            journal.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "phase": "rolling_back",
+                        "last_error_code": "rollback_retry_required",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 3)
+        journal.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "phase": "rolled_back",
+                    "last_error_code": "health_check_failed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+
+    smoke.run_packaged_rollback_smoke(
+        helper=helper,
+        journal=journal,
+        environment={"ATC_CORE_DATA_DIR": str(tmp_path)},
+    )
+
+    assert calls == 2
+    assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "rolled_back"
+
+
+def test_packaged_rollback_smoke_rejects_unexpected_code_three_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = tmp_path / "AllTheContextUpdater.exe"
+    journal = tmp_path / "journal.json"
+    helper.write_bytes(b"helper")
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "rolling_back",
+                "last_error_code": "unexpected",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(command, 3)
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="first=3; retry=None"):
+        smoke.run_packaged_rollback_smoke(
+            helper=helper,
+            journal=journal,
+            environment={"ATC_CORE_DATA_DIR": str(tmp_path)},
+        )
+
+    assert calls == 1
+
+
+def test_packaged_rollback_smoke_fails_after_one_unsuccessful_reentry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = tmp_path / "AllTheContextUpdater.exe"
+    journal = tmp_path / "journal.json"
+    helper.write_bytes(b"helper")
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "rolling_back",
+                "last_error_code": "rollback_retry_required",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(command, 3)
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="first=3; retry=3"):
+        smoke.run_packaged_rollback_smoke(
+            helper=helper,
+            journal=journal,
+            environment={"ATC_CORE_DATA_DIR": str(tmp_path)},
+        )
+
+    assert calls == 2
 
 
 def test_cleanup_recovers_token_then_scrubs_sensitive_state_first(tmp_path: Path) -> None:

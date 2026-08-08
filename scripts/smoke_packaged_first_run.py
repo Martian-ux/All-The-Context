@@ -256,6 +256,53 @@ def prepare_packaged_update_transaction(
     return transaction_helper, journal_path
 
 
+def run_packaged_rollback_smoke(
+    *,
+    helper: Path,
+    journal: Path,
+    environment: dict[str, str],
+) -> None:
+    """Exercise rollback, including one exact persisted-recovery re-entry."""
+
+    command = [str(helper), "--journal", str(journal)]
+    first = subprocess.run(
+        command,
+        env=environment,
+        check=False,
+        timeout=180,
+    )
+    if first.returncode == 2:
+        return
+    if first.returncode == 3:
+        try:
+            retry_state: Any = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            retry_state = None
+        if (
+            isinstance(retry_state, dict)
+            and retry_state.get("phase") == "rolling_back"
+            and retry_state.get("last_error_code") == "rollback_retry_required"
+        ):
+            retried = subprocess.run(
+                command,
+                env=environment,
+                check=False,
+                timeout=180,
+            )
+            if retried.returncode == 0:
+                return
+            retry_code: int | None = retried.returncode
+        else:
+            retry_code = None
+    else:
+        retry_code = None
+    raise SystemExit(
+        "packaged updater did not report or recover the exercised rollback: "
+        f"first={first.returncode}; retry={retry_code}; "
+        f"journal={journal_failure_diagnostic(journal)}"
+    )
+
+
 async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> None:
     async with (
         stdio_client(parameters, errlog=errlog) as streams,
@@ -962,18 +1009,11 @@ def main() -> int:
                 "ATC_UPDATE_SMOKE_MUTATE_DB": "1",
             }
         )
-        rolled_back = subprocess.run(
-            [str(rollback_helper), "--journal", str(rollback_journal)],
-            env=rollback_environment,
-            check=False,
-            timeout=180,
+        run_packaged_rollback_smoke(
+            helper=rollback_helper,
+            journal=rollback_journal,
+            environment=rollback_environment,
         )
-        if rolled_back.returncode != 2:
-            raise SystemExit(
-                "packaged updater did not report the exercised rollback: "
-                f"{rolled_back.returncode}; "
-                f"journal={journal_failure_diagnostic(rollback_journal)}"
-            )
         wait_for_core(base_url, token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
         if rollback_status.get("phase") != "rolled_back":

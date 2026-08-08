@@ -63,6 +63,19 @@ and `hdiutil` diagnostics plus one 30-second managed-Core readiness window. It
 does not relax a gate, retry a failed launch, or change updater/release
 behavior.
 
+The 2026-08-08 merged-main matrix exposed a narrow mismatch between the
+Windows updater's documented recovery contract and its packaged smoke. The
+helper may persist `rolling_back` / `rollback_retry_required` and exit 3 when
+restoration enters its bounded retryable error path; the content-free hosted
+diagnostic intentionally did not retain the underlying exception. Production
+then re-enters that same journal. The smoke previously required the first helper
+invocation to return the terminal rollback code and therefore failed even
+though the identical tree had passed twice. It now permits exactly one second
+invocation only for that exact persisted state, then still requires the
+terminal journal, restored binary hashes, pre-update database, healthy prior
+Core, uninstall, and cleanup. Other exit codes, states, or a second failure
+remain release-blocking; no updater threshold or production behavior changed.
+
 ## Provider packaged-acceptance and Windows smoke residue (2026-07-26)
 
 Source-level blocker fixes for V1 convergence (exact base
