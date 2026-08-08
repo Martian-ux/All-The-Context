@@ -226,6 +226,15 @@ no longer network-bootstraps unhashed `uv` and requires the already pinned
 required bumping the dev pin of `pytest` to `>=9.0.3,<10` (locked `9.1.1`)
 for PYSEC-2026-1845.
 
+On 2026-08-08, newly published dependency advisories made the otherwise
+unchanged hosted matrix fail closed. The reviewed Python runtime range now
+requires `cryptography>=50,<51` and the frozen lock contains `50.0.0`, closing
+PYSEC-2026-3552, PYSEC-2026-3553, and PYSEC-2026-3554. The dashboard lock now
+contains `nanoid 3.3.18`, `postcss 8.5.26`, and `undici 7.29.0`, closing the
+high-severity nanoid and undici advisories plus the reported PostCSS advisory.
+The frozen Python audit and `npm audit --audit-level=high` both pass locally;
+the replacement exact-SHA hosted matrix remains required before integration.
+
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every

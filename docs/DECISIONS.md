@@ -2101,3 +2101,25 @@ API/direct receipt gaps. It retained exact two-billion-byte identity and closed
 coverage but emitted no receipt. Source tests and local wheels are not
 acceptance evidence; a rebuilt immutable Linux artifact must rerun the complete
 BETA-D01 journey.
+
+## ADR-080: Security advisories advance frozen dependency locks
+
+**Status:** accepted 2026-08-08.
+
+The release dependency gates intentionally audit the reviewed lock state on
+every hosted matrix run. When new advisories made the exact branch fail closed,
+the repository advanced only the affected reviewed packages rather than
+weakening, ignoring, or dismissing the gates.
+
+The Python runtime range now requires `cryptography>=50,<51`, and `uv.lock`
+selects `50.0.0`, the first version that closes all three reported
+cryptography findings (PYSEC-2026-3552, PYSEC-2026-3553, and
+PYSEC-2026-3554). The dashboard retains its existing direct dependency ranges;
+its lock alone advances the affected transitives to `nanoid 3.3.18`,
+`postcss 8.5.26`, and `undici 7.29.0`.
+
+No vulnerability waiver, audit threshold change, package-manager override, or
+runtime feature is introduced. The frozen Python export audit and dashboard
+high-severity audit must pass locally and in the complete replacement hosted
+matrix, and the ordinary cross-platform/package test gates remain authoritative
+for compatibility with the cryptography major-version change.
