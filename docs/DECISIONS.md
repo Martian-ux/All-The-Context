@@ -2178,3 +2178,24 @@ second invocation still fails closed.
 
 This is test-contract alignment, not a production retry loop. Helper behavior,
 RunOnce recovery, timeouts, release gates, and update semantics are unchanged.
+
+## ADR-083: Shared-host retrieval smoke is not latency certification
+
+**Status:** accepted 2026-08-08.
+
+Retrieval V3 latency acceptance remains the integrated CLI's 1k/10k
+wall-clock measurement on comparable hardware, including five immediate warm
+repetitions per query and a strict 10k warm p95 below 150 ms. That production
+benchmark remains fail-closed and retains its clock, sample count, profiles,
+and threshold.
+
+The bounded 100-record pytest integration runs inside the complete shared-host
+suite. It proves retrieval quality, authorization, time, admissibility,
+determinism, storage wiring, and lifecycle behavior, but it cannot certify a
+hardware-sensitive latency SLO. A hosted Windows run demonstrated the mismatch:
+all functional gates passed while concurrent-host delay inflated warm p95 to
+1,305 ms. Pytest therefore no longer treats its measured wall clock as
+acceptance evidence. The production operational calculation is factored into
+one helper with deterministic boundary regressions: 149.999 ms passes; 150 ms,
+non-finite, negative, missing, and any failing required profile do not. A green
+shared-host suite must never be described as a Retrieval V3 latency pass.
