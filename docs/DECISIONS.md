@@ -2123,3 +2123,30 @@ runtime feature is introduced. The frozen Python export audit and dashboard
 high-severity audit must pass locally and in the complete replacement hosted
 matrix, and the ordinary cross-platform/package test gates remain authoritative
 for compatibility with the cryptography major-version change.
+
+## ADR-081: macOS packaging statically links source-built cryptography OpenSSL
+
+**Status:** accepted 2026-08-08.
+
+Cryptography 50 publishes a macOS ARM64 wheel but no macOS x86-64 wheel. The
+reviewed Intel packaging install therefore builds its Rust extension from
+source. The first hosted replacement matrix linked that extension to Homebrew
+OpenSSL, while PyInstaller selected Python's incompatible same-basename
+`libssl.3.dylib` for the bundle. Packaged startup failed on
+`_SSL_get0_group_name` before application code ran.
+
+All macOS installs that request the packaging extra now set cryptography's
+documented `OPENSSL_STATIC=1` build mode and bypass pip's wheel cache so a prior
+dynamic local build cannot be reused. Immediately after the locked,
+hash-enforced third-party install, the installer locates the installed Rust
+extension and runs `otool -L`; either `libssl.3.dylib` or
+`libcrypto.3.dylib` is a fail-closed packaging error. This avoids relying on
+PyInstaller collision order or a mutable Homebrew path and keeps cryptography's
+OpenSSL implementation inside its extension. Python's standard-library TLS
+dependency remains independently bundled and package startup exercises both.
+
+The rule is scoped to Darwin plus the packaging extra. macOS wheel installs
+also pass the static-link check, while Windows, Linux, ordinary development,
+and audit installs inherit their previous environment. The frozen dependency
+range, vulnerability gate, package smoke, native architecture matrix, and
+release-candidate evidence requirements are unchanged.

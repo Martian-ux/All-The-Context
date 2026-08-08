@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import os
+import platform
 import re
 import shutil
 import subprocess
@@ -20,8 +23,83 @@ UV_VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+)\b")
 BUILD_BACKEND_PACKAGES = ("packaging", "setuptools", "wheel")
 
 
-def _run(command: list[str], *, cwd: Path | None = None) -> None:
-    subprocess.run(command, cwd=cwd, check=True)
+def _run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
+    subprocess.run(command, cwd=cwd, check=True, env=env)
+
+
+def locked_install_environment(
+    extras: list[str],
+    *,
+    system: str | None = None,
+    environ: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Return the reviewed third-party install environment.
+
+    Cryptography 50 does not publish a macOS x86-64 wheel. Its source build
+    otherwise links Homebrew OpenSSL dynamically, while the frozen application
+    also collects Python's same-basename OpenSSL libraries. Static linkage keeps
+    the cryptography extension self-contained and removes that ambiguous bundle
+    collision. Other installs retain their inherited environment unchanged.
+    """
+
+    active_system = system or platform.system()
+    result = dict(os.environ if environ is None else environ)
+    if active_system == "Darwin" and "packaging" in extras:
+        result["OPENSSL_STATIC"] = "1"
+        # A cached wheel may have been built dynamically before this policy
+        # existed. Force this hash-verified install to rebuild the missing
+        # Intel wheel under the static-link environment.
+        result["PIP_NO_CACHE_DIR"] = "1"
+    return result
+
+
+def _macos_cryptography_openssl_dependencies(output: str) -> set[str]:
+    """Return dynamic OpenSSL library basenames reported by ``otool -L``."""
+
+    expected = {"libcrypto.3.dylib", "libssl.3.dylib"}
+    return {
+        Path(line.strip().split(" (compatibility version", maxsplit=1)[0]).name
+        for line in output.splitlines()[1:]
+        if line.strip()
+    } & expected
+
+
+def verify_static_macos_cryptography(
+    extras: list[str],
+    *,
+    system: str | None = None,
+) -> None:
+    """Fail closed if a macOS packaging install retained dynamic OpenSSL."""
+
+    active_system = system or platform.system()
+    if active_system != "Darwin" or "packaging" not in extras:
+        return
+    binding = importlib.util.find_spec("cryptography.hazmat.bindings._rust")
+    if binding is None or binding.origin is None:
+        raise RuntimeError("cryptography Rust binding is unavailable after locked install")
+    otool = shutil.which("otool")
+    if otool is None:
+        raise RuntimeError("otool is required to verify macOS cryptography linkage")
+    completed = subprocess.run(
+        [otool, "-L", binding.origin],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("otool could not inspect the macOS cryptography binding")
+    dependencies = _macos_cryptography_openssl_dependencies(completed.stdout)
+    if dependencies:
+        names = ", ".join(sorted(dependencies))
+        raise RuntimeError(
+            "macOS packaging requires statically linked cryptography OpenSSL; "
+            f"dynamic dependencies remain: {names}"
+        )
 
 
 def _uv_version(uv_path: str) -> str | None:
@@ -190,6 +268,7 @@ def main() -> int:
             if "--hash=" not in constraints_text and "sha256:" not in constraints_text:
                 raise RuntimeError("uv export did not produce hash-pinned requirements")
             # Third-party packages only, hash-enforced.
+            install_environment = locked_install_environment(arguments.extra)
             _run(
                 [
                     python,
@@ -201,7 +280,9 @@ def main() -> int:
                     str(constraints),
                 ],
                 cwd=root,
+                env=install_environment,
             )
+            verify_static_macos_cryptography(arguments.extra)
             if not arguments.skip_project:
                 # Build backend must come from the reviewed lock digests, not an
                 # unpinned download during uncontrolled build isolation.

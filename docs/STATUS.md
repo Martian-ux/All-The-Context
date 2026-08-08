@@ -235,6 +235,17 @@ high-severity nanoid and undici advisories plus the reported PostCSS advisory.
 The frozen Python audit and `npm audit --audit-level=high` both pass locally;
 the replacement exact-SHA hosted matrix remains required before integration.
 
+That replacement matrix exposed a deterministic macOS Intel packaging
+incompatibility rather than an application regression. Cryptography 50 has no
+macOS x86-64 wheel, so the locked install built its Rust extension from source
+against Homebrew OpenSSL. PyInstaller then collected Python's incompatible
+same-basename `libssl.3.dylib`; packaged startup failed on the missing
+`_SSL_get0_group_name` symbol. Reviewed macOS packaging installs now use
+cryptography's documented static-OpenSSL source mode and immediately inspect
+the installed Rust extension with `otool`, failing closed if either dynamic
+OpenSSL library remains. Other OSes and non-packaging installs are unchanged.
+The frozen package smoke still must pass on both native macOS architectures.
+
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every
