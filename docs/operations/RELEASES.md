@@ -54,7 +54,14 @@ Python installs use `scripts/install_locked_python.py` so composition comes from
 the reviewed `uv.lock` rather than independently resolving broad ranges.
 Build backends (`setuptools`, `wheel`) must be present as hashed lock entries and
 installed before `--no-build-isolation`; the installer fails closed if either is
-missing. `ensure_pinned_uv` never network-bootstraps `uv` without digests—the
+missing. macOS packaging installs set cryptography's documented
+`OPENSSL_STATIC=1` source-build mode and fail closed if its Rust extension still
+links `libssl.3.dylib` or `libcrypto.3.dylib`. This keeps Intel builds, for which
+cryptography 50 publishes no wheel, from colliding with Python's separately
+bundled same-basename OpenSSL libraries; the install bypasses pip's wheel cache
+so an older dynamically built local wheel cannot evade that policy.
+`ensure_pinned_uv` never
+network-bootstraps `uv` without digests—the
 reviewed `0.11.32` binary must already be available (for example via the
 SHA-pinned setup-uv action). The Python dependency vulnerability gate audits a
 frozen hashed export of `uv.lock` (dev and packaging extras) with lock-installed

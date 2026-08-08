@@ -226,6 +226,26 @@ no longer network-bootstraps unhashed `uv` and requires the already pinned
 required bumping the dev pin of `pytest` to `>=9.0.3,<10` (locked `9.1.1`)
 for PYSEC-2026-1845.
 
+On 2026-08-08, newly published dependency advisories made the otherwise
+unchanged hosted matrix fail closed. The reviewed Python runtime range now
+requires `cryptography>=50,<51` and the frozen lock contains `50.0.0`, closing
+PYSEC-2026-3552, PYSEC-2026-3553, and PYSEC-2026-3554. The dashboard lock now
+contains `nanoid 3.3.18`, `postcss 8.5.26`, and `undici 7.29.0`, closing the
+high-severity nanoid and undici advisories plus the reported PostCSS advisory.
+The frozen Python audit and `npm audit --audit-level=high` both pass locally;
+the replacement exact-SHA hosted matrix remains required before integration.
+
+That replacement matrix exposed a deterministic macOS Intel packaging
+incompatibility rather than an application regression. Cryptography 50 has no
+macOS x86-64 wheel, so the locked install built its Rust extension from source
+against Homebrew OpenSSL. PyInstaller then collected Python's incompatible
+same-basename `libssl.3.dylib`; packaged startup failed on the missing
+`_SSL_get0_group_name` symbol. Reviewed macOS packaging installs now use
+cryptography's documented static-OpenSSL source mode and immediately inspect
+the installed Rust extension with `otool`, failing closed if either dynamic
+OpenSSL library remains. Other OSes and non-packaging installs are unchanged.
+The frozen package smoke still must pass on both native macOS architectures.
+
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
 returned by direct fetch, search, or bootstrap. `*` explicitly grants every
@@ -864,7 +884,38 @@ state is already noncurrent and creates no user queue.
   competing source writes; the final complete-bit update remains a short
   immediate write. The operation heartbeat starts before staging and closes
   unconditionally on every upload exit. Focused regressions prove both
-  pre-parse scheduling coverage and writer-free chunk validation. Candidate
+  pre-parse scheduling coverage and writer-free chunk validation.
+- Replacement exact candidate source `4ab235d` completed two qualified Linux
+  x86-64 2,000,000,000-byte straight imports with exact hash, 239 chunks, five
+  candidates, closed coverage, clean SQLite integrity, and zero foreign-key
+  violations, but both attempts failed the unchanged-byte operation-liveness
+  gate. Attempt one measured a 5.918573-second durable top-level timestamp
+  interval; attempt two independently measured 5.332539 seconds, with API and
+  direct-SQLite receipt gaps also above five seconds. Both endpoints remained
+  `processing`/`parsing` at 2,000,000,000 committed bytes. No receipt was
+  emitted and later D01 slices did not run.
+  Twenty-millisecond multiprocessing observers remained schedulable during
+  standalone full source streaming, temporary reconstruction, and the complete
+  4,134,533-line parse. Source inspection localized the remaining stall to the
+  full-durability operation-row phase commit immediately after preserved-source
+  reconstruction: its timestamp is generated before commit, readers retain the
+  prior WAL row while that commit flushes, and the timestamp-only writer cannot
+  enter SQLite's single-writer slot.
+  Explicit nonterminal operation progress now uses a serialized WAL
+  `synchronous=NORMAL` connection with the normal ten-second arbitration
+  budget. It retains the Python lifecycle lock, semantic validation, and
+  monotonic fields; only its power-loss durability differs from canonical
+  state. Cancellation intent, preflight changes, errors, result payloads,
+  terminal status, source/blob tables, and every other Core write retain FULL
+  durability. The separate timestamp-only heartbeat remains fail-fast and
+  lock-bypassing. Focused regressions prove connection policy and fail-closed
+  routing. A pure-Python wheel from the corrected worktree then passed one
+  straight-only run in the same qualified guest: durable timestamp gaps were
+  at most 0.780195 seconds and API/direct receipt gaps were at most
+  0.786998/0.800204 seconds, with exact source identity and coverage. That run
+  is local source-artifact evidence only and emitted no receipt. The
+  five-second gate is unchanged; a rebuilt immutable Linux artifact must rerun
+  the complete D01 journey.
 - B-105 is not accepted yet. Durable import-operation identifiers, lifecycle
   states, and cancellable chunk heartbeats are implemented in source
   (`import_operations.py`, migration `009_import_operations.sql`, Core admin

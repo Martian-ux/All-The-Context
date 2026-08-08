@@ -2051,3 +2051,102 @@ post-commit touch succeeded 0.013890 seconds later. Deterministic regressions
 now hold that scan open and prove a liveness commit remains possible, and hold
 promotion before parser entry while proving multiple durable timestamps plus
 unconditional heartbeat shutdown.
+
+## ADR-079: Nonterminal operation progress avoids FULL WAL flush stalls
+
+**Status:** accepted 2026-08-08.
+
+Explicit nonterminal import-operation progress uses a serialized WAL
+`synchronous=NORMAL` connection. It retains CoreStore's Python lifecycle lock,
+`BEGIN IMMEDIATE`, the ordinary ten-second SQLite arbitration budget, complete
+row validation, monotonic byte rules, and atomic commit. Only the durability of
+the latest observer-facing nonterminal transition changes: it remains safe
+across a process crash but, like other WAL-NORMAL telemetry, the newest commit
+may roll back after an operating-system or power failure. Authoritative source
+blobs, source records, and parser outcomes remain separate canonical writes.
+Startup recovery terminalizes any surviving nonterminal operation.
+
+The NORMAL path is fail-closed and deliberately narrow. The caller must provide
+an explicit `awaiting_upload`, `uploading`, or `processing` status, must not
+complete the operation, and must not change cancellation intent, preflight,
+error state, or result data. Cancellation requests, clear/error writes,
+terminal complete/failed/cancelled transitions, and every update without an
+explicit nonterminal status retain the original FULL-durability transaction.
+The timestamp-only liveness writer remains a separate 250-millisecond,
+Python-lock-bypassing WAL-NORMAL path; semantic progress does not inherit that
+fail-fast busy budget.
+
+Exact candidate source `4ab235d` completed two qualified Linux x86-64
+2,000,000,000-byte straight imports with correct data, coverage, resources,
+SQLite integrity, and foreign keys, but emitted no D01 receipt. At unchanged
+2,000,000,000 committed bytes in `processing`/`parsing`, attempt one measured a
+5.918573-second durable top-level timestamp interval and attempt two measured
+5.332539 seconds. API and direct-SQLite receipt observations independently
+exceeded five seconds in both attempts.
+
+Bounded controls kept a separate 20-millisecond process schedulable during a
+full two-billion-byte source stream, temporary reconstruction, and the complete
+4,134,533-line parse. Source inspection then isolated the remaining handoff:
+the lifecycle updater generates `updated_at` inside a FULL transaction before
+commit, readers keep the previous WAL row while that commit flushes, and the
+timestamp-only writer cannot enter SQLite's single-writer slot. A NORMAL
+nonterminal commit removes that per-transition FULL flush without weakening
+canonical or terminal durability. Focused tests prove the WAL mode/busy budget
+and adversarial routing of preflight, cancellation, error, clear-error, result,
+and terminal updates. The frozen five-second threshold is unchanged. Source
+wheel `0905c7ab90de20dd7d5cf2b0f01a9fbc6a9ec8e1244ed15b34c2da4d985da974`
+then passed a straight-only run in the same qualified guest with a 0.780195-
+second maximum durable timestamp gap and 0.786998/0.800204-second maximum
+API/direct receipt gaps. It retained exact two-billion-byte identity and closed
+coverage but emitted no receipt. Source tests and local wheels are not
+acceptance evidence; a rebuilt immutable Linux artifact must rerun the complete
+BETA-D01 journey.
+
+## ADR-080: Security advisories advance frozen dependency locks
+
+**Status:** accepted 2026-08-08.
+
+The release dependency gates intentionally audit the reviewed lock state on
+every hosted matrix run. When new advisories made the exact branch fail closed,
+the repository advanced only the affected reviewed packages rather than
+weakening, ignoring, or dismissing the gates.
+
+The Python runtime range now requires `cryptography>=50,<51`, and `uv.lock`
+selects `50.0.0`, the first version that closes all three reported
+cryptography findings (PYSEC-2026-3552, PYSEC-2026-3553, and
+PYSEC-2026-3554). The dashboard retains its existing direct dependency ranges;
+its lock alone advances the affected transitives to `nanoid 3.3.18`,
+`postcss 8.5.26`, and `undici 7.29.0`.
+
+No vulnerability waiver, audit threshold change, package-manager override, or
+runtime feature is introduced. The frozen Python export audit and dashboard
+high-severity audit must pass locally and in the complete replacement hosted
+matrix, and the ordinary cross-platform/package test gates remain authoritative
+for compatibility with the cryptography major-version change.
+
+## ADR-081: macOS packaging statically links source-built cryptography OpenSSL
+
+**Status:** accepted 2026-08-08.
+
+Cryptography 50 publishes a macOS ARM64 wheel but no macOS x86-64 wheel. The
+reviewed Intel packaging install therefore builds its Rust extension from
+source. The first hosted replacement matrix linked that extension to Homebrew
+OpenSSL, while PyInstaller selected Python's incompatible same-basename
+`libssl.3.dylib` for the bundle. Packaged startup failed on
+`_SSL_get0_group_name` before application code ran.
+
+All macOS installs that request the packaging extra now set cryptography's
+documented `OPENSSL_STATIC=1` build mode and bypass pip's wheel cache so a prior
+dynamic local build cannot be reused. Immediately after the locked,
+hash-enforced third-party install, the installer locates the installed Rust
+extension and runs `otool -L`; either `libssl.3.dylib` or
+`libcrypto.3.dylib` is a fail-closed packaging error. This avoids relying on
+PyInstaller collision order or a mutable Homebrew path and keeps cryptography's
+OpenSSL implementation inside its extension. Python's standard-library TLS
+dependency remains independently bundled and package startup exercises both.
+
+The rule is scoped to Darwin plus the packaging extra. macOS wheel installs
+also pass the static-link check, while Windows, Linux, ordinary development,
+and audit installs inherit their previous environment. The frozen dependency
+range, vulnerability gate, package smoke, native architecture matrix, and
+release-candidate evidence requirements are unchanged.

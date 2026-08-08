@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -129,6 +130,88 @@ def test_ensure_pinned_uv_fails_closed_without_network_bootstrap(
     with pytest.raises(RuntimeError, match=r"pinned uv==0\.11\.32 is unavailable"):
         install.ensure_pinned_uv(sys.executable)
     assert runs == []
+
+
+def test_macos_packaging_install_requires_static_cryptography_openssl() -> None:
+    install = _load_script("install_locked_python.py")
+    baseline = {"EXISTING": "preserved", "OPENSSL_STATIC": "caller-value"}
+
+    macos = install.locked_install_environment(["packaging"], system="Darwin", environ=baseline)
+    windows = install.locked_install_environment(["packaging"], system="Windows", environ=baseline)
+    macos_dev = install.locked_install_environment(["dev"], system="Darwin", environ=baseline)
+
+    assert macos == {
+        "EXISTING": "preserved",
+        "OPENSSL_STATIC": "1",
+        "PIP_NO_CACHE_DIR": "1",
+    }
+    assert windows == baseline
+    assert macos_dev == baseline
+
+
+def test_static_macos_cryptography_linkage_verification_rejects_dynamic_openssl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install = _load_script("install_locked_python.py")
+
+    class Spec:
+        origin = "/tmp/cryptography/hazmat/bindings/_rust.abi3.so"
+
+    monkeypatch.setattr(install.importlib.util, "find_spec", lambda _name: Spec())
+    monkeypatch.setattr(install.shutil, "which", lambda _name: "/usr/bin/otool")
+    monkeypatch.setattr(
+        install.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            "\n".join(
+                [
+                    f"{Spec.origin}:",
+                    "\t/usr/local/opt/openssl@3/lib/libssl.3.dylib "
+                    "(compatibility version 3.0.0, current version 3.6.0)",
+                    "\t/usr/local/opt/openssl@3/lib/libcrypto.3.dylib "
+                    "(compatibility version 3.0.0, current version 3.6.0)",
+                    "\t/usr/lib/libSystem.B.dylib "
+                    "(compatibility version 1.0.0, current version 1351.0.0)",
+                ]
+            ),
+            "",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=r"libcrypto\.3\.dylib, libssl\.3\.dylib"):
+        install.verify_static_macos_cryptography(["packaging"], system="Darwin")
+
+
+def test_static_macos_cryptography_linkage_verification_accepts_static_extension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install = _load_script("install_locked_python.py")
+
+    class Spec:
+        origin = "/tmp/cryptography/hazmat/bindings/_rust.abi3.so"
+
+    monkeypatch.setattr(install.importlib.util, "find_spec", lambda _name: Spec())
+    monkeypatch.setattr(install.shutil, "which", lambda _name: "/usr/bin/otool")
+    monkeypatch.setattr(
+        install.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command,
+            0,
+            "\n".join(
+                [
+                    f"{Spec.origin}:",
+                    "\t/usr/lib/libSystem.B.dylib "
+                    "(compatibility version 1.0.0, current version 1351.0.0)",
+                ]
+            ),
+            "",
+        ),
+    )
+
+    install.verify_static_macos_cryptography(["packaging"], system="Darwin")
 
 
 def test_dependency_audit_pip_audit_command_uses_frozen_requirements_mode(
