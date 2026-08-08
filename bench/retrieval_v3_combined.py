@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import sqlite3
 import sys
@@ -21,6 +22,8 @@ from allthecontext.storage import durable_sqlite_footprint
 
 from bench.retrieval_benchmark import build_database
 from bench.retrieval_v3_foundation import (
+    WARM_P95_LIMIT_MS,
+    WARM_REPETITIONS,
     GateStatus,
     _bootstrap_redundancy,
     _latency_summary,
@@ -70,7 +73,7 @@ def run_candidate_profile(size: int, directory: Path, fixture: dict[str, Any]) -
         results[str(query["id"])] = ids
         policy_violations += len(set(ids) & set(query.get("forbidden", [])))
         repeats: list[list[str]] = []
-        for _ in range(5):
+        for _ in range(WARM_REPETITIONS):
             started = time.perf_counter()
             repeated = engine.search(request, principal)
             warm.append((time.perf_counter() - started) * 1_000)
@@ -205,6 +208,55 @@ def run_candidate_lifecycle(directory: Path, fixture: dict[str, Any]) -> dict[st
     }
 
 
+def _evaluate_operational_acceptance(
+    measured: Sequence[dict[str, Any]],
+    lifecycle: dict[str, Any],
+    profile_gates_passed: bool,
+) -> dict[str, bool]:
+    """Apply the production operational gates to already-measured evidence."""
+
+    warm_p95_values: list[float] = []
+    for item in measured:
+        try:
+            raw_value = item["metrics"]["warm_latency"]["p95_ms"]
+        except (KeyError, TypeError):
+            warm_p95_values = []
+            break
+        if type(raw_value) not in {int, float}:
+            warm_p95_values = []
+            break
+        value = float(raw_value)
+        if not math.isfinite(value) or value < 0:
+            warm_p95_values = []
+            break
+        warm_p95_values.append(value)
+
+    lifecycle_metrics = lifecycle.get("metrics")
+    if not isinstance(lifecycle_metrics, dict):
+        lifecycle_metrics = {}
+    return {
+        "all_profile_gates_passed": profile_gates_passed is True,
+        "warm_p95_under_150_ms": bool(warm_p95_values)
+        and len(warm_p95_values) == len(measured)
+        and all(value < WARM_P95_LIMIT_MS for value in warm_p95_values),
+        "as_of_resolution_exercised": bool(measured)
+        and all(
+            item.get("metrics", {}).get("as_of_expected_ids_present") is True for item in measured
+        ),
+        "restart_restore_lifecycle_passed": all(
+            lifecycle_metrics.get(name) is True
+            for name in (
+                "as_of_expected_ids_present",
+                "restart_as_of_ranking_parity",
+                "restore_rebuild_valid",
+            )
+        ),
+        "zero_resurrection": type(lifecycle_metrics.get("resurrected_deleted_or_purged_count"))
+        is int
+        and lifecycle_metrics.get("resurrected_deleted_or_purged_count") == 0,
+    }
+
+
 def run(profiles: Sequence[int]) -> dict[str, Any]:
     fixture = load_foundation_fixture()
     started = time.perf_counter()
@@ -239,24 +291,7 @@ def run(profiles: Sequence[int]) -> dict[str, Any]:
         )
     candidate["storage_growth"] = growth
     passed, gate_results = evaluate_gates(candidate, comparator)
-    operational = {
-        "all_profile_gates_passed": passed,
-        "warm_p95_under_150_ms": all(
-            float(item["metrics"]["warm_latency"]["p95_ms"]) < 150.0 for item in measured
-        ),
-        "as_of_resolution_exercised": all(
-            bool(item["metrics"]["as_of_expected_ids_present"]) for item in measured
-        ),
-        "restart_restore_lifecycle_passed": all(
-            bool(lifecycle["metrics"][name])
-            for name in (
-                "as_of_expected_ids_present",
-                "restart_as_of_ranking_parity",
-                "restore_rebuild_valid",
-            )
-        ),
-        "zero_resurrection": lifecycle["metrics"]["resurrected_deleted_or_purged_count"] == 0,
-    }
+    operational = _evaluate_operational_acceptance(measured, lifecycle, passed)
     candidate["gate_results"] = gate_results
     candidate["gate_results_status"] = GateStatus.PASSED if passed else GateStatus.FAILED
     candidate["operational_acceptance"] = operational

@@ -76,6 +76,16 @@ terminal journal, restored binary hashes, pre-update database, healthy prior
 Core, uninstall, and cleanup. Other exit codes, states, or a second failure
 remain release-blocking; no updater threshold or production behavior changed.
 
+The same merged-main matrix later exposed an evidence-boundary defect in the
+100-record Retrieval V3 pytest smoke: every functional and lifecycle gate
+passed, but shared-runner descheduling inflated its warm wall-clock p95. The
+frozen product benchmark has always required the 1k/10k CLI run on comparable
+hardware, with the 10k warm p95 below 150 ms. Pytest now treats its bounded
+100-record run as functional evidence only, while deterministic unit cases
+prove the production operational gate accepts 149.999 ms and rejects 150 ms,
+non-finite, negative, missing, and mixed-profile evidence. The CLI clock,
+sample count, profiles, threshold, and fail-closed result are unchanged.
+
 ## Provider packaged-acceptance and Windows smoke residue (2026-07-26)
 
 Source-level blocker fixes for V1 convergence (exact base

@@ -32,6 +32,8 @@ FROZEN_COMPARATOR_CONTRACT = Path(__file__).parent / "baselines" / "v2_comparato
 _PASSPHRASE = "synthetic retrieval fixture passphrase"
 NORMAL_PROFILES = (1_000, 10_000)
 MAXIMUM_PROFILE = 50_000
+WARM_REPETITIONS = 5
+WARM_P95_LIMIT_MS = 150.0
 
 
 class GateStatus(StrEnum):
@@ -215,7 +217,7 @@ def run_profile(
         results[str(query["id"])] = ids
         policy_violations += len(set(ids) & set(query.get("forbidden", [])))
         repeats: list[list[str]] = []
-        for _ in range(5):
+        for _ in range(WARM_REPETITIONS):
             started = time.perf_counter()
             repeated = engine.search(request, principal)
             warm.append((time.perf_counter() - started) * 1_000)

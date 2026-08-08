@@ -190,6 +190,13 @@ latency gates. Its output embeds the comparator report so the evidence remains
 self-contained. The 50k candidate remains explicitly opt-in and capped by the
 same `--include-50k` rule.
 
+The bounded 100-record pytest integration is a functional regression smoke. It
+exercises the same quality, policy, lifecycle, and operational-gate wiring, but
+its measured shared-host wall clock is diagnostic only and is not accepted as
+latency evidence. The warm p95 gate remains fail-closed in this command at the
+unchanged 150 ms boundary; claim latency acceptance only from the 1k/10k CLI
+run on comparable hardware.
+
 ## Retrieval V1/V2 benchmark
 
 This directory freezes the Retrieval V1 evaluation corpus and measurements used
