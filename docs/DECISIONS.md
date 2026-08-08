@@ -1190,8 +1190,10 @@ stdout/stderr tails. The packaged Windows rollback smoke emits only the helper
 journal phase, fixed error code, and schema version; paths, operation
 identifiers, and the rest of the journal remain excluded.
 
-These diagnostics do not convert a failure to success. No threshold is relaxed
-and no automatic retry is added. The one-file Windows MCP adapter gets one
+These diagnostics do not convert a failure to success. No threshold is relaxed.
+ADR-082 later adds one exact-state re-entry to the rollback smoke so it exercises
+the already-defined persisted recovery contract rather than misclassifying it.
+The one-file Windows MCP adapter gets one
 bounded 30-second managed-Core readiness window so native extraction and
 startup are not misclassified by the earlier 10-second boundary; it still
 launches once and fails hard at the deadline. A repeated failure still stops
@@ -2150,3 +2152,29 @@ also pass the static-link check, while Windows, Linux, ordinary development,
 and audit installs inherit their previous environment. The frozen dependency
 range, vulnerability gate, package smoke, native architecture matrix, and
 release-candidate evidence requirements are unchanged.
+
+## ADR-082: Windows rollback smoke re-enters one persisted retry state
+
+**Status:** accepted 2026-08-08.
+
+The Windows update helper intentionally treats an interrupted rollback as a
+recoverable journal state. An `OSError`, bounded helper error, or SQLite error
+during restoration leaves the journal at `rolling_back` with
+`rollback_retry_required`; the helper exits 3, and RunOnce or the ordinary
+Core-start guard re-enters that exact journal. The hosted diagnostic retains
+only that bounded state, so its underlying exception is not claimed. Unit
+coverage already proves the next invocation can finish the restoration.
+
+The packaged first-run smoke previously required the first forced-health-failure
+invocation to return the terminal rollback code 2. An exact merged-main job
+therefore failed on the designed retry state even though the byte-identical tree
+had completed the same Windows smoke twice. The smoke now performs exactly one
+second invocation only after verifying both the persisted phase and fixed error
+code. The resumed helper must return 0, after which the existing terminal
+`rolled_back` journal, restored application/MCP/recovery/updater hashes,
+pre-update SQLite database, prior-Core health, uninstall, and cleanup checks all
+remain mandatory. Any other first result, malformed state, or unsuccessful
+second invocation still fails closed.
+
+This is test-contract alignment, not a production retry loop. Helper behavior,
+RunOnce recovery, timeouts, release gates, and update semantics are unchanged.
