@@ -212,3 +212,34 @@ blob fields before setting complete. Regressions prove the long validation
 scan no longer owns SQLite's writer slot and that pre-parser promotion advances
 and closes its background heartbeat. Integrity, phase/byte monotonicity,
 thresholds, and source-only behavior remain unchanged. A replacement immutable
+candidate must rerun the complete exact-artifact journey.
+
+### 2026-08-08 nonterminal-operation durability amendment
+
+Exact candidate source `4ab235d` twice completed the qualified Linux x86-64
+2,000,000,000-byte straight import with exact source identity, 239 chunks, five
+candidates, closed coverage, clean SQLite integrity, and zero foreign-key
+violations. Both runs nevertheless failed BETA-D01 liveness at unchanged full
+committed bytes during `processing`/`parsing`: durable top-level timestamp gaps
+were 5.918573 and 5.332539 seconds, with independent authenticated API and
+direct-SQLite receipt gaps also above the frozen five-second budget. No receipt
+was emitted and later slices did not run.
+
+Standalone full-source streaming, reconstruction, and complete JSONL parsing
+kept a separate 20-millisecond observer schedulable. The remaining source path
+generated the phase timestamp before committing it through the default FULL
+WAL connection; readers retained the prior committed row while that flush held
+SQLite's writer slot, so the fail-fast timestamp-only heartbeat could not
+publish a newer row.
+
+`CoreStore.update_import_operation` now routes only explicit nonterminal
+progress to a serialized WAL-NORMAL transaction. The path keeps the Python
+write lock, ordinary SQLite busy budget, atomic row validation, and monotonic
+bytes. Preflight, cancellation intent, clear/error changes, result data,
+completion, terminal states, source/blob authority, and all unrelated writes
+remain FULL-durable. Focused regressions verify NORMAL/WAL configuration and
+adversarial FULL routing. The five-second requirement is unchanged; a new
+local source wheel passed a straight-only run in the same qualified guest with
+a 0.780195-second maximum durable timestamp gap and 0.786998/0.800204-second
+maximum API/direct receipt gaps. It emitted no receipt. A new immutable Linux
+candidate must pass the complete D01 matrix.

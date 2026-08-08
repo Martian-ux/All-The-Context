@@ -1994,6 +1994,112 @@ def test_operation_liveness_touch_is_fail_fast_and_semantically_neutral(
         core.store.touch_import_operation_liveness("missing-operation")
 
 
+def test_nonterminal_operation_telemetry_uses_normal_wal_with_full_busy_budget(
+    tmp_path: Path,
+) -> None:
+    core, _ops_service = _ops(tmp_path)
+
+    full_connection = core.store.connect()
+    try:
+        assert int(full_connection.execute("PRAGMA synchronous").fetchone()[0]) == 2
+    finally:
+        full_connection.close()
+
+    connection = core.store._connect_import_operation_telemetry()
+    try:
+        assert int(connection.execute("PRAGMA synchronous").fetchone()[0]) == 1
+        assert str(connection.execute("PRAGMA journal_mode").fetchone()[0]) == "wal"
+        assert int(connection.execute("PRAGMA busy_timeout").fetchone()[0]) == 10_000
+    finally:
+        connection.close()
+
+
+def test_only_explicit_nonterminal_progress_uses_normal_durability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, ops = _ops(tmp_path)
+    payload = b"{}\n"
+    operation = ops.start_operation(
+        declared_byte_size=len(payload),
+        filename="durability.jsonl",
+    )
+    operation_id = str(operation["operation_id"])
+    staged = ops.accept_upload(
+        operation_id,
+        io.BytesIO(payload),
+        expected_size=len(payload),
+        process_after=False,
+    )
+    source_id = str(staged["source_id"])
+    transaction_modes: list[bool] = []
+    original_transaction = core.store._import_operation_update_transaction
+
+    @contextmanager
+    def tracked_transaction(
+        *,
+        normal_durability: bool,
+    ) -> Iterator[sqlite3.Connection]:
+        transaction_modes.append(normal_durability)
+        with original_transaction(normal_durability=normal_durability) as connection:
+            yield connection
+
+    monkeypatch.setattr(
+        core.store,
+        "_import_operation_update_transaction",
+        tracked_transaction,
+    )
+
+    core.store.update_import_operation(
+        operation_id,
+        status="processing",
+        phase="parsing",
+        bytes_received=len(payload),
+        bytes_committed=len(payload),
+        content_hash=hashlib.sha256(payload).hexdigest(),
+        source_id=source_id,
+        progress={"phase": "parsing", "percent": 99},
+    )
+    core.store.update_import_operation(
+        operation_id,
+        status="processing",
+        preflight={"diagnostic": True},
+    )
+    core.store.update_import_operation(
+        operation_id,
+        phase="parsing",
+        progress={"phase": "parsing", "percent": 99},
+    )
+    core.store.update_import_operation(
+        operation_id,
+        status="processing",
+        error_message="closed_diagnostic_code",
+    )
+    core.store.update_import_operation(
+        operation_id,
+        status="processing",
+        clear_error=True,
+    )
+    core.store.update_import_operation(
+        operation_id,
+        cancel_requested=True,
+        progress={"phase": "parsing", "percent": 99, "cancel_requested": True},
+    )
+    finished = core.store.update_import_operation(
+        operation_id,
+        status="complete",
+        phase="complete",
+        result={"ok": True},
+        completed=True,
+    )
+
+    assert transaction_modes == [True, False, False, False, False, False, False]
+    assert finished["status"] == "complete"
+    assert finished["completed_at"] is not None
+    assert finished["cancel_requested"] is True
+    assert finished["result"] == {"ok": True}
+
+
 def test_operation_liveness_bypasses_python_writer_lock_and_reader_stays_queryable(
     tmp_path: Path,
 ) -> None:

@@ -261,6 +261,41 @@ class CoreStore:
         connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
+    def _connect_import_operation_telemetry(self) -> sqlite3.Connection:
+        """Open the serialized semantic-progress writer at WAL NORMAL durability.
+
+        Nonterminal operation progress is queryable telemetry over authoritative
+        source/blob state. A FULL WAL flush at a source-copy/parse boundary can
+        make the already-committed row invisible beyond the public heartbeat
+        budget on a qualified virtual SSD. NORMAL preserves transaction atomicity
+        and process-crash durability without that per-transition disk flush.
+
+        Unlike the timestamp-only liveness writer, semantic progress retains the
+        store's Python write lock and normal ten-second SQLite arbitration budget.
+        Terminal state, cancellation intent, errors, and results never use this
+        connection.
+        """
+        connection = self.connect()
+        connection.execute("PRAGMA synchronous = NORMAL")
+        return connection
+
+    @contextmanager
+    def _import_operation_update_transaction(
+        self,
+        *,
+        normal_durability: bool,
+    ) -> Iterator[sqlite3.Connection]:
+        connector = self._connect_import_operation_telemetry if normal_durability else self.connect
+        with self._write_lock, connector() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield connection
+            except BaseException:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
+
     @contextmanager
     def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
         with self._write_lock, self.connect() as connection:
@@ -1090,7 +1125,23 @@ class CoreStore:
     ) -> dict[str, Any]:
         """Update durable operation telemetry. Incomplete source blobs stay non-canonical."""
         terminal = frozenset({"complete", "failed", "cancelled"})
-        with self.transaction() as connection:
+        # content_hash/source_id on this row are observer and restart-recovery
+        # references, not source authority. Their source_blobs/source_records
+        # transactions remain FULL, so an explicit nonterminal update may carry
+        # those references on the NORMAL telemetry path. Everything that closes,
+        # cancels, diagnoses, or clears an operation remains FULL below.
+        nonterminal_telemetry = (
+            status in {"awaiting_upload", "uploading", "processing"}
+            and not completed
+            and cancel_requested is None
+            and preflight is None
+            and result is None
+            and error_message is None
+            and not clear_error
+        )
+        with self._import_operation_update_transaction(
+            normal_durability=nonterminal_telemetry
+        ) as connection:
             row = connection.execute(
                 "SELECT * FROM import_operations WHERE id=?",
                 (operation_id,),

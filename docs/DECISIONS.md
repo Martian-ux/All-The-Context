@@ -2051,3 +2051,53 @@ post-commit touch succeeded 0.013890 seconds later. Deterministic regressions
 now hold that scan open and prove a liveness commit remains possible, and hold
 promotion before parser entry while proving multiple durable timestamps plus
 unconditional heartbeat shutdown.
+
+## ADR-079: Nonterminal operation progress avoids FULL WAL flush stalls
+
+**Status:** accepted 2026-08-08.
+
+Explicit nonterminal import-operation progress uses a serialized WAL
+`synchronous=NORMAL` connection. It retains CoreStore's Python lifecycle lock,
+`BEGIN IMMEDIATE`, the ordinary ten-second SQLite arbitration budget, complete
+row validation, monotonic byte rules, and atomic commit. Only the durability of
+the latest observer-facing nonterminal transition changes: it remains safe
+across a process crash but, like other WAL-NORMAL telemetry, the newest commit
+may roll back after an operating-system or power failure. Authoritative source
+blobs, source records, and parser outcomes remain separate canonical writes.
+Startup recovery terminalizes any surviving nonterminal operation.
+
+The NORMAL path is fail-closed and deliberately narrow. The caller must provide
+an explicit `awaiting_upload`, `uploading`, or `processing` status, must not
+complete the operation, and must not change cancellation intent, preflight,
+error state, or result data. Cancellation requests, clear/error writes,
+terminal complete/failed/cancelled transitions, and every update without an
+explicit nonterminal status retain the original FULL-durability transaction.
+The timestamp-only liveness writer remains a separate 250-millisecond,
+Python-lock-bypassing WAL-NORMAL path; semantic progress does not inherit that
+fail-fast busy budget.
+
+Exact candidate source `4ab235d` completed two qualified Linux x86-64
+2,000,000,000-byte straight imports with correct data, coverage, resources,
+SQLite integrity, and foreign keys, but emitted no D01 receipt. At unchanged
+2,000,000,000 committed bytes in `processing`/`parsing`, attempt one measured a
+5.918573-second durable top-level timestamp interval and attempt two measured
+5.332539 seconds. API and direct-SQLite receipt observations independently
+exceeded five seconds in both attempts.
+
+Bounded controls kept a separate 20-millisecond process schedulable during a
+full two-billion-byte source stream, temporary reconstruction, and the complete
+4,134,533-line parse. Source inspection then isolated the remaining handoff:
+the lifecycle updater generates `updated_at` inside a FULL transaction before
+commit, readers keep the previous WAL row while that commit flushes, and the
+timestamp-only writer cannot enter SQLite's single-writer slot. A NORMAL
+nonterminal commit removes that per-transition FULL flush without weakening
+canonical or terminal durability. Focused tests prove the WAL mode/busy budget
+and adversarial routing of preflight, cancellation, error, clear-error, result,
+and terminal updates. The frozen five-second threshold is unchanged. Source
+wheel `0905c7ab90de20dd7d5cf2b0f01a9fbc6a9ec8e1244ed15b34c2da4d985da974`
+then passed a straight-only run in the same qualified guest with a 0.780195-
+second maximum durable timestamp gap and 0.786998/0.800204-second maximum
+API/direct receipt gaps. It retained exact two-billion-byte identity and closed
+coverage but emitted no receipt. Source tests and local wheels are not
+acceptance evidence; a rebuilt immutable Linux artifact must rerun the complete
+BETA-D01 journey.
