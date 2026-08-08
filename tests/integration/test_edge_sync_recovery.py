@@ -353,17 +353,34 @@ def test_online_core_services_forwarding_via_outbound_edge_poll(
             payload={"query": "Atlas", "limit": 20},
         )
         result: dict[str, object] = {}
+        forwarding_phase = threading.Event()
+        service_forwarding = manager._service_forwarding
+
+        def mark_forwarding_phase(sync: CoreRelaySync) -> int:
+            # sync_now verifies, pushes, and pulls before servicing forwarding.
+            # Start the bounded broker wait at the phase it is intended to test,
+            # rather than letting slow unrelated preamble work consume its budget.
+            forwarding_phase.set()
+            return service_forwarding(sync)
+
+        monkeypatch.setattr(manager, "_service_forwarding", mark_forwarding_phase)
 
         def wait_for_response() -> None:
+            forwarding_phase.wait()
             response = broker.wait(request_id, timeout_seconds=3)
             result["state"] = response.state
             result["response"] = response.response
 
         waiter = threading.Thread(target=wait_for_response)
         waiter.start()
-        synchronized = manager.sync_now(http_client=client)
+        try:
+            synchronized = manager.sync_now(http_client=client)
+        finally:
+            # Keep the harness fail-safe if sync_now exits before forwarding.
+            forwarding_phase.set()
         waiter.join(timeout=5)
 
+        assert not waiter.is_alive()
         assert synchronized["forwarded_requests"] == 1
         assert result["state"] == "available"
         response = result["response"]
