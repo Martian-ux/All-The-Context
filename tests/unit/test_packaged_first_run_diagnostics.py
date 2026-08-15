@@ -42,6 +42,31 @@ DASHBOARD_CANARY = (
 RAW_STATEMENT = "User said their password is hunter2-never-store"
 
 
+def test_packaged_smoke_parent_override_must_be_absolute_and_external(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+
+    assert smoke.packaged_smoke_parent(root=source, environ={}) == source / "tmp"
+    with pytest.raises(SystemExit, match="absolute path"):
+        smoke.packaged_smoke_parent(
+            root=source,
+            environ={"ATC_PACKAGED_SMOKE_PARENT": "relative"},
+        )
+    with pytest.raises(SystemExit, match="outside the source"):
+        smoke.packaged_smoke_parent(
+            root=source,
+            environ={"ATC_PACKAGED_SMOKE_PARENT": str(source / "owned")},
+        )
+    external = tmp_path / "external"
+    assert (
+        smoke.packaged_smoke_parent(
+            root=source,
+            environ={"ATC_PACKAGED_SMOKE_PARENT": str(external)},
+        )
+        == external.resolve()
+    )
+
+
 def test_browser_session_reads_escaped_handoff_data_attribute() -> None:
     browser_session = 'opaque-session-"&<canary>'
     handoff_html = (

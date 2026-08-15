@@ -166,6 +166,14 @@ jobs:
         run: >-
           python scripts/check_runner_architecture.py
           --expected ${{ matrix.architecture }}
+      - name: Record content-free macOS host preflight
+        if: runner.os == 'macOS'
+        run: >-
+          python scripts/macos_acceptance_preflight.py
+          --profile hosted-ci
+          --expected-architecture ${{ matrix.architecture }}
+          --expected-major 26
+          --output dist/macos-preflight/${{ matrix.architecture }}-hosted-ci.json
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes python3-tk
@@ -210,6 +218,7 @@ jobs:
           python scripts/smoke_platform_package.py
           --directory dist/platform
           --platform ${{ matrix.platform }}
+          --architecture ${{ matrix.architecture }}
       - name: Create deterministic candidate archive and metadata
         run: >-
           python scripts/build_release_assets.py
@@ -224,4 +233,5 @@ jobs:
           path: |
             dist/platform/**
             dist/release/**
+            dist/macos-preflight/**
           if-no-files-found: error
