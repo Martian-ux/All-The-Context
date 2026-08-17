@@ -2301,3 +2301,47 @@ all 20 unique prepublication receipts pass and the maintainer reviews them.
 Only an explicit approve permits offline signing, immutable publication, and
 channel promotion; private signing material never enters GitHub, Actions, the
 repository, an AI system, a shell argument, or an environment variable.
+
+## ADR-087: Privileged release workflows check out the default-branch dispatch SHA
+
+**Status:** accepted 2026-08-16; revised 2026-08-16 after review of the
+candidate versus publish/promote lifecycle.
+
+Privileged `workflow_dispatch` jobs that check out source and execute
+repository code are release-control surfaces. They must not check out an
+operator-supplied SHA that can differ from the default-branch dispatch
+commit, and they must not consume GitHub Actions caches that untrusted
+workflows can poison.
+
+Every source-executing job in `release-candidate.yml` (`validate`, `native`,
+`draft`), `publish-beta-release.yml` (`publish`), and
+`promote-beta-channel.yml` (`build`) therefore fail-closes in inline Bash
+before checkout: the requested ref must be `refs/heads/<default_branch>`,
+and `inputs.source_commit` must be exactly 40 lowercase hexadecimal
+characters. Checkout then uses `ref: ${{ github.sha }}` so the executed
+tree is the trusted current protected default-branch dispatch snapshot,
+not `inputs.source_commit`.
+
+The two privileged families then diverge:
+
+- Candidate-build jobs (`validate`, `native`, `draft`) construct one
+  candidate from that dispatch snapshot. Their `inputs.source_commit` is
+  that snapshot's identity and must equal `github.sha`.
+- Later publish (`publish`) and promote (`build`) jobs may run after
+  protected `main` has advanced. Their `inputs.source_commit` is the
+  reviewed historical candidate/release identity and must not be required
+  to equal the later `github.sha`. Those jobs still check out `github.sha`
+  for current protected release-control code and pass the historical
+  `source_commit` as data to the existing release/candidate verification
+  steps.
+
+In the new pre-check steps only, GitHub expressions are bound through
+`env` and are not interpolated into the shell script. Later verification
+steps may still pass `inputs.source_commit` and other inputs as data.
+Actions cache access (`cache`, `cache-dependency-path`, and
+`actions/cache`) is removed from the three privileged release workflows;
+`setup-uv` keeps `enable-cache: false`. Ordinary CI caches remain.
+
+This is a local/static source remediation. Hosted CodeQL rescan is still
+required before any GitHub alert is claimed closed. Findings remain open
+until that rescan; they are not dismissed.

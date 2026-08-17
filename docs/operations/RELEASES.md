@@ -31,12 +31,13 @@ version rather than ambiguous interpretation.
 
 ## Candidate build
 
-The **Release candidate** workflow requires an exact version, channel, and full
-40-character source commit. The commit must be the current default-branch head,
-and the Python project/runtime/lock plus dashboard package/lock versions must
-all represent the requested release. Beta tags, asset names, and manifests keep
-the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
-equivalent `x.y.zbN` spelling.
+The **Release candidate** workflow must be dispatched from the default branch
+with an exact version, channel, and full 40-character source commit. That
+commit must equal the dispatch SHA and therefore the default-branch head at
+candidate-creation time. The Python project/runtime/lock plus dashboard
+package/lock versions must all represent the requested release. Beta tags,
+asset names, and manifests keep the raw `x.y.z-beta.N` SemVer spelling even
+when Python lock metadata uses its equivalent `x.y.zbN` spelling.
 
 Before native packaging, the validate job fail-closes unless:
 
@@ -80,11 +81,13 @@ gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/OWNER/REPOSITORY/immutable-re
 ```
 
 The command must return `true`. The owner then dispatches **Release candidate**
-with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The workflow never receives
-the owner's admin credential; it checks that deliberate phrase, the exact
-default-branch head, the unused tag/release slot, version metadata, and the
-reviewed public key. A failed candidate is reissued under a new version rather
-than uploaded with `--clobber`.
+from the default branch with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The
+workflow never receives the owner's admin credential; it fail-closes unless
+that phrase is present, the requested ref is the default branch, and
+`source_commit` is 40 lowercase hex and equals the dispatch SHA. It then
+checks the unused tag/release slot, version metadata, and the reviewed public
+key. A failed candidate is reissued under a new version rather than uploaded
+with `--clobber`.
 
 The unpublished `v0.1.0-beta.1` four-platform draft occupies that version slot
 and remains historical. Do not retarget, replace, or publish it. The first
@@ -199,11 +202,17 @@ distinct from the R02 receipt and must retain
    log must describe any self-approval truthfully and must not call AI review
    or an environment click independent human review. The repository owner
    repeats the admin-authenticated immutable-setting command above immediately
-   before manually dispatching **Publish verified beta release** with the exact
-   tag, source commit, candidate digest, and phrase `PUBLISH UNSIGNED BETA`.
-   The protected job never receives the admin token. It repeats package,
-   checksum, SPDX, provenance, source, keyring, signature, URL, and supported
-   manifest-set verification before publishing. It also runs
+   before manually dispatching **Publish verified beta release** from the
+   protected default branch with the exact tag, the reviewed historical
+   candidate `source_commit`, candidate digest, and phrase
+   `PUBLISH UNSIGNED BETA`. Protected `main` may have advanced since
+   candidate creation; the later dispatch SHA is the trusted current
+   release-control checkout and is not required to equal that earlier
+   reviewed `source_commit`. The protected job never receives the admin
+   token. It checks out `github.sha` and repeats package, checksum, SPDX,
+   provenance, source, keyring, signature, URL, and supported manifest-set
+   verification against the historical candidate identity before publishing.
+   It also runs
    `scripts/publication_gate.py` against the reviewed candidate digest, the
    exact promotion asset inventory, a content-free acceptance receipt bundle
    containing exactly the 20 prepublication gates with an explicit maintainer
@@ -228,9 +237,14 @@ If the sole maintainer approves the deployment, the release receipt records
 that fact without claiming separation of duties. This does not require a paid
 signing identity.
 
-The manual **Promote signed beta update channel** workflow accepts only an exact
-immutable published tag, source commit, reviewed candidate digest, and the
-confirmation phrase `PROMOTE SIGNED BETA`. It verifies GitHub's immutable
+The manual **Promote signed beta update channel** workflow must be dispatched
+from the default branch with an exact immutable published tag, the reviewed
+historical release `source_commit`, reviewed candidate digest, and the
+confirmation phrase `PROMOTE SIGNED BETA`. It checks out the current
+protected default-branch SHA for release-control code. That later dispatch
+SHA is not required to equal the earlier reviewed `source_commit`; existing
+verification still binds the published release, attestations, and signed
+manifests to the historical candidate identity. It verifies GitHub's immutable
 release attestation, matches every downloaded asset to that release, rechecks
 the build/SBOM attestations, and accepts exactly the signed manifests identified
 as OTA-eligible by the candidate inventory. It then builds a link-free Pages

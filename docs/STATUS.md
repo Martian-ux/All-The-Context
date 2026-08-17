@@ -155,6 +155,28 @@ provider receipts and live OTA smoke re-runs remain open.
 
 ## Security maintenance
 
+On 2026-08-16, privileged `workflow_dispatch` release jobs were required to
+run from the default branch and to check out `github.sha` rather than
+`inputs.source_commit` before executing repository code. Every
+source-executing job in `release-candidate.yml` (`validate`, `native`,
+`draft`), `publish-beta-release.yml` (`publish`), and
+`promote-beta-channel.yml` (`build`) fail-closes unless `github.ref` is
+`refs/heads/<default_branch>` and `inputs.source_commit` is exactly 40
+lowercase hex. Candidate-build jobs additionally require that
+`source_commit` equal the dispatch SHA, because they build one candidate
+from that snapshot. Later publish and promote jobs may run after protected
+`main` has advanced; their `source_commit` is the reviewed historical
+candidate/release identity, is not required to equal the later
+`github.sha`, and is passed as data to existing release/candidate
+verification. Only the new pre-check steps bind GitHub expressions through
+`env` and avoid interpolating them into the shell script. Privileged
+checkouts use `ref: ${{ github.sha }}`; no `inputs.source_commit` checkout
+remains in those workflows. Actions cache access (`cache`,
+`cache-dependency-path`, and `actions/cache`) is removed from the three
+privileged release workflows; `setup-uv` keeps `enable-cache: false`.
+Ordinary CI caches are unchanged. This is local/static remediation only; a
+hosted CodeQL rescan is still pending, and no GitHub alert is claimed closed.
+
 On 2026-07-26, Core browser handoff values were removed from executable
 JavaScript literals and are now passed through quoted HTML-escaped data
 attributes to a constant nonce-protected script. The integrations status
