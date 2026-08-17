@@ -29,6 +29,7 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, TextIO
@@ -87,6 +88,27 @@ _SENSITIVE_SETUP_PRESENCE_KEYS = (
 )
 _MAX_REDACTED_ERROR_CHARS = 500
 _CLOSED_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def packaged_smoke_parent(
+    *,
+    root: Path = ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Resolve an optional isolated smoke parent outside the source checkout."""
+
+    active_environment = os.environ if environ is None else environ
+    override = active_environment.get("ATC_PACKAGED_SMOKE_PARENT")
+    if not override:
+        return root / "tmp"
+    requested = Path(override).expanduser()
+    if not requested.is_absolute():
+        raise SystemExit("ATC_PACKAGED_SMOKE_PARENT must be an absolute path")
+    resolved = requested.resolve()
+    source = root.resolve()
+    if resolved == source or resolved.is_relative_to(source):
+        raise SystemExit("ATC_PACKAGED_SMOKE_PARENT must be outside the source checkout")
+    return resolved
 
 
 def available_port() -> int:
@@ -647,7 +669,7 @@ def main() -> int:
     if not executable.is_file():
         raise SystemExit(f"desktop artifact is missing: {executable}")
 
-    temp_parent = ROOT / "tmp"
+    temp_parent = packaged_smoke_parent()
     temp_parent.mkdir(parents=True, exist_ok=True)
     # Disposable work holds credentials/vault/binaries and is always removed.
     work = Path(tempfile.mkdtemp(prefix="packaged-first-run-", dir=temp_parent))

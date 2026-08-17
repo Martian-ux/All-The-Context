@@ -2199,3 +2199,41 @@ acceptance evidence. The production operational calculation is factored into
 one helper with deterministic boundary regressions: 149.999 ms passes; 150 ms,
 non-finite, negative, missing, and any failing required profile do not. A green
 shared-host suite must never be described as a Retrieval V3 latency pass.
+
+## ADR-085: macOS preparation is deterministic but native acceptance stays physical
+
+**Status:** accepted 2026-08-15.
+
+Beta 1 continues to require native macOS 26 ARM64 and native macOS 26 x86-64.
+Rosetta, a virtual machine, a hosted package job, or success on the other Mac
+architecture cannot close either target. The exact macOS patch and stable
+Codex/Claude versions are frozen when the two physical hosts are selected.
+
+Every hosted Mac package job now records a content-free host preflight. The
+release-candidate job also mounts the direct DMG and fails unless the package
+report, checksum, unsigned notice, bundle identity, version, safe internal
+links, structural code seal, and main/MCP/recovery binary architectures all
+match the declared target. A publisher identity is still rejected when the
+package declares the unsigned-community trust state. This strengthens artifact
+identity; it does not add Developer ID signing or notarization.
+
+Physical-host preparation uses a strict preflight that requires the exact OS
+version, native non-Rosetta architecture, four logical CPUs, 8 GiB memory,
+internal solid-state root storage, more than 16 GiB free, non-root execution,
+native tools, and a dedicated-clean-user attestation. A candidate-bound runner
+then verifies the complete inventory and exact clean source, mounts and stages
+the DMG, executes the existing isolated package smokes, removes only run-owned
+state, and retains content-free reports. When the tooling is newer than an
+already-frozen candidate, it must be invoked by that candidate checkout's
+Python environment; the runner verifies the imported package path and records
+its own tool-file digests.
+
+The runner always records `preparation_only=true`,
+`acceptance_claimed=false`, and `canonical_receipts_emitted=false`. It cannot
+replace the supervised Gatekeeper path, stable Codex and Claude journeys,
+login/reboot persistence, Keychain failure rollback, raw-store secret scan,
+authorization/deletion/recovery matrix, or allocated two-billion-byte import
+journey. ARM64, Intel, Codex, and Claude results remain separate slices until
+every frozen cell passes and one unique receipt per gate is consolidated.
+Deferred or unrun Mac work is never relabeled as passed, skipped, or
+unavailable.

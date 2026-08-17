@@ -217,6 +217,11 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
         assert "scripts/smoke_packaged_recovery.py" in text
         assert "scripts/smoke_packaged_first_run.py" in text
         assert "scripts/package_desktop.py" in text
+        assert "scripts/macos_acceptance_preflight.py" in text
+        assert "scripts/smoke_platform_package.py" in text
+        assert "--architecture ${{ matrix.architecture }}" in text or (
+            '--architecture "${{ matrix.architecture }}"' in text
+        )
 
 
 def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:

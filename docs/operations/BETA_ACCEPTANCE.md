@@ -46,6 +46,10 @@ On the exact release commit:
 - Every artifact ships a version-matched recovery/admin helper or native mode
   that exposes installed help, stopped-Core restore, and deliberate purge
   without Python, a source checkout, or developer tooling.
+- Both native Mac architectures follow the candidate-bound preparation and
+  supervised journey contract in
+  [`MACOS_NATIVE_ACCEPTANCE.md`](MACOS_NATIVE_ACCEPTANCE.md). Its hosted and
+  one-command supporting checks explicitly emit no acceptance receipt.
 
 ## Gate 3: one-time setup and automatic context
 

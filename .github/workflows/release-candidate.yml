@@ -181,6 +181,14 @@ jobs:
           python scripts/release_candidate.py validate-runner
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
+      - name: Record content-free macOS host preflight
+        if: runner.os == 'macOS'
+        run: >-
+          python scripts/macos_acceptance_preflight.py
+          --profile hosted-ci
+          --expected-architecture "${{ matrix.architecture }}"
+          --expected-major 26
+          --output "dist/macos-preflight/${{ matrix.architecture }}-hosted-ci.json"
       - run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
       - run: python scripts/smoke_packaged_recovery.py
@@ -192,6 +200,12 @@ jobs:
           --architecture "${{ matrix.architecture }}"
           --version "${{ inputs.version }}"
           --output-dir dist/release
+      - name: Verify direct package identity, architecture, and trust boundary
+        run: >-
+          python scripts/smoke_platform_package.py
+          --directory dist/release
+          --platform "${{ matrix.platform }}"
+          --architecture "${{ matrix.architecture }}"
       - name: Build deterministic archive, checksum, and SPDX inventory
         run: >-
           python scripts/build_release_assets.py
@@ -256,6 +270,14 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve content-free hosted Mac preflight outside release assets
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
+        with:
+          name: macos-preflight-${{ matrix.architecture }}
+          path: dist/macos-preflight/*.json
+          if-no-files-found: error
+          retention-days: 14
 
   draft:
     needs: [validate, native]

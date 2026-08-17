@@ -17,6 +17,11 @@ leaves the beta in draft. The non-sparse exact-2,000,000,000-byte journey and
 its frozen resource/progress/cancel/recovery budgets run on all four artifact
 targets, not only one representative host.
 
+The deterministic preparation and supervised evidence boundary for the two
+native Mac targets is defined in
+[`MACOS_NATIVE_ACCEPTANCE.md`](MACOS_NATIVE_ACCEPTANCE.md). Hosted Mac package
+jobs and preparation reports do not replace those physical-machine journeys.
+
 ## Desktop installation
 
 `scripts/build_desktop.py` uses PyInstaller to build on the operating system it
@@ -54,7 +59,10 @@ publication.
 unsigned-build notice, and path-free JSON package report. These human-install
 artifacts are separate from the immutable ZIP used by the OTA updater.
 Every native job compares `platform.machine()` with its declared asset
-architecture before building. Beta 1 uses the current standard `macos-26`
+architecture before building. Mac jobs also record a content-free native-host
+preflight, and direct-package smoke verifies the declared app identity,
+architecture of the main/MCP/recovery binaries, structural code seal, and
+identity-free trust boundary after mounting the DMG. Beta 1 uses the current standard `macos-26`
 ARM64 and `macos-26-intel` x86-64 public-repository runners. They produce
 separate, honestly labeled assets and run the identical clean-install,
 Keychain, LaunchAgent, MCP, and package-trust matrix; neither is mislabeled as

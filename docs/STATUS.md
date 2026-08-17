@@ -86,6 +86,32 @@ prove the production operational gate accepts 149.999 ms and rejects 150 ms,
 non-finite, negative, missing, and mixed-profile evidence. The CLI clock,
 sample count, profiles, threshold, and fail-closed result are unchanged.
 
+## macOS native acceptance preparation (2026-08-15)
+
+Beta 1 still requires both native macOS 26 architectures and the frozen stable
+Codex/Claude cells. No Mac acceptance cell is credited by this preparation.
+The exact patch is deliberately left unfrozen until the physical ARM64 and
+Intel hosts are selected.
+
+Source now provides a strict, content-free Mac host preflight and a
+candidate-bound supporting runner. The runner verifies the complete candidate
+inventory, exact clean source and Python import path, native host eligibility,
+architecture-specific DMG identity, app/MCP/recovery architectures, structural
+code seal, isolated Keychain/startup adapters, frozen resources, packaged
+recovery, first run, MCP restart, and exact cleanup. It retains no subprocess
+content and emits no gate receipt. Its tool-file digests make a newer reviewed
+runner usable against an older frozen candidate without modifying that
+candidate checkout.
+
+Hosted CI and release-candidate source also record the Mac preflight, and the
+exact release workflow now runs the direct-package trust/identity verifier
+before artifact assembly. These changes require a green hosted ARM64 and Intel
+run after integration. Physical Gatekeeper, real-client, login/reboot,
+Keychain-failure, secret/deletion/recovery, and allocated 2 GB journeys remain
+open on both architectures, as does final `BETA-X01` reconciliation. The full
+operator boundary is in
+[`operations/MACOS_NATIVE_ACCEPTANCE.md`](operations/MACOS_NATIVE_ACCEPTANCE.md).
+
 ## Provider packaged-acceptance and Windows smoke residue (2026-07-26)
 
 Source-level blocker fixes for V1 convergence (exact base

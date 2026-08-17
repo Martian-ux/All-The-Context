@@ -24,7 +24,9 @@ from scripts.check_runner_architecture import normalized_architecture, verify_ru
 from scripts.evaluate_appimage import evaluate_appimage
 from scripts.package_desktop import _write_macos_dmg, build_platform_package
 from scripts.smoke_platform_package import (
+    _load_report,
     macos_has_publisher_identity,
+    verify_macos_app,
     verify_package,
     windows_has_authenticode_certificate_table,
 )
@@ -91,6 +93,18 @@ def test_package_report_records_platform_recovery_surface(tmp_path: Path) -> Non
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["recovery_surface"] == "console-main-binary"
     assert payload["recovery_console_helper"] == "all-the-context"
+
+
+def test_platform_package_report_can_be_selected_by_architecture(tmp_path: Path) -> None:
+    arm = tmp_path / "all-the-context-0.1.0-beta.1-macos-arm64-unsigned.package.json"
+    intel = tmp_path / "all-the-context-0.1.0-beta.1-macos-x86_64-unsigned.package.json"
+    arm.write_text('{"architecture":"arm64"}', encoding="utf-8")
+    intel.write_text('{"architecture":"x86_64"}', encoding="utf-8")
+
+    path, payload = _load_report(tmp_path, "macos", "arm64")
+
+    assert path == arm
+    assert payload == {"architecture": "arm64"}
 
 
 def test_windows_package_report_records_embedded_recovery_helper(tmp_path: Path) -> None:
@@ -251,6 +265,8 @@ def test_linux_portable_package_is_reproducible_and_self_describing(tmp_path: Pa
     assert payload["trust"] == "unsigned-community"
     assert str(tmp_path) not in report.read_text(encoding="utf-8")
     assert verify_package(first_dir, platform_name="linux")["format"] == "tar.gz"
+    with pytest.raises(RuntimeError, match="found 0"):
+        verify_package(first_dir, platform_name="linux", architecture="arm64")
 
 
 def test_windows_direct_package_preserves_self_installer(tmp_path: Path) -> None:
@@ -341,3 +357,113 @@ def test_macos_trust_parser_accepts_absent_or_ad_hoc_and_rejects_developer_id() 
         )
         is True
     )
+
+
+def _test_macos_app(tmp_path: Path) -> Path:
+    app = tmp_path / "All The Context.app"
+    contents = app / "Contents"
+    macos = contents / "MacOS"
+    frameworks = contents / "Frameworks"
+    macos.mkdir(parents=True)
+    frameworks.mkdir()
+    with (contents / "Info.plist").open("wb") as stream:
+        plistlib.dump(
+            {
+                "ATCDistributionTrust": "unsigned-community",
+                "ATCReleaseVersion": "0.1.0-beta.1",
+                "CFBundleDisplayName": "All The Context",
+                "CFBundleExecutable": "AllTheContext",
+                "CFBundleIdentifier": "com.allthecontext.desktop",
+            },
+            stream,
+        )
+    (macos / "AllTheContext").write_bytes(b"main")
+    (frameworks / "all-the-context-mcp").write_bytes(b"mcp")
+    (frameworks / "all-the-context-recovery").write_bytes(b"recovery")
+    return app
+
+
+def test_macos_package_verifier_binds_identity_seal_and_binary_architecture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _test_macos_app(tmp_path)
+    monkeypatch.setattr(
+        "scripts.smoke_platform_package.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "-archs" in command:
+            return subprocess.CompletedProcess(command, 0, "arm64\n", "")
+        if "--display" in command:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "",
+                "Signature=adhoc\nTeamIdentifier=not set\n",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("scripts.smoke_platform_package.subprocess.run", run)
+
+    verify_macos_app(
+        app,
+        expected_architecture="arm64",
+        expected_version="0.1.0-beta.1",
+    )
+
+
+def test_macos_package_verifier_rejects_mislabeled_helper_architecture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _test_macos_app(tmp_path)
+    monkeypatch.setattr(
+        "scripts.smoke_platform_package.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "-archs" in command:
+            architecture = "x86_64" if command[-1].endswith("all-the-context-mcp") else "arm64"
+            return subprocess.CompletedProcess(command, 0, architecture, "")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "",
+            "Signature=adhoc\nTeamIdentifier=not set\n",
+        )
+
+    monkeypatch.setattr("scripts.smoke_platform_package.subprocess.run", run)
+
+    with pytest.raises(RuntimeError, match="does not match its label"):
+        verify_macos_app(
+            app,
+            expected_architecture="arm64",
+            expected_version="0.1.0-beta.1",
+        )
+
+
+def test_macos_package_verifier_rejects_invalid_structural_seal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _test_macos_app(tmp_path)
+    monkeypatch.setattr(
+        "scripts.smoke_platform_package.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "-archs" in command:
+            return subprocess.CompletedProcess(command, 0, "arm64", "")
+        if "--verify" in command:
+            return subprocess.CompletedProcess(command, 1, "", "invalid seal")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("scripts.smoke_platform_package.subprocess.run", run)
+
+    with pytest.raises(RuntimeError, match="structural code seal"):
+        verify_macos_app(
+            app,
+            expected_architecture="arm64",
+            expected_version="0.1.0-beta.1",
+        )
