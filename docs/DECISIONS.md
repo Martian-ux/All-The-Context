@@ -405,9 +405,11 @@ on the public GitHub repository and immutable GitHub Release assets, SHA-256
 sidecars, SBOM/provenance, reproducible source inspection, and an offline
 Ed25519 key whose reviewed public half ships with the application. The updater
 continues to fail closed on a missing/invalid manifest signature, wrong target,
-size mismatch, or digest mismatch. Windows and macOS first-install publisher
-warnings are an accepted usability tradeoff and must be disclosed rather than
-bypassed or described as signed.
+size mismatch, or digest mismatch. Windows and, under the historical
+four-platform plan, macOS first-install publisher warnings are an accepted
+usability tradeoff and must be disclosed rather than bypassed or described as
+signed. ADR-086 later removed macOS from the public-beta support table; the
+`0.1.0-beta.2` first-install warning surface is Windows SmartScreen only.
 
 ## ADR-029: Platform-only APIs are late-bound behind typed compatibility helpers
 
@@ -427,6 +429,10 @@ failures remain observable.
 
 ## ADR-030: Distribution acceptance precedes new retrieval infrastructure
 
+**Status:** accepted as the then-current distribution milestone. Later ADRs
+superseded its hosted-Edge path (ADR-032) and its `0.1.0-beta.1` / three-OS
+product-scope (ADR-053, then ADR-086). The historical text is unchanged.
+
 The next milestone is the installable `0.1.0-beta.1` community release, a real
 hosted Edge/provider acceptance pass, and a signed beta1-to-beta2 update and
 rollback drill. Embeddings and other backend expansion are deferred until those
@@ -442,6 +448,12 @@ The complete evidence contract is maintained in
 `docs/operations/BETA_ACCEPTANCE.md`.
 
 ## ADR-031: Beta 1 separates native installation, OTA eligibility, and Edge activation
+
+**Status:** accepted as the then-current Beta 1 packaging split. ADR-032
+superseded its hosted-Edge activation path. ADR-086 later removed macOS from
+the public-beta support table and release composition; the Mac DMG and
+manual-required Mac OTA sentences below remain historical and are not a
+`0.1.0-beta.2` package, support, or execution requirement.
 
 Beta 1 publishes direct unsigned native packages for people to install:
 Windows uses a one-click `.exe`, macOS uses a `.dmg` containing the per-user
@@ -1246,10 +1258,14 @@ a non-content monitoring permission.
 ## ADR-053: Govern V1 as the first usable public beta
 
 **Status:** accepted as the planning and release-governance baseline on
-2026-07-25. The product-scope decisions are closed; implementation,
-exact-artifact acceptance, and publication remain open.
+2026-07-25. ADR-086 later superseded the three-OS / `0.1.0-beta.1`
+product-scope and version identity while preserving the text below as the
+historical four-platform plan. Those Mac requirements were not passed,
+skipped, waived, or marked unavailable. Implementation, exact-artifact
+acceptance, and publication remain open for the Windows/Linux
+`0.1.0-beta.2` destination in the active roadmap.
 
-For the active roadmap, V1 means the first usable public beta,
+For the then-current roadmap, V1 meant the first usable public beta,
 `0.1.0-beta.1`, not stable `1.0.0`. The active execution plan is
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). It contains no calendar or effort
 estimates. Readiness follows dependency order and exact-artifact evidence.
@@ -1369,8 +1385,10 @@ credential lookup, not a bearer token, when the OS store is used. A failed
 credential or configuration transaction revokes a newly created principal,
 removes its credential, and restores the exact prior configuration bytes.
 Backend errors are surfaced without credential values. Exact-package real
-credential-service receipts on every mandatory OS remain a release-acceptance
-gate.
+credential-service receipts on every then-mandatory OS remain a
+release-acceptance gate. ADR-086 later limited that mandatory set to Windows
+Credential Manager and supported Linux Secret Service; the retained macOS
+Keychain adapter is unsupported source/CI code, not a `0.1.0-beta.2` receipt.
 
 Packaged first-run smoke (`scripts/smoke_packaged_first_run.py`) is intentionally
 **not** that OS-credential receipt. It isolates non-secret smoke credentials with
@@ -2202,7 +2220,10 @@ shared-host suite must never be described as a Retrieval V3 latency pass.
 
 ## ADR-085: macOS preparation is deterministic but native acceptance stays physical
 
-**Status:** accepted 2026-08-15.
+**Status:** accepted 2026-08-15. ADR-086 superseded its product-scope and
+acceptance requirement on 2026-08-16 while preserving this record as
+engineering history. The native Mac cells below were never passed, skipped,
+waived, or marked unavailable.
 
 Beta 1 continues to require native macOS 26 ARM64 and native macOS 26 x86-64.
 Rosetta, a virtual machine, a hosted package job, or success on the other Mac
@@ -2237,3 +2258,90 @@ journey. ARM64, Intel, Codex, and Claude results remain separate slices until
 every frozen cell passes and one unique receipt per gate is consolidated.
 Deferred or unrun Mac work is never relabeled as passed, skipped, or
 unavailable.
+
+## ADR-086: First public beta supports Windows and Linux, not macOS
+
+**Status:** accepted 2026-08-16; supersedes ADR-085's product-scope and
+acceptance requirement while preserving it as engineering history.
+
+The first public beta supports exactly Windows 11 x86-64 and Ubuntu 24.04 LTS
+x86-64 with GNOME and a working Secret Service/GNOME Keyring backend. The
+supported stable-client cells are Codex on Windows/Linux and Claude Desktop on
+Windows; Linux Claude beta is not promoted into the stable-only claim. ChatGPT,
+Claude, and Grok export claims remain mandatory and unchanged.
+
+macOS is not a beta platform. Existing Mac runtime, packaging, Keychain,
+LaunchAgent, DMG, preflight, tests, and hosted CI code remain in the public
+source tree so the cross-platform implementation is not destructively removed.
+Those paths are unsupported portability code: the consumer release workflow
+builds no Mac job, the candidate inventory accepts no Mac asset, publication
+accepts no Mac manifest, public copy advertises no Mac download, and no Mac
+receipt can close or strengthen a beta gate. Retained Mac CI on the ordinary
+source workflow is a regression check only and grants zero support credit. A
+future return to Mac support requires a new ADR, newly frozen support table,
+new candidate, current documentation, and native evidence; ADR-085 preparation
+cannot be retroactively counted.
+
+The 20 prepublication gate IDs remain unchanged. Gates such as BETA-D01,
+BETA-D03, and BETA-X01 now quantify only over the two supported artifact
+targets and the frozen supported client/provider claims. This is an explicit
+pre-candidate product-scope decision, not a claim that deferred Mac cells
+passed, failed, were skipped, or became unavailable.
+
+The existing unpublished `v0.1.0-beta.1` four-platform draft remains bound to
+its old source and candidate digest. Immutable-version controls prohibit
+retargeting or replacing it, so the Windows/Linux-only source version advances
+to `0.1.0-beta.2`. The old draft is not published or reused.
+
+Release signing remains offline Ed25519 signing of the Windows x86-64 OTA
+manifest only. First, the human custodian restore-tests two encrypted backups
+in distinct failure domains and records content-free facts. Then one BETA-R02
+source receipt may be emitted. The separate bundle decision remains null until
+all 20 unique prepublication receipts pass and the maintainer reviews them.
+Only an explicit approve permits offline signing, immutable publication, and
+channel promotion; private signing material never enters GitHub, Actions, the
+repository, an AI system, a shell argument, or an environment variable.
+
+## ADR-087: Privileged release workflows check out the default-branch dispatch SHA
+
+**Status:** accepted 2026-08-16; revised 2026-08-16 after review of the
+candidate versus publish/promote lifecycle.
+
+Privileged `workflow_dispatch` jobs that check out source and execute
+repository code are release-control surfaces. They must not check out an
+operator-supplied SHA that can differ from the default-branch dispatch
+commit, and they must not consume GitHub Actions caches that untrusted
+workflows can poison.
+
+Every source-executing job in `release-candidate.yml` (`validate`, `native`,
+`draft`), `publish-beta-release.yml` (`publish`), and
+`promote-beta-channel.yml` (`build`) therefore fail-closes in inline Bash
+before checkout: the requested ref must be `refs/heads/<default_branch>`,
+and `inputs.source_commit` must be exactly 40 lowercase hexadecimal
+characters. Checkout then uses `ref: ${{ github.sha }}` so the executed
+tree is the trusted current protected default-branch dispatch snapshot,
+not `inputs.source_commit`.
+
+The two privileged families then diverge:
+
+- Candidate-build jobs (`validate`, `native`, `draft`) construct one
+  candidate from that dispatch snapshot. Their `inputs.source_commit` is
+  that snapshot's identity and must equal `github.sha`.
+- Later publish (`publish`) and promote (`build`) jobs may run after
+  protected `main` has advanced. Their `inputs.source_commit` is the
+  reviewed historical candidate/release identity and must not be required
+  to equal the later `github.sha`. Those jobs still check out `github.sha`
+  for current protected release-control code and pass the historical
+  `source_commit` as data to the existing release/candidate verification
+  steps.
+
+In the new pre-check steps only, GitHub expressions are bound through
+`env` and are not interpolated into the shell script. Later verification
+steps may still pass `inputs.source_commit` and other inputs as data.
+Actions cache access (`cache`, `cache-dependency-path`, and
+`actions/cache`) is removed from the three privileged release workflows;
+`setup-uv` keeps `enable-cache: false`. Ordinary CI caches remain.
+
+This is a local/static source remediation. Hosted CodeQL rescan is still
+required before any GitHub alert is claimed closed. Findings remain open
+until that rescan; they are not dismissed.

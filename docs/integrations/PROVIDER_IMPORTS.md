@@ -123,8 +123,8 @@ parser version to reprocess the source.
   expectations, nonzero parse/publication material, and interruption
   checkpoints. Generate or verify with
   `python scripts/generate_boundary_canary.py`. Exact
-  `2,000,000,000`-byte candidate runs on Windows x86-64, macOS ARM64, macOS
-  x86-64, and Linux x86-64 remain operator-controlled acceptance; a
+  `2,000,000,000`-byte candidate runs on Windows x86-64 and Linux x86-64 remain
+  operator-controlled acceptance; a
   `2,000,000,001`-byte source is refused deterministically before upload.
 - Core stores large raw sources as ordered 8 MiB-or-smaller SQLite rows instead
   of one oversized BLOB. Reads, retries, and source-inclusive portable restores
@@ -149,7 +149,7 @@ unparsed material is a visible coverage warning and keeps coverage incomplete
 rather than counting as parser success. Each provider must still pass a
 privacy-safe nonempty real-export receipt acquired after parser freeze and
 within 30 days of candidate acceptance. Missing real-export evidence keeps
-beta1 in draft rather than narrowing the provider list.
+the beta in draft rather than narrowing the provider list.
 
 ## Contributor CLI
 

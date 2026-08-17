@@ -4,13 +4,18 @@ Run `scripts/demo.py` to exercise the authoritative single-Core path without a
 network service, Docker, provider account, personal data, or memory review
 step.
 
+The demo is a contributor/source demonstration. It can run on macOS, but that
+does not make macOS a supported `0.1.0-beta.2` platform or produce release
+evidence; the public beta artifact scope is Windows 11 x86-64 and Ubuntu 24.04
+LTS x86-64.
+
 PowerShell:
 
 ```text
 .\.venv\Scripts\python.exe scripts\demo.py
 ```
 
-macOS or Linux:
+macOS (contributors only) or Linux:
 
 ```text
 ./.venv/bin/python scripts/demo.py

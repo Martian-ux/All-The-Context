@@ -31,12 +31,13 @@ version rather than ambiguous interpretation.
 
 ## Candidate build
 
-The **Release candidate** workflow requires an exact version, channel, and full
-40-character source commit. The commit must be the current default-branch head,
-and the Python project/runtime/lock plus dashboard package/lock versions must
-all represent the requested release. Beta tags, asset names, and manifests keep
-the raw `x.y.z-beta.N` SemVer spelling even when Python lock metadata uses its
-equivalent `x.y.zbN` spelling.
+The **Release candidate** workflow must be dispatched from the default branch
+with an exact version, channel, and full 40-character source commit. That
+commit must equal the dispatch SHA and therefore the default-branch head at
+candidate-creation time. The Python project/runtime/lock plus dashboard
+package/lock versions must all represent the requested release. Beta tags,
+asset names, and manifests keep the raw `x.y.z-beta.N` SemVer spelling even
+when Python lock metadata uses its equivalent `x.y.zbN` spelling.
 
 Before native packaging, the validate job fail-closes unless:
 
@@ -59,8 +60,9 @@ missing. macOS packaging installs set cryptography's documented
 links `libssl.3.dylib` or `libcrypto.3.dylib`. This keeps Intel builds, for which
 cryptography 50 publishes no wheel, from colliding with Python's separately
 bundled same-basename OpenSSL libraries; the install bypasses pip's wheel cache
-so an older dynamically built local wheel cannot evade that policy.
-`ensure_pinned_uv` never
+so an older dynamically built local wheel cannot evade that policy. Those
+retained Mac checks protect source portability only; they do not add a Mac
+target to the consumer candidate. `ensure_pinned_uv` never
 network-bootstraps `uv` without digests—the
 reviewed `0.11.32` binary must already be available (for example via the
 SHA-pinned setup-uv action). The Python dependency vulnerability gate audits a
@@ -79,18 +81,26 @@ gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/OWNER/REPOSITORY/immutable-re
 ```
 
 The command must return `true`. The owner then dispatches **Release candidate**
-with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The workflow never receives
-the owner's admin credential; it checks that deliberate phrase, the exact
-default-branch head, the unused tag/release slot, version metadata, and the
-reviewed public key. A failed candidate is reissued under a new version rather
-than uploaded with `--clobber`.
+from the default branch with the exact phrase `BUILD IMMUTABLE CANDIDATE`. The
+workflow never receives the owner's admin credential; it fail-closes unless
+that phrase is present, the requested ref is the default branch, and
+`source_commit` is 40 lowercase hex and equals the dispatch SHA. It then
+checks the unused tag/release slot, version metadata, and the reviewed public
+key. A failed candidate is reissued under a new version rather than uploaded
+with `--clobber`.
 
-The native matrix builds Windows x86_64, Linux x86_64, macOS arm64 on
-`macos-26`, and macOS x86_64 on `macos-26-intel`. Each job compares the actual
-OS, CPU, and 64-bit runtime with its label before it builds or attests anything.
+The unpublished `v0.1.0-beta.1` four-platform draft occupies that version slot
+and remains historical. Do not retarget, replace, or publish it. The first
+Windows/Linux-only candidate is `0.1.0-beta.2` and must use a fresh draft bound
+to the then-current protected `main` SHA.
+
+The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
+Each job compares the actual OS, CPU, and 64-bit runtime with its label before
+it builds or attests anything. Retained Mac source/CI paths are not part of this
+workflow and cannot contribute a DMG, updater ZIP, manifest, or receipt.
 For each target it produces two deliberately different deliverables:
 
-- a direct unsigned native package (`.exe`, `.dmg`, or `.tar.gz`)
+- a direct unsigned native package (`.exe` or `.tar.gz`)
   with checksum, prominent unsigned notice, package report, and SPDX subject;
 - a deterministic updater ZIP with its own checksum and an SPDX file inventory.
 
@@ -113,22 +123,19 @@ publication do the controls require the by-tag release, exact tag ref,
 immutable state, and `gh release verify`.
 
 Direct packages are the human install path: Windows provides one-click setup,
-macOS provides an open-and-launch DMG, and Linux provides a portable archive.
-An updater ZIP is not automatically
-OTA-eligible merely because it exists. Beta 1 promotes only Windows x86_64 into
-the signed OTA manifest set. macOS and Linux ZIP manifests are withheld until
-real native extraction/install, health, interruption, and rollback acceptance
-proves them. In particular, macOS application bundles contain internal symlinks
-covered by the application seal. The archive writer preserves safe relative
-symlinks and rejects escaping links, but that is not a substitute for a native
-extraction and seal-verification test.
+and Linux provides a portable archive. macOS is unsupported and has no release
+asset. An updater ZIP is not automatically OTA-eligible merely because it
+exists. The first public beta promotes only Windows x86_64 into the signed OTA
+manifest set. The Linux ZIP manifest is withheld until real native
+extraction/install, health, interruption, and rollback acceptance proves it.
+No Mac ZIP or manifest exists in the candidate.
 
 Before using a candidate, an operator must confirm all source, dashboard,
 package, native diagnostic, and packaged-smoke jobs passed for the exact commit.
 Native publisher signing is not a community release gate. Current artifacts
 must be labeled **unsigned community builds** and must never be described as
-Authenticode-signed, Apple-notarized, or publisher-identified. Donated or
-sponsored native signing can be added later as defense in depth.
+Authenticode-signed or publisher-identified. Donated or sponsored Windows
+signing can be added later as defense in depth.
 
 ## Offline public-key ceremony
 
@@ -152,14 +159,23 @@ encrypted `release-2026-a` private key outside the checkout on 2026-07-22 and
 imported only its beta-authorized public half. The reviewed public-key
 fingerprint is
 `sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
-The private key has not entered the repository or GitHub; two recoverable
+The private key has not entered the repository, GitHub, Actions, an AI
+system, a shell argument, or an environment variable. Two recoverable
 encrypted backups in distinct failure domains must each be restore-tested
-before its first production signature.
+before the one candidate-bound `BETA-R02` source receipt.
 
 ## Offline manifest signing and draft publication
 
-For Beta 1, perform these steps only for the explicitly eligible Windows
+For the first public beta, perform these steps only for the explicitly eligible Windows
 x86_64 OTA ZIP:
+
+Do not begin signing merely because the candidate exists. First complete the
+two-backup custody prerequisite on
+[RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md), emit the unique
+`BETA-R02` source receipt, collect all 20 unique prepublication pass receipts,
+and record the maintainer's bundle-level `approve` decision. That decision is
+distinct from the R02 receipt and must retain
+`independent_human_review_claimed=false`.
 
 1. Download the draft ZIP, candidate inventory, checksum, SPDX document, and
    attestation bundles over authenticated HTTPS. Verify the exact workflow,
@@ -169,7 +185,7 @@ x86_64 OTA ZIP:
    command prompts for its password without echo:
 
    ```text
-   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.1-windows-x86_64.zip --version 0.1.0-beta.1 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.1/all-the-context-0.1.0-beta.1-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.1 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.1 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
+   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.2-windows-x86_64.zip --version 0.1.0-beta.2 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.2/all-the-context-0.1.0-beta.2-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.2 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.2 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
    ```
 
    Add `--mandatory` only for a documented security or compatibility boundary.
@@ -177,27 +193,35 @@ x86_64 OTA ZIP:
    against the reviewed repository keyring and the downloaded artifact:
 
    ```text
-   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.1-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.1
+   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.2-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.2
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
-   macOS or Linux manifests. Record the reviewed candidate-inventory SHA-256.
+   a Linux or macOS manifest. Record the reviewed candidate-inventory SHA-256.
 5. Configure the `release-promotion` environment for deliberate maintainer
    approval. This project currently has one human maintainer, so the release
    log must describe any self-approval truthfully and must not call AI review
    or an environment click independent human review. The repository owner
    repeats the admin-authenticated immutable-setting command above immediately
-   before manually dispatching **Publish verified beta release** with the exact
-   tag, source commit, candidate digest, and phrase `PUBLISH UNSIGNED BETA`.
-   The protected job never receives the admin token. It repeats package,
-   checksum, SPDX, provenance, source, keyring, signature, URL, and supported
-   manifest-set verification before publishing. It also runs
+   before manually dispatching **Publish verified beta release** from the
+   protected default branch with the exact tag, the reviewed historical
+   candidate `source_commit`, candidate digest, and phrase
+   `PUBLISH UNSIGNED BETA`. Protected `main` may have advanced since
+   candidate creation; the later dispatch SHA is the trusted current
+   release-control checkout and is not required to equal that earlier
+   reviewed `source_commit`. The protected job never receives the admin
+   token. It checks out `github.sha` and repeats package, checksum, SPDX,
+   provenance, source, keyring, signature, URL, and supported manifest-set
+   verification against the historical candidate identity before publishing.
+   It also runs
    `scripts/publication_gate.py` against the reviewed candidate digest, the
    exact promotion asset inventory, a content-free acceptance receipt bundle
    containing exactly the 20 prepublication gates with an explicit maintainer
    `approve` decision, and the reviewed public-key identity. `BETA-R05` and
    `BETA-O01` are postpublication gates and are rejected from this bundle. The
-   private signing key never enters Actions. The job then requires the resulting
-   release to report immutable and verifies GitHub's release attestation.
+   private signing key, password, and backup location never enter Actions, the
+   repository, an AI system, a shell argument, or an environment variable. The
+   job then requires the resulting release to report immutable and verifies
+   GitHub's release attestation.
 6. Record tag, commit, release URL, asset digests, manifest digests, key ID,
    workflow URLs, unsigned community-build status, and approver in the release
    log. Never replace an asset underneath an already signed URL; issue a new
@@ -213,9 +237,14 @@ If the sole maintainer approves the deployment, the release receipt records
 that fact without claiming separation of duties. This does not require a paid
 signing identity.
 
-The manual **Promote signed beta update channel** workflow accepts only an exact
-immutable published tag, source commit, reviewed candidate digest, and the
-confirmation phrase `PROMOTE SIGNED BETA`. It verifies GitHub's immutable
+The manual **Promote signed beta update channel** workflow must be dispatched
+from the default branch with an exact immutable published tag, the reviewed
+historical release `source_commit`, reviewed candidate digest, and the
+confirmation phrase `PROMOTE SIGNED BETA`. It checks out the current
+protected default-branch SHA for release-control code. That later dispatch
+SHA is not required to equal the earlier reviewed `source_commit`; existing
+verification still binds the published release, attestations, and signed
+manifests to the historical candidate identity. It verifies GitHub's immutable
 release attestation, matches every downloaded asset to that release, rechecks
 the build/SBOM attestations, and accepts exactly the signed manifests identified
 as OTA-eligible by the candidate inventory. It then builds a link-free Pages
@@ -237,7 +266,7 @@ Candidate creation fails closed before this sequence unless
 [recovery runbook](RUNBOOK.md) exist and remain linked from the repository
 README. That is source readiness, not postpublication execution evidence.
 
-The Beta 1 pointer is therefore only:
+The first-public-beta pointer is therefore only:
 
 ```text
 https://OWNER.github.io/REPOSITORY/beta/windows/x86_64/manifest-v1.json
@@ -317,16 +346,16 @@ database; a pre-cutover failure leaves the current files and vault untouched.
 The packaged Windows smoke injects both a crash after replacement and a failed
 post-migration health check and verifies resume and rollback.
 
-macOS and Linux remain direct-package/manual-required and have no Beta 1 OTA
+Linux remains direct-package/manual-required and has no first-public-beta OTA
 channel manifest. The Windows evidence is an unsigned
 same-version engineering transaction, not a public promotion. Community
-Windows beta1 OTA publication requires the offline Ed25519 key ceremony,
+Windows beta OTA publication requires the offline Ed25519 key ceremony,
 immutable channel publication, explicit unsigned-publisher disclosure, and the
-exact-candidate same-version transaction. The first beta2 gate is the real
-signed beta1-to-beta2 N-1 update drill. Paid Authenticode and Apple notarization
-are out of scope. Do not enable automatic macOS or Linux cutover until
-equivalent journaling, health, interruption, and rollback work is implemented
-and observed on those systems.
+exact-candidate same-version transaction. The next-beta gate is the real signed
+first-published-beta-to-successor N-1 update drill. Paid Authenticode is out of
+scope. Do not enable automatic Linux cutover until equivalent journaling,
+health, interruption, and rollback work is implemented and observed. macOS is
+not a release target.
 
 Unknown operating systems, unknown CPU identifiers, and 32-bit application
 runtimes fail closed. Repeated checks and channel changes remove a bounded

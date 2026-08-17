@@ -1,4 +1,8 @@
-# Native macOS observation form
+# Retired native macOS observation form
+
+> **Do not use for the public beta.** macOS is unsupported under ADR-086 and no
+> Mac asset or acceptance receipt belongs to the `0.1.0-beta.2` candidate. This
+> blank form is retained only to preserve the history of the earlier plan.
 
 Copy this form once for ARM64 and once for x86-64. It is a content-free
 operator worksheet, not an acceptance receipt, maintainer decision, signature,

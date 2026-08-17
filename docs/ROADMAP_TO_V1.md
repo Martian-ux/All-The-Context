@@ -3,7 +3,7 @@
 ## Document control
 
 - **Status:** active execution plan
-- **V1 destination:** first usable public beta, `0.1.0-beta.1`
+- **V1 destination:** first usable public beta, `0.1.0-beta.2`
 - **Baseline:** `1d44fdd80a3dcb32c580434924bb03c1e5291ae1`, 2026-07-25
 - **Human owner:** one maintainer
 - **Review model:** AI-assisted implementation and adversarial review; no claim
@@ -16,8 +16,8 @@
 This roadmap defines the shortest responsible path from the integrated
 baseline to a beta that another person can install and use. It is not a plan
 for stable `1.0.0`, and it does not make every known hardening item a V1
-blocker. Stable-release, beta2, mobile, and research work is separated into the
-post-V1 horizon.
+blocker. Successor beta / stable, mobile, and research work is separated into
+the post-V1 horizon.
 
 Exact candidate results belong in an immutable release receipt and in
 [`REQUIREMENTS_TRACEABILITY.md`](REQUIREMENTS_TRACEABILITY.md). The roadmap is
@@ -28,43 +28,45 @@ pass the defined gates.
 
 | ID | Decision | Resolution |
 |---|---|---|
-| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.1`, not stable `1.0.0` |
+| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.2`, not stable `1.0.0` |
 | A-02 | Does mobile block V1? | No. V1 is same-device desktop use with Core online and loopback-only by default |
 | A-03 | Who drives the release? | One human maintainer using AI tools for implementation and review |
 | A-04 | Should the roadmap estimate time? | No. Sequence and evidence determine readiness |
-| A-05 | Does real beta1-to-beta2 N-1 block beta1? | No. Beta1 requires the implemented same-version transactional updater smoke; real N-1 is the first beta2 gate |
+| A-05 | Does a real N-1 update block the first published beta? | No. The first published beta requires the implemented same-version transactional updater smoke; a real first-beta-to-successor N-1 transaction gates the successor |
 | A-06 | Do Project Context Capsules or Memory Lab mechanisms enter V1? | No. They remain research or post-beta work |
 | A-07 | May the roadmap become GitHub work? | Yes. The reviewed beta packages may be represented as milestones and issues |
 | A-08 | Does the beta retain the advertised 2 GB import limit? | Yes. `2,000,000,000` raw bytes is a mandatory inclusive beta boundary; structural chunk support alone is insufficient, and full boundary/resource/recovery evidence blocks publication |
 | A-09 | May a configured Codex/Claude client attest that text was explicitly written by the user? | Yes, when the same-device client principal is explicitly authorized for that witness class. This is a local trust grant, not cryptographic proof; inference remains tentative and imported conflicts remain conservative |
 | A-10 | How are sensitive findings and solo approval handled? | GitHub private vulnerability reporting is enabled. The sole human maintainer approves releases and may use reproducible AI-assisted review without claiming independent review or separation of duties |
-| A-11 | Which platforms and providers are formally supported? | All three desktop OS families—Windows, macOS, and Linux—and all three provider exports—ChatGPT, Claude, and Grok—are mandatory beta targets. Missing exact-artifact or current-export evidence blocks publication rather than narrowing this scope |
+| A-11 | Which platforms and providers are formally supported? | Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 are the mandatory desktop targets; macOS is unsupported and excluded from release assets/evidence. ChatGPT, Claude, and Grok exports remain mandatory. Missing evidence for a supported target or provider blocks publication rather than narrowing that scope |
 
 The high-level product scope is fixed. Phase A still has to freeze the exact
-OS versions, architectures, Linux desktop/keyring baseline, client variants,
+Windows version/build, Linux desktop/keyring baseline, supported client variants,
 bounded source-Python policy if advertised, provider parser/format shapes, and
 scale acceptance profile used to prove it.
 
 ## Fixed beta support floor
 
-| Surface | `0.1.0-beta.1` floor |
+| Surface | `0.1.0-beta.2` floor |
 |---|---|
 | Windows | Windows 11 x86-64 desktop artifact; the exact supported feature release/build is recorded at candidate freeze |
-| macOS | macOS 26 ARM64 and x86-64 artifacts on the then-current supported patch |
-| Linux | Ubuntu 24.04 LTS x86-64 GNOME desktop with a working Secret Service/GNOME Keyring backend; other distributions/desktops are experimental for beta1 |
-| Local AI clients | Current stable Codex and Claude Desktop variants on each OS where the vendor publishes them; the exact version/config path and every advertised OS/client combination are frozen and tested |
+| macOS | Unsupported; retained source/CI code only, with no candidate asset, receipt, or support claim |
+| Linux | Ubuntu 24.04 LTS x86-64 GNOME desktop with a working Secret Service/GNOME Keyring backend; other distributions/desktops are experimental |
+| Local AI clients | Current stable Codex on Windows and Linux plus current stable Claude Desktop on Windows; freeze exact versions/config paths. Linux Claude beta is excluded unless a stable supported client is deliberately added before candidate freeze |
 | Provider exports | Current nonempty ChatGPT, Claude, and Grok account exports, with the freshness/shape/reconciliation rules below |
-| Raw source | Inclusive `2,000,000,000` bytes on all four artifact targets under the frozen scale profile |
+| Raw source | Inclusive `2,000,000,000` bytes on both supported artifact targets under the frozen scale profile |
 | Source installs | Contributor-only, not a normal-user beta support claim; no unbounded `Python 3.12+` public promise |
 | Network | Same device, Core on `127.0.0.1` by default; no mobile/remote/cloud path |
 
 ## What “first usable beta” means
 
-A beta user on Windows, macOS, or Linux can:
+A beta user on Windows or supported Ubuntu can:
 
 1. obtain one immutable artifact and verify its checksum/provenance;
 2. install and start one user-owned Core without Python, Docker, a hosting
-   account, a manually copied bearer token, or routine terminal use;
+   account, or a manually copied bearer token. Windows uses the one-click
+   installer with no routine terminal use. Supported Ubuntu remains a
+   portable `tar.gz` requiring documented manual extract and launch;
 3. keep Core on `127.0.0.1` and use it from the same device;
 4. connect a supported local Codex or Claude client once without destroying unrelated
    client configuration;
@@ -83,11 +85,12 @@ The beta does **not** promise:
 
 - phone or remote-computer access;
 - Core availability while the device is offline;
-- native publisher signing or notarization;
-- automatic macOS/Linux replacement;
+- paid native publisher signing;
+- macOS product support or a Mac release package;
+- automatic Linux replacement;
 - a no-terminal native restore experience;
 - stable 1.x API, schema, export, or support compatibility;
-- a real beta1-to-beta2 update result before beta2 exists;
+- a real N-1 update result before a successor beta exists;
 - provider login, scraping, APIs, or recurring cloud sync;
 - a cloud replica, hosted Edge, or second authority; or
 - production use of Project Context Capsules, Memory Lab mechanisms, learned
@@ -102,18 +105,19 @@ Current main is a strong implementation baseline, not a release candidate.
 | Core and policy | One authoritative Core; automatic dispositions; correction; reversible delete/restore; purge barriers; source-level B-102 witness grant and unkeyed archive conflict collapse | Exact packaged Codex/Claude witness E2E receipts and generalized multi-slot conflict normalization remain open |
 | Retrieval | Authorization/time-first Retrieval V3, bounded FTS5, deterministic selection, 1k/10k gates | Repeat safety and quality gates on the exact candidate |
 | Imports | Generic and ChatGPT/Claude/Grok parsers, raw preservation, atomic finish, retry, bounded chunks | Current real exports for all three providers plus exact-boundary, progress/cancel, resource, interruption, export, and restore evidence at 2,000,000,000 bytes |
-| Desktop | Windows/macOS/Linux packages, setup flow, managed MCP adapter, dashboard | Downloaded-artifact browser/client acceptance in all three mandatory OS families |
+| Desktop | Windows/Linux release packages, setup flow, managed MCP adapter, dashboard; retained unsupported Mac implementation | Downloaded-artifact browser/client acceptance in both supported OS families |
 | Credentials | OS keyring abstraction and scoped client principals | No silent plaintext fallback; failed configuration must not leave a usable orphaned credential |
 | Runtime scope | Edge UI, worker, and deployment workflow removed | Core still constructs Edge managers and exposes callable enrollment/connect/sync/client-management and CLI surfaces |
 | Release | Candidate assets, checksums, SBOM/provenance, beta public key, updater/rollback mechanics | Exact-SHA quality enforcement, locked composition, generated-dashboard parity, key backups, protected publication, and first immutable release |
 | Repository operations | Strong hosted nine-job matrix; GitHub private vulnerability reporting enabled | No execution backlog; `main` remains unprotected and several repository security controls are absent at the baseline snapshot |
-| Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback, version-matched packaged recovery/admin helper (Windows/macOS) and Linux console recovery modes | Exact downloaded-artifact backup/restore/purge receipts on every OS family remain open; contributor CLI alone is not the acceptance surface |
+| Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback, version-matched Windows helper and Linux console recovery modes | Exact downloaded-artifact backup/restore/purge receipts on both supported OS families remain open; contributor CLI alone is not the acceptance surface |
 
 Exact `main` commit `1d44fdd` passed all nine hosted jobs in
 [CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472):
-Python 3.12 on Windows/macOS/Ubuntu, dashboard on Node 20/22, and native package
-acceptance on Windows, Ubuntu, macOS ARM, and macOS Intel. That evidence does not
-replace a frozen beta candidate or operator-owned clean-machine acceptance.
+Python 3.12 on Windows/macOS/Ubuntu, dashboard on Node 20/22, and package
+regressions on Windows, Ubuntu, macOS ARM, and macOS Intel. The Mac jobs now
+protect source portability only; they do not replace a frozen Windows/Linux
+candidate or operator-owned supported-target acceptance.
 
 ## Governing rules
 
@@ -154,7 +158,7 @@ The following failures always leave the release as a draft:
   application without recovery;
 - manifest/signature/hash/target/version verification failure;
 - unintended Edge/Relay/network operation in the supported Core-only artifact;
-- missing or failing exact-artifact evidence for Windows, macOS, or Linux,
+- missing or failing exact-artifact evidence for supported Windows or Linux,
   current-real-export evidence for ChatGPT, Claude, or Grok, or the accepted
   `2,000,000,000`-byte boundary receipt;
 - candidate artifacts not traceable to the exact reviewed source and required
@@ -173,7 +177,7 @@ flowchart LR
   B --> C["Phase C<br/>release controls and candidate freeze"]
   C --> D["Phase D<br/>exact-artifact acceptance"]
   D --> E["Phase E<br/>publish and verify"]
-  E --> H["Post-V1<br/>beta2 and stable horizon"]
+  E --> H["Post-V1<br/>successor beta / stable horizon"]
 ```
 
 No acceptance receipt may be collected before a later code or packaging change
@@ -193,7 +197,8 @@ does not erase it.
   - Codex/Claude client variants;
   - provider export formats and parser versions;
   - import-size ceiling;
-  - manual macOS/Linux update and CLI restore limitations.
+  - manual Linux update and CLI restore limitations plus the explicit absence
+    of macOS support.
 - Before Phase B measurements exist, freeze the 2 GB acceptance profile:
   - reference floor: 4 logical CPU cores, 8 GiB RAM, local SSD, and 16 GiB
     free before the full import/export/isolated-restore journey;
@@ -213,8 +218,8 @@ does not erase it.
     or duplicate decisions;
   - import, source-inclusive export, and isolated restore each complete within
     60 minutes on the reference floor; and
-  - the full journey runs on Windows x86-64, macOS ARM64, macOS x86-64, and
-    Linux x86-64 candidate artifacts.
+  - the full journey runs on Windows x86-64 and Linux x86-64 candidate
+    artifacts.
   These are product usability budgets, not project time estimates. They cannot
   be relaxed after candidate results are known without an explicit revised
   decision and a new candidate.
@@ -327,7 +332,7 @@ All implementation changes finish before the candidate is frozen.
 ### Packaged recovery and irreversible administration
 
 - Version-matched recovery/admin helper or native mode is integrated in every
-  Windows, macOS, and Linux artifact without Python, a source checkout, or
+  supported Windows and Linux artifact without Python, a source checkout, or
   developer tooling.
 - Documented stopped-Core preflight, encrypted restore into an isolated
   destination, integrity verification, cutover/rollback, and help are exposed
@@ -375,9 +380,10 @@ All implementation changes finish before the candidate is frozen.
   ```
 
 - Require dashboard `npm ci`, type/check, tests, build, and high-severity audit.
-- Require the exact nine-job hosted matrix on the candidate SHA: Python 3.12 on
-  Windows/macOS/Ubuntu; dashboard on Node 20/22; and native package acceptance
-  on Windows, Ubuntu, macOS ARM64, and macOS x86-64.
+- Require the exact nine-job hosted source-health matrix on the candidate SHA:
+  Python 3.12 on Windows/macOS/Ubuntu; dashboard on Node 20/22; and package
+  regressions on Windows, Ubuntu, macOS ARM64, and macOS x86-64. The Mac jobs
+  are portability regressions, not release targets or acceptance receipts.
 - Build Python and Node dependencies from reviewed locks/constraints rather
   than resolving broad ranges independently.
 - Verify committed dashboard assets match the production build byte-for-byte.
@@ -439,8 +445,10 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
   preservation.
 - Test the minimum and maximum advertised source Python versions if source
   installs are a public claim.
-- Record SmartScreen, Gatekeeper, unsigned-package, Linux desktop, and manual
-  update behavior exactly rather than treating hosted CI as proof.
+- Record SmartScreen, unsigned-package, Linux desktop, and manual update
+  behavior exactly rather than treating hosted CI as proof. Gatekeeper
+  observations belong to the superseded Mac plan and are not a
+  `0.1.0-beta.2` execution requirement.
 
 ### Providers and import scale
 
@@ -463,7 +471,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
   SHA, current publication atomicity, packaged source-inclusive encrypted
   export/restore, and interruption behavior.
 - A missing ChatGPT, Claude, Grok, or 2,000,000,000-byte receipt leaves the
-  candidate in draft; these mandatory targets are not narrowed for beta1.
+  candidate in draft; these mandatory targets are not narrowed for the beta.
 
 ### Data, security, and recovery
 
@@ -527,11 +535,11 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-S04 | Supported artifacts expose only the Core product boundary | Open | No active Edge operation path; isolated cleanup proof |
 | BETA-S05 | Browser handoff/session credentials obey the accepted design | Partial | URL/ticket/session/referrer/cache/revocation browser tests |
 | BETA-S06 | Repository, dependency, artifact, and private-intake defenses exist | Private intake enabled; other controls partial | Enabled controls and exact-candidate scan receipts |
-| BETA-D01 | The inclusive 2,000,000,000-byte import boundary is usable on every frozen target | Structural chunks only | Predeclared hardware/budgets; allocated non-sparse canary; per-OS/architecture exact-boundary success; boundary+1 refusal; progress/cancel/retry/interruption/SHA/export/restore |
+| BETA-D01 | The inclusive 2,000,000,000-byte import boundary is usable on every supported frozen target | Structural chunks only | Predeclared hardware/budgets; allocated non-sparse canary; Windows/Linux exact-boundary success; boundary+1 refusal; progress/cancel/retry/interruption/SHA/export/restore |
 | BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
-| BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on every OS family from exact downloaded artifacts |
+| BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on supported Windows and Linux from exact downloaded artifacts |
 | BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
-| BETA-R02 | Key custody and publication are recoverable and deliberate | Open | Two restore-tested backups in distinct failure domains, protected workflows, sole-maintainer decision record |
+| BETA-R02 | Key custody is recoverable and publication remains deliberate | Public key prepared; human custody prerequisite open | Two restore-tested backups in distinct failure domains, then one source receipt; the separate 20-receipt maintainer decision precedes offline signing/publication |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
 | BETA-R05 | Public beta and channel reference the approved bytes | Open | Exact-candidate public download/install/channel smoke |
@@ -552,7 +560,7 @@ make the mapping explicit.
 | [B-103 Core-only distribution isolation](https://github.com/Martian-ux/All-The-Context/issues/18) | B | B-001 | BETA-S04 | no active Edge/Relay surface in supported artifacts |
 | [B-104 Credential storage and transactional setup](https://github.com/Martian-ux/All-The-Context/issues/19) | B | B-001 | BETA-P02, BETA-S03 | protected storage and orphan-free rollback |
 | [B-105 Honest provider/import boundary](https://github.com/Martian-ux/All-The-Context/issues/20) | B | B-001 | BETA-P04, BETA-D01 | parser/claim versions and tested size behavior |
-| [B-109 Packaged recovery and deliberate purge administration](https://github.com/Martian-ux/All-The-Context/issues/37) | B | B-001 | BETA-P05, BETA-D02, BETA-D03 | version-matched restore/admin surface in every native artifact |
+| [B-109 Packaged recovery and deliberate purge administration](https://github.com/Martian-ux/All-The-Context/issues/37) | B | B-001 | BETA-P05, BETA-D02, BETA-D03 | version-matched restore/admin surface in every supported artifact |
 | [B-106 Repository security and private intake](https://github.com/Martian-ux/All-The-Context/issues/21) | C | B-001 | BETA-S06, BETA-O01 | feasible controls, intake path, scan policy |
 | [B-107 Exact-SHA locked candidate pipeline](https://github.com/Martian-ux/All-The-Context/issues/22) | C | B-101..B-106, B-109 | BETA-R01, BETA-R03 | exact nine-job matrix, required checks, locks, parity, inventory |
 | [B-108 Beta key backup and protected publication](https://github.com/Martian-ux/All-The-Context/issues/23) | C | B-106 | BETA-R02 | verified backups and deliberate solo workflow |
@@ -581,12 +589,12 @@ and
 | Credential fallback weakens silently | Keyring fails or client config partially writes | B-104 protected fallback and transactional cleanup |
 | Mandatory import boundary exceeds usable behavior | A 2,000,000,000-byte source stalls, exhausts resources, corrupts, or cannot recover | A-08, B-105/B-204; predeclared profile, non-sparse canary, every frozen target; keep beta in draft |
 | Provider receipt proves only a trivial export | Empty/minimal account or unrecognized material reports success | B-105/B-204; 30-day freshness, frozen fictional shapes, nonempty real exports, complete count reconciliation |
-| Recovery or purge exists only for developers | Packaged user needs Python/source checkout or an undocumented API | B-109/B-205; shipped version-matched helper/admin path on all OS families |
+| Recovery or purge exists only for developers | Packaged user needs Python/source checkout or an undocumented API | B-109/B-205; shipped version-matched helper/admin path on both supported OS families |
 | Acceptance evidence is stale | Fixes land after browser/platform/provider receipts | Freeze at B-201; all receipts depend on it |
 | Candidate bytes differ from reviewed source | Broad dependencies or stale web assets resolve/build differently | B-107 exact-SHA locks/parity/inventory |
 | Solo approval is described as independent | AI or self-review is mislabeled | A-10; truthful sole-maintainer record |
 | Security details are disclosed publicly | Sensitive issue body is filed outside the enabled private intake | A-10 and B-106 |
-| Mandatory platform/provider scope is silently narrowed | One OS artifact or current provider export lacks proof | A-11; keep the beta in draft until all six target categories pass |
+| Mandatory platform/provider scope is silently narrowed | One supported OS artifact or current provider export lacks proof | A-11; keep the beta in draft until every frozen supported category passes |
 | Unsigned packages confuse users | OS warning appears without context | Exact warning receipts, checksums, provenance, prominent notice |
 | No telemetry hides failures | Beta problems go unreported | Live support/security paths and criteria-based launch watch |
 
@@ -615,8 +623,8 @@ V1 beta is complete only when:
 These items are important, but do not block the first usable beta unless the
 maintainer expands a beta claim:
 
-1. Publish beta2 and run the real beta1-to-beta2 signed update, interruption,
-   failed-health rollback, and vault-preservation drill.
+1. Publish the successor to the first public beta and run the real signed N-1
+   update, interruption, failed-health rollback, and vault-preservation drill.
 2. Add database/export forward-version refusal, migration identity, a true
    disposable-vault restore dry run, and supported beta snapshot matrix before
    the first schema-changing update.
@@ -641,13 +649,18 @@ maintainer expands a beta claim:
 
 ## Next actions
 
-1. Freeze exact Windows, macOS, and Linux versions/architectures, Codex/Claude
-   variants, and ChatGPT/Claude/Grok parser-format versions under A-11.
-2. Route detailed findings through the enabled private vulnerability intake
+1. Freeze exact Windows and Linux versions/architectures, supported
+   Codex/Claude variants, and ChatGPT/Claude/Grok parser-format versions under
+   A-11.
+2. Complete the two-backup restore tests on the custody form, then emit one
+   candidate-bound `BETA-R02` source receipt. Do not start offline signing
+   until all 20 unique prepublication receipts pass and the maintainer
+   records `approve` with `independent_human_review_claimed=false`.
+3. Route detailed findings through the enabled private vulnerability intake
    and finish the remaining repository security controls.
-3. Complete Phase B fixes, including the mandatory 2 GB path, before collecting
+4. Complete Phase B fixes, including the mandatory 2 GB path, before collecting
    any release acceptance evidence.
-4. Freeze one exact candidate only after the beta safety/product surface stops
-   changing.
-5. Run every browser, client, platform, provider, security, and recovery receipt
+5. Freeze one exact Windows/Linux candidate only after the beta safety/product
+   surface stops changing. Do not reuse the unpublished `0.1.0-beta.1` draft.
+6. Run every browser, client, platform, provider, security, and recovery receipt
    against that exact downloaded candidate before publication.

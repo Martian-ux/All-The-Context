@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
+import tomllib
 from pathlib import Path
 
+from allthecontext import __version__
 from allthecontext.acceptance_receipt import POST_PUBLICATION_GATES, REQUIRED_PUBLICATION_GATES
 from allthecontext.release_candidate import (
     ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME,
@@ -17,10 +20,137 @@ from allthecontext.release_candidate import (
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
+PRIVILEGED_WORKFLOWS = (
+    "release-candidate.yml",
+    "publish-beta-release.yml",
+    "promote-beta-channel.yml",
+)
+CANDIDATE_BUILD_JOBS = {
+    "release-candidate.yml": ("validate", "native", "draft"),
+}
+PUBLISH_PROMOTE_CONTROL_JOBS = {
+    "publish-beta-release.yml": ("publish",),
+    "promote-beta-channel.yml": ("build",),
+}
+SOURCE_EXECUTING_JOBS = CANDIDATE_BUILD_JOBS | PUBLISH_PROMOTE_CONTROL_JOBS
+CANDIDATE_PRECHECK_NAME = "Bind requested source to default-branch dispatch SHA"
+CONTROL_PRECHECK_NAME = "Require default-branch dispatch and a 40-character source commit"
+DEFAULT_REF_CHECK = 'test "$REQUESTED_REF" = "$DEFAULT_BRANCH_REF"'
+SOURCE_COMMIT_SHAPE = r'[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+CANDIDATE_EQUALITY = 'test "$SOURCE_COMMIT" = "$DISPATCH_SHA"'
+CANDIDATE_PRECHECK_ENV = {
+    "REQUESTED_REF": "${{ github.ref }}",
+    "DEFAULT_BRANCH_REF": "refs/heads/${{ github.event.repository.default_branch }}",
+    "SOURCE_COMMIT": "${{ inputs.source_commit }}",
+    "DISPATCH_SHA": "${{ github.sha }}",
+}
+CONTROL_PRECHECK_ENV = {
+    "REQUESTED_REF": "${{ github.ref }}",
+    "DEFAULT_BRANCH_REF": "refs/heads/${{ github.event.repository.default_branch }}",
+    "SOURCE_COMMIT": "${{ inputs.source_commit }}",
+}
+CACHE_KEY = re.compile(r"""^[ \t]+['"]?cache['"]?[ \t]*:""", re.MULTILINE)
+ACTIONS_CACHE = re.compile(r"actions/cache")
+CHECKOUT_USES = re.compile(r"""uses[ \t]*:[ \t]*['"]?actions/checkout@""")
+CHECKOUT_REF = re.compile(r"""^[ \t]+['"]?ref['"]?[ \t]*:[ \t]*(.+?)\s*$""", re.MULTILINE)
+INPUT_COMMIT_REF = re.compile(
+    r"""['"]?ref['"]?[ \t]*:[ \t]*['"]?\$\{\{\s*inputs\.source_commit\s*\}\}"""
+)
+SHELL_VALUE = re.compile(r"""^[ \t]+['"]?shell['"]?[ \t]*:[ \t]*(.+?)\s*$""", re.MULTILINE)
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _job_bodies(text: str) -> dict[str, str]:
+    header = re.search(r"^jobs:\s*$", text, re.MULTILINE)
+    assert header is not None
+    section = text[header.end() + 1 :]
+    starts = list(re.finditer(r"^  ([A-Za-z0-9_-]+):\s*$", section, re.MULTILINE))
+    bodies: dict[str, str] = {}
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(section)
+        bodies[match.group(1)] = section[match.end() + 1 : end]
+    return bodies
+
+
+def _step_blocks(job_body: str) -> list[str]:
+    header = re.search(r"^    steps:\s*$", job_body, re.MULTILINE)
+    assert header is not None
+    section = job_body[header.end() + 1 :]
+    starts = list(re.finditer(r"^      - ", section, re.MULTILINE))
+    blocks: list[str] = []
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(section)
+        blocks.append(section[match.start() : end])
+    return blocks
+
+
+def _unquote(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        return stripped[1:-1]
+    return stripped
+
+
+def _is_checkout(step: str) -> bool:
+    return CHECKOUT_USES.search(step) is not None
+
+
+def _checkout_ref(step: str) -> str | None:
+    match = CHECKOUT_REF.search(step)
+    return _unquote(match.group(1)) if match else None
+
+
+def _shell(step: str) -> str | None:
+    match = SHELL_VALUE.search(step)
+    return _unquote(match.group(1)) if match else None
+
+
+def _mapping_block(step: str, key: str) -> dict[str, str]:
+    mappings: dict[str, str] = {}
+    for line in _step_section(step, key).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        name, separator, value = stripped.partition(":")
+        assert separator, f"expected {key} mapping: {stripped!r}"
+        mappings[name.strip()] = value.strip()
+    return mappings
+
+
+def _precheck_before_checkout(name: str, job_name: str, *, step_name: str) -> tuple[str, str]:
+    steps = _step_blocks(_job_bodies(_read(WORKFLOWS / name))[job_name])
+    precheck_indexes = [index for index, step in enumerate(steps) if step_name in step]
+    checkout_indexes = [index for index, step in enumerate(steps) if _is_checkout(step)]
+    assert precheck_indexes, f"{name}:{job_name} missing {step_name!r}"
+    assert checkout_indexes, f"{name}:{job_name} missing checkout"
+    assert precheck_indexes[0] < checkout_indexes[0], f"{name}:{job_name}"
+    precheck = steps[precheck_indexes[0]]
+    assert _shell(precheck) == "bash", f"{name}:{job_name}"
+    run_block = _step_section(precheck, "run")
+    assert "${{" not in run_block, f"{name}:{job_name}"
+    assert DEFAULT_REF_CHECK in run_block, f"{name}:{job_name}"
+    assert SOURCE_COMMIT_SHAPE in run_block, f"{name}:{job_name}"
+    return precheck, run_block
+
+
+def _step_section(step: str, key: str) -> str:
+    match = re.search(rf"^[ \t]+{re.escape(key)}:\s*(?:\|-?|>-?)?\s*$", step, re.MULTILINE)
+    if match is None:
+        return ""
+    indent = len(match.group(0)) - len(match.group(0).lstrip(" "))
+    lines: list[str] = []
+    for line in step[match.end() :].splitlines():
+        if not line.strip():
+            lines.append(line)
+            continue
+        current = len(line) - len(line.lstrip(" "))
+        if current <= indent and not line.lstrip().startswith("#"):
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def test_release_candidate_validate_job_grants_actions_read() -> None:
@@ -107,8 +237,6 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
 
 
 def test_prepublication_template_is_exact_and_excludes_postpublication_gates() -> None:
-    import json
-
     template_path = ROOT / "release" / "acceptance-receipt-bundle.template.json"
     template = json.loads(template_path.read_text(encoding="utf-8"))
     gate_ids = {item["gate_id"] for item in template["receipts"]}
@@ -217,11 +345,76 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
         assert "scripts/smoke_packaged_recovery.py" in text
         assert "scripts/smoke_packaged_first_run.py" in text
         assert "scripts/package_desktop.py" in text
-        assert "scripts/macos_acceptance_preflight.py" in text
         assert "scripts/smoke_platform_package.py" in text
         assert "--architecture ${{ matrix.architecture }}" in text or (
             '--architecture "${{ matrix.architecture }}"' in text
         )
+
+    ci = _read(WORKFLOWS / "ci.yml")
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    assert "scripts/macos_acceptance_preflight.py" in ci
+    assert "scripts/macos_acceptance_preflight.py" not in candidate
+
+
+def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
+    """Retained macOS code and CI do not create a supported release asset."""
+
+    ci = _read(WORKFLOWS / "ci.yml")
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    publish = _read(WORKFLOWS / "publish-beta-release.yml")
+    promote = _read(WORKFLOWS / "promote-beta-channel.yml")
+
+    native_block = candidate.split("  native:", maxsplit=1)[1].split("  draft:", maxsplit=1)[0]
+    assert native_block.count("platform: windows") == 1
+    assert native_block.count("platform: linux") == 1
+    assert "platform: macos" not in native_block
+    assert "macos-26" not in native_block
+    assert "macos-26-intel" not in native_block
+    assert "-unsigned.dmg" not in candidate
+    assert "scripts/macos_acceptance_preflight.py" not in candidate
+
+    assert "macos-latest" in ci
+    assert "macos-26" in ci
+    assert "macos-26-intel" in ci
+    assert "scripts/macos_acceptance_preflight.py" in ci
+    assert "platform: macos" in ci
+
+    for workflow in (candidate, publish, promote):
+        assert workflow.count("--target windows:x86_64") == 1
+        assert workflow.count("--target linux:x86_64") == 1
+        assert "--target macos:" not in workflow
+        assert workflow.count("--ota-target windows:x86_64") == 1
+        assert workflow.count("--ota-target") == 1
+        assert "-unsigned.dmg" not in workflow
+        assert "v0.1.0-beta.1" not in workflow
+        assert "macos_acceptance" not in workflow
+
+    assert "v0.1.0-beta.2" in publish
+
+
+def test_public_beta_source_metadata_is_beta2_not_historical_beta1() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dashboard = json.loads((ROOT / "apps" / "dashboard" / "package.json").read_text())
+    dashboard_lock = json.loads((ROOT / "apps" / "dashboard" / "package-lock.json").read_text())
+    uv_lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    template = json.loads(
+        (ROOT / "release" / "acceptance-receipt-bundle.template.json").read_text(encoding="utf-8")
+    )
+    locked_project = next(
+        package
+        for package in uv_lock["package"]
+        if isinstance(package, dict) and package.get("name") == "all-the-context"
+    )
+
+    assert pyproject["project"]["version"] == "0.1.0-beta.2"
+    assert __version__ == "0.1.0-beta.2"
+    assert dashboard["version"] == "0.1.0-beta.2"
+    assert dashboard_lock["version"] == "0.1.0-beta.2"
+    assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.2"
+    assert locked_project["version"] == "0.1.0b2"
+    assert template["version"] == "0.1.0-beta.2"
+    assert pyproject["project"]["version"] != "0.1.0-beta.1"
+    assert template["version"] != "0.1.0-beta.1"
 
 
 def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
@@ -304,3 +497,57 @@ def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
     )
     assert "dashboard_import_operations" in artifact_smoke
     assert "--packaged-credential-acceptance" in artifact_smoke
+
+
+def test_privileged_release_workflows_have_no_actions_cache_access() -> None:
+    for name in PRIVILEGED_WORKFLOWS:
+        text = _read(WORKFLOWS / name)
+        assert CACHE_KEY.search(text) is None, name
+        assert "cache-dependency-path" not in text
+        assert ACTIONS_CACHE.search(text) is None, name
+        if "setup-uv@" in text:
+            assert "enable-cache: false" in text
+
+
+def test_privileged_checkouts_use_dispatch_sha_not_input_commit() -> None:
+    for name in PRIVILEGED_WORKFLOWS:
+        text = _read(WORKFLOWS / name)
+        assert INPUT_COMMIT_REF.search(text) is None, name
+        checkout_count = 0
+        for job_name, body in _job_bodies(text).items():
+            if job_name not in SOURCE_EXECUTING_JOBS[name]:
+                assert not any(_is_checkout(step) for step in _step_blocks(body)), job_name
+                continue
+            for step in _step_blocks(body):
+                if not _is_checkout(step):
+                    continue
+                checkout_count += 1
+                assert _checkout_ref(step) == "${{ github.sha }}", f"{name}:{job_name}"
+                assert "inputs.source_commit" not in step, f"{name}:{job_name}"
+        assert checkout_count == len(SOURCE_EXECUTING_JOBS[name]), name
+
+
+def test_candidate_build_jobs_bind_source_to_dispatch_sha_before_checkout() -> None:
+    for name, jobs in CANDIDATE_BUILD_JOBS.items():
+        for job_name in jobs:
+            precheck, run_block = _precheck_before_checkout(
+                name, job_name, step_name=CANDIDATE_PRECHECK_NAME
+            )
+            assert CONTROL_PRECHECK_NAME not in precheck
+            assert _mapping_block(precheck, "env") == CANDIDATE_PRECHECK_ENV
+            assert CANDIDATE_EQUALITY in run_block
+
+
+def test_publish_promote_jobs_do_not_require_historical_source_to_equal_dispatch_sha() -> None:
+    for name, jobs in PUBLISH_PROMOTE_CONTROL_JOBS.items():
+        text = _read(WORKFLOWS / name)
+        assert "DISPATCH_SHA" not in text, name
+        assert CANDIDATE_EQUALITY not in text, name
+        assert CANDIDATE_PRECHECK_NAME not in text, name
+        for job_name in jobs:
+            precheck, run_block = _precheck_before_checkout(
+                name, job_name, step_name=CONTROL_PRECHECK_NAME
+            )
+            assert _mapping_block(precheck, "env") == CONTROL_PRECHECK_ENV
+            assert "DISPATCH_SHA" not in precheck
+            assert CANDIDATE_EQUALITY not in run_block

@@ -30,8 +30,10 @@ credential backend and verifies the round trip. If protected storage is
 unavailable or fails, setup stops, revokes newly created access, and restores
 prior configuration; it does not silently select a plaintext fallback. The
 plaintext file store is development-only and requires deliberate environment
-opt-in. Exact-package Windows, macOS, and Linux protected-store receipts remain
-release gates and are not implied by this source contract.
+opt-in. Exact-package Windows Credential Manager and supported Linux Secret
+Service receipts remain release gates and are not implied by this source
+contract. The retained macOS Keychain adapter is unsupported source code, not a
+beta release surface.
 
 An ATC-configured same-device Codex or Claude principal may receive the
 explicit-statement witness grant. That grant lets the client attest that

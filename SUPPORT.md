@@ -1,9 +1,12 @@
 # Support
 
-All The Context `0.1.0-beta.1` is an unsigned community beta maintained on a
-best-effort basis. Before reporting a problem, review the
-[known issues](docs/KNOWN_ISSUES.md), [platform guidance](docs/operations/PLATFORMS.md),
-and [recovery runbook](docs/operations/RUNBOOK.md).
+All The Context `0.1.0-beta.2` is an unsigned community beta for Windows 11
+x86-64 and Ubuntu 24.04 LTS x86-64, maintained on a best-effort basis. macOS is
+unsupported and no Mac package is distributed. The retained Mac source paths
+are for contributors, not supported users. Before reporting a problem, review
+the [known issues](docs/KNOWN_ISSUES.md),
+[platform guidance](docs/operations/PLATFORMS.md), and
+[recovery runbook](docs/operations/RUNBOOK.md).
 
 ## Public, non-sensitive support
 

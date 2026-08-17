@@ -2,14 +2,30 @@
 
 ## Current milestone
 
-As of 2026-07-25, the immediate target remains an unsigned
-`0.1.0-beta.1` community release. This first usable public beta is the active
-V1 target; stable `1.0.0` is post-V1. No beta release has been published. The
+As of 2026-08-16, the immediate target is an unsigned
+`0.1.0-beta.2` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
+x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
+is post-V1. No beta release has been published. The
 dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
 work packages are in
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-a` private
 key exists outside the checkout and cloud-synchronized workspace; only its
 reviewed public half is tracked.
+
+The earlier `0.1.0-beta.1` four-platform candidate remains an unpublished draft
+bound to its old source and artifact bytes. Its occupied version, evidence, and
+assets are historical and will not be retargeted or published. ADR-086 removes
+macOS from the product support table and consumer release composition while
+retaining the existing Mac source and CI code as unsupported portability work.
+No Mac execution or receipt is required for `0.1.0-beta.2`, and no Mac result is
+relabeled as passed, skipped, waived, or unavailable.
+
+PR 62 was squash-merged into protected `main` at
+`080d90669dd5936206c088ae0f4fe4cca24d327e`. That SHA is the clean starting
+point for this scope change, not the final candidate identity. Candidate
+creation remains blocked until the Windows/Linux scope change itself is merged,
+its exact protected-main checks pass, and a new immutable `beta.2` draft is
+built from that final SHA.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -86,12 +102,11 @@ prove the production operational gate accepts 149.999 ms and rejects 150 ms,
 non-finite, negative, missing, and mixed-profile evidence. The CLI clock,
 sample count, profiles, threshold, and fail-closed result are unchanged.
 
-## macOS native acceptance preparation (2026-08-15)
+## Superseded macOS acceptance preparation (2026-08-15)
 
-Beta 1 still requires both native macOS 26 architectures and the frozen stable
-Codex/Claude cells. No Mac acceptance cell is credited by this preparation.
-The exact patch is deliberately left unfrozen until the physical ARM64 and
-Intel hosts are selected.
+This section records the former four-platform plan and is superseded by ADR-086.
+It credits no Mac acceptance cell and creates no requirement for the current
+Windows/Linux beta. The exact Mac patch was never frozen.
 
 Source now provides a strict, content-free Mac host preflight and a
 candidate-bound supporting runner. The runner verifies the complete candidate
@@ -103,13 +118,11 @@ content and emits no gate receipt. Its tool-file digests make a newer reviewed
 runner usable against an older frozen candidate without modifying that
 candidate checkout.
 
-Hosted CI and release-candidate source also record the Mac preflight, and the
-exact release workflow now runs the direct-package trust/identity verifier
-before artifact assembly. These changes require a green hosted ARM64 and Intel
-run after integration. Physical Gatekeeper, real-client, login/reboot,
-Keychain-failure, secret/deletion/recovery, and allocated 2 GB journeys remain
-open on both architectures, as does final `BETA-X01` reconciliation. The full
-operator boundary is in
+At the time, hosted CI and the old release-candidate source also recorded the
+Mac preflight, and the four-platform workflow ran the direct-package
+trust/identity verifier before artifact assembly. Those unrun physical
+Gatekeeper, client, login/reboot, Keychain, recovery, and 2 GB journeys are now
+retired requirements, not failures or passes. The archived operator boundary is in
 [`operations/MACOS_NATIVE_ACCEPTANCE.md`](operations/MACOS_NATIVE_ACCEPTANCE.md).
 
 ## Provider packaged-acceptance and Windows smoke residue (2026-07-26)
@@ -141,6 +154,28 @@ These are source/harness fixes only. Exact downloaded-candidate real-export
 provider receipts and live OTA smoke re-runs remain open.
 
 ## Security maintenance
+
+On 2026-08-16, privileged `workflow_dispatch` release jobs were required to
+run from the default branch and to check out `github.sha` rather than
+`inputs.source_commit` before executing repository code. Every
+source-executing job in `release-candidate.yml` (`validate`, `native`,
+`draft`), `publish-beta-release.yml` (`publish`), and
+`promote-beta-channel.yml` (`build`) fail-closes unless `github.ref` is
+`refs/heads/<default_branch>` and `inputs.source_commit` is exactly 40
+lowercase hex. Candidate-build jobs additionally require that
+`source_commit` equal the dispatch SHA, because they build one candidate
+from that snapshot. Later publish and promote jobs may run after protected
+`main` has advanced; their `source_commit` is the reviewed historical
+candidate/release identity, is not required to equal the later
+`github.sha`, and is passed as data to existing release/candidate
+verification. Only the new pre-check steps bind GitHub expressions through
+`env` and avoid interpolating them into the shell script. Privileged
+checkouts use `ref: ${{ github.sha }}`; no `inputs.source_commit` checkout
+remains in those workflows. Actions cache access (`cache`,
+`cache-dependency-path`, and `actions/cache`) is removed from the three
+privileged release workflows; `setup-uv` keeps `enable-cache: false`.
+Ordinary CI caches are unchanged. This is local/static remediation only; a
+hosted CodeQL rescan is still pending, and no GitHub alert is claimed closed.
 
 On 2026-07-26, Core browser handoff values were removed from executable
 JavaScript literals and are now passed through quoted HTML-escaped data
@@ -219,9 +254,11 @@ credential safety and the Windows windowed artifact can both be meaningful:
 credentials with the null keyring backend **and** explicit
 `ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1`, asserts
 `credential_storage` is the insecure development file, and does **not** claim
-real OS credential acceptance. Real Windows Credential Manager / macOS Keychain
-round-trips remain the separate `--packaged-credential-acceptance` /
-`smoke_platform_acceptance.py` gates. Headless setup writes a redacted failure
+real OS credential acceptance. Real Windows Credential Manager and supported
+Linux Secret Service round-trips remain the separate
+`--packaged-credential-acceptance` / `smoke_platform_acceptance.py` gates. The
+retained macOS Keychain adapter is unsupported source/CI code and is not a
+`0.1.0-beta.2` receipt. Headless setup writes a redacted failure
 report when setup exits non-zero. On smoke failure the disposable work tree
 (credentials, vault, configs, binaries) is always deleted; only a content-free
 allowlisted summary is retained under a separate diagnostics directory (phase,
@@ -293,7 +330,10 @@ same-basename `libssl.3.dylib`; packaged startup failed on the missing
 cryptography's documented static-OpenSSL source mode and immediately inspect
 the installed Rust extension with `otool`, failing closed if either dynamic
 OpenSSL library remains. Other OSes and non-packaging installs are unchanged.
-The frozen package smoke still must pass on both native macOS architectures.
+Under the then-current four-platform plan the frozen package smoke still had
+to pass on both native macOS architectures. ADR-086 later removed macOS from
+product support; those source packaging checks remain contributor portability
+work and create no Mac package, support promise, or beta gate credit.
 
 On 2026-07-25, experimental pre-beta Core forwarding compatibility code was
 tightened so Core-approved remote Edge `context_scopes` apply to every record
@@ -318,7 +358,8 @@ parts of B-101, B-102, and B-104:
   and encrypted export/restore bytes;
 - normal credential setup now requires Windows Credential Manager, macOS
   Keychain, or Linux Secret Service, while plaintext development storage
-  requires explicit opt-in;
+  requires explicit opt-in. Only the Windows and supported Linux backends are
+  `0.1.0-beta.2` release gates; the Keychain adapter is retained source code;
 - failed credential or managed-client configuration revokes any new principal,
   removes the credential, and restores the prior client configuration bytes;
 - A-09 / B-102 client witness: only ATC-configured same-device Codex/Claude
@@ -604,8 +645,9 @@ accepted.
   package, including its package-local roaming configuration path.
 - Bundled dashboard infrastructure for import, search, local connections,
   encrypted backup, audit/activity, and signed-update controls.
-- Windows per-user installer/shortcut/startup/uninstall path, macOS unsigned
-  app/DMG/LaunchAgent path, Linux portable package path, and three-OS CI.
+- Windows per-user installer/shortcut/startup/uninstall path, Linux portable
+  package path, and three-OS source-health CI. The retained macOS unsigned
+  app/DMG/LaunchAgent path is contributor portability only.
 - Deterministic Retrieval V3 with policy-first authorization, rebuildable UTC
   interval sidecars, weighted candidate-scoped FTS5, conservative task
   admissibility, safe diagnostics, and deterministic marginal context-set
@@ -733,8 +775,8 @@ state is already noncurrent and creates no user queue.
   version for download/install/health/rollback smoke without network I/O and
   without weakening signature, hash, platform, channel, or key checks. The
   admin route is `POST /v1/admin/updates/accept-exact-candidate`. This supports
-  beta1 exact-candidate same-version transactional proof; it is not a public
-  beta1-to-beta2 N-1 receipt.
+  exact-candidate same-version transactional proof; it is not a public
+  first-beta-to-successor N-1 receipt.
 - Roadmap gate `BETA-S04` / work package `B-103` is implemented for the
   supported Core product surface. Exact packaged artifact matrix proof on the
   frozen release identity, release-key ceremony, and deliberate publication
@@ -971,7 +1013,7 @@ state is already noncurrent and creates no user queue.
   routes, and the combined dashboard import flow). Exact-candidate proof of
   the frozen 5-second first-progress/cancel budget, privacy-safe current
   real-export receipts for all three providers, and the exact
-  2,000,000,000-byte four-target import/export/restore receipts remain
+  2,000,000,000-byte Windows/Linux import/export/restore receipts remain
   candidate-controlled acceptance work.
 
 ## Retrieval V3 integration
@@ -1016,9 +1058,10 @@ state is already noncurrent and creates no user queue.
 
 ## V1 recovery/import/release integration reconciliation
 
-- Packaged recovery/admin is integrated across native candidates: Windows and
-  macOS ship a version-matched console helper; Linux exposes the same
-  stopped-Core modes on the console-capable main binary. Candidate and CI
+- Packaged recovery/admin code is integrated across platform implementations:
+  Windows and the retained unsupported Mac path have a version-matched console
+  helper; Linux exposes the same stopped-Core modes on the console-capable main
+  binary. The supported candidate includes Windows and Linux only. Candidate and CI
   native jobs run fail-closed `smoke_packaged_recovery.py` against built bytes
   (`--recovery-help` / doctor plus fiction export/restore/purge). Package reports
   record `recovery_surface` / `recovery_console_helper`; Windows OTA first-run
@@ -1033,12 +1076,15 @@ state is already noncurrent and creates no user queue.
 
 ## Publication sequencing and public readiness
 
-- The protected publication decision requires exactly 20 prepublication gates.
-  `BETA-R05` public-download/channel smoke and `BETA-O01` live public-path and
-  triaged launch-watch proof are postpublication gates; either is rejected if
-  inserted into the prepublication bundle. Their eventual pass receipts require
-  exact downloaded-artifact operational evidence bound to the candidate
-  inventory; source-only receipts remain insufficient.
+- The protected publication decision requires exactly 20 unique prepublication
+  pass receipts plus an explicit maintainer `approve` with
+  `independent_human_review_claimed=false`. Offline Windows x86-64 signing may
+  begin only after that approve. `BETA-R05` public-download/channel smoke and
+  `BETA-O01` live public-path and triaged launch-watch proof are
+  postpublication gates; either is rejected if inserted into the
+  prepublication bundle. Their eventual pass receipts require exact
+  downloaded-artifact operational evidence bound to the candidate inventory;
+  source-only receipts remain insufficient.
 - Candidate source validation now fails closed unless stable support,
   known-issues, security-intake, and recovery guidance exists and remains
   linked from the README. This source readiness does not claim either
@@ -1057,9 +1103,15 @@ state is already noncurrent and creates no user queue.
   main and the exact diagnostic/startup branch SHA have passed the hosted
   Python 3.12 Windows/macOS/Linux and native-package matrices, but that does
   not substitute for validation of the final frozen release identity.
-- Create and restore-test two recoverable encrypted backups of the
-  operator-held release private key in distinct failure domains before its
-  first production signature.
+- Complete the human custody prerequisite on
+  [`operations/RELEASE_KEY_CUSTODY_FORM.md`](operations/RELEASE_KEY_CUSTODY_FORM.md):
+  restore-test two recoverable encrypted backups in distinct failure domains,
+  then emit exactly one candidate-bound `BETA-R02` source receipt. Offline
+  Windows x86-64 signing, publication, and channel promotion wait until all 20
+  unique prepublication pass receipts exist and the maintainer records an
+  explicit `approve` with `independent_human_review_claimed=false`. The private
+  key, password, and backup location never enter the repository, Actions, an
+  AI system, a shell argument, or an environment variable.
 - Preserve and reverify the live branch, environment, secret, dependency,
   immutable-Action, and CodeQL controls on the final candidate SHA. CodeQL
   findings must close through an integrated rescan rather than dismissal; the
@@ -1084,30 +1136,35 @@ state is already noncurrent and creates no user queue.
   every input to a closed recognized/excluded/skipped/unavailable/failed
   outcome. All three are mandatory; missing evidence leaves the release in
   draft.
-- Repeat B-104 against real Windows Credential Manager, macOS Keychain, and
-  Linux Secret Service from exact packages, including unavailable/locked
-  backend and partial-write rollback receipts.
-- Freeze exact Windows/macOS build/patch and supported Codex/Claude variants
-  for the mandatory Windows 11 x86-64, macOS 26 ARM64/x86-64, and Ubuntu 24.04
-  LTS x86-64 GNOME/Secret-Service floor. Before measuring candidates, use the
-  frozen 4-core/8-GiB/SSD/16-GiB-free profile, 1-GiB RSS cap,
+- Repeat B-104 against real Windows Credential Manager and supported Linux
+  Secret Service from exact packages, including unavailable/locked
+  backend and partial-write rollback receipts. The retained macOS Keychain
+  adapter is not a `0.1.0-beta.2` acceptance cell.
+- Freeze the exact Windows build, the exact current stable Codex versions on
+  Windows and Linux, and the exact current stable Windows Claude Desktop
+  version and config path for the mandatory Windows 11 x86-64 and Ubuntu
+  24.04 LTS x86-64 GNOME/Secret-Service floor. Linux Claude beta is excluded
+  by the frozen stable-only support wording unless a stable supported client
+  is deliberately added before candidate freeze. Before measuring candidates,
+  use the frozen 4-core/8-GiB/SSD/16-GiB-free profile, 1-GiB RSS cap,
   four-times-source-plus-1-GiB storage cap, 5-second progress/cancel budgets,
   30-second safe quiescence, and 60-minute import/export/restore ceilings.
   Prove the inclusive `2,000,000,000`-byte boundary with an allocated
-  non-sparse, nonempty canary on Windows x86-64, macOS ARM64, macOS x86-64, and
-  Linux x86-64.
+  non-sparse, nonempty canary on Windows x86-64 and Linux x86-64.
 - Prove the already-shipped version-matched packaged recovery/admin helper
-  (Windows/macOS console helper) and Linux console main-binary recovery modes
-  on exact downloaded candidate artifacts for every OS family; source packaging
+  (Windows console helper) and Linux console main-binary recovery modes
+  on exact downloaded candidate artifacts for both supported OS families; source packaging
   and fail-closed built-byte recovery smokes are integrated, but
   downloaded-artifact export/restore/purge acceptance receipts remain open.
 - Freeze the final release commit after review and repeat the exact nine-job
   hosted matrix on that identity: Python Windows/macOS/Ubuntu, dashboard Node
-  20/22, and packages on Windows, Ubuntu, macOS ARM64, and macOS x86-64.
-- Publish beta1 only after the applicable gates above. Exercise a real signed
-  beta1-to-beta2 Windows update and rollback as the first beta2 gate; beta1
-  instead repeats the existing same-version transactional interruption and
-  rollback smoke on the exact candidate.
+  20/22, and package regressions on Windows, Ubuntu, macOS ARM64, and macOS
+  x86-64. The Mac jobs are source-health only; the release candidate contains
+  Windows and Linux jobs/assets only.
+- Publish `0.1.0-beta.2` only after the applicable gates above. Exercise a real
+  signed first-beta-to-successor Windows update and rollback as a successor
+  gate; the first public beta instead repeats the existing same-version
+  transactional interruption and rollback smoke on the exact candidate.
 - Keep mobile and remote-computer copy out of V1 beta. Core remains
   `127.0.0.1` by default.
 
@@ -1227,9 +1284,9 @@ state is already noncurrent and creates no user queue.
 ## Explicitly unclaimed
 
 - No public beta downloads currently exist.
+- macOS is not supported and no Mac package belongs to the public beta.
 - No secure automatic mobile endpoint currently exists.
-- No paid/native publisher signing or Apple notarization is planned for the
-  community beta.
+- No paid/native Windows publisher signing is planned for the community beta.
 - The live SQLite vault is not application-encrypted at rest; portable exports
   are passphrase-encrypted.
 

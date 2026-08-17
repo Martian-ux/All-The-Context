@@ -4,6 +4,7 @@ import json
 import os
 import plistlib
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ from scripts.build_desktop import (
 )
 from scripts.check_runner_architecture import normalized_architecture, verify_runner_architecture
 from scripts.evaluate_appimage import evaluate_appimage
-from scripts.package_desktop import _write_macos_dmg, build_platform_package
+from scripts.package_desktop import _write_macos_dmg, build_platform_package, unsigned_notice
 from scripts.smoke_platform_package import (
     _load_report,
     macos_has_publisher_identity,
@@ -286,6 +287,76 @@ def test_windows_direct_package_preserves_self_installer(tmp_path: Path) -> None
     assert checksum.name == f"{package.name}.sha256"
     assert notice.name.endswith(".IMPORTANT-UNSIGNED.txt")
     assert json.loads(report.read_text(encoding="utf-8"))["format"] == "exe"
+
+
+_APPLE_OR_GATEKEEPER_MARKERS = ("apple", "notariz", "gatekeeper")
+
+
+def _assert_official_notice_has_no_apple_wording(text: str) -> None:
+    lowered = text.casefold()
+    assert "unsigned community build" in lowered
+    for marker in _APPLE_OR_GATEKEEPER_MARKERS:
+        assert marker not in lowered, f"official notice must not mention {marker!r}"
+
+
+def _linux_embedded_notice(package: Path) -> str:
+    with tarfile.open(package, "r:gz") as bundle:
+        extracted = bundle.extractfile("AllTheContext/IMPORTANT-UNSIGNED-COMMUNITY-BUILD.txt")
+        assert extracted is not None
+        return extracted.read().decode("utf-8")
+
+
+def test_windows_official_package_notice_has_no_apple_or_gatekeeper_wording(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "AllTheContextSetup.exe"
+    executable.write_bytes(b"windows-self-installer")
+
+    _package, _checksum, notice, _report = build_platform_package(
+        executable,
+        tmp_path / "output",
+        version="0.1.0-beta.2",
+        platform_name="windows",
+        architecture="x86_64",
+    )
+
+    text = notice.read_text(encoding="utf-8")
+    lowered = text.casefold()
+    _assert_official_notice_has_no_apple_wording(text)
+    assert "smartscreen" in lowered
+    assert "unknown publisher" in lowered
+    assert text == unsigned_notice("windows")
+
+
+def test_linux_official_package_notice_has_no_apple_or_gatekeeper_wording(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "all-the-context"
+    executable.write_bytes(b"linux-binary")
+
+    package, _checksum, notice, _report = build_platform_package(
+        executable,
+        tmp_path / "output",
+        version="0.1.0-beta.2",
+        platform_name="linux",
+        architecture="x86_64",
+    )
+
+    adjacent = notice.read_text(encoding="utf-8")
+    embedded = _linux_embedded_notice(package)
+    for text in (adjacent, embedded):
+        lowered = text.casefold()
+        _assert_official_notice_has_no_apple_wording(text)
+        assert "direct-install" in lowered
+        assert "unsigned" in lowered
+        assert "sha-256" in lowered
+        assert "checksum" in lowered
+        assert "provenance" in lowered
+        assert "attestation" in lowered
+        assert "signed channel manifest" not in lowered
+        assert "ed25519" not in lowered
+        assert "updater" not in lowered
+        assert text == unsigned_notice("linux")
 
 
 def test_windows_trust_parser_reads_pe_certificate_table_without_powershell(

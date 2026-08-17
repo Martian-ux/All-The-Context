@@ -11,8 +11,10 @@
   user-downloaded ChatGPT, Claude, and Grok archives are in scope.
 - Vector embeddings as a release requirement.
 - Application-level encryption of the live SQLite database.
-- Paid Authenticode, Apple Developer signing, or notarization.
-- Automatic macOS/Linux binary cutover before transactional rollback is proven.
+- Paid Authenticode.
+- macOS product support, release packages, signing, notarization, or acceptance
+  evidence. Retained Mac code is a contributor portability surface only.
+- Automatic Linux binary cutover before transactional rollback is proven.
 
 The retained experimental Relay/Edge source is compatibility/research code, not
 a supported exception to these non-goals.
