@@ -93,12 +93,13 @@ and independently restore-testing two recoverable encrypted backups in distinct
 failure domains, both outside the checkout and synchronized workspace, remains
 required before the first production signature.
 
-## Beta 0.1.0-beta.2 custody handoff
+## Beta 0.1.0-beta.3 custody handoff
 
 The machine-side trust root is prepared: `release-2026-a` is active for beta in
 both tracked keyrings and its reviewed public fingerprint is recorded above.
 The old `0.1.0-beta.1` candidate and its receipts are bound to different source
-and artifact bytes and cannot be reused.
+and artifact bytes and cannot be reused. The unpublished `0.1.0-beta.2` draft
+remains a historical occupied identity; its evidence is not rebound.
 
 The remaining sequence is deliberately separated:
 
@@ -128,7 +129,7 @@ key inside the checkout, then prompts for the encrypted key password without
 echo. Transfer only the signed JSON manifest back. Wipe transient decrypted
 copies and transfer media according to the recorded ceremony procedure.
 
-For `0.1.0-beta.2`, sign only the Windows x86-64 OTA manifest. The Linux
+For `0.1.0-beta.3`, sign only the Windows x86-64 OTA manifest. The Linux
 portable package remains a direct human-install asset and its updater manifest
 stays absent until platform-native update/rollback acceptance changes the
 candidate's explicit OTA-supported target set. macOS is unsupported and has no

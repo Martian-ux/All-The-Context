@@ -16,7 +16,7 @@ fingerprint.
 - Channel: `beta`
 - Expected public fingerprint:
   `sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`
-- Candidate version: `0.1.0-beta.2`
+- Candidate version: `0.1.0-beta.3`
 - Candidate source commit (fill after candidate freeze):
 - Candidate inventory SHA-256 (fill after candidate freeze):
 

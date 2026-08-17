@@ -9,7 +9,7 @@ automatically and remains the only authority.
 
 ## V1 principles
 
-The active V1 release is the first usable public beta, `0.1.0-beta.2`. It is a
+The active V1 release is the first usable public beta, `0.1.0-beta.3`. It is a
 same-device desktop product; stable `1.0.0`, phone access, and remote-computer
 access are post-V1.
 

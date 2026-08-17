@@ -2390,3 +2390,31 @@ payload with `data_dir_cleanup_failed` and returns exit 1.
 
 Candidate dispatch stays blocked pending this follow-up merge and exact-main
 green. This decision does not satisfy real-provider exact-candidate receipts.
+
+## ADR-089: Unpublished beta.2 stays historical; P06 source fix advances beta.3
+
+**Status:** accepted 2026-08-17.
+
+`ROADMAP_TO_V1.md` requires keyboard traversal and visible focus for BETA-P06.
+Source inspection of the unpublished `0.1.0-beta.2` tree at protected main
+`6151e1f8850793c80ebe01d7db0b38e3ac1aff05` found that the global
+`:focus-visible` amber outline is overridden by a later equal-specificity
+`.search-input input { outline: 0; }` rule. The `.search-input` label wrapper
+has only a static border. A static border is not a focus indicator, so that
+source cannot honestly pass P06.
+
+The unpublished `0.1.0-beta.2` draft/candidate remains an occupied historical
+identity. Its evidence is not rebound, deleted, relabeled, weakened, or
+reused. Exact-candidate evidence cannot be rewritten onto a later source tree.
+The next candidate must be rebuilt as `0.1.0-beta.3`.
+
+The smallest source correction keeps the input borderless and adds a
+`:focus-within` outline on the existing search label wrapper, matching the
+global amber outline and offset. A Python source regression fails unless that
+wrapper declares a nonzero, non-none focus-dependent indicator and keeps the
+input `outline: 0`. A dashboard test keeps the existing sr-only accessible
+name. This source fix only makes a new exact Windows/Linux candidate eligible
+for fresh Edge acceptance. It does not pass P06.
+
+macOS remains unsupported and excluded from candidate assets, receipts, and
+support claims. Retained Mac source and CI code is unchanged portability work.

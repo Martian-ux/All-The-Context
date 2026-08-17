@@ -173,6 +173,7 @@ button:disabled { opacity: .55; cursor: wait; }
 .search-row { display: grid; grid-template-columns: minmax(230px, 1fr) 165px auto; gap: 8px; margin-bottom: 24px; }
 .search-input { display: flex; align-items: center; gap: 9px; padding: 0 11px; }
 .search-input input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; font-size: 12px; }
+.search-input:focus-within { outline: 2px solid var(--amber); outline-offset: 3px; }
 .search-input svg { color: var(--faint); flex: none; }
 .search-row select { font-size: 10px; }
 .result-count { padding-bottom: 11px; border-bottom: 1px solid var(--ink); color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
