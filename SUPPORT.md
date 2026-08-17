@@ -1,6 +1,6 @@
 # Support
 
-All The Context `0.1.0-beta.2` is an unsigned community beta for Windows 11
+All The Context `0.1.0-beta.3` is an unsigned community beta for Windows 11
 x86-64 and Ubuntu 24.04 LTS x86-64, maintained on a best-effort basis. macOS is
 unsupported and no Mac package is distributed. The retained Mac source paths
 are for contributors, not supported users. Before reporting a problem, review

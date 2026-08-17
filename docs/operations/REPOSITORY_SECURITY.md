@@ -70,7 +70,7 @@ python scripts/dependency_audit.py --ecosystem python
 # Python audit uses the frozen hashed uv.lock export (dev+packaging), not ambient resolve
 python scripts/dependency_audit.py --ecosystem dashboard
 python scripts/verify_dashboard_parity.py
-python scripts/build_component_inventory.py --version 0.1.0-beta.2 --output-dir dist/inventory
+python scripts/build_component_inventory.py --version 0.1.0-beta.3 --output-dir dist/inventory
 ```
 
 Candidate creation also requires the exact nine-job hosted matrix and local

@@ -3,7 +3,7 @@
 ## Current milestone
 
 As of 2026-08-17, the immediate target is an unsigned
-`0.1.0-beta.2` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
+`0.1.0-beta.3` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
 x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
 is post-V1. No beta release has been published. The
 dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
@@ -19,22 +19,28 @@ release-candidate run `31285545048`, and candidate digest
 assets). It is never retargeted, deleted, or published. An earlier episode
 created draft `360008392` from source
 `48815077544f9defb78d0e6b9c8022319888dfed`; that episode remains historical
-and is no longer the live release identity. ADR-086 removes macOS from the
-product support table and consumer release composition while retaining the
-existing Mac source and CI code as unsupported portability work. No Mac
-execution or receipt is required for `0.1.0-beta.2`, and no Mac result is
+and is no longer the live release identity. The unpublished `0.1.0-beta.2`
+Windows/Linux-only identity remains an occupied historical draft; its
+evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
+from the product support table and consumer release composition while retaining
+the existing Mac source and CI code as unsupported portability work. No Mac
+execution or receipt is required for `0.1.0-beta.3`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
-`080d90669dd5936206c088ae0f4fe4cca24d327e`. That `6be7e1d` SHA is the
-Windows/Linux product-scope change, not the final `beta.2` candidate identity.
-Hosted CI on that exact main exposed a nondeterministic Windows failure in the
-packaged provider owned-vault removal test. The CI assertion retained only the
-exit code, not the content-free stage report; inspection then identified the
-missing explicit Core close before owned `rmtree` as the concrete lifecycle
-gap. Candidate dispatch stays blocked pending the follow-up close/cleanup merge
-and exact-main green.
+`080d90669dd5936206c088ae0f4fe4cca24d327e`. PR 64 then landed the ADR-088
+provider-acceptance close/cleanup follow-up at
+`6151e1f8850793c80ebe01d7db0b38e3ac1aff05`. That `6151e1f` SHA is the
+inspected `beta.2` source tree, not a reusable exact-candidate identity.
+Source inspection found that BETA-P06 cannot honestly pass on that tree: the
+global visible-focus outline is overridden by `.search-input input { outline:
+0; }`, and the search wrapper's static border is not a focus indicator.
+ADR-089 records the source-level `:focus-within` wrapper treatment and
+advances the active source version to `0.1.0-beta.3`. This correction only
+makes a new exact candidate eligible for fresh Edge acceptance; it does not
+pass P06. Candidate dispatch stays blocked pending this source correction,
+review, and exact-main green.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -1187,7 +1193,7 @@ state is already noncurrent and creates no user queue.
 - Repeat B-104 against real Windows Credential Manager and supported Linux
   Secret Service from exact packages, including unavailable/locked
   backend and partial-write rollback receipts. The retained macOS Keychain
-  adapter is not a `0.1.0-beta.2` acceptance cell.
+  adapter is not a `0.1.0-beta.3` acceptance cell.
 - Freeze the exact Windows build, the exact current stable Codex versions on
   Windows and Linux, and the exact current stable Windows Claude Desktop
   version and config path for the mandatory Windows 11 x86-64 and Ubuntu
@@ -1209,7 +1215,7 @@ state is already noncurrent and creates no user queue.
   20/22, and package regressions on Windows, Ubuntu, macOS ARM64, and macOS
   x86-64. The Mac jobs are source-health only; the release candidate contains
   Windows and Linux jobs/assets only.
-- Publish `0.1.0-beta.2` only after the applicable gates above. Exercise a real
+- Publish `0.1.0-beta.3` only after the applicable gates above. Exercise a real
   signed first-beta-to-successor Windows update and rollback as a successor
   gate; the first public beta instead repeats the existing same-version
   transactional interruption and rollback smoke on the exact candidate.

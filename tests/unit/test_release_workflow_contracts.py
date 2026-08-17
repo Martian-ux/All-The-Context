@@ -389,10 +389,11 @@ def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
         assert "v0.1.0-beta.1" not in workflow
         assert "macos_acceptance" not in workflow
 
-    assert "v0.1.0-beta.2" in publish
+    assert "v0.1.0-beta.3" in publish
+    assert "v0.1.0-beta.2" not in publish
 
 
-def test_public_beta_source_metadata_is_beta2_not_historical_beta1() -> None:
+def test_public_beta_source_metadata_is_beta3_not_historical_beta1_or_beta2() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     dashboard = json.loads((ROOT / "apps" / "dashboard" / "package.json").read_text())
     dashboard_lock = json.loads((ROOT / "apps" / "dashboard" / "package-lock.json").read_text())
@@ -406,15 +407,17 @@ def test_public_beta_source_metadata_is_beta2_not_historical_beta1() -> None:
         if isinstance(package, dict) and package.get("name") == "all-the-context"
     )
 
-    assert pyproject["project"]["version"] == "0.1.0-beta.2"
-    assert __version__ == "0.1.0-beta.2"
-    assert dashboard["version"] == "0.1.0-beta.2"
-    assert dashboard_lock["version"] == "0.1.0-beta.2"
-    assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.2"
-    assert locked_project["version"] == "0.1.0b2"
-    assert template["version"] == "0.1.0-beta.2"
+    assert pyproject["project"]["version"] == "0.1.0-beta.3"
+    assert __version__ == "0.1.0-beta.3"
+    assert dashboard["version"] == "0.1.0-beta.3"
+    assert dashboard_lock["version"] == "0.1.0-beta.3"
+    assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.3"
+    assert locked_project["version"] == "0.1.0b3"
+    assert template["version"] == "0.1.0-beta.3"
     assert pyproject["project"]["version"] != "0.1.0-beta.1"
+    assert pyproject["project"]["version"] != "0.1.0-beta.2"
     assert template["version"] != "0.1.0-beta.1"
+    assert template["version"] != "0.1.0-beta.2"
 
 
 def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:

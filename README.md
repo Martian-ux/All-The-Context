@@ -96,7 +96,7 @@ pass.
 
 The source tree retains macOS implementation paths for contributor portability
 checks. They are not a supported beta installation path: no Mac package,
-Mac acceptance receipt, or Mac support promise belongs to `0.1.0-beta.2`.
+Mac acceptance receipt, or Mac support promise belongs to `0.1.0-beta.3`.
 
 The bootstrap script creates or repairs `.venv`, installs the application, and
 checks compiled dependencies. Docker is not required.

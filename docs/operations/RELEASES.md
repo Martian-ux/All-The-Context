@@ -98,10 +98,12 @@ four-platform assets). An earlier episode created draft `360008392` from
 source `48815077544f9defb78d0e6b9c8022319888dfed`; that episode is no longer
 the live release identity. Do not retarget, delete, replace, or publish the
 live draft, and do not revive or reuse the earlier episode. The first
-Windows/Linux-only candidate is `0.1.0-beta.2` and must use a fresh draft bound
-to the then-current protected `main` SHA after exact-main checks are green.
-Candidate dispatch stays blocked pending the ADR-088 provider-acceptance
-close/cleanup merge and that exact-main green.
+Windows/Linux-only candidate was `0.1.0-beta.2`. That unpublished identity
+remains an occupied historical draft; its evidence is not rebound, deleted,
+relabeled, or reused. Source inspection of that tree found a BETA-P06
+visible-focus defect, so the next candidate must be rebuilt as `0.1.0-beta.3`
+from a fresh draft bound to the then-current protected `main` SHA after
+exact-main checks are green. This source correction does not pass P06.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
@@ -194,7 +196,7 @@ distinct from the R02 receipt and must retain
    command prompts for its password without echo:
 
    ```text
-   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.2-windows-x86_64.zip --version 0.1.0-beta.2 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.2/all-the-context-0.1.0-beta.2-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.2 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.2 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
+   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.3-windows-x86_64.zip --version 0.1.0-beta.3 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.3/all-the-context-0.1.0-beta.3-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.3 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.3 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
    ```
 
    Add `--mandatory` only for a documented security or compatibility boundary.
@@ -202,7 +204,7 @@ distinct from the R02 receipt and must retain
    against the reviewed repository keyring and the downloaded artifact:
 
    ```text
-   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.2-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.2
+   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.3-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.3
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
    a Linux or macOS manifest. Record the reviewed candidate-inventory SHA-256.

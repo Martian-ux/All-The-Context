@@ -3,7 +3,7 @@
 ## Document control
 
 - **Status:** active execution plan
-- **V1 destination:** first usable public beta, `0.1.0-beta.2`
+- **V1 destination:** first usable public beta, `0.1.0-beta.3`
 - **Baseline:** `1d44fdd80a3dcb32c580434924bb03c1e5291ae1`, 2026-07-25
 - **Human owner:** one maintainer
 - **Review model:** AI-assisted implementation and adversarial review; no claim
@@ -28,7 +28,7 @@ pass the defined gates.
 
 | ID | Decision | Resolution |
 |---|---|---|
-| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.2`, not stable `1.0.0` |
+| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.3`, not stable `1.0.0` |
 | A-02 | Does mobile block V1? | No. V1 is same-device desktop use with Core online and loopback-only by default |
 | A-03 | Who drives the release? | One human maintainer using AI tools for implementation and review |
 | A-04 | Should the roadmap estimate time? | No. Sequence and evidence determine readiness |
@@ -47,7 +47,7 @@ scale acceptance profile used to prove it.
 
 ## Fixed beta support floor
 
-| Surface | `0.1.0-beta.2` floor |
+| Surface | `0.1.0-beta.3` floor |
 |---|---|
 | Windows | Windows 11 x86-64 desktop artifact; the exact supported feature release/build is recorded at candidate freeze |
 | macOS | Unsupported; retained source/CI code only, with no candidate asset, receipt, or support claim |
@@ -448,7 +448,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 - Record SmartScreen, unsigned-package, Linux desktop, and manual update
   behavior exactly rather than treating hosted CI as proof. Gatekeeper
   observations belong to the superseded Mac plan and are not a
-  `0.1.0-beta.2` execution requirement.
+  `0.1.0-beta.3` execution requirement.
 
 ### Providers and import scale
 
@@ -528,7 +528,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-P03 | Direct context applies and is later retrieved without review | Source-level automatic apply/retrieve and witness policy tests pass; residual is exact-client E2E | Exact packaged Codex/Claude observe-to-retrieve receipt |
 | BETA-P04 | Current mandatory provider imports are truthful | Synthetic/parser evidence | Fresh nonempty real-export receipts, frozen shape canaries, and complete count reconciliation |
 | BETA-P05 | Correction, record/source delete/restore, provenance, history, and deliberate purge are reachable | Earlier API/tests; packaged recovery/admin purge surface integrated in source packaging | Exact-artifact UI/MCP plus packaged administrator receipt |
-| BETA-P06 | Basic keyboard/focus/error/narrow-width behavior | Partial tests | Real browser receipt |
+| BETA-P06 | Basic keyboard/focus/error/narrow-width behavior | Partial tests plus source search-wrapper focus-within regression; P06 has not passed | Real browser receipt |
 | BETA-S01 | Direct secret-like payload or guessable verifier is not durably retained | Open | Pre-ledger refusal, no unkeyed fingerprint, repair/compaction, raw SQLite/WAL/freelist/export/diagnostic scans |
 | BETA-S02 | Client witness and minimum conflict handling are safe and explicit | Source implementation and chronological fixtures integrated; residual exact-client evidence open | Exact packaged authorized-client witness and conflict receipts |
 | BETA-S03 | Credentials use accepted protected storage and setup rolls back | Partial | Real OS stores; no silent plaintext; orphan-free failure |

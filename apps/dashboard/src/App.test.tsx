@@ -669,4 +669,15 @@ describe("dashboard", () => {
     expect(within(activity).queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("keeps a focus-dependent indicator on the search wrapper and names the input", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => (
+      String(request).includes("/context/status") ? json(status()) : json({ items: [] })
+    )));
+
+    render(<App />);
+    const search = await screen.findByRole("textbox", { name: "Search context" });
+    expect(search).toHaveAccessibleName("Search context");
+    expect(search.closest("label.search-input")).not.toBeNull();
+  });
+
 });
