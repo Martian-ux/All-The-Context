@@ -7,9 +7,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_CSS = ROOT / "apps" / "dashboard" / "src" / "styles.css"
-PACKAGED_CSS_DIR = (
-    ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "web" / "assets"
-)
+PACKAGED_CSS_DIR = ROOT / "packages" / "allthecontext" / "src" / "allthecontext" / "web" / "assets"
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
