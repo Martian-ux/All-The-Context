@@ -192,12 +192,13 @@ def run_packaged_provider_acceptance(
         if config.host != "127.0.0.1":
             raise InvalidStateError("non-loopback host")
         try:
-            operation = CoreService(config).import_operations.import_path_via_operation(
-                source,
-                filename=_safe_display_name(normalized, source),
-                source_service=normalized,
-                provider=normalized,
-            )
+            with CoreService(config) as core:
+                operation = core.import_operations.import_path_via_operation(
+                    source,
+                    filename=_safe_display_name(normalized, source),
+                    source_service=normalized,
+                    provider=normalized,
+                )
         except (InvalidStateError, OSError, TypeError, UnicodeError, ValueError):
             # Production operation/import refused or failed before a complete result.
             payload = _failure("import_operation_failed")

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import TracebackType
+from typing import Literal
 
 from ..config import CoreConfig
 from ..import_operations import ImportOperationService
@@ -37,3 +39,19 @@ class CoreService:
     @classmethod
     def in_directory(cls, data_dir: Path, *, require_auth: bool = False) -> CoreService:
         return cls(CoreConfig.in_directory(data_dir, require_auth=require_auth))
+
+    def close(self) -> None:
+        """Release store resources owned by this Core instance."""
+        self.store.close()
+
+    def __enter__(self) -> CoreService:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Literal[False]:
+        self.close()
+        return False

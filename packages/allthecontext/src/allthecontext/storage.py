@@ -2290,6 +2290,31 @@ class CoreStore:
         if hasattr(self._operation_observer_local, "fingerprint_key"):
             del self._operation_observer_local.fingerprint_key
 
+    def close(self) -> None:
+        """Release handles required for deterministic Windows vault removal.
+
+        Shutdown intent: short-lived owners such as packaged provider acceptance
+        must close before deleting an owned data root. Windows cannot unlink the
+        SQLite database, WAL, or SHM file while this process still holds a
+        handle. This method is idempotent and best-effort: it closes the
+        thread-local import-operation observer, then under the existing write
+        lock opens a ``_ClosingConnection``, runs ``PRAGMA wal_checkpoint(TRUNCATE)``,
+        and lets that context close the connection. Only ``sqlite3.Error`` is
+        swallowed on this release path. It does not change ``journal_mode``,
+        hide later ``rmtree`` errors, sleep, retry, or force garbage collection.
+
+        CoreStore does not keep a process-wide writer. After ``close()``, a
+        later public method may open a new connection; reuse remains available
+        under the current architecture.
+        """
+        with suppress(sqlite3.Error):
+            self.close_import_operation_observer()
+        try:
+            with self._write_lock, self.connect() as connection:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            return
+
     def revoke_client(self, client_id: str) -> None:
         with self.transaction() as connection:
             result = connection.execute(

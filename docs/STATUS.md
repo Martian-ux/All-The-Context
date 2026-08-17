@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-08-16, the immediate target is an unsigned
+As of 2026-08-17, the immediate target is an unsigned
 `0.1.0-beta.2` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
 x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
 is post-V1. No beta release has been published. The
@@ -12,20 +12,29 @@ work packages are in
 key exists outside the checkout and cloud-synchronized workspace; only its
 reviewed public half is tracked.
 
-The earlier `0.1.0-beta.1` four-platform candidate remains an unpublished draft
-bound to its old source and artifact bytes. Its occupied version, evidence, and
-assets are historical and will not be retargeted or published. ADR-086 removes
-macOS from the product support table and consumer release composition while
-retaining the existing Mac source and CI code as unsupported portability work.
-No Mac execution or receipt is required for `0.1.0-beta.2`, and no Mac result is
+The live unpublished `0.1.0-beta.1` four-platform identity is draft ID
+`367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
+release-candidate run `31285545048`, and candidate digest
+`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe` (55
+assets). It is never retargeted, deleted, or published. An earlier episode
+created draft `360008392` from source
+`48815077544f9defb78d0e6b9c8022319888dfed`; that episode remains historical
+and is no longer the live release identity. ADR-086 removes macOS from the
+product support table and consumer release composition while retaining the
+existing Mac source and CI code as unsupported portability work. No Mac
+execution or receipt is required for `0.1.0-beta.2`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
-PR 62 was squash-merged into protected `main` at
-`080d90669dd5936206c088ae0f4fe4cca24d327e`. That SHA is the clean starting
-point for this scope change, not the final candidate identity. Candidate
-creation remains blocked until the Windows/Linux scope change itself is merged,
-its exact protected-main checks pass, and a new immutable `beta.2` draft is
-built from that final SHA.
+PR 63 was squash-merged into protected `main` at
+`6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
+`080d90669dd5936206c088ae0f4fe4cca24d327e`. That `6be7e1d` SHA is the
+Windows/Linux product-scope change, not the final `beta.2` candidate identity.
+Hosted CI on that exact main exposed a nondeterministic Windows failure in the
+packaged provider owned-vault removal test. The CI assertion retained only the
+exit code, not the content-free stage report; inspection then identified the
+missing explicit Core close before owned `rmtree` as the concrete lifecycle
+gap. Candidate dispatch stays blocked pending the follow-up close/cleanup merge
+and exact-main green.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -153,6 +162,34 @@ Source-level blocker fixes for V1 convergence (exact base
 These are source/harness fixes only. Exact downloaded-candidate real-export
 provider receipts and live OTA smoke re-runs remain open.
 
+## Packaged provider-acceptance Windows vault close (2026-08-17)
+
+Exact main `6be7e1d032714b39528fcc31d5333539406d08a6` hosted CI exposed a
+nondeterministic Windows failure in the packaged provider owned-vault removal
+test. The assertion retained only exit 1, not the content-free stage report,
+so the exact failing stage was not directly observed. Inspection found that
+packaged `--packaged-provider-acceptance` had no explicit Core shutdown before
+owned `rmtree`; on Windows, a lingering SQLite/WAL/observer handle can block
+that removal. ADR-088 adds idempotent
+`CoreStore.close()` (observer close, then write-locked
+`PRAGMA wal_checkpoint(TRUNCATE)` on a `_ClosingConnection`) and
+`CoreService` context-manager shutdown. The packaged surface binds Core as a
+context manager so close always precedes owned `rmtree` on success and every
+exception path. Caller-supplied data-dir deletion is unchanged. An `OSError`
+from owned `rmtree` after close still yields `data_dir_cleanup_failed` and
+exit 1. The release path does not sleep, retry, change `journal_mode`, hide
+`rmtree` errors, or call `gc.collect`. Candidate dispatch stays blocked
+pending this follow-up merge and exact-main green.
+
+Local Python 3.12 validation for this follow-up passes repository-wide Ruff
+format/check, strict mypy across 81 source files, and pytest with 1,022 passed,
+four host-limited symlink skips, and three known deprecation warnings. The docs
+contract, 43 third-party Action pins, current-tree and full-history security
+scans, paired public keyring validation, tracked private-key audit, frozen
+Python dependency audit, and `git diff --check` also pass. These local results
+do not substitute for the required hosted Windows rerun on the eventual exact
+protected-main merge SHA.
+
 ## Security maintenance
 
 On 2026-08-16, privileged `workflow_dispatch` release jobs were required to
@@ -174,8 +211,13 @@ checkouts use `ref: ${{ github.sha }}`; no `inputs.source_commit` checkout
 remains in those workflows. Actions cache access (`cache`,
 `cache-dependency-path`, and `actions/cache`) is removed from the three
 privileged release workflows; `setup-uv` keeps `enable-cache: false`.
-Ordinary CI caches are unchanged. This is local/static remediation only; a
-hosted CodeQL rescan is still pending, and no GitHub alert is claimed closed.
+Ordinary CI caches are unchanged. Exact protected `main`
+`6be7e1d032714b39528fcc31d5333539406d08a6` then passed hosted CodeQL run
+`31991996483`: Actions, JavaScript/TypeScript, and Python analyses all reported
+zero results, `main` had zero open code-scanning alerts, and alerts #3 through
+#21 closed as fixed with no dismissal. This closes the ADR-087 hosted rescan;
+it does not waive the separate Windows CI cleanup failure on that SHA or the
+required green checks on the follow-up exact `main`.
 
 On 2026-07-26, Core browser handoff values were removed from executable
 JavaScript literals and are now passed through quoted HTML-escaped data
@@ -183,8 +225,9 @@ attributes to a constant nonce-protected script. The integrations status
 endpoint also replaces local configuration exceptions with a stable repair
 message, so parser errors cannot disclose paths, credentials, or personal
 configuration material. Focused regressions cover both response sinks. GitHub
-alerts #1 and #2 were left open for the integrated `main` rescan; no alert was
-dismissed or otherwise mutated to manufacture a clean gate.
+alerts #1 and #2 closed as fixed through the integrated `main` rescan on
+2026-07-26; neither was dismissed or otherwise mutated to manufacture a clean
+gate.
 
 A later exact-candidate Windows Edge run found one same-origin, query-free
 `/favicon.ico` JSON 404 during every healthy dashboard handoff. The dashboard
@@ -244,9 +287,14 @@ SHA-256 digests, and sizes, and uses release-ID REST operations through
 publication. The unused-version preflight now also rejects any matching draft
 from the full release listing before consulting the published-only tag routes.
 Post-publication verification still requires the by-tag release, exact tag
-ref, immutable state, and GitHub release attestation. The existing live draft
-was not changed, deleted, published, or reused; a rebuilt candidate from the
-corrected source remains pending.
+ref, immutable state, and GitHub release attestation. That `360008392` /
+`48815077544f9defb78d0e6b9c8022319888dfed` episode remains recorded history
+and is no longer the live `v0.1.0-beta.1` release identity. The live
+unpublished draft is numeric ID `367337056`, bound to source
+`563a397d3095f1f45bb5814dfd39d9d7c4fab0bc` from release-candidate run
+`31285545048`, candidate digest
+`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe`, with 55
+four-platform assets. It has not been retargeted, deleted, or published.
 
 On 2026-07-26, the packaged first-run smoke was corrected so ADR-056 fail-closed
 credential safety and the Windows windowed artifact can both be meaningful:
