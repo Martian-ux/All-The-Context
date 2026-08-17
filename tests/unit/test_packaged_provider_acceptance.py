@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import shutil
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from allthecontext.core.service import CoreService
 from allthecontext.desktop import main as desktop_main
 from allthecontext.packaged_provider_acceptance import run_packaged_provider_acceptance
 from allthecontext.provider_shapes import frozen_provider_shapes
+from allthecontext.storage import CoreStore
 
 
 def _chatgpt_export(path: Path) -> str:
@@ -97,6 +100,47 @@ def _write_zip(path: Path, entries: dict[str, bytes | str]) -> None:
             archive.writestr(name, payload)
 
 
+class _ClosingFakeCore:
+    def close(self) -> None:
+        return None
+
+    def __enter__(self) -> _ClosingFakeCore:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> Literal[False]:
+        self.close()
+        return False
+
+
+def _complete_operation() -> dict[str, object]:
+    return {
+        "status": "complete",
+        "result": {
+            "provider": "chatgpt",
+            "parser_identity": "chatgpt-archives-v1",
+            "export_format": "chatgpt_conversation_graph",
+            "coverage": {
+                "complete": True,
+                "closed_coverage": {
+                    "recognized": 1,
+                    "excluded": 0,
+                    "skipped": 0,
+                    "unavailable": 0,
+                    "failed": 0,
+                    "unparsed": 0,
+                },
+            },
+            "candidate_ids": ["candidate-1"],
+            "outcomes": {"applied": 1},
+        },
+    }
+
+
 def test_packaged_surface_imports_through_core_without_content_in_report(
     tmp_path: Path,
 ) -> None:
@@ -121,6 +165,7 @@ def test_packaged_surface_imports_through_core_without_content_in_report(
     assert payload["candidate_count"] >= 1
     assert payload["coverage_complete"] is True
     assert payload["loopback_bound"] is True
+    assert data_dir.is_dir()
     rendered = json.dumps(payload)
     assert str(export) not in rendered
     for value in json.loads(source_text):
@@ -255,7 +300,7 @@ def test_packaged_surface_splits_operation_and_reconcile_failure_stages(
         def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
             raise ValueError("synthetic operation validation failure")
 
-    class _BoomService:
+    class _BoomService(_ClosingFakeCore):
         def __init__(self, _config: object) -> None:
             self.import_operations = _BoomOps()
 
@@ -284,7 +329,7 @@ def test_packaged_surface_splits_operation_and_reconcile_failure_stages(
         def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
             return {"status": "failed", "result": None}
 
-    class _IncompleteService:
+    class _IncompleteService(_ClosingFakeCore):
         def __init__(self, _config: object) -> None:
             self.import_operations = _IncompleteOps()
 
@@ -331,7 +376,7 @@ def test_packaged_surface_splits_operation_and_reconcile_failure_stages(
                 },
             }
 
-    class _ReconcileService:
+    class _ReconcileService(_ClosingFakeCore):
         def __init__(self, _config: object) -> None:
             self.import_operations = _ReconcileOps()
 
@@ -407,3 +452,178 @@ def test_packaged_surface_reports_reconcile_stage_for_unknown_graph_nodes(
     assert payload["error_code"] == "import_acceptance_reconcile_failed"
     assert payload["content_free"] is True
     assert "plugin" not in json.dumps(payload)
+
+
+def test_packaged_surface_closes_owned_core_before_rmtree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = tmp_path / "conversations.json"
+    _chatgpt_export(export)
+    report = tmp_path / "report.json"
+    disposable = tmp_path / "owned-vault"
+    events: list[str] = []
+
+    class _Ops:
+        def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            events.append("import")
+            return _complete_operation()
+
+    class _Service(_ClosingFakeCore):
+        def __init__(self, _config: object) -> None:
+            self.import_operations = _Ops()
+
+        def close(self) -> None:
+            events.append("close")
+
+    def fake_data_dir() -> Path:
+        disposable.mkdir()
+        return disposable
+
+    def fake_rmtree(path: Path) -> None:
+        events.append("rmtree")
+        assert Path(path) == disposable
+
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.CoreService", _Service)
+    monkeypatch.setattr(
+        "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
+        fake_data_dir,
+    )
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.shutil.rmtree", fake_rmtree)
+    assert (
+        run_packaged_provider_acceptance(
+            report_path=report,
+            export_path=export,
+            provider="chatgpt",
+        )
+        == 0
+    )
+    assert events == ["import", "close", "rmtree"]
+    assert json.loads(report.read_text(encoding="utf-8"))["status"] == "complete"
+
+
+def test_packaged_surface_closes_on_import_exception_before_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = tmp_path / "conversations.json"
+    _chatgpt_export(export)
+    report = tmp_path / "report.json"
+    disposable = tmp_path / "owned-vault"
+    events: list[str] = []
+
+    class _Ops:
+        def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            events.append("import")
+            raise ValueError("synthetic operation validation failure")
+
+    class _Service(_ClosingFakeCore):
+        def __init__(self, _config: object) -> None:
+            self.import_operations = _Ops()
+
+        def close(self) -> None:
+            events.append("close")
+
+    def fake_data_dir() -> Path:
+        disposable.mkdir()
+        return disposable
+
+    def fake_rmtree(path: Path) -> None:
+        events.append("rmtree")
+        assert Path(path) == disposable
+
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.CoreService", _Service)
+    monkeypatch.setattr(
+        "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
+        fake_data_dir,
+    )
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.shutil.rmtree", fake_rmtree)
+    assert (
+        run_packaged_provider_acceptance(
+            report_path=report,
+            export_path=export,
+            provider="chatgpt",
+        )
+        == 1
+    )
+    assert events == ["import", "close", "rmtree"]
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["error_code"] == "import_operation_failed"
+    assert payload["content_free"] is True
+
+
+def test_packaged_surface_reports_cleanup_failure_after_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = tmp_path / "conversations.json"
+    _chatgpt_export(export)
+    report = tmp_path / "report.json"
+    disposable = tmp_path / "owned-vault"
+    events: list[str] = []
+
+    class _Ops:
+        def import_path_via_operation(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            events.append("import")
+            return _complete_operation()
+
+    class _Service(_ClosingFakeCore):
+        def __init__(self, _config: object) -> None:
+            self.import_operations = _Ops()
+
+        def close(self) -> None:
+            events.append("close")
+
+    def fake_data_dir() -> Path:
+        disposable.mkdir()
+        return disposable
+
+    def fake_rmtree(path: Path) -> None:
+        events.append("rmtree")
+        assert Path(path) == disposable
+        raise OSError("synthetic vault removal failure")
+
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.CoreService", _Service)
+    monkeypatch.setattr(
+        "allthecontext.packaged_provider_acceptance._make_temp_data_dir",
+        fake_data_dir,
+    )
+    monkeypatch.setattr("allthecontext.packaged_provider_acceptance.shutil.rmtree", fake_rmtree)
+    assert (
+        run_packaged_provider_acceptance(
+            report_path=report,
+            export_path=export,
+            provider="chatgpt",
+        )
+        == 1
+    )
+    assert events == ["import", "close", "rmtree"]
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["error_code"] == "data_dir_cleanup_failed"
+    assert payload["status"] == "failed"
+    assert payload["content_free"] is True
+
+
+def test_core_store_close_is_idempotent_and_allows_reuse(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    vault_id = store.initialize_vault()
+    store.close()
+    store.close()
+    assert store.vault_id() == vault_id
+    store.close()
+
+
+def test_core_service_context_releases_sqlite_files_without_gc(tmp_path: Path) -> None:
+    data_root = tmp_path / "owned-vault"
+    data_root.mkdir()
+    export = tmp_path / "conversations.json"
+    _chatgpt_export(export)
+    with CoreService.in_directory(data_root) as core:
+        core.import_operations.import_path_via_operation(
+            export,
+            filename="chatgpt-acceptance-export.json",
+            source_service="chatgpt",
+            provider="chatgpt",
+        )
+        core.store._operation_observer_local.connection = (
+            core.store._connect_import_operation_reader()
+        )
+    shutil.rmtree(data_root)
+    assert not data_root.exists()

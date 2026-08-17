@@ -2289,9 +2289,16 @@ pre-candidate product-scope decision, not a claim that deferred Mac cells
 passed, failed, were skipped, or became unavailable.
 
 The existing unpublished `v0.1.0-beta.1` four-platform draft remains bound to
-its old source and candidate digest. Immutable-version controls prohibit
-retargeting or replacing it, so the Windows/Linux-only source version advances
-to `0.1.0-beta.2`. The old draft is not published or reused.
+its live identity: numeric release ID `367337056`, source
+`563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`, release-candidate run
+`31285545048`, and candidate digest
+`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe` (55
+assets). An earlier episode created draft `360008392` from source
+`48815077544f9defb78d0e6b9c8022319888dfed`; that episode is historical and is
+no longer the live release identity. Immutable-version controls prohibit
+retargeting, deleting, replacing, or publishing the live draft and prohibit
+reviving or reusing the earlier draft episode, so the Windows/Linux-only
+source version advances to `0.1.0-beta.2`.
 
 Release signing remains offline Ed25519 signing of the Windows x86-64 OTA
 manifest only. First, the human custodian restore-tests two encrypted backups
@@ -2304,8 +2311,8 @@ repository, an AI system, a shell argument, or an environment variable.
 
 ## ADR-087: Privileged release workflows check out the default-branch dispatch SHA
 
-**Status:** accepted 2026-08-16; revised 2026-08-16 after review of the
-candidate versus publish/promote lifecycle.
+**Status:** accepted 2026-08-16; revised 2026-08-17 after review of the
+candidate versus publish/promote lifecycle and the protected-main rescan.
 
 Privileged `workflow_dispatch` jobs that check out source and execute
 repository code are release-control surfaces. They must not check out an
@@ -2342,6 +2349,44 @@ Actions cache access (`cache`, `cache-dependency-path`, and
 `actions/cache`) is removed from the three privileged release workflows;
 `setup-uv` keeps `enable-cache: false`. Ordinary CI caches remain.
 
-This is a local/static source remediation. Hosted CodeQL rescan is still
-required before any GitHub alert is claimed closed. Findings remain open
-until that rescan; they are not dismissed.
+Exact protected `main` `6be7e1d032714b39528fcc31d5333539406d08a6` passed
+hosted CodeQL run `31991996483` for Actions, JavaScript/TypeScript, and Python.
+Each analysis reported zero results, `main` had zero open code-scanning
+alerts, and alerts #3 through #21 closed as fixed without dismissal. The
+separate Windows provider-acceptance CI failure on that SHA remains blocking
+under ADR-088; the CodeQL result does not waive a required CI context.
+
+## ADR-088: Packaged provider acceptance closes Core before owned vault removal
+
+**Status:** accepted 2026-08-17.
+
+Exact protected `main` `6be7e1d032714b39528fcc31d5333539406d08a6` exposed a
+nondeterministic Windows failure in
+`test_packaged_surface_removes_its_disposable_vault`. The hosted assertion
+retained only exit 1, not the content-free stage report, so the precise failing
+stage was not directly observed. Inspection found a concrete lifecycle gap:
+packaged `--packaged-provider-acceptance` constructed a `CoreService`, imported
+through the production operation path, then called `shutil.rmtree` on its
+owned data root without an explicit Core close. Windows cannot unlink SQLite,
+WAL, or SHM files while this process still holds a handle, so that path can
+fail closed as `data_dir_cleanup_failed` even after a truthful complete import.
+
+`CoreStore.close()` is the explicit shutdown path. It is idempotent and
+best-effort: it closes the thread-local import-operation observer, then under
+the existing write lock opens a `_ClosingConnection`, runs
+`PRAGMA wal_checkpoint(TRUNCATE)`, and lets that context close the connection.
+Only `sqlite3.Error` is swallowed on this release path. It does not change
+`journal_mode`, hide later `rmtree` errors, sleep, retry, or force garbage
+collection. Because CoreStore does not keep a process-wide writer, a later
+public method may open a new connection after `close()`.
+
+`CoreService` exposes `close()`, `__enter__`, and `__exit__` that delegate to
+the store. Packaged provider acceptance binds that service as a context
+manager around the import operation so close always precedes owned
+`data_root` cleanup on success and every exception path. Caller-supplied
+data-dir deletion behavior is unchanged: only an acceptance-owned temporary
+root is removed. An `OSError` from that owned `rmtree` still replaces the
+payload with `data_dir_cleanup_failed` and returns exit 1.
+
+Candidate dispatch stays blocked pending this follow-up merge and exact-main
+green. This decision does not satisfy real-provider exact-candidate receipts.

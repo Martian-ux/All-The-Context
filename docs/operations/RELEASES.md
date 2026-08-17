@@ -90,9 +90,18 @@ key. A failed candidate is reissued under a new version rather than uploaded
 with `--clobber`.
 
 The unpublished `v0.1.0-beta.1` four-platform draft occupies that version slot
-and remains historical. Do not retarget, replace, or publish it. The first
+and remains historical. The live unpublished identity is numeric release ID
+`367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
+release-candidate run `31285545048`, and candidate digest
+`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe` (55
+four-platform assets). An earlier episode created draft `360008392` from
+source `48815077544f9defb78d0e6b9c8022319888dfed`; that episode is no longer
+the live release identity. Do not retarget, delete, replace, or publish the
+live draft, and do not revive or reuse the earlier episode. The first
 Windows/Linux-only candidate is `0.1.0-beta.2` and must use a fresh draft bound
-to the then-current protected `main` SHA.
+to the then-current protected `main` SHA after exact-main checks are green.
+Candidate dispatch stays blocked pending the ADR-088 provider-acceptance
+close/cleanup merge and that exact-main green.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
