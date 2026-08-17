@@ -1,5 +1,10 @@
 # Local Core runbook
 
+This runbook covers contributor source execution on macOS and the supported
+Windows/Linux beta artifacts. macOS is not a `0.1.0-beta.2` product target:
+retained Mac code, CI, and local smoke output do not create a Mac support claim
+or release evidence.
+
 ## Start and verify
 
 Run each command as a separate line after completing the README bootstrap.
@@ -10,7 +15,7 @@ PowerShell:
 .\.venv\Scripts\atc.exe open-dashboard
 ```
 
-macOS and Linux:
+macOS (contributors only) and Linux:
 
 ```text
 ./.venv/bin/atc init
@@ -32,7 +37,8 @@ python -m pytest tests/unit/test_export.py
 
 These commands exercise Core lifecycle/storage, ingestion/retrieval, and export
 behavior. CI runs the complete suite independently on Windows,
-macOS, and Linux.
+macOS, and Linux; the retained macOS jobs are source-health regressions only
+and do not qualify a beta artifact or Mac support claim.
 
 ## Locking, shutdown, and restart
 

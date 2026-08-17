@@ -258,9 +258,13 @@ def _write_notes(candidate_path: Path, release_dir: Path, output: Path) -> None:
     lines = [
         f"# All The Context v{candidate['version']}",
         "",
-        f"> **Unsigned community {candidate['channel']} build.** Windows and macOS will display ",
-        "> publisher warnings. ",
-        "> This release has no paid platform signing or notarization.",
+        f"> **Unsigned community {candidate['channel']} build.** Windows may display an ",
+        "> unknown-publisher or SmartScreen warning. This release has no paid ",
+        "> platform signing.",
+        "",
+        "> Supported release targets: Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64. ",
+        "> Windows x86-64 is the only OTA target; Linux is direct install only. ",
+        "> macOS is not supported and no macOS package is included.",
         "",
         f"Source commit: `{candidate['source_commit']}`",
         "",
@@ -274,13 +278,17 @@ def _write_notes(candidate_path: Path, release_dir: Path, output: Path) -> None:
         "## Native packages and OTA payloads",
         "",
     ]
+    package_labels = {
+        "windows": "one-click setup",
+        "linux": "portable archive",
+    }
     for artifact in candidate["artifacts"]:
-        package_labels = {
-            "windows": "one-click setup",
-            "macos": "open-and-launch DMG",
-            "linux": "portable archive",
-        }
-        package_label = package_labels[artifact["platform"]]
+        platform_name = artifact["platform"]
+        if platform_name not in package_labels:
+            raise ManifestError(
+                f"public release notes do not support {platform_name} packages or DMG assets"
+            )
+        package_label = package_labels[platform_name]
         lines.append(
             f"- Direct native package ({package_label}): "
             f"`{artifact['direct_package']['name']}` — "

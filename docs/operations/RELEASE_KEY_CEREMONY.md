@@ -93,6 +93,32 @@ and independently restore-testing two recoverable encrypted backups in distinct
 failure domains, both outside the checkout and synchronized workspace, remains
 required before the first production signature.
 
+## Beta 0.1.0-beta.2 custody handoff
+
+The machine-side trust root is prepared: `release-2026-a` is active for beta in
+both tracked keyrings and its reviewed public fingerprint is recorded above.
+The old `0.1.0-beta.1` candidate and its receipts are bound to different source
+and artifact bytes and cannot be reused.
+
+The remaining sequence is deliberately separated:
+
+1. The custodian completes
+   [`RELEASE_KEY_CUSTODY_FORM.md`](RELEASE_KEY_CUSTODY_FORM.md): restore-test two
+   encrypted backups in distinct failure domains and compare the full public
+   fingerprint from each restored copy. Record only content-free facts.
+2. After every custody check passes, emit exactly one candidate-bound
+   `BETA-R02` source receipt. That receipt proves key custody only; it is not a
+   release decision, signature, or publication authorization.
+3. After all 20 unique prepublication receipts pass, the maintainer reviews
+   each receipt and records one bundle-level `approve` or `reject` decision.
+   Keep `independent_human_review_claimed=false`.
+4. Only an explicit `approve` permits the offline Windows x86-64 manifest
+   signature, one-time draft upload, protected publication, and channel
+   promotion. A null or rejected decision permits none of those actions.
+
+No AI agent, GitHub workflow, or online build needs the private key, password,
+backup location, removable-media identifier, or decrypted key bytes.
+
 ## Signing day
 
 The custodian downloads and verifies the exact draft artifact set, moves only
@@ -102,10 +128,11 @@ key inside the checkout, then prompts for the encrypted key password without
 echo. Transfer only the signed JSON manifest back. Wipe transient decrypted
 copies and transfer media according to the recorded ceremony procedure.
 
-For Beta 1, sign only the Windows x86_64 OTA manifest. The macOS DMGs and Linux
-portable package remain direct human-install assets. Their updater manifests
-stay absent until platform-native update/rollback acceptance changes the
-candidate's explicit OTA-supported target set.
+For `0.1.0-beta.2`, sign only the Windows x86-64 OTA manifest. The Linux
+portable package remains a direct human-install asset and its updater manifest
+stays absent until platform-native update/rollback acceptance changes the
+candidate's explicit OTA-supported target set. macOS is unsupported and has no
+candidate asset or manifest.
 
 ## Loss, rotation, or suspected compromise
 

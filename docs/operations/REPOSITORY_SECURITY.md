@@ -70,7 +70,7 @@ python scripts/dependency_audit.py --ecosystem python
 # Python audit uses the frozen hashed uv.lock export (dev+packaging), not ambient resolve
 python scripts/dependency_audit.py --ecosystem dashboard
 python scripts/verify_dashboard_parity.py
-python scripts/build_component_inventory.py --version 0.1.0-beta.1 --output-dir dist/inventory
+python scripts/build_component_inventory.py --version 0.1.0-beta.2 --output-dir dist/inventory
 ```
 
 Candidate creation also requires the exact nine-job hosted matrix and local
@@ -115,7 +115,12 @@ python scripts/publication_gate.py \
 
 This gate never accesses, generates, or prints a private release key. Offline
 key backup and restore-test remain operator ceremony work documented in
-[RELEASE_KEY_CEREMONY.md](RELEASE_KEY_CEREMONY.md).
+[RELEASE_KEY_CEREMONY.md](RELEASE_KEY_CEREMONY.md) and the content-free
+[RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md). Two restore-tested
+backups in distinct failure domains must precede the one candidate-bound
+`BETA-R02` source receipt. Offline signing waits for all 20 unique
+prepublication pass receipts and an explicit `approve` with
+`independent_human_review_claimed=false`.
 
 ## Sole-maintainer residual
 

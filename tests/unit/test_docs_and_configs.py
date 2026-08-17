@@ -83,12 +83,25 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--draft" in candidate
     assert "actions/attest@v4" in candidate
     assert "package_desktop.py" in candidate
-    assert "macos-26\n" in candidate
-    assert "macos-26-intel" in candidate
+    assert "platform: windows" in candidate
+    assert "platform: linux" in candidate
+    assert "platform: macos" not in candidate
+    assert "macos-26" not in candidate
+    assert "macos-26-intel" not in candidate
+    assert "-unsigned.dmg" not in candidate
+    assert "-unsigned.dmg" not in publish
     assert "validate-runner" in candidate
     assert "direct unsigned native package" in candidate
     assert "direct unsigned one-click" not in candidate
     assert "--ota-target windows:x86_64" in candidate
+    assert "--target windows:x86_64" in candidate
+    assert "--target linux:x86_64" in candidate
+    assert "--target macos:" not in candidate
+    assert "--target macos:" not in publish
+    assert "--target macos:" not in promote
+    assert "-unsigned.dmg" not in promote
+    assert "v0.1.0-beta.2" in publish
+    assert "v0.1.0-beta.1" not in publish
     assert "--clobber" not in candidate
     assert "github_release_gate.py" in candidate
     assert "BUILD IMMUTABLE CANDIDATE" in candidate

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
+import tomllib
 from pathlib import Path
 
+from allthecontext import __version__
 from allthecontext.acceptance_receipt import POST_PUBLICATION_GATES, REQUIRED_PUBLICATION_GATES
 from allthecontext.release_candidate import (
     ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME,
@@ -107,8 +110,6 @@ def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
 
 
 def test_prepublication_template_is_exact_and_excludes_postpublication_gates() -> None:
-    import json
-
     template_path = ROOT / "release" / "acceptance-receipt-bundle.template.json"
     template = json.loads(template_path.read_text(encoding="utf-8"))
     gate_ids = {item["gate_id"] for item in template["receipts"]}
@@ -217,11 +218,76 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
         assert "scripts/smoke_packaged_recovery.py" in text
         assert "scripts/smoke_packaged_first_run.py" in text
         assert "scripts/package_desktop.py" in text
-        assert "scripts/macos_acceptance_preflight.py" in text
         assert "scripts/smoke_platform_package.py" in text
         assert "--architecture ${{ matrix.architecture }}" in text or (
             '--architecture "${{ matrix.architecture }}"' in text
         )
+
+    ci = _read(WORKFLOWS / "ci.yml")
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    assert "scripts/macos_acceptance_preflight.py" in ci
+    assert "scripts/macos_acceptance_preflight.py" not in candidate
+
+
+def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
+    """Retained macOS code and CI do not create a supported release asset."""
+
+    ci = _read(WORKFLOWS / "ci.yml")
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    publish = _read(WORKFLOWS / "publish-beta-release.yml")
+    promote = _read(WORKFLOWS / "promote-beta-channel.yml")
+
+    native_block = candidate.split("  native:", maxsplit=1)[1].split("  draft:", maxsplit=1)[0]
+    assert native_block.count("platform: windows") == 1
+    assert native_block.count("platform: linux") == 1
+    assert "platform: macos" not in native_block
+    assert "macos-26" not in native_block
+    assert "macos-26-intel" not in native_block
+    assert "-unsigned.dmg" not in candidate
+    assert "scripts/macos_acceptance_preflight.py" not in candidate
+
+    assert "macos-latest" in ci
+    assert "macos-26" in ci
+    assert "macos-26-intel" in ci
+    assert "scripts/macos_acceptance_preflight.py" in ci
+    assert "platform: macos" in ci
+
+    for workflow in (candidate, publish, promote):
+        assert workflow.count("--target windows:x86_64") == 1
+        assert workflow.count("--target linux:x86_64") == 1
+        assert "--target macos:" not in workflow
+        assert workflow.count("--ota-target windows:x86_64") == 1
+        assert workflow.count("--ota-target") == 1
+        assert "-unsigned.dmg" not in workflow
+        assert "v0.1.0-beta.1" not in workflow
+        assert "macos_acceptance" not in workflow
+
+    assert "v0.1.0-beta.2" in publish
+
+
+def test_public_beta_source_metadata_is_beta2_not_historical_beta1() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dashboard = json.loads((ROOT / "apps" / "dashboard" / "package.json").read_text())
+    dashboard_lock = json.loads((ROOT / "apps" / "dashboard" / "package-lock.json").read_text())
+    uv_lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    template = json.loads(
+        (ROOT / "release" / "acceptance-receipt-bundle.template.json").read_text(encoding="utf-8")
+    )
+    locked_project = next(
+        package
+        for package in uv_lock["package"]
+        if isinstance(package, dict) and package.get("name") == "all-the-context"
+    )
+
+    assert pyproject["project"]["version"] == "0.1.0-beta.2"
+    assert __version__ == "0.1.0-beta.2"
+    assert dashboard["version"] == "0.1.0-beta.2"
+    assert dashboard_lock["version"] == "0.1.0-beta.2"
+    assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.2"
+    assert locked_project["version"] == "0.1.0b2"
+    assert template["version"] == "0.1.0-beta.2"
+    assert pyproject["project"]["version"] != "0.1.0-beta.1"
+    assert template["version"] != "0.1.0-beta.1"
 
 
 def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:

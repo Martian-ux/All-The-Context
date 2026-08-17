@@ -9,9 +9,13 @@ automatically and remains the only authority.
 
 ## V1 principles
 
-The active V1 release is the first usable public beta, `0.1.0-beta.1`. It is a
+The active V1 release is the first usable public beta, `0.1.0-beta.2`. It is a
 same-device desktop product; stable `1.0.0`, phone access, and remote-computer
 access are post-V1.
+
+Its supported platform floor is Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64
+with GNOME and a working Secret Service/GNOME Keyring backend. macOS code is
+retained in source but is not a supported V1 beta journey or release target.
 
 - Normal use has no memory inbox or routine review queue. The dashboard is an
   optional place to inspect provenance and activity, correct context, undo a
@@ -48,9 +52,12 @@ access are post-V1.
 
 ## Primary journeys
 
-- Install the documented artifact on Windows, macOS, or Linux, initialize one
-  protected local vault, and reach the dashboard without a timezone, token,
-  command, or configuration file.
+- Install the documented artifact on Windows or supported Ubuntu, initialize one
+  protected local vault, and reach the dashboard without Python, Docker, a
+  hosting account, a copied bearer token, a timezone, or a configuration file.
+  Windows uses the one-click installer with no routine terminal use. Supported
+  Ubuntu remains a portable `tar.gz` requiring documented manual extract and
+  launch.
 - Connect detected Codex and Claude Desktop installations with one selection or
   button while preserving unrelated settings. After the required client
   restart, context maintenance needs no recurring setup or approval work.
@@ -78,10 +85,11 @@ access are post-V1.
 
 ## Success criteria
 
-- Fresh Windows 11 x86-64, macOS 26 ARM64/x86-64, and Ubuntu 24.04 LTS x86-64
-  GNOME/Secret-Service installations need no developer tooling or routine
-  terminal use and survive restart; exact Windows/macOS builds and client
-  versions are frozen in the candidate receipt.
+- Fresh Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64
+  GNOME/Secret-Service installations need no developer tooling and survive
+  restart; the exact Windows build and supported client versions are frozen in
+  the candidate receipt. Supported Ubuntu remains a portable `tar.gz` with
+  documented manual extract and launch; desktop integration stays manual.
 - A user can connect a client once, state a durable preference, and have a later
   session retrieve it without opening the dashboard.
 - An explicit correction or reversible forget request takes effect before its
@@ -92,17 +100,17 @@ access are post-V1.
 - Current real ChatGPT, Claude, and Grok exports all pass privacy-safe
   exact-candidate acceptance with a nonempty frozen canary shape set and
   complete recognized/excluded/skipped/unavailable/failed reconciliation; none
-  of the three is optional for beta1.
+  of the three is optional for the public beta.
 - Tentative observations are not retrieved as current context. They are
   corroborated or remain unused without asking the user to clear an inbox.
 - Initialization, startup, ingestion, policy evaluation, retrieval, export,
-  shutdown/restart, and STDIO MCP pass on Windows, macOS, and Linux.
+  shutdown/restart, and STDIO MCP pass on the supported Windows and Linux
+  targets.
 - Idempotent retries never create duplicate observations, decisions, batches,
   or current records.
 - Unauthorized or revoked clients receive no record content.
-- Packaged backup/restore and deliberate purge pass on Windows, macOS, and
-  Linux; purge remains administrator-only and cannot resurrect after restart
-  or restore.
+- Packaged backup/restore and deliberate purge pass on Windows and Linux; purge
+  remains administrator-only and cannot resurrect after restart or restore.
 - No normal V1 path asks for a hosting account, deploys a service, starts an
   Edge worker, or copies user context to a third-party runtime.
 - V1 beta UI and documentation make no phone or remote-computer claim. Any

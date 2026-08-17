@@ -53,6 +53,25 @@ TEST_ONLY_SEED = bytes(range(32))
 VERSION = "0.1.0-beta.1"
 SOURCE_COMMIT = "a" * 40
 TARGET = ReleaseTarget("linux", "x86_64")
+WINDOWS_TARGET = ReleaseTarget("windows", "x86_64")
+MACOS_TARGET = ReleaseTarget("macos", "arm64")
+DIRECT_PACKAGE_FIELDS = {
+    "windows": {
+        "format": "exe",
+        "recovery_console_helper": "AllTheContextRecovery.exe",
+        "recovery_surface": "embedded-console-helper",
+    },
+    "macos": {
+        "format": "dmg",
+        "recovery_console_helper": "all-the-context-recovery",
+        "recovery_surface": "bundled-console-helper",
+    },
+    "linux": {
+        "format": "tar.gz",
+        "recovery_console_helper": "all-the-context",
+        "recovery_surface": "console-main-binary",
+    },
+}
 
 
 def _bundle(path: Path) -> None:
@@ -141,24 +160,21 @@ def _source_evidence(release_dir: Path) -> None:
     )
 
 
-def _candidate_files(tmp_path: Path) -> tuple[Path, Path]:
-    release_dir = tmp_path / "release"
-    release_dir.mkdir(parents=True)
-    _source_evidence(release_dir)
-    source = tmp_path / "all-the-context"
+def _write_target_artifacts(release_dir: Path, tmp_path: Path, target: ReleaseTarget) -> None:
+    source = tmp_path / f"all-the-context-{target.platform}-{target.architecture}"
     source.write_bytes(b"portable app\n")
     ota = build_archive(
         source,
         release_dir,
         version=VERSION,
-        platform_name=TARGET.platform,
-        architecture=TARGET.architecture,
+        platform_name=target.platform,
+        architecture=target.architecture,
     )
     write_metadata(ota, version=VERSION)
     for suffix in ("provenance.sigstore.json", "sbom.sigstore.json"):
         _bundle(release_dir / f"{ota.name}.{suffix}")
 
-    names = direct_package_names(VERSION, TARGET)
+    names = direct_package_names(VERSION, target)
     direct_package = release_dir / names["direct_package"]
     direct_package.write_bytes(b"direct portable package\n")
     digest, size = sha256_file(direct_package)
@@ -167,16 +183,17 @@ def _candidate_files(tmp_path: Path) -> tuple[Path, Path]:
     )
     notice = release_dir / names["direct_package_notice"]
     notice.write_text("IMPORTANT: unsigned community build\n", encoding="utf-8")
+    fields = DIRECT_PACKAGE_FIELDS[target.platform]
     (release_dir / names["direct_package_report"]).write_text(
         json.dumps(
             {
-                "architecture": TARGET.architecture,
-                "format": "tar.gz",
+                "architecture": target.architecture,
+                "format": fields["format"],
                 "notice": notice.name,
                 "package": direct_package.name,
-                "platform": TARGET.platform,
-                "recovery_console_helper": "all-the-context",
-                "recovery_surface": "console-main-binary",
+                "platform": target.platform,
+                "recovery_console_helper": fields["recovery_console_helper"],
+                "recovery_surface": fields["recovery_surface"],
                 "schema_version": 1,
                 "sha256": digest,
                 "size": size,
@@ -190,13 +207,28 @@ def _candidate_files(tmp_path: Path) -> tuple[Path, Path]:
     write_subject_sbom(direct_package, version=VERSION)
     _bundle(release_dir / names["direct_package_provenance_bundle"])
     _bundle(release_dir / names["direct_package_sbom_bundle"])
+
+
+def _candidate_files(
+    tmp_path: Path,
+    *,
+    targets: list[ReleaseTarget] | None = None,
+    ota_targets: list[ReleaseTarget] | None = None,
+) -> tuple[Path, Path]:
+    selected = targets or [TARGET]
+    selected_ota = ota_targets or selected
+    release_dir = tmp_path / "release"
+    release_dir.mkdir(parents=True)
+    _source_evidence(release_dir)
+    for target in selected:
+        _write_target_artifacts(release_dir, tmp_path, target)
     candidate = assemble_candidate(
         release_dir,
         version=VERSION,
         channel="beta",
         source_commit=SOURCE_COMMIT,
-        targets=[TARGET],
-        ota_targets=[TARGET],
+        targets=selected,
+        ota_targets=selected_ota,
     )
     return release_dir, candidate
 
@@ -236,6 +268,47 @@ def test_candidate_inventories_direct_package_and_separate_ota(tmp_path: Path) -
     assert artifact["ota_archive"]["name"] == archive_name(VERSION, TARGET)
     assert artifact["direct_package"]["name"] != artifact["ota_archive"]["name"]
     assert candidate["unsigned_community_build"] is True
+
+
+def test_public_release_notes_exclude_macos_support_and_assets(tmp_path: Path) -> None:
+    release_dir, candidate_path = _candidate_files(
+        tmp_path,
+        targets=[WINDOWS_TARGET, TARGET],
+        ota_targets=[WINDOWS_TARGET],
+    )
+    output = tmp_path / "release-notes.md"
+
+    release_candidate_script._write_notes(candidate_path, release_dir, output)
+
+    notes = output.read_text(encoding="utf-8")
+    assert "Supported release targets: Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64" in notes
+    assert "Windows x86-64 is the only OTA target; Linux is direct install only" in notes
+    assert "macOS is not supported and no macOS package is included" in notes
+    assert "one-click setup" in notes
+    assert "portable archive" in notes
+    assert "eligible" in notes
+    assert "withheld" in notes
+    assert ".dmg" not in notes
+    assert "open-and-launch" not in notes
+    assert "notarization" not in notes
+    assert archive_name(VERSION, WINDOWS_TARGET) in notes
+    assert archive_name(VERSION, TARGET) in notes
+    assert direct_package_names(VERSION, WINDOWS_TARGET)["direct_package"] in notes
+    assert direct_package_names(VERSION, TARGET)["direct_package"] in notes
+
+
+def test_public_release_notes_reject_macos_assets(tmp_path: Path) -> None:
+    release_dir, candidate_path = _candidate_files(
+        tmp_path,
+        targets=[MACOS_TARGET],
+        ota_targets=[MACOS_TARGET],
+    )
+    output = tmp_path / "release-notes.md"
+
+    with pytest.raises(ManifestError, match="do not support macos packages or DMG"):
+        release_candidate_script._write_notes(candidate_path, release_dir, output)
+
+    assert not output.exists()
 
 
 def test_candidate_rejects_changed_direct_package_and_untracked_files(tmp_path: Path) -> None:

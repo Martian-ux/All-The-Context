@@ -21,6 +21,11 @@ V1 has no hosted Edge, cloud replica, hosting provider, or paid runtime
 dependency. The first usable beta is same-device only: desktop clients connect
 locally while Core is online. Phone and remote-computer access are post-V1.
 
+The public beta supports Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 with
+GNOME and a working Secret Service/GNOME Keyring backend. macOS implementation
+code remains in the public source tree for portability and contributor use, but
+macOS is not a supported beta platform and no macOS release package is shipped.
+
 Core binds only to `127.0.0.1` by default. The beta does not silently open a
 LAN/public port, upload context, or pretend that plain HTTP is safe remote
 access. The beta makes no mobile or remote-access claim.
@@ -34,8 +39,10 @@ never starts the legacy network worker. Residual cleanup is isolated under
 
 ## Install
 
-Normal users should not need Python, Docker, a terminal, a token, or a
-hand-edited MCP configuration.
+Normal users should not need Python, Docker, a hosting account, a copied
+bearer token, or a hand-edited MCP configuration. Windows uses the
+one-click installer with no routine terminal use. Supported Ubuntu remains
+a portable `tar.gz` requiring documented manual extract and launch.
 
 On Windows 11, the intended path is to download `AllTheContextSetup.exe` and
 double-click it. The first-run wizard:
@@ -50,12 +57,16 @@ double-click it. The first-run wizard:
 7. finishes without asking for timezone, hosting, provider accounts, or Edge
    setup.
 
+On supported Ubuntu, download the x86-64 portable `tar.gz`, verify its SHA-256
+and provenance, extract it locally, and launch `all-the-context`. Linux desktop
+integration and updates remain manual in this beta.
+
 The public source repository is
 [Martian-ux/All-The-Context](https://github.com/Martian-ux/All-The-Context).
 Community packages are unsigned: the project does not require paid Windows
-publisher certificates or Apple notarization. Releases must clearly disclose
-normal operating-system warnings and provide SHA-256 checksums, SBOM,
-provenance, and offline Ed25519 update metadata.
+publisher certificates. Releases must clearly disclose normal operating-system
+warnings and provide SHA-256 checksums, SBOM, provenance, and offline Ed25519
+update metadata.
 
 Public beta downloads do not exist until the exact-commit gates in
 [`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md)
@@ -74,12 +85,18 @@ pass.
 - one-click local Codex and Claude Desktop configuration;
 - optional local context/activity/search/backup/update dashboard;
 - encrypted portable export, contributor CLI restore, and a version-matched
-  packaged recovery/admin helper or console mode on every native artifact;
+  packaged recovery/admin helper or console mode on every supported release
+  artifact;
   exact downloaded-artifact recovery receipts remain a beta acceptance blocker;
-- cross-platform Windows, macOS, and Linux CI/package paths; and
+- Windows and Linux public-beta package paths, plus retained cross-platform
+  macOS source/CI code that carries no beta support claim; and
 - deterministic lexical retrieval with a future embedding interface.
 
 ## Source development
+
+The source tree retains macOS implementation paths for contributor portability
+checks. They are not a supported beta installation path: no Mac package,
+Mac acceptance receipt, or Mac support promise belongs to `0.1.0-beta.2`.
 
 The bootstrap script creates or repairs `.venv`, installs the application, and
 checks compiled dependencies. Docker is not required.
@@ -95,7 +112,7 @@ py -3.12 scripts/bootstrap.py
 If `py` is unavailable but `python --version` is 3.12 or newer, run
 `python scripts/bootstrap.py` instead.
 
-macOS or Linux:
+macOS (contributors only) or Linux:
 
 ```text
 python3 scripts/bootstrap.py
@@ -123,6 +140,10 @@ python scripts/build_desktop.py
 python scripts/smoke_desktop_artifact.py
 python scripts/smoke_packaged_first_run.py
 ```
+
+On macOS this command exercises retained source code only; its output is not a
+beta artifact and must not be uploaded to or advertised from the public
+release.
 
 See [architecture](docs/architecture/ARCHITECTURE.md),
 [provider history import](docs/integrations/PROVIDER_IMPORTS.md),

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Exact beta tag (for example v0.1.0-beta.1)
+        description: Exact beta tag (for example v0.1.0-beta.2)
         required: true
         type: string
       source_commit:
@@ -139,8 +139,6 @@ jobs:
             --release-dir dist/release \
             --expected-sha256 "${{ inputs.candidate_sha256 }}" \
             --target windows:x86_64 \
-            --target macos:arm64 \
-            --target macos:x86_64 \
             --target linux:x86_64 \
             --ota-target windows:x86_64 \
             --asset-stage signed
@@ -196,7 +194,7 @@ jobs:
           SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-candidate.yml
         run: |
           set -euo pipefail
-          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.dmg dist/release/*-unsigned.tar.gz; do
+          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.tar.gz; do
             [[ -f "$subject" ]] || continue
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \

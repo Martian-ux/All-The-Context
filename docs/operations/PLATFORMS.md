@@ -1,26 +1,24 @@
 # Cross-platform operations and packaging path
 
-Contributor source development currently targets Python 3.12+ on Windows 11,
-current macOS, and Linux without Docker. This is not an unbounded public-beta
-Python compatibility claim: normal beta support covers the frozen desktop
-artifacts, and any advertised source-install path must name and test a bounded
-minimum and maximum Python version. Application data is resolved with
+Contributor source development currently targets Python 3.12+ on Windows,
+macOS, and Linux without Docker. That portability work is not an unbounded
+public-beta Python or operating-system compatibility claim: normal beta support
+covers only the frozen release artifacts. Application data is resolved with
 `platformdirs`; operators should not hard-code its location.
 
-Windows, macOS, and Linux are all mandatory `0.1.0-beta.1` OS families. The
-support floor is Windows 11 x86-64, macOS 26 ARM64 and x86-64, and Ubuntu 24.04
-LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring backend. The
-candidate receipt freezes exact Windows/macOS builds and patches. Other Linux
-distributions/desktops are experimental for beta1. Downloaded artifacts must
-pass clean-machine acceptance in every mandatory family; a missing receipt
-leaves the beta in draft. The non-sparse exact-2,000,000,000-byte journey and
-its frozen resource/progress/cancel/recovery budgets run on all four artifact
-targets, not only one representative host.
+The `0.1.0-beta.2` public support floor is exactly Windows 11 x86-64 and Ubuntu
+24.04 LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring
+backend. Other Linux distributions/desktops are experimental. Downloaded
+artifacts must pass clean-machine acceptance in both supported families; a
+missing receipt leaves the beta in draft. The non-sparse exact-
+2,000,000,000-byte journey and its frozen resource/progress/cancel/recovery
+budgets run on both supported artifact targets.
 
-The deterministic preparation and supervised evidence boundary for the two
-native Mac targets is defined in
-[`MACOS_NATIVE_ACCEPTANCE.md`](MACOS_NATIVE_ACCEPTANCE.md). Hosted Mac package
-jobs and preparation reports do not replace those physical-machine journeys.
+macOS implementation, packaging helpers, and hosted regression jobs remain in
+the source tree, but macOS is unsupported for this beta. The release-candidate
+and publication workflows produce and accept no DMG, Mac updater ZIP, Mac
+manifest, or Mac acceptance receipt. The archived Mac acceptance documents are
+engineering history only and must not be run or cited as beta evidence.
 
 ## Desktop installation
 
@@ -31,42 +29,32 @@ runs on; artifacts are never cross-compiled.
   the console-subsystem STDIO MCP helper, copies both to the current user's
   local Programs directory, and relaunches the stable copy. No administrator
   access is requested.
-- **macOS:** CI puts `AllTheContext.app` and its STDIO helper in an unsigned
-  disk image. Opening the app copies the complete bundle to
-  `~/Applications/All The Context.app` before setup and relaunches that stable
-  per-user copy. Startup therefore never points into a transient mounted disk
-  image and no administrator access is requested. After final bundle metadata
-  is written, the build restores an identity-free ad-hoc structural seal and
-  verifies it. This costs nothing and prevents a corrupt bundle; it is not a
-  Developer ID signature or notarization and does not suppress Gatekeeper.
+- **macOS (unsupported contributor path):** the retained build helper can still
+  produce `AllTheContext.app` and a DMG for source-level portability work. Those
+  bytes are not consumer release assets, receive no support or acceptance
+  credit, and must not be advertised as a beta download.
 - **Linux:** CI puts the console-capable `all-the-context` executable in a
   deterministic `tar.gz` portable package. The same executable opens the
   wizard and supports `--mcp-stdio`; it does not require Docker, Python, Bash,
   systemd, or an installer script at runtime.
 
-Each native artifact exposes a version-matched recovery/admin surface for
+Each supported release artifact exposes a version-matched recovery/admin surface for
 documented stopped-Core restore and deliberate administrator purge:
-Windows embeds `AllTheContextRecovery.exe`, macOS bundles
-`all-the-context-recovery` inside the app, and Linux attaches recovery modes to
+Windows embeds `AllTheContextRecovery.exe`, and Linux attaches recovery modes to
 the console-capable `all-the-context` binary. Contributor-only `atc restore`
 remains available for source development but is not the packaged-user gate.
 Exact downloaded-artifact recovery acceptance receipts remain required before
 publication.
 
-`scripts/package_desktop.py` emits direct downloads named
+For the public beta, `scripts/package_desktop.py` emits direct downloads named
 `all-the-context-VERSION-PLATFORM-ARCHITECTURE-unsigned` with the appropriate
-`.exe`, `.dmg`, or `.tar.gz` extension. Each has an adjacent SHA-256 file,
+`.exe` or `.tar.gz` extension. Each has an adjacent SHA-256 file,
 unsigned-build notice, and path-free JSON package report. These human-install
 artifacts are separate from the immutable ZIP used by the OTA updater.
-Every native job compares `platform.machine()` with its declared asset
-architecture before building. Mac jobs also record a content-free native-host
-preflight, and direct-package smoke verifies the declared app identity,
-architecture of the main/MCP/recovery binaries, structural code seal, and
-identity-free trust boundary after mounting the DMG. Beta 1 uses the current standard `macos-26`
-ARM64 and `macos-26-intel` x86-64 public-repository runners. They produce
-separate, honestly labeled assets and run the identical clean-install,
-Keychain, LaunchAgent, MCP, and package-trust matrix; neither is mislabeled as
-universal.
+Every candidate job compares `platform.machine()` with its declared asset
+architecture before building. The official candidate matrix contains only
+`windows:x86_64` and `linux:x86_64`. Retained Mac CI jobs are source-health
+regressions and their outputs are never downloaded into the release directory.
 
 The native wizard detects the local timezone, initializes SQLite and
 migrations, configures Codex and Claude Desktop with separate
@@ -86,9 +74,9 @@ client configuration, and isolated per-user startup location. It forces the
 null keyring backend and explicitly enables the insecure development credential
 file so non-secret smoke credentials never enter the host OS store; the setup
 report must record that development store and must not be treated as real OS
-credential acceptance. Real Windows Credential Manager and macOS Keychain
-round-trips remain the separate packaged-credential and platform-acceptance
-gates. On failure the disposable work tree is always deleted; only a
+credential acceptance. Real Windows Credential Manager and supported Linux
+Secret Service round-trips remain separate packaged-credential and
+platform-acceptance gates. On failure the disposable work tree is always deleted; only a
 content-free allowlisted diagnostic summary is kept outside that tree, and
 headless setup writes a redacted report (windowed Windows packages have no
 console). On Windows it also uses uniquely named test-only HKCU keys and
@@ -124,18 +112,16 @@ config backups that could contain a development-fallback token. If retained
 SQLite cannot be read, uninstall says that its internal rows were not revoked
 and warns against restoring that data until it is repaired or deleted.
 
-The current artifacts are unsigned community engineering builds. The wizard,
+The current Windows and Linux artifacts are unsigned community engineering builds. The wizard,
 filenames, embedded/adjacent notices, and package reports all disclose that
-boundary. Paid Authenticode and Apple Developer ID/notarization are not release
-requirements; users must expect an unknown-publisher, SmartScreen, or
-Gatekeeper prompt. PyInstaller can add a structural macOS ad-hoc signature; it
-has no publisher identity and is not notarization. Package smoke rejects any
+boundary. Paid Authenticode is not a release requirement; Windows users must
+expect an unknown-publisher or SmartScreen prompt. Package smoke rejects any
 unexpected publisher identity. Candidate CI also produces SHA-256 metadata,
 SPDX inventory, and provenance. See the [release runbook](RELEASES.md) for the
 required offline Ed25519 manifest signing, stable/beta promotion, key rotation,
 and downgrade rules.
 
-The native updater verifies and stages a versioned ZIP on every platform. The
+The updater code can verify and stage a versioned ZIP across platforms. The
 packaged Windows application also includes separate MCP, recovery
 (`AllTheContextRecovery.exe`), and updater executables, so it exposes one-click
 install when running from the complete per-user installation. The helper
@@ -144,11 +130,9 @@ stop, refreshes the SQLite backup, verifies the replacement and its
 MCP/recovery/updater helpers, runs a real loopback Core health check, and either
 commits or restores all prior binaries and the database. Its frozen smoke covers
 a crash after replacement and a failed-health rollback that re-verifies the
-recovery helper digest. The macOS app self-installs per user (including the
-bundled console recovery helper) but OTA handoff remains manual. The Linux
-archive is portable with recovery modes on the main console binary, and its OTA
-handoff remains manual. Those are deliberate safety states, not missing success
-messages.
+recovery helper digest. The Linux archive is portable with recovery modes on
+the main console binary, and its OTA handoff remains manual. No Mac package or
+OTA handoff belongs to the public beta.
 
 ## Source development installation
 
@@ -178,22 +162,22 @@ source workflow is for contributors; normal users use the desktop artifact.
 
 ## Credential storage abstraction
 
-The credential interface targets Windows Credential Manager, macOS Keychain,
-and the system secret service on Linux through `keyring`. Setup verifies that a
+The credential interface retains adapters for Windows Credential Manager,
+macOS Keychain, and the system secret service on Linux through `keyring`. Setup verifies that a
 write can be read back before trusting the backend. The first slice has an
 explicitly reported local app-data fallback for development and systems without
 a functional keyring; it is not equivalent to an OS-protected credential.
 
 Native-package CI performs a unique random set/get/delete against the real
-Windows Credential Manager and macOS Keychain and fails those platform jobs if
-the round trip is unavailable. Headless Linux CI exercises and reports the
+Windows Credential Manager and retains a Mac Keychain regression on Mac CI.
+Headless Linux CI exercises and reports the
 explicit fallback because it has no logged-in desktop secret service. Every
 platform also performs an isolated fallback round trip and startup
 install/remove check; no token value or host path is printed or uploaded.
 
 ## Linux AppImage spike decision
 
-Beta 1 uses the deterministic `tar.gz` fallback. CI writes
+The public beta uses the deterministic `tar.gz` fallback. CI writes
 `appimage-evaluation.json` from `scripts/evaluate_appimage.py` so the decision
 is reviewable with the package artifacts. The clean toolchain has no
 `appimagetool`; adding one would introduce an architecture-specific native
@@ -224,16 +208,16 @@ existing parent component must be real directories, never links.
 ## Packaging roadmap
 
 - **Windows:** complete the offline release-key ceremony, verify the immutable
-  unsigned beta1 candidate and provenance, repeat the exact-candidate
+  unsigned beta candidate and provenance, repeat the exact-candidate
   same-version rollback transaction, then run the real Ed25519-signed
-  beta1-to-beta2 N-1 transaction as the first beta2 gate. Evaluate a Windows
+  first-published-beta-to-successor N-1 transaction as the next-beta gate. Evaluate a Windows
   service only if per-user startup proves insufficient. The per-user installer,
   transactional updater, and uninstaller paths are implemented.
-- **macOS:** exercise the unsigned disk image, stable per-user app copy,
-  LaunchAgent, Keychain, and manual OTA handoff on an operator-owned current
-  macOS machine; a future paid-signing path remains optional.
 - **Linux:** complete desktop acceptance of the portable archive and XDG
   autostart, then revisit AppImage or native packages only with pinned tooling.
+- **macOS:** retained code is unsupported and outside the beta release plan. A
+  future decision to restore support would require a new scoped ADR, candidate,
+  documentation pass, and native evidence; existing preparation is not credit.
 
 Service installation is isolated behind a platform adapter. None of the shared
 Core lifecycle assumes systemd, LaunchAgents, or the Windows Service Manager.

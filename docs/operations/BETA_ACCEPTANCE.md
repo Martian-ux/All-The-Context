@@ -6,7 +6,7 @@ offline private key.
 
 ## Version identity
 
-- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.1`.
+- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.2`.
 - The release candidate records one exact 40-character commit and every
   artifact digest.
 - Published assets are immutable; changed bytes require a new version.
@@ -16,9 +16,11 @@ offline private key.
 On the exact release commit:
 
 1. Ruff formatting/lint, strict mypy, Python tests, and dashboard checks pass.
-2. The exact nine-job hosted matrix passes: Python 3.12 on
-   Windows/macOS/Ubuntu, dashboard on Node 20/22, and native package acceptance
-   on Windows, Ubuntu, macOS ARM64, and macOS x86-64.
+2. The exact hosted source-health matrix passes: Python 3.12 on
+   Windows/macOS/Ubuntu, dashboard on Node 20/22, and package regression jobs
+   on Windows, Ubuntu, macOS ARM64, and macOS x86-64. The retained macOS jobs
+   protect cross-platform source from accidental breakage; they do not create a
+   support claim or a macOS release asset.
 3. Dashboard production build and dependency audit pass.
 4. Reachable history and artifacts contain no private key, credential, personal
    context, or developer-machine path.
@@ -33,28 +35,27 @@ On the exact release commit:
   shortcuts, connects selected local clients, survives restart, passes the
   same-version transactional replacement/rollback smoke, and uninstalls without
   deleting the vault.
-- macOS unsigned app/DMG explains the OS warning, installs per-user startup
-  without root, and passes lifecycle smoke tests.
 - Linux portable package runs without Docker or root and passes the same tests.
 - Initialization, startup, ingestion, automatic policy evaluation, retrieval,
-  export, shutdown, and restart are observed on every target OS.
-- Mandatory targets are Windows 11 x86-64, macOS 26 ARM64 and x86-64, and
-  Ubuntu 24.04 LTS x86-64 GNOME with a working Secret Service/GNOME Keyring
-  backend. Freeze exact Windows/macOS build/patch and client versions; a
-  missing target receipt leaves the candidate in draft. Other Linux
-  distributions/desktops are experimental for beta1.
+  export, shutdown, and restart are observed on every supported target OS.
+- Mandatory targets are Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 GNOME
+  with a working Secret Service/GNOME Keyring backend. Freeze the exact Windows
+  build and supported client versions; a missing target receipt leaves the
+  candidate in draft. Other Linux distributions/desktops are experimental.
+  macOS is excluded from the product support table before candidate freeze: no
+  Mac cell is passed, waived, skipped, or represented by a release asset.
 - Every artifact ships a version-matched recovery/admin helper or native mode
   that exposes installed help, stopped-Core restore, and deliberate purge
   without Python, a source checkout, or developer tooling.
-- Both native Mac architectures follow the candidate-bound preparation and
-  supervised journey contract in
-  [`MACOS_NATIVE_ACCEPTANCE.md`](MACOS_NATIVE_ACCEPTANCE.md). Its hosted and
-  one-command supporting checks explicitly emit no acceptance receipt.
 
 ## Gate 3: one-time setup and automatic context
 
-- Codex and Claude Desktop connect once, preserve unrelated configuration, and
-  survive Core/app restart.
+- On each supported client/OS cell, that client connects once, preserves
+  unrelated configuration, and survives Core/app restart. The supported cells
+  are current stable Codex on Windows and Linux and current stable Claude
+  Desktop on Windows. Linux Claude beta is excluded by the frozen stable-only
+  support wording unless a stable supported client is deliberately added
+  before candidate freeze.
 - A user states a durable preference in a connected client; Core returns an
   `applied` disposition and another session retrieves it without an approval
   call or dashboard visit.
@@ -115,8 +116,8 @@ On the exact release commit:
 - A deterministic physically allocated/non-sparse fixture with a known
   generator, SHA-256, chunk count, nonzero parse/publication counts, and
   interruption checkpoints succeeds at exactly `2,000,000,000` bytes on the
-  Windows x86-64, macOS ARM64, macOS x86-64, and Linux x86-64 candidate
-  artifacts. A `2,000,000,001`-byte source is refused
+  Windows x86-64 and Linux x86-64 candidate artifacts. A
+  `2,000,000,001`-byte source is refused
   deterministically. Each receipt meets the predeclared budgets and covers
   complete source integrity, atomic publication, packaged source-inclusive
   encrypted export, stopped-Core restore, and retrieval/integrity.
@@ -159,23 +160,33 @@ On the exact release commit:
 - Native packages are labeled **unsigned community build**.
 - OTA metadata is signed outside the repository with an operator-controlled
   Ed25519 key; only reviewed public keys enter source control.
-- Beta1 publication requires the reviewed update client, two restore-tested
-  release-key backups in distinct failure domains, protected immutable
-  publication, and a signed channel. A real
-  beta1-to-beta2 Windows update then proves success, interruption recovery,
-  failed-health rollback, and vault preservation before beta2 or stable
-  graduation. A same-version engineering smoke is required for beta1 but is not
-  N-1. macOS/Linux remain manual until equivalent native rollback is observed.
+- First-public-beta publication requires the reviewed update client, two
+  restore-tested release-key backups in distinct failure domains, one
+  candidate-bound `BETA-R02` source receipt after those restore tests, the
+  remaining unique prepublication pass receipts, an explicit maintainer
+  `approve` with `independent_human_review_claimed=false`, protected immutable
+  publication, and a signed Windows x86-64 channel. The private key, password,
+  and backup location never enter the repository, Actions, an AI system, a
+  shell argument, or an environment variable. A real update from the first
+  published beta to its successor then proves success, interruption recovery,
+  failed-health rollback, and vault preservation before a later beta or stable
+  graduation. A same-version engineering smoke is required for the first
+  published beta but is not N-1. Linux remains a direct human-install package
+  until equivalent native rollback is observed; macOS has no beta release
+  package or channel.
 
 ## Human release decision
 
 Before publication, record the commit, CI and draft-release URLs, asset and
 manifest digests, public-key fingerprint, real-platform results, unsigned
 warning acknowledgement, and explicit release approve/reject decision against
-exactly the 20 prepublication receipts. The decision must enumerate every one
-of those receipt IDs and no postpublication receipt. This is a software-release
-decision, not a context-review queue. The sole human maintainer may use
-AI-assisted review but must not call it independent human approval.
+exactly the 20 unique prepublication pass receipts. The decision must
+enumerate every one of those receipt IDs exactly once and no postpublication
+receipt, and it must retain `independent_human_review_claimed=false`. Offline
+Windows x86-64 signing may begin only after that approve. This is a
+software-release decision, not a context-review queue. The sole human
+maintainer may use AI-assisted review but must not call it independent human
+approval.
 
 GitHub private vulnerability reporting must remain enabled, the public security
 policy must route sensitive reports to it, and source validation must require

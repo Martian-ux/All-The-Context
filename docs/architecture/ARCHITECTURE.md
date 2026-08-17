@@ -138,9 +138,11 @@ Contributor source installations use Python 3.12+, `pathlib`, `platformdirs`,
 TCP loopback, portable locking, lifespan handling, and SQLite transactions.
 Shared runtime code does not rely on Bash, systemd, POSIX permissions, symlinks,
 Unix sockets, case-sensitive paths, or Docker. Public beta support is limited to
-the platform and package matrix frozen in the V1 roadmap. Service installation
-and credential storage remain behind platform abstractions for Windows
-Credential Manager, macOS Keychain, and Linux Secret Service. Normal setup
-fails closed when protected storage is unavailable. A plaintext development
-file requires deliberate opt-in and is excluded from the normal beta setup
-path.
+Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 as frozen in the V1 roadmap.
+macOS implementation and Keychain adapters remain in source for contributor
+portability; they create no Mac package, support promise, or acceptance
+credit. Service installation and credential storage remain behind platform
+abstractions for Windows Credential Manager, macOS Keychain, and Linux Secret
+Service. Normal setup fails closed when protected storage is unavailable. A
+plaintext development file requires deliberate opt-in and is excluded from the
+normal beta setup path.

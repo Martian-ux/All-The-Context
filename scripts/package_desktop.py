@@ -21,7 +21,27 @@ DESKTOP_ROOT = ROOT / "dist" / "desktop"
 PACKAGE_ROOT = ROOT / "dist" / "platform"
 PLATFORMS = frozenset({"windows", "macos", "linux"})
 ARCHITECTURES = frozenset({"x86_64", "arm64"})
-UNSIGNED_NOTICE = """All The Context - unsigned community build
+WINDOWS_UNSIGNED_NOTICE = """All The Context - unsigned community build
+
+This package is intentionally not Authenticode-signed or publisher-signed.
+Windows may show an Unknown publisher or SmartScreen warning.
+
+Download only from the official GitHub Release. Before running it, verify the
+adjacent SHA-256 metadata and the release's offline Ed25519 signature when the
+signed channel manifest is available. No warning bypass is performed by the
+application.
+"""
+LINUX_UNSIGNED_NOTICE = """All The Context - unsigned community build
+
+This package is an unsigned direct-install portable Linux package. It is
+intentionally not publisher-signed. Your operating system may warn that the
+file is unsigned. Verify the release checksum before running it.
+
+Download only from the official GitHub Release. Before running it, verify the
+adjacent SHA-256 checksum and the release provenance and attestation as
+actually available. No warning bypass is performed by the application.
+"""
+MACOS_UNSIGNED_NOTICE = """All The Context - unsigned community build
 
 This package is intentionally not Authenticode-signed, Apple-notarized, or
 publisher-signed. Your operating system may show an Unknown publisher,
@@ -32,6 +52,16 @@ adjacent SHA-256 metadata and the release's offline Ed25519 signature when the
 signed channel manifest is available. No warning bypass is performed by the
 application.
 """
+
+
+def unsigned_notice(platform_name: str) -> str:
+    if platform_name == "windows":
+        return WINDOWS_UNSIGNED_NOTICE
+    if platform_name == "linux":
+        return LINUX_UNSIGNED_NOTICE
+    if platform_name == "macos":
+        return MACOS_UNSIGNED_NOTICE
+    raise ValueError(f"unsupported platform: {platform_name}")
 
 
 def default_source(platform_name: str) -> Path:
@@ -46,7 +76,7 @@ def default_source(platform_name: str) -> Path:
 
 def _write_linux_tar(source: Path, output: Path) -> None:
     root = Path("AllTheContext")
-    notice = UNSIGNED_NOTICE.encode("utf-8")
+    notice = unsigned_notice("linux").encode("utf-8")
     with (
         output.open("wb") as raw_stream,
         gzip.GzipFile(fileobj=raw_stream, mode="wb", filename="", mtime=0) as compressed,
@@ -87,7 +117,7 @@ def _write_macos_dmg(source: Path, output: Path, *, version: str) -> None:
         shutil.copytree(source, staging / "All The Context.app", symlinks=True)
         validate_macos_bundle_links(staging / "All The Context.app")
         (staging / "IMPORTANT - UNSIGNED COMMUNITY BUILD.txt").write_text(
-            UNSIGNED_NOTICE, encoding="utf-8", newline="\n"
+            unsigned_notice("macos"), encoding="utf-8", newline="\n"
         )
         completed = subprocess.run(
             [
@@ -155,7 +185,7 @@ def build_platform_package(
         package_format = "tar.gz"
 
     notice = output_dir / f"{base_name}.IMPORTANT-UNSIGNED.txt"
-    notice.write_text(UNSIGNED_NOTICE, encoding="utf-8", newline="\n")
+    notice.write_text(unsigned_notice(platform_name), encoding="utf-8", newline="\n")
     digest, size = sha256_file(package)
     checksum = output_dir / f"{package.name}.sha256"
     checksum.write_text(f"{digest}  {package.name}\n", encoding="utf-8", newline="\n")

@@ -26,7 +26,7 @@ administration; it is not an inbox. Clients call `forget_context` only for an
 explicit user request naming a particular memory; Core records a reversible
 deletion, never a purge.
 
-For beta1, an ATC-configured same-device Codex or Claude principal may attest
+For the public beta, an ATC-configured same-device Codex or Claude principal may attest
 that text was explicitly stated by the user only when Core grants that witness
 class. This is an explicit local trust grant, not cryptographic authorship
 proof, and authentication by itself is insufficient. Unattested model

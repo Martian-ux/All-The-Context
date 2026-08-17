@@ -67,7 +67,7 @@ jobs:
           --version "${{ inputs.version }}"
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
-      - name: Require exact green nine-job matrix plus security/parity jobs on this SHA
+      - name: Require exact green source-health matrix plus security/parity jobs on this SHA
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
@@ -141,16 +141,6 @@ jobs:
             architecture: x86_64
             source: AllTheContextSetup.exe
             package_suffix: .exe
-          - os: macos-26
-            platform: macos
-            architecture: arm64
-            source: AllTheContext.app
-            package_suffix: .dmg
-          - os: macos-26-intel
-            platform: macos
-            architecture: x86_64
-            source: AllTheContext.app
-            package_suffix: .dmg
           - os: ubuntu-latest
             platform: linux
             architecture: x86_64
@@ -181,14 +171,6 @@ jobs:
           python scripts/release_candidate.py validate-runner
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
-      - name: Record content-free macOS host preflight
-        if: runner.os == 'macOS'
-        run: >-
-          python scripts/macos_acceptance_preflight.py
-          --profile hosted-ci
-          --expected-architecture "${{ matrix.architecture }}"
-          --expected-major 26
-          --output "dist/macos-preflight/${{ matrix.architecture }}-hosted-ci.json"
       - run: python scripts/build_desktop.py
       - run: python scripts/smoke_desktop_artifact.py
       - run: python scripts/smoke_packaged_recovery.py
@@ -270,15 +252,6 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 7
-      - name: Preserve content-free hosted Mac preflight outside release assets
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
-        with:
-          name: macos-preflight-${{ matrix.architecture }}
-          path: dist/macos-preflight/*.json
-          if-no-files-found: error
-          retention-days: 14
-
   draft:
     needs: [validate, native]
     runs-on: ubuntu-latest
@@ -326,7 +299,7 @@ jobs:
           SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/release-candidate.yml
         run: |
           set -euo pipefail
-          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.dmg dist/release/*-unsigned.tar.gz; do
+          for subject in dist/release/*.zip dist/release/*-unsigned.exe dist/release/*-unsigned.tar.gz; do
             [[ -f "$subject" ]] || continue
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
@@ -366,8 +339,6 @@ jobs:
           --channel "${{ inputs.channel }}"
           --source-commit "${{ inputs.source_commit }}"
           --target windows:x86_64
-          --target macos:arm64
-          --target macos:x86_64
           --target linux:x86_64
           --ota-target windows:x86_64
       - name: Attest candidate inventory provenance

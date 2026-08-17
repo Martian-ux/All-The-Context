@@ -1,10 +1,16 @@
-# Native macOS Beta 1 acceptance
+# Retired native macOS acceptance plan
 
-macOS remains a mandatory Beta 1 platform on both native ARM64 and native
-x86-64. Deferring a physical-machine run does not pass, waive, skip, or narrow
-either target. Rosetta on Apple Silicon is not Intel acceptance.
+> **Historical engineering record only.** ADR-086 removed macOS from the public
+> beta support table before the `0.1.0-beta.2` candidate. Do not run this plan,
+> emit receipts from it, include Mac assets in a candidate, or cite any hosted
+> or physical result as beta support. The retained implementation carries no
+> support commitment.
 
-This runbook separates preparation that can be automated before hardware is
+The text below records the superseded four-platform plan. Under that plan,
+macOS would have required independent native ARM64 and x86-64 evidence; nothing
+in this archive marks either target passed, waived, skipped, or unavailable.
+
+The retired runbook separated preparation that could be automated before hardware was
 available from acceptance that must be observed on the two real Macs. A green
 hosted job or preparation report grants zero native acceptance credit and must
 not be converted into a canonical gate receipt.
@@ -250,3 +256,7 @@ user account:
 Physical Mac execution is the point where product evidence begins. Until both
 architectures and all four stable Mac client cells finish these journeys, Mac
 support and `BETA-X01` remain open and the beta remains unpublished.
+
+This closing requirement is superseded by ADR-086. The archived cells remain
+unrun historical requirements; they are not passed, skipped, waived, or
+unavailable, and they do not block `0.1.0-beta.2`.

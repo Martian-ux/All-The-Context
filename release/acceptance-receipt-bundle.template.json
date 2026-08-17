@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_commit": "0000000000000000000000000000000000000000",
   "candidate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "receipts": [
     {
       "schema_version": 1,
@@ -171,7 +171,7 @@
       "severity": null,
       "limitations": [],
       "attempts": [],
-      "notes": "Template only. Inclusive 2 GB import boundary on every frozen target."
+      "notes": "Template only. Inclusive 2 GB import boundary on every supported frozen target."
     },
     {
       "schema_version": 1,
