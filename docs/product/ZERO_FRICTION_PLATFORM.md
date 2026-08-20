@@ -147,8 +147,8 @@ purge behavior before production promotion.
 ### 2.5 Corrections close future ATC influence
 
 A correction is incomplete if the canonical record changes while an old graph
-edge, summary, capsule, checkpoint, procedure, or future ATC issue continues to
-treat the displaced value as current.
+edge, summary, capsule, checkpoint, procedure, or future ATC issuance continues
+to treat the displaced value as current.
 
 For supported connected adapters, ATC should invalidate, replace, or notify at
 the next declared checkpoint. ATC cannot retroactively erase context already
