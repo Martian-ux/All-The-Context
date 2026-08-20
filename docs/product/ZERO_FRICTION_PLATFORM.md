@@ -2,10 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed post-V1 product contract |
+| Status | Accepted post-V1 product contract under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Relationship to V1 | Does not expand or block `0.1.0-beta.3` |
 | Authority | The user-owned Core remains the sole canonical authority |
-| Normal interaction model | Install once, connect accounts and clients once, then use AI tools normally |
+| Normal interaction model | Install once, authorize accounts and clients once, then use AI tools normally |
+| Capability rule | Guarantees are limited to the declared and accepted connector/client capability level |
 
 ## Executive decision
 
@@ -20,10 +21,15 @@ working.
 
 The product promise is:
 
-> Connect ATC once. It continuously learns from the sources the user authorized,
-> organizes that knowledge automatically, supplies the right current context to
-> every supported AI, preserves ongoing project state, and applies ordinary
-> conversational corrections to future use.
+> Connect ATC once. Within the capabilities of each supported integration, ATC
+> continuously learns from authorized sources, organizes that knowledge,
+> supplies current context before supported AI work, preserves project and task
+> continuity, and applies ordinary conversational corrections to future use.
+
+This promise is capability-qualified. An ordinary L0 MCP integration remains a
+best-effort compatibility path and cannot guarantee pre-generation delivery or
+complete automatic capture. Stronger guarantees require lifecycle-aware
+integration levels and their own acceptance evidence.
 
 The dashboard remains an optional inspection, correction, recovery, and
 administration surface. Requiring routine dashboard use is a product failure.
@@ -45,22 +51,24 @@ A normal user journey is:
 4. choose a small set of privacy and retention defaults; and
 5. stop thinking about ATC.
 
-After that, ATC automatically:
+After that, and only where a connector or client declares the required
+capability, ATC automatically:
 
 - backfills available history;
 - synchronizes new activity incrementally;
 - records truthful source coverage and connector health;
 - extracts durable facts, preferences, decisions, constraints, and corrections;
-- retains uncertain material as noncurrent evidence rather than asking the user
-  to review it;
+- retains uncertain material as noncurrent evidence rather than creating a
+  review queue;
 - discovers people, projects, components, goals, and relationships;
-- preserves temporary working state across sessions and model changes;
-- compiles the smallest sufficient context before a supported AI answers;
-- captures new direct statements and observable outcomes after interactions;
+- preserves temporary working state across supported sessions and model changes;
+- compiles the smallest sufficient context before a lifecycle-aware AI answers;
+- captures directly observed statements and observable outcomes;
 - invalidates stale summaries, relations, capsules, and working state after a
-  correction, permission change, deletion, or purge;
+  correction, permission change, deletion, purge, or relevant source drift;
 - maintains indexes, projections, backups, updates, and storage health; and
-- asks for attention only when a real security or recovery boundary requires it.
+- asks for attention only when a real consent, security, or recovery boundary
+  requires it.
 
 ### 1.2 Tasks the user must not routinely perform
 
@@ -74,14 +82,17 @@ The normal product must not require the user to:
 - draw, repair, or curate graph relationships;
 - choose embeddings, rankers, graph traversal settings, or context budgets;
 - repeatedly download and import the same provider history;
-- tell a supported client when to retrieve context;
-- tell a supported client when to store a correction;
+- tell a lifecycle-aware client when to retrieve context;
+- tell a lifecycle-aware client when to store a correction;
 - reconcile duplicate or conflicting memories;
 - run database maintenance, rebuild indexes, rotate logs, or compact storage;
 - inspect connector status during healthy operation; or
 - open the dashboard merely to keep memory current.
 
 Advanced controls may exist, but the default experience cannot depend on them.
+An L0 client that lacks lifecycle hooks may expose weaker behavior; ATC must
+label that limitation rather than quietly transferring the missing work to the
+user while claiming a stronger level.
 
 ### 1.3 Legitimate user attention
 
@@ -90,6 +101,8 @@ ATC may interrupt the user only for a bounded class of events:
 - initial account or client authorization;
 - an account that requires reauthorization;
 - a requested permission expansion;
+- an ambiguity that is material to the requested answer or action and cannot be
+  contained safely;
 - an ambiguous destructive request;
 - irreversible purge;
 - recovery when the vault cannot safely repair itself;
@@ -131,27 +144,57 @@ sets, learned policies, caches, and usage statistics are projections. Every
 projection must declare lineage, version, invalidation, rebuild, deletion, and
 purge behavior before production promotion.
 
-### 2.5 Corrections close future influence
+### 2.5 Corrections close future ATC influence
 
 A correction is incomplete if the canonical record changes while an old graph
-edge, summary, capsule, checkpoint, procedure, or supported client continues to
+edge, summary, capsule, checkpoint, procedure, or future ATC issue continues to
 treat the displaced value as current.
+
+For supported connected adapters, ATC should invalidate, replace, or notify at
+the next declared checkpoint. ATC cannot retroactively erase context already
+sent to an external provider or client, undo a completed model response, or
+delete another provider’s logs. No product or acceptance claim may imply those
+powers.
 
 ### 2.6 Silence is not permission to hide failure
 
 Healthy operation should be quiet. Materially incomplete source coverage,
-expired authorization, unsafe repair failure, and unsupported guarantees must
-remain visible in bounded health state and surface one actionable notification
-when user action is required.
+expired authorization, unsafe repair failure, ambiguous project applicability,
+and unsupported guarantees must remain visible in bounded health state and
+surface one actionable notification only when user action is required.
 
-## 3. Platform architecture
+## 3. Evolution from the existing ATC system
+
+The post-V1 platform extends existing mechanisms. It must not create parallel
+systems that compete for authority.
+
+| Existing mechanism | Post-V1 role |
+|---|---|
+| `source_record` / source blobs | Continue to own retained raw source evidence and source-level deletion/purge semantics |
+| Observation ledger | Remains the durable-context proposal, policy-decision, and provenance surface |
+| Current records and versions | Remain the only canonical current memory selected by Core |
+| Permissions and temporal resolution | Continue to run before every retrieval, projection, graph, or capsule operation |
+| Retrieval V3 | Remains the production baseline and comparator; new candidate generators feed its protected downstream gates rather than bypassing them |
+| `bootstrap_context` / `search_context` | Remain L0 compatibility entry points; lifecycle-aware adapters invoke the same compiler before generation |
+| Existing `current_project` and project scopes | Become migration hints and compatibility inputs to stable project identities, not a second project store |
+| Memory Lab M1 | Supplies the starting observable-use/outcome contract and falsification fixtures |
+| Memory Lab M3 | Supplies the starting dependency-complete influence-closure contract and full-rebuild oracle |
+| Earlier Project Context Capsule research | Is refined into the structured disposable capsule in this contract rather than recreated independently |
+
+The names `SourceConnector` and `ClientRuntimeAdapter` define conceptual seams.
+Their first executable forms are experimental **v0** contracts. They become
+stable SDK or ABI promises only after a disposable fake harness and at least one
+real connector/client vertical slice exercise restart, replay, coverage,
+capability negotiation, correction, deletion, and purge.
+
+## 4. Platform architecture
 
 ```mermaid
 flowchart TD
   Accounts["Connected accounts and project sources"] --> Connectors["Source connection fabric"]
-  Clients["AI client runtime integrations"] --> Runtime["ClientRuntimeAdapter"]
+  Clients["AI client runtime integrations"] --> Runtime["ClientRuntimeAdapter v0 → stable"]
 
-  Connectors --> Events["Authoritative evidence and experience stream"]
+  Connectors --> Events["Core-owned evidence and experience stream"]
   Runtime --> Events
 
   Events --> Formation["Automatic memory formation"]
@@ -182,15 +225,13 @@ flowchart TD
   Closure --> Outcomes
 ```
 
-The platform has eight cooperating layers.
-
-### 3.1 Source connection fabric
+### 4.1 Source connection fabric
 
 A `SourceConnector` gathers evidence from one authorized account or source.
 Examples include conversation history, repositories, files, issues, task
 systems, messages, calendars, and tool-result streams.
 
-The common connector contract should cover:
+The experimental v0 connector contract should cover:
 
 ```text
 connect
@@ -207,19 +248,17 @@ source_delete
 
 Every connector declares:
 
-- identity and version;
+- identity and contract version;
 - acquisition method;
 - account or source identity;
 - supported data families;
-- initial-history capability;
-- incremental-sync capability;
+- initial-history and incremental-sync capabilities;
 - cursor and replay semantics;
-- permission and data-egress behavior;
-- expected freshness;
-- coverage limitations;
+- permission, network, and data-egress behavior;
+- expected freshness and coverage limitations;
 - retry and backoff behavior;
-- deletion and disconnection semantics; and
-- whether user action is required.
+- deletion, disconnection, and purge coordination; and
+- bounded user-action-required states.
 
 Official APIs and OAuth are preferred where they provide a truthful, stable
 path. Local application integrations and export-directory observation may be
@@ -227,13 +266,13 @@ used where appropriate. Manual archive import remains an honest fallback when
 a provider offers no reliable continuous path. ATC must not silently add
 fragile scraping merely to claim automatic synchronization.
 
-### 3.2 AI client runtime integration
+### 4.2 AI client runtime integration
 
 A source connector gathers evidence. A `ClientRuntimeAdapter` supplies and
 captures context at the point an AI is actually working. These are separate
 responsibilities.
 
-A strong runtime adapter exposes lifecycle events such as:
+A lifecycle-aware adapter may expose events such as:
 
 ```text
 session.start
@@ -251,17 +290,17 @@ session.end
 ```
 
 The adapter supplies bounded task, workspace, repository, conversation, and
-client identity. ATC compiles context before generation rather than depending
-only on the model to remember to call a tool.
+client identity. At L1 or higher, ATC compiles context before generation rather
+than depending on the model to remember to call a tool.
 
 Directly observed user turns provide stronger witness evidence than model
 summaries. Tool calls and results provide observable experience without
 retaining hidden reasoning.
 
-### 3.3 Evidence and experience stream
+### 4.3 Evidence and experience stream
 
 The observation ledger remains the durable-context policy surface. A broader
-normalized event stream records lower-level evidence and observable experience
+Core-owned event stream records lower-level evidence and observable experience
 without automatically declaring it durable truth.
 
 Representative event families include:
@@ -281,13 +320,29 @@ user_correction_observed
 connector_sync_completed
 ```
 
-Events are immutable, source-linked, bounded, idempotent, and covered by
-retention and purge policy. Background formation workers may propose durable
+The event stream must not become a second permanent raw-history store.
+
+- Source records and blobs continue to own retained raw source bytes.
+- Events normally retain bounded envelopes, source references, or only the
+  payload necessary for their declared evidence role.
+- Direct secret-like payloads are refused before durable event persistence.
+- Every event declares content ownership and a retention class.
+- Temporary working events expire or compact under declared policy.
+- Operational and health events should be content-free and bounded where
+  possible.
+- Events are append-only while retained; authorized expiry and destructive purge
+  remain allowed.
+- Purge removes attributable content-bearing events and derived state, retaining
+  only the minimum opaque identity or generation barrier needed to prevent
+  resurrection.
+
+Events are source-linked, bounded, idempotent, and replayable within their
+retention boundary. Background formation workers may propose durable
 observations from events, but only Core decides what becomes current.
 
-### 3.4 Automatic memory formation
+### 4.4 Automatic memory formation
 
-Memory formation should distinguish at least:
+Memory formation distinguishes at least:
 
 - explicit user claims and corrections;
 - source-grounded factual observations;
@@ -304,12 +359,13 @@ not world evidence. A provider summary is not equivalent to a directly
 observed user statement.
 
 Extraction may use deterministic rules, local models, external models, or
-external systems through reviewed adapters. Every path must preserve origin,
-source, model or extractor version, confidence, and reproducibility limits.
+reviewed external adapters. Every path preserves origin, source, model or
+extractor version, confidence, network/egress declarations, and reproducibility
+limits.
 
-### 3.5 Automatic organization
+### 4.5 Automatic organization
 
-ATC should organize current authorized evidence without requiring user curation.
+ATC organizes current authorized evidence without requiring user curation.
 Derived organization may include:
 
 - entity resolution and aliases;
@@ -325,7 +381,7 @@ A general graph is not mandatory infrastructure. Typed relation families must
 individually earn production use against simpler lexical, event, or structured
 baselines.
 
-### 3.6 Working-state continuity
+### 4.6 Working-state continuity
 
 Working state is not durable personal truth. It records the current objective,
 completed work, active artifacts, hypotheses, blockers, open questions, and
@@ -342,7 +398,7 @@ Working state must:
 - distinguish completion, abandonment, expiry, and supersession; and
 - never claim that hidden model state was preserved.
 
-### 3.7 Context and capsule compiler
+### 4.7 Context and capsule compiler
 
 The compiler produces the smallest sufficient current context for a particular
 client, task, project, time, permission set, and character budget.
@@ -363,17 +419,17 @@ authorization
 Graph traversal, learned ranking, and summaries may expand or order candidates.
 They cannot weaken upstream policy.
 
-### 3.8 Observable use and outcomes
+### 4.8 Observable use and outcomes
 
 ATC should eventually measure whether supplied context improved an observable
-answer, plan, decision, or action. The ledger records memory assignment,
-acknowledgement, use, observable outcome, correction, and invalidation without
-storing hidden chain-of-thought.
+answer, plan, decision, or action. The ledger records assignment,
+acknowledgement, observable use or nonuse where available, outcome, correction,
+and invalidation without storing hidden chain-of-thought.
 
-Outcome evidence supports later consolidation and procedural learning. It does
-not grant truth authority to an agent’s self-evaluation.
+This layer extends the accepted Memory Lab M1 contract. It must not create a
+parallel causal authority or treat an agent’s self-evaluation as truth.
 
-### 3.9 Invisible operations
+### 4.9 Invisible operations
 
 The platform should automatically manage:
 
@@ -389,21 +445,26 @@ The platform should automatically manage:
 - redacted diagnostics and bounded log retention; and
 - health notification deduplication.
 
-## 4. Integration capability levels
+## 5. Integration capability levels
 
-ATC should describe integration strength honestly.
+ATC describes integration strength honestly.
 
-| Level | Capability | Guarantee |
+| Level | Capability | Truthful guarantee |
 |---|---|---|
 | L0 | Ordinary MCP tools | Best-effort model-initiated retrieval and observation submission |
 | L1 | Pre-turn and post-turn runtime hooks | Context is supplied before generation and direct user turns are observed |
 | L2 | Tool, compaction, task, and outcome checkpoints | Working state and observable experience survive supported session boundaries |
 | L3 | Synchronous pre-effect checkpoint | A conforming host can enforce a current memory-derived confirmation, prerequisite, or block before a declared transition |
 
-L0 remains useful for broad compatibility. It must not be described as providing
-the same capture, use, or consequence guarantees as lifecycle-aware adapters.
+A connector has a separate acquisition capability manifest. A connected source
+that supports only manual snapshots cannot be described as continuously
+synchronized.
 
-## 5. Automatic project intelligence
+L0 remains useful for broad compatibility. It must not be described as providing
+the same capture, use, working-state, or consequence guarantees as
+lifecycle-aware adapters.
+
+## 6. Automatic project intelligence
 
 Projects are a critical organization boundary, but users should not administer
 them manually.
@@ -422,12 +483,20 @@ Core assigns a stable opaque project ID. Human-readable names are aliases, not
 identities. Projects may be renamed, merged, split, archived, or corrected
 without losing history.
 
-When project assignment is uncertain, ATC should preserve the evidence and wait
-for stronger signals rather than interrupting the user or forcefully creating
-current project truth. A natural-language correction such as “that belongs to
-project B, not project A” must repair future organization.
+Project assignment has at least three outcomes:
 
-### 5.1 Project memory graph
+- `resolved` — evidence supports one authorized project;
+- `unresolved` — evidence does not yet support a project; and
+- `ambiguous` — multiple projects remain materially plausible.
+
+Unresolved or ambiguous evidence must not silently enter a project-specific
+graph or capsule. ATC may use project-neutral authorized retrieval and wait for
+stronger signals. It asks the user only when project-specific context is
+material to the answer or action and ambiguity cannot be contained safely. A
+natural-language correction such as “that belongs to project B, not project A”
+repairs future organization.
+
+### 6.1 Project memory graph
 
 The project graph is a typed, rebuildable projection over authorized Core
 records, source snapshots, and working state.
@@ -472,14 +541,14 @@ record versions, validity, extractor or compiler version, and projection
 revision. A generic production `related_to` edge is prohibited unless a later
 benchmark defines a precise useful meaning.
 
-The graph must never be a second authority. Model-inferred edges remain shadow
+The graph never becomes a second authority. Model-inferred edges remain shadow
 or tentative until their relation family and admission path pass dedicated
 promotion gates.
 
-### 5.2 Project Context Capsule
+### 6.2 Project Context Capsule
 
-A Project Context Capsule is a structured disposable projection containing the
-smallest useful set of:
+A Project Context Capsule is the user-facing project primitive: a structured,
+disposable projection containing the smallest useful set of:
 
 ```text
 project identity
@@ -503,16 +572,16 @@ and compiles the capsule automatically. The user does not request, curate, or
 approve it.
 
 A capsule includes a project revision, `as_of` time, compiler version,
-dependency list or digest, budget use, omission counts, and freshness state. A
-changed dependency invalidates the capsule.
+dependency list or digest, budget use, omission counts, capability level, and
+freshness state. A changed dependency invalidates the capsule.
 
-## 6. Correction, deletion, and purge closure
+## 7. Correction, deletion, and purge closure
 
-Every derived artifact must be dependency-bound.
+Every derived artifact is dependency-bound.
 
 When a record, event, permission, source, project assignment, connector
-snapshot, policy generation, or target schema changes, ATC must identify and
-invalidate affected:
+snapshot, policy generation, or target schema changes, ATC identifies and
+invalidates affected:
 
 - current records;
 - graph edges and entity aliases;
@@ -521,17 +590,22 @@ invalidate affected:
 - procedures and cues;
 - indexes and caches;
 - use and outcome statistics; and
-- already-issued state for supported connected clients.
+- future issued state for supported connected clients.
 
-Optimized repair must be checked against a full-rebuild oracle before it becomes
-a production optimization. Purge remains fail-closed: no stale descendant may
-remain reachable merely because incremental repair failed.
+Optimized repair must be checked against the existing M3-style full-rebuild
+oracle before it becomes a production optimization. Purge remains fail-closed:
+no stale descendant may remain reachable merely because incremental repair
+failed.
 
-## 7. Privacy and security boundaries
+For already-issued state, closure means stopping future issuance and using a
+supported adapter’s invalidation, replacement, or checkpoint mechanism where
+available. It does not mean retroactive erasure from external providers.
+
+## 8. Privacy and security boundaries
 
 Zero friction cannot mean silent over-collection.
 
-The platform must preserve:
+The platform preserves:
 
 - explicit account and client authorization;
 - least-privilege scopes;
@@ -539,7 +613,8 @@ The platform must preserve:
 - local-first authority;
 - truthful network and data-egress declarations;
 - inert treatment of imported instructions;
-- secret refusal before durable direct-payload persistence;
+- secret refusal before durable direct-payload or event persistence;
+- explicit event content ownership and retention classes;
 - minimum necessary disclosure;
 - bounded diagnostics without raw personal context;
 - revocation and account disconnection;
@@ -547,10 +622,10 @@ The platform must preserve:
 - deliberate irreversible purge.
 
 Connecting an account authorizes only the declared acquisition scope. It does
-not authorize ATC to execute content, broaden client access, or infer unlimited
-cross-domain applicability.
+not authorize ATC to execute content, broaden client access, infer unlimited
+cross-domain applicability, or retain duplicate raw history indefinitely.
 
-## 8. User interface contract
+## 9. User interface contract
 
 The dashboard is optional during healthy operation. Its primary purposes are:
 
@@ -562,7 +637,7 @@ The dashboard is optional during healthy operation. Its primary purposes are:
 - create and restore backups; and
 - troubleshoot bounded failures.
 
-The default dashboard should prioritize actionable state rather than exposing
+The default dashboard prioritizes actionable state rather than exposing
 internal machinery. A graph visualization may exist as an optional inspector,
 but the useful questions are:
 
@@ -574,27 +649,29 @@ but the useful questions are:
 - What would be invalidated by a correction or deletion?
 - Does any account require attention?
 
-## 9. Product success and acceptance
+## 10. Product success and acceptance
 
 The principal product metric is successful current behavior with no
 unauthorized, stale, or purged influence. Retrieval metrics remain stage-level
 diagnostics.
 
-A credible zero-friction end-to-end acceptance journey is:
+A credible zero-friction end-to-end acceptance journey uses integrations whose
+manifests declare the required acquisition and lifecycle capabilities:
 
 1. install ATC on a clean supported machine;
 2. connect at least two supported AI clients and multiple supported sources;
 3. backfill history without manual classification;
-4. synchronize new activity without repeat imports;
-5. begin work on an existing project in one client;
-6. infer the project without requiring manual selection;
+4. synchronize new activity without repeat imports for continuous connectors;
+5. begin work on an existing project in one lifecycle-aware client;
+6. resolve the project or explicitly abstain when materially ambiguous;
 7. supply current goals, constraints, decisions, failed approaches, and working
    state before generation;
 8. capture a new directly stated project decision without a save-memory command;
-9. move to another supported client and resume with updated project state;
+9. move to another lifecycle-aware client and resume with updated project state;
 10. apply a natural-language correction;
-11. invalidate the displaced record, graph relations, capsule, working state,
-    and future client context;
+11. stop future issuance of the displaced record, graph relations, capsule, and
+    working state, and deliver replacement/invalidation where the adapter
+    supports it;
 12. recover from restart and a simulated connector interruption without
     duplication; and
 13. complete the journey without routine dashboard use.
@@ -604,14 +681,29 @@ Promotion gates include:
 - zero unauthorized disclosure or influence;
 - zero deleted or purged resurrection;
 - deterministic correction and invalidation;
-- truthful incomplete-coverage handling;
+- truthful incomplete-coverage and capability handling;
 - no mandatory manual classification or memory review;
 - no routine dashboard dependency;
 - bounded latency, storage, network, model, and monetary cost;
 - measurable task or outcome improvement over simpler baselines; and
 - no material regression on ordinary nonproject tasks.
 
-## 10. Explicit non-goals
+## 11. Parallel successor-beta and stable hardening
+
+The zero-friction program does not replace the separate post-V1 hardening track
+represented by issue #30 or its successor. Real N-1 update evidence,
+forward-version refusal, migration identity, compatibility and support policy,
+recovery improvements, support bundles, stable APIs/schemas/exports, and release
+channel hardening continue independently and may become prerequisites for a
+specific zero-friction production slice.
+
+Before `ZF-*` implementation issues are created, the existing beta tracker must
+be reconciled to the active beta.3 Windows/Ubuntu scope without erasing
+historical beta.1/macOS evidence. Source-readiness and exact-candidate
+acceptance dependencies must be separated so candidate creation is not
+circularly blocked by tests requiring the candidate to already exist.
+
+## 12. Explicit non-goals
 
 This contract does not require:
 
@@ -624,11 +716,12 @@ This contract does not require:
 - automatic procedure promotion from a single agent run;
 - a dashboard-centered workflow;
 - manual ontology or project administration;
+- retroactive erasure of context already sent to an external provider;
 - remote or mobile access before the local automatic loop works; or
 - production promotion of learned or external systems without comparative
   evidence and lifecycle closure.
 
-## 11. Relationship to V1
+## 13. Relationship to V1
 
 `0.1.0-beta.3` remains the immediate release target and the foundation for this
 contract. Its same-device Core, provider imports, automatic policy, retrieval,
