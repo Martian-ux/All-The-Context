@@ -118,8 +118,8 @@ key backup and restore-test remain operator ceremony work documented in
 [RELEASE_KEY_CEREMONY.md](RELEASE_KEY_CEREMONY.md) and the content-free
 [RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md). Two restore-tested
 backups in distinct failure domains must precede the one candidate-bound
-`BETA-R02` source receipt. Offline signing waits for all 20 unique
-prepublication pass receipts and an explicit `approve` with
+`BETA-R02` source receipt. Offline signing waits for every receipt and
+acknowledgement required by the explicitly selected publication profile and an explicit `approve` with
 `independent_human_review_claimed=false`.
 
 ## Sole-maintainer residual

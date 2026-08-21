@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "source_commit": "0000000000000000000000000000000000000000",
+  "candidate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "version": "0.1.0-beta.3",
+  "publication_policy": "lean_public_beta_v1",
+  "lean_beta_acknowledgements": {
+    "certification_matrix_incomplete_acknowledged": false,
+    "macos_unsupported_acknowledged": false,
+    "unsigned_community_build_acknowledged": false,
+    "known_issues_reviewed": false
+  },
+  "receipts": [
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-l01",
+      "gate_id": "BETA-L01",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Windows 11 exact artifact installs, starts, reports healthy loopback Core, connects a supported client, survives restart, and cleans up."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-l02",
+      "gate_id": "BETA-L02",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Ubuntu 24.04 exact artifact installs, starts, reports healthy loopback Core, connects a supported client, survives restart, and cleans up."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-s06",
+      "gate_id": "BETA-S06",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Exact candidate repository, dependency, artifact, and intake defenses pass."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r01",
+      "gate_id": "BETA-R01",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Candidate derives from exact green locked source."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r02",
+      "gate_id": "BETA-R02",
+      "evidence_kind": "source",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Human-controlled key custody and publication recovery ceremony passes."
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "template-beta-r03",
+      "gate_id": "BETA-R03",
+      "evidence_kind": "exact_downloaded_artifact",
+      "status": "not_run",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "content_free": true,
+      "severity": null,
+      "limitations": [],
+      "attempts": [],
+      "notes": "Template only. Candidate inventory, SBOM, provenance, and checksums are complete and immutable."
+    }
+  ],
+  "maintainer_decision": {
+    "decision": null,
+    "approver": "",
+    "decided_at": "",
+    "independent_human_review_claimed": false,
+    "ai_assisted": true,
+    "notes": "Decision stays null until all six lean public-beta receipts pass, every acknowledgement is true, and the sole human maintainer approves. Enumerate exactly those six receipt_id values. Do not claim independent human review.",
+    "reviewed_receipt_ids": []
+  }
+}

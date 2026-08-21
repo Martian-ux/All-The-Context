@@ -19,6 +19,14 @@ for stable `1.0.0`, and it does not make every known hardening item a V1
 blocker. Successor beta / stable, mobile, and research work is separated into
 the post-V1 horizon.
 
+ADR-092 separates initial publication from complete certification. The initial
+`0.1.0-beta.3` may publish only under `lean_public_beta_v1`, with exact passing
+`BETA-L01`, `BETA-L02`, `BETA-S06`, `BETA-R01`, `BETA-R02`, and `BETA-R03`
+receipts plus four literal-true human acknowledgements. The 20-gate matrix in
+this roadmap remains the unchanged `certification_v1` hardening track. Open
+certification cells are disclosed; they are not passed, skipped, waived,
+deleted, or rebound to the lean profile.
+
 Exact candidate results belong in an immutable release receipt and in
 [`REQUIREMENTS_TRACEABILITY.md`](REQUIREMENTS_TRACEABILITY.md). The roadmap is
 complete only as a plan; the beta is complete only when its exact artifacts
@@ -35,10 +43,10 @@ pass the defined gates.
 | A-05 | Does a real N-1 update block the first published beta? | No. The first published beta requires the implemented same-version transactional updater smoke; a real first-beta-to-successor N-1 transaction gates the successor |
 | A-06 | Do Project Context Capsules or Memory Lab mechanisms enter V1? | No. They remain research or post-beta work |
 | A-07 | May the roadmap become GitHub work? | Yes. The reviewed beta packages may be represented as milestones and issues |
-| A-08 | Does the beta retain the advertised 2 GB import limit? | Yes. `2,000,000,000` raw bytes is a mandatory inclusive beta boundary; structural chunk support alone is insufficient, and full boundary/resource/recovery evidence blocks publication |
+| A-08 | Does the beta retain the advertised 2 GB import limit? | The implementation retains the inclusive `2,000,000,000`-byte boundary. Exact full boundary/resource/recovery evidence remains mandatory for `certification_v1`; the lean beta must disclose that the complete scale profile is not yet certified and must not advertise a verified 2 GB performance claim |
 | A-09 | May a configured Codex/Claude client attest that text was explicitly written by the user? | Yes, when the same-device client principal is explicitly authorized for that witness class. This is a local trust grant, not cryptographic proof; inference remains tentative and imported conflicts remain conservative |
 | A-10 | How are sensitive findings and solo approval handled? | GitHub private vulnerability reporting is enabled. The sole human maintainer approves releases and may use reproducible AI-assisted review without claiming independent review or separation of duties |
-| A-11 | Which platforms and providers are formally supported? | Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 are the mandatory desktop targets; macOS is unsupported and excluded from release assets/evidence. ChatGPT, Claude, and Grok exports remain mandatory. Missing evidence for a supported target or provider blocks publication rather than narrowing that scope |
+| A-11 | Which platforms and providers are formally supported? | Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 are the mandatory desktop targets; macOS is unsupported and excluded from release assets/evidence. ChatGPT, Claude, and Grok import capability remains in scope. Missing Windows/Ubuntu L01/L02 evidence blocks lean publication; the broader platform/client/provider evidence remains mandatory for certification and explicitly incomplete in the lean beta |
 
 The high-level product scope is fixed. Phase A still has to freeze the exact
 Windows version/build, Linux desktop/keyring baseline, supported client variants,
@@ -470,8 +478,10 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
   using the non-sparse canary and verify all predeclared budgets, raw-source
   SHA, current publication atomicity, packaged source-inclusive encrypted
   export/restore, and interruption behavior.
-- A missing ChatGPT, Claude, Grok, or 2,000,000,000-byte receipt leaves the
-  candidate in draft; these mandatory targets are not narrowed for the beta.
+- A missing ChatGPT, Claude, Grok, or 2,000,000,000-byte receipt leaves
+  `certification_v1` open. Under `lean_public_beta_v1`, this incomplete matrix
+  is an explicit P2 limitation and no verified provider-shape or 2 GB
+  performance claim may be inferred from publication.
 
 ### Data, security, and recovery
 
@@ -499,8 +509,10 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 
 ## Phase E: Publish and verify
 
-- Before publication, require the exact 20-receipt prepublication bundle and
-  explicit sole-maintainer approve decision. Known issues, support, security
+- Before publication, require the exact gate set selected by the bundle's
+  explicit policy and an explicit sole-maintainer approve decision. The initial
+  lean beta requires exactly six receipts and all four lean acknowledgements;
+  certification requires the unchanged 20. Known issues, support, security
   intake, and recovery guidance must already exist and remain linked in the
   candidate source, but source readiness is not a `BETA-O01` pass.
 - Publish the exact immutable beta assets through the protected workflow.
@@ -519,7 +531,10 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 - Record `BETA-R05` and `BETA-O01` only after publication. Neither receipt may
   appear in or satisfy the prepublication maintainer-decision bundle.
 
-## V1 beta acceptance matrix
+## Certification V1 acceptance matrix
+
+This 20-gate matrix is the complete `certification_v1` profile. It remains
+truthful and open after a lean beta; it is not the six-gate publication bundle.
 
 | Gate | Requirement | Current state | Required proof |
 |---|---|---|---|
@@ -539,7 +554,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 | BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
 | BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on supported Windows and Linux from exact downloaded artifacts |
 | BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
-| BETA-R02 | Key custody is recoverable and publication remains deliberate | Public key prepared; human custody prerequisite open | Two restore-tested backups in distinct failure domains, then one source receipt; the separate 20-receipt maintainer decision precedes offline signing/publication |
+| BETA-R02 | Key custody is recoverable and publication remains deliberate | Public key prepared; human custody prerequisite open | Two restore-tested backups in distinct failure domains, then one source receipt; the separate selected-profile maintainer decision precedes offline signing/publication |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
 | BETA-R05 | Public beta and channel reference the approved bytes | Open | Exact-candidate public download/install/channel smoke |
@@ -569,7 +584,7 @@ make the mapping explicit.
 | [B-203 Client and platform acceptance](https://github.com/Martian-ux/All-The-Context/issues/26) | D | B-201 | BETA-P01, BETA-P02, BETA-S03, BETA-X01 | clean-machine and real-client receipts |
 | [B-204 Provider and scale acceptance](https://github.com/Martian-ux/All-The-Context/issues/27) | D | B-201 | BETA-P04, BETA-D01, BETA-X01 | real-export and accepted-boundary receipts |
 | [B-205 Data, security, and recovery acceptance](https://github.com/Martian-ux/All-The-Context/issues/28) | D | B-201 | BETA-S01..BETA-S06, BETA-D02, BETA-D03, BETA-R04 | exact-candidate adversarial/recovery matrix |
-| [B-206 Publish, public smoke, and go/no-go](https://github.com/Martian-ux/All-The-Context/issues/29) | E | B-202..B-205 | BETA-R05, BETA-O01 | publish after the 20-receipt approval, then close public smoke and launch watch |
+| [B-206 Publish, public smoke, and go/no-go](https://github.com/Martian-ux/All-The-Context/issues/29) | E | Lean: B-106..B-108, B-201, exact L01/L02; certification: B-202..B-205 | BETA-R05, BETA-O01 | publish only after the selected-profile approval, then close public smoke and launch watch |
 
 GitHub tracking is organized under
 [V1 Beta — Product & Safety](https://github.com/Martian-ux/All-The-Context/milestone/1),
@@ -600,23 +615,24 @@ and
 
 ## Definition of done
 
-V1 beta is complete only when:
+The initial lean V1 beta is complete only when:
 
 - A-01 through A-11 are reflected consistently;
-- every work package B-001 through B-206 is closed against its acceptance
-  criteria;
-- every `BETA-*` gate passes on one exact candidate or is an eligible P2/P3
-  limitation with public disclosure and a follow-up issue; A-08/A-11 platform,
-  provider, and size-boundary gates are never limitation-eligible;
-- every non-waivable gate passes;
-- every claimed platform, client, provider, and import boundary has an
-  exact-artifact receipt;
+- the exact six-gate `lean_public_beta_v1` set passes on one candidate;
+- the four lean acknowledgements are true and every open certification cell is
+  disclosed without pass/skip/waive credit;
+- Windows 11 and Ubuntu 24.04 each have an exact-artifact first-run receipt;
+- the exact-candidate security and immutable-inventory gates pass;
 - the beta key is recoverable and the immutable release/channel reference the
   approved bytes;
 - zero P0/P1 remains open;
 - the sole human maintainer records an explicit approve decision without
   claiming independent human review; and
 - the public beta is downloaded and smoke-tested from its public URLs.
+
+Complete `certification_v1` remains achieved only when all 20 prepublication
+matrix gates and their mapped work packages pass on one exact candidate. Lean
+publication does not satisfy that definition.
 
 ## Post-V1 horizon
 
@@ -649,18 +665,18 @@ maintainer expands a beta claim:
 
 ## Next actions
 
-1. Freeze exact Windows and Linux versions/architectures, supported
-   Codex/Claude variants, and ChatGPT/Claude/Grok parser-format versions under
-   A-11.
-2. Complete the two-backup restore tests on the custody form, then emit one
+1. Materialize candidate-bound `BETA-L01` and `BETA-L02` receipts from the
+   already completed Windows 11 and Ubuntu 24.04 exact-artifact journeys; do not
+   inspect private user content or reuse a source-only slice.
+2. Recompute `BETA-S06`, `BETA-R01`, and `BETA-R03` against the exact candidate
+   inventory and retain their content-free evidence.
+3. Complete the two-backup restore tests on the custody form, then emit one
    candidate-bound `BETA-R02` source receipt. Do not start offline signing
-   until all 20 unique prepublication receipts pass and the maintainer
-   records `approve` with `independent_human_review_claimed=false`.
-3. Route detailed findings through the enabled private vulnerability intake
-   and finish the remaining repository security controls.
-4. Complete Phase B fixes, including the mandatory 2 GB path, before collecting
-   any release acceptance evidence.
-5. Freeze one exact Windows/Linux candidate only after the beta safety/product
-   surface stops changing. Do not reuse the unpublished `0.1.0-beta.1` draft.
-6. Run every browser, client, platform, provider, security, and recovery receipt
-   against that exact downloaded candidate before publication.
+   until all six lean receipts pass and the maintainer records all four
+   acknowledgements plus `approve` with
+   `independent_human_review_claimed=false`.
+4. Stop for the human signing and publication ceremony. Do not expose the
+   private key, password, or backup locations to an AI system or Actions.
+5. After publication, collect `BETA-R05` and `BETA-O01`. Continue the complete
+   browser, client, provider, scale, privacy, recovery, and replacement matrix
+   as the visible `certification_v1` track.

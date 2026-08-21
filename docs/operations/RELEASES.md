@@ -183,9 +183,13 @@ x86_64 OTA ZIP:
 Do not begin signing merely because the candidate exists. First complete the
 two-backup custody prerequisite on
 [RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md), emit the unique
-`BETA-R02` source receipt, collect all 20 unique prepublication pass receipts,
-and record the maintainer's bundle-level `approve` decision. That decision is
-distinct from the R02 receipt and must retain
+`BETA-R02` source receipt, collect every receipt required by the explicitly
+selected publication profile, and record the maintainer's bundle-level
+`approve` decision. The initial `lean_public_beta_v1` profile requires exactly
+`BETA-L01`, `BETA-L02`, `BETA-S06`, `BETA-R01`, `BETA-R02`, and `BETA-R03`,
+plus all four lean acknowledgements set to true. The complete
+`certification_v1` profile still requires the unchanged 20-gate set. The
+decision is distinct from the R02 receipt and must retain
 `independent_human_review_claimed=false`.
 
 1. Download the draft ZIP, candidate inventory, checksum, SPDX document, and
@@ -226,8 +230,11 @@ distinct from the R02 receipt and must retain
    It also runs
    `scripts/publication_gate.py` against the reviewed candidate digest, the
    exact promotion asset inventory, a content-free acceptance receipt bundle
-   containing exactly the 20 prepublication gates with an explicit maintainer
-   `approve` decision, and the reviewed public-key identity. `BETA-R05` and
+   containing exactly the gate set named by `publication_policy`, with an
+   explicit maintainer `approve` decision, and the reviewed public-key identity.
+   The gate records the selected policy and fails closed on unknown policies,
+   extra/missing/duplicate gates, false lean acknowledgements, or non-pass
+   receipts. `BETA-R05` and
    `BETA-O01` are postpublication gates and are rejected from this bundle. The
    private signing key, password, and backup location never enter Actions, the
    repository, an AI system, a shell argument, or an environment variable. The
@@ -268,7 +275,7 @@ After immutable publication and protected channel promotion, collect
 security-intake, and recovery URLs have remained healthy through the initial
 launch watch and every received report has been triaged. These receipts close
 B-206, require exact downloaded-artifact operational evidence bound to the
-candidate inventory, and do not retroactively enter the 20-receipt publication
+candidate inventory, and do not retroactively enter the selected prepublication
 bundle.
 
 Candidate creation fails closed before this sequence unless

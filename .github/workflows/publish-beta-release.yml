@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       receipt_bundle_json:
-        description: Content-free acceptance receipt bundle JSON (explicit maintainer decision required)
+        description: Content-free bundle JSON with an explicit publication policy and maintainer decision
         required: true
         type: string
       key_id:

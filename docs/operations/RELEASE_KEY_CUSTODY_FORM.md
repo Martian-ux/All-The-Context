@@ -57,8 +57,9 @@ candidate-bound `BETA-R02` receipt with `evidence_kind=source` and
 `content_free=true`. Do not include this form in the release asset set or treat
 it as the receipt.
 
-The maintainer decision remains null until all 20 unique prepublication pass
-receipts, including R02, exist and are reviewed. An approval must enumerate all
-20 receipt IDs exactly once and retain
+The maintainer decision remains null until every receipt selected by the named
+publication profile, including R02, exists and is reviewed. The initial lean
+profile requires six receipt IDs and four true acknowledgements; certification
+requires 20. An approval must enumerate every selected receipt ID exactly once and retain
 `independent_human_review_claimed=false`. Only that explicit approval permits
 offline signing, protected immutable publication, and channel promotion.
