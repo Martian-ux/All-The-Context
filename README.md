@@ -146,6 +146,8 @@ beta artifact and must not be uploaded to or advertised from the public
 release.
 
 See [architecture](docs/architecture/ARCHITECTURE.md),
+[product requirements](docs/product/PRODUCT_REQUIREMENTS.md),
+[the accepted post-V1 zero-friction platform contract](docs/product/ZERO_FRICTION_PLATFORM.md),
 [provider history import](docs/integrations/PROVIDER_IMPORTS.md),
 [platform support](docs/operations/PLATFORMS.md),
 [support](SUPPORT.md),
