@@ -2418,3 +2418,53 @@ for fresh Edge acceptance. It does not pass P06.
 
 macOS remains unsupported and excluded from candidate assets, receipts, and
 support claims. Retained Mac source and CI code is unchanged portability work.
+
+## ADR-090: Adopt zero-routine-friction as the post-V1 product direction
+
+**Status:** accepted 2026-08-20.
+
+After the first usable public beta, ATC is developed as background local-first
+infrastructure: users connect supported sources and clients once, then work
+normally without a routine memory inbox, manual classification, project
+curation, repeated archive imports, or dashboard administration. The normative
+contract is
+[`product/ZERO_FRICTION_PLATFORM.md`](product/ZERO_FRICTION_PLATFORM.md), and
+its dependency- and evidence-ordered implementation sequence is
+[`product/ZERO_FRICTION_EXECUTION_PLAN.md`](product/ZERO_FRICTION_EXECUTION_PLAN.md).
+
+Core remains the sole canonical authority. Connected text is inert untrusted
+data; authorization and temporal/lifecycle resolution occur before derived
+work; projections are disposable and dependency-bound; and correction,
+retention, deletion, and purge must close future ATC influence without claiming
+retroactive erasure from an external provider. The current source, observation,
+ledger, current-record, Retrieval V3, Memory Lab, and project-scope mechanisms
+are extended rather than replaced by parallel authorities.
+
+Integration claims are capability-qualified. L0 MCP is a best-effort
+compatibility path. Pre-generation delivery, direct-turn capture, working
+checkpoints, observable outcomes, or consequence enforcement require matching
+L1-L3 lifecycle hooks and acceptance evidence. Experimental connector, runtime,
+event, and lineage contracts remain v0 until exercised by a fake harness and
+one real vertical slice; stable SDK promises come later.
+
+This decision does not expand, block, or grant acceptance credit to
+`0.1.0-beta.3`. Phase 0 preserves the Windows/Ubuntu beta scope and completes
+the existing release boundary. `ZF-*` implementation issues and implementation
+PRs begin only after beta publication and tracker reconciliation. Successor-beta
+and stable hardening, including real N-1 updates and stable contracts, remains a
+separate post-V1 track.
+
+## ADR-091: Raise the reviewed pip floor after PYSEC-2026-3721
+
+**Status:** accepted 2026-08-21.
+
+The frozen Python dependency audit for PR 66 failed closed after
+PYSEC-2026-3721 / CVE-2026-13346 was published for the locked `pip 26.1.2`.
+The advisory identifies `26.2` as the first fixed release. The development
+extra therefore requires `pip>=26.2,<27`, and `uv.lock` selects fixed `26.2.1`
+for the exact dev-and-packaging export audited by CI.
+
+This is a reviewed build and audit dependency repair. `pip` is not added to
+the ATC runtime dependencies, the beta.3 candidate identity is unchanged, and
+no acceptance gate receives credit from this source-level correction. PR 66
+still requires a fresh green hosted matrix before merge.

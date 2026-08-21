@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-08-17, the immediate target is an unsigned
+As of 2026-08-21, the immediate target is an unsigned
 `0.1.0-beta.3` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
 x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
 is post-V1. No beta release has been published. The
@@ -27,6 +27,14 @@ the existing Mac source and CI code as unsupported portability work. No Mac
 execution or receipt is required for `0.1.0-beta.3`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
+The active unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
+`371617909`, source `89f3973f8408ee80a76265b88d13e6fbf5791f6e`,
+release-candidate run `32010253144`, and candidate digest
+`804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369` (31
+assets). It remains unsigned, draft, and unpublished. Candidate creation and a
+green release-candidate workflow do not satisfy any exact-candidate acceptance
+receipt or authorize publication.
+
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
 `080d90669dd5936206c088ae0f4fe4cca24d327e`. PR 64 then landed the ADR-088
@@ -39,8 +47,16 @@ global visible-focus outline is overridden by `.search-input input { outline:
 ADR-089 records the source-level `:focus-within` wrapper treatment and
 advances the active source version to `0.1.0-beta.3`. This correction only
 makes a new exact candidate eligible for fresh Edge acceptance; it does not
-pass P06. Candidate dispatch stays blocked pending this source correction,
-review, and exact-main green.
+pass P06. The resulting candidate identity is recorded above; its remaining
+acceptance and human release gates stay open.
+
+ADR-090 accepts the post-V1 zero-routine-friction direction and its
+capability-qualified integration model. It preserves Core authority, treats
+connected content as inert data, reuses the existing observation/current-record
+and Retrieval V3 boundaries, and requires correction, retention, deletion, and
+purge closure across derived state. This direction does not expand
+`0.1.0-beta.3`, grant acceptance credit, or permit `ZF-*` implementation issues
+before beta publication and tracker reconciliation.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
@@ -374,6 +390,13 @@ contains `nanoid 3.3.18`, `postcss 8.5.26`, and `undici 7.29.0`, closing the
 high-severity nanoid and undici advisories plus the reported PostCSS advisory.
 The frozen Python audit and `npm audit --audit-level=high` both pass locally;
 the replacement exact-SHA hosted matrix remains required before integration.
+
+On 2026-08-21, the same fail-closed audit rejected the frozen development and
+packaging environment after PYSEC-2026-3721 / CVE-2026-13346 was published for
+`pip 26.1.2`. The reviewed development constraint now requires `pip>=26.2,<27`
+and the frozen lock selects `26.2.1`. This is a build/audit dependency repair;
+it does not change the beta.3 runtime dependency set or grant acceptance
+receipt credit. The hosted matrix must pass again before PR 66 can merge.
 
 That replacement matrix exposed a deterministic macOS Intel packaging
 incompatibility rather than an application regression. Cryptography 50 has no

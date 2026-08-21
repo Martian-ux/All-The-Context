@@ -117,3 +117,27 @@ retained in source but is not a supported V1 beta journey or release target.
   later direct-Core mobile path requires authentication, revocation, transport
   security, restart persistence, and safe offline failure before it is called
   complete.
+
+## Post-V1 zero-friction direction
+
+V1 establishes the local authoritative Core and safe memory foundation.
+[`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) accepts the post-V1 direction:
+ATC must behave as infrastructure so that, after installation and explicit
+account/client authorization, healthy normal use requires no memory inbox,
+manual classification, project or graph curation, repeat history import,
+retrieval tuning, or routine dashboard administration.
+
+The normative product contract is
+[`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md). Its evidence-gated,
+dependency-ordered implementation direction is
+[`ZERO_FRICTION_EXECUTION_PLAN.md`](ZERO_FRICTION_EXECUTION_PLAN.md).
+
+The promise remains capability-qualified: ordinary L0 MCP is best effort, while
+pre-generation delivery, complete automatic capture, working continuity, and
+consequence guarantees require the corresponding accepted connector/client
+capabilities.
+
+These documents do not expand the `0.1.0-beta.3` release boundary or make
+continuous connectors, lifecycle-aware client hooks, the broader event
+substrate, project graphs, Project Context Capsules, working-state continuity,
+outcome learning, or remote access V1 claims.
