@@ -100,7 +100,7 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--target macos:" not in publish
     assert "--target macos:" not in promote
     assert "-unsigned.dmg" not in promote
-    assert "v0.1.0-beta.4" in publish
+    assert "v0.1.0-beta.5" in publish
     assert "v0.1.0-beta.2" not in publish
     assert "v0.1.0-beta.1" not in publish
     assert "--clobber" not in candidate

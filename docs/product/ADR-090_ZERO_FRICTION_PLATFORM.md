@@ -16,7 +16,7 @@ evidence-ordered implementation plan is
 [`ZERO_FRICTION_EXECUTION_PLAN.md`](ZERO_FRICTION_EXECUTION_PLAN.md).
 
 This decision does not expand, block, or provide acceptance credit for
-`0.1.0-beta.4`. Continuous connectors, lifecycle-aware client hooks, the broader
+`0.1.0-beta.5`. Continuous connectors, lifecycle-aware client hooks, the broader
 event substrate, automatic project discovery, project graphs, Project Context
 Capsules, working-state continuity, outcome learning, and remote/mobile access
 remain post-V1 behavior until separately implemented and accepted.
