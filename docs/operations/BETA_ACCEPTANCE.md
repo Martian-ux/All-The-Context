@@ -6,7 +6,7 @@ offline private key.
 
 ## Version identity
 
-- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.3`.
+- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.4`.
 - The release candidate records one exact 40-character commit and every
   artifact digest.
 - Published assets are immutable; changed bytes require a new version.
@@ -189,9 +189,9 @@ On the exact release commit:
 - Native packages are labeled **unsigned community build**.
 - OTA metadata is signed outside the repository with an operator-controlled
   Ed25519 key; only reviewed public keys enter source control.
-- First-public-beta publication requires the reviewed update client, two
-  restore-tested release-key backups in distinct failure domains, one
-  candidate-bound `BETA-R02` source receipt after those restore tests, the
+- First-public-beta publication requires the reviewed update client, one
+  restore-tested encrypted release-key backup separate from the primary, one
+  candidate-bound `BETA-R02` source receipt after that restore test, the
   remaining unique receipts selected by the bundle's publication profile, an explicit maintainer
   `approve` with `independent_human_review_claimed=false`, protected immutable
   publication, and a signed Windows x86-64 channel. The private key, password,

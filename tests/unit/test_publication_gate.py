@@ -47,7 +47,7 @@ TARGETS = (
 )
 ROOT = Path(__file__).resolve().parents[2]
 KEYRING = ROOT / "release" / "keys.json"
-PUBLIC_FP = "sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
+PUBLIC_FP = "sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f"
 
 
 def _bundle(path: Path) -> None:
@@ -318,7 +318,7 @@ def test_publication_gate_fails_without_approve(tmp_path: Path) -> None:
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -344,12 +344,12 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
         source_commit=SOURCE,
         receipt_bundle_path=bundle_path,
         keyring_path=KEYRING,
-        key_id="release-2026-a",
+        key_id="release-2026-b",
         expected_public_key_sha256=PUBLIC_FP,
         asset_stage="promotion",
     )
     assert record["ok"] is True
-    assert record["key_id"] == "release-2026-a"
+    assert record["key_id"] == "release-2026-b"
     assert record["maintainer_approver"] == "sole-maintainer"
     assert record["publication_policy"] == CERTIFICATION_PUBLICATION_POLICY
     assert set(record["required_gates"]) == REQUIRED_PUBLICATION_GATES
@@ -387,7 +387,7 @@ def test_publication_gate_passes_with_exact_lean_public_beta_set(tmp_path: Path)
         source_commit=SOURCE,
         receipt_bundle_path=bundle_path,
         keyring_path=KEYRING,
-        key_id="release-2026-a",
+        key_id="release-2026-b",
         expected_public_key_sha256=PUBLIC_FP,
         asset_stage="promotion",
     )
@@ -423,7 +423,7 @@ def test_publication_gate_rejects_false_lean_public_beta_acknowledgement(
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -463,7 +463,7 @@ def test_publication_gate_rejects_postpublication_receipts(
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -486,7 +486,7 @@ def test_publication_gate_rejects_wrong_public_key(tmp_path: Path) -> None:
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256="sha256:" + ("0" * 64),
             asset_stage="promotion",
         )
@@ -511,7 +511,7 @@ def test_publication_gate_rejects_incomplete_gate_set(tmp_path: Path) -> None:
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -547,7 +547,7 @@ def test_publication_gate_rejects_arbitrary_extra_gate_before_approval(tmp_path:
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -574,7 +574,7 @@ def test_publication_gate_rejects_duplicate_required_gate_receipt(tmp_path: Path
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -602,7 +602,7 @@ def test_publication_gate_rejects_forged_matrix_evidence(tmp_path: Path) -> None
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -630,7 +630,7 @@ def test_publication_gate_rejects_mixed_inventory_artifact_digest(tmp_path: Path
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )
@@ -654,7 +654,7 @@ def test_publication_gate_rejects_arbitrary_safe_key_as_exact_binding(tmp_path: 
             source_commit=SOURCE,
             receipt_bundle_path=bundle_path,
             keyring_path=KEYRING,
-            key_id="release-2026-a",
+            key_id="release-2026-b",
             expected_public_key_sha256=PUBLIC_FP,
             asset_stage="promotion",
         )

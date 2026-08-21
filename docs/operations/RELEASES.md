@@ -101,9 +101,14 @@ live draft, and do not revive or reuse the earlier episode. The first
 Windows/Linux-only candidate was `0.1.0-beta.2`. That unpublished identity
 remains an occupied historical draft; its evidence is not rebound, deleted,
 relabeled, or reused. Source inspection of that tree found a BETA-P06
-visible-focus defect, so the next candidate must be rebuilt as `0.1.0-beta.3`
-from a fresh draft bound to the then-current protected `main` SHA after
-exact-main checks are green. This source correction does not pass P06.
+visible-focus defect, so it was rebuilt as `0.1.0-beta.3`. That unpublished
+Windows/Linux draft is ID `371617909`, source
+`89f3973f8408ee80a76265b88d13e6fbf5791f6e`, release-candidate run
+`32010253144`, and candidate digest
+`804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369`.
+It remains historical, unsigned, and unpublished. A prepublication signing-key
+rotation makes `0.1.0-beta.4` the next candidate; the occupied beta.3 draft is
+not retargeted, deleted, reused, or published.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
@@ -165,15 +170,16 @@ independently reviewed `sha256:<hex>` fingerprint. An import adds the base64url
 public key and fingerprint to both `release/keys.json` and packaged
 `allthecontext/update_keys.json`; validation requires the tracked files to be
 byte-for-byte identical. The offline/key-custody checklist is in
-[Release key ceremony](RELEASE_KEY_CEREMONY.md). The operator generated the
-encrypted `release-2026-a` private key outside the checkout on 2026-07-22 and
-imported only its beta-authorized public half. The reviewed public-key
-fingerprint is
-`sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`.
+[Release key ceremony](RELEASE_KEY_CEREMONY.md). The active beta key is
+`release-2026-b`; its reviewed public-key fingerprint is
+`sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f`.
+The predecessor `release-2026-a` remains tracked as revoked after its encrypted
+private-key passphrase became unavailable before any release was published;
+this records availability loss and does not allege compromise.
 The private key has not entered the repository, GitHub, Actions, an AI
-system, a shell argument, or an environment variable. Two recoverable
-encrypted backups in distinct failure domains must each be restore-tested
-before the one candidate-bound `BETA-R02` source receipt.
+system, a shell argument, or an environment variable. One recoverable encrypted
+backup, kept separate from the operator-controlled primary, must be
+restore-tested before the one candidate-bound `BETA-R02` source receipt.
 
 ## Offline manifest signing and draft publication
 
@@ -200,7 +206,7 @@ decision is distinct from the R02 receipt and must retain
    command prompts for its password without echo:
 
    ```text
-   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.3-windows-x86_64.zip --version 0.1.0-beta.3 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.3/all-the-context-0.1.0-beta.3-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.3 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.3 --key-id release-2026-a --private-key <offline-path>/release-2026-a.pem --output manifest-beta-windows-x86_64-v1.json
+   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.4-windows-x86_64.zip --version 0.1.0-beta.4 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.4/all-the-context-0.1.0-beta.4-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.4 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.4 --key-id release-2026-b --private-key <offline-path>/release-2026-b.pem --output manifest-beta-windows-x86_64-v1.json
    ```
 
    Add `--mandatory` only for a documented security or compatibility boundary.
@@ -208,7 +214,7 @@ decision is distinct from the R02 receipt and must retain
    against the reviewed repository keyring and the downloaded artifact:
 
    ```text
-   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.3-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.3
+   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.4-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.4
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
    a Linux or macOS manifest. Record the reviewed candidate-inventory SHA-256.

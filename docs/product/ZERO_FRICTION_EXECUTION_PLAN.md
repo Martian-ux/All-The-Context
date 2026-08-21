@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
-| Immediate release boundary | `0.1.0-beta.3` remains unchanged |
+| Immediate release boundary | `0.1.0-beta.4` remains unchanged |
 | Early interface status | Experimental v0 until exercised by a fake harness and one real vertical slice |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
@@ -106,7 +106,7 @@ release-channel hardening remain a separate post-V1 track.
 
 ### Goal
 
-Publish the first usable `0.1.0-beta.3` without importing post-V1 product claims
+Publish the first usable `0.1.0-beta.4` without importing post-V1 product claims
 or carrying a misleading execution tracker forward.
 
 ### Tracker reconciliation

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Exact beta tag (for example v0.1.0-beta.3)
+        description: Exact beta tag (for example v0.1.0-beta.4)
         required: true
         type: string
       source_commit:
@@ -23,12 +23,12 @@ on:
         description: Reviewed public release key ID
         required: true
         type: string
-        default: release-2026-a
+        default: release-2026-b
       expected_public_key_sha256:
         description: Reviewed public-key fingerprint (sha256:<hex>)
         required: true
         type: string
-        default: sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4
+        default: sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f
       approval:
         description: Type PUBLISH UNSIGNED BETA
         required: true

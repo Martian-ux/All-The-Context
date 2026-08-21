@@ -2501,3 +2501,33 @@ approver, and retain `independent_human_review_claimed=false`.
 handle private signing material, claim key-backup recovery, approve the release,
 or publish it. It changes only the machine-enforced evidence threshold for the
 initial public beta; certification remains a visible post-beta hardening track.
+
+## ADR-093: Rotate the unavailable prepublication beta signing key
+
+**Status:** accepted 2026-08-21.
+
+The encrypted private credential for `release-2026-a` could no longer be
+authenticated by the custodian before any ATC release was published. This is a
+key-availability failure, not a claim that the private key was disclosed or
+compromised. The immutable key ID is not reused: both tracked public keyrings
+retain `release-2026-a` with `status=revoked`.
+
+The replacement Ed25519 beta key is `release-2026-b`, with reviewed public
+fingerprint
+`sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f`.
+Only the public half enters source control. The encrypted private half and its
+passphrase remain under human custody outside the checkout, GitHub, Actions,
+and model context. For this beta, the operator-controlled primary plus one
+encrypted backup in a separate failure domain is the accepted custody floor.
+The backup must pass a human-entered restore test before the candidate-bound
+`BETA-R02` receipt can pass. This supersedes only ADR-092's two-backup custody
+count; it does not weaken candidate binding, signing separation, or explicit
+human approval.
+
+The unpublished `0.1.0-beta.3` draft already occupies its immutable version
+slot and embeds the predecessor-only trust root. It is retained as unsigned,
+unpublished history and is not retargeted, deleted, reused, or published. The
+replacement source version is `0.1.0-beta.4`; a new exact candidate and fresh
+candidate-bound lean receipts are required. This decision adds no feature,
+macOS asset, Mac support or evidence, signature, human release approval, or
+publication authorization.

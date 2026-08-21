@@ -3,7 +3,7 @@
 ## Document control
 
 - **Status:** active execution plan
-- **V1 destination:** first usable public beta, `0.1.0-beta.3`
+- **V1 destination:** first usable public beta, `0.1.0-beta.4`
 - **Baseline:** `1d44fdd80a3dcb32c580434924bb03c1e5291ae1`, 2026-07-25
 - **Human owner:** one maintainer
 - **Review model:** AI-assisted implementation and adversarial review; no claim
@@ -20,7 +20,7 @@ blocker. Successor beta / stable, mobile, and research work is separated into
 the post-V1 horizon.
 
 ADR-092 separates initial publication from complete certification. The initial
-`0.1.0-beta.3` may publish only under `lean_public_beta_v1`, with exact passing
+`0.1.0-beta.4` may publish only under `lean_public_beta_v1`, with exact passing
 `BETA-L01`, `BETA-L02`, `BETA-S06`, `BETA-R01`, `BETA-R02`, and `BETA-R03`
 receipts plus four literal-true human acknowledgements. The 20-gate matrix in
 this roadmap remains the unchanged `certification_v1` hardening track. Open
@@ -36,7 +36,7 @@ pass the defined gates.
 
 | ID | Decision | Resolution |
 |---|---|---|
-| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.3`, not stable `1.0.0` |
+| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.4`, not stable `1.0.0` |
 | A-02 | Does mobile block V1? | No. V1 is same-device desktop use with Core online and loopback-only by default |
 | A-03 | Who drives the release? | One human maintainer using AI tools for implementation and review |
 | A-04 | Should the roadmap estimate time? | No. Sequence and evidence determine readiness |
@@ -55,7 +55,7 @@ scale acceptance profile used to prove it.
 
 ## Fixed beta support floor
 
-| Surface | `0.1.0-beta.3` floor |
+| Surface | `0.1.0-beta.4` floor |
 |---|---|
 | Windows | Windows 11 x86-64 desktop artifact; the exact supported feature release/build is recorded at candidate freeze |
 | macOS | Unsupported; retained source/CI code only, with no candidate asset, receipt, or support claim |
@@ -401,9 +401,10 @@ All implementation changes finish before the candidate is frozen.
 
 ### Key and publication controls
 
-- Create, restore-test, and verify two recoverable encrypted backups of the
-  beta release private key in distinct failure domains, both outside the
-  checkout and synchronized workspace.
+- Create, restore-test, and verify one recoverable encrypted backup of the beta
+  release private key, kept in a failure domain separate from the
+  operator-controlled primary and outside the checkout and synchronized
+  workspace.
 - Configure the beta publication and Pages promotion path so a typed human
   decision, exact candidate inventory, immutable asset slot, and key
   authorization are enforced.
@@ -456,7 +457,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 - Record SmartScreen, unsigned-package, Linux desktop, and manual update
   behavior exactly rather than treating hosted CI as proof. Gatekeeper
   observations belong to the superseded Mac plan and are not a
-  `0.1.0-beta.3` execution requirement.
+  `0.1.0-beta.4` execution requirement.
 
 ### Providers and import scale
 
@@ -554,7 +555,7 @@ truthful and open after a lean beta; it is not the six-gate publication bundle.
 | BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
 | BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on supported Windows and Linux from exact downloaded artifacts |
 | BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
-| BETA-R02 | Key custody is recoverable and publication remains deliberate | Public key prepared; human custody prerequisite open | Two restore-tested backups in distinct failure domains, then one source receipt; the separate selected-profile maintainer decision precedes offline signing/publication |
+| BETA-R02 | Key custody is recoverable and publication remains deliberate | `release-2026-b` public key prepared; one separate encrypted backup was restore-tested by the human custodian; candidate binding remains open | One restore-tested encrypted backup separate from the operator-controlled primary, then one source receipt; the separate selected-profile maintainer decision precedes offline signing/publication |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
 | BETA-R05 | Public beta and channel reference the approved bytes | Open | Exact-candidate public download/install/channel smoke |
