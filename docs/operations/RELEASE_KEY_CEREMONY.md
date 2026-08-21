@@ -117,13 +117,14 @@ outside the checkout. The human custodian successfully opened and validated the
 separate encrypted backup on 2026-08-21. Candidate identity is still required
 before the `BETA-R02` receipt can be emitted.
 
-## Beta 0.1.0-beta.4 custody handoff
+## Beta 0.1.0-beta.5 custody handoff
 
 The machine-side trust root is prepared: `release-2026-b` is active for beta in
 both tracked keyrings and its reviewed public fingerprint is recorded above.
 The old `0.1.0-beta.1` candidate and its receipts are bound to different source
-and artifact bytes and cannot be reused. The unpublished `0.1.0-beta.2` draft
-remains a historical occupied identity; its evidence is not rebound.
+and artifact bytes and cannot be reused. The unpublished `0.1.0-beta.2` and
+`0.1.0-beta.4` drafts remain historical occupied identities; their evidence is
+not rebound.
 
 The remaining sequence is deliberately separated:
 
@@ -156,7 +157,7 @@ key inside the checkout, then prompts for the encrypted key password without
 echo. Transfer only the signed JSON manifest back. Wipe transient decrypted
 copies and transfer media according to the recorded ceremony procedure.
 
-For `0.1.0-beta.4`, sign only the Windows x86-64 OTA manifest. The Linux
+For `0.1.0-beta.5`, sign only the Windows x86-64 OTA manifest. The Linux
 portable package remains a direct human-install asset and its updater manifest
 stays absent until platform-native update/rollback acceptance changes the
 candidate's explicit OTA-supported target set. macOS is unsupported and has no

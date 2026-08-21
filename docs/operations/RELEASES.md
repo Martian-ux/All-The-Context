@@ -106,9 +106,11 @@ Windows/Linux draft is ID `371617909`, source
 `89f3973f8408ee80a76265b88d13e6fbf5791f6e`, release-candidate run
 `32010253144`, and candidate digest
 `804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369`.
-It remains historical, unsigned, and unpublished. A prepublication signing-key
-rotation makes `0.1.0-beta.4` the next candidate; the occupied beta.3 draft is
-not retargeted, deleted, reused, or published.
+It remains historical, unsigned, and unpublished. The prepublication
+signing-key rotation produced the `0.1.0-beta.4` draft, but two live runbook
+sentences still contradicted ADR-093's one-backup custody floor. That draft is
+therefore also historical, unsigned, and unpublished. `0.1.0-beta.5` is the
+next candidate; no occupied draft is retargeted, deleted, reused, or published.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
@@ -187,7 +189,7 @@ For the first public beta, perform these steps only for the explicitly eligible 
 x86_64 OTA ZIP:
 
 Do not begin signing merely because the candidate exists. First complete the
-two-backup custody prerequisite on
+one-backup custody prerequisite on
 [RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md), emit the unique
 `BETA-R02` source receipt, collect every receipt required by the explicitly
 selected publication profile, and record the maintainer's bundle-level
@@ -206,7 +208,7 @@ decision is distinct from the R02 receipt and must retain
    command prompts for its password without echo:
 
    ```text
-   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.4-windows-x86_64.zip --version 0.1.0-beta.4 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.4/all-the-context-0.1.0-beta.4-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.4 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.4 --key-id release-2026-b --private-key <offline-path>/release-2026-b.pem --output manifest-beta-windows-x86_64-v1.json
+   python scripts/release_manifest.py create --artifact all-the-context-0.1.0-beta.5-windows-x86_64.zip --version 0.1.0-beta.5 --channel beta --platform windows --architecture x86_64 --url https://github.com/OWNER/REPOSITORY/releases/download/v0.1.0-beta.5/all-the-context-0.1.0-beta.5-windows-x86_64.zip --minimum-supported-version 0.1.0-beta.5 --release-notes-url https://github.com/OWNER/REPOSITORY/releases/tag/v0.1.0-beta.5 --key-id release-2026-b --private-key <offline-path>/release-2026-b.pem --output manifest-beta-windows-x86_64-v1.json
    ```
 
    Add `--mandatory` only for a documented security or compatibility boundary.
@@ -214,7 +216,7 @@ decision is distinct from the R02 receipt and must retain
    against the reviewed repository keyring and the downloaded artifact:
 
    ```text
-   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.4-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.4
+   python scripts/release_manifest.py verify --manifest manifest-beta-windows-x86_64-v1.json --keyring release/keys.json --artifact all-the-context-0.1.0-beta.5-windows-x86_64.zip --channel beta --current-version 0.1.0-beta.5
    ```
 4. Upload that exact manifest to the draft once, without `--clobber`. Do not add
    a Linux or macOS manifest. Record the reviewed candidate-inventory SHA-256.

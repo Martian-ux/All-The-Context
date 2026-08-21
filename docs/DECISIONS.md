@@ -2301,9 +2301,11 @@ reviving or reusing the earlier draft episode, so the Windows/Linux-only
 source version advances to `0.1.0-beta.2`.
 
 Release signing remains offline Ed25519 signing of the Windows x86-64 OTA
-manifest only. First, the human custodian restore-tests two encrypted backups
-in distinct failure domains and records content-free facts. Then one BETA-R02
-source receipt may be emitted. The separate bundle decision remains null until
+manifest only. This decision originally required two encrypted backups in
+distinct failure domains; ADR-093 supersedes that count with one encrypted
+backup separate from the operator-controlled primary. After the applicable
+restore test, one BETA-R02 source receipt may be emitted. The separate bundle
+decision remains null until
 all 20 unique prepublication receipts pass and the maintainer reviews them.
 Only an explicit approve permits offline signing, immutable publication, and
 channel promotion; private signing material never enters GitHub, Actions, the
@@ -2531,3 +2533,25 @@ replacement source version is `0.1.0-beta.4`; a new exact candidate and fresh
 candidate-bound lean receipts are required. This decision adds no feature,
 macOS asset, Mac support or evidence, signature, human release approval, or
 publication authorization.
+
+## ADR-094: Retire the contradictory beta.4 draft and correct custody wording
+
+**Status:** accepted 2026-08-21.
+
+The unpublished `0.1.0-beta.4` draft is release ID `374681462`, source
+`1084abd54d39ecb5be6e33e5dce57cd3d56d3ccb`, release-candidate run
+`32527232813`, and candidate digest
+`79020be27e998725664abe0f20fd27cc1b4e1735f4ea9ff1ae0171252f2dd797` (31
+assets). It is unsigned and unpublished. Although ADR-093 and the custody form
+correctly set the floor at one encrypted backup separate from the primary,
+two live runbook sentences still said two backups. The contradiction is a
+documentation defect; it is not resolved by silently reinterpreting the
+frozen candidate.
+
+The beta.4 draft remains occupied historical evidence and is not retargeted,
+deleted, reused, signed, or published. All live custody instructions now say
+one restore-tested encrypted backup separate from the operator-controlled
+primary. The replacement version is `0.1.0-beta.5`, which requires a fresh
+exact candidate and fresh candidate-bound lean receipts. No feature, support
+target, signing key, macOS claim, human approval, signature, or publication
+authorization changes.

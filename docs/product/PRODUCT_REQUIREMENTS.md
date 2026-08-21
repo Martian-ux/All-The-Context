@@ -9,7 +9,7 @@ automatically and remains the only authority.
 
 ## V1 principles
 
-The active V1 release is the first usable public beta, `0.1.0-beta.4`. It is a
+The active V1 release is the first usable public beta, `0.1.0-beta.5`. It is a
 same-device desktop product; stable `1.0.0`, phone access, and remote-computer
 access are post-V1.
 
@@ -137,7 +137,7 @@ pre-generation delivery, complete automatic capture, working continuity, and
 consequence guarantees require the corresponding accepted connector/client
 capabilities.
 
-These documents do not expand the `0.1.0-beta.4` release boundary or make
+These documents do not expand the `0.1.0-beta.5` release boundary or make
 continuous connectors, lifecycle-aware client hooks, the broader event
 substrate, project graphs, Project Context Capsules, working-state continuity,
 outcome learning, or remote access V1 claims.
