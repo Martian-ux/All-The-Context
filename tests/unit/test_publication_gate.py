@@ -274,9 +274,7 @@ def _full_bundle(
         },
     }
     if publication_policy == LEAN_PUBLIC_BETA_POLICY:
-        body["lean_beta_acknowledgements"] = {
-            key: True for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
-        }
+        body["lean_beta_acknowledgements"] = {key: True for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS}
     if decision == "approve":
         body["maintainer_decision"]["approver"] = "sole-maintainer"
         body["maintainer_decision"]["ai_assisted"] = True

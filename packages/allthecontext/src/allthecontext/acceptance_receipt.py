@@ -525,9 +525,7 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
     acknowledgements = value.get("lean_beta_acknowledgements")
     lean_acknowledgements: dict[str, Any] | None = None
     if publication_policy == LEAN_PUBLIC_BETA_POLICY:
-        lean_acknowledgements = _require_dict(
-            acknowledgements, "lean_beta_acknowledgements"
-        )
+        lean_acknowledgements = _require_dict(acknowledgements, "lean_beta_acknowledgements")
         _reject_unknown_keys(
             lean_acknowledgements,
             LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
@@ -547,9 +545,7 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
         ):
             raise ManifestError("lean_beta_acknowledgements values must be booleans")
     elif acknowledgements is not None:
-        raise ManifestError(
-            "lean_beta_acknowledgements is allowed only for lean_public_beta_v1"
-        )
+        raise ManifestError("lean_beta_acknowledgements is allowed only for lean_public_beta_v1")
     receipts_value = value.get("receipts")
     if not isinstance(receipts_value, list) or not receipts_value:
         raise ManifestError("acceptance receipt bundle must contain receipts")
@@ -762,12 +758,9 @@ def _require_lean_platform_artifact_binding(
     digests: Mapping[str, str],
 ) -> None:
     required_suffix = LEAN_PLATFORM_ARTIFACT_SUFFIXES.get(gate_id)
-    if required_suffix is not None and not any(
-        name.endswith(required_suffix) for name in digests
-    ):
+    if required_suffix is not None and not any(name.endswith(required_suffix) for name in digests):
         raise ManifestError(
-            f"gate {gate_id} must bind the candidate consumer artifact ending "
-            f"{required_suffix}"
+            f"gate {gate_id} must bind the candidate consumer artifact ending {required_suffix}"
         )
 
 

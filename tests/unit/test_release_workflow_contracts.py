@@ -426,9 +426,7 @@ def test_public_beta_source_metadata_is_beta3_not_historical_beta1_or_beta2() ->
         (ROOT / "release" / "acceptance-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
     lean_template = json.loads(
-        (ROOT / "release" / "lean-beta-receipt-bundle.template.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "release" / "lean-beta-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
     locked_project = next(
         package

@@ -59,9 +59,7 @@ def main() -> int:
             missing = (
                 missing_required_gates(
                     bundle["receipts"],
-                    required_gates=publication_gates_for_policy(
-                        bundle["publication_policy"]
-                    ),
+                    required_gates=publication_gates_for_policy(bundle["publication_policy"]),
                 )
                 if arguments.require_publication_gates
                 else []

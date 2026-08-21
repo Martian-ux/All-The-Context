@@ -509,9 +509,7 @@ def test_template_bundle_loads() -> None:
 def test_lean_beta_template_loads_without_claiming_pass() -> None:
     root = Path(__file__).resolve().parents[2]
     raw = json.loads(
-        (root / "release" / "lean-beta-receipt-bundle.template.json").read_text(
-            encoding="utf-8"
-        )
+        (root / "release" / "lean-beta-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
     validated = validate_receipt_bundle(raw)
     assert validated["publication_policy"] == LEAN_PUBLIC_BETA_POLICY
@@ -529,8 +527,7 @@ def test_lean_beta_approve_requires_every_acknowledgement() -> None:
         "candidate_sha256": DIGEST,
         "publication_policy": LEAN_PUBLIC_BETA_POLICY,
         "lean_beta_acknowledgements": {
-            key: key != "macos_unsupported_acknowledged"
-            for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+            key: key != "macos_unsupported_acknowledged" for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
         },
         "receipts": [_receipt()],
         "maintainer_decision": {

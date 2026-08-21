@@ -141,9 +141,7 @@ def evaluate_publication_gate(
     if bundle["candidate_sha256"] != candidate_sha256:
         raise ManifestError("receipt bundle candidate_sha256 does not match publication input")
 
-    publication_policy = str(
-        bundle.get("publication_policy", CERTIFICATION_PUBLICATION_POLICY)
-    )
+    publication_policy = str(bundle.get("publication_policy", CERTIFICATION_PUBLICATION_POLICY))
     required_gate_ids = set(publication_gates_for_policy(publication_policy))
     gate_ids = [str(receipt["gate_id"]) for receipt in bundle["receipts"]]
     # Preserve the more useful sequencing diagnostic before the generic exact-set
