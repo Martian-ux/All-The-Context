@@ -391,6 +391,13 @@ high-severity nanoid and undici advisories plus the reported PostCSS advisory.
 The frozen Python audit and `npm audit --audit-level=high` both pass locally;
 the replacement exact-SHA hosted matrix remains required before integration.
 
+On 2026-08-21, the same fail-closed audit rejected the frozen development and
+packaging environment after PYSEC-2026-3721 / CVE-2026-13346 was published for
+`pip 26.1.2`. The reviewed development constraint now requires `pip>=26.2,<27`
+and the frozen lock selects `26.2.1`. This is a build/audit dependency repair;
+it does not change the beta.3 runtime dependency set or grant acceptance
+receipt credit. The hosted matrix must pass again before PR 66 can merge.
+
 That replacement matrix exposed a deterministic macOS Intel packaging
 incompatibility rather than an application regression. Cryptography 50 has no
 macOS x86-64 wheel, so the locked install built its Rust extension from source

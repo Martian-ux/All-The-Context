@@ -2453,3 +2453,18 @@ the existing release boundary. `ZF-*` implementation issues and implementation
 PRs begin only after beta publication and tracker reconciliation. Successor-beta
 and stable hardening, including real N-1 updates and stable contracts, remains a
 separate post-V1 track.
+
+## ADR-091: Raise the reviewed pip floor after PYSEC-2026-3721
+
+**Status:** accepted 2026-08-21.
+
+The frozen Python dependency audit for PR 66 failed closed after
+PYSEC-2026-3721 / CVE-2026-13346 was published for the locked `pip 26.1.2`.
+The advisory identifies `26.2` as the first fixed release. The development
+extra therefore requires `pip>=26.2,<27`, and `uv.lock` selects fixed `26.2.1`
+for the exact dev-and-packaging export audited by CI.
+
+This is a reviewed build and audit dependency repair. `pip` is not added to
+the ATC runtime dependencies, the beta.3 candidate identity is unchanged, and
+no acceptance gate receives credit from this source-level correction. PR 66
+still requires a fresh green hosted matrix before merge.

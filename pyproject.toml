@@ -29,6 +29,8 @@ dev = [
   "build>=1.3,<2",
   "hypothesis>=6.135,<7",
   "mypy>=1.16,<2",
+  # CVE-2026-13346 / PYSEC-2026-3721: pip 26.1.x is vulnerable.
+  "pip>=26.2,<27",
   "pip-audit==2.10.1",
   # PYSEC-2026-1845: lock-export audit requires >=9.0.3 (8.4.x is vulnerable).
   "pytest>=9.0.3,<10",
