@@ -11,7 +11,7 @@ Use two people if possible: a **key custodian** operating a clean offline or
 operator-controlled computer, and a **reviewer** independently comparing the
 public fingerprint and repository diff. Both record the release key ID,
 channels, date, tools, and fingerprint. The key ID is lowercase and immutable,
-for example `release-2026-a`.
+for example `release-2026-b`.
 
 Use a no-cost Ed25519-capable tool that exports an encrypted PKCS8 PEM private
 key and a standard PEM or OpenSSH public key. OpenSSL 3 is one option on
@@ -27,8 +27,9 @@ easier.
 ## Public-key inspection
 
 1. The custodian generates the key using the separately reviewed offline tool,
-   with a strong unique password, and makes two recoverable encrypted backups
-   in distinct failure domains outside the checkout and synchronized workspace.
+   with a strong unique password, and makes one recoverable encrypted backup in
+   a failure domain separate from the operator-controlled primary, outside the
+   checkout and synchronized workspace.
 2. Export only the public key to removable media. Confirm it starts with
    `-----BEGIN PUBLIC KEY-----` or `ssh-ed25519`, never `PRIVATE KEY`.
 3. On a clean online checkout, inspect the public half:
@@ -48,7 +49,7 @@ easier.
 After both people agree on the full fingerprint, import only the public half:
 
 ```text
-python scripts/release_keyring.py import --public-key <public-key-path> --key-id release-2026-a --channel beta --expected-fingerprint sha256:<64-lowercase-hex>
+python scripts/release_keyring.py import --public-key <public-key-path> --key-id release-2026-b --channel beta --expected-fingerprint sha256:<64-lowercase-hex>
 ```
 
 The importer rejects private-key containers, ambiguous raw 32-byte values,
@@ -87,15 +88,38 @@ channels: beta
 fingerprint: sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4
 ```
 
-`release/keys.json` and the packaged `update_keys.json` contain the same active
-public entry. The encrypted private key remains outside the checkout. Creating
-and independently restore-testing two recoverable encrypted backups in distinct
-failure domains, both outside the checkout and synchronized workspace, remains
-required before the first production signature.
+`release/keys.json` and the packaged `update_keys.json` originally contained
+this active public entry. On 2026-08-21, before any ATC release was published,
+the owner could no longer authenticate to the encrypted private copy. This is
+loss of availability, not a claim of compromise. The key ID remains immutable
+and its public entry is retained with `status=revoked`; it cannot authorize a
+release.
 
-## Beta 0.1.0-beta.3 custody handoff
+## Ceremony record: release-2026-b
 
-The machine-side trust root is prepared: `release-2026-a` is active for beta in
+On 2026-08-21, the release owner generated a replacement Ed25519 key on an
+operator-controlled Windows system outside the source checkout and synchronized
+workspace. The private half is encrypted PKCS8 PEM. Only the standard PEM
+public half was passed to the repository importer.
+
+The repository inspection utility and raw-key fingerprint calculation agree
+on:
+
+```text
+key_id: release-2026-b
+channels: beta
+fingerprint: sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f
+```
+
+The two tracked keyrings contain the same public entries: `release-2026-a` is
+revoked and `release-2026-b` is active. The encrypted private key remains
+outside the checkout. The human custodian successfully opened and validated the
+separate encrypted backup on 2026-08-21. Candidate identity is still required
+before the `BETA-R02` receipt can be emitted.
+
+## Beta 0.1.0-beta.4 custody handoff
+
+The machine-side trust root is prepared: `release-2026-b` is active for beta in
 both tracked keyrings and its reviewed public fingerprint is recorded above.
 The old `0.1.0-beta.1` candidate and its receipts are bound to different source
 and artifact bytes and cannot be reused. The unpublished `0.1.0-beta.2` draft
@@ -104,9 +128,10 @@ remains a historical occupied identity; its evidence is not rebound.
 The remaining sequence is deliberately separated:
 
 1. The custodian completes
-   [`RELEASE_KEY_CUSTODY_FORM.md`](RELEASE_KEY_CUSTODY_FORM.md): restore-test two
-   encrypted backups in distinct failure domains and compare the full public
-   fingerprint from each restored copy. Record only content-free facts.
+   [`RELEASE_KEY_CUSTODY_FORM.md`](RELEASE_KEY_CUSTODY_FORM.md): restore-test one
+   encrypted backup kept separate from the primary, verify its encrypted bytes
+   matched the fingerprinted primary before the test, and validate its key
+   structure with the human-entered passphrase. Record only content-free facts.
 2. After every custody check passes, emit exactly one candidate-bound
    `BETA-R02` source receipt. That receipt proves key custody only; it is not a
    release decision, signature, or publication authorization.
@@ -131,7 +156,7 @@ key inside the checkout, then prompts for the encrypted key password without
 echo. Transfer only the signed JSON manifest back. Wipe transient decrypted
 copies and transfer media according to the recorded ceremony procedure.
 
-For `0.1.0-beta.3`, sign only the Windows x86-64 OTA manifest. The Linux
+For `0.1.0-beta.4`, sign only the Windows x86-64 OTA manifest. The Linux
 portable package remains a direct human-install asset and its updater manifest
 stays absent until platform-native update/rollback acceptance changes the
 candidate's explicit OTA-supported target set. macOS is unsupported and has no

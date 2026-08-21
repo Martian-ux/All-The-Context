@@ -100,7 +100,7 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--target macos:" not in publish
     assert "--target macos:" not in promote
     assert "-unsigned.dmg" not in promote
-    assert "v0.1.0-beta.3" in publish
+    assert "v0.1.0-beta.4" in publish
     assert "v0.1.0-beta.2" not in publish
     assert "v0.1.0-beta.1" not in publish
     assert "--clobber" not in candidate
@@ -137,8 +137,18 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
                 "public_key_sha256": (
                     "sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
                 ),
+                "status": "revoked",
+            },
+            {
+                "algorithm": "Ed25519",
+                "channels": ["beta"],
+                "key_id": "release-2026-b",
+                "public_key": "omaAzCobyHsqPt8WEjRu7peKvZ_qlDEknSd9NK8_trM",
+                "public_key_sha256": (
+                    "sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f"
+                ),
                 "status": "active",
-            }
+            },
         ],
     }
 

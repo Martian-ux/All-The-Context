@@ -70,7 +70,7 @@ python scripts/dependency_audit.py --ecosystem python
 # Python audit uses the frozen hashed uv.lock export (dev+packaging), not ambient resolve
 python scripts/dependency_audit.py --ecosystem dashboard
 python scripts/verify_dashboard_parity.py
-python scripts/build_component_inventory.py --version 0.1.0-beta.3 --output-dir dist/inventory
+python scripts/build_component_inventory.py --version 0.1.0-beta.4 --output-dir dist/inventory
 ```
 
 Candidate creation also requires the exact nine-job hosted matrix and local
@@ -109,15 +109,16 @@ python scripts/publication_gate.py \
   --candidate-sha256 <hex> \
   --source-commit <40-char-sha> \
   --receipt-bundle path/to/bundle.json \
-  --key-id release-2026-a \
-  --expected-public-key-sha256 sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4
+  --key-id release-2026-b \
+  --expected-public-key-sha256 sha256:40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f
 ```
 
 This gate never accesses, generates, or prints a private release key. Offline
 key backup and restore-test remain operator ceremony work documented in
 [RELEASE_KEY_CEREMONY.md](RELEASE_KEY_CEREMONY.md) and the content-free
-[RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md). Two restore-tested
-backups in distinct failure domains must precede the one candidate-bound
+[RELEASE_KEY_CUSTODY_FORM.md](RELEASE_KEY_CUSTODY_FORM.md). One restore-tested
+encrypted backup kept separate from the operator-controlled primary must
+precede the one candidate-bound
 `BETA-R02` source receipt. Offline signing waits for every receipt and
 acknowledgement required by the explicitly selected publication profile and an explicit `approve` with
 `independent_human_review_claimed=false`.

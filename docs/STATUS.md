@@ -3,14 +3,15 @@
 ## Current milestone
 
 As of 2026-08-21, the immediate target is an unsigned
-`0.1.0-beta.3` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
+`0.1.0-beta.4` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
 x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
 is post-V1. No beta release has been published. The
 dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
 work packages are in
-[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-a` private
-key exists outside the checkout and cloud-synchronized workspace; only its
-reviewed public half is tracked.
+[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-b` private
+key exists outside the checkout and synchronized workspace; only its reviewed
+public half is tracked. The predecessor `release-2026-a` remains in the
+keyring as revoked prepublication history.
 
 ADR-092 introduces two explicit, machine-enforced publication profiles without
 rewriting evidence. `certification_v1` remains the unchanged 20-gate contract.
@@ -34,16 +35,20 @@ Windows/Linux-only identity remains an occupied historical draft; its
 evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
 from the product support table and consumer release composition while retaining
 the existing Mac source and CI code as unsupported portability work. No Mac
-execution or receipt is required for `0.1.0-beta.3`, and no Mac result is
+execution or receipt is required for `0.1.0-beta.4`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
-The active unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
+The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
 `371617909`, source `89f3973f8408ee80a76265b88d13e6fbf5791f6e`,
 release-candidate run `32010253144`, and candidate digest
 `804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369` (31
-assets). It remains unsigned, draft, and unpublished. Candidate creation and a
-green release-candidate workflow do not satisfy any exact-candidate acceptance
-receipt or authorize publication.
+assets). It remains unsigned, draft, and unpublished. Its version slot is
+occupied and it cannot be retargeted, deleted, reused, or published after the
+prepublication signing-key rotation. Candidate creation and a green
+release-candidate workflow do not satisfy any exact-candidate acceptance
+receipt or authorize publication. A fresh `0.1.0-beta.4` candidate must be
+built from the protected default-branch head after the key-rotation PR is green
+and merged; all lean receipts must bind that new source and candidate digest.
 
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
@@ -55,10 +60,13 @@ Source inspection found that BETA-P06 cannot honestly pass on that tree: the
 global visible-focus outline is overridden by `.search-input input { outline:
 0; }`, and the search wrapper's static border is not a focus indicator.
 ADR-089 records the source-level `:focus-within` wrapper treatment and
-advances the active source version to `0.1.0-beta.3`. This correction only
+advanced the source version to `0.1.0-beta.3`. This correction only
 makes a new exact candidate eligible for fresh Edge acceptance; it does not
-pass P06. The resulting candidate identity is recorded above; its remaining
-acceptance and human release gates stay open.
+pass P06. The resulting historical candidate identity is recorded above.
+ADR-093 rotates the unavailable prepublication signing credential without
+alleging compromise, marks `release-2026-a` revoked, activates
+`release-2026-b`, and advances the replacement candidate to
+`0.1.0-beta.4`; its acceptance and human release gates remain open.
 
 PR 66 was squash-merged after both hosted CI matrices and CodeQL passed at
 protected main `088485d268d11e3167e7aad2e09a22c42659607f`. It records the
@@ -71,7 +79,7 @@ capability-qualified integration model. It preserves Core authority, treats
 connected content as inert data, reuses the existing observation/current-record
 and Retrieval V3 boundaries, and requires correction, retention, deletion, and
 purge closure across derived state. This direction does not expand
-`0.1.0-beta.3`, grant acceptance credit, or permit `ZF-*` implementation issues
+`0.1.0-beta.4`, grant acceptance credit, or permit `ZF-*` implementation issues
 before beta publication and tracker reconciliation.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
@@ -747,10 +755,11 @@ accepted.
   selection without a vector dependency.
 - Offline-signed Ed25519 update metadata, immutable candidate assets,
   checksums, SBOM/provenance, and Windows transactional update/rollback code.
-- The active beta-only `release-2026-a` public key is embedded in the package
+- The active beta-only `release-2026-b` public key is embedded in the package
   keyring. Its SHA-256 fingerprint is
-  `fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4`;
+  `40f95302dd6c0241dc7f639e29693c15e94c5ccae1357b927d039a7e6bf1cf8f`;
   the encrypted private half remains operator-controlled outside the checkout.
+  `release-2026-a` remains tracked as revoked and cannot sign a release.
 - Frozen Windows x86_64 beta packages with an active reviewed key now select
   the canonical Pages channel automatically. The artifact transport follows
   GitHub's single pinned release-CDN redirect while retaining signed size and
@@ -1199,10 +1208,12 @@ state is already noncurrent and creates no user queue.
   Windows/Ubuntu journeys. The broader fresh-user browser/client/provider/
   scale/recovery matrix remains open certification work and receives no lean
   credit.
-- Complete the human custody prerequisite on
-  [`operations/RELEASE_KEY_CUSTODY_FORM.md`](operations/RELEASE_KEY_CUSTODY_FORM.md):
-  restore-test two recoverable encrypted backups in distinct failure domains,
-  then emit exactly one candidate-bound `BETA-R02` source receipt. Offline
+- Bind the completed human custody prerequisite to the replacement candidate.
+  On 2026-08-21 the custodian restore-tested one recoverable encrypted backup
+  kept separate from the primary under
+  [`operations/RELEASE_KEY_CUSTODY_FORM.md`](operations/RELEASE_KEY_CUSTODY_FORM.md).
+  Emit exactly one `BETA-R02` source receipt only after the beta.4 source commit
+  and candidate digest exist. Offline
   Windows x86-64 signing, publication, and channel promotion wait until all six
   lean pass receipts exist, every lean acknowledgement is true, and the
   maintainer records an explicit `approve` with
@@ -1236,7 +1247,7 @@ state is already noncurrent and creates no user queue.
 - Repeat B-104 against real Windows Credential Manager and supported Linux
   Secret Service from exact packages, including unavailable/locked
   backend and partial-write rollback receipts. The retained macOS Keychain
-  adapter is not a `0.1.0-beta.3` acceptance cell.
+  adapter is not a `0.1.0-beta.4` acceptance cell.
 - Freeze the exact Windows build, the exact current stable Codex versions on
   Windows and Linux, and the exact current stable Windows Claude Desktop
   version and config path for the mandatory Windows 11 x86-64 and Ubuntu
@@ -1258,7 +1269,7 @@ state is already noncurrent and creates no user queue.
   20/22, and package regressions on Windows, Ubuntu, macOS ARM64, and macOS
   x86-64. The Mac jobs are source-health only; the release candidate contains
   Windows and Linux jobs/assets only.
-- Publish `0.1.0-beta.3` only after the applicable gates above. Exercise a real
+- Publish `0.1.0-beta.4` only after the applicable gates above. Exercise a real
   signed first-beta-to-successor Windows update and rollback as a successor
   gate; the first public beta instead repeats the existing same-version
   transactional interruption and rollback smoke on the exact candidate.
