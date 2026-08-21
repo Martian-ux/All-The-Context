@@ -100,7 +100,7 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     assert "--target macos:" not in publish
     assert "--target macos:" not in promote
     assert "-unsigned.dmg" not in promote
-    assert "v0.1.0-beta.5" in publish
+    assert "v0.1.0-beta.6" in publish
     assert "v0.1.0-beta.2" not in publish
     assert "v0.1.0-beta.1" not in publish
     assert "--clobber" not in candidate
@@ -151,6 +151,25 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
             },
         ],
     }
+
+
+def test_active_release_docs_do_not_relabel_historical_candidates_as_current() -> None:
+    status = (REPOSITORY_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
+    traceability = (REPOSITORY_ROOT / "docs" / "REQUIREMENTS_TRACEABILITY.md").read_text(
+        encoding="utf-8"
+    )
+    execution = (
+        REPOSITORY_ROOT / "docs" / "product" / "ZERO_FRICTION_EXECUTION_PLAN.md"
+    ).read_text(encoding="utf-8")
+    decisions = (REPOSITORY_ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
+
+    assert "`0.1.0-beta.6` is the active source version" in status
+    assert "external exact" in status and "prepublication ledger" in status
+    assert "live unpublished beta.3 identity" not in traceability
+    assert "Phase 0 preserves the beta.3 boundary" not in traceability
+    assert "Publish and verify beta.3" not in execution
+    assert "align active acceptance work with beta.3" not in execution
+    assert "ADR-095: Candidate identities stay external" in decisions
 
 
 def test_v1_has_no_hosted_runtime_publication_or_provider_template() -> None:

@@ -5,7 +5,7 @@ network service, Docker, provider account, personal data, or memory review
 step.
 
 The demo is a contributor/source demonstration. It can run on macOS, but that
-does not make macOS a supported `0.1.0-beta.5` platform or produce release
+does not make macOS a supported `0.1.0-beta.6` platform or produce release
 evidence; the public beta artifact scope is Windows 11 x86-64 and Ubuntu 24.04
 LTS x86-64.
 

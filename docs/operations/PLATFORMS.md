@@ -6,7 +6,7 @@ public-beta Python or operating-system compatibility claim: normal beta support
 covers only the frozen release artifacts. Application data is resolved with
 `platformdirs`; operators should not hard-code its location.
 
-The `0.1.0-beta.5` public support floor is exactly Windows 11 x86-64 and Ubuntu
+The `0.1.0-beta.6` public support floor is exactly Windows 11 x86-64 and Ubuntu
 24.04 LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring
 backend. Other Linux distributions/desktops are experimental. Downloaded
 artifacts must pass candidate-bound `BETA-L01` and `BETA-L02` first-run

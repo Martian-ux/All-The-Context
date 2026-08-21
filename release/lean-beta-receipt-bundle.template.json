@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source_commit": "0000000000000000000000000000000000000000",
   "candidate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "version": "0.1.0-beta.5",
+  "version": "0.1.0-beta.6",
   "publication_policy": "lean_public_beta_v1",
   "lean_beta_acknowledgements": {
     "certification_matrix_incomplete_acknowledged": false,

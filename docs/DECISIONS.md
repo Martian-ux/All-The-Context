@@ -2555,3 +2555,28 @@ primary. The replacement version is `0.1.0-beta.5`, which requires a fresh
 exact candidate and fresh candidate-bound lean receipts. No feature, support
 target, signing key, macOS claim, human approval, signature, or publication
 authorization changes.
+
+## ADR-095: Candidate identities stay external; retire contradictory beta.5
+
+**Status:** accepted 2026-08-21.
+
+The unpublished `0.1.0-beta.5` draft is release ID `374697784`, source
+`28b46ea192af76233afe41f0d2b287edc2d59a04`, release-candidate run
+`32530830948`, and candidate digest
+`b0303b24164de987de9eab85caeeba4b460441fbe2c32463589269f4279462bd` (31
+assets). Six candidate-bound lean receipts were materialized, but no bundle,
+approval, signature, or publication exists.
+
+That candidate source still said beta.5 had not been built, named beta.3 as the
+live traceability identity, and aligned the active product plan to beta.3.
+Those active-state contradictions are not reinterpreted after freeze. Beta.5
+remains occupied, unsigned, unpublished historical evidence and is not
+retargeted, deleted, reused, signed, or published.
+
+The active source version advances to `0.1.0-beta.6`. Source documentation now
+records immutable historical drafts and the release contract, while the exact
+post-build candidate ID, run, digest, and receipts are recorded in an external
+exact prepublication ledger. A commit cannot truthfully self-record a candidate
+created only after that commit. This decision changes no feature, support
+target, signing key, custody floor, macOS claim, human approval requirement,
+signature, or publication authorization.

@@ -16,7 +16,7 @@ evidence-ordered implementation plan is
 [`ZERO_FRICTION_EXECUTION_PLAN.md`](ZERO_FRICTION_EXECUTION_PLAN.md).
 
 This decision does not expand, block, or provide acceptance credit for
-`0.1.0-beta.5`. Continuous connectors, lifecycle-aware client hooks, the broader
+`0.1.0-beta.6`. Continuous connectors, lifecycle-aware client hooks, the broader
 event substrate, automatic project discovery, project graphs, Project Context
 Capsules, working-state continuity, outcome learning, and remote/mobile access
 remain post-V1 behavior until separately implemented and accepted.
@@ -110,7 +110,7 @@ and release-channel hardening remain a separate post-V1 track represented by
 issue #30 or its successor.
 
 Before creating the `ZF-*` issue hierarchy, the current beta tracker must be
-reconciled to the active beta.3 Windows/Ubuntu scope without erasing historical
+reconciled to the active Windows/Ubuntu lean-beta scope without erasing historical
 beta.1/macOS evidence. Source-readiness and exact-downloaded-candidate
 acceptance dependencies must also be separated so candidate creation is not
 circularly blocked by tests that require the candidate to already exist.

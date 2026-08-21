@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted post-V1 product contract under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
-| Relationship to V1 | Does not expand or block `0.1.0-beta.5` |
+| Relationship to V1 | Does not expand or block `0.1.0-beta.6` |
 | Authority | The user-owned Core remains the sole canonical authority |
 | Normal interaction model | Install once, authorize accounts and clients once, then use AI tools normally |
 | Capability rule | Guarantees are limited to the declared and accepted connector/client capability level |
@@ -698,7 +698,7 @@ channel hardening continue independently and may become prerequisites for a
 specific zero-friction production slice.
 
 Before `ZF-*` implementation issues are created, the existing beta tracker must
-be reconciled to the active beta.3 Windows/Ubuntu scope without erasing
+be reconciled to the active Windows/Ubuntu lean-beta scope without erasing
 historical beta.1/macOS evidence. Source-readiness and exact-candidate
 acceptance dependencies must be separated so candidate creation is not
 circularly blocked by tests requiring the candidate to already exist.
@@ -723,7 +723,7 @@ This contract does not require:
 
 ## 13. Relationship to V1
 
-`0.1.0-beta.5` remains the immediate release target and the foundation for this
+`0.1.0-beta.6` remains the immediate release target and the foundation for this
 contract. Its same-device Core, provider imports, automatic policy, retrieval,
 client configuration, backup, recovery, and release acceptance must finish
 without adding post-V1 connector, graph, working-state, or outcome claims.
