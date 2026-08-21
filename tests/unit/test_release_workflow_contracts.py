@@ -8,7 +8,14 @@ import tomllib
 from pathlib import Path
 
 from allthecontext import __version__
-from allthecontext.acceptance_receipt import POST_PUBLICATION_GATES, REQUIRED_PUBLICATION_GATES
+from allthecontext.acceptance_receipt import (
+    CERTIFICATION_PUBLICATION_POLICY,
+    LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
+    LEAN_PUBLIC_BETA_GATES,
+    LEAN_PUBLIC_BETA_POLICY,
+    POST_PUBLICATION_GATES,
+    REQUIRED_PUBLICATION_GATES,
+)
 from allthecontext.release_candidate import (
     ACCEPTANCE_RECEIPT_BUNDLE_FILE_NAME,
     COMPONENT_INVENTORY_FILE_NAME,
@@ -240,12 +247,29 @@ def test_prepublication_template_is_exact_and_excludes_postpublication_gates() -
     template_path = ROOT / "release" / "acceptance-receipt-bundle.template.json"
     template = json.loads(template_path.read_text(encoding="utf-8"))
     gate_ids = {item["gate_id"] for item in template["receipts"]}
+    assert template["publication_policy"] == CERTIFICATION_PUBLICATION_POLICY
     assert gate_ids == REQUIRED_PUBLICATION_GATES
     assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
     assert len(template["receipts"]) == 20
     assert all(item["status"] == "not_run" for item in template["receipts"])
     assert all(item["status"] != "pass" for item in template["receipts"])
     assert template["maintainer_decision"]["independent_human_review_claimed"] is False
+
+
+def test_lean_public_beta_template_is_exact_and_explicit() -> None:
+    template_path = ROOT / "release" / "lean-beta-receipt-bundle.template.json"
+    template = json.loads(template_path.read_text(encoding="utf-8"))
+    gate_ids = {item["gate_id"] for item in template["receipts"]}
+    assert template["publication_policy"] == LEAN_PUBLIC_BETA_POLICY
+    assert gate_ids == LEAN_PUBLIC_BETA_GATES
+    assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
+    assert len(template["receipts"]) == 6
+    assert all(item["status"] == "not_run" for item in template["receipts"])
+    assert all(item["status"] != "pass" for item in template["receipts"])
+    assert set(template["lean_beta_acknowledgements"]) == LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+    assert not any(template["lean_beta_acknowledgements"].values())
+    ci = _read(WORKFLOWS / "ci.yml")
+    assert "release/lean-beta-receipt-bundle.template.json" in ci
 
 
 def test_publish_workflow_persists_decision_artifacts_before_final_recheck() -> None:
@@ -401,6 +425,9 @@ def test_public_beta_source_metadata_is_beta3_not_historical_beta1_or_beta2() ->
     template = json.loads(
         (ROOT / "release" / "acceptance-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
+    lean_template = json.loads(
+        (ROOT / "release" / "lean-beta-receipt-bundle.template.json").read_text(encoding="utf-8")
+    )
     locked_project = next(
         package
         for package in uv_lock["package"]
@@ -414,6 +441,7 @@ def test_public_beta_source_metadata_is_beta3_not_historical_beta1_or_beta2() ->
     assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.3"
     assert locked_project["version"] == "0.1.0b3"
     assert template["version"] == "0.1.0-beta.3"
+    assert lean_template["version"] == "0.1.0-beta.3"
     assert pyproject["project"]["version"] != "0.1.0-beta.1"
     assert pyproject["project"]["version"] != "0.1.0-beta.2"
     assert template["version"] != "0.1.0-beta.1"

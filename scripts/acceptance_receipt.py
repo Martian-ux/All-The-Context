@@ -11,6 +11,7 @@ from allthecontext.acceptance_receipt import (
     load_receipt,
     load_receipt_bundle,
     missing_required_gates,
+    publication_gates_for_policy,
     write_template_receipt,
 )
 from allthecontext.release_manifest import ManifestError
@@ -56,7 +57,10 @@ def main() -> int:
         elif arguments.command == "validate-bundle":
             bundle = load_receipt_bundle(arguments.bundle)
             missing = (
-                missing_required_gates(bundle["receipts"])
+                missing_required_gates(
+                    bundle["receipts"],
+                    required_gates=publication_gates_for_policy(bundle["publication_policy"]),
+                )
                 if arguments.require_publication_gates
                 else []
             )
@@ -71,6 +75,7 @@ def main() -> int:
                         "source_commit": bundle["source_commit"],
                         "candidate_sha256": bundle["candidate_sha256"],
                         "decision": bundle["maintainer_decision"].get("decision"),
+                        "publication_policy": bundle["publication_policy"],
                         "ok": True,
                     },
                     sort_keys=True,

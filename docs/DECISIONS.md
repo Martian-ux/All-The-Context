@@ -2467,4 +2467,37 @@ for the exact dev-and-packaging export audited by CI.
 This is a reviewed build and audit dependency repair. `pip` is not added to
 the ATC runtime dependencies, the beta.3 candidate identity is unchanged, and
 no acceptance gate receives credit from this source-level correction. PR 66
-still requires a fresh green hosted matrix before merge.
+passed both hosted CI matrices and CodeQL before its squash merge at
+`088485d268d11e3167e7aad2e09a22c42659607f`.
+
+## ADR-092: Add an explicit lean public-beta publication profile
+
+**Status:** accepted 2026-08-21.
+
+The complete 20-gate prepublication set remains the `certification_v1`
+contract. Its gates, existing receipts, failed attempts, and canonical ledger
+are not deleted, weakened, waived, renamed, or credited to another profile.
+`BETA-R05` and `BETA-O01` remain postpublication evidence under every profile.
+
+The first usable public beta may instead use the separately named
+`lean_public_beta_v1` contract. Its exact prepublication set is `BETA-L01`
+(Windows 11 exact-artifact first-run readiness), `BETA-L02` (Ubuntu 24.04
+exact-artifact first-run readiness), `BETA-S06`, `BETA-R01`, `BETA-R02`, and
+`BETA-R03`. L01/L02 bind the downloaded candidate and cover install/extract,
+startup, loopback health, one supported client connection, restart persistence,
+and cleanup. They do not imply that the broader 20-gate client, provider,
+browser, 2 GB, privacy, recovery, or replacement matrix passed.
+
+A bundle names exactly one publication profile. The protected publication gate
+accepts exactly that profile's gate IDs, rejects extras, duplicates,
+postpublication receipts, non-pass status, stale source/candidate bindings, and
+open P0/P1 limitations. Lean approval additionally requires four literal-true
+human acknowledgements: the certification matrix is incomplete, macOS is
+unsupported, community packages are unsigned, and known issues were reviewed.
+The maintainer must still enumerate every selected receipt once, name the human
+approver, and retain `independent_human_review_claimed=false`.
+
+`BETA-R02` remains mandatory. This policy does not authorize an AI system to
+handle private signing material, claim key-backup recovery, approve the release,
+or publish it. It changes only the machine-enforced evidence threshold for the
+initial public beta; certification remains a visible post-beta hardening track.

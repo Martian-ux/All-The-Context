@@ -38,6 +38,7 @@ EvidenceKind = Literal["source", "exact_downloaded_artifact", "skipped", "unavai
 ReceiptStatus = Literal["pass", "fail", "skipped", "unavailable", "not_run"]
 Severity = Literal["P0", "P1", "P2", "P3"]
 MaintainerDecision = Literal["approve", "reject"]
+PublicationPolicy = Literal["certification_v1", "lean_public_beta_v1"]
 
 ALLOWED_EVIDENCE_KINDS = frozenset(
     {"source", "exact_downloaded_artifact", "skipped", "unavailable"}
@@ -46,8 +47,15 @@ ALLOWED_STATUSES = frozenset({"pass", "fail", "skipped", "unavailable", "not_run
 ALLOWED_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
 ALLOWED_DECISIONS = frozenset({"approve", "reject"})
 
-# Pre-publication V1 gates. Public-release smoke and launch-watch closure happen
-# only after the immutable release exists.
+# The certification profile remains the complete pre-publication V1 contract.
+# Public-release smoke and launch-watch closure happen only after the immutable
+# release exists. The lean public-beta profile below is a separate, explicit
+# contract; it does not waive or rewrite any certification gate.
+CERTIFICATION_PUBLICATION_POLICY = "certification_v1"
+LEAN_PUBLIC_BETA_POLICY = "lean_public_beta_v1"
+ALLOWED_PUBLICATION_POLICIES = frozenset(
+    {CERTIFICATION_PUBLICATION_POLICY, LEAN_PUBLIC_BETA_POLICY}
+)
 REQUIRED_PUBLICATION_GATES = frozenset(
     {
         "BETA-P01",
@@ -72,6 +80,32 @@ REQUIRED_PUBLICATION_GATES = frozenset(
         "BETA-X01",
     }
 )
+LEAN_PUBLIC_BETA_GATES = frozenset(
+    {
+        "BETA-L01",
+        "BETA-L02",
+        "BETA-S06",
+        "BETA-R01",
+        "BETA-R02",
+        "BETA-R03",
+    }
+)
+PUBLICATION_GATES_BY_POLICY = {
+    CERTIFICATION_PUBLICATION_POLICY: REQUIRED_PUBLICATION_GATES,
+    LEAN_PUBLIC_BETA_POLICY: LEAN_PUBLIC_BETA_GATES,
+}
+LEAN_BETA_ACKNOWLEDGEMENT_KEYS = frozenset(
+    {
+        "certification_matrix_incomplete_acknowledged",
+        "macos_unsupported_acknowledged",
+        "unsigned_community_build_acknowledged",
+        "known_issues_reviewed",
+    }
+)
+LEAN_PLATFORM_ARTIFACT_SUFFIXES = {
+    "BETA-L01": "-windows-x86_64-unsigned.exe",
+    "BETA-L02": "-linux-x86_64-unsigned.tar.gz",
+}
 POST_PUBLICATION_GATES = frozenset({"BETA-R05", "BETA-O01"})
 
 # Gates whose pass claims require candidate-bound downloaded-artifact or
@@ -93,6 +127,8 @@ EXACT_ARTIFACT_PUBLICATION_GATES = frozenset(
         "BETA-D01",
         "BETA-D02",
         "BETA-D03",
+        "BETA-L01",
+        "BETA-L02",
         "BETA-R03",
         "BETA-R04",
         "BETA-R05",
@@ -129,10 +165,23 @@ BUNDLE_ALLOWED_KEYS = frozenset(
         "source_commit",
         "candidate_sha256",
         "version",
+        "publication_policy",
+        "lean_beta_acknowledgements",
         "receipts",
         "maintainer_decision",
     }
 )
+
+
+def publication_gates_for_policy(policy: str) -> frozenset[str]:
+    """Return the exact pre-publication gate set for a named policy."""
+
+    gates = PUBLICATION_GATES_BY_POLICY.get(policy)
+    if gates is None:
+        raise ManifestError(f"unsupported publication_policy: {policy!r}")
+    return gates
+
+
 DECISION_ALLOWED_KEYS = frozenset(
     {
         "decision",
@@ -469,6 +518,34 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
     version = value.get("version")
     if version is not None and (not isinstance(version, str) or not version.strip()):
         raise ManifestError("bundle version must be a non-empty string when present")
+    publication_policy = value.get("publication_policy", CERTIFICATION_PUBLICATION_POLICY)
+    if not isinstance(publication_policy, str):
+        raise ManifestError("bundle publication_policy must be a string")
+    publication_gates_for_policy(publication_policy)
+    acknowledgements = value.get("lean_beta_acknowledgements")
+    lean_acknowledgements: dict[str, Any] | None = None
+    if publication_policy == LEAN_PUBLIC_BETA_POLICY:
+        lean_acknowledgements = _require_dict(acknowledgements, "lean_beta_acknowledgements")
+        _reject_unknown_keys(
+            lean_acknowledgements,
+            LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
+            "lean_beta_acknowledgements",
+        )
+        missing_acknowledgements = sorted(
+            LEAN_BETA_ACKNOWLEDGEMENT_KEYS - set(lean_acknowledgements)
+        )
+        if missing_acknowledgements:
+            raise ManifestError(
+                "lean_beta_acknowledgements is missing fields: "
+                + ", ".join(missing_acknowledgements)
+            )
+        if any(
+            not isinstance(lean_acknowledgements[key], bool)
+            for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+        ):
+            raise ManifestError("lean_beta_acknowledgements values must be booleans")
+    elif acknowledgements is not None:
+        raise ManifestError("lean_beta_acknowledgements is allowed only for lean_public_beta_v1")
     receipts_value = value.get("receipts")
     if not isinstance(receipts_value, list) or not receipts_value:
         raise ManifestError("acceptance receipt bundle must contain receipts")
@@ -542,11 +619,25 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
             raise ManifestError(
                 "publication rejects open P0/P1 limitations: " + ", ".join(sorted(open_blockers))
             )
+        if publication_policy == LEAN_PUBLIC_BETA_POLICY:
+            if lean_acknowledgements is None:
+                raise ManifestError("lean public-beta acknowledgements are required")
+            false_acknowledgements = sorted(
+                key
+                for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+                if lean_acknowledgements[key] is not True
+            )
+            if false_acknowledgements:
+                raise ManifestError(
+                    "lean public-beta approval requires true acknowledgements: "
+                    + ", ".join(false_acknowledgements)
+                )
     elif reviewed is not None:
         if not isinstance(reviewed, list) or any(not isinstance(item, str) for item in reviewed):
             raise ManifestError("reviewed_receipt_ids must be a list of strings when present")
     value["receipts"] = receipts
     value["maintainer_decision"] = decision_obj
+    value["publication_policy"] = publication_policy
     return value
 
 
@@ -591,6 +682,7 @@ def missing_required_gates(
                         _require_exact_artifact_digest_bindings(
                             digests, inventory_digests=inventory_digests
                         )
+                        _require_lean_platform_artifact_binding(gate_id, digests)
                     except ManifestError:
                         continue
             elif gate_id in SOURCE_ALLOWED_PUBLICATION_GATES:
@@ -661,6 +753,17 @@ def _require_exact_artifact_digest_bindings(
             )
 
 
+def _require_lean_platform_artifact_binding(
+    gate_id: str,
+    digests: Mapping[str, str],
+) -> None:
+    required_suffix = LEAN_PLATFORM_ARTIFACT_SUFFIXES.get(gate_id)
+    if required_suffix is not None and not any(name.endswith(required_suffix) for name in digests):
+        raise ManifestError(
+            f"gate {gate_id} must bind the candidate consumer artifact ending {required_suffix}"
+        )
+
+
 def recompute_receipt_artifact_bindings(
     receipts: Sequence[Mapping[str, Any]],
     *,
@@ -698,6 +801,8 @@ def recompute_receipt_artifact_bindings(
                     "exact downloaded-artifact pass receipts require artifact_digests"
                 )
             _require_exact_artifact_digest_bindings(digests, inventory_digests=inventory_digests)
+            if isinstance(gate_id, str):
+                _require_lean_platform_artifact_binding(gate_id, digests)
         elif isinstance(digests, dict) and digests:
             for name, digest in digests.items():
                 expected = inventory_digests.get(name)

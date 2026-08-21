@@ -110,9 +110,11 @@ The remaining sequence is deliberately separated:
 2. After every custody check passes, emit exactly one candidate-bound
    `BETA-R02` source receipt. That receipt proves key custody only; it is not a
    release decision, signature, or publication authorization.
-3. After all 20 unique prepublication receipts pass, the maintainer reviews
-   each receipt and records one bundle-level `approve` or `reject` decision.
-   Keep `independent_human_review_claimed=false`.
+3. After every receipt required by the explicitly selected publication profile
+   passes, the maintainer reviews each receipt and records one bundle-level
+   `approve` or `reject` decision. The initial lean profile has exactly six and
+   requires four true acknowledgements; certification has 20. Keep
+   `independent_human_review_claimed=false`.
 4. Only an explicit `approve` permits the offline Windows x86-64 manifest
    signature, one-time draft upload, protected publication, and channel
    promotion. A null or rejected decision permits none of those actions.

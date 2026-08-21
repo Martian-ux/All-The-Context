@@ -79,6 +79,7 @@ jobs:
         run: |
           python scripts/acceptance_receipt.py validate --receipt release/acceptance-receipt.template.json
           python scripts/acceptance_receipt.py validate-bundle --bundle release/acceptance-receipt-bundle.template.json
+          python scripts/acceptance_receipt.py validate-bundle --bundle release/lean-beta-receipt-bundle.template.json
 
   dashboard:
     name: Dashboard - Node ${{ matrix.node }}

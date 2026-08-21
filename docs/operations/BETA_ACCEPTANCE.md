@@ -11,6 +11,34 @@ offline private key.
   artifact digest.
 - Published assets are immutable; changed bytes require a new version.
 
+## Publication profiles
+
+Every receipt bundle names one machine-enforced publication profile. Profiles
+are exact gate sets, not labels that can reinterpret old evidence.
+
+- `certification_v1` is the complete 20-gate prepublication contract described
+  by Gates 1 through 6 and the certification matrix in `ROADMAP_TO_V1.md`.
+  Existing ledgers and attempts remain under this profile.
+- `lean_public_beta_v1` is the initial usable-beta contract. It requires exactly
+  six passing receipts on one candidate: `BETA-L01` (Windows 11 first run),
+  `BETA-L02` (Ubuntu 24.04 first run), `BETA-S06` (security and supply-chain
+  scans), `BETA-R01` (green locked source), `BETA-R02` (human signing-key
+  custody/recovery), and `BETA-R03` (immutable inventory/SBOM/provenance).
+
+L01 and L02 require exact downloaded-artifact evidence for install or extract,
+startup, one healthy Core listener on `127.0.0.1`, one supported local client
+connection, restart persistence, and cleanup without inspecting private user
+content. They do not claim that the broader client/provider/browser/2 GB/data-
+recovery matrix passed. Those cells remain open certification work and must be
+disclosed as a known P2 beta limitation, never marked skipped, waived, or pass.
+
+Lean approval fails closed unless the human maintainer explicitly acknowledges
+that certification is incomplete, macOS is unsupported, packages are unsigned
+community builds, and known issues were reviewed. Zero P0/P1 limitations is
+still mandatory. `BETA-R02` and the separate human approve decision remain
+mandatory, so the lean profile does not authorize signing or publication by an
+AI system.
+
 ## Gate 1: integrated source
 
 On the exact release commit:
@@ -40,8 +68,9 @@ On the exact release commit:
   export, shutdown, and restart are observed on every supported target OS.
 - Mandatory targets are Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64 GNOME
   with a working Secret Service/GNOME Keyring backend. Freeze the exact Windows
-  build and supported client versions; a missing target receipt leaves the
-  candidate in draft. Other Linux distributions/desktops are experimental.
+  build and supported client versions; a missing certification target receipt
+  leaves certification open. Under the lean profile, missing L01 or L02 leaves
+  the candidate in draft. Other Linux distributions/desktops are experimental.
   macOS is excluded from the product support table before candidate freeze: no
   Mac cell is passed, waived, skipped, or represented by a release asset.
 - Every artifact ships a version-matched recovery/admin helper or native mode
@@ -163,7 +192,7 @@ On the exact release commit:
 - First-public-beta publication requires the reviewed update client, two
   restore-tested release-key backups in distinct failure domains, one
   candidate-bound `BETA-R02` source receipt after those restore tests, the
-  remaining unique prepublication pass receipts, an explicit maintainer
+  remaining unique receipts selected by the bundle's publication profile, an explicit maintainer
   `approve` with `independent_human_review_claimed=false`, protected immutable
   publication, and a signed Windows x86-64 channel. The private key, password,
   and backup location never enter the repository, Actions, an AI system, a
@@ -180,8 +209,9 @@ On the exact release commit:
 Before publication, record the commit, CI and draft-release URLs, asset and
 manifest digests, public-key fingerprint, real-platform results, unsigned
 warning acknowledgement, and explicit release approve/reject decision against
-exactly the 20 unique prepublication pass receipts. The decision must
-enumerate every one of those receipt IDs exactly once and no postpublication
+exactly the unique pass receipts selected by the named publication profile. The
+initial lean beta therefore enumerates exactly six; certification enumerates
+exactly 20. The decision must enumerate every selected receipt ID exactly once and no postpublication
 receipt, and it must retain `independent_human_review_claimed=false`. Offline
 Windows x86-64 signing may begin only after that approve. This is a
 software-release decision, not a context-review queue. The sole human
@@ -192,7 +222,9 @@ GitHub private vulnerability reporting must remain enabled, the public security
 policy must route sensitive reports to it, and source validation must require
 linked support, known-issues, security-intake, and recovery guidance before a
 candidate is built. Those source prerequisites do not satisfy `BETA-O01`.
-Missing prepublication gates leave the release as a draft.
+Missing gates or acknowledgements from the selected profile leave the release
+as a draft. Missing certification gates remain visible open certification work
+even when a lean beta is approved.
 
 `BETA-R05` public download/channel smoke and `BETA-O01` live public-path and
 triaged launch-watch proof are recorded only after the immutable release exists.

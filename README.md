@@ -70,7 +70,10 @@ update metadata.
 
 Public beta downloads do not exist until the exact-commit gates in
 [`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md)
-pass.
+pass. The initial release uses the explicit six-gate
+`lean_public_beta_v1` profile; the unchanged 20-gate `certification_v1` matrix
+remains a visible hardening track. Lean publication does not claim that every
+client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
 
 ## Implemented slice
 
@@ -87,7 +90,8 @@ pass.
 - encrypted portable export, contributor CLI restore, and a version-matched
   packaged recovery/admin helper or console mode on every supported release
   artifact;
-  exact downloaded-artifact recovery receipts remain a beta acceptance blocker;
+  complete exact downloaded-artifact recovery receipts remain a certification
+  blocker and a disclosed lean-beta limitation;
 - Windows and Linux public-beta package paths, plus retained cross-platform
   macOS source/CI code that carries no beta support claim; and
 - deterministic lexical retrieval with a future embedding interface.

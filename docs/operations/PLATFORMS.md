@@ -9,10 +9,11 @@ covers only the frozen release artifacts. Application data is resolved with
 The `0.1.0-beta.3` public support floor is exactly Windows 11 x86-64 and Ubuntu
 24.04 LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring
 backend. Other Linux distributions/desktops are experimental. Downloaded
-artifacts must pass clean-machine acceptance in both supported families; a
-missing receipt leaves the beta in draft. The non-sparse exact-
-2,000,000,000-byte journey and its frozen resource/progress/cancel/recovery
-budgets run on both supported artifact targets.
+artifacts must pass candidate-bound `BETA-L01` and `BETA-L02` first-run
+acceptance in both supported families; a missing lean receipt leaves the beta
+in draft. The complete clean-machine feature matrix and the non-sparse exact-
+2,000,000,000-byte resource/progress/cancel/recovery journeys remain required
+for `certification_v1`, not silently credited by the lean first-run receipts.
 
 macOS implementation, packaging helpers, and hosted regression jobs remain in
 the source tree, but macOS is unsupported for this beta. The release-candidate
@@ -43,8 +44,9 @@ documented stopped-Core restore and deliberate administrator purge:
 Windows embeds `AllTheContextRecovery.exe`, and Linux attaches recovery modes to
 the console-capable `all-the-context` binary. Contributor-only `atc restore`
 remains available for source development but is not the packaged-user gate.
-Exact downloaded-artifact recovery acceptance receipts remain required before
-publication.
+Exact downloaded-artifact recovery acceptance receipts remain required for
+complete certification. Their absence is an explicit lean-beta limitation and
+does not weaken the packaged recovery surface or grant it receipt credit.
 
 For the public beta, `scripts/package_desktop.py` emits direct downloads named
 `all-the-context-VERSION-PLATFORM-ARCHITECTURE-unsigned` with the appropriate

@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 from allthecontext.acceptance_receipt import (
+    CERTIFICATION_PUBLICATION_POLICY,
     EXACT_ARTIFACT_PUBLICATION_GATES,
+    LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
+    LEAN_PUBLIC_BETA_GATES,
+    LEAN_PUBLIC_BETA_POLICY,
     POST_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
@@ -37,7 +41,10 @@ from scripts.build_release_assets import build_archive, write_metadata, write_su
 
 SOURCE = "d" * 40
 VERSION = "0.1.0-beta.1"
-TARGET = ReleaseTarget("linux", "x86_64")
+TARGETS = (
+    ReleaseTarget("linux", "x86_64"),
+    ReleaseTarget("windows", "x86_64"),
+)
 ROOT = Path(__file__).resolve().parents[2]
 KEYRING = ROOT / "release" / "keys.json"
 PUBLIC_FP = "sha256:fe05a2bd52db97f808650fb0e832c49bd704abd62a813af4dedca4994f98e0d4"
@@ -132,55 +139,61 @@ def _candidate_dir(tmp_path: Path) -> Path:
     _source_evidence(release_dir)
     source = tmp_path / "all-the-context"
     source.write_bytes(b"portable app\n")
-    ota = build_archive(
-        source,
-        release_dir,
-        version=VERSION,
-        platform_name=TARGET.platform,
-        architecture=TARGET.architecture,
-    )
-    write_metadata(ota, version=VERSION)
-    for suffix in ("provenance.sigstore.json", "sbom.sigstore.json"):
-        _bundle(release_dir / f"{ota.name}.{suffix}")
-    names = direct_package_names(VERSION, TARGET)
-    direct_package = release_dir / names["direct_package"]
-    direct_package.write_bytes(b"direct portable package\n")
-    digest, size = sha256_file(direct_package)
-    (release_dir / names["direct_package_checksum"]).write_text(
-        f"{digest}  {direct_package.name}\n", encoding="ascii"
-    )
-    notice = release_dir / names["direct_package_notice"]
-    notice.write_text("IMPORTANT: unsigned community build\n", encoding="utf-8")
-    (release_dir / names["direct_package_report"]).write_text(
-        json.dumps(
-            {
-                "architecture": TARGET.architecture,
-                "format": "tar.gz",
-                "notice": notice.name,
-                "package": direct_package.name,
-                "platform": TARGET.platform,
-                "recovery_console_helper": "all-the-context",
-                "recovery_surface": "console-main-binary",
-                "schema_version": 1,
-                "sha256": digest,
-                "size": size,
-                "source": source.name,
-                "trust": "unsigned-community",
-                "version": VERSION,
-            }
-        ),
-        encoding="utf-8",
-    )
-    write_subject_sbom(direct_package, version=VERSION)
-    _bundle(release_dir / names["direct_package_provenance_bundle"])
-    _bundle(release_dir / names["direct_package_sbom_bundle"])
+    for target in TARGETS:
+        ota = build_archive(
+            source,
+            release_dir,
+            version=VERSION,
+            platform_name=target.platform,
+            architecture=target.architecture,
+        )
+        write_metadata(ota, version=VERSION)
+        for suffix in ("provenance.sigstore.json", "sbom.sigstore.json"):
+            _bundle(release_dir / f"{ota.name}.{suffix}")
+        names = direct_package_names(VERSION, target)
+        direct_package = release_dir / names["direct_package"]
+        direct_package.write_bytes(b"direct portable package\n")
+        digest, size = sha256_file(direct_package)
+        (release_dir / names["direct_package_checksum"]).write_text(
+            f"{digest}  {direct_package.name}\n", encoding="ascii"
+        )
+        notice = release_dir / names["direct_package_notice"]
+        notice.write_text("IMPORTANT: unsigned community build\n", encoding="utf-8")
+        is_windows = target.platform == "windows"
+        (release_dir / names["direct_package_report"]).write_text(
+            json.dumps(
+                {
+                    "architecture": target.architecture,
+                    "format": "exe" if is_windows else "tar.gz",
+                    "notice": notice.name,
+                    "package": direct_package.name,
+                    "platform": target.platform,
+                    "recovery_console_helper": (
+                        "AllTheContextRecovery.exe" if is_windows else "all-the-context"
+                    ),
+                    "recovery_surface": (
+                        "embedded-console-helper" if is_windows else "console-main-binary"
+                    ),
+                    "schema_version": 1,
+                    "sha256": digest,
+                    "size": size,
+                    "source": source.name,
+                    "trust": "unsigned-community",
+                    "version": VERSION,
+                }
+            ),
+            encoding="utf-8",
+        )
+        write_subject_sbom(direct_package, version=VERSION)
+        _bundle(release_dir / names["direct_package_provenance_bundle"])
+        _bundle(release_dir / names["direct_package_sbom_bundle"])
     assemble_candidate(
         release_dir,
         version=VERSION,
         channel="beta",
         source_commit=SOURCE,
-        targets=[TARGET],
-        ota_targets=[TARGET],
+        targets=list(TARGETS),
+        ota_targets=list(TARGETS),
     )
     _bundle(release_dir / CANDIDATE_PROVENANCE_FILE_NAME)
     return release_dir
@@ -214,7 +227,21 @@ def _pass_receipt(
         if not inventory_digests:
             raise AssertionError("exact artifact receipts require inventory digests in tests")
         # Bind one real inventory-declared package name and digest.
-        name = next(iter(inventory_digests))
+        platform_suffixes = {
+            "BETA-L01": "-windows-x86_64-unsigned.exe",
+            "BETA-L02": "-linux-x86_64-unsigned.tar.gz",
+        }
+        required_suffix = platform_suffixes.get(gate_id)
+        name = next(
+            (
+                candidate_name
+                for candidate_name in inventory_digests
+                if required_suffix is None or candidate_name.endswith(required_suffix)
+            ),
+            "",
+        )
+        if not name:
+            raise AssertionError(f"test inventory has no consumer artifact for {gate_id}")
         body["artifact_digests"] = {name: inventory_digests[name]}
     return body
 
@@ -224,21 +251,30 @@ def _full_bundle(
     *,
     decision: str | None = "approve",
     inventory_digests: dict[str, str] | None = None,
+    publication_policy: str = CERTIFICATION_PUBLICATION_POLICY,
 ) -> dict[str, Any]:
+    required_gates = (
+        LEAN_PUBLIC_BETA_GATES
+        if publication_policy == LEAN_PUBLIC_BETA_POLICY
+        else REQUIRED_PUBLICATION_GATES
+    )
     receipts = [
         _pass_receipt(gate, candidate_sha256=digest, inventory_digests=inventory_digests)
-        for gate in sorted(REQUIRED_PUBLICATION_GATES)
+        for gate in sorted(required_gates)
     ]
     body: dict[str, Any] = {
         "schema_version": 1,
         "source_commit": SOURCE,
         "candidate_sha256": digest,
+        "publication_policy": publication_policy,
         "receipts": receipts,
         "maintainer_decision": {
             "decision": decision,
             "independent_human_review_claimed": False,
         },
     }
+    if publication_policy == LEAN_PUBLIC_BETA_POLICY:
+        body["lean_beta_acknowledgements"] = {key: True for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS}
     if decision == "approve":
         body["maintainer_decision"]["approver"] = "sole-maintainer"
         body["maintainer_decision"]["ai_assisted"] = True
@@ -249,10 +285,11 @@ def _full_bundle(
 
 
 def _promotion_extras(release_dir: Path) -> None:
-    (release_dir / signed_manifest_name("beta", TARGET)).write_text(
-        json.dumps({"schema_version": 1, "test_only": True}) + "\n",
-        encoding="utf-8",
-    )
+    for target in TARGETS:
+        (release_dir / signed_manifest_name("beta", target)).write_text(
+            json.dumps({"schema_version": 1, "test_only": True}) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _inventory_digests(release_dir: Path) -> dict[str, str]:
@@ -314,6 +351,7 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     assert record["ok"] is True
     assert record["key_id"] == "release-2026-a"
     assert record["maintainer_approver"] == "sole-maintainer"
+    assert record["publication_policy"] == CERTIFICATION_PUBLICATION_POLICY
     assert set(record["required_gates"]) == REQUIRED_PUBLICATION_GATES
     assert len(record["required_gates"]) == 20
     assert record["receipt_count"] == 20
@@ -322,6 +360,73 @@ def test_publication_gate_passes_with_required_set(tmp_path: Path) -> None:
     assert (release_dir / PUBLICATION_GATE_RECORD_FILE_NAME).is_file()
     assert "acceptance-receipt-bundle-v1.json" in record["assets"]
     assert PUBLICATION_GATE_RECORD_FILE_NAME in record["assets"]
+
+
+def test_publication_gate_passes_with_exact_lean_public_beta_set(tmp_path: Path) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    bundle_path = tmp_path / "lean-bundle.json"
+    bundle_path.write_text(
+        json.dumps(
+            _full_bundle(
+                digest,
+                inventory_digests=_inventory_digests(release_dir),
+                publication_policy=LEAN_PUBLIC_BETA_POLICY,
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = evaluate_publication_gate(
+        release_dir=release_dir,
+        candidate_sha256=digest,
+        source_commit=SOURCE,
+        receipt_bundle_path=bundle_path,
+        keyring_path=KEYRING,
+        key_id="release-2026-a",
+        expected_public_key_sha256=PUBLIC_FP,
+        asset_stage="promotion",
+    )
+
+    assert record["ok"] is True
+    assert record["publication_policy"] == LEAN_PUBLIC_BETA_POLICY
+    assert set(record["required_gates"]) == LEAN_PUBLIC_BETA_GATES
+    assert record["receipt_count"] == 6
+    assert len(record["reviewed_receipt_ids"]) == 6
+    assert all(record["lean_beta_acknowledgements"].values())
+
+
+def test_publication_gate_rejects_false_lean_public_beta_acknowledgement(
+    tmp_path: Path,
+) -> None:
+    release_dir = _candidate_dir(tmp_path)
+    candidate = release_dir / CANDIDATE_FILE_NAME
+    digest, _ = sha256_file(candidate)
+    _promotion_extras(release_dir)
+    bundle = _full_bundle(
+        digest,
+        inventory_digests=_inventory_digests(release_dir),
+        publication_policy=LEAN_PUBLIC_BETA_POLICY,
+    )
+    bundle["lean_beta_acknowledgements"]["known_issues_reviewed"] = False
+    bundle_path = tmp_path / "lean-bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="known_issues_reviewed"):
+        evaluate_publication_gate(
+            release_dir=release_dir,
+            candidate_sha256=digest,
+            source_commit=SOURCE,
+            receipt_bundle_path=bundle_path,
+            keyring_path=KEYRING,
+            key_id="release-2026-a",
+            expected_public_key_sha256=PUBLIC_FP,
+            asset_stage="promotion",
+        )
 
 
 @pytest.mark.parametrize("gate_id", sorted(POST_PUBLICATION_GATES))

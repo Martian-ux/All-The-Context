@@ -5,12 +5,17 @@ from pathlib import Path
 
 import pytest
 from allthecontext.acceptance_receipt import (
+    CERTIFICATION_PUBLICATION_POLICY,
     EXACT_ARTIFACT_PUBLICATION_GATES,
+    LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
+    LEAN_PUBLIC_BETA_GATES,
+    LEAN_PUBLIC_BETA_POLICY,
     POST_PUBLICATION_GATES,
     REQUIRED_PUBLICATION_GATES,
     SOURCE_ALLOWED_PUBLICATION_GATES,
     load_receipt,
     missing_required_gates,
+    publication_gates_for_policy,
     recompute_receipt_artifact_bindings,
     validate_receipt,
     validate_receipt_bundle,
@@ -118,6 +123,55 @@ def test_required_publication_gates_are_complete() -> None:
     assert {"BETA-R05", "BETA-O01"} == POST_PUBLICATION_GATES
     assert REQUIRED_PUBLICATION_GATES.isdisjoint(POST_PUBLICATION_GATES)
     assert {"BETA-R01", "BETA-R02"} == SOURCE_ALLOWED_PUBLICATION_GATES
+
+
+def test_publication_profiles_are_distinct_and_fail_closed() -> None:
+    assert publication_gates_for_policy(CERTIFICATION_PUBLICATION_POLICY) == (
+        REQUIRED_PUBLICATION_GATES
+    )
+    assert publication_gates_for_policy(LEAN_PUBLIC_BETA_POLICY) == {
+        "BETA-L01",
+        "BETA-L02",
+        "BETA-S06",
+        "BETA-R01",
+        "BETA-R02",
+        "BETA-R03",
+    }
+    assert len(LEAN_PUBLIC_BETA_GATES) == 6
+    assert {"BETA-L01", "BETA-L02"}.issubset(EXACT_ARTIFACT_PUBLICATION_GATES)
+    with pytest.raises(ManifestError, match="unsupported publication_policy"):
+        publication_gates_for_policy("made_up")
+
+
+def test_lean_platform_gates_bind_the_correct_consumer_artifact() -> None:
+    linux_name = "all-the-context-0.1.0-beta.3-linux-x86_64-unsigned.tar.gz"
+    windows_name = "all-the-context-0.1.0-beta.3-windows-x86_64-unsigned.exe"
+    inventory = {linux_name: "c" * 64, windows_name: "d" * 64}
+    wrong_windows_receipt = _receipt(
+        receipt_id="lean-windows-wrong-artifact",
+        gate_id="BETA-L01",
+        evidence_kind="exact_downloaded_artifact",
+        artifact_digests={linux_name: inventory[linux_name]},
+    )
+    assert missing_required_gates(
+        [wrong_windows_receipt],
+        required_gates={"BETA-L01"},
+        inventory_digests=inventory,
+    ) == ["BETA-L01"]
+    with pytest.raises(ManifestError, match=r"windows-x86_64-unsigned\.exe"):
+        recompute_receipt_artifact_bindings(
+            [wrong_windows_receipt],
+            inventory_digests=inventory,
+            candidate_sha256=DIGEST,
+        )
+
+    correct_windows_receipt = dict(wrong_windows_receipt)
+    correct_windows_receipt["artifact_digests"] = {windows_name: inventory[windows_name]}
+    recompute_receipt_artifact_bindings(
+        [correct_windows_receipt],
+        inventory_digests=inventory,
+        candidate_sha256=DIGEST,
+    )
 
 
 def test_bundle_missing_required_gates() -> None:
@@ -450,3 +504,38 @@ def test_template_bundle_loads() -> None:
     assert gate_ids.isdisjoint(POST_PUBLICATION_GATES)
     assert len(validated["receipts"]) == 20
     assert all(item["status"] != "pass" for item in validated["receipts"])
+
+
+def test_lean_beta_template_loads_without_claiming_pass() -> None:
+    root = Path(__file__).resolve().parents[2]
+    raw = json.loads(
+        (root / "release" / "lean-beta-receipt-bundle.template.json").read_text(encoding="utf-8")
+    )
+    validated = validate_receipt_bundle(raw)
+    assert validated["publication_policy"] == LEAN_PUBLIC_BETA_POLICY
+    assert {item["gate_id"] for item in validated["receipts"]} == LEAN_PUBLIC_BETA_GATES
+    assert len(validated["receipts"]) == 6
+    assert all(item["status"] == "not_run" for item in validated["receipts"])
+    assert set(validated["lean_beta_acknowledgements"]) == LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+    assert not any(validated["lean_beta_acknowledgements"].values())
+
+
+def test_lean_beta_approve_requires_every_acknowledgement() -> None:
+    bundle = {
+        "schema_version": 1,
+        "source_commit": SOURCE,
+        "candidate_sha256": DIGEST,
+        "publication_policy": LEAN_PUBLIC_BETA_POLICY,
+        "lean_beta_acknowledgements": {
+            key: key != "macos_unsupported_acknowledged" for key in LEAN_BETA_ACKNOWLEDGEMENT_KEYS
+        },
+        "receipts": [_receipt()],
+        "maintainer_decision": {
+            "decision": "approve",
+            "approver": "sole-maintainer",
+            "independent_human_review_claimed": False,
+            "reviewed_receipt_ids": ["source-beta-r01"],
+        },
+    }
+    with pytest.raises(ManifestError, match="macos_unsupported_acknowledged"):
+        validate_receipt_bundle(bundle)

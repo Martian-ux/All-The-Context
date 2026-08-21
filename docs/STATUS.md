@@ -12,6 +12,16 @@ work packages are in
 key exists outside the checkout and cloud-synchronized workspace; only its
 reviewed public half is tracked.
 
+ADR-092 introduces two explicit, machine-enforced publication profiles without
+rewriting evidence. `certification_v1` remains the unchanged 20-gate contract.
+The initial public beta uses `lean_public_beta_v1`: exact Windows 11 and Ubuntu
+24.04 first-run receipts (`BETA-L01`/`BETA-L02`), `BETA-S06`, `BETA-R01`,
+`BETA-R02`, and `BETA-R03`. Approval additionally requires the sole human
+maintainer to acknowledge the incomplete certification matrix, unsupported
+macOS, unsigned community packages, and reviewed known issues. The 20-gate
+ledger remains truthful certification evidence and is not relabeled, waived,
+or treated as lean approval. No receipt bundle or approval exists yet.
+
 The live unpublished `0.1.0-beta.1` four-platform identity is draft ID
 `367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
 release-candidate run `31285545048`, and candidate digest
@@ -49,6 +59,12 @@ advances the active source version to `0.1.0-beta.3`. This correction only
 makes a new exact candidate eligible for fresh Edge acceptance; it does not
 pass P06. The resulting candidate identity is recorded above; its remaining
 acceptance and human release gates stay open.
+
+PR 66 was squash-merged after both hosted CI matrices and CodeQL passed at
+protected main `088485d268d11e3167e7aad2e09a22c42659607f`. It records the
+post-V1 zero-friction product contract and raises the reviewed dev/build `pip`
+floor past CVE-2026-13346. Neither change alters the historical beta.3
+candidate identity or grants a receipt.
 
 ADR-090 accepts the post-V1 zero-routine-friction direction and its
 capability-qualified integration model. It preserves Core authority, treats
@@ -1153,10 +1169,12 @@ state is already noncurrent and creates no user queue.
 
 ## Publication sequencing and public readiness
 
-- The protected publication decision requires exactly 20 unique prepublication
-  pass receipts plus an explicit maintainer `approve` with
-  `independent_human_review_claimed=false`. Offline Windows x86-64 signing may
-  begin only after that approve. `BETA-R05` public-download/channel smoke and
+- The protected publication decision requires exactly the gate set named by
+  the bundle's publication policy plus an explicit maintainer `approve` with
+  `independent_human_review_claimed=false`. The initial lean policy is exactly
+  L01, L02, S06, R01, R02, and R03 and requires four true human
+  acknowledgements; certification remains the unchanged 20. Offline Windows
+  x86-64 signing may begin only after that approve. `BETA-R05` public-download/channel smoke and
   `BETA-O01` live public-path and triaged launch-watch proof are
   postpublication gates; either is rejected if inserted into the
   prepublication bundle. Their eventual pass receipts require exact
@@ -1168,25 +1186,27 @@ state is already noncurrent and creates no user queue.
   postpublication gate.
 - `SUPPORT.md` defines content-free public intake, private security routing, and
   launch-watch triage. `docs/KNOWN_ISSUES.md` records the accepted beta-scope
-  P2/P3 impacts, workarounds, owner, and post-V1 follow-up without converting a
-  missing mandatory receipt into a limitation.
+  P2/P3 impacts, workarounds, owner, and post-V1 follow-up. Missing lean gates
+  cannot become limitations; missing certification gates remain explicit open
+  certification evidence.
 - `SECURITY.md` now matches the implemented Core-only tombstones and
   fail-closed protected-credential setup. Exact platform/client/package
   receipts remain required; documentation truth is not execution evidence.
 
 ## Remaining beta gates
 
-- Complete the fresh-user browser smoke on the exact release candidate. Current
-  main and the exact diagnostic/startup branch SHA have passed the hosted
-  Python 3.12 Windows/macOS/Linux and native-package matrices, but that does
-  not substitute for validation of the final frozen release identity.
+- Materialize candidate-bound L01/L02 receipts from the completed supported
+  Windows/Ubuntu journeys. The broader fresh-user browser/client/provider/
+  scale/recovery matrix remains open certification work and receives no lean
+  credit.
 - Complete the human custody prerequisite on
   [`operations/RELEASE_KEY_CUSTODY_FORM.md`](operations/RELEASE_KEY_CUSTODY_FORM.md):
   restore-test two recoverable encrypted backups in distinct failure domains,
   then emit exactly one candidate-bound `BETA-R02` source receipt. Offline
-  Windows x86-64 signing, publication, and channel promotion wait until all 20
-  unique prepublication pass receipts exist and the maintainer records an
-  explicit `approve` with `independent_human_review_claimed=false`. The private
+  Windows x86-64 signing, publication, and channel promotion wait until all six
+  lean pass receipts exist, every lean acknowledgement is true, and the
+  maintainer records an explicit `approve` with
+  `independent_human_review_claimed=false`. The private
   key, password, and backup location never enter the repository, Actions, an
   AI system, a shell argument, or an environment variable.
 - Preserve and reverify the live branch, environment, secret, dependency,

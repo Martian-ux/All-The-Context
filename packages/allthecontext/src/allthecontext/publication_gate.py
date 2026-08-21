@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from .acceptance_receipt import (
+    CERTIFICATION_PUBLICATION_POLICY,
+    LEAN_PUBLIC_BETA_POLICY,
     POST_PUBLICATION_GATES,
     RECEIPT_BUNDLE_FILE_NAME,
-    REQUIRED_PUBLICATION_GATES,
     candidate_inventory_digests,
     load_receipt_bundle,
     missing_required_gates,
+    publication_gates_for_policy,
     recompute_receipt_artifact_bindings,
     validate_receipt_bundle,
 )
@@ -139,6 +141,8 @@ def evaluate_publication_gate(
     if bundle["candidate_sha256"] != candidate_sha256:
         raise ManifestError("receipt bundle candidate_sha256 does not match publication input")
 
+    publication_policy = str(bundle.get("publication_policy", CERTIFICATION_PUBLICATION_POLICY))
+    required_gate_ids = set(publication_gates_for_policy(publication_policy))
     gate_ids = [str(receipt["gate_id"]) for receipt in bundle["receipts"]]
     # Preserve the more useful sequencing diagnostic before the generic exact-set
     # check. These gates can exist only after immutable publication.
@@ -147,7 +151,6 @@ def evaluate_publication_gate(
             raise ManifestError(
                 f"publication rejects post-publication gate {gate_id} before release"
             )
-    required_gate_ids = set(REQUIRED_PUBLICATION_GATES)
     unexpected = sorted(set(gate_ids) - required_gate_ids)
     missing_gate_ids = sorted(required_gate_ids - set(gate_ids))
     if unexpected or missing_gate_ids or len(gate_ids) != len(required_gate_ids):
@@ -180,10 +183,18 @@ def evaluate_publication_gate(
         )
     if decision.get("independent_human_review_claimed") is not False:
         raise ManifestError("publication rejects false independent-review claims")
+    if publication_policy == LEAN_PUBLIC_BETA_POLICY:
+        acknowledgements = bundle.get("lean_beta_acknowledgements")
+        if not isinstance(acknowledgements, dict) or not all(
+            value is True for value in acknowledgements.values()
+        ):
+            raise ManifestError(
+                "publication requires every lean public-beta acknowledgement to be true"
+            )
 
     missing = missing_required_gates(
         bundle["receipts"],
-        required_gates=REQUIRED_PUBLICATION_GATES,
+        required_gates=required_gate_ids,
         inventory_digests=inventory_digests,
     )
     if missing:
@@ -193,7 +204,7 @@ def evaluate_publication_gate(
     for receipt in bundle["receipts"]:
         gate_id = receipt.get("gate_id")
         status = receipt.get("status")
-        if gate_id in REQUIRED_PUBLICATION_GATES and status != "pass":
+        if gate_id in required_gate_ids and status != "pass":
             raise ManifestError(f"required gate {gate_id} is not pass (status={status})")
         if status in {"not_run", "skipped", "unavailable", "fail"}:
             raise ManifestError(
@@ -240,12 +251,15 @@ def evaluate_publication_gate(
         "public_key_sha256": expected_public_key_sha256,
         "maintainer_approver": decision.get("approver"),
         "independent_human_review_claimed": False,
-        "required_gates": sorted(REQUIRED_PUBLICATION_GATES),
+        "publication_policy": publication_policy,
+        "required_gates": sorted(required_gate_ids),
         "receipt_count": len(bundle["receipts"]),
         "reviewed_receipt_ids": receipt_ids,
         "receipt_bundle_name": RECEIPT_BUNDLE_FILE_NAME,
         "publication_record_name": PUBLICATION_GATE_RECORD_FILE_NAME,
     }
+    if publication_policy == LEAN_PUBLIC_BETA_POLICY:
+        record["lean_beta_acknowledgements"] = bundle["lean_beta_acknowledgements"]
 
     if persist_decision_artifacts and asset_stage == "promotion":
         bundle_destination = release_dir / RECEIPT_BUNDLE_FILE_NAME
