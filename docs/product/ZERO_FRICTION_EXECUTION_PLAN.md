@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
-| Immediate release boundary | `0.1.0-beta.5` remains unchanged |
+| Immediate release boundary | `0.1.0-beta.6` remains unchanged |
 | Early interface status | Experimental v0 until exercised by a fake harness and one real vertical slice |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
@@ -77,7 +77,7 @@ first show why extension is impossible and receive a separate production ADR.
 
 ```mermaid
 flowchart LR
-  T["Reconcile beta tracker"] --> V1["Publish and verify beta.3"]
+  T["Reconcile beta tracker"] --> V1["Publish and verify the initial lean beta"]
   V1 --> F["v0 contracts and event foundation"]
   F --> S["Continuous source + runtime vertical slice"]
   S --> P["Automatic project intelligence and capsules"]
@@ -106,7 +106,7 @@ release-channel hardening remain a separate post-V1 track.
 
 ### Goal
 
-Publish the first usable `0.1.0-beta.5` without importing post-V1 product claims
+Publish the first usable `0.1.0-beta.6` without importing post-V1 product claims
 or carrying a misleading execution tracker forward.
 
 ### Tracker reconciliation
@@ -117,7 +117,7 @@ Before creating `ZF-*` issues:
   mandatory macOS acceptance;
 - preserve historical beta.1/macOS requirements as history rather than
   relabelling them passed, skipped, or waived;
-- align active acceptance work with beta.3 on Windows and Ubuntu;
+- align active acceptance work with the current Windows/Ubuntu lean-beta source;
 - separate source-level implementation readiness from exact-downloaded-candidate
   acceptance; and
 - remove dependency cycles in which candidate creation requires a test that can

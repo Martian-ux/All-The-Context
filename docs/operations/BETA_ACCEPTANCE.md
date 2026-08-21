@@ -6,7 +6,7 @@ offline private key.
 
 ## Version identity
 
-- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.5`.
+- Tags, update manifests, and assets use SemVer such as `0.1.0-beta.6`.
 - The release candidate records one exact 40-character commit and every
   artifact digest.
 - Published assets are immutable; changed bytes require a new version.

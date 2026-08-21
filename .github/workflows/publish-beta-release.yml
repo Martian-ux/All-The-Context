@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Exact beta tag (for example v0.1.0-beta.5)
+        description: Exact beta tag (for example v0.1.0-beta.6)
         required: true
         type: string
       source_commit:

@@ -3,7 +3,7 @@
 ## Status
 
 Proposed feature plan for a post-beta ATC Project Context capability. This document
-is intentionally non-normative for the `0.1.0-beta.5` release gate until promoted by
+is intentionally non-normative for the `0.1.0-beta.6` release gate until promoted by
 a later ADR or implementation PR.
 
 ## Motivation

@@ -3,7 +3,7 @@
 ## Document control
 
 - **Status:** active execution plan
-- **V1 destination:** first usable public beta, `0.1.0-beta.5`
+- **V1 destination:** first usable public beta, `0.1.0-beta.6`
 - **Baseline:** `1d44fdd80a3dcb32c580434924bb03c1e5291ae1`, 2026-07-25
 - **Human owner:** one maintainer
 - **Review model:** AI-assisted implementation and adversarial review; no claim
@@ -20,7 +20,7 @@ blocker. Successor beta / stable, mobile, and research work is separated into
 the post-V1 horizon.
 
 ADR-092 separates initial publication from complete certification. The initial
-`0.1.0-beta.5` may publish only under `lean_public_beta_v1`, with exact passing
+`0.1.0-beta.6` may publish only under `lean_public_beta_v1`, with exact passing
 `BETA-L01`, `BETA-L02`, `BETA-S06`, `BETA-R01`, `BETA-R02`, and `BETA-R03`
 receipts plus four literal-true human acknowledgements. The 20-gate matrix in
 this roadmap remains the unchanged `certification_v1` hardening track. Open
@@ -36,7 +36,7 @@ pass the defined gates.
 
 | ID | Decision | Resolution |
 |---|---|---|
-| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.5`, not stable `1.0.0` |
+| A-01 | What does V1 mean? | The first usable public beta, `0.1.0-beta.6`, not stable `1.0.0` |
 | A-02 | Does mobile block V1? | No. V1 is same-device desktop use with Core online and loopback-only by default |
 | A-03 | Who drives the release? | One human maintainer using AI tools for implementation and review |
 | A-04 | Should the roadmap estimate time? | No. Sequence and evidence determine readiness |
@@ -55,7 +55,7 @@ scale acceptance profile used to prove it.
 
 ## Fixed beta support floor
 
-| Surface | `0.1.0-beta.5` floor |
+| Surface | `0.1.0-beta.6` floor |
 |---|---|
 | Windows | Windows 11 x86-64 desktop artifact; the exact supported feature release/build is recorded at candidate freeze |
 | macOS | Unsupported; retained source/CI code only, with no candidate asset, receipt, or support claim |
@@ -457,7 +457,7 @@ All tests in this phase use the frozen, downloaded candidate artifacts.
 - Record SmartScreen, unsigned-package, Linux desktop, and manual update
   behavior exactly rather than treating hosted CI as proof. Gatekeeper
   observations belong to the superseded Mac plan and are not a
-  `0.1.0-beta.5` execution requirement.
+  `0.1.0-beta.6` execution requirement.
 
 ### Providers and import scale
 
@@ -666,15 +666,17 @@ maintainer expands a beta claim:
 
 ## Next actions
 
-1. Materialize candidate-bound `BETA-L01` and `BETA-L02` receipts from the
-   already completed Windows 11 and Ubuntu 24.04 exact-artifact journeys; do not
-   inspect private user content or reuse a source-only slice.
+1. Build the active source version from protected `main`, record its exact
+   post-build identity in the external prepublication ledger, and materialize
+   candidate-bound `BETA-L01` and `BETA-L02` receipts from fresh Windows 11 and
+   Ubuntu 24.04 exact-artifact journeys. Do not inspect private user content or
+   reuse a prior candidate's receipt.
 2. Recompute `BETA-S06`, `BETA-R01`, and `BETA-R03` against the exact candidate
    inventory and retain their content-free evidence.
-3. Complete the one-backup restore test on the custody form, then emit one
-   candidate-bound `BETA-R02` source receipt. Do not start offline signing
-   until all six lean receipts pass and the maintainer records all four
-   acknowledgements plus `approve` with
+3. Revalidate the completed one-backup custody prerequisite, then emit one
+   candidate-bound `BETA-R02` source receipt without handling private signing
+   material. Do not start offline signing until all six lean receipts pass and
+   the maintainer records all four acknowledgements plus `approve` with
    `independent_human_review_claimed=false`.
 4. Stop for the human signing and publication ceremony. Do not expose the
    private key, password, or backup locations to an AI system or Actions.

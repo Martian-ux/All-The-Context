@@ -1,7 +1,7 @@
 # Local Core runbook
 
 This runbook covers contributor source execution on macOS and the supported
-Windows/Linux beta artifacts. macOS is not a `0.1.0-beta.5` product target:
+Windows/Linux beta artifacts. macOS is not a `0.1.0-beta.6` product target:
 retained Mac code, CI, and local smoke output do not create a Mac support claim
 or release evidence.
 

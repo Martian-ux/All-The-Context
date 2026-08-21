@@ -3,7 +3,7 @@
 ## Current milestone
 
 As of 2026-08-21, the immediate target is an unsigned
-`0.1.0-beta.5` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
+`0.1.0-beta.6` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
 x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
 is post-V1. No beta release has been published. The
 dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
@@ -35,7 +35,7 @@ Windows/Linux-only identity remains an occupied historical draft; its
 evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
 from the product support table and consumer release composition while retaining
 the existing Mac source and CI code as unsupported portability work. No Mac
-execution or receipt is required for `0.1.0-beta.5`, and no Mac result is
+execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
 The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
@@ -54,9 +54,24 @@ release-candidate run `32527232813`, and candidate digest
 `79020be27e998725664abe0f20fd27cc1b4e1735f4ea9ff1ae0171252f2dd797` (31
 assets). It remains unsigned, draft, and unpublished. Two live runbook
 sentences contradicted ADR-093's one-backup custody floor, so this occupied
-identity is historical and receives no rebound receipts. A fresh
-`0.1.0-beta.5` candidate must be built from the protected default-branch head;
-all lean receipts must bind that new source and candidate digest.
+identity is historical and receives no rebound receipts.
+
+The unpublished `0.1.0-beta.5` Windows/Linux candidate is draft ID
+`374697784`, source `28b46ea192af76233afe41f0d2b287edc2d59a04`,
+release-candidate run `32530830948`, and candidate digest
+`b0303b24164de987de9eab85caeeba4b460441fbe2c32463589269f4279462bd` (31
+assets). Six candidate-bound lean receipts were materialized without a bundle,
+approval, signature, or publication. The candidate source still described
+beta.5 as unbuilt, called beta.3 the live traceability identity, and aligned
+the active product plan to beta.3. Those statements are contradictory current
+release state, so beta.5 remains occupied historical evidence and receives no
+rebound receipts.
+
+`0.1.0-beta.6` is the active source version. Its post-build numeric release ID,
+workflow run, candidate digest, and receipts belong in the external exact
+prepublication ledger because a source commit cannot truthfully self-record a
+candidate created after that commit. No occupied draft is retargeted, deleted,
+reused, signed, or published.
 
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
@@ -74,9 +89,11 @@ pass P06. The resulting historical candidate identity is recorded above.
 ADR-093 rotates the unavailable prepublication signing credential without
 alleging compromise, marks `release-2026-a` revoked, activates
 `release-2026-b`, and advances the replacement candidate to
-`0.1.0-beta.4`. ADR-094 records the documentation correction and advances the
-replacement candidate to `0.1.0-beta.5`; its acceptance and human release gates
-remain open.
+`0.1.0-beta.4`. ADR-094 records the custody documentation correction and
+advanced the replacement candidate to `0.1.0-beta.5`. ADR-095 records the
+remaining stale active-state statements, retains beta.5 as occupied history,
+and advances the active source version to `0.1.0-beta.6`. Its exact candidate
+evidence and human release gates remain external and fail closed.
 
 PR 66 was squash-merged after both hosted CI matrices and CodeQL passed at
 protected main `088485d268d11e3167e7aad2e09a22c42659607f`. It records the
@@ -89,7 +106,7 @@ capability-qualified integration model. It preserves Core authority, treats
 connected content as inert data, reuses the existing observation/current-record
 and Retrieval V3 boundaries, and requires correction, retention, deletion, and
 purge closure across derived state. This direction does not expand
-`0.1.0-beta.5`, grant acceptance credit, or permit `ZF-*` implementation issues
+`0.1.0-beta.6`, grant acceptance credit, or permit `ZF-*` implementation issues
 before beta publication and tracker reconciliation.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
@@ -1257,7 +1274,7 @@ state is already noncurrent and creates no user queue.
 - Repeat B-104 against real Windows Credential Manager and supported Linux
   Secret Service from exact packages, including unavailable/locked
   backend and partial-write rollback receipts. The retained macOS Keychain
-  adapter is not a `0.1.0-beta.5` acceptance cell.
+  adapter is not a `0.1.0-beta.6` acceptance cell.
 - Freeze the exact Windows build, the exact current stable Codex versions on
   Windows and Linux, and the exact current stable Windows Claude Desktop
   version and config path for the mandatory Windows 11 x86-64 and Ubuntu
@@ -1279,7 +1296,7 @@ state is already noncurrent and creates no user queue.
   20/22, and package regressions on Windows, Ubuntu, macOS ARM64, and macOS
   x86-64. The Mac jobs are source-health only; the release candidate contains
   Windows and Linux jobs/assets only.
-- Publish `0.1.0-beta.5` only after the applicable gates above. Exercise a real
+- Publish `0.1.0-beta.6` only after the applicable gates above. Exercise a real
   signed first-beta-to-successor Windows update and rollback as a successor
   gate; the first public beta instead repeats the existing same-version
   transactional interruption and rollback smoke on the exact candidate.
