@@ -7,13 +7,40 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
+MAX_CLOSED_COVERAGE_COUNT = 2_147_483_647
+CLOSED_COVERAGE_KEYS = (
+    "recognized",
+    "excluded",
+    "skipped",
+    "unavailable",
+    "duplicate",
+    "failed",
+    "unparsed",
+)
+CLOSED_COVERAGE_INCOMPLETE_KEYS = frozenset(
+    {"unavailable", "duplicate", "failed", "unparsed"}
+)
+
+ClosedCoverageCount = Annotated[
+    StrictInt,
+    Field(ge=0, le=MAX_CLOSED_COVERAGE_COUNT),
+]
 
 RecordListItem = Annotated[
     str,
@@ -182,7 +209,34 @@ class CoverageReport(StrictModel):
     unavailable: list[str] = Field(default_factory=list, max_length=512)
     limitations: list[str] = Field(default_factory=list, max_length=512)
     warnings: list[str] = Field(default_factory=list, max_length=512)
-    complete: bool = True
+    closed_coverage: dict[StrictStr, ClosedCoverageCount] = Field(
+        default_factory=lambda: {key: 0 for key in CLOSED_COVERAGE_KEYS},
+        max_length=16,
+    )
+    complete: StrictBool = True
+
+    @field_validator("closed_coverage")
+    @classmethod
+    def validate_closed_coverage_keys(
+        cls,
+        value: dict[str, int],
+    ) -> dict[str, int]:
+        unknown = sorted(set(value).difference(CLOSED_COVERAGE_KEYS))
+        if unknown:
+            raise ValueError(
+                "closed_coverage contains unknown reason(s): " + ", ".join(unknown)
+            )
+        return {key: value.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
+
+    @model_validator(mode="after")
+    def validate_completion_consistency(self) -> Self:
+        if self.complete and any(
+            self.closed_coverage.get(key, 0) > 0 for key in CLOSED_COVERAGE_INCOMPLETE_KEYS
+        ):
+            raise ValueError(
+                "complete cannot be true when closed_coverage contains incomplete items"
+            )
+        return self
 
 
 class FinishIngestionRequest(StrictModel):

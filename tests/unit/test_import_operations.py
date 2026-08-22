@@ -346,6 +346,21 @@ def test_process_restart_recovery_marks_failed_and_allows_retry(tmp_path: Path) 
     )
     assert finished["source_id"]
     assert finished["status"] == "processing"
+    source_id = str(finished["source_id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    source_metadata = dict(source.metadata)
+    source_metadata["closed_coverage"] = {
+        "recognized": 2,
+        "unparsed": 1,
+        "unexpected": 99,
+        "failed": True,
+    }
+    core.store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata=source_metadata,
+        parser_warnings=source.parser_warnings,
+    )
     # Force non-terminal processing state as if the process died mid-parse.
     core.store.update_import_operation(
         operation["operation_id"],
@@ -357,6 +372,18 @@ def test_process_restart_recovery_marks_failed_and_allows_retry(tmp_path: Path) 
     state = ops.get_operation(operation["operation_id"])
     assert state["status"] == "failed"
     assert state["source_id"]
+    recovered_source = core.store.get_source(str(state["source_id"]), duplicate=True)
+    assert recovered_source.import_status == "failed"
+    assert recovered_source.metadata["source_terminal_reason"] == "failed"
+    assert recovered_source.metadata["closed_coverage"] == {
+        "recognized": 2,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 1,
+    }
     # No-upload retry from preserved source.
     retried = ops.retry_operation(operation["operation_id"])
     assert retried["status"] == "complete"
@@ -993,6 +1020,7 @@ def test_retry_cancel_acknowledged_via_operation_tracker(
     source = core.store.get_source(source_id, duplicate=True)
     assert source.import_status == "cancelled"
     assert source.metadata["import_progress"]["phase"] == "cancelled"
+    assert source.metadata["source_terminal_reason"] == "cancelled"
 
 
 def test_http_cancel_acknowledges_during_preserved_blob_copy(

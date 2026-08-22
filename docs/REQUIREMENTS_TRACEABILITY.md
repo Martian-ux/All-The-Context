@@ -7,6 +7,73 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 provider-terminal Import Truth correction
+
+Provider-shaped empty roots, zero-message conversations, and malformed provider
+siblings now close exactly one logical terminal result. Known-provider empty
+roots/conversations are `skipped`; identity-free provider-shaped empties and
+malformed entries are `unparsed` and keep coverage incomplete. Provider
+containers remain structural in raw ZIP accounting and are not double-counted.
+The bounded parser carries explicit root versus root-array-item context beside
+each streamed value, so an empty object or wrapper sibling is `unparsed` exactly
+once while standalone known-provider empties and zero-message conversations
+remain `skipped`. No full root is materialized and terminal context is not
+filename-derived; malformed-entry coverage and completion remain invariant under
+permutation across direct, path, and ZIP entrypoints.
+Allowed neutral alternate JSON basenames establish ChatGPT attachment scanning
+only after a valid bounded content signature and a successful complete iterator;
+the signature buffer retains no JSON root. A valid provider-looking prefix with
+trailing data or any later parse, depth, item, or byte-limit failure stays
+generic, closes one `unparsed` logical item, and cannot enable provider-specific
+attachment inventory or links. A malformed neutral sibling cannot poison a
+separately valid named provider member. Focused tests cover all three terminal
+cases, adversarial permutations, four alternate names, direct/path/ZIP parity,
+bounded failure classes, and the negative neutral case. This is synthetic
+engineering evidence only and grants no acceptance credit.
+
+### 2026-08-22 bounded ordinary-JSON and exact-coverage correction
+
+Direct bytes, filesystem paths, and ordinary ZIP JSON now share a strict
+incremental bounded reader with explicit 512 MiB byte, 128 MiB item/document,
+and 128-level quote/escape-aware nesting limits. Validate-then-consume keeps
+trailing-data, malformed, depth, and recursion failures atomic with no partial
+candidates. Empty ordinary JSON roots close as one skipped logical item across
+direct/path/ZIP entrypoints, while provider containers stay structural and
+semantic-item-driven. Provider raw classification uses the canonical and dated
+conversation filenames plus the exact alternate-name/provider-context rules in
+ADR-109; neutral malformed alternates remain ordinary rather than being
+silently promoted. `CoverageReport` normalizes omitted/partial maps to the exact
+seven-key zero-filled contract and rejects unknown or invalid counts. Focused
+synthetic tests cover all five acceptance blockers; this change grants no
+acceptance credit and does not inspect live/private data.
+
+### 2026-08-22 final import terminal-partition correction
+
+The import boundary now keeps malformed provider containers structural in the
+raw ZIP audit while assigning their logical failure exactly once to the closed
+seven-key map. Provider-memory/profile values rejected by bounded content
+policy close as `skipped` logical items rather than leaving an all-zero
+denominator. Standalone decoding is strict UTF-8, standalone CSV is supported
+atomically through both public archive entrypoints, and ordinary JSON roots use
+bounded two-pass validation/consumption without raw temporary artifacts.
+Enumerated ZIP count, size, ratio, encryption, and path/depth rejections return
+content-free member closure without reading rejected payloads; an unenumerable
+ZIP returns a distinct archive-level failure with no fabricated member closure.
+Focused synthetic regressions cover these equations and terminal contracts.
+This change grants no acceptance credit and does not inspect live/private data.
+
+### 2026-08-22 final import-truth contract correction
+
+Declared JSON `.dat` members are validated atomically before candidate
+publication, so malformed trailing bytes cannot leave partial candidates while
+also incrementing `unparsed`. Packaged-provider acceptance uses the shared
+`CoverageReport` validator for closed keys, strict bounded counts, and
+completion consistency. Synthetic focused tests cover the malformed trailing
+JSON regression, valid JSON/JSONL attachment paths, reconciler coercion,
+unknown/bounded counts, and unavailable/duplicate/failed/unparsed completion
+cases. This correction changes no memory, retrieval, dashboard, capture,
+platform, workflow, release, or GitHub behavior.
+
 ### 2026-08-22 source-rebuild atomicity correction
 
 The idempotent/resumable ingestion and full provider-history requirements now
@@ -44,10 +111,10 @@ requirements.
 | Immediate correction with preserved history | explicit targeted correction observation and existing record-version lifecycle | Implemented; new/legacy HTTP, MCP, ACL, history, and idempotency tests pass locally |
 | Reversible ordinary deletion | history-preserving delete; `restore_record` and admin endpoint restore latest deleted state or a selected historical version, rebuild FTS, version, audit, and replication state | Implemented; Core/API/UI, contiguous-history, and ordered Relay restore tests pass locally |
 | Reversible imported-source deletion | migration 006, provenance-bounded source/record deletion membership, admin delete/restore endpoints, dashboard Remove/Undo, duplicate-reimport restoration | Implemented locally; storage/API/UI regressions prove independently deleted records are not resurrected |
-| Idempotent/resumable ingestion with atomic policy publication and coverage | `ingestion.py`, `importers.py`, staged observations, raw-first preservation, `finish_ingestion`; retry/resume/coverage tests | Implemented locally: raw bytes are authoritative before parsing; failure/cancellation retains an inert retry source; path parsing uses a reconstructed Core copy; parser-versioned replay publishes no duplicates. Exact-candidate interruption receipts remain pending |
+| Idempotent/resumable ingestion with atomic policy publication and coverage | `ingestion.py`, `importers.py`, staged observations, raw-first preservation, `finish_ingestion`; retry/resume/coverage tests | Implemented locally: raw bytes are authoritative before parsing; failure/cancellation retains an inert retry source; path parsing uses a reconstructed Core copy; parser-versioned replay publishes no duplicates. Public coverage preserves logical seven-key item accounting with path-specific provider-container/control-member denominator rules, intentional closure for empty generic members, and atomic ordinary JSON validation. The separate content-free ZIP member audit proves raw-member closure without double-counting containers. Source-level `source_terminal_reason` remains separate, so terminal events do not corrupt item totals. Operation-owned cancel/restart paths preserve sanitized prior counts, and ZIP diagnostics escape control characters. Exact-candidate interruption receipts remain pending |
 | Generic JSON/JSONL/Markdown import | `importers.py`; importer/security tests | Implemented |
 | Raw imports through 2,000,000,000 bytes | `config.py`, `import_boundary.py`, `boundary_canary.py`, `importers.py`, migration 007/009, `import_operations.py`, `source_blobs`/`source_blob_chunks`; database-volume preflight, raw-first preservation, bounded chunks, operation-authoritative unchanged-byte reprocess heartbeats isolated from source telemetry latency, bounded timestamp-only WAL liveness commits, parser-reclassification merge rebinding of operation `source_id` on complete/fail/cancel without complete-canonical downgrade or re-ingest, cancellable preserved-source reconstruction checkpoints with partial-copy cleanup, preserved-source retry trackers initialized at the already-committed byte boundary, boundary-canary-v2 JSONL-safe alignment, closed generic skipped/unparsed accounting, direct source-only telemetry, terminal source state, retry/cancel, migration, copy-integrity, and focused adversarial regressions | A-08 makes the inclusive boundary mandatory. Source-level boundary/recovery machinery, durable import operations, and the corrected deterministic canary contract are implemented. WSL2 first exposed operation delay from serialized source-plus-operation transactions; source now isolates operation-owned heartbeat authority. Exact candidate `4257e40` then reproduced 15/17 over-budget unchanged-byte heartbeat intervals on a qualified 4-vCPU/8-GiB Ubuntu QEMU target, with a 10.196354-second maximum despite correct import data and resource use. Unchanged-byte liveness now updates only the operation timestamp through a 250-ms, WAL-NORMAL telemetry writer; semantic progress and terminal state retain the original lifecycle writer, source-only behavior is unchanged, and non-lock SQLite failures propagate. Candidate `628797d` kept durable retry liveness within 4.936978 seconds but authenticated API receipt reached 5.735102 seconds while direct SQLite stayed within 3.731520 seconds. Operation-owned streaming JSONL parsing now yields one millisecond at existing one-MiB checkpoints so the observer and ASGI loop receive a scheduling turn; auth, durable state, source-only behavior, and response semantics are unchanged. Replacement candidate `7ffb1a4` passed the exact Windows straight/repeat slices but missed the strict cancel-ack deadline because preserved-source reconstruction checked no cancellation until its complete copy; source now checks after every at-most-8-MiB chunk and cleans a partial target on cancellation. Exact candidate source `65612cc` then exposed a no-upload retry progress regression: the preserved source was fully committed, but the first forced retry phase briefly wrote zero committed bytes/percent before restoring the declared size. Retry trackers now initialize their monotonic byte state and emission watermark at the preserved declared size, so the first durable phase cannot regress. A new immutable candidate must rerun the complete Windows journey. A new immutable Linux artifact must prove the frozen five-second gate and run interruption. Allocated non-sparse exact-boundary success on Windows x86-64 and frozen-target Linux x86-64, boundary-plus-one refusal, interruption, resource budgets, SHA, packaged export, and restore evidence also remain open |
-| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, `provider_shapes.py`, streaming ZIP/JSON adapters, versioned parser identities (`provider-archives-v2`), closed coverage, staged policy publication, `outcomes`/`record_ids` import response, dashboard provider flow, raw-first recovery, complete-source rebuild from the preserved blob, packaged `--packaged-provider-acceptance` control surface; ADR-069/ADR-088/ADR-097/ADR-099/ADR-100 | All three providers are mandatory under A-11. Frozen fictional shape sets and parser identities are implemented; every import reconciles recognized, excluded, skipped, unavailable, failed, and unparsed counts. Extraction publishes specific durable kinds, requires durable preference evidence, and keeps task-local/adversarial instruction framing inert; sensitivity is classified conservatively. Complete-source rebuild withdraws uncorrected automatic records reversibly and re-extracts without destroying the raw blob or history. Known empty/tool/attachment ChatGPT graph shells now close into excluded/skipped/unavailable while unknown/malformed material remains unparsed and keeps coverage incomplete. Provider conversation wrappers, nested wrappers, and root conversation arrays account for every malformed or unknown entry as unparsed, retain valid siblings, emit content-free structural warnings, and keep `complete` false. Packaged acceptance emits content-free stage codes for operation failure, non-complete operation status, and reconcile refusal; synthetic ZIP/classifiable-graph and unknown-residual regressions cover the former ambiguous fail-closed path. ADR-088 binds `CoreService` as a context manager so `CoreStore.close()` always precedes owned-vault `rmtree` on success and exception paths; an `OSError` after close still yields `data_dir_cleanup_failed` / exit 1, and caller-supplied data-dir deletion is unchanged. Privacy-safe nonempty real exports acquired after parser freeze and within 30 days, execution of all three against exact downloaded candidates, and inventory-bound receipts remain open and block beta if any one is missing |
+| Full local ChatGPT/Claude/Grok history ingestion | `provider_ingestion.py`, `provider_shapes.py`, streaming ZIP/JSON adapters, versioned parser identities (`provider-archives-v2`), closed coverage, staged policy publication, `outcomes`/`record_ids` import response, dashboard provider flow, raw-first recovery, complete-source rebuild from the preserved blob, packaged `--packaged-provider-acceptance` control surface; ADR-069/ADR-088/ADR-097/ADR-099/ADR-100/ADR-106 | All three providers are mandatory under A-11. Frozen fictional shape sets and parser identities are implemented; every import exposes the strict seven-key item map with recognized, excluded, skipped, unavailable, duplicate, failed, and unparsed counts, while source-level failed/cancelled terminal status is separate. Extraction publishes specific durable kinds, requires durable preference evidence, and keeps task-local/adversarial instruction framing inert; sensitivity is classified conservatively. Complete-source rebuild withdraws uncorrected automatic records reversibly and re-extracts without destroying the raw blob or history. Known empty/tool/attachment ChatGPT graph shells now close into excluded/skipped/unavailable while unknown/malformed material remains unparsed and keeps coverage incomplete. Provider conversation wrappers, nested wrappers, and root conversation arrays account for every malformed or unknown entry as unparsed, retain valid siblings, emit content-free structural warnings, and keep `complete` false. Oversized ZIP text members close unavailable and malformed declared-text `.dat` attachments close unparsed only; attacker-controlled ZIP diagnostics are bounded/control-escaped. Packaged acceptance emits content-free stage codes for operation failure, non-complete operation status, and reconcile refusal; synthetic ZIP/classifiable-graph and unknown-residual regressions cover the former ambiguous fail-closed path. ADR-088 binds `CoreService` as a context manager so `CoreStore.close()` always precedes owned-vault `rmtree` on success and exception paths; an `OSError` after close still yields `data_dir_cleanup_failed` / exit 1, and caller-supplied data-dir deletion is unchanged. Privacy-safe nonempty real exports acquired after parser freeze and within 30 days, execution of all three against exact downloaded candidates, and inventory-bound receipts remain open and block beta if any one is missing |
 | Bounded ChatGPT attachment inventory and text slice | `importers.py`; synthetic ZIP regressions in `tests/unit/test_provider_ingestion.py`; ADR-105; `docs/protocols/INGESTION.md` | Implemented locally for gated `.dat` identity/hash/raw preservation, manifest/filename/MIME provenance, explicit MIME ambiguity status, unique archive-member identity, exact conversation/message link pairs, strict ZIP bounds, bounded 10,000-pair/64-level/10,000-node linkage scans, and supported text formats `.txt`, `.json`, `.jsonl`, `.csv`, `.md`, `.markdown`. Unsupported binary/document/web/script formats remain explicitly unavailable. This does not claim all `.dat` contents are searchable, does not provide office/PDF/media extraction, and has no real-export acceptance receipt; only structural real-export inspection was performed content-free |
 | Structured filtering and FTS5 | retrieval engine; policy-before-ranking and integration tests | Implemented |
 | Request-bound context-search pagination | `SearchRequest`, `SearchCursor`, Core `/v1/context/search`, per-installation HMAC cursor signing, `tests/integration/test_core_api.py`, ADR-103 | Implemented locally; malformed, negative, oversized, bounded, normal-page, query/filter/page-size mismatch, and cross-principal cursor cases are covered by API tests. The cursor is integrity-authenticated but not encrypted, one-time-use, expiry-bound, or snapshot-consistent |

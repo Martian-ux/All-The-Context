@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from pathlib import PurePosixPath
 from typing import Any, cast
 
 from .memory_policy import archive_lineage_key, classify_sensitivity
-from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput
+from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput, Sensitivity
 
 PARSER_VERSION = "provider-archives-v2"
 
@@ -46,6 +47,7 @@ CLOSED_COVERAGE_REASONS = (
     "excluded",
     "skipped",
     "unavailable",
+    "duplicate",
     "failed",
     "unparsed",
 )
@@ -81,13 +83,16 @@ def _closed_coverage_counts(
     excluded = int(stats.get("assistant_messages", 0)) + int(stats.get("other_messages", 0))
     skipped = int(stats.get("skipped_messages", 0))
     unavailable = int(stats.get("unsupported_entries", 0))
+    duplicate = int(stats.get("duplicate_entries", 0))
     failed = int(stats.get("failed_items", 0))
     unparsed = int(stats.get("unparsed_messages", 0))
+    skipped += int(stats.get("skipped_memory_items", 0))
     return {
         "recognized": recognized,
         "excluded": excluded,
         "skipped": skipped,
         "unavailable": unavailable,
+        "duplicate": duplicate,
         "failed": failed,
         "unparsed": unparsed,
     }
@@ -266,9 +271,11 @@ class ProviderArchiveBuilder:
             "assistant_messages": 0,
             "other_messages": 0,
             "memory_items": 0,
+            "skipped_memory_items": 0,
             "skipped_messages": 0,
             "unparsed_messages": 0,
             "unsupported_entries": 0,
+            "duplicate_entries": 0,
             "failed_items": 0,
             "recognized_items": 0,
         }
@@ -276,12 +283,62 @@ class ProviderArchiveBuilder:
     def note_file(self, source_name: str) -> None:
         self._files_seen.add(_safe_source_name(source_name))
 
+    def note_provider_context(self, provider: str | ArchiveProvider) -> None:
+        """Remember provider evidence without publishing logical items."""
+        normalized = normalize_provider(provider)
+        if normalized not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+            self._providers.add(normalized)
+
+    def observe_json_provider(self, source_name: str, value: Any) -> ArchiveProvider:
+        """Observe one validated JSON value before its siblings are consumed."""
+        detected = _detect_json_provider(value, _safe_source_name(source_name), self.provider_hint)
+        self.note_provider_context(detected)
+        return detected
+
+    def provider_context_established(self) -> bool:
+        return self.provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or any(
+            provider not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
+            for provider in self._providers
+        )
+
+    def note_provider_container(self, source_name: str) -> None:
+        """Record a provider container as structural without counting it twice."""
+        safe_name = _safe_source_name(source_name)
+        self.note_file(safe_name)
+        self._formats.add("provider_conversations")
+        if self.provider_context_established():
+            self._recognized_files.add(safe_name)
+
+    def note_provider_terminal(self, source_name: str, reason: str) -> None:
+        """Close one provider-container logical item without exposing its content."""
+        if reason not in {"skipped", "unparsed"}:
+            raise ValueError("unsupported provider terminal reason")
+        self.note_provider_container(source_name)
+        if reason == "skipped":
+            self._stats["skipped_messages"] += 1
+            return
+        self._note_unparsed_conversation_entries(_safe_source_name(source_name), 1)
+
+    def stats_snapshot(self) -> dict[str, int]:
+        """Return bounded parser counters for one-member transaction probes."""
+        return {
+            **self._stats,
+            "files": len(self._files_seen),
+            "recognized_files": len(self._recognized_files),
+        }
+
     def note_unsupported_entries(self, count: int) -> None:
         self._stats["unsupported_entries"] += max(count, 0)
 
+    def note_duplicate_entries(self, count: int = 1) -> None:
+        self._stats["duplicate_entries"] += max(count, 0)
+
+    def note_failed_items(self, count: int = 1) -> None:
+        self._stats["failed_items"] += max(count, 0)
+
     def add_warning(self, warning: str) -> None:
         if warning and warning not in self._warnings and len(self._warnings) < 512:
-            self._warnings.append(warning[:2_000])
+            self._warnings.append(_safe_diagnostic_text(warning)[:2_000])
 
     def consume_json(self, source_name: str, value: Any) -> bool:
         """Consume a JSON document, returning whether a provider schema was recognized."""
@@ -339,6 +396,10 @@ class ProviderArchiveBuilder:
                 )
                 if accounted < raw_message_count:
                     self._stats["unparsed_messages"] += raw_message_count - accounted
+                if raw_message_count == 0 and not any(residual.values()):
+                    # A recognized empty conversation is still one logical
+                    # provider item; it is not a fabricated memory candidate.
+                    self._stats["skipped_messages"] += 1
                 self._consume_messages(messages)
             if provider_list and not conversations:
                 # A provider-shaped list with no valid siblings is still a
@@ -360,6 +421,7 @@ class ProviderArchiveBuilder:
             self._formats.add("provider_memory_json")
             recognized = True
             for index, memory in enumerate(memory_items):
+                self._stats["memory_items"] += 1
                 candidate = _memory_candidate(
                     memory,
                     provider=memory_provider,
@@ -367,8 +429,9 @@ class ProviderArchiveBuilder:
                 )
                 if candidate is not None:
                     self._candidates.append(candidate)
-                    self._stats["memory_items"] += 1
                     self._stats["recognized_items"] += 1
+                else:
+                    self._stats["skipped_memory_items"] += 1
 
         if recognized:
             self._recognized_files.add(safe_name)
@@ -465,6 +528,7 @@ class ProviderArchiveBuilder:
             self._formats.add("provider_memory_text")
             self._recognized_files.add(safe_name)
             for index, item in enumerate(items):
+                self._stats["memory_items"] += 1
                 candidate = _memory_candidate(
                     item,
                     provider=provider,
@@ -472,8 +536,9 @@ class ProviderArchiveBuilder:
                 )
                 if candidate is not None:
                     self._candidates.append(candidate)
-                    self._stats["memory_items"] += 1
                     self._stats["recognized_items"] += 1
+                else:
+                    self._stats["skipped_memory_items"] += 1
             return True
         return False
 
@@ -533,13 +598,26 @@ class ProviderArchiveBuilder:
                 f"{closed_coverage['excluded']} assistant/system/tool/attachment items were "
                 "excluded from context publication"
             )
+        if self._stats["skipped_memory_items"]:
+            warnings.append(
+                f"{self._stats['skipped_memory_items']} provider memory/profile items were "
+                "skipped by content policy"
+            )
+        if closed_coverage["duplicate"]:
+            warnings.append(
+                f"{closed_coverage['duplicate']} duplicate source entries were skipped with "
+                "their original entry retained"
+            )
         complete = (
             not any(
                 marker in warning.casefold()
                 for warning in warnings
                 for marker in ("invalid json", "could not parse", "exceeds", "truncated")
             )
-            and closed_coverage["failed"] == 0
+            and all(
+                closed_coverage[key] == 0
+                for key in ("unavailable", "duplicate", "failed")
+            )
         )
         # Unparsed material keeps coverage incomplete so it cannot report pure success.
         if closed_coverage["unparsed"] > 0:
@@ -738,6 +816,24 @@ def _looks_like_conversation(value: Any) -> bool:
                 for key in ("assistant", "response", "answer", "grok")
             )
         )
+    )
+
+
+def is_empty_provider_container(value: Any) -> bool:
+    """Return whether a value is an empty provider conversation container/wrapper."""
+    if isinstance(value, dict) and not value:
+        return True
+    if isinstance(value, dict):
+        for key in _NESTED_CONVERSATION_WRAPPER_KEYS:
+            nested = value.get(key)
+            if nested == [] or (isinstance(nested, dict) and is_empty_provider_container(nested)):
+                return True
+    collection = _conversation_collection(value)
+    return (
+        collection.key is not None
+        and not collection.values
+        and collection.malformed_count == 0
+        and not _looks_like_conversation(value)
     )
 
 
@@ -1328,6 +1424,7 @@ def _memory_candidate(
         or len(cleaned) > 4_000
         or _SECRET_HINT.search(cleaned)
         or _is_inert_instruction(cleaned)
+        or classify_sensitivity(cleaned) == Sensitivity.HIGHLY_SENSITIVE
     ):
         return None
     classified = _classify_statement(cleaned)
@@ -1493,7 +1590,19 @@ def _stable_id(material: str) -> str:
 def _safe_source_name(value: str) -> str:
     normalized = value.replace("\\", "/")
     parts = [part for part in PurePosixPath(normalized).parts if part not in {".", "..", "/"}]
-    return "/".join(parts)[-1_000:] or "import"
+    return _safe_diagnostic_text("/".join(parts))[-1_000:] or "import"
+
+
+def _safe_diagnostic_text(value: str) -> str:
+    """Keep untrusted source names and warnings bounded and single-line safe."""
+    escaped: list[str] = []
+    for char in value:
+        if char.isprintable() and unicodedata.category(char) != "Cc":
+            escaped.append(char)
+            continue
+        codepoint = ord(char)
+        escaped.append(f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}")
+    return "".join(escaped)
 
 
 def _deduplicate_strings(items: Iterable[str]) -> Iterable[str]:

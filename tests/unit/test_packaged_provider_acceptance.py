@@ -9,7 +9,10 @@ from typing import Any, Literal
 import pytest
 from allthecontext.core.service import CoreService
 from allthecontext.desktop import main as desktop_main
-from allthecontext.packaged_provider_acceptance import run_packaged_provider_acceptance
+from allthecontext.packaged_provider_acceptance import (
+    _successful_payload,
+    run_packaged_provider_acceptance,
+)
 from allthecontext.provider_shapes import frozen_provider_shapes
 from allthecontext.storage import CoreStore
 
@@ -141,6 +144,64 @@ def _complete_operation() -> dict[str, object]:
     }
 
 
+def _successful_result(
+    closed_coverage: dict[str, object],
+    *,
+    complete: object = True,
+) -> dict[str, object]:
+    return {
+        "provider": "chatgpt",
+        "parser_identity": "chatgpt-archives-v2",
+        "export_format": "chatgpt_conversation_graph",
+        "coverage": {"complete": complete, "closed_coverage": closed_coverage},
+        "candidate_ids": ["candidate-1"],
+        "outcomes": {"applied": 1},
+    }
+
+
+@pytest.mark.parametrize("count", [True, 1.0, "1"])
+def test_packaged_reconciler_rejects_coverage_count_coercion(count: object) -> None:
+    with pytest.raises(ValueError):
+        _successful_payload(
+            _successful_result({"recognized": count, "unavailable": 0}),
+            "chatgpt",
+        )
+
+
+def test_packaged_reconciler_rejects_unknown_coverage_reason() -> None:
+    with pytest.raises(ValueError):
+        _successful_payload(
+            _successful_result({"recognized": 1, "unknown": 0}),
+            "chatgpt",
+        )
+
+
+@pytest.mark.parametrize("count", [-1, 2_147_483_648])
+def test_packaged_reconciler_rejects_out_of_bounds_coverage_count(count: int) -> None:
+    with pytest.raises(ValueError):
+        _successful_payload(
+            _successful_result({"recognized": 1, "unparsed": count}),
+            "chatgpt",
+        )
+
+
+@pytest.mark.parametrize("reason", ["unavailable", "duplicate", "failed", "unparsed"])
+def test_packaged_reconciler_rejects_complete_incomplete_coverage(reason: str) -> None:
+    with pytest.raises(ValueError, match="complete cannot be true"):
+        _successful_payload(
+            _successful_result({"recognized": 1, reason: 1}),
+            "chatgpt",
+        )
+
+
+def test_packaged_reconciler_rejects_explicitly_incomplete_coverage() -> None:
+    with pytest.raises(ValueError, match="coverage is incomplete"):
+        _successful_payload(
+            _successful_result({"recognized": 1}, complete=False),
+            "chatgpt",
+        )
+
+
 def test_packaged_surface_imports_through_core_without_content_in_report(
     tmp_path: Path,
 ) -> None:
@@ -241,10 +302,10 @@ def test_packaged_surface_removes_its_disposable_vault(
     assert not disposable.exists()
 
 
-def test_packaged_surface_accepts_classifiable_chatgpt_zip_without_content(
+def test_packaged_surface_rejects_chatgpt_zip_with_unavailable_content(
     tmp_path: Path,
 ) -> None:
-    """ZIP + realistic classifiable ChatGPT graph yields complete content-free report."""
+    """Unavailable attachment content keeps the packaged claim incomplete."""
     export = tmp_path / "chatgpt-export.zip"
     # Inflated member larger than compressed raw archive so progress domains differ.
     conversations = json.dumps(_chatgpt_realistic_graph(), ensure_ascii=False)
@@ -263,25 +324,16 @@ def test_packaged_surface_accepts_classifiable_chatgpt_zip_without_content(
     report = tmp_path / "report.json"
     data_dir = tmp_path / "vault"
 
-    assert (
-        run_packaged_provider_acceptance(
-            report_path=report,
-            export_path=export,
-            provider="chatgpt",
-            data_dir=data_dir,
-        )
-        == 0
-    )
+    assert run_packaged_provider_acceptance(
+        report_path=report,
+        export_path=export,
+        provider="chatgpt",
+        data_dir=data_dir,
+    ) == 1
     payload = json.loads(report.read_text(encoding="utf-8"))
-    assert payload["status"] == "complete"
-    assert payload["operation_status"] == "complete"
-    assert payload["provider"] == "chatgpt"
-    assert payload["coverage_complete"] is True
-    assert payload["candidate_count"] >= 1
-    assert payload["closed_coverage"]["unparsed"] == 0
-    assert payload["closed_coverage"]["excluded"] >= 1
-    assert payload["closed_coverage"]["skipped"] >= 1
-    assert payload["closed_coverage"]["unavailable"] >= 1
+    assert payload["status"] == "failed"
+    assert payload["operation_status"] == "failed"
+    assert payload["error_code"] == "import_acceptance_reconcile_failed"
     rendered = json.dumps(payload)
     assert "Preference:" not in rendered
     assert "fabricated assistant" not in rendered

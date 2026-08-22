@@ -2818,8 +2818,9 @@ metadata establish a supported text format: `.txt`, `.json`, `.jsonl`, `.csv`,
 `.md`, or `.markdown`. It uses bounded in-memory reads and existing
 deterministic provider extraction; no member is rendered, macro-enabled, or
 executed. Images/audio, PDF, DOCX, PPTX, XLSX, RTF, HTML, scripts, unknown
-extensions, malformed text, and over-limit text remain raw and are counted as
-unsupported/unavailable. Attachment inventory presence, hashing, or raw
+extensions, and over-limit text remain raw and are counted as
+unsupported/unavailable. Malformed JSON or text is one `unparsed` logical item;
+it is never also counted as unavailable. Attachment inventory presence, hashing, or raw
 preservation must never be reported as searchable coverage. Linkage is
 retained only when a conversation attachment ID resolves to the `.dat` asset
 identity; unresolved assets remain inventoried without an invented link.
@@ -2843,3 +2844,164 @@ pairs; a colliding stem produces no inferred link. MIME conflicts persist as
 source. Total link accumulation is bounded at 10,000 pairs, with per-document
 link scanning bounded to 64 levels and 10,000 nodes; either truncation is
 visible and leaves coverage incomplete.
+
+## ADR-106: Keep item coverage separate from source terminal state
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The public import contract carries a closed item-level map in
+`CoverageReport.closed_coverage`. Its keys are `recognized`, `excluded`,
+`skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`. Duplicate ZIP
+members and bounded per-member parser failures are counted there because they
+refer to source items. A parser failure makes coverage incomplete even when
+other members are retained and imported.
+
+The schema is closed to those seven keys and accepts only strict non-negative
+integer counts up to 2,147,483,647. `complete=true` is inconsistent with any
+unavailable, duplicate, failed, or unparsed count; excluded/skipped material is
+still resolved item accounting. An oversized ZIP text member is unavailable,
+while a malformed manifest-declared text `.dat` attachment is unparsed only,
+never both. Attacker-controlled member names are bounded and escaped before
+they enter warnings, errors, or diagnostics.
+
+Fatal source errors and operator cancellation are lifecycle events, not items.
+They preserve any already-known item counts, set `coverage_complete` false,
+and store `source_terminal_reason=failed|cancelled` in source metadata while
+the durable import-operation row exposes its corresponding terminal status.
+They must never be added to `closed_coverage` or summed with its item counts.
+The preserved raw source remains the retry authority. This keeps pre-parse
+failure, partial member failure, and cancellation dimensionally honest.
+
+The contract remains content-free: warnings and durable error messages use
+bounded status codes/classes, while the raw source stays local and untrusted.
+The dashboard may render the two dimensions together but must label them
+separately.
+
+## ADR-107: Packaged acceptance must validate the same import coverage contract
+
+**Status:** accepted 2026-08-22. Post-review import-truth correction. Does not
+retarget, relabel, or grant acceptance credit to any published artifact.
+
+Declared-text JSON `.dat` members are bounded source items. The importer first
+validates the complete member, including trailing-data rejection, and only then
+publishes its parsed items. A malformed member cannot publish early array items
+and also be counted as `unparsed`; JSONL remains line-oriented with its existing
+per-line behavior.
+
+The packaged-provider acceptance boundary constructs the shared
+`CoverageReport` model for its dict-level coverage map. It therefore rejects
+unknown keys, booleans/floats/strings, negative or overflowing counts, and
+`complete=true` when unavailable, duplicate, failed, or unparsed items exist.
+Synthetic acceptance fixtures with unavailable content remain incomplete and
+cannot produce a complete packaged report.
+
+## ADR-108: Close terminal import partitions at both archive dimensions
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The importer keeps two deliberately separate contracts. `closed_coverage` is
+the logical item map; `stats.archive_member_coverage` is the content-free raw
+ZIP-member audit. Provider containers and controls remain structural in the
+raw audit even when bounded parsing finds malformed content. Their applicable
+logical `unparsed` or `failed` result is assigned exactly once, and the raw
+member is never also placed in a terminal ordinary-member bucket.
+
+Provider-memory/profile values rejected before candidate construction by
+secret-like, inert, highly-sensitive, or size policy close as logical
+`skipped` items. Accepted and rejected values therefore cannot produce a
+nonempty provider-memory surface with an all-zero logical denominator, and
+rejected text is not copied into warnings or receipts. Sensitivity that is
+allowed by the configured local-only policy remains a candidate with its
+declared sensitivity; parser coverage is not confused with later policy
+dispositions.
+
+Standalone text, JSON, and CSV decoding is strict UTF-8. Invalid bytes are one
+atomic `unparsed` item, never replacement-decoded. CSV is a supported generic
+logical item through both public archive entrypoints, with malformed CSV
+closing atomically as `unparsed`. Ordinary JSON roots use a bounded two-pass
+validate-then-consume strategy, preserving trailing-data atomicity without an
+unbounded document list or a retained raw temporary artifact.
+
+When ZIP metadata can be enumerated, entry-count, declared-size, compression,
+encryption, and path/depth safety failures return a content-free member audit.
+Every rejected file member is placed in exactly one `unavailable` bucket, the
+raw denominator closes, and no rejected payload is opened. If enumeration
+fails, the result uses `archive_level_failure=zip_enumeration_failed` and
+`member_coverage_available=false`; it deliberately has no invented member
+closure. These are parser results and coverage contracts, not fresh acceptance
+evidence.
+
+## ADR-109: Share bounded ordinary-JSON parsing across every archive entrypoint
+
+**Status:** accepted 2026-08-22. Import Truth acceptance-blocker correction.
+Does not retarget, relabel, or grant acceptance credit to any published artifact.
+
+Direct byte imports, filesystem JSON paths, and ordinary JSON ZIP members use the
+same incremental strict-UTF-8 reader and `JSONDecoder.raw_decode` contract. The
+reader enforces a 512 MiB raw-byte ceiling, a 128 MiB decoded item/document
+ceiling, and a 128-level quote/escape-aware nesting ceiling before recursive
+decode can raise `RecursionError`. It validates the complete source before the
+builder or generic candidate list is mutated; trailing data, malformed JSON,
+depth rejection, and parser failure therefore cannot leave partial candidates.
+The reader yields root-array members without materializing the array. An empty
+ordinary root array is represented as one logical value so direct, path, and ZIP
+coverage agree; provider containers remain structural and are counted only by
+their semantic contents.
+
+Raw ZIP classification has an explicit bounded allowlist. Canonical
+`conversations.json` and dated `conversations-YYYY[-MM[-DD]].json` names are
+provider containers. The alternate `chats.json`, `history.json`, and
+`messages.json` basenames require an explicit provider hint or an exact provider
+path component from `chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, or
+`x.ai`. A neutral alternate with valid provider-shaped content can still be
+promoted to structural by provider parser statistics; malformed neutral
+alternates remain ordinary unparsed members because filename-only inference
+would overclassify arbitrary generic JSON. This residual is visible in the raw
+member audit and closed logical coverage.
+
+`CoverageReport.closed_coverage` remains closed to the seven recognized keys and
+strict bounded non-negative integers. Omitted or partial maps are normalized to
+the exact zero-filled seven-key map for backward-compatible callers; unknown
+keys and invalid counts remain validation errors. The API and serialized model
+therefore never expose a missing or extra coverage key.
+
+## ADR-110: Establish provider context before terminal accounting
+
+**Status:** implemented as a bounded synthetic correction on 2026-08-22. Does
+not retarget, relabel, or grant acceptance credit to any published artifact.
+
+The importer observes provider evidence from every value yielded by the bounded
+JSON validator in a disposable validation builder, buffering only a bounded set
+of structural provider signatures. Those signatures are published to the live
+builder only after the entire iterator succeeds; the consuming pass then mutates
+candidates or logical counts. This two-phase boundary is intentionally
+context-only: it does not retain the root array or publish any imported text. A
+valid provider-looking prefix followed by trailing data or any later bounded
+parse failure therefore cannot promote a neutral alternate or enable ChatGPT
+attachment links. Such a ZIP member closes exactly once as `unparsed`; direct
+and path entrypoints report generic incomplete coverage. A malformed neutral
+sibling cannot poison a separately valid named provider member.
+
+The bounded iterator carries an explicit context tag with each yielded value:
+standalone roots use root policy, while members streamed from a non-empty root
+array use root-array-item policy. An empty object or empty provider wrapper in
+that item context is therefore one `unparsed` terminal even when the valid
+conversation is its sibling. The distinction is part of the parser boundary;
+it is not inferred from a filename and does not require materializing the root.
+
+Provider containers and conversations have a nonzero logical denominator even
+when they contain no messages. A known empty provider root or zero-message
+conversation closes as one `skipped` item; an identity-free provider-shaped
+empty root and malformed provider entries close as one `unparsed` item. The
+container remains structural in the ZIP-member audit, so it is never counted as
+both a raw member and a logical item.
+
+Auto ZIP attachment discovery uses a bounded content signature over the allowed
+conversation basenames, including neutral `messages.json`, `chats.json`, and
+`history.json`. The signature scan consumes the entire bounded iterator before
+publishing a member observation. Only valid ChatGPT-shaped content promotes
+such a member before attachment link scanning. A malformed or over-limit
+neutral alternate remains generic and does not activate ChatGPT attachment
+inventory; filename alone is insufficient.

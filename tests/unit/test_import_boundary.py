@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import threading
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -122,6 +124,57 @@ def test_import_bytes_records_preflight_progress_and_closed_coverage(tmp_path: P
     assert source["metadata"]["import_progress"]["percent"] == 100
     assert result["parser_version"]
     assert "closed_coverage" in result["coverage"]
+    assert set(result["coverage"]["closed_coverage"]) == {
+        "recognized",
+        "excluded",
+        "skipped",
+        "unavailable",
+        "duplicate",
+        "failed",
+        "unparsed",
+    }
+    assert result["session"]["coverage"]["closed_coverage"] == result["coverage"][
+        "closed_coverage"
+    ]
+
+
+def test_unenumerable_zip_persists_archive_failure_coverage_on_source(tmp_path: Path) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store, skip_disk_preflight=True)
+
+    result = service.import_bytes("broken.zip", b"not-a-zip")
+
+    sources, total = core.store.list_sources()
+    assert total == 1
+    completed = core.store.get_source(sources[0]["id"], duplicate=True)
+    assert result["session"]["status"] == "finished"
+    assert completed.import_status == "complete"
+    assert completed.metadata["coverage_complete"] is False
+    assert sum(completed.metadata["closed_coverage"].values()) == 0
+    assert result["coverage"]["unavailable"] == [
+        "ZIP archive could not be enumerated; member coverage is unavailable"
+    ]
+    assert result["coverage"]["complete"] is False
+
+
+def test_partial_member_malformed_text_stays_in_item_coverage(tmp_path: Path) -> None:
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("valid.md", "Goal: Keep the synthetic source local")
+        archive.writestr("malformed.csv", 'header,"unterminated')
+
+    core = CoreService.in_directory(tmp_path)
+    result = ArchiveImportService(core.store, skip_disk_preflight=True).import_bytes(
+        "mixed.zip",
+        bundle.getvalue(),
+    )
+    source = core.store.get_source(result["source"]["id"], duplicate=True)
+    closed = source.metadata["closed_coverage"]
+    assert closed["unparsed"] == 1
+    assert closed["failed"] == 0
+    assert closed["recognized"] >= 1
+    assert source.metadata["coverage_complete"] is False
+    assert "source_terminal_reason" not in source.metadata
 
 
 def test_boundary_plus_one_import_refuses_without_publication(tmp_path: Path) -> None:
@@ -361,6 +414,8 @@ def test_in_flight_cancel_marks_cancelled_without_publication(tmp_path: Path) ->
     items, total = core.store.list_sources()
     assert total == 1
     assert items[0]["import_status"] == "cancelled"
+    assert sum(items[0]["metadata"]["closed_coverage"].values()) == 0
+    assert items[0]["metadata"]["source_terminal_reason"] == "cancelled"
     # No current context publication after cancel.
     status = core.store.status()
     assert status["counts"]["active_records"] == 0

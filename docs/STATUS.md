@@ -114,6 +114,42 @@ unsupported binaries, traversal, member/total expansion, and text read bounds.
 Real-export structural inspection was content-free; no real export bytes or
 personal values enter the repository, tests, logs, or receipts.
 
+### 2026-08-22 neutral alternate promotion correction
+
+Auto provider detection now buffers only bounded structural-signature
+observations until the complete JSON iterator succeeds. A neutral alternate
+such as `messages.json` with valid ChatGPT-shaped content followed by trailing
+data or a later depth, item, byte, or parser-limit failure remains generic and
+incomplete, closes once as `unparsed`, and cannot enable ChatGPT attachment
+inventory or links. Direct, path, and ZIP entrypoints share this boundary; a
+valid named provider member remains independent of a malformed neutral sibling.
+This is synthetic local engineering evidence only, does not inspect live/private
+Core or exports, and grants no acceptance credit.
+
+### 2026-08-22 Import Truth accounting closure
+
+Provider and ZIP results now expose a dimensionally bounded
+`coverage.closed_coverage` map with the item-level keys `recognized`,
+`excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`.
+The public schema rejects unknown keys and non-strict, negative, or
+out-of-bound counts; `complete=true` is rejected when unavailable, duplicate,
+failed, or unparsed counts are nonzero. Oversized ZIP `.txt`/`.md` members close as
+`unavailable`, and malformed manifest-declared text `.dat` attachments close
+as `unparsed` only. ZIP/member diagnostic names are bounded and control-escaped.
+Case-insensitive duplicate ZIP members increment `duplicate`; bounded member
+parser failures increment `failed` and force incomplete coverage. A fatal
+source failure or cancellation never inflates those item counts: the preserved
+source keeps known counts, sets `coverage_complete=false`, and records the
+separate source-level `source_terminal_reason` (`failed` or `cancelled`) in
+source metadata; durable import operations retain their terminal status too.
+The same closed map is carried in the public ingestion coverage report and
+CLI/API import result. Synthetic regressions cover duplicate members,
+malformed CSV, pre-parse failure, partial member failure, and cancellation.
+
+UI handoff contract: render `coverage.closed_coverage` as item accounting and
+render `source.metadata.source_terminal_reason` or the operation `status` as a
+source-level terminal state. These dimensions must not be added together.
+
 ### 2026-08-22 attachment review-boundary corrections
 
 The ChatGPT `.dat` inventory and bounded text slice now run only for explicit
@@ -1479,6 +1515,85 @@ state is already noncurrent and creates no user queue.
   `account_data` wrappers, and root conversation arrays. Structural warnings
   contain no entry IDs, titles, or imported text; all-malformed provider lists
   remain recognized but incomplete.
+
+## Final import-truth contract hardening (2026-08-22)
+
+- Manifest-declared JSON `.dat` attachments now validate the complete bounded
+  member before publishing candidates. A valid JSON array followed by trailing
+  malformed bytes is therefore one `unparsed` item with zero recognized items
+  and no partial candidate; valid JSON and line-oriented JSONL attachment
+  extraction remain supported.
+- Ordinary bounded ZIP `.json` members now use the same atomic validation
+  boundary. A generic standalone text/CSV/JSON member that yields no candidate
+  closes as intentional `excluded`/`skipped` logical coverage instead of
+  disappearing. Provider containers and manifest/control members remain
+  structural; the separate content-free `stats.archive_member_coverage` audit
+  records its raw-member denominator without adding containers to item counts.
+- Malformed JSON/text is one `unparsed` logical item; malformed CSV follows
+  the same rule, while JSONL remains line-oriented.
+- Provider container/control members remain structural in the raw-member audit
+  when malformed, while their logical `unparsed`/`failed` outcome is counted
+  exactly once in `closed_coverage`. Rejected provider-memory/profile values
+  close as logical `skipped` items, including content-policy, inert,
+  highly-sensitive, and over-limit rejection, without exposing their text.
+- Standalone text, JSON, and CSV decoding is strict UTF-8; invalid bytes never
+  become replacement-decoded candidates. CSV is supported atomically through
+  both public archive entrypoints.
+- Ordinary JSON roots now use bounded two-pass validation and consumption, so
+  no unbounded document list or raw temporary artifact is retained. Enumerated
+  ZIP safety failures return content-free member closure with each rejected
+  file member in exactly one `unavailable` bucket and no rejected payload read;
+  an unenumerable ZIP returns `zip_enumeration_failed` without fabricated
+  member closure.
+- Packaged-provider acceptance now validates its dict-level coverage through
+  `CoverageReport`, preserving the closed seven-key schema, strict bounded
+  integer counts, and fail-closed completion semantics for unavailable,
+  duplicate, failed, or unparsed items.
+- Direct bytes, filesystem JSON, and ordinary ZIP JSON members now share one
+  bounded incremental UTF-8/raw-decoder contract: a 512 MiB JSON byte ceiling,
+  128 MiB decoded item/document ceiling, and 128-level quote/escape-aware
+  nesting ceiling. Validation completes before candidate consumption, so depth,
+  recursion, or trailing-data rejection cannot publish partial candidates.
+  Empty ordinary `[]`/`{}` roots remain one skipped logical item across all
+  three entrypoints; empty provider containers remain structural and contribute
+  no invented semantic item.
+- Provider raw-container classification uses the canonical
+  `conversations.json`/dated `conversations-YYYY[-MM[-DD]].json` names plus the
+  frozen alternate basenames `chats.json`, `history.json`, and `messages.json`.
+  Alternates require an explicit provider hint or an exact provider path
+  component (`chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, `x.ai`);
+  valid provider-shaped neutral alternates can still become structural from
+  parser statistics, while malformed neutral JSON remains an ordinary item.
+- `CoverageReport.closed_coverage` normalizes omitted or partial input to the
+  exact seven-key zero-filled map and still rejects unknown keys, non-integer,
+  negative, and overflowing counts. This preserves older partial callers while
+  making model validation and serialization exact.
+- Focused synthetic regressions cover the atomic malformed-JSON attachment,
+  valid attachment behavior, reconciler coercion/unknown/bounds cases, and
+  completion consistency, bounded direct/path/ZIP JSON, depth/escape handling,
+  alternate provider names, empty roots, and exact API/model coverage maps. No
+  live or private export/Core data was inspected.
+
+## Import Truth provider-terminal follow-up (2026-08-22)
+
+- Provider-shaped empty roots and zero-message conversations now close exactly
+  one logical item. A known provider closes an empty root or conversation as
+  `skipped`; an identity-free provider-shaped empty or malformed entry closes
+  as `unparsed` and keeps coverage incomplete. Structural provider containers
+  remain outside the raw-member terminal buckets.
+- The bounded JSON iterator carries explicit root versus root-array-item context
+  with each streamed value. An empty object or provider wrapper inside a
+  non-empty root array is therefore one `unparsed` terminal in either sibling
+  order, while a standalone known-provider root remains one `skipped` terminal.
+  This context is not filename-derived and does not materialize the root;
+  direct bytes, filesystem paths, and ZIP members use the same accounting.
+- Auto ZIP attachment discovery scans the allowed neutral alternate basenames
+  for a bounded ChatGPT content signature before link inventory. Valid
+  `messages.json`, `chats.json`, `history.json`, and `conversations.json`
+  content matches explicit ChatGPT attachment links; malformed neutral content
+  stays generic and cannot enable provider-specific attachment parsing.
+- These are bounded synthetic corrections only. No live/private Core or real
+  export was inspected, and no acceptance credit is claimed.
 
 ## Repository security convergence
 

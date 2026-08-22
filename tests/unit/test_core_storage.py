@@ -24,6 +24,7 @@ from allthecontext.storage import (
     InvalidStateError,
     NotFoundError,
 )
+from pydantic import ValidationError
 
 
 @pytest.fixture
@@ -67,6 +68,47 @@ def test_ingestion_is_resumable_and_batches_are_idempotent(core: CoreService) ->
     )
     assert finished["status"] == "finished"
     assert finished["coverage"]["unavailable"] == ["deleted chats"]
+
+
+@pytest.mark.parametrize(
+    "closed_coverage",
+    [
+        {"unexpected": 1},
+        {"recognized": True},
+        {"recognized": 1.0},
+        {"recognized": 2_147_483_648},
+    ],
+)
+def test_coverage_report_closed_counts_are_strict_and_closed(
+    closed_coverage: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        CoverageReport(closed_coverage=closed_coverage)
+
+
+@pytest.mark.parametrize("reason", ["unavailable", "duplicate", "failed", "unparsed"])
+def test_coverage_report_complete_rejects_incomplete_item_counts(reason: str) -> None:
+    with pytest.raises(ValidationError, match="complete cannot be true"):
+        CoverageReport(
+            closed_coverage={"recognized": 1, reason: 1},
+            complete=True,
+        )
+
+    # Omitted and partial maps are normalized for honest backward compatibility.
+    report = CoverageReport(available=["synthetic source"], complete=True)
+    assert set(report.closed_coverage) == {
+        "recognized",
+        "excluded",
+        "skipped",
+        "unavailable",
+        "duplicate",
+        "failed",
+        "unparsed",
+    }
+    assert all(value == 0 for value in report.closed_coverage.values())
+    partial = CoverageReport(closed_coverage={"recognized": 2})
+    assert partial.closed_coverage["recognized"] == 2
+    assert sum(partial.closed_coverage.values()) == 2
 
 
 def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> None:
