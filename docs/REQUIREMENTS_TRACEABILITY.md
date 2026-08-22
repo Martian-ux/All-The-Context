@@ -105,6 +105,12 @@ fresh visual Product Design acceptance; visual acceptance remains pending.
 | Authenticated content-free admin API and CLI | `/v1/admin/capture/*`; `atc capture ...`; API/CLI tests | Implemented locally with existing admin authentication and loopback defaults. Cursors, payloads, credential references, provider tokens, and raw errors are not exposed. If no adapter is registered, run fails safely with `capture_adapter_unavailable` and no network call |
 | Current product/release availability | beta.6 status and identity docs retained; no dashboard/package startup edits | Independent security/correctness/API review accepted the local foundation only. Real provider availability, hosted CI, release acceptance, publication, live/private data review, and macOS acceptance remain outside scope |
 
+### 2026-08-22 Continuous Capture adapter-availability ownership correction
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| A coordinator without an adapter cannot invalidate another coordinator's live leased run | `CaptureCoordinator._mark_unavailable`; `tests/unit/test_capture.py::test_missing_adapter_does_not_invalidate_live_run_on_shared_database` | Implemented locally: the adapter-missing probe atomically observes a future-expiring run before degrading; it preserves `reconciling`, retry/operator state, and content-free errors, and the owning coordinator can renew and finish. No provider, network, scheduler, or release behavior is claimed |
+
 ### 2026-08-22 provider-terminal Import Truth correction
 
 Provider-shaped empty roots, zero-message conversations, and malformed provider

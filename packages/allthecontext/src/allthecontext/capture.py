@@ -1385,8 +1385,8 @@ class CaptureCoordinator:
         }
 
     def _mark_unavailable(self, source_id: str) -> None:
-        now = self.clock()
         with self.ledger.store.transaction() as connection:
+            now = self.clock()
             row = connection.execute(
                 "SELECT retry_count,lifecycle_state FROM capture_sources WHERE id=?", (source_id,)
             ).fetchone()
@@ -1394,6 +1394,18 @@ class CaptureCoordinator:
                 raise NotFoundError("capture source not found")
             if str(row["lifecycle_state"]) in {"disabled", "paused", "revoked"}:
                 return
+            if str(row["lifecycle_state"]) == "reconciling":
+                active_run = connection.execute(
+                    "SELECT 1 FROM capture_runs "
+                    "WHERE source_id=? AND state='running' AND lease_expires_at>? LIMIT 1",
+                    (source_id, now),
+                ).fetchone()
+                if active_run is not None:
+                    # Adapter availability is not authority to revoke a live
+                    # run owned by another coordinator/process.  The lease
+                    # owner must be able to renew and finish while this
+                    # content-free probe reports the adapter as unavailable.
+                    return
             retry_count = int(row["retry_count"]) + 1
             next_retry = (
                 (_parse_time(now) + timedelta(seconds=self.backoff.delay_seconds(retry_count)))

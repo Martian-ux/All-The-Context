@@ -300,6 +300,51 @@ def test_stale_coordinator_cannot_mutate_after_recovery_and_successful_replaceme
     assert coordinator_b.get_source(source_id).lifecycle_state == "enabled"
 
 
+def test_missing_adapter_does_not_invalidate_live_run_on_shared_database(tmp_path: Path) -> None:
+    clock = _MutableClock()
+    database_path = tmp_path / "shared-live-run.sqlite3"
+    store_a = CoreStore(database_path)
+    store_a.initialize_vault()
+    coordinator_a = CaptureCoordinator(store_a, clock=clock, sink=IdempotentFakeSink())
+    source_id = _source(coordinator_a)
+    _enable(coordinator_a, source_id)
+    coordinator_a.register_adapter(
+        "fake", DeterministicFakeAdapter([CapturePage(generation=1, done=True)])
+    )
+    handle_a, _source_a, _attempt_a = coordinator_a.ledger.begin_run(source_id)
+
+    coordinator_b = CaptureCoordinator(
+        CoreStore(database_path), clock=clock, sink=IdempotentFakeSink()
+    )
+    unavailable = coordinator_b.run(source_id)
+
+    assert unavailable.status == "skipped"
+    assert unavailable.error_code == "capture_adapter_unavailable"
+    with coordinator_a.ledger.store.connect() as connection:
+        source_row = connection.execute(
+            "SELECT lifecycle_state,retry_count,last_error_code FROM capture_sources WHERE id=?",
+            (source_id,),
+        ).fetchone()
+    assert source_row is not None
+    assert tuple(source_row) == ("reconciling", 0, None)
+
+    assert coordinator_a.ledger.renew_run(handle_a) == handle_a
+    completed = coordinator_a.ledger.finish_run(
+        handle=handle_a,
+        status="completed",
+        error_code=None,
+        pages=0,
+        events=0,
+        applied_events=0,
+        duplicate_events=0,
+        failures=0,
+        attempts=1,
+        backoff=coordinator_a.backoff,
+    )
+    assert completed.status == "completed"
+    assert coordinator_a.get_source(source_id).lifecycle_state == "enabled"
+
+
 @pytest.mark.parametrize("transition", ["pause", "revoke"])
 def test_pause_or_revoke_blocks_later_run_handle_writes(tmp_path: Path, transition: str) -> None:
     clock = _MutableClock()

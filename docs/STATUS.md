@@ -1902,3 +1902,14 @@ or papered over in this integration.
   degrades only a source that remains reconciling. Sink-expiry replay retains
   the same idempotency key. This is local beta.6 review evidence only; fresh
   independent acceptance remains required.
+
+## Continuous Capture adapter-availability ownership correction (2026-08-22)
+
+- An adapter-missing probe now checks the source and live run lease in one
+  serialized transaction. If another coordinator owns a future-expiring run,
+  the probe returns the same content-free `capture_adapter_unavailable` result
+  without changing `reconciling`, retry metadata, or operator state.
+- Focused shared-SQLite coverage proves the owning coordinator can renew and
+  finish after the probe, while sources without a live run retain the existing
+  degradation behavior. This remains local beta.6 review evidence only; fresh
+  independent acceptance remains required.

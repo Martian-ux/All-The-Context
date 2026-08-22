@@ -3374,3 +3374,18 @@ mutations, local-only records, stable identities, and ordinary deletion
 barriers. Concurrent repair callers may share one idempotent rebuild generation
 and session; only the validated atomic cutover withdraws eligible automatic
 records.
+
+## ADR-126: Adapter availability cannot revoke another coordinator's live run
+
+**Status:** accepted locally on 2026-08-22 after focused shared-SQLite
+correctness reproduction; this is not release or provider acceptance.
+
+`CaptureCoordinator.run()` may be invoked by a coordinator that has no adapter
+for the source provider while another coordinator or process owns a live leased
+run. The adapter-missing path therefore checks the source lifecycle and
+future-expiring running lease in the same serialized transaction before
+degrading. A live owner leaves `reconciling`, retry metadata, and operator
+pause/revoke state authoritative, while the caller still receives the bounded
+`capture_adapter_unavailable` result. If no live run exists, the existing
+degradation and retry behavior remains unchanged. Run-owned renewal and finish
+continue to require the exact handle, lease, and `reconciling` state.
