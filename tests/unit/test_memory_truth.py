@@ -434,8 +434,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
             ),
         )
     partial_restarted = CoreStore(partial_database)
-    assert partial_restarted.migrate() == 13
-    assert partial_restarted.migrate() == 13
+    assert partial_restarted.migrate() == 14
+    assert partial_restarted.migrate() == 14
     with partial_restarted.connect() as connection, pytest.raises(
         sqlite3.IntegrityError, match="append-only"
     ):
@@ -449,8 +449,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     legacy_restarted = CoreStore(database)
-    assert legacy_restarted.migrate() == 13
-    assert legacy_restarted.migrate() == 13
+    assert legacy_restarted.migrate() == 14
+    assert legacy_restarted.migrate() == 14
     with legacy_restarted.connect() as connection:
         marker = connection.execute(
             "SELECT mutation_kind,mutation_origin,actor FROM context_user_mutations "
@@ -459,6 +459,69 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
         ).fetchone()
     assert marker is not None
     assert tuple(marker) == ("legacy_user_edit", "local_user", "migration-013")
+
+
+@pytest.mark.parametrize(
+    "missing_triggers",
+    [
+        ("reject_context_user_mutations_update",),
+        ("reject_context_user_mutations_delete",),
+        (
+            "reject_context_user_mutations_update",
+            "reject_context_user_mutations_delete",
+        ),
+    ],
+)
+def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
+    tmp_path: Path, missing_triggers: tuple[str, ...]
+) -> None:
+    database = tmp_path / ("trigger-repair-" + "-".join(missing_triggers) + ".sqlite3")
+    store = CoreStore(database)
+    store.initialize_vault()
+    with sqlite3.connect(database) as connection:
+        for trigger in missing_triggers:
+            connection.execute(f"DROP TRIGGER {trigger}")
+        vault_id = str(connection.execute("SELECT id FROM vaults LIMIT 1").fetchone()[0])
+        connection.execute(
+            "INSERT INTO context_user_mutations"
+            "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                "trigger-repair-marker",
+                vault_id,
+                "missing-record",
+                "restore",
+                "local_user",
+                "local-user",
+                "2026-08-22T00:00:00Z",
+            ),
+        )
+
+    restarted = CoreStore(database)
+    assert restarted.migrate() == 14
+    assert restarted.migrate() == 14
+    with restarted.connect() as connection:
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' "
+                "AND name IN ('reject_context_user_mutations_update',"
+                "'reject_context_user_mutations_delete')"
+            )
+        }
+        assert triggers == {
+            "reject_context_user_mutations_update",
+            "reject_context_user_mutations_delete",
+        }
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE context_user_mutations SET actor='tampered' "
+                "WHERE id='trigger-repair-marker'"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "DELETE FROM context_user_mutations WHERE id='trigger-repair-marker'"
+            )
 
 
 def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
@@ -502,7 +565,7 @@ def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 13
+    assert restarted.migrate() == 14
     with restarted.connect() as connection:
         assert connection.execute(
             "SELECT 1 FROM context_user_mutations WHERE record_id=?",

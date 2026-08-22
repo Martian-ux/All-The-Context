@@ -49,11 +49,17 @@ timestamps, content hash, and schema version. Only current applied records are
 retrieval-eligible.
 
 `context_user_mutations` is an append-only typed authority ledger. Each new
-row stores a closed mutation kind/origin, a bounded normalized actor, a typed
-record-version evidence ID/version/digest, and a deterministic intent key. It
-does not store caller reason text; version, source-deletion, and tombstone
-reason fields are canonical content-free codes. Purge may remove the referenced
-record and history while retaining the opaque barrier row.
+row stores a closed mutation kind/origin, a bounded normalized actor, typed
+user-action evidence ID/version/digest, and a deterministic intent key. Schema
+14 adds nullable `user_action_kind` and `user_action_key` fields to
+`context_record_versions`; Core fills them only on the local user-action path.
+The ledger's `evidence_kind='user_action'` row must match those fields exactly,
+including the action key, before a portable restore may import it. A generic
+record-version coordinate remains only as a compatibility fact for
+`legacy_user_edit`, never as authority for a typed action. The ledger does not
+store caller reason text; version, source-deletion, and tombstone reason fields
+are canonical content-free codes. Purge may remove the referenced record and
+history while retaining the opaque barrier row.
 
 ## Memory Truth semantics
 
@@ -76,16 +82,21 @@ authorized restore. Every public/local restore, correction, availability
 change, and explicit deletion path writes a typed `local_user` row to
 `context_user_mutations`; source rebuild checks that ledger rather than
 interpreting free-form version reasons. Portable restore does not generically
-insert ledger rows: it accepts only rows whose evidence ID, version, digest,
-vault, record, source relationship, canonical reason, and intent key all match
-same-package durable evidence; malformed or forged rows are ignored. Isolated
+insert ledger rows: it accepts only typed rows whose action kind/key, evidence
+ID/version, digest, vault, record, source relationship, canonical reason, and
+intent key all match same-package durable evidence; malformed or forged rows
+are ignored. Isolated
 recovery carries verified destination-local mutation rows transactionally with
 purge tombstones before package import. A restore of an already-current record
 still creates one version-backed barrier and exact retry is idempotent. Legacy
 databases and pre-ledger exports infer at most one `legacy_user_edit` row from
 typed source-lineage evidence, excluding source-free manual records and
 validated automatic reapplications. Distinct values that reuse one source
-reference remain distinct records.
+reference remain distinct records. Encrypted package authentication proves
+possession of the passphrase and package integrity, not provenance from an
+untampered originating Core: a party able to rewrite and re-encrypt every
+package member can also rewrite its canonical evidence. The typed boundary
+therefore rejects row-only forgery but does not claim external authenticity.
 
 ## Slots, conflicts, and reinforcement
 

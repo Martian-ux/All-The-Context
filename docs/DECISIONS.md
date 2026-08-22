@@ -2952,3 +2952,27 @@ version/source/tombstone reasons are canonical codes, and restore of an already
 current record is one version-backed, exact-retry-idempotent barrier. SQLite
 checks and append-only triggers fail closed on invalid, copied, or tampered
 ledger mutations.
+
+## ADR-110: Require typed canonical action evidence for portable mutation authority
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Migration 014 adds nullable `user_action_kind` and deterministic
+`user_action_key` fields to `context_record_versions`. Core emits those fields
+only in the local correction, availability-change, restore, delete, and
+source-delete paths. New `context_user_mutations` rows use
+`evidence_kind='user_action'`; portable restore recomputes the typed digest and
+requires the history action kind/key, canonical reason, exact vault/record/
+source relationship, and ledger intent to agree. A generic `record_version`
+coordinate can remain a compatibility-scoped `legacy_user_edit` fact but cannot
+authorize a typed action.
+
+Migration repair drops and recreates both append-only ledger triggers on every
+restart-safe repair pass, including when migration 013 is already marked
+applied. Duplicate-safe restore and isolated carry-forward counters increment
+only when SQLite actually inserts a row. The encrypted export passphrase is
+not an external author signature: a holder who rewrites and re-encrypts every
+package member can rewrite both canonical history and ledger data. This
+decision closes row-only forgery without claiming provenance that the package
+trust model cannot establish.

@@ -1588,3 +1588,21 @@ state is already noncurrent and creates no user queue.
   Version/source/tombstone reasons and persisted actor fields are content-free;
   focused adversarial probes cover secret-marker absence in SQLite, exports,
   and returned durable structures. Fresh reviewer acceptance remains pending.
+
+## Memory Truth final-authority repair (2026-08-22)
+
+- Schema 014 adds typed canonical user-action kind/key evidence to record
+  history. New portable mutation rows require that evidence and a matching
+  typed digest; a generic same-package `record_restored` version cannot grant a
+  forged restore barrier. Legacy generic rows remain compatibility-only
+  `legacy_user_edit` facts, and old packages are handled explicitly rather than
+  treated as typed action proof.
+- Migration repair recreates both append-only mutation triggers on every pass,
+  including databases where migration 013 is already marked applied. Restore
+  and isolated recovery counters now report only actual inserts, so repeated
+  imports are ignored rather than reported accepted.
+- Focused adversarial coverage includes zero-source-ledger evidence-only
+  forgery with stable-ID rebuild reuse, genuine typed mutation round-trip and
+  rebuild blocking, trigger loss/restart/idempotence, and duplicate import
+  counts. This remains local review evidence only; encrypted package possession
+  is not an external signature over a fully rewritten and re-encrypted archive.

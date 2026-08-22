@@ -21,6 +21,13 @@ purge tombstones/jobs, and the append-only `context_user_mutations` ledger.
 Derived integrity groups and search indexes are excluded. A legacy package that
 does not contain the ledger is upgraded from durable historical evidence with
 one deterministic `legacy_user_edit` row per affected record at most.
+Schema-14 packages also export nullable `user_action_kind` and
+`user_action_key` fields on record-version history. New ledger rows use
+`evidence_kind='user_action'`; restore validates the action kind/key, exact
+history row, canonical reason, source relationship, and typed digest together.
+An older generic `record_version` ledger row is not accepted as a typed action;
+it remains eligible only for the explicitly compatibility-scoped
+`legacy_user_edit` inference path.
 During restore, both existing and incoming purge tombstones are loaded before
 content rows. A pre-purge record or source with a tombstoned stable ID, its
 observation/history/deletion event, its source blob, and attributable batch hash
@@ -37,3 +44,9 @@ were exported and restored.
 
 Database-file replication is unrelated and prohibited; this explicit user
 backup format is application-level and versioned.
+
+The encrypted container authenticates the package bytes to whoever holds the
+passphrase. It does not attest that an external, untampered Core authored the
+contents: a passphrase holder can rewrite the ZIP and re-encrypt it. The
+typed-action checks close the row-only forgery described above while retaining
+that honest trust boundary.

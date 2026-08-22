@@ -24,6 +24,7 @@ from .storage import (
     _mutation_evidence_hash,
     _normalize_actor,
     _stable_record_key_from_row,
+    _user_action_evidence_hash,
 )
 
 MAGIC = b"ATCEXP1\x00"
@@ -591,8 +592,9 @@ def _validate_imported_user_mutation(
     connection: sqlite3.Connection,
     row: dict[str, Any],
     columns: set[str],
+    version_columns: set[str],
 ) -> bool:
-    """Accept a portable ledger row only with exact same-package evidence."""
+    """Accept only typed same-package action evidence or legacy compatibility facts."""
 
     required = {
         "id",
@@ -631,7 +633,8 @@ def _validate_imported_user_mutation(
     ).fetchone()
     if vault is None or record is None or str(record["vault_id"]) != vault_id:
         return False
-    if str(row.get("evidence_kind")) != "record_version":
+    evidence_kind = str(row.get("evidence_kind"))
+    if evidence_kind not in {"record_version", "user_action"}:
         return False
     evidence_id = str(row.get("evidence_id") or "")
     try:
@@ -641,43 +644,55 @@ def _validate_imported_user_mutation(
     if evidence_version < 1 or not evidence_id:
         return False
     evidence = connection.execute(
-        "SELECT id,record_id,version,snapshot_json,reason FROM context_record_versions "
+        "SELECT id,record_id,version,snapshot_json,reason,user_action_kind,user_action_key "
+        "FROM context_record_versions "
         "WHERE id=? AND record_id=? AND version=?",
         (evidence_id, record_id, evidence_version),
     ).fetchone()
     if evidence is None:
         return False
-    expected_hash = _mutation_evidence_hash(
-        mutation_kind=mutation_kind,
-        evidence_kind="record_version",
-        vault_id=vault_id,
-        record_id=record_id,
-        evidence_id=evidence_id,
-        evidence_version=evidence_version,
-        snapshot_json=str(evidence["snapshot_json"]),
-    )
-    if str(row.get("evidence_hash")) != expected_hash:
-        return False
     intent = str(row.get("intent_key") or "")
-    if intent == f"legacy-row:{row['id']}":
-        pass
-    elif mutation_kind in {"correction", "availability_change", "delete", "source_delete"}:
-        if intent != f"{mutation_kind}:{record_id}:{evidence_version}":
+    if evidence_kind == "user_action":
+        if not {"user_action_kind", "user_action_key"}.issubset(version_columns):
             return False
-    elif mutation_kind == "restore":
-        if intent == f"restore-version:{record_id}:{evidence_version}":
-            pass
-        elif intent.startswith(f"restore:{record_id}:"):
-            try:
-                prior_version = int(intent.rsplit(":", 1)[1])
-            except ValueError:
-                return False
-            if prior_version not in {evidence_version, evidence_version - 1}:
-                return False
-        else:
+        user_action_kind = str(evidence["user_action_kind"] or "")
+        user_action_key = str(evidence["user_action_key"] or "")
+        if user_action_kind != mutation_kind or not user_action_key:
             return False
-    elif intent != f"{mutation_kind}:{record_id}:{evidence_id}":
-        return False
+        if intent != user_action_key:
+            return False
+        expected_hash = _user_action_evidence_hash(
+            mutation_kind=mutation_kind,
+            user_action_key=user_action_key,
+            vault_id=vault_id,
+            record_id=record_id,
+            evidence_id=evidence_id,
+            evidence_version=evidence_version,
+            snapshot_json=str(evidence["snapshot_json"]),
+        )
+        if str(row.get("evidence_hash")) != expected_hash:
+            return False
+    else:
+        # The pre-014 generic coordinate is retained only for the explicitly
+        # compatibility-scoped legacy inference fact.  It is never authority
+        # for a typed correction, restore, availability, or delete action.
+        if mutation_kind != "legacy_user_edit":
+            return False
+        expected_hash = _mutation_evidence_hash(
+            mutation_kind=mutation_kind,
+            evidence_kind="record_version",
+            vault_id=vault_id,
+            record_id=record_id,
+            evidence_id=evidence_id,
+            evidence_version=evidence_version,
+            snapshot_json=str(evidence["snapshot_json"]),
+        )
+        if str(row.get("evidence_hash")) != expected_hash:
+            return False
+        if intent != f"legacy-row:{row['id']}" and intent != (
+            f"{mutation_kind}:{record_id}:{evidence_id}"
+        ):
+            return False
 
     try:
         snapshot = json.loads(str(evidence["snapshot_json"]))
@@ -1072,11 +1087,14 @@ def restore_export(
                         mutation_columns = columns_by_table["context_user_mutations"]
                         for row in imported_user_mutations:
                             if not _validate_imported_user_mutation(
-                                connection, row, mutation_columns
+                                connection,
+                                row,
+                                mutation_columns,
+                                columns_by_table.get("context_record_versions", set()),
                             ):
                                 ignored_user_mutations += 1
                                 continue
-                            connection.execute(
+                            inserted = connection.execute(
                                 "INSERT OR IGNORE INTO context_user_mutations"
                                 "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,"
                                 "created_at,evidence_kind,evidence_id,evidence_version,"
@@ -1089,14 +1107,17 @@ def restore_export(
                                     "local_user",
                                     str(row["actor"]),
                                     str(row["created_at"]),
-                                    "record_version",
+                                    str(row["evidence_kind"]),
                                     str(row["evidence_id"]),
                                     int(row["evidence_version"]),
                                     str(row["evidence_hash"]),
                                     str(row["intent_key"]),
                                 ),
                             )
-                            accepted_user_mutations += 1
+                            if inserted.rowcount == 1:
+                                accepted_user_mutations += 1
+                            else:
+                                ignored_user_mutations += 1
                     _validate_source_blob_storage(
                         connection,
                         all_tables,

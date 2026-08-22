@@ -344,7 +344,7 @@ def carry_forward_purge_tombstones(
             )
         carried = 0
         for tomb in tombs:
-            isolated.execute(
+            inserted = isolated.execute(
                 "INSERT OR IGNORE INTO purge_tombstones"
                 "(stable_id,vault_id,target_type,purged_at,"
                 "replication_sequence,replication_event_id) VALUES(?,?,?,?,?,?)",
@@ -357,7 +357,8 @@ def carry_forward_purge_tombstones(
                     tomb["replication_event_id"],
                 ),
             )
-            carried += 1
+            if inserted.rowcount == 1:
+                carried += 1
         carried_mutations = 0
         allowed_kinds = {
             "restore",
@@ -409,11 +410,12 @@ def carry_forward_purge_tombstones(
                 str(mutation["created_at"]),
             ]
             values.extend(mutation[column] for column in columns[7:])
-            isolated.execute(
+            inserted = isolated.execute(
                 f'INSERT OR IGNORE INTO context_user_mutations ({quoted}) VALUES ({placeholders})',
                 values,
             )
-            carried_mutations += 1
+            if inserted.rowcount == 1:
+                carried_mutations += 1
         isolated.commit()
     finally:
         isolated.close()

@@ -66,6 +66,16 @@ persist only canonical reason codes and bounded actor classes/opaque
 identifiers. Imported source-rebuild provenance is still downgraded to an
 ordinary deletion barrier.
 
+Schema-14 record history carries the typed `user_action_kind` and deterministic
+`user_action_key` emitted by Core at a local correction, availability change,
+restore, delete, or source-delete action. Portable ledger rows are accepted
+only when their `user_action` evidence matches that exact history row and
+digest; a generic same-package `record_restored` version is not sufficient.
+Repeated imports and recovery carry-forward report only rows actually inserted,
+so duplicate-safe retries are counted as ignored. This is a local integrity
+boundary, not external authorship: anyone who can rewrite and re-encrypt a
+package with its passphrase can rewrite both history and ledger members.
+
 A one-click dashboard restore is not a beta requirement. The required packaged
 helper may remain a documented CLI/native mode, but it must implement the safe
 stopped-Core workflow above and pass exact downloaded-artifact acceptance on
