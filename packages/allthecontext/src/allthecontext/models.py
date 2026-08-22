@@ -210,7 +210,7 @@ class CoverageReport(StrictModel):
     limitations: list[str] = Field(default_factory=list, max_length=512)
     warnings: list[str] = Field(default_factory=list, max_length=512)
     closed_coverage: dict[StrictStr, ClosedCoverageCount] = Field(
-        default_factory=dict,
+        default_factory=lambda: {key: 0 for key in CLOSED_COVERAGE_KEYS},
         max_length=16,
     )
     complete: StrictBool = True
@@ -226,7 +226,7 @@ class CoverageReport(StrictModel):
             raise ValueError(
                 "closed_coverage contains unknown reason(s): " + ", ".join(unknown)
             )
-        return value
+        return {key: value.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
 
     @model_validator(mode="after")
     def validate_completion_consistency(self) -> Self:

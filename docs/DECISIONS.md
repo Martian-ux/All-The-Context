@@ -2932,3 +2932,37 @@ fails, the result uses `archive_level_failure=zip_enumeration_failed` and
 `member_coverage_available=false`; it deliberately has no invented member
 closure. These are parser results and coverage contracts, not fresh acceptance
 evidence.
+
+## ADR-109: Share bounded ordinary-JSON parsing across every archive entrypoint
+
+**Status:** accepted 2026-08-22. Import Truth acceptance-blocker correction.
+Does not retarget, relabel, or grant acceptance credit to any published artifact.
+
+Direct byte imports, filesystem JSON paths, and ordinary JSON ZIP members use the
+same incremental strict-UTF-8 reader and `JSONDecoder.raw_decode` contract. The
+reader enforces a 512 MiB raw-byte ceiling, a 128 MiB decoded item/document
+ceiling, and a 128-level quote/escape-aware nesting ceiling before recursive
+decode can raise `RecursionError`. It validates the complete source before the
+builder or generic candidate list is mutated; trailing data, malformed JSON,
+depth rejection, and parser failure therefore cannot leave partial candidates.
+The reader yields root-array members without materializing the array. An empty
+ordinary root array is represented as one logical value so direct, path, and ZIP
+coverage agree; provider containers remain structural and are counted only by
+their semantic contents.
+
+Raw ZIP classification has an explicit bounded allowlist. Canonical
+`conversations.json` and dated `conversations-YYYY[-MM[-DD]].json` names are
+provider containers. The alternate `chats.json`, `history.json`, and
+`messages.json` basenames require an explicit provider hint or an exact provider
+path component from `chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, or
+`x.ai`. A neutral alternate with valid provider-shaped content can still be
+promoted to structural by provider parser statistics; malformed neutral
+alternates remain ordinary unparsed members because filename-only inference
+would overclassify arbitrary generic JSON. This residual is visible in the raw
+member audit and closed logical coverage.
+
+`CoverageReport.closed_coverage` remains closed to the seven recognized keys and
+strict bounded non-negative integers. Omitted or partial maps are normalized to
+the exact zero-filled seven-key map for backward-compatible callers; unknown
+keys and invalid counts remain validation errors. The API and serialized model
+therefore never expose a missing or extra coverage key.

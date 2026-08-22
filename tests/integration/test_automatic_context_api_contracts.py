@@ -120,6 +120,15 @@ def test_authenticated_clients_cannot_submit_or_finish_each_others_session(
         )
         assert accepted_finish.status_code == 200, accepted_finish.text
         assert accepted_finish.json()["status"] == "finished"
+        assert set(accepted_finish.json()["coverage"]["closed_coverage"]) == {
+            "recognized",
+            "excluded",
+            "skipped",
+            "unavailable",
+            "duplicate",
+            "failed",
+            "unparsed",
+        }
 
 
 def test_ingestion_finish_rejects_inconsistent_coverage_and_propagates_closed_map(
@@ -159,7 +168,12 @@ def test_ingestion_finish_rejects_inconsistent_coverage_and_propagates_closed_ma
         assert finished.status_code == 200, finished.text
         assert finished.json()["coverage"]["closed_coverage"] == {
             "recognized": 1,
+            "excluded": 0,
+            "skipped": 0,
             "unavailable": 1,
+            "duplicate": 0,
+            "failed": 0,
+            "unparsed": 0,
         }
 
 

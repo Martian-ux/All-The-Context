@@ -7,6 +7,22 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 bounded ordinary-JSON and exact-coverage correction
+
+Direct bytes, filesystem paths, and ordinary ZIP JSON now share a strict
+incremental bounded reader with explicit 512 MiB byte, 128 MiB item/document,
+and 128-level quote/escape-aware nesting limits. Validate-then-consume keeps
+trailing-data, malformed, depth, and recursion failures atomic with no partial
+candidates. Empty ordinary JSON roots close as one skipped logical item across
+direct/path/ZIP entrypoints, while provider containers stay structural and
+semantic-item-driven. Provider raw classification uses the canonical and dated
+conversation filenames plus the exact alternate-name/provider-context rules in
+ADR-109; neutral malformed alternates remain ordinary rather than being
+silently promoted. `CoverageReport` normalizes omitted/partial maps to the exact
+seven-key zero-filled contract and rejects unknown or invalid counts. Focused
+synthetic tests cover all five acceptance blockers; this change grants no
+acceptance credit and does not inspect live/private data.
+
 ### 2026-08-22 final import terminal-partition correction
 
 The import boundary now keeps malformed provider containers structural in the

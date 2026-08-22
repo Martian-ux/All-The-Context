@@ -1537,9 +1537,30 @@ state is already noncurrent and creates no user queue.
   `CoverageReport`, preserving the closed seven-key schema, strict bounded
   integer counts, and fail-closed completion semantics for unavailable,
   duplicate, failed, or unparsed items.
+- Direct bytes, filesystem JSON, and ordinary ZIP JSON members now share one
+  bounded incremental UTF-8/raw-decoder contract: a 512 MiB JSON byte ceiling,
+  128 MiB decoded item/document ceiling, and 128-level quote/escape-aware
+  nesting ceiling. Validation completes before candidate consumption, so depth,
+  recursion, or trailing-data rejection cannot publish partial candidates.
+  Empty ordinary `[]`/`{}` roots remain one skipped logical item across all
+  three entrypoints; empty provider containers remain structural and contribute
+  no invented semantic item.
+- Provider raw-container classification uses the canonical
+  `conversations.json`/dated `conversations-YYYY[-MM[-DD]].json` names plus the
+  frozen alternate basenames `chats.json`, `history.json`, and `messages.json`.
+  Alternates require an explicit provider hint or an exact provider path
+  component (`chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, `x.ai`);
+  valid provider-shaped neutral alternates can still become structural from
+  parser statistics, while malformed neutral JSON remains an ordinary item.
+- `CoverageReport.closed_coverage` normalizes omitted or partial input to the
+  exact seven-key zero-filled map and still rejects unknown keys, non-integer,
+  negative, and overflowing counts. This preserves older partial callers while
+  making model validation and serialization exact.
 - Focused synthetic regressions cover the atomic malformed-JSON attachment,
   valid attachment behavior, reconciler coercion/unknown/bounds cases, and
-  completion consistency. No live or private export/Core data was inspected.
+  completion consistency, bounded direct/path/ZIP JSON, depth/escape handling,
+  alternate provider names, empty roots, and exact API/model coverage maps. No
+  live or private export/Core data was inspected.
 
 ## Repository security convergence
 

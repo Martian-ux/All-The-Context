@@ -176,12 +176,22 @@ provider claim has a parser identity (`chatgpt-archives-v2`,
 `claude-archives-v2`, `grok-archives-v2`) under the aggregate
 `provider-archives-v2` session version. Frozen fictional shapes live in the
 runtime claim manifest. Each import reports closed coverage counts
-(recognized, excluded, skipped, unavailable, failed, unparsed). Unknown or
+(recognized, excluded, skipped, unavailable, duplicate, failed, unparsed). Unknown or
 unparsed material is a visible coverage warning and keeps coverage incomplete
 rather than counting as parser success. Each provider must still pass a
 privacy-safe nonempty real-export receipt acquired after parser freeze and
 within 30 days of candidate acceptance. Missing real-export evidence keeps
 the beta in draft rather than narrowing the provider list.
+
+Ordinary JSON is parsed through a shared bounded direct/path/ZIP reader: strict
+UTF-8, 512 MiB raw bytes, 128 MiB decoded item/document size, and 128 nesting
+levels. The source is validated before candidates are consumed. Empty generic
+roots are one skipped logical item; provider containers are structural in the
+raw ZIP audit and close only through their semantic coverage. Canonical and
+dated conversation filenames are recognized directly; `chats.json`,
+`history.json`, and `messages.json` require an explicit provider hint or exact
+provider path context, with valid provider-shaped neutral files still
+classified from parser evidence and malformed neutral files left generic.
 
 ## Contributor CLI
 

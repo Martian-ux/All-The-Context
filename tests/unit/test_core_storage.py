@@ -94,9 +94,21 @@ def test_coverage_report_complete_rejects_incomplete_item_counts(reason: str) ->
             complete=True,
         )
 
-    # Existing callers with the default/partial map remain valid.
+    # Omitted and partial maps are normalized for honest backward compatibility.
     report = CoverageReport(available=["synthetic source"], complete=True)
-    assert report.closed_coverage == {}
+    assert set(report.closed_coverage) == {
+        "recognized",
+        "excluded",
+        "skipped",
+        "unavailable",
+        "duplicate",
+        "failed",
+        "unparsed",
+    }
+    assert all(value == 0 for value in report.closed_coverage.values())
+    partial = CoverageReport(closed_coverage={"recognized": 2})
+    assert partial.closed_coverage["recognized"] == 2
+    assert sum(partial.closed_coverage.values()) == 2
 
 
 def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> None:

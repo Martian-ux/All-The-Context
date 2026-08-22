@@ -723,6 +723,130 @@ def test_ordinary_json_trailing_data_is_atomic_unparsed() -> None:
     assert parsed.stats["archive_member_coverage"]["terminal_member_buckets"]["unparsed"] == 1
 
 
+def test_ordinary_json_entrypoints_do_not_call_full_document_json_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b'{"kind":"goal","content":"bounded ordinary JSON"}'
+    bundle = _zip({"ordinary.json": payload})
+
+    def reject_full_load(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("ordinary JSON must use the bounded raw decoder")
+
+    monkeypatch.setattr(importers_module.json, "loads", reject_full_load)
+    direct = parse_archive("ordinary.json", payload)
+    path = tmp_path / "ordinary.json"
+    path.write_bytes(payload)
+    from_path = parse_archive_path(path)
+    from_zip = parse_zip_bundle(bundle)
+
+    for parsed in (direct, from_path, from_zip):
+        assert [item.content for item in parsed.candidates] == ["bounded ordinary JSON"]
+        assert parsed.closed_coverage["recognized"] == 1
+        assert parsed.complete is True
+
+
+@pytest.mark.parametrize("empty_document", [b"[]", b"{}"])
+def test_empty_ordinary_json_is_one_logical_item_across_entrypoints(
+    tmp_path: Path,
+    empty_document: bytes,
+) -> None:
+    direct = parse_archive("ordinary.json", empty_document)
+    path = tmp_path / "ordinary.json"
+    path.write_bytes(empty_document)
+    from_path = parse_archive_path(path)
+    from_zip = parse_zip_bundle(_zip({"ordinary.json": empty_document}))
+
+    for parsed in (direct, from_path, from_zip):
+        assert parsed.candidates == []
+        assert parsed.closed_coverage["skipped"] == 1
+        assert sum(parsed.closed_coverage.values()) == 1
+        assert parsed.complete is True
+    assert from_zip.stats["archive_member_coverage"]["terminal_member_buckets"]["skipped"] == 1
+
+
+def test_path_import_cleans_parser_temporary_directory(tmp_path: Path) -> None:
+    source_path = tmp_path / "ordinary.json"
+    source_path.write_bytes(b'{"kind":"goal","content":"temporary parse cleanup"}')
+    core = CoreService.in_directory(tmp_path / "core")
+
+    result = ArchiveImportService(core.store, skip_disk_preflight=True).import_path(source_path)
+
+    assert result["source"]["import_status"] == "complete"
+    assert not list(core.store.database_path.parent.glob("atc-import-parse-*"))
+
+
+def test_json_nesting_limit_is_atomic_and_quote_aware(tmp_path: Path) -> None:
+    too_deep = b"[" * 129 + b"0" + b"]" * 129
+    under_limit = b"[" * 64 + b"0" + b"]" * 64
+    quoted = json.dumps(
+        {"kind": "goal", "content": "literal brackets " + ("[" * 1_000)}
+    ).encode("utf-8")
+
+    under_limit_result = parse_archive("ordinary.json", under_limit)
+    assert under_limit_result.closed_coverage["skipped"] == 1
+    assert under_limit_result.complete is True
+    quoted_result = parse_archive("ordinary.json", quoted)
+    assert quoted_result.closed_coverage["recognized"] == 1
+    assert quoted_result.complete is True
+
+    path = tmp_path / "ordinary.json"
+    path.write_bytes(too_deep)
+    direct = parse_archive("ordinary.json", too_deep)
+    from_path = parse_archive_path(path)
+    from_zip = parse_zip_bundle(_zip({"ordinary.json": too_deep}))
+
+    for parsed in (direct, from_path, from_zip):
+        assert parsed.candidates == []
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert sum(parsed.closed_coverage.values()) == 1
+        assert parsed.complete is False
+    audit = from_zip.stats["archive_member_coverage"]
+    assert audit["terminal_member_buckets"]["unparsed"] == 1
+    assert audit["structural_members"] == 0
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["conversations.json", "chats.json", "history.json", "messages.json"],
+)
+def test_alternate_provider_container_names_are_structural(
+    filename: str,
+) -> None:
+    parsed = parse_zip_bundle(_zip({filename: b"[{\"mapping\": {}}] trailing"}), provider="chatgpt")
+    audit = parsed.stats["archive_member_coverage"]
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage == {
+        "recognized": 0,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 1,
+    }
+    assert parsed.complete is False
+    assert audit["structural_members"] == 1
+    assert audit["standalone_members"] == 0
+    assert audit["terminal_member_buckets"]["unparsed"] == 0
+    assert audit["unaccounted_members"] == 0
+
+
+def test_provider_signature_path_classifies_alternate_but_neutral_json_stays_generic() -> None:
+    signed = parse_zip_bundle(_zip({"chatgpt/chats.json": b"not-json"}))
+    signed_audit = signed.stats["archive_member_coverage"]
+    assert signed_audit["structural_members"] == 1
+    assert signed.closed_coverage["unparsed"] == 1
+    assert signed_audit["standalone_members"] == 0
+
+    neutral = parse_zip_bundle(_zip({"messages.json": b'{"arbitrary":"generic"}'}))
+    neutral_audit = neutral.stats["archive_member_coverage"]
+    assert neutral_audit["structural_members"] == 0
+    assert neutral_audit["standalone_members"] == 1
+    assert neutral.closed_coverage["skipped"] == 1
+
+
 def test_malformed_provider_container_is_structural_and_logically_unparsed() -> None:
     parsed = parse_zip_bundle(
         _zip({"conversations.json": b'[{"mapping": {}}] trailing'})

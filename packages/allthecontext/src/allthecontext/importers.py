@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import csv
 import hashlib
 import io
@@ -12,7 +13,7 @@ import time
 import unicodedata
 import zipfile
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
@@ -53,6 +54,8 @@ from .storage import CoreStore, InvalidStateError
 
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
+DEFAULT_MAX_JSON_NESTING_DEPTH = 128
+DEFAULT_MAX_JSON_BYTES = DEFAULT_MAX_JSON_ITEM_CHARS * 4
 DEFAULT_MAX_ZIP_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_TEXT_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_LINK_PAIRS = 10_000
@@ -93,6 +96,19 @@ _SUPPORTED_ATTACHMENT_SUFFIXES = frozenset(_SUPPORTED_TEXT_SUFFIXES)
 _CHATGPT_CONTROL_BASENAMES = frozenset(
     {"conversation_asset_file_names.json", "export_manifest.json", "library_files.json"}
 )
+_PROVIDER_CONTAINER_BASENAMES = frozenset(
+    {"conversations.json", "chats.json", "history.json", "messages.json"}
+)
+_PROVIDER_SIGNATURE_PATH_PARTS = frozenset(
+    {"chatgpt", "openai", "claude", "anthropic", "grok", "xai", "x.ai"}
+)
+_DATED_CONVERSATIONS_BASENAME = re.compile(
+    r"conversations-\d{4}(?:-\d{2}(?:-\d{2})?)?\.json$"
+)
+
+
+class _JsonNestingLimitError(InvalidStateError):
+    """The bounded JSON scanner rejected a document before recursive decode."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,16 +260,14 @@ def parse_json(
     source_name: str = "import.json",
 ) -> ParsedArchive:
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise InvalidStateError(
-            f"invalid JSON at line {error.lineno}, column {error.colno}"
-        ) from error
-    builder = _builder(provider)
-    generic: list[CandidateInput] = []
-    coverage = _GenericCoverage()
-    _consume_json_value(builder, source_name, value, generic, coverage)
-    return _combine(builder.finish(), generic, generic_coverage=coverage)
+        raw = text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise InvalidStateError("JSON is not valid UTF-8") from error
+    return _parse_json_stream_atomic(
+        lambda: io.BytesIO(raw),
+        provider=provider,
+        source_name=source_name,
+    )
 
 
 def parse_jsonl(
@@ -324,13 +338,16 @@ def _consume_json_value(
     value: Any,
     generic: list[CandidateInput],
     coverage: _GenericCoverage,
+    *,
+    provider_container: bool = False,
 ) -> None:
     if isinstance(value, list):
         if builder.consume_json_list(source_name, value):
             return
         if not value:
             builder.note_file(source_name)
-            coverage.skipped += 1
+            if not provider_container:
+                coverage.skipped += 1
             return
         for item in value:
             _consume_json_value(builder, source_name, item, generic, coverage)
@@ -541,6 +558,101 @@ def _deduplicate_strings(items: Iterable[str]) -> list[str]:
     return result
 
 
+def _parse_json_stream_atomic(
+    open_stream: Callable[[], IO[bytes]],
+    *,
+    provider: str | ArchiveProvider,
+    source_name: str,
+    max_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
+    max_json_bytes: int = DEFAULT_MAX_JSON_BYTES,
+    progress: ImportProgressTracker | None = None,
+) -> ParsedArchive:
+    """Validate a bounded JSON stream before consuming any logical items.
+
+    The stream is opened twice so direct bytes, filesystem paths, and ZIP members
+    share the same trailing-data, UTF-8, byte, item, and nesting contracts. Each
+    raw-decoded value is bounded and discarded during validation; the second pass
+    is the only pass allowed to mutate the builder or generic candidate list.
+    """
+    def validate() -> None:
+        with open_stream() as stream:
+            for _document in _iter_json_documents(
+                stream,
+                max_item_chars=max_item_chars,
+                max_bytes=max_json_bytes,
+            ):
+                if progress is not None:
+                    progress.check_cancelled()
+
+    try:
+        validate()
+    except UnicodeDecodeError:
+        return _generic_failure_result(
+            provider,
+            "standalone input is not valid UTF-8",
+            reason="unparsed",
+        )
+    except json.JSONDecodeError as error:
+        raise _invalid_json_error(error) from error
+    except _JsonNestingLimitError:
+        return _generic_failure_result(
+            provider,
+            "standalone JSON exceeded the nesting-depth limit",
+            reason="unparsed",
+        )
+    except RecursionError:
+        # Keep the public outcome deterministic if a future decoder path
+        # recurses before the scanner can reject the document.
+        return _generic_failure_result(
+            provider,
+            "standalone JSON exceeded the nesting-depth limit",
+            reason="unparsed",
+        )
+
+    builder = _builder(provider)
+    generic: list[CandidateInput] = []
+    coverage = _GenericCoverage()
+    provider_container = _is_conversation_json_member(source_name, normalize_provider(provider))
+    try:
+        with open_stream() as stream:
+            for document in _iter_json_documents(
+                stream,
+                max_item_chars=max_item_chars,
+                max_bytes=max_json_bytes,
+            ):
+                if progress is not None:
+                    progress.check_cancelled()
+                _consume_json_value(
+                    builder,
+                    source_name,
+                    document,
+                    generic,
+                    coverage,
+                    provider_container=provider_container,
+                )
+    except UnicodeDecodeError:
+        return _generic_failure_result(
+            provider,
+            "standalone input is not valid UTF-8",
+            reason="unparsed",
+        )
+    except json.JSONDecodeError as error:
+        raise _invalid_json_error(error) from error
+    except _JsonNestingLimitError:
+        return _generic_failure_result(
+            provider,
+            "standalone JSON exceeded the nesting-depth limit",
+            reason="unparsed",
+        )
+    except RecursionError:
+        return _generic_failure_result(
+            provider,
+            "standalone JSON exceeded the nesting-depth limit",
+            reason="unparsed",
+        )
+    return _combine(builder.finish(), generic, generic_coverage=coverage)
+
+
 def parse_archive(
     filename: str,
     content: bytes,
@@ -551,6 +663,12 @@ def parse_archive(
     suffix = Path(safe_name).suffix.casefold()
     if suffix == ".zip":
         return parse_zip_bundle(content, provider=provider)
+    if suffix == ".json":
+        return _parse_json_stream_atomic(
+            lambda: io.BytesIO(content),
+            provider=provider,
+            source_name=safe_name,
+        )
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -559,9 +677,7 @@ def parse_archive(
             "standalone input is not valid UTF-8",
             reason="unparsed",
         )
-    if suffix == ".json":
-        result = parse_json(text, provider=provider, source_name=safe_name)
-    elif suffix == ".jsonl":
+    if suffix == ".jsonl":
         result = parse_jsonl(text, provider=provider, source_name=safe_name)
     elif suffix == ".csv":
         result = _parse_csv_document(text, provider=provider, source_name=safe_name)
@@ -606,30 +722,12 @@ def parse_archive_path(
             progress=progress,
         )
     if suffix == ".json":
-        builder = _builder(provider)
-        generic: list[CandidateInput] = []
-        coverage = _GenericCoverage()
-        try:
-            with path.open("rb") as stream:
-                # Validate first, then reopen and consume. This keeps root-array
-                # imports atomic without retaining every parsed document.
-                for _ in _iter_json_documents(stream):
-                    if progress is not None:
-                        progress.check_cancelled()
-            with path.open("rb") as stream:
-                for document in _iter_json_documents(stream):
-                    if progress is not None:
-                        progress.check_cancelled()
-                    _consume_json_value(builder, safe_name, document, generic, coverage)
-        except UnicodeDecodeError:
-            return _generic_failure_result(
-                provider,
-                "standalone input is not valid UTF-8",
-                reason="unparsed",
-            )
-        except json.JSONDecodeError as error:
-            raise _invalid_json_error(error) from error
-        return _combine(builder.finish(), generic, generic_coverage=coverage)
+        return _parse_json_stream_atomic(
+            lambda: path.open("rb"),
+            provider=provider,
+            source_name=safe_name,
+            progress=progress,
+        )
     if suffix == ".jsonl":
         return _parse_jsonl_stream(path, safe_name, provider, progress=progress)
     if suffix in {".csv", ".md", ".markdown", ".txt", ""}:
@@ -987,8 +1085,22 @@ def _load_zip_json_member(
 ) -> Any:
     raw = _read_zip_member_bytes(archive, member, max_bytes=max_item_chars)
     try:
-        return json.loads(raw.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        root_is_array = raw.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"[")
+        documents = list(
+            _iter_json_documents(
+                io.BytesIO(raw),
+                max_item_chars=max_item_chars,
+                max_bytes=max_item_chars,
+            )
+        )
+        if root_is_array:
+            if len(documents) == 1 and documents[0] == []:
+                return []
+            return documents
+        if len(documents) == 1:
+            return documents[0]
+        return documents
+    except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError) as error:
         raise InvalidStateError("attachment metadata JSON is invalid") from error
 
 
@@ -1153,9 +1265,37 @@ def _looks_like_chatgpt_structure(value: Any) -> bool:
     return False
 
 
-def _is_conversation_json_member(safe_name: str) -> bool:
+def _is_conversation_json_member(
+    safe_name: str,
+    provider_hint: ArchiveProvider = ArchiveProvider.AUTO,
+) -> bool:
+    """Recognize provider containers without treating generic JSON as one.
+
+    The exact filename allowlist is the canonical ``conversations.json`` plus
+    the frozen alternate basenames ``chats.json``, ``history.json``, and
+    ``messages.json``. The canonical name is always structural. An alternate
+    name is structural only with an explicit provider hint or an exact provider
+    signature path component (for example ``chatgpt/chats.json``); otherwise a
+    valid provider-shaped value can still become structural through parser
+    statistics, while malformed neutral JSON remains an ordinary item.
+    """
     path = PurePosixPath(safe_name)
-    return path.suffix.casefold() == ".json" and "conversation" in path.stem.casefold()
+    basename = path.name.casefold()
+    canonical = basename == "conversations.json" or bool(
+        _DATED_CONVERSATIONS_BASENAME.fullmatch(basename)
+    )
+    if path.suffix.casefold() != ".json" or (
+        not canonical and basename not in _PROVIDER_CONTAINER_BASENAMES
+    ):
+        return False
+    if canonical:
+        return True
+    if provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+        return True
+    return any(
+        part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS
+        for part in path.parts[:-1]
+    )
 
 
 def _is_chatgpt_control_member(safe_name: str) -> bool:
@@ -1398,7 +1538,10 @@ def parse_zip_bundle(
             provider_container_names = {
                 _safe_zip_name(member.filename)
                 for member in unique_members
-                if _is_conversation_json_member(_safe_zip_name(member.filename))
+                if _is_conversation_json_member(
+                    _safe_zip_name(member.filename),
+                    provider_hint,
+                )
             }
             if context.invalid_control_members:
                 coverage.unparsed += len(context.invalid_control_members)
@@ -1694,6 +1837,7 @@ def parse_zip_bundle(
                                     document,
                                     generic,
                                     coverage,
+                                    provider_container=is_provider_container,
                                 )
                     elif suffix == ".jsonl":
                         _consume_zip_jsonl(
@@ -1726,6 +1870,13 @@ def parse_zip_bundle(
                         mark_structural_member(member_index)
                     else:
                         close_archive_member(member_index, "unparsed")
+                except (_JsonNestingLimitError, RecursionError):
+                    coverage.unparsed += 1
+                    _append_warning(warnings, f"{safe_name}: bounded JSON nesting limit")
+                    if is_provider_container:
+                        mark_structural_member(member_index)
+                    else:
+                        close_archive_member(member_index, "unparsed")
                 except InvalidStateError as error:
                     malformed_csv = suffix == ".csv" and "not well formed" in str(error).casefold()
                     if malformed_csv:
@@ -1746,12 +1897,15 @@ def parse_zip_bundle(
                         close_archive_member(member_index, "failed")
                     _append_warning(warnings, f"{safe_name}: {error}")
                 else:
-                    close_parsed_member(
-                        member_index,
-                        before_stats,
-                        before_generic,
-                        before_coverage,
-                    )
+                    if is_provider_container:
+                        mark_structural_member(member_index)
+                    else:
+                        close_parsed_member(
+                            member_index,
+                            before_stats,
+                            before_generic,
+                            before_coverage,
+                        )
     except zipfile.BadZipFile:
         return _archive_preflight_result(
             provider_hint,
@@ -1873,13 +2027,58 @@ def _iter_json_documents(
     *,
     max_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
     chunk_chars: int = 1024 * 1024,
+    max_bytes: int | None = None,
+    max_depth: int = DEFAULT_MAX_JSON_NESTING_DEPTH,
 ) -> Iterator[Any]:
-    """Yield a root JSON value, or each item of a root array, without loading the array."""
-    wrapper = io.TextIOWrapper(stream, encoding="utf-8-sig", errors="strict")
+    """Yield bounded root JSON values without json.loads or root-array materialization."""
+    if max_item_chars < 1 or chunk_chars < 1 or max_depth < 1:
+        raise ValueError("JSON limits must be positive")
+    byte_limit = max_bytes if max_bytes is not None else max_item_chars * 4
+    if byte_limit < 1:
+        raise ValueError("JSON byte limit must be positive")
+
+    decoder_factory = codecs.getincrementaldecoder("utf-8-sig")
+    utf8_decoder = decoder_factory(errors="strict")
     decoder = json.JSONDecoder()
     buffer = ""
     position = 0
     eof = False
+    total_bytes = 0
+    depth = 0
+    in_string = False
+    escaped = False
+
+    def scan_depth(chunk: str) -> None:
+        nonlocal depth, in_string, escaped
+        for character in chunk:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                continue
+            if character == '"':
+                in_string = True
+            elif character in "[{":
+                depth += 1
+                if depth > max_depth:
+                    raise _JsonNestingLimitError(
+                        "JSON document exceeds the nesting-depth limit"
+                    )
+            elif character in "]}" and depth:
+                depth -= 1
+
+    def decode_chunk(raw: bytes, *, final: bool = False) -> str:
+        nonlocal total_bytes
+        total_bytes += len(raw)
+        if total_bytes > byte_limit:
+            raise InvalidStateError("JSON document exceeds the byte parse limit")
+        chunk = utf8_decoder.decode(raw, final=final)
+        if chunk:
+            scan_depth(chunk)
+        return chunk
 
     def fill() -> bool:
         nonlocal buffer, position, eof
@@ -1888,9 +2087,14 @@ def _iter_json_documents(
         if position:
             buffer = buffer[position:]
             position = 0
-        chunk = wrapper.read(chunk_chars)
-        if chunk:
-            buffer += chunk
+        raw = stream.read(chunk_chars)
+        if raw:
+            buffer += decode_chunk(raw)
+            return True
+        tail = decode_chunk(b"", final=True)
+        if tail:
+            buffer += tail
+            eof = True
             return True
         eof = True
         return False
@@ -1916,15 +2120,25 @@ def _iter_json_documents(
             raise json.JSONDecodeError("empty JSON document", buffer, position)
 
     if buffer[position] != "[":
-        document_parts = [buffer[position:]]
-        document_length = len(document_parts[0])
-        while chunk := wrapper.read(chunk_chars):
-            document_parts.append(chunk)
-            document_length += len(chunk)
-            if document_length > max_item_chars:
-                raise InvalidStateError("JSON document exceeds the parse limit")
-        yield json.loads("".join(document_parts))
-        return
+        while True:
+            if len(buffer) - position > max_item_chars:
+                raise InvalidStateError("JSON document exceeds the item parse limit")
+            try:
+                document, end = decoder.raw_decode(buffer, position)
+            except json.JSONDecodeError:
+                if eof:
+                    raise
+                if not fill():
+                    raise
+                continue
+            except RecursionError as error:
+                raise _JsonNestingLimitError(
+                    "JSON document exceeds the nesting-depth limit"
+                ) from error
+            position = end
+            yield document
+            reject_trailing_data()
+            return
 
     position += 1
     first_item = True
@@ -1939,6 +2153,10 @@ def _iter_json_documents(
         if buffer[position] == "]":
             if first_item:
                 position += 1
+                # Preserve an empty ordinary root as one logical value. The
+                # caller may classify a provider container as structural and
+                # suppress this generic item accounting explicitly.
+                yield []
                 reject_trailing_data()
                 return
             raise json.JSONDecodeError("trailing comma in JSON array", buffer, position)
@@ -1953,6 +2171,10 @@ def _iter_json_documents(
                 if not fill():
                     raise
                 continue
+            except RecursionError as error:
+                raise _JsonNestingLimitError(
+                    "JSON document exceeds the nesting-depth limit"
+                ) from error
             position = end
             yield item
             first_item = False
