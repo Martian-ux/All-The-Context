@@ -63,9 +63,9 @@ and secret-marker absence.
 Fresh independent security/correctness review accepted the exact cumulative
 foundation after reproducing and closing schema-repair and stale-lease authority
 defects. The review passed 17 capture tests, 14 migration regressions, Ruff,
-mypy, diff checks, and independent temporary-database probes. Full pytest was
-not run. A pre-existing `test_client_witness.py` reason-string assertion remains
-an unrelated baseline residual and was not changed in this slice.
+mypy, diff checks, and independent temporary-database probes. The whole
+`test_client_witness.py` file passes 19/19 after bounded canonical relay-reason
+reconciliation. Full pytest and release acceptance are not claimed.
 
 This is infrastructure, not a claim that a provider supports continuous
 capture. No real connector, network implementation, OAuth/credential handling,

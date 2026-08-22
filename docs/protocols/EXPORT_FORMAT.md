@@ -19,7 +19,9 @@ The Memory Truth/automatic-policy schema exports observations, disposition
 fields, policy versions, observation/record evidence links, optional slot
 metadata, opaque purge tombstones/jobs, and the append-only
 `context_user_mutations` ledger. Core migrations 010–014 define this foundation;
-015 is the next free migration number.
+the provider-neutral Continuous Capture foundation is migration 015 and does
+not change the Memory Truth export foundation or portable ledger format. The
+next free Core migration number is 016.
 Derived integrity groups and search indexes are excluded. A legacy package that
 does not contain the ledger is upgraded from durable historical evidence with
 one deterministic `legacy_user_edit` row per affected record at most.
