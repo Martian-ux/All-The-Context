@@ -992,7 +992,6 @@ class ContextCompiler:
         )
         overflow_preference_ids: set[str] = set()
         overflow_support_ids: dict[str, frozenset[str]] = {}
-        deferred_supporting_ids: set[str] = set()
 
         if high_cardinality_preferences:
             # Bootstrap receives ranked input. Preserve that order for every
@@ -1015,12 +1014,6 @@ class ContextCompiler:
             # this compiler-local preselection; the selector itself is unchanged.
             reserve_source = sorted(mandatory_preferences, key=lambda item: item.id)
 
-            fixed_mandatory_cost = sum(
-                self._cost(item)
-                for item in ordered
-                if item.id in mandatory_ids and not self._is_interaction_preference(item)
-            )
-            reserve_budget = max(0, budget_chars - fixed_mandatory_cost)
             fixed_mandatory_items = [
                 item
                 for item in ordered
@@ -1032,6 +1025,40 @@ class ContextCompiler:
                     redundancy[left.id] & redundancy[right.id]
                     or self._conflict_groups(left) & self._conflict_groups(right)
                 )
+
+            # Fixed mandatory records use the same selector semantics as the
+            # final pack. A redundant/conflicting fixed tier therefore has one
+            # deterministic feasible survivor rather than charging every input
+            # record against the preference reserve.
+            fixed_candidates = [
+                SetSelectionCandidate(
+                    key=item.id,
+                    budget_cost=self._cost(item),
+                    base_utility=self._base_utility(item, index, len(fixed_mandatory_items)),
+                    semantic_facets=self._semantic_facets(item),
+                    diversity_dimensions=self._diversity_dimensions(item),
+                    redundancy_groups=redundancy[item.id],
+                    conflict_groups=self._conflict_groups(item),
+                    mandatory_interaction_preference=True,
+                    policy_authorized=True,
+                    temporally_eligible=True,
+                    task_admissible=True,
+                )
+                for index, item in enumerate(fixed_mandatory_items)
+            ]
+            fixed_selection = self.selector.select(
+                fixed_candidates,
+                SetSelectionConstraints(
+                    limit=min(len(fixed_candidates), _MAX_CONTEXT_PACK_ITEMS),
+                    budget=budget_chars,
+                ),
+            )
+            fixed_survivor_ids = {candidate.key for candidate in fixed_selection.candidates}
+            fixed_mandatory_items = [
+                item for item in fixed_mandatory_items if item.id in fixed_survivor_ids
+            ]
+            fixed_mandatory_cost = sum(self._cost(item) for item in fixed_mandatory_items)
+            reserve_budget = max(0, budget_chars - fixed_mandatory_cost)
 
             # Fixed mandatory records remain authoritative. A preference that
             # duplicates or conflicts with any of them cannot enter the reserve,
@@ -1171,23 +1198,20 @@ class ContextCompiler:
                     or frozenset({"__context_compiler_primary_required__"})
                 )
             elif not mandatory_preference and self._is_supporting(item):
-                if item.id in deferred_supporting_ids:
-                    supports.add("__context_compiler_overflow_evidence_deferred__")
-                else:
-                    supports.update(
-                        target.id
-                        for target in primary
-                        if (item.source_id is not None and item.source_id == target.source_id)
-                        or (
-                            item.entity_key is not None
-                            and item.entity_key == target.entity_key
-                            and item.attribute_key == target.attribute_key
-                        )
+                supports.update(
+                    target.id
+                    for target in primary
+                    if (item.source_id is not None and item.source_id == target.source_id)
+                    or (
+                        item.entity_key is not None
+                        and item.entity_key == target.entity_key
+                        and item.attribute_key == target.attribute_key
                     )
-                    # Preserve the established primary-before-evidence boundary when
-                    # imported evidence lacks explicit source/slot relationships.
-                    if not supports:
-                        supports.update(target.id for target in primary)
+                )
+                # Preserve the established primary-before-evidence boundary when
+                # imported evidence lacks explicit source/slot relationships.
+                if not supports:
+                    supports.update(target.id for target in primary)
             return SetSelectionCandidate(
                 key=item.id,
                 budget_cost=self._cost(item),
@@ -1231,14 +1255,10 @@ class ContextCompiler:
             prepass_order = [candidate.key for candidate in prepass_selection.candidates]
             prepass_positions = {record_id: index for index, record_id in enumerate(prepass_order)}
             prepass_selected_ids = set(prepass_order)
-            fixed_reserve_cost = sum(self._cost(item) for item in fixed_mandatory_items) + sum(
-                self._cost(item) for item in reserve_items
-            )
             by_id = {item.id: item for item in ordered}
             selected_primary = [
                 item for item in compatible_primary if item.id in prepass_selected_ids
             ]
-            gated_evidence_ids: set[str] = set()
             for overflow in overflow_items:
                 evidence_support_ids: set[str] = set()
                 for evidence_id, target_ids in supporting_target_ids.items():
@@ -1252,28 +1272,21 @@ class ContextCompiler:
                             and prepass_positions[target.id] < evidence_position
                             and can_coexist(evidence, target)
                             and can_coexist(overflow, evidence)
-                            and fixed_reserve_cost
-                            + self._cost(target)
-                            + self._cost(evidence)
-                            + self._cost(overflow)
-                            <= budget_chars
                         ):
                             evidence_support_ids.add(evidence.id)
                             break
                 if evidence_support_ids:
                     # Requiring selected evidence IDs forms a primary -> evidence
                     # -> overflow chain without pretending OR supports encode AND.
+                    # The evidence remains eligible even when overflow cannot fit
+                    # after it; the final selector then keeps evidence first.
                     overflow_support_ids[overflow.id] = frozenset(evidence_support_ids)
-                    gated_evidence_ids.update(evidence_support_ids)
                 else:
-                    # If no selected evidence can complete this overflow's full
-                    # chain, retain the primary fallback without deadlocking.
+                    # If no applicable selected evidence exists, retain the
+                    # primary fallback without deadlocking.
                     overflow_support_ids[overflow.id] = frozenset(
                         target.id for target in selected_primary if can_coexist(overflow, target)
                     )
-            # Evidence that cannot complete any overflow chain must not consume
-            # the budget ahead of an otherwise valid primary fallback.
-            deferred_supporting_ids = set(supporting_target_ids) - gated_evidence_ids
 
         count = len(ordered)
         candidates = [make_candidate(item, index, count) for index, item in enumerate(ordered)]
@@ -1608,6 +1621,7 @@ class _PipelineDiagnostics:
     admissibility: AdmissibilityBatch | None = None
     candidate_pool_count: int = 0
     candidate_pool_truncated: bool = False
+    candidate_pool_ids: frozenset[str] | None = None
 
     def safe_dict(self) -> dict[str, Any]:
         lexical = self.lexical
@@ -1805,6 +1819,7 @@ class RetrievalEngine:
                 admissibility=admissibility,
                 candidate_pool_count=candidate_pool_count,
                 candidate_pool_truncated=candidate_pool_truncated,
+                candidate_pool_ids=frozenset(str(row["id"]) for row in temporally_eligible),
             ),
         )
 
@@ -1825,7 +1840,11 @@ class RetrievalEngine:
                 if bounded:
                     ranked = ranked[:100]
                 explanations = tuple(getattr(self.ranker, "explanations", ()))
-                diagnostics = _PipelineDiagnostics()
+                diagnostics = _PipelineDiagnostics(
+                    candidate_pool_count=len(authorized),
+                    candidate_pool_truncated=bounded and len(authorized) > 100,
+                    candidate_pool_ids=frozenset(str(row["id"]) for row in authorized),
+                )
             else:
                 ranked, explanations, denied, diagnostics = self._v3_rows(
                     connection, request, principal, bounded=bounded
@@ -1940,6 +1959,14 @@ class RetrievalEngine:
             principal,
             bounded=True,
         )
+        candidate_pool_ids = None
+        if (
+            mandatory_diagnostics.candidate_pool_ids is not None
+            and relevant_diagnostics.candidate_pool_ids is not None
+        ):
+            candidate_pool_ids = (
+                mandatory_diagnostics.candidate_pool_ids | relevant_diagnostics.candidate_pool_ids
+            )
         selected, used, pack_metadata = self.compiler.compile_with_diagnostics(
             mandatory_search.items,
             relevant_search.items,
@@ -1948,10 +1975,14 @@ class RetrievalEngine:
                 mandatory_diagnostics.candidate_pool_truncated
                 or relevant_diagnostics.candidate_pool_truncated
             ),
-            candidate_pool_count=max(
-                len({item.id for item in (*mandatory_search.items, *relevant_search.items)}),
-                mandatory_diagnostics.candidate_pool_count,
-                relevant_diagnostics.candidate_pool_count,
+            candidate_pool_count=(
+                len(candidate_pool_ids)
+                if candidate_pool_ids is not None
+                else max(
+                    len({item.id for item in (*mandatory_search.items, *relevant_search.items)}),
+                    mandatory_diagnostics.candidate_pool_count,
+                    relevant_diagnostics.candidate_pool_count,
+                )
             ),
         )
         granted = set(principal.scopes) if principal else set(request.requested_scopes)

@@ -1496,14 +1496,20 @@ state is already noncurrent and creates no user queue.
   result, while overflow preferences remain optional fallback candidates. The
   compiler preserves caller ranking for non-preference records, excludes fixed
   mandatory duplicate/conflict slots from the reserve, and unlocks each overflow
-  preference after any compatible selected primary. When applicable evidence is
-  feasible, overflow is chained through that evidence so selector utility density
-  cannot place it first; absent or infeasible evidence keeps the primary fallback.
-  The focused sanitized regression covers 77 preferences, 20 relevant records,
-  ten generic queries at a 4,000-character budget, no-match behavior, ACL/temporal/
-  sensitivity exclusion, exact accounting, caller-rank preservation, fixed-slot
-  conflicts, alternate-primary evidence ordering, large-evidence ordering,
-  infeasible-evidence fallback, and preference-input determinism.
+  preference after any compatible selected primary. The overflow-free compiler
+  prepass gates overflow through an actually selected applicable evidence item;
+  the final exact budget may retain that evidence while omitting overflow, and
+  absent, infeasible, or excluded-primary evidence keeps the primary fallback.
+  Fixed mandatory conflicts are reduced to deterministic selector survivors
+  before reserve budgeting. Bounded bootstrap metadata uses the exact union of
+  complete policy/temporal candidate-pool IDs, with a count fallback only for
+  legacy/injected diagnostics. The focused sanitized regression covers 77
+  preferences, 20 relevant records, ten generic queries at a 4,000-character
+  budget, no-match behavior, ACL/temporal/sensitivity exclusion, exact
+  accounting, caller-rank preservation, fixed-slot conflicts and duplicate
+  survivors, alternate-primary evidence ordering, large-evidence ordering,
+  1007/905 evidence-over-overflow boundaries, infeasible-evidence fallback,
+  exact disjoint/overlapping pool unions, and preference-input determinism.
 - Edge forwarding now reconciles context-pack metadata to the final returned
   items after scope filtering or envelope trimming: selected, omitted, used,
   and provenance counts are recomputed; duplicate/conflict aggregates are

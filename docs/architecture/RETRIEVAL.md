@@ -48,15 +48,19 @@ The production pipeline has seven ordered boundaries:
    compatible primary result. Each overflow preference may follow any selected
    compatible primary, while applicable supporting evidence remains ahead of
    that fallback tier. The compiler expresses primary-plus-evidence as a chain:
-   evidence supports the primary, and overflow supports feasible evidence; when
-   no applicable evidence can fit, overflow falls back to primary support rather
-   than deadlocking. Fixed mandatory records exclude their duplicate/conflict
-   groups from the reserve, and caller-ranked non-preference candidates retain
-   their order; only preference reserve/overflow tiers are canonicalized for
-   input-order determinism. The reserve budget leaves room for the cheapest
-   feasible primary result when such a pair fits. At eight or fewer preferences,
-   the existing mandatory behavior is unchanged. Bootstrap returns optional
-   content-free `pack_metadata` accounting for candidate-pool caps, omissions,
+   evidence supports the primary, and an actually selected applicable evidence
+   item gates overflow. The final exact budget may keep that evidence and omit
+   overflow; when no applicable evidence is selected (absent, infeasible, or
+   tied to an excluded primary), overflow falls back to primary support rather
+   than deadlocking. Fixed mandatory records are first reduced to their
+   deterministic feasible selector survivors, whose duplicate/conflict groups
+   exclude preferences from the reserve. Caller-ranked non-preference
+   candidates retain their order; only preference reserve/overflow tiers are
+   canonicalized for input-order determinism. The reserve budget leaves room
+   for the cheapest feasible primary result when such a pair fits. At eight or
+   fewer preferences, the existing mandatory behavior is unchanged. Bootstrap
+   returns optional content-free `pack_metadata` accounting for the exact union
+   of complete bounded policy/temporal candidate pools, omissions,
    provenance-backed items, and truthful truncation reasons. It cannot weaken an
    upstream gate.
 7. Administrator-only diagnostics expose authorized returned record IDs plus
@@ -111,7 +115,10 @@ its 100-record retrieval pool before `ContextCompiler` performs budgeted set
 selection. This preserves bounded MCP context compilation; it is not the source
 of the catalog API's `total`. Its optional `pack_metadata` envelope is
 provider-facing accounting, not ranking diagnostics, and does not expose query
-text or record IDs beyond the selected items already returned.
+text or record IDs beyond the selected items already returned. The candidate
+count is the exact union of the two complete bounded policy/temporal-eligible
+pools when those internal IDs are available; legacy/injected diagnostics use
+their bounded count fallback.
 
 The high-cardinality repair is local to compilation: authorization, temporal
 eligibility, sensitivity, admissibility, retrieval-pool limits, selector

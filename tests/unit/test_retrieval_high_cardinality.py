@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from allthecontext.models import (
     ApprovalRequest,
     BootstrapRequest,
     CandidateInput,
     ContextRecordOut,
+    SearchResponse,
 )
-from allthecontext.retrieval import ContextCompiler, RetrievalEngine
+from allthecontext.retrieval import ContextCompiler, RetrievalEngine, _PipelineDiagnostics
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 
@@ -123,6 +125,71 @@ def test_high_cardinality_no_match_returns_bounded_preferences() -> None:
     assert metadata.truncated is False
 
 
+@pytest.mark.parametrize(
+    ("mandatory_ids", "relevant_ids", "expected_count"),
+    (
+        (
+            frozenset(f"pool-{index:03d}" for index in range(150)),
+            frozenset(f"pool-{index:03d}" for index in range(150, 300)),
+            300,
+        ),
+        (
+            frozenset(f"pool-{index:03d}" for index in range(150)),
+            frozenset(f"pool-{index:03d}" for index in range(100, 250)),
+            250,
+        ),
+    ),
+)
+def test_bootstrap_candidate_metadata_unions_exact_bounded_pool_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mandatory_ids: frozenset[str],
+    relevant_ids: frozenset[str],
+    expected_count: int,
+) -> None:
+    store = CoreStore(tmp_path / "pool-accounting.sqlite3")
+    store.initialize_vault("synthetic-pool-accounting", "UTC")
+    engine = RetrievalEngine(store)
+    mandatory_item = _record("mandatory-item", "interaction_preference", "Prefer concise output.")
+    relevant_item = _record("relevant-item", "fact", "The scoped answer is cobalt.")
+
+    def stub_search(
+        request: object,
+        principal: ClientPrincipal | None = None,
+        *,
+        bounded: bool = False,
+    ) -> tuple[SearchResponse, tuple[object, ...], _PipelineDiagnostics]:
+        del request, principal, bounded
+        if not hasattr(stub_search, "calls"):
+            stub_search.calls = 0  # type: ignore[attr-defined]
+        stub_search.calls += 1  # type: ignore[attr-defined]
+        if stub_search.calls == 1:  # type: ignore[attr-defined]
+            items = [mandatory_item]
+            pool_ids = mandatory_ids
+        else:
+            items = [relevant_item]
+            pool_ids = relevant_ids
+        return (
+            SearchResponse(items=items, total=len(pool_ids), trace_id="synthetic-trace"),
+            (),
+            _PipelineDiagnostics(
+                candidate_pool_count=len(pool_ids),
+                candidate_pool_truncated=True,
+                candidate_pool_ids=pool_ids,
+            ),
+        )
+
+    monkeypatch.setattr(engine, "_search", stub_search)
+    try:
+        response = engine.bootstrap(BootstrapRequest(query="cobalt", budget_chars=4_000))
+    finally:
+        store.close()
+
+    assert response.pack_metadata is not None
+    assert response.pack_metadata.candidate_count == expected_count
+    assert response.pack_metadata.omitted_count == expected_count - len(response.items)
+
+
 def test_high_cardinality_compiler_is_stable_when_input_is_reordered() -> None:
     preferences = _synthetic_preferences()
     relevant = _synthetic_relevant_records()[:2]
@@ -200,6 +267,50 @@ def test_high_cardinality_reserve_cannot_displace_fixed_mandatory_conflict() -> 
     assert selected_slots == [fixed]
     assert used == sum(len(item.content) + 64 for item in selected)
     assert metadata.used_chars == used
+
+
+def test_high_cardinality_fixed_mandatory_prepass_keeps_one_conflicting_survivor() -> None:
+    preferences = [
+        _record(
+            f"preference-{index:02d}",
+            "interaction_preference",
+            f"p{index:02d} q{index:02d}",
+        )
+        for index in range(9)
+    ]
+    fixed_one = _record(
+        "fixed-one",
+        "fact",
+        "f" * 36,
+        entity_key="entity",
+        attribute_key="slot",
+    )
+    fixed_two = _record(
+        "fixed-two",
+        "fact",
+        "g" * 36,
+        entity_key="entity",
+        attribute_key="slot",
+    )
+    budget = 717
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        [*preferences, fixed_one, fixed_two],
+        [],
+        budget,
+    )
+
+    selected_ids = {item.id for item in selected}
+    selected_fixed = [
+        item for item in selected if item.entity_key == "entity" and item.attribute_key == "slot"
+    ]
+    assert len(selected_fixed) == 1
+    assert selected_fixed[0].id in {fixed_one.id, fixed_two.id}
+    assert sum(item.kind == "interaction_preference" for item in selected) == 8
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= budget
+    assert metadata.used_chars == used
+    assert len(selected_ids) == len(selected)
 
 
 def test_high_cardinality_overflow_supports_any_selected_compatible_primary() -> None:
@@ -326,7 +437,7 @@ def test_high_cardinality_overflow_falls_back_when_evidence_is_infeasible() -> N
     assert metadata.used_chars == used
 
 
-def test_high_cardinality_overflow_cost_is_included_in_evidence_gate() -> None:
+def test_high_cardinality_evidence_wins_when_overflow_does_not_fit() -> None:
     preferences = [
         _record(
             f"preference-{index:02d}",
@@ -357,8 +468,47 @@ def test_high_cardinality_overflow_cost_is_included_in_evidence_gate() -> None:
 
     selected_ids = {item.id for item in selected}
     assert primary.id in selected_ids
-    assert "preference-08" in selected_ids
-    assert evidence.id not in selected_ids
+    assert evidence.id in selected_ids
+    assert "preference-08" not in selected_ids
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= budget
+    assert metadata.used_chars == used
+
+
+def test_high_cardinality_exact_905_budget_keeps_evidence_ahead_of_overflow() -> None:
+    preferences = [
+        _record(
+            f"preference-{index:02d}",
+            "interaction_preference",
+            f"p{index:02d} q{index:02d}",
+        )
+        for index in range(9)
+    ]
+    primary = _record(
+        "primary",
+        "fact",
+        "answer",
+        source_id="primary-source",
+    )
+    evidence = _record(
+        "supporting-evidence",
+        "evidence",
+        "e" * 200,
+        source_id="primary-source",
+    )
+    budget = 905
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [primary, evidence],
+        budget,
+    )
+
+    selected_ids = {item.id for item in selected}
+    assert primary.id in selected_ids
+    assert evidence.id in selected_ids
+    assert "preference-08" not in selected_ids
+    assert used == 902
     assert used == sum(len(item.content) + 64 for item in selected)
     assert used <= budget
     assert metadata.used_chars == used

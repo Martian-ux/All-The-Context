@@ -663,6 +663,20 @@ duplicate, conflict, compatibility, and supporting-evidence constraints. The
 selector's diagnostics remain closed aggregate codes. Raw content, query text,
 unauthorized identifiers, and arbitrary metadata are not diagnostic fields.
 
+The high-cardinality compiler reserve is also a compiler-only policy. It first
+uses the selector locally to identify feasible fixed-mandatory survivors, then
+reserves at most eight interaction preferences. An overflow preference is
+gated by an actually selected applicable evidence item when one follows a
+selected compatible primary; the final selector's exact budget may therefore
+retain evidence while omitting overflow. If no such evidence is selected,
+overflow falls back to an actually selected compatible primary. This keeps
+evidence ahead of optional preference fallback without changing the selector
+contract or pretending its OR-based `supports` field expresses an AND chain.
+Bootstrap metadata counts the exact union of the complete bounded
+policy/temporal-eligible candidate ID sets when available, while legacy or
+injected diagnostics retain the bounded count fallback; those internal IDs
+never enter public metadata.
+
 Dense retrieval is not a production dependency. The checked-in 384-dimensional
 CPU experiment is disabled by default, rebuild-only, nonpersistent, and outside
 application package discovery. Its deterministic synthetic runtime can measure
