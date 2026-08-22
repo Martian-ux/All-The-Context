@@ -9,7 +9,7 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | Entity | Purpose |
 |---|---|
 | `vault` | User-owned authority, display time zone, and versioned memory policy |
-| `source_record` / `source_blob` / `source_blob_chunk` | Deduplicated raw local evidence; provider/format/coverage metadata, extraction status, and ordered bounded storage for large raw sources |
+| `source_record` / `source_blob` / `source_blob_chunk` | Deduplicated raw local evidence; provider/format/import-coverage metadata, extraction status, and ordered bounded storage for large raw sources |
 | `ingestion_session` / `ingestion_batch` | Coverage, resumability, atomic publication, and idempotency |
 | observation | Immutable proposed, extracted, corrected, or inferred durable-context evidence |
 | observation decision | Core-derived `applied`, `reinforced`, `tentative`, or `ignored` disposition, reason, policy version, origin class, and decision time |
@@ -27,6 +27,22 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | `audit_event` | Client access and automatic or administrative decision trace |
 | Relay queued observation | Noncurrent input waiting for authoritative Core evaluation |
 | `export_manifest` | Portable package schema and integrity metadata |
+
+Import, truth, and retrieval accounting are separate contracts. Import parsing
+publishes the item-level `CoverageReport.closed_coverage` map with exactly the
+seven logical keys `recognized`, `excluded`, `skipped`, `unavailable`,
+`duplicate`, `failed`, and `unparsed`. A source-level `failed` or `cancelled`
+terminal state is stored separately in source metadata and operation status; it
+is never added to those item counts. Memory Truth exposes the durable,
+content-free `TruthCoverageOut` projection over sources, observations, records,
+conflicts, and ingestion sessions. Retrieval's `ContextPackMetadata` is a
+bounded provider-facing report for one compiled bootstrap pack. It is transient
+selection accounting, not import coverage or Memory Truth coverage, and is not
+part of canonical Core authority.
+
+Core migrations `010_memory_truth.sql` through
+`014_typed_user_action_evidence.sql` belong to the Memory Truth foundation. The
+next free Core migration number is `015`.
 
 The compatibility schema may retain historical table or column names such as
 `context_candidate` and `approval_status` during migration. Those are storage
@@ -128,7 +144,8 @@ Provider archive metadata is intentionally schema-flexible JSON attached to the
 source record. The writer records detected provider, export format, parser
 version, coverage completion, and bounded aggregate statistics. Durable
 session/batch rows, not metadata, remain the authority for replay and
-idempotency. `import_status` exposes `processing`, `failed`, or `complete`; the
+idempotency. `import_status` exposes `processing`, `failed`, `cancelled`, or
+`complete`; the
 content-addressed source blob is retained for a safe retry or later parser.
 `source_blobs` owns the source hash, total size, media type, and storage kind.
 Inline values are at most 8 MiB; nonempty path imports and larger in-memory

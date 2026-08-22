@@ -15,9 +15,11 @@ Restore authenticates before parsing, rejects traversal/absolute/oversized ZIP
 entries, verifies every manifest hash, and uses duplicate-safe inserts into an
 already migrated clean Core. `--dry-run` verifies without writing.
 
-The automatic-policy schema exports observations, disposition fields, policy
-versions, observation/record evidence links, optional slot metadata, opaque
-purge tombstones/jobs, and the append-only `context_user_mutations` ledger.
+The Memory Truth/automatic-policy schema exports observations, disposition
+fields, policy versions, observation/record evidence links, optional slot
+metadata, opaque purge tombstones/jobs, and the append-only
+`context_user_mutations` ledger. Core migrations 010–014 define this foundation;
+015 is the next free migration number.
 Derived integrity groups and search indexes are excluded. A legacy package that
 does not contain the ledger is upgraded from durable historical evidence with
 one deterministic `legacy_user_edit` row per affected record at most.
@@ -41,6 +43,11 @@ approved/rejected rows to applied/ignored dispositions, and runs the
 idempotent versioned policy only for eligible unresolved observations. Staged,
 tentative, or ignored observations do not become current merely because they
 were exported and restored.
+
+Source metadata preserves import `closed_coverage` and the separate
+`source_terminal_reason`; neither is merged into Memory Truth coverage during
+restore. Retrieval `ContextPackMetadata` describes one transient compiled pack
+and is not a canonical export table.
 
 Database-file replication is unrelated and prohibited; this explicit user
 backup format is application-level and versioned.

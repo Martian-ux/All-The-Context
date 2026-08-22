@@ -4,6 +4,13 @@
 V3 remains SQLite-first and deterministic; no embedding, graph database, hosted
 service, native extension, or production vector dependency is required.
 
+This architecture note describes the combined local Import/Memory Truth/
+Retrieval integration. `ContextPackMetadata` is a bounded provider-facing
+selection report, distinct from import `closed_coverage` and Memory Truth
+coverage. The 17-case usefulness harness and focused checks are developer
+evidence only; this document makes no hosted CI, release, or exact-client
+acceptance claim.
+
 The production pipeline has seven ordered boundaries:
 
 1. `EligibleRecordSelector.select_authorized` applies vault, applied/current
@@ -109,13 +116,13 @@ measures Recall@1/3/5, MRR, nDCG@5, empty rates, policy violations, temporal
 precision, compiled-context coverage/redundancy, cold/warm p50/p95, SQLite index
 size, initial indexing throughput, and production correction/reindex cost.
 
-Retrieval V2 acceptance is executable through the comparison command. Every
+Retrieval V2 comparison is executable through the comparison command. Every
 common profile must have zero policy violations, exact Recall@5 no worse than
 V1, overall MRR at least 10% better, and multi-term empty rate at least 50%
 lower. The 10k profile additionally requires warm p95 below
 `max(150 ms, 1.25 × V1)`.
 
-## Phase 1 measured evidence
+## Phase 1 local measured evidence
 
 Two consecutive Windows runs on Python 3.14.3/SQLite 3.50.4 produced identical
 rankings and quality metrics at 1k and 10k. Against the checked-in Windows

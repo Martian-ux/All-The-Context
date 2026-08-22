@@ -2,83 +2,33 @@
 
 ## Current milestone
 
-As of 2026-08-22 UTC, the unsigned `0.1.0-beta.6` community release is a public,
-immutable GitHub prerelease for Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64.
-Stable `1.0.0` is post-V1. Direct downloads are live; the protected Windows
-beta-channel promotion remains pending. The
-dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
-work packages are in
-[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-b` private
-key exists outside the checkout and synchronized workspace; only its reviewed
-public half is tracked. The predecessor `release-2026-a` remains in the
-keyring as revoked prepublication history.
+As of 2026-08-22 UTC, this document describes the local integration baseline
+only: Import, Memory Truth, Retrieval, and the Context UI are composed on the
+local `codex/truth-foundations-overnight` checkout. It does not assert release
+publication, hosted CI results, exact artifact/client/provider acceptance, or
+inspection of live/private data.
 
-ADR-092 introduces two explicit, machine-enforced publication profiles without
-rewriting evidence. `certification_v1` remains the unchanged 20-gate contract.
-The initial public beta uses `lean_public_beta_v1`: exact Windows 11 and Ubuntu
-24.04 first-run receipts (`BETA-L01`/`BETA-L02`), `BETA-S06`, `BETA-R01`,
-`BETA-R02`, and `BETA-R03`. Approval additionally requires the sole human
-maintainer to acknowledge the incomplete certification matrix, unsupported
-macOS, unsigned community packages, and reviewed known issues. The 20-gate
-ledger remains truthful certification evidence and is not relabeled, waived,
-or treated as lean approval. The exact six-receipt lean bundle and the required
-maintainer acknowledgements authorized beta.6 signing and publication; they do
-not claim completion of the 20-gate certification profile.
+Core remains the authoritative local service and binds to loopback by default.
+The supported posture is Windows and supported Linux source/package work; the
+macOS source, tests, and historical preflight remain retained for portability,
+but macOS is unsupported and creates no support or acceptance claim. Historical
+release and CI notes lower in this file are retained as provenance only, not as
+evidence for this integrated checkout.
 
-The live unpublished `0.1.0-beta.1` four-platform identity is draft ID
-`367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
-release-candidate run `31285545048`, and candidate digest
-`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe` (55
-assets). It is never retargeted, deleted, or published. An earlier episode
-created draft `360008392` from source
-`48815077544f9defb78d0e6b9c8022319888dfed`; that episode remains historical
-and is no longer the live release identity. The unpublished `0.1.0-beta.2`
-Windows/Linux-only identity remains an occupied historical draft; its
-evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
-from the product support table and consumer release composition while retaining
-the existing Mac source and historical evidence as unsupported portability
-work. Ordinary CI no longer schedules Mac hosted runners, jobs, or preflight;
-no Mac execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
-relabeled as passed, skipped, waived, or unavailable.
+The integrated truth boundary is explicit: import `closed_coverage` counts
+logical source items; source terminal failure/cancellation is separate; Memory
+Truth coverage counts durable Core entities; and Retrieval `pack_metadata`
+describes one bounded transient bootstrap selection. These dimensions are not
+combined or presented as release evidence.
 
-The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
-`371617909`, source `89f3973f8408ee80a76265b88d13e6fbf5791f6e`,
-release-candidate run `32010253144`, and candidate digest
-`804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369` (31
-assets). It remains unsigned, draft, and unpublished. Its version slot is
-occupied and it cannot be retargeted, deleted, reused, or published after the
-prepublication signing-key rotation. Candidate creation and a green
-release-candidate workflow do not satisfy any exact-candidate acceptance
-receipt or authorize publication.
-
-The unpublished `0.1.0-beta.4` Windows/Linux candidate is draft ID
-`374681462`, source `1084abd54d39ecb5be6e33e5dce57cd3d56d3ccb`,
-release-candidate run `32527232813`, and candidate digest
-`79020be27e998725664abe0f20fd27cc1b4e1735f4ea9ff1ae0171252f2dd797` (31
-assets). It remains unsigned, draft, and unpublished. Two live runbook
-sentences contradicted ADR-093's one-backup custody floor, so this occupied
-identity is historical and receives no rebound receipts.
-
-The unpublished `0.1.0-beta.5` Windows/Linux candidate is draft ID
-`374697784`, source `28b46ea192af76233afe41f0d2b287edc2d59a04`,
-release-candidate run `32530830948`, and candidate digest
-`b0303b24164de987de9eab85caeeba4b460441fbe2c32463589269f4279462bd` (31
-assets). Six candidate-bound lean receipts were materialized without a bundle,
-approval, signature, or publication. The candidate source still described
-beta.5 as unbuilt, called beta.3 the live traceability identity, and aligned
-the active product plan to beta.3. Those statements are contradictory current
-release state, so beta.5 remains occupied historical evidence and receives no
-rebound receipts.
-
-`0.1.0-beta.6` is published as immutable prerelease ID `374723649` from exact
-source `d6d51acc5a880e611a65a206b90c6eb68118443d`, release-candidate run
-`32536391309`, and candidate digest
-`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`.
-The release contains 34 attested assets: Windows/Linux packages and evidence,
-the offline-signed Windows OTA manifest, the lean acceptance bundle, and the
-publication record. GitHub release attestation verification passes for all 34
-assets. No occupied historical draft was retargeted, deleted, reused, signed,
-or published.
+The separately published `0.1.0-beta.6` remains the public, immutable,
+current downloadable release; this local integration neither publishes nor
+alters it. Its exact release identity is ID `374723649`, source
+`d6d51acc5a880e611a65a206b90c6eb68118443d`, release-candidate run
+`32536391309`, candidate digest
+`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`, and 34
+attested assets. Occupied beta.1 through beta.5 draft/candidate identities
+remain historical and are not rebound or reused.
 
 ### 2026-08-22 Memory Truth foundation
 
@@ -101,12 +51,15 @@ no replacement current record. Stable record identity includes source address
 and value identity, so repeated source references with different values remain
 distinct.
 
+Migrations `010`–`014` are the Memory Truth foundation; the next free Core
+migration number is `015`.
+
 This is a Memory Truth foundation, not a complete memory-audit product. A
 replayable append-only decision event stream, configurable tentative expiry or
 decay, source-content history/purge presentation, provider extraction changes,
 retrieval/ranking changes, and dashboard wiring remain outside this slice.
-Focused truth, storage, policy, migration, and API tests pass locally; hosted
-CI and release state are unchanged.
+Focused truth, storage, policy, migration, and API checks are local engineering
+evidence only; this slice makes no hosted-CI or release-state claim.
 
 ### 2026-08-22 source-rebuild safety correction
 
@@ -124,10 +77,10 @@ local mutation, ordinary deletion, or invalid identity are replacement targets.
 Direct/local-admin records that retain the source ID remain in place; public
 restore retains their truthful source provenance while the ledger blocks later
 replacement.
-Synthetic focused coverage passes for parse failure, injected policy-ingestion
-rollback, cancellation, corrected records, and local-authored records. Full
-Ruff passes; mypy reports no issues across 81 source files; and pytest passes
-1,065 tests with 4 Windows symlink-capability skips and 3 dependency warnings.
+Synthetic focused coverage covers parse failure, injected policy-ingestion
+rollback, cancellation, corrected records, and local-authored records. This
+integration lane reports only the scoped local checks run below; it makes no
+full-pytest, hosted-CI, release, or exact-client acceptance claim.
 
 ### 2026-08-22 bounded ChatGPT attachment ingestion slice
 
@@ -1355,10 +1308,29 @@ state is already noncurrent and creates no user queue.
   beta-acceptance credit. The checked-in baseline is
   `bench/baselines/retrieval_usefulness_v1.json` (17 cases; all scorecard gates
   pass locally).
-- Historical integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
-  macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
-  Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
-  measurements rather than cross-platform performance claims.
+- This integration did not rerun hosted Python/dashboard/native matrices or
+  exact client acceptance. The retained macOS source and historical evidence
+  remain unsupported portability material; local retrieval measurements are not
+  cross-platform performance claims.
+
+## Post-merge Sources/Context contract gaps
+
+The backend and dashboard contracts were inspected after the ordered merge. The
+next dedicated reconciliation task should address these observed mismatches:
+
+- Core `SourceOut.import_status` includes `cancelled`, and source metadata can
+  carry the seven-key `closed_coverage` map plus the separate
+  `source_terminal_reason`; dashboard `SourceRecord` omits `cancelled`,
+  `IngestionCoverage` omits `closed_coverage`, and the Sources view currently
+  renders only selected warnings rather than the full item/terminal split.
+- Core exposes `/v1/context/truth/{record_id}` and `/v1/context/coverage` with
+  Memory Truth status, conflict, evidence, and durable coverage fields. The
+  Context UI currently calls legacy `/v1/context/search`, maps to its narrower
+  `ContextRecord` type, and hard-codes returned rows as “Current”; it does not
+  consume the truth projection or render those additional states.
+
+These are recorded as contract gaps only. No backend or UI feature is invented
+or papered over in this integration.
 
 ## V1 recovery/import/release integration reconciliation
 

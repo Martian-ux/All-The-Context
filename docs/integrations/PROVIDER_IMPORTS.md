@@ -17,10 +17,13 @@ user must continually curate.
    exports. The dashboard uses the durable import-operation API: it creates an
    opaque operation id, streams the file, shows committed progress, and can
    cancel mid-upload or mid-extraction.
-4. Let extraction complete. The dashboard reports truthful source coverage and
-   the total observations processed. Core's import response also returns
-   per-disposition `outcomes` and affected `record_ids`; the dashboard presents
-   those disposition counts. There is no extracted-memory review queue.
+4. Let extraction complete. Core reports truthful source coverage, the separate
+   source terminal state, and the total observations processed. Core's import
+   response also returns per-disposition `outcomes` and affected `record_ids`;
+   the current dashboard presents the observation disposition counts and a
+   subset of the coverage warnings. Full seven-key coverage and terminal-state
+   rendering are recorded as a follow-up UI/API reconciliation seam. There is
+   no extracted-memory review queue.
 
 The canonical `coverage.closed_coverage` map has exactly seven keys:
 `recognized`, `excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and
@@ -111,16 +114,18 @@ parser version to reprocess the source.
   complete archive into memory.
 - The current implementation default and maximum raw-source limit is
   2,000,000,000 bytes, and an operator can lower it with
-  `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the
-  mandatory beta maximum. The inclusive boundary is implemented and tested;
-  exact multi-platform candidate receipts remain acceptance work. The frozen
-  reference floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free.
+  `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the local
+  source-boundary contract. The inclusive boundary is implemented in the local
+  code path; no exact multi-platform or packaged-client acceptance is claimed by
+  this documentation. The frozen reference floor is 4 logical cores, 8 GiB RAM,
+  local SSD, and 16 GiB free.
   Core plus import-worker RSS is capped at 1 GiB; incremental import storage is
-  capped at four times raw size plus 1 GiB. The beta acceptance contract
+  capped at four times raw size plus 1 GiB. The local engineering budget
   requires progress to start within 5 seconds and advance every 5 seconds or
   64 MiB, cancellation to be acknowledged within 5 seconds and quiesce safely
   within 30 seconds, and import, source-inclusive export, and isolated restore
-  each to finish within 60 minutes.
+  each to finish within 60 minutes; these are not release or client acceptance
+  evidence.
 - Disk preflight requires the greater of four-times-source-plus-1-GiB or any
   measured durable high-water plus 25 percent on the Core database volume
   before accepting a raw source. A durable opaque **import operation** id is
@@ -171,17 +176,16 @@ parser version to reprocess the source.
   another upload or duplicate decisions.
 - Raw source text and credentials are never logged.
 
-ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each
-provider claim has a parser identity (`chatgpt-archives-v2`,
+ChatGPT, Claude, and Grok are the supported local provider targets for this
+slice. Each provider claim has a parser identity (`chatgpt-archives-v2`,
 `claude-archives-v2`, `grok-archives-v2`) under the aggregate
 `provider-archives-v2` session version. Frozen fictional shapes live in the
 runtime claim manifest. Each import reports closed coverage counts
-(recognized, excluded, skipped, unavailable, duplicate, failed, unparsed). Unknown or
-unparsed material is a visible coverage warning and keeps coverage incomplete
-rather than counting as parser success. Each provider must still pass a
-privacy-safe nonempty real-export receipt acquired after parser freeze and
-within 30 days of candidate acceptance. Missing real-export evidence keeps
-the beta in draft rather than narrowing the provider list.
+(recognized, excluded, skipped, unavailable, duplicate, failed, unparsed).
+Unknown or unparsed material is a visible coverage warning and keeps coverage
+incomplete rather than counting as parser success. No real-export, exact-client,
+release, or hosted acceptance receipt is claimed by this local integration
+documentation; those remain separate operator work.
 
 Ordinary JSON is parsed through a shared bounded direct/path/ZIP reader: strict
 UTF-8, 512 MiB raw bytes, 128 MiB decoded item/document size, and 128 nesting
