@@ -526,12 +526,27 @@ function rowAccessibleName(record: ContextRecord): string {
   return `${record.kind.replaceAll("_", " ")} memory, ${record.availability}, updated ${formatDate(record.updated_at)}: ${preview}`;
 }
 
+type ContextSearchCriteria = {
+  query: string;
+  availability: Availability | "";
+  kind: string;
+  sensitivity: string;
+  highConfidence: boolean;
+};
+
 function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability | "">("");
   const [kind, setKind] = useState("");
   const [sensitivity, setSensitivity] = useState("");
   const [highConfidence, setHighConfidence] = useState(false);
+  const [appliedCriteria, setAppliedCriteria] = useState<ContextSearchCriteria>({
+    query: "",
+    availability: "",
+    kind: "",
+    sensitivity: "",
+    highConfidence: false,
+  });
   const [records, setRecords] = useState<ContextRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -546,18 +561,21 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [removedMemory, setRemovedMemory] = useState<{ record: ContextRecord; index: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const searchSequence = useRef(0);
 
-  const search = useCallback(async (append = false, cursor?: string | null) => {
+  const search = useCallback(async (criteria: ContextSearchCriteria, append = false, cursor?: string | null) => {
+    const sequence = ++searchSequence.current;
     setLoading(true);
     try {
-      const result = await api.searchContext(query, {
-        availability: availability || undefined,
-        kinds: kind ? [kind] : [],
-        sensitivity: sensitivity ? [sensitivity] : [],
-        minConfidence: highConfidence ? 0.85 : undefined,
+      const result = await api.searchContext(criteria.query, {
+        availability: criteria.availability || undefined,
+        kinds: criteria.kind ? [criteria.kind] : [],
+        sensitivity: criteria.sensitivity ? [criteria.sensitivity] : [],
+        minConfidence: criteria.highConfidence ? 0.85 : undefined,
         limit: CONTEXT_PAGE_SIZE,
         cursor: append ? cursor ?? undefined : undefined,
       });
+      if (sequence !== searchSequence.current) return;
       setRecords((current) => {
         const merged = append ? [...current, ...result.items] : result.items;
         setSelected((selectedRecord) => (
@@ -570,14 +588,29 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       setTotal(result.total ?? result.items.length);
       setNextCursor(result.next_cursor ?? null);
       setError(null);
-    } catch (caught) { setError(errorMessage(caught)); }
-    finally { setLoading(false); }
-  }, [availability, highConfidence, kind, query, sensitivity]);
+    } catch (caught) {
+      if (sequence === searchSequence.current) setError(errorMessage(caught));
+    }
+    finally {
+      if (sequence === searchSequence.current) setLoading(false);
+    }
+  }, []);
   const loadHistory = useCallback(async (recordId: string) => {
     try { setHistory((await api.contextHistory(recordId)).items); }
     catch { setHistory([]); }
   }, []);
-  useEffect(() => { void search(); }, [availability, kind, sensitivity, highConfidence]);
+  useEffect(() => {
+    const criteria: ContextSearchCriteria = {
+      query: appliedCriteria.query,
+      availability,
+      kind,
+      sensitivity,
+      highConfidence,
+    };
+    setAppliedCriteria(criteria);
+    setNextCursor(null);
+    void search(criteria);
+  }, [availability, highConfidence, kind, search, sensitivity]);
   useEffect(() => {
     if (!selected) { setHistory([]); return; }
     void loadHistory(selected.id);
@@ -698,18 +731,30 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
     finally { setWorking(false); }
   }
 
+  const paginationMatchesCriteria = query === appliedCriteria.query
+    && availability === appliedCriteria.availability
+    && kind === appliedCriteria.kind
+    && sensitivity === appliedCriteria.sensitivity
+    && highConfidence === appliedCriteria.highConfidence;
+
   return (
     <div className="context-layout">
       <section className="context-results">
-        <form className="search-row" onSubmit={(event) => { event.preventDefault(); void search(); }}>
-          <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search decisions, preferences, people…" /></label>
+        <form className="search-row" onSubmit={(event) => {
+          event.preventDefault();
+          const criteria: ContextSearchCriteria = { query, availability, kind, sensitivity, highConfidence };
+          setAppliedCriteria(criteria);
+          setNextCursor(null);
+          void search(criteria);
+        }}>
+          <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => { setQuery(event.target.value); setNextCursor(null); }} placeholder="Search decisions, preferences, people…" /></label>
           <button className="primary-button" type="submit">Search</button>
         </form>
         <div className="search-filters">
-          <select aria-label="Filter by kind" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All kinds</option>{CONTEXT_KIND_FILTERS.filter(Boolean).map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select>
-          <select aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(event.target.value as Availability | "")}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
-          <select aria-label="Filter by sensitivity" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)}><option value="">All sensitivity</option><option value="normal">Normal</option><option value="sensitive">Sensitive</option><option value="highly_sensitive">Highly sensitive</option></select>
-          <label className="confidence-filter"><input type="checkbox" checked={highConfidence} onChange={(event) => setHighConfidence(event.target.checked)} /> High confidence</label>
+          <select aria-label="Filter by kind" value={kind} onChange={(event) => { setKind(event.target.value); setNextCursor(null); }}><option value="">All kinds</option>{CONTEXT_KIND_FILTERS.filter(Boolean).map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select>
+          <select aria-label="Filter by availability" value={availability} onChange={(event) => { setAvailability(event.target.value as Availability | ""); setNextCursor(null); }}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
+          <select aria-label="Filter by sensitivity" value={sensitivity} onChange={(event) => { setSensitivity(event.target.value); setNextCursor(null); }}><option value="">All sensitivity</option><option value="normal">Normal</option><option value="sensitive">Sensitive</option><option value="highly_sensitive">Highly sensitive</option></select>
+          <label className="confidence-filter"><input type="checkbox" checked={highConfidence} onChange={(event) => { setHighConfidence(event.target.checked); setNextCursor(null); }} /> High confidence</label>
         </div>
         {removedMemory ? <Notice kind="success"><span>Memory removed from current context.</span><button className="notice-action" disabled={working} onClick={() => void undoRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
         {error ? <Notice kind="error">{error}</Notice> : null}
@@ -719,7 +764,7 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
             <span><KindLabel value={record.kind} /><AvailabilityLabel value={record.availability} /></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}{record.sensitivity !== "normal" ? ` · ${record.sensitivity.replaceAll("_", " ")}` : ""}</small>
           </button>
         )) : <EmptyState icon={<Search />} title="No matching context" body="Try a broader phrase or import another source." />}
-        {nextCursor && !loading ? <button className="secondary-button load-more" onClick={() => void search(true, nextCursor)}>Load more</button> : null}
+        {nextCursor && !loading && paginationMatchesCriteria ? <button className="secondary-button load-more" onClick={() => void search(appliedCriteria, true, nextCursor)}>Load more</button> : null}
       </section>
       <aside className="record-detail">
         {selected ? (

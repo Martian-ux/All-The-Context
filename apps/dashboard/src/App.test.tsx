@@ -199,6 +199,75 @@ describe("dashboard", () => {
     expect(searchBodies.some((body) => body.cursor === "50")).toBe(true);
   });
 
+  it("does not offer an old page after typing a new query without submitting it", async () => {
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.query === "A") return json({ total: 2, next_cursor: "a-cursor", items: [contextRecord("a-1", "A result")] });
+        if (body.query === "B") return json({ total: 1, next_cursor: null, items: [contextRecord("b-1", "B result")] });
+        return json({ total: 0, next_cursor: null, items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const input = await screen.findByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("A result")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "B" } });
+
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "a-cursor")).toBe(false);
+  });
+
+  it.each([
+    { label: "kind", control: "Filter by kind", bodyKey: "kinds", value: "goal" },
+    { label: "availability", control: "Filter by availability", bodyKey: "availability", value: "core_available" },
+    { label: "sensitivity", control: "Filter by sensitivity", bodyKey: "sensitivity", value: "sensitive" },
+    { label: "minimum confidence", control: "High confidence", bodyKey: "min_confidence", value: undefined },
+  ])("starts pagination over when the $label filter changes", async ({ label, control, bodyKey, value }) => {
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const filterMatches = (body: Record<string, unknown>): boolean => {
+      if (bodyKey === "min_confidence") return body.min_confidence === 0.85;
+      const values = body[bodyKey];
+      return Array.isArray(values) && values.includes(value);
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.cursor === "old-cursor") return json({ total: 99, next_cursor: null, items: [contextRecord("mixed", "Mixed stale page")] });
+        if (filterMatches(body) && body.cursor === undefined) return json({ total: 2, next_cursor: "new-cursor", items: [contextRecord("filtered-1", `${label} filtered first page`)] });
+        if (filterMatches(body) && body.cursor === "new-cursor") return json({ total: 3, next_cursor: null, items: [contextRecord("filtered-2", `${label} filtered second page`)] });
+        return json({ total: 2, next_cursor: "old-cursor", items: [contextRecord("base-1", "Base first page")] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    expect(await screen.findByText("Base first page")).toBeInTheDocument();
+    if (value === undefined) fireEvent.click(screen.getByLabelText(control));
+    else fireEvent.change(screen.getByLabelText(control), { target: { value } });
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(await screen.findByText(`${label} filtered first page`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText(`${label} filtered second page`)).toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "old-cursor")).toBe(false);
+    expect(searchBodies.find((body) => body.cursor === "new-cursor")).toMatchObject({ cursor: "new-cursor" });
+  });
+
   it("navigates to source import", async () => {
     vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
