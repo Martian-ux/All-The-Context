@@ -1,0 +1,96 @@
+{
+  "requested_level": "L3",
+  "transport": "in_process_reference",
+  "client_id": "reference-client-atlas",
+  "session_id": "reference-session-1",
+  "actions": [
+    {
+      "kind": "pre_generation",
+      "reference": "generation-1",
+      "generation_id": "generation-1",
+      "requested_scopes": ["project:atlas"],
+      "budget_chars": 4000,
+      "conversation_id": "conversation-atlas",
+      "task_id": "task-atlas",
+      "workspace_id": "workspace-synthetic",
+      "project_id": "project:atlas",
+      "query": "Atlas retrieval"
+    },
+    {
+      "kind": "direct_user_turn",
+      "reference": "turn-preference-1",
+      "reference_kind": "user_turn",
+      "content": "I prefer concise context packs.",
+      "conversation_id": "conversation-atlas",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "model_self_attestation",
+      "reference": "attestation-1",
+      "reference_kind": "attestation"
+    },
+    {
+      "kind": "tool_result",
+      "reference": "tool-result-1",
+      "reference_kind": "tool_result",
+      "content": "The synthetic tool returned a bounded Atlas result.",
+      "tool_name": "synthetic_lookup",
+      "result_kind": "observable_result",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "response",
+      "reference": "response-1",
+      "reference_kind": "response",
+      "content": "The reference host emitted a bounded response.",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "checkpoint",
+      "reference": "checkpoint-compaction-1",
+      "reference_kind": "working_checkpoint",
+      "content": "Atlas compaction checkpoint fixture.",
+      "checkpoint_kind": "compaction",
+      "checkpoint_state": "completed",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "checkpoint",
+      "reference": "checkpoint-task-1",
+      "reference_kind": "working_checkpoint",
+      "content": "Atlas task checkpoint fixture.",
+      "checkpoint_kind": "task_checkpoint",
+      "checkpoint_state": "completed",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "session_transition",
+      "reference": "restart-1",
+      "next_session_id": "reference-session-2"
+    },
+    {
+      "kind": "direct_user_turn",
+      "reference": "turn-correction-1",
+      "reference_kind": "user_turn",
+      "content": "Atlas uses bounded local retrieval.",
+      "conversation_id": "conversation-atlas",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "consequence",
+      "reference": "outcome-1",
+      "reference_kind": "outcome",
+      "content": "The synthetic task completed with an observable result.",
+      "consequence_kind": "task_outcome_observed",
+      "consequence_status": "observed",
+      "task_id": "task-atlas"
+    },
+    {
+      "kind": "completion",
+      "reference": "completion-1",
+      "terminal_state": "completed",
+      "reason_code": "completed",
+      "task_id": "task-atlas"
+    }
+  ]
+}
