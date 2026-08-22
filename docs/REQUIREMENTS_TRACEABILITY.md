@@ -17,6 +17,18 @@ Hosted revalidation of this exact follow-up commit remains pending. The trigger
 change does not alter the unsupported-macOS posture or the manual release,
 candidate, and beta-channel ceremonies.
 
+### 2026-08-22 complete-source coverage repair
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Sources dashboard retry repairs a source that is terminal-complete but coverage-incomplete | `ArchiveImportService.reprocess_source`; existing `publish_source_rebuild` authority; `test_complete_source_with_incomplete_coverage_repairs_from_preserved_blob`; dashboard retry contract regression | Implemented locally: non-rebuild reprocess routes only `import_status=complete` plus explicit `coverage_complete=false` into the preserved-blob rebuild path, which publishes only after complete coverage |
+| Repair failure and concurrent retry remain safe | `test_incomplete_coverage_repair_failure_keeps_prior_records`; `test_concurrent_incomplete_coverage_repairs_are_idempotent`; `test_complete_healthy_source_reprocess_remains_a_noop` | Implemented locally: parser failure does not withdraw prior current records, concurrent callers converge on one rebuild generation, and healthy complete sources are not reparsed |
+
+Evidence uses synthetic payloads and temporary local databases only. Dashboard
+check, full test suite (55 tests), and production build pass locally. Full
+pytest, hosted CI, release/publication, live/private data, and macOS execution
+are not claimed here.
+
 ### 2026-08-22 hosted full-suite reconciliation
 
 | Requirement | Implementation/evidence | Status |

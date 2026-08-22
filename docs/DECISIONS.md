@@ -3353,3 +3353,24 @@ The principal-less Core/local-admin path intentionally retains the complete
 projection, including linked evidence; no admin-scope bypass is added to the
 principal-scoped path. This is a storage/query repair with no schema or
 provider-contract change, and it uses only synthetic temporary-database tests.
+
+## ADR-125: Complete-but-incomplete sources use the existing rebuild authority
+
+**Status:** accepted locally on 2026-08-22 after focused synthetic backend and
+dashboard regression tests; hosted revalidation is pending.
+
+`import_status=complete` and `coverage_complete=false` is a repairable source
+state, not a successful extraction. A non-rebuild source reprocess request from
+that exact state therefore enters the existing source-rebuild ceremony. The
+preserved source blob is reparsed, candidates remain staged, and
+`publish_source_rebuild` is allowed to cut over only when the new coverage is
+complete. A parser failure leaves prior current records in place and marks the
+rebuild resumable/failed through the existing terminal path.
+
+This decision deliberately does not create a new endpoint, parser session, or
+deletion primitive. Explicit healthy complete-source reprocess remains a
+duplicate/no-op, and the source-rebuild authority continues to protect user
+mutations, local-only records, stable identities, and ordinary deletion
+barriers. Concurrent repair callers may share one idempotent rebuild generation
+and session; only the validated atomic cutover withdraws eligible automatic
+records.

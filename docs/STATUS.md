@@ -40,6 +40,23 @@ Local validation for this change is six focused pytest nodeids (6 passed),
 deprecation warning remains in the focused test environment; it is unrelated
 to this repair.
 
+## Complete-source coverage repair (2026-08-22)
+
+The Sources dashboard's retry action now reaches a real bounded repair for the
+specific state `import_status=complete` with `coverage_complete=false`.
+Core routes that state through the existing preserved-blob source-rebuild
+authority: it reparses the retained source, stages candidates, and publishes
+only after complete coverage is proven. The atomic cutover continues to
+preserve user-corrected, local-only, and deletion-barrier-protected records;
+healthy complete sources still return the existing duplicate/no-op receipt.
+
+Focused synthetic regressions cover successful repair, parser failure without
+withdrawing prior current records, concurrent repair idempotency, healthy
+complete-source no-op behavior, and the dashboard's non-`rebuild=true` retry
+request. Full pytest and hosted revalidation remain outside this lane; the
+dashboard dependency install, check, full test suite (55 tests), and production
+build pass in this fresh worktree.
+
 ## Draft-PR formatting and CI-trigger reconciliation (2026-08-22)
 
 Draft PR 73 exposed one deterministic source-check failure: 23 changed Python

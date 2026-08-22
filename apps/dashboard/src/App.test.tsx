@@ -831,6 +831,54 @@ describe("dashboard", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
   });
 
+  it("repairs complete sources with incomplete coverage through the retry endpoint", async () => {
+    let repaired = false;
+    const source = {
+      id: "source-incomplete",
+      filename: "incomplete.zip",
+      media_type: "application/zip",
+      source_service: "chatgpt",
+      source_type: "archive",
+      byte_size: 2048,
+      content_hash: "incomplete-hash",
+      candidate_count: 1,
+      import_status: "complete",
+      metadata: {
+        provider: "chatgpt",
+        coverage_complete: false,
+        closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 1 },
+      },
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/sources/source-incomplete/reprocess")) {
+        repaired = true;
+        return json({
+          source: { ...source, import_status: "complete", metadata: { ...source.metadata, coverage_complete: true, closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 0 } } },
+          candidate_ids: ["candidate-1"],
+          provider: "chatgpt",
+          export_format: "generic_document",
+          stats: { conversations: 1, user_messages: 1, candidates: 1 },
+          warnings: [],
+          coverage: { available: ["1 conversation"], unavailable: [], limitations: [], warnings: [], complete: true },
+        });
+      }
+      if (url.endsWith("/admin/sources")) return json({ total: 1, items: [{ ...source, import_status: "complete", metadata: { ...source.metadata, coverage_complete: repaired, closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: repaired ? 0 : 1 } } }] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry extraction" }));
+
+    expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, requestInit]) => String(request).endsWith("/admin/sources/source-incomplete/reprocess") && requestInit?.method === "POST" && !String(request).includes("rebuild=true"))).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
+  });
+
   it("keeps cancelled and incomplete source accounting separate from terminal status", async () => {
     const sources = [
       {

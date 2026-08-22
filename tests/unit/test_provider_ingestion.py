@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import zipfile
 from hashlib import sha256
 from pathlib import Path
@@ -2161,6 +2162,167 @@ def test_complete_source_rebuild_is_non_destructive(tmp_path: Path) -> None:
         # re-applied under the same canonical record ID during cutover.
         assert store.get_record(withdrawn_id).id == withdrawn_id
         assert store.record_history(withdrawn_id)
+
+
+def test_complete_source_with_incomplete_coverage_repairs_from_preserved_blob(
+    tmp_path: Path,
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    payload = b'{"kind":"goal","content":"Repair this preserved source"}\n'
+    first = service.import_bytes("repair.jsonl", payload)
+    source_id = str(first["source"]["id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    incomplete_metadata = dict(source.metadata)
+    incomplete_metadata["coverage_complete"] = False
+    incomplete_metadata["closed_coverage"] = {
+        **dict(incomplete_metadata["closed_coverage"]),
+        "unparsed": 1,
+    }
+    core.store.update_source_import(
+        source_id,
+        import_status="complete",
+        metadata=incomplete_metadata,
+        parser_warnings=source.parser_warnings,
+    )
+
+    repaired = service.reprocess_source(source_id)
+
+    assert repaired["rebuild"] is True
+    assert repaired["session"]["status"] == "finished"
+    assert repaired["coverage"]["complete"] is True
+    assert "source extraction was already complete" not in repaired["warnings"]
+    assert core.store.get_source_content(source_id) == payload
+    repaired_source = core.store.get_source(source_id, duplicate=True)
+    assert repaired_source.import_status == "complete"
+    assert repaired_source.metadata["coverage_complete"] is True
+    assert repaired_source.metadata["rebuild_generation"] == 1
+
+
+def test_incomplete_coverage_repair_failure_keeps_prior_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    first = service.import_bytes(
+        "repair-failure.jsonl",
+        b'{"kind":"goal","content":"Keep this current on repair failure"}\n',
+    )
+    source_id = str(first["source"]["id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    prior_contents = {
+        record_id: core.store.get_record(record_id).content for record_id in first["record_ids"]
+    }
+    incomplete_metadata = dict(source.metadata)
+    incomplete_metadata["coverage_complete"] = False
+    core.store.update_source_import(
+        source_id,
+        import_status="complete",
+        metadata=incomplete_metadata,
+        parser_warnings=source.parser_warnings,
+    )
+
+    def fail_parse(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise InvalidStateError("synthetic coverage repair parse failure")
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", fail_parse)
+    with pytest.raises(InvalidStateError, match="synthetic coverage repair parse failure"):
+        service.reprocess_source(source_id)
+
+    failed_source = core.store.get_source(source_id, duplicate=True)
+    assert failed_source.import_status == "failed"
+    assert failed_source.metadata["rebuild_in_progress"] is True
+    assert all(
+        core.store.get_record(record_id).content == content
+        for record_id, content in prior_contents.items()
+    )
+
+
+def test_concurrent_incomplete_coverage_repairs_are_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    first = service.import_bytes(
+        "repair-race.jsonl",
+        b'{"kind":"goal","content":"Repair this source once"}\n',
+    )
+    source_id = str(first["source"]["id"])
+    source = core.store.get_source(source_id, duplicate=True)
+    incomplete_metadata = dict(source.metadata)
+    incomplete_metadata["coverage_complete"] = False
+    core.store.update_source_import(
+        source_id,
+        import_status="complete",
+        metadata=incomplete_metadata,
+        parser_warnings=source.parser_warnings,
+    )
+
+    original_parse = importers_module.parse_archive_path
+    parse_barrier = threading.Barrier(2)
+
+    def synchronized_parse(*args: Any, **kwargs: Any) -> Any:
+        parse_barrier.wait(timeout=10)
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", synchronized_parse)
+    outcomes: list[dict[str, Any]] = []
+    failures: list[BaseException] = []
+    result_lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            result = service.reprocess_source(source_id)
+            with result_lock:
+                outcomes.append(result)
+        except BaseException as error:
+            with result_lock:
+                failures.append(error)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+    assert len(outcomes) == 2
+    assert all(result["rebuild"] is True for result in outcomes)
+    assert all(result["source"]["import_status"] == "complete" for result in outcomes)
+    assert outcomes[0]["session"]["session_id"] == outcomes[1]["session"]["session_id"]
+    assert outcomes[0]["candidate_ids"] == outcomes[1]["candidate_ids"]
+    repaired_source = core.store.get_source(source_id, duplicate=True)
+    assert repaired_source.metadata["rebuild_generation"] == 1
+    assert repaired_source.metadata["rebuild_published_generation"] == 1
+    assert core.store.candidate_ids_for_source(source_id)
+
+
+def test_complete_healthy_source_reprocess_remains_a_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core = CoreService.in_directory(tmp_path)
+    service = ArchiveImportService(core.store)
+    first = service.import_bytes(
+        "healthy.jsonl",
+        b'{"kind":"goal","content":"Do not reparse healthy sources"}\n',
+    )
+    source_id = str(first["source"]["id"])
+
+    def fail_parse(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise AssertionError("healthy complete source was unnecessarily reparsed")
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", fail_parse)
+    result = service.reprocess_source(source_id)
+
+    assert result["session"]["status"] == "duplicate"
+    assert "source extraction was already complete" in result["warnings"]
+    assert core.store.get_source(source_id, duplicate=True).import_status == "complete"
 
 
 def test_rebuild_parse_failure_keeps_prior_current_records(

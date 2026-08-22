@@ -2596,12 +2596,26 @@ class ArchiveImportService:
         """Resume or rebuild extraction from the preserved raw blob.
 
         Failed and cancelled sources retry the existing parser session.
+        Complete sources with incomplete coverage use the same bounded repair
+        path as an explicit rebuild, so the preserved blob is reparsed and
+        canonical automatic records are replaced only after complete coverage
+        is proven.
         ``rebuild=True`` on a complete source stages a new parser-versioned
         observation set, then atomically replaces eligible automatic records
         only after parsing and staging succeed. The raw blob and
         user-corrected records are not destroyed.
         """
         source = self.store.get_source(source_id, duplicate=True)
+        repair_incomplete_coverage = (
+            not rebuild
+            and source.import_status == "complete"
+            and source.metadata.get("coverage_complete") is False
+        )
+        if repair_incomplete_coverage:
+            # A complete source with closed coverage is not a retryable
+            # no-op. Reuse the existing rebuild authority so parsing remains
+            # non-destructive and publication remains fail-closed.
+            rebuild = True
         resume_rebuild = bool(source.metadata.get("rebuild_in_progress"))
         resume_published_rebuild = resume_rebuild and (
             source.metadata.get("rebuild_published_generation") is not None
