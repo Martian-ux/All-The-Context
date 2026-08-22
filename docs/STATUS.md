@@ -1511,6 +1511,14 @@ state is already noncurrent and creates no user queue.
   malformed bytes is therefore one `unparsed` item with zero recognized items
   and no partial candidate; valid JSON and line-oriented JSONL attachment
   extraction remain supported.
+- Ordinary bounded ZIP `.json` members now use the same atomic validation
+  boundary. A generic standalone text/CSV/JSON member that yields no candidate
+  closes as intentional `excluded`/`skipped` logical coverage instead of
+  disappearing. Provider containers and manifest/control members remain
+  structural; the separate content-free `stats.archive_member_coverage` audit
+  records its raw-member denominator without adding containers to item counts.
+- Malformed JSON/text is one `unparsed` logical item; malformed CSV follows
+  the same rule, while JSONL remains line-oriented.
 - Packaged-provider acceptance now validates its dict-level coverage through
   `CoverageReport`, preserving the closed seven-key schema, strict bounded
   integer counts, and fail-closed completion semantics for unavailable,

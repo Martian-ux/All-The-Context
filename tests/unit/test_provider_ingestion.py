@@ -614,8 +614,7 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
     with pytest.raises(InvalidStateError, match="compression-ratio"):
         parse_zip_bundle(_zip({"file-compress.dat": b"x" * 10_000}), max_compression_ratio=2)
 
-    with pytest.raises(InvalidStateError, match="metadata JSON"):
-        parse_zip_bundle(
+        malformed_metadata = parse_zip_bundle(
             _zip(
                 {
                     "export_manifest.json": b"{malformed",
@@ -624,15 +623,82 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
             ),
             provider="chatgpt",
         )
+        assert malformed_metadata.closed_coverage["unparsed"] == 1
+        assert malformed_metadata.closed_coverage["unavailable"] == 1
+        assert malformed_metadata.complete is False
 
 
-def test_malformed_generic_csv_member_is_failed_and_incomplete() -> None:
+def test_malformed_generic_csv_member_is_unparsed_and_incomplete() -> None:
     parsed = parse_zip_bundle(_zip({"malformed.csv": 'header,"unterminated'}))
 
-    assert parsed.stats["failed_items"] == 1
-    assert parsed.closed_coverage["failed"] == 1
+    assert parsed.stats["failed_items"] == 0
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.closed_coverage["failed"] == 0
     assert parsed.complete is False
     assert parsed.warnings
+
+
+def test_generic_standalone_text_without_candidate_is_closed_as_excluded() -> None:
+    parsed = parse_zip_bundle(_zip({"hello.txt": "hello from a generic text member"}))
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage["excluded"] == 1
+    assert sum(parsed.closed_coverage.values()) == 1
+    assert parsed.complete is True
+    audit = parsed.stats["archive_member_coverage"]
+    assert audit["file_members"] == 1
+    assert audit["structural_members"] == 0
+    assert audit["unaccounted_members"] == 0
+    assert audit["terminal_member_buckets"]["excluded"] == 1
+
+
+def test_ordinary_json_trailing_data_is_atomic_unparsed() -> None:
+    parsed = parse_zip_bundle(
+        _zip({"ordinary.json": b'[{"kind":"goal","content":"prefix"}] trailing'})
+    )
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage["recognized"] == 0
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert sum(parsed.closed_coverage.values()) == 1
+    assert parsed.complete is False
+    assert parsed.stats["archive_member_coverage"]["terminal_member_buckets"]["unparsed"] == 1
+
+
+def test_mixed_zip_closes_logical_items_without_counting_containers_twice() -> None:
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("structural/", b"")
+        archive.writestr("export_manifest.json", b'{"logical_files": {}}')
+        archive.writestr("conversations.json", json.dumps(_chatgpt_export()))
+        archive.writestr("hello.txt", b"hello from a generic member")
+        archive.writestr("fact.json", b'{"kind":"fact","content":"one generic fact"}')
+        archive.writestr(
+            "events.jsonl",
+            b'{"kind":"fact","content":"one line fact"}\nnot-json\n',
+        )
+        archive.writestr("payload.bin", b"binary")
+        archive.writestr("duplicate.txt", b"first duplicate member")
+        archive.writestr("DUPLICATE.TXT", b"second duplicate member")
+
+    parsed = parse_zip_bundle(bundle.getvalue(), provider="generic")
+    audit = parsed.stats["archive_member_coverage"]
+
+    assert audit["file_members"] == 8
+    assert audit["directories_excluded"] == 1
+    assert audit["structural_members"] == 2  # manifest + provider container
+    assert audit["unaccounted_members"] == 0
+    assert (
+        audit["structural_members"] + audit["standalone_members"]
+        == audit["file_members"]
+    )
+    assert sum(audit["terminal_member_buckets"].values()) == audit["standalone_members"]
+    assert audit["closed_coverage_total"] == sum(parsed.closed_coverage.values())
+    assert parsed.closed_coverage["duplicate"] == 1
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.closed_coverage["unavailable"] == 1
+    assert parsed.closed_coverage["excluded"] >= 2
+    assert len({(item.kind, item.content) for item in parsed.candidates}) == len(parsed.candidates)
 
 
 def test_attachment_inventory_is_persisted_in_source_metadata(tmp_path: Path) -> None:

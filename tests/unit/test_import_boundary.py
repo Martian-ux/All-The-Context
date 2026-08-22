@@ -154,7 +154,7 @@ def test_fatal_parse_failure_persists_failed_coverage_on_source(tmp_path: Path) 
     assert failed.metadata["source_terminal_reason"] == "failed"
 
 
-def test_partial_member_failure_stays_in_item_coverage(tmp_path: Path) -> None:
+def test_partial_member_malformed_text_stays_in_item_coverage(tmp_path: Path) -> None:
     bundle = io.BytesIO()
     with zipfile.ZipFile(bundle, "w") as archive:
         archive.writestr("valid.md", "Goal: Keep the synthetic source local")
@@ -167,7 +167,8 @@ def test_partial_member_failure_stays_in_item_coverage(tmp_path: Path) -> None:
     )
     source = core.store.get_source(result["source"]["id"], duplicate=True)
     closed = source.metadata["closed_coverage"]
-    assert closed["failed"] == 1
+    assert closed["unparsed"] == 1
+    assert closed["failed"] == 0
     assert closed["recognized"] >= 1
     assert source.metadata["coverage_complete"] is False
     assert "source_terminal_reason" not in source.metadata

@@ -111,6 +111,15 @@ control-character escaped.
 If parsing cannot finish, source metadata instead carries the separate
 `source_terminal_reason` (`failed` or `cancelled`); this lifecycle status is
 not added to item-level coverage totals.
+The logical denominator is path-sensitive: provider containers contribute
+their contained messages, provider-memory items, and malformed list entries;
+manifest/control members are structural and contribute no second item; a
+standalone generic text, CSV, or JSON member contributes one logical item when
+it has no nested provider items. A successful standalone member with no
+candidate closes as intentional `excluded` or `skipped`. ZIP results also carry
+content-free `stats.archive_member_coverage` for the raw-member audit; its
+structural-member count is kept separate from `closed_coverage` so containers
+are not double-counted.
 For a recognized provider conversation list, every non-conversation entry is
 counted as `unparsed`; valid siblings still import, but any such residual keeps
 the coverage report incomplete. Structural warnings never include imported

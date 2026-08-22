@@ -161,6 +161,7 @@ class ParsedArchive:
 class _GenericCoverage:
     """Closed accounting for generic JSON values outside provider schemas."""
 
+    excluded: int = 0
     skipped: int = 0
     failed: int = 0
     unparsed: int = 0
@@ -285,10 +286,16 @@ def parse_text(
 ) -> ParsedArchive:
     builder = _builder(provider)
     candidates: list[CandidateInput] = []
+    coverage = _GenericCoverage()
     recognized = builder.consume_text(source_name, text)
     if not recognized:
         candidates.extend(_labeled_text_candidates(text))
-    return _combine(builder.finish(), candidates)
+        if not candidates:
+            # A standalone generic text member is itself one logical source
+            # item. It must not disappear merely because it yielded no
+            # durable candidate.
+            coverage.excluded += 1
+    return _combine(builder.finish(), candidates, generic_coverage=coverage)
 
 
 def _labeled_text_candidates(text: str) -> list[CandidateInput]:
@@ -387,9 +394,11 @@ def _combine(
     if generic_list and not provider_result.recognized:
         closed["recognized"] = max(closed["recognized"], len(candidates))
     if generic_coverage is not None:
+        closed["excluded"] = int(closed.get("excluded", 0)) + generic_coverage.excluded
         closed["skipped"] = int(closed.get("skipped", 0)) + generic_coverage.skipped
         closed["failed"] = int(closed.get("failed", 0)) + generic_coverage.failed
         closed["unparsed"] = int(closed.get("unparsed", 0)) + generic_coverage.unparsed
+        stats["generic_excluded"] = generic_coverage.excluded
         stats["generic_skipped"] = generic_coverage.skipped
         stats["generic_failed"] = generic_coverage.failed
         stats["generic_unparsed"] = generic_coverage.unparsed
@@ -504,7 +513,10 @@ def parse_archive_path(
         coverage = _GenericCoverage()
         try:
             with path.open("rb") as stream:
-                for document in _iter_json_documents(stream):
+                # A bounded JSON source is atomic: do not publish root-array
+                # items until trailing data has also been validated.
+                documents = list(_iter_json_documents(stream))
+                for document in documents:
                     if progress is not None:
                         progress.check_cancelled()
                     _consume_json_value(builder, safe_name, document, generic, coverage)
@@ -594,6 +606,7 @@ class _ChatGPTAttachmentContext:
     link_sources: dict[str, set[str]] = field(default_factory=dict)
     member_names_by_reference: dict[str, set[str]] = field(default_factory=dict)
     control_members: set[str] = field(default_factory=set)
+    invalid_control_members: set[str] = field(default_factory=set)
     max_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS
     link_pairs: int = 0
     links_truncated: bool = False
@@ -882,8 +895,13 @@ def _attachment_context(
 
     asset_member = by_basename.get("conversation_asset_file_names.json")
     if asset_member is not None:
-        context.control_members.add(_safe_zip_name(asset_member.filename))
-        value = _load_zip_json_member(archive, asset_member, max_item_chars=max_item_chars)
+        safe_asset_name = _safe_zip_name(asset_member.filename)
+        context.control_members.add(safe_asset_name)
+        try:
+            value = _load_zip_json_member(archive, asset_member, max_item_chars=max_item_chars)
+        except InvalidStateError:
+            context.invalid_control_members.add(safe_asset_name)
+            value = None
         if isinstance(value, dict):
             for member_name, original_filename in value.items():
                 if not isinstance(member_name, str) or not isinstance(original_filename, str):
@@ -896,8 +914,13 @@ def _attachment_context(
 
     manifest_member = by_basename.get("export_manifest.json")
     if manifest_member is not None:
-        context.control_members.add(_safe_zip_name(manifest_member.filename))
-        value = _load_zip_json_member(archive, manifest_member, max_item_chars=max_item_chars)
+        safe_manifest_name = _safe_zip_name(manifest_member.filename)
+        context.control_members.add(safe_manifest_name)
+        try:
+            value = _load_zip_json_member(archive, manifest_member, max_item_chars=max_item_chars)
+        except InvalidStateError:
+            context.invalid_control_members.add(safe_manifest_name)
+            value = None
         if isinstance(value, dict):
             logical_files = value.get("logical_files")
             if isinstance(logical_files, dict):
@@ -927,11 +950,18 @@ def _attachment_context(
 
     library_member = by_basename.get("library_files.json")
     if library_member is not None:
-        context.control_members.add(_safe_zip_name(library_member.filename))
-        _collect_library_mime_types(
-            _load_zip_json_member(archive, library_member, max_item_chars=max_item_chars),
-            context,
-        )
+        safe_library_name = _safe_zip_name(library_member.filename)
+        context.control_members.add(safe_library_name)
+        try:
+            library_value = _load_zip_json_member(
+                archive,
+                library_member,
+                max_item_chars=max_item_chars,
+            )
+        except InvalidStateError:
+            context.invalid_control_members.add(safe_library_name)
+            library_value = None
+        _collect_library_mime_types(library_value, context)
         for safe_name, original_filename in context.original_filenames.items():
             if original_filename in context.ambiguous_mime_filenames:
                 _declare_member_mime(context, safe_name, (None, "ambiguous"))
@@ -1103,14 +1133,48 @@ def parse_zip_bundle(
             if len(members) > max_entries:
                 raise InvalidStateError("ZIP bundle contains too many entries")
             seen_names: set[str] = set()
-            unique_members: list[zipfile.ZipInfo] = []
+            unique_entries: list[tuple[int, zipfile.ZipInfo]] = []
+            archive_member_states: dict[int, str] = {}
+            archive_structural_indices: set[int] = set()
+            archive_member_buckets = {
+                "recognized": 0,
+                "excluded": 0,
+                "skipped": 0,
+                "unavailable": 0,
+                "duplicate": 0,
+                "failed": 0,
+                "unparsed": 0,
+            }
+            archive_file_members = 0
+            archive_directories_excluded = 0
+            archive_structural_members = 0
+
+            def close_archive_member(member_index: int, reason: str) -> None:
+                if member_index in archive_member_states:
+                    raise InvalidStateError("ZIP member coverage was assigned twice")
+                if reason not in archive_member_buckets:
+                    raise InvalidStateError("ZIP member coverage used an unknown reason")
+                archive_member_states[member_index] = reason
+                archive_member_buckets[reason] += 1
+
+            def mark_structural_member(member_index: int) -> None:
+                nonlocal archive_structural_members
+                if member_index in archive_member_states or (
+                    member_index in archive_structural_indices
+                ):
+                    raise InvalidStateError("ZIP structural member was assigned twice")
+                archive_structural_indices.add(member_index)
+                archive_structural_members += 1
+
             total_uncompressed = sum(item.file_size for item in members if not item.is_dir())
             if total_uncompressed > max_uncompressed_bytes:
                 raise InvalidStateError("ZIP bundle exceeds the total uncompressed-size limit")
             supported_members: list[zipfile.ZipInfo] = []
-            for member in members:
+            for member_index, member in enumerate(members):
                 if member.is_dir():
+                    archive_directories_excluded += 1
                     continue
+                archive_file_members += 1
                 safe_name = _validate_zip_member_name(member.filename)
                 builder.note_file(safe_name)
                 folded = safe_name.casefold()
@@ -1126,13 +1190,17 @@ def parse_zip_bundle(
                     raise InvalidStateError("ZIP bundle exceeds the compression-ratio limit")
                 if duplicate:
                     builder.note_duplicate_entries()
+                    close_archive_member(member_index, "duplicate")
                     _append_warning(
                         warnings,
                         f"{safe_name}: case-insensitive duplicate entry skipped",
                     )
                     continue
                 seen_names.add(folded)
-                unique_members.append(member)
+                unique_entries.append((member_index, member))
+
+            unique_members = [member for _index, member in unique_entries]
+            unique_index_by_identity = {id(member): index for index, member in unique_entries}
 
             attachment_enabled = provider_hint == ArchiveProvider.CHATGPT
             if provider_hint in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
@@ -1152,6 +1220,60 @@ def parse_zip_bundle(
                 if attachment_enabled
                 else _ChatGPTAttachmentContext(max_link_pairs=max_attachment_link_pairs)
             )
+            structural_names = {
+                _safe_zip_name(member.filename)
+                for member in unique_members
+                if _is_chatgpt_control_member(_safe_zip_name(member.filename))
+                or _safe_zip_name(member.filename) in context.control_members
+            }
+            if context.invalid_control_members:
+                coverage.unparsed += len(context.invalid_control_members)
+                for invalid_name in sorted(context.invalid_control_members):
+                    _append_warning(warnings, f"{invalid_name}: invalid control JSON")
+
+            def close_parsed_member(
+                member_index: int,
+                before_stats: Mapping[str, int],
+                before_generic: int,
+                before_coverage: Mapping[str, int],
+            ) -> None:
+                """Audit one non-structural member without changing item coverage.
+
+                Provider containers are structural: their contained messages and
+                provider-memory items are the logical denominator. A generic
+                standalone member is audited as one archive content member;
+                its logical items remain in ``closed_coverage``.
+                """
+                after_stats = builder.stats_snapshot()
+                provider_fields = (
+                    "conversations",
+                    "messages",
+                    "message_records",
+                    "memory_items",
+                    "recognized_files",
+                )
+                if any(
+                    after_stats.get(key, 0) > before_stats.get(key, 0)
+                    for key in provider_fields
+                ):
+                    mark_structural_member(member_index)
+                    return
+                for reason in ("unparsed", "failed"):
+                    if getattr(coverage, reason) > before_coverage.get(reason, 0):
+                        close_archive_member(member_index, reason)
+                        return
+                recognized_delta = after_stats.get("recognized_items", 0) > before_stats.get(
+                    "recognized_items", 0
+                )
+                if len(generic) > before_generic or recognized_delta:
+                    close_archive_member(member_index, "recognized")
+                    return
+                for reason in ("skipped", "excluded"):
+                    if getattr(coverage, reason) > before_coverage.get(reason, 0):
+                        close_archive_member(member_index, reason)
+                        return
+                close_archive_member(member_index, "excluded")
+
             for member in unique_members:
                 safe_name = _safe_zip_name(member.filename)
                 if not _is_conversation_json_member(safe_name):
@@ -1170,9 +1292,24 @@ def parse_zip_bundle(
                 except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
                     continue
 
-            for member in unique_members:
+            for member_index, member in unique_entries:
                 safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
+                if safe_name in structural_names:
+                    mark_structural_member(member_index)
+                    if safe_name in context.invalid_control_members:
+                        # The malformed control JSON was already accounted as
+                        # one unparsed logical item above.
+                        continue
+                    continue
+                before_stats = builder.stats_snapshot()
+                before_generic = len(generic)
+                before_coverage = {
+                    "excluded": coverage.excluded,
+                    "skipped": coverage.skipped,
+                    "failed": coverage.failed,
+                    "unparsed": coverage.unparsed,
+                }
                 if suffix == ".dat" and attachment_enabled:
                     if progress is not None:
                         progress.check_cancelled()
@@ -1247,12 +1384,23 @@ def parse_zip_bundle(
                                             coverage,
                                         )
                                 elif text_format == "csv":
-                                    builder.consume_text(
-                                        source_name,
-                                        _csv_text(text, max_chars=max_attachment_text_bytes),
+                                    csv_text = _csv_text(
+                                        text,
+                                        max_chars=max_attachment_text_bytes,
                                     )
+                                    before_generic = len(generic)
+                                    recognized = builder.consume_text(source_name, csv_text)
+                                    if not recognized:
+                                        generic.extend(_labeled_text_candidates(csv_text))
+                                        if len(generic) == before_generic:
+                                            coverage.excluded += 1
                                 else:
-                                    builder.consume_text(source_name, text)
+                                    before_generic = len(generic)
+                                    recognized = builder.consume_text(source_name, text)
+                                    if not recognized:
+                                        generic.extend(_labeled_text_candidates(text))
+                                        if len(generic) == before_generic:
+                                            coverage.excluded += 1
                                 extraction_status = "text_extracted"
                                 extracted_format = text_format
                             except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
@@ -1293,16 +1441,31 @@ def parse_zip_bundle(
                             provenance=tuple(provenance),
                         )
                     )
+                    if extraction_status in {"unsupported_binary", "text_read_limit"}:
+                        close_archive_member(member_index, "unavailable")
+                    elif extraction_status == "text_parse_failed":
+                        close_archive_member(member_index, "unparsed")
+                    else:
+                        close_parsed_member(
+                            member_index,
+                            before_stats,
+                            before_generic,
+                            before_coverage,
+                        )
                     continue
                 if suffix == ".dat":
                     unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
                     continue
                 if suffix == ".json" and _is_chatgpt_control_member(safe_name):
+                    mark_structural_member(member_index)
                     continue
                 if suffix not in _SUPPORTED_TEXT_SUFFIXES:
                     unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
                     continue
                 if safe_name in context.control_members:
+                    mark_structural_member(member_index)
                     continue
                 if suffix in {".md", ".markdown", ".txt"} and (
                     member.file_size > max_json_item_chars
@@ -1314,20 +1477,37 @@ def parse_zip_bundle(
                         warnings,
                         f"{safe_name}: text entry exceeds the per-entry parse limit; retained raw",
                     )
+                    close_archive_member(member_index, "unavailable")
                     continue
                 supported_members.append(member)
 
             for member in supported_members:
                 if progress is not None:
                     progress.check_cancelled()
+                member_index = unique_index_by_identity[id(member)]
                 safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
+                before_stats = builder.stats_snapshot()
+                before_generic = len(generic)
+                before_coverage = {
+                    "excluded": coverage.excluded,
+                    "skipped": coverage.skipped,
+                    "failed": coverage.failed,
+                    "unparsed": coverage.unparsed,
+                }
                 try:
                     if suffix == ".json":
                         with archive.open(member) as stream:
-                            for document in _iter_json_documents(
-                                stream, max_item_chars=max_json_item_chars
-                            ):
+                            # Validate the complete bounded member before
+                            # publishing any candidates. Root-array items can
+                            # be yielded before trailing garbage is found.
+                            documents = list(
+                                _iter_json_documents(
+                                    stream,
+                                    max_item_chars=max_json_item_chars,
+                                )
+                            )
+                            for document in documents:
                                 _consume_json_value(
                                     builder,
                                     safe_name,
@@ -1360,18 +1540,38 @@ def parse_zip_bundle(
                             )
                         if suffix == ".csv":
                             text = _csv_text(text, max_chars=max_json_item_chars)
+                        before_generic = len(generic)
                         recognized = builder.consume_text(safe_name, text)
                         if not recognized:
                             generic.extend(_labeled_text_candidates(text))
+                            if len(generic) == before_generic:
+                                coverage.excluded += 1
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
                     coverage.unparsed += 1
                     _append_warning(warnings, f"{safe_name}: {_invalid_json_error(error)}")
+                    close_archive_member(member_index, "unparsed")
                 except InvalidStateError as error:
-                    # A bounded member parser failure is a durable failed
-                    # item, not an invisible warning. The raw ZIP remains
-                    # preserved for retry with a later parser.
-                    builder.note_failed_items()
+                    if suffix == ".csv" and "not well formed" in str(error).casefold():
+                        # Malformed text is one unparsed logical item. Keep
+                        # `failed` for bounded parser/runtime failures that
+                        # are not malformed source data.
+                        coverage.unparsed += 1
+                    else:
+                        # A bounded member parser failure is a durable failed
+                        # item, not an invisible warning. The raw ZIP remains
+                        # preserved for retry with a later parser.
+                        builder.note_failed_items()
+                        close_archive_member(member_index, "failed")
+                    if suffix == ".csv" and "not well formed" in str(error).casefold():
+                        close_archive_member(member_index, "unparsed")
                     _append_warning(warnings, f"{safe_name}: {error}")
+                else:
+                    close_parsed_member(
+                        member_index,
+                        before_stats,
+                        before_generic,
+                        before_coverage,
+                    )
     except zipfile.BadZipFile as error:
         raise InvalidStateError("invalid ZIP bundle") from error
     builder.note_unsupported_entries(unsupported_entries)
@@ -1398,9 +1598,29 @@ def parse_zip_bundle(
             warnings,
             "attachment link scanning was truncated at the configured depth/node bound",
         )
+    accounted_members = len(archive_member_states) + len(archive_structural_indices)
+    if accounted_members != archive_file_members:
+        raise InvalidStateError("ZIP member coverage partition did not close every file member")
+    archive_member_coverage = {
+        "file_members": archive_file_members,
+        "directories_excluded": archive_directories_excluded,
+        "structural_members": len(archive_structural_indices),
+        "standalone_members": sum(archive_member_buckets.values()),
+        "unaccounted_members": archive_file_members - accounted_members,
+        "terminal_member_buckets": dict(archive_member_buckets),
+        "denominator": (
+            "non-directory ZIP members after safety validation; control/manifest and provider "
+            "container members are structural, while their logical messages/entries remain in "
+            "closed_coverage; standalone generic members are one archive content member"
+        ),
+    }
     result = _combine(builder.finish(), generic, warnings, coverage, attachments)
     result.stats.update(
         {
+            "archive_member_coverage": {
+                **archive_member_coverage,
+                "closed_coverage_total": sum(result.closed_coverage.values()),
+            },
             "attachment_entries": len(attachments),
             "attachment_hashed": len(attachments),
             "attachment_linked": sum(bool(item.links) for item in attachments),

@@ -281,6 +281,14 @@ class ProviderArchiveBuilder:
     def note_file(self, source_name: str) -> None:
         self._files_seen.add(_safe_source_name(source_name))
 
+    def stats_snapshot(self) -> dict[str, int]:
+        """Return bounded parser counters for one-member transaction probes."""
+        return {
+            **self._stats,
+            "files": len(self._files_seen),
+            "recognized_files": len(self._recognized_files),
+        }
+
     def note_unsupported_entries(self, count: int) -> None:
         self._stats["unsupported_entries"] += max(count, 0)
 

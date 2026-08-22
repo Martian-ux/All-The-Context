@@ -22,6 +22,16 @@ user must continually curate.
    per-disposition `outcomes` and affected `record_ids`; the dashboard presents
    those disposition counts. There is no extracted-memory review queue.
 
+The canonical `coverage.closed_coverage` map has exactly seven keys:
+`recognized`, `excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and
+`unparsed`. Counts are logical source items, not a second count of raw ZIP
+members. Provider containers contribute their contained messages or memory
+items; manifest/control members are structural; a standalone generic text,
+CSV, or JSON member is itself one logical item when it has no nested provider
+items. A standalone member that parses successfully but yields no candidate is
+closed intentionally as `excluded` or `skipped`, so it cannot vanish from
+coverage.
+
 The same importer accepts JSON, JSONL, Markdown, and text. A copied provider
 memory summary can therefore be saved as a text or Markdown file, its provider
 selected in the dashboard, and imported through the same automatic policy.
@@ -44,6 +54,8 @@ treated as direct user statements.
   supported through adaptive field normalization.
 - Non-text attachments remain inside the preserved raw archive. They are
   counted, but are ignored for context maintenance in this slice.
+- Malformed JSON or text is one `unparsed` logical item and cannot publish a
+  valid prefix; line-oriented JSONL retains its per-line behavior.
 - The import does not change current context until the extraction session
   finishes successfully. A failed or interrupted session retains recoverable source
   state without partially publishing decisions.

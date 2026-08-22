@@ -2818,8 +2818,9 @@ metadata establish a supported text format: `.txt`, `.json`, `.jsonl`, `.csv`,
 `.md`, or `.markdown`. It uses bounded in-memory reads and existing
 deterministic provider extraction; no member is rendered, macro-enabled, or
 executed. Images/audio, PDF, DOCX, PPTX, XLSX, RTF, HTML, scripts, unknown
-extensions, malformed text, and over-limit text remain raw and are counted as
-unsupported/unavailable. Attachment inventory presence, hashing, or raw
+extensions, and over-limit text remain raw and are counted as
+unsupported/unavailable. Malformed JSON or text is one `unparsed` logical item;
+it is never also counted as unavailable. Attachment inventory presence, hashing, or raw
 preservation must never be reported as searchable coverage. Linkage is
 retained only when a conversation attachment ID resolves to the `.dat` asset
 identity; unresolved assets remain inventoried without an invented link.
