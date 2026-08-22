@@ -429,9 +429,34 @@ describe("dashboard", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
     expect(await screen.findByText("History unavailable. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("0 versions")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("History unavailable. Try again.");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("No versions")).toBeInTheDocument();
     expect(await screen.findByText("No version history is available for this record.")).toBeInTheDocument();
     expect(screen.queryByText("No version history was returned")).not.toBeInTheDocument();
+  });
+
+  it("gives the selected inspector a keyboard-focusable scroll region on desktop", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(false)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(inspector).toHaveAttribute("tabindex", "0");
+    expect(inspector).toHaveTextContent("Availability");
+    expect(inspector).toHaveTextContent("Correct");
+    expect(inspector).toHaveTextContent("Remove");
+    expect(inspector).toHaveTextContent("History");
   });
 
   it("navigates to source import", async () => {

@@ -25,7 +25,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   ActivityEvent,
@@ -124,6 +124,24 @@ function formatImportOutcomes(outcomes: ImportResult["outcomes"]): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function handleInspectorKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey) return;
+  const pageStep = Math.max(event.currentTarget.clientHeight - 48, 1);
+  const step = 48;
+  if (event.key === "Home") {
+    event.preventDefault();
+    event.currentTarget.scrollTo({ top: 0, behavior: "auto" });
+  } else if (event.key === "End") {
+    event.preventDefault();
+    event.currentTarget.scrollTo({ top: event.currentTarget.scrollHeight, behavior: "auto" });
+  } else if (event.key === "PageUp" || event.key === "PageDown" || event.key === " " || event.key === "ArrowUp" || event.key === "ArrowDown") {
+    event.preventDefault();
+    const direction = event.key === "PageUp" || event.key === "ArrowUp" ? -1 : 1;
+    const distance = event.key === "PageUp" || event.key === "PageDown" || event.key === " " ? pageStep : step;
+    event.currentTarget.scrollBy({ top: direction * distance, behavior: "auto" });
+  }
 }
 
 function App() {
@@ -908,7 +926,7 @@ function ContextView({ status, onChanged }: { status: CoreStatus | null; onChang
       </section>
       <aside className={`record-detail ${selected ? "record-detail--selected" : "record-detail--empty"}`}>
         {selected ? (
-          <div className="inspector-inner" key={selected.id}>
+          <div className="inspector-inner" key={selected.id} role="region" aria-label="Selected memory inspector" tabIndex={0} onKeyDown={handleInspectorKeyDown}>
             <span className="eyebrow">Current memory · returned by Core</span><h2>{selected.content}</h2>
             <div className="inspector-state-line"><span className="state-token state-token--current">Current</span><span>{selected.supersedes ? `Supersedes ${selected.supersedes}` : "No superseded record indicated"}</span></div>
             <section className="inspector-section" aria-labelledby="memory-facts-heading">
@@ -954,7 +972,7 @@ function ContextView({ status, onChanged }: { status: CoreStatus | null; onChang
             )}
 
             <section className="history-block" aria-labelledby="history-heading">
-              <div className="section-heading compact"><h3 id="history-heading"><History size={15} /> History</h3><span>{historyLoading ? "Loading" : `${history.length} versions`}</span></div>
+              <div className="section-heading compact"><h3 id="history-heading"><History size={15} /> History</h3><span>{historyLoading ? "Loading" : historyError ? "Unavailable" : history.length ? `${history.length} ${history.length === 1 ? "version" : "versions"}` : "No versions"}</span></div>
               {historyLoading ? <p className="history-status" role="status">Loading history…</p> : historyError ? <div className="history-error" role="alert"><span>{historyError}</span><button className="notice-action" type="button" onClick={() => void loadHistory(selected.id)}>Retry</button></div> : history.length ? history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p>{version.version !== selected.version ? <button className="history-restore" disabled={working} onClick={() => void restoreVersion(version)} aria-label={`Restore version ${version.version}`}><RotateCcw size={11} /> Restore</button> : <span className="history-current">Current</span>}{version.change_reason ? <small>{version.change_reason}</small> : null}<time>{formatDate(version.updated_at)}</time></div>) : <p className="history-empty">No version history is available for this record.</p>}
             </section>
           </div>
