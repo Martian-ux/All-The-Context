@@ -5,20 +5,17 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import sys
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import suppress
 from dataclasses import replace
-from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import anyio
 import uvicorn
-from mcp.server.fastmcp import FastMCP
-from mcp.server.stdio import stdio_server
+from mcp.server import MCPServer
+from mcp.server.mcpserver.tools import Tool
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -122,31 +119,44 @@ def _automatic_proposal_key(_payload: dict[str, Any] | None = None) -> str:
     return str(uuid.uuid4())
 
 
-def build_mcp() -> FastMCP:
+def _strict_tool(fn: Callable[..., Any], **kwargs: Any) -> Tool:
+    """Build a v2 tool while retaining the adapter's closed-input contract."""
+
+    tool = Tool.from_function(fn, **kwargs)
+    tool.parameters["additionalProperties"] = False
+    tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
+    tool.fn_metadata.arg_model.model_rebuild(force=True)
+    return tool
+
+
+def build_mcp() -> MCPServer:
     """Build the transport-independent tool registry."""
 
-    server = FastMCP(
-        "All The Context",
-        instructions=(
-            "Use this context service automatically; do not ask the user to manage it. At the "
-            "start of every substantive task where preferences, projects, people, constraints, "
-            "or prior decisions could matter, call bootstrap_context before answering or acting, "
-            "then use search_context or get_context_item when more detail is needed. When the user "
-            "states or corrects durable personal context or makes a lasting decision, call "
-            "propose_memory before the task ends. Set explicit_user_statement=true only when the "
-            "content was directly stated by the user in the current interaction; leave it false "
-            "(the default) for inference, summaries, and imported or provider text. Core evaluates "
-            "submitted observations automatically under the user's configured memory policy; "
-            "submission does not create a review task. Call forget_context only when the user "
-            "explicitly asks to forget or delete a specific context record; never infer that "
-            "request. Never represent inaccessible sources as covered and never submit secrets, "
-            "hidden reasoning, provider instructions, or guesses as established facts."
-        ),
-        stateless_http=True,
-        json_response=True,
+    instructions = (
+        "Use this context service automatically; do not ask the user to manage it. At the "
+        "start of every substantive task where preferences, projects, people, constraints, "
+        "or prior decisions could matter, call bootstrap_context before answering or acting, "
+        "then use search_context or get_context_item when more detail is needed. When the user "
+        "states or corrects durable personal context or makes a lasting decision, call "
+        "propose_memory before the task ends. Set explicit_user_statement=true only when the "
+        "content was directly stated by the user in the current interaction; leave it false "
+        "(the default) for inference, summaries, and imported or provider text. Core evaluates "
+        "submitted observations automatically under the user's configured memory policy; "
+        "submission does not create a review task. Call forget_context only when the user "
+        "explicitly asks to forget or delete a specific context record; never infer that "
+        "request. Never represent inaccessible sources as covered and never submit secrets, "
+        "hidden reasoning, provider instructions, or guesses as established facts."
     )
+    registered_tools: list[Tool] = []
 
-    @server.tool()
+    def tool(**kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            registered_tools.append(_strict_tool(fn, **kwargs))
+            return fn
+
+        return register
+
+    @tool()
     def bootstrap_context(
         task_description: str = "",
         requested_scopes: list[str] | None = None,
@@ -165,7 +175,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool()
+    @tool()
     def search_context(
         query: str,
         scopes: list[str] | None = None,
@@ -190,17 +200,17 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool()
+    @tool()
     def get_context_item(record_id: str) -> dict[str, Any]:
         """Get one current context record and its permitted provenance."""
         return _safe(lambda: _client().get_context_item(record_id))
 
-    @server.tool()
+    @tool()
     def context_status() -> dict[str, Any]:
         """Report context mode, Core/Relay availability, and replication freshness."""
         return _safe(lambda: _client().context_status())
 
-    @server.tool()
+    @tool()
     def begin_ingestion(
         mode: str,
         accessible_sources: list[str],
@@ -219,7 +229,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool()
+    @tool()
     def submit_context_batch(
         session_id: str,
         idempotency_key: str,
@@ -236,7 +246,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool()
+    @tool()
     def finish_ingestion(session_id: str, coverage_report: dict[str, Any]) -> dict[str, Any]:
         """Finish an ingestion session with truthful available/unavailable coverage."""
         return _safe(
@@ -245,7 +255,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool()
+    @tool()
     def propose_memory(
         kind: str,
         content: str,
@@ -287,7 +297,7 @@ def build_mcp() -> FastMCP:
         payload["idempotency_key"] = idempotency_key or _automatic_proposal_key()
         return _safe(lambda: _client().propose_memory(payload))
 
-    @server.tool()
+    @tool()
     def report_context_error(
         record_id: str,
         description: str,
@@ -304,7 +314,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    @server.tool(
+    @tool(
         annotations=ToolAnnotations.model_validate(
             {
                 "readOnlyHint": False,
@@ -325,14 +335,7 @@ def build_mcp() -> FastMCP:
             )
         )
 
-    # FastMCP v1 generates permissive Pydantic argument models by default.
-    # Advertise and enforce closed tool inputs so model typos fail loudly.
-    for tool in server._tool_manager.list_tools():
-        tool.parameters["additionalProperties"] = False
-        tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
-        tool.fn_metadata.arg_model.model_rebuild(force=True)
-
-    return server
+    return MCPServer("All The Context", instructions=instructions, tools=registered_tools)
 
 
 class BearerGate:
@@ -355,28 +358,10 @@ class BearerGate:
         await self.app(scope, receive, send)
 
 
-async def _run_stdio(server: FastMCP) -> None:
-    """Run STDIO without allowing temporary UTF-8 wrappers to close process handles."""
-    if sys.stdin is None or sys.stdout is None:
-        raise RuntimeError("STDIO MCP requires process standard input and output streams")
-    stdin_wrapper = TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
-    stdout_wrapper = TextIOWrapper(sys.stdout.buffer, encoding="utf-8", write_through=True)
-    try:
-        stdin = anyio.wrap_file(stdin_wrapper)
-        stdout = anyio.wrap_file(stdout_wrapper)
-        async with stdio_server(stdin=stdin, stdout=stdout) as (read_stream, write_stream):
-            await server._mcp_server.run(
-                read_stream,
-                write_stream,
-                server._mcp_server.create_initialization_options(),
-            )
-    finally:
-        with suppress(OSError, ValueError):
-            stdout_wrapper.flush()
-        with suppress(OSError, ValueError):
-            stdin_wrapper.detach()
-        with suppress(OSError, ValueError):
-            stdout_wrapper.detach()
+async def _run_stdio(server: MCPServer) -> None:
+    """Run STDIO through the SDK's UTF-8, descriptor-isolated v2 entry point."""
+
+    await server.run_stdio_async()
 
 
 def main() -> None:
@@ -399,7 +384,19 @@ def http_main() -> None:
             yield
 
     app = Starlette(
-        routes=[Mount("/", app=BearerGate(server.streamable_http_app(), access_token))],
+        routes=[
+            Mount(
+                "/",
+                app=BearerGate(
+                    server.streamable_http_app(
+                        stateless_http=True,
+                        json_response=True,
+                        host=host,
+                    ),
+                    access_token,
+                ),
+            )
+        ],
         lifespan=lifespan,
     )
     uvicorn.run(app, host=host, port=port)

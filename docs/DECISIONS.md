@@ -32,11 +32,31 @@ The adapter is transport glue, not an authority. Generated config pins a target,
 client ID, and credential source so models can retrieve and propose memory
 without repeated setup.
 
-## ADR-005: Official MCP v1 during v2 transition
+## ADR-005: Official MCP v2 and HTTPX2 compatibility lane
 
-As of 2026-07-21 the official Python SDK documents v1 as stable and v2 as alpha,
-with v2 stable targeted later in July. The dependency is constrained to
-`mcp>=1.27,<2` and isolated in `mcp_adapter.py` for a controlled v2 migration.
+As of 2026-08-22 the official Python SDK v2 line is stable. ATC constrains the
+runtime to `mcp>=2,<3` and raises the MCP-required Pydantic/AnyIO floors. The
+local and Edge adapters use the supported `MCPServer` registration surface;
+STDIO uses the SDK's descriptor-isolated runner, and Streamable HTTP transport
+options are supplied at app construction. Edge OAuth provider settings remain
+on the server's supported auth surface, while bearer protection, Core
+authority, loopback defaults, and content bounds remain ATC-owned boundaries.
+The hosted Edge binds the SDK's request ceiling and ATC's outer request guard to
+the same 256 KiB constant, while the loopback HTTP adapter retains the SDK's
+4 MiB default.
+
+The v2 SDK serves both modern and 2025-era MCP clients on the same Streamable
+HTTP app. This is an interoperability migration only: ordinary MCP remains an
+L0 integration and does not provide lifecycle-aware L1-L3 hooks or make such a
+claim for ATC.
+
+First-party production HTTP call sites use `httpx2>=2.12,<3`, including the
+library's OS trust-store path; hosted Windows/Linux verification remains a CI
+responsibility. Legacy `httpx` is not a runtime dependency; it remains in the
+development extra only because Starlette's in-process `TestClient` still imports
+that package. The packaged first-run smoke streams response bodies in bounded
+chunks, refuses responses over 1 MiB, and never includes rejected response
+content in the error.
 
 ## ADR-006: Bundle the dashboard with Core
 

@@ -12,14 +12,15 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "All The Context contributors"}]
 dependencies = [
+  "anyio>=4.9,<5",
   "cryptography>=50,<51",
   "fastapi>=0.116,<1",
   "filelock>=3.18,<4",
-  "httpx>=0.28,<1",
+  "httpx2>=2.12,<3",
   "keyring>=25.6,<26",
-  "mcp>=1.27,<2",
+  "mcp>=2,<3",
   "platformdirs>=4.3,<5",
-  "pydantic>=2.11,<3",
+  "pydantic>=2.12,<3",
   "python-multipart>=0.0.20,<1",
   "uvicorn>=0.35,<1",
 ]
@@ -27,6 +28,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build>=1.3,<2",
+  # Starlette's in-process TestClient still imports the legacy httpx package.
+  "httpx>=0.28,<1",
   "hypothesis>=6.135,<7",
   "mypy>=1.16,<2",
   # CVE-2026-13346 / PYSEC-2026-3721: pip 26.1.x is vulnerable.

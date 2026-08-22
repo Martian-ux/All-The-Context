@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+import anyio
 import pytest
 from allthecontext import mcp_adapter as local_mcp
 from allthecontext.config import CoreConfig
@@ -22,13 +23,28 @@ from allthecontext.mcp_adapter import (
     build_mcp,
 )
 from allthecontext.relay import mcp as edge_mcp
+from allthecontext.relay.mcp import (
+    MAX_EDGE_MCP_REQUEST_BYTES,
+    build_edge_mcp_app,
+)
 from allthecontext.relay.mcp import _automatic_proposal_key as edge_proposal_key
 from allthecontext.relay.service import ClientIdentity
+from mcp.server.mcpserver.exceptions import ToolError
+
+
+def _tools(server: Any) -> dict[str, Any]:
+    return {tool.name: tool for tool in anyio.run(server.list_tools)}
+
+
+def _call_tool(server: Any, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    result = anyio.run(server.call_tool, name, arguments)
+    assert result.structured_content is not None
+    return result.structured_content
 
 
 def test_required_mcp_tools_are_exposed_without_admin_writes() -> None:
     server = build_mcp()
-    names = {tool.name for tool in server._tool_manager.list_tools()}
+    names = set(_tools(server))
     assert names == {
         "begin_ingestion",
         "bootstrap_context",
@@ -47,8 +63,8 @@ def test_required_mcp_tools_are_exposed_without_admin_writes() -> None:
 
 def test_ingestion_tools_have_strict_generated_schemas() -> None:
     server = build_mcp()
-    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    begin_schema = tools["begin_ingestion"].parameters
+    tools = _tools(server)
+    begin_schema = tools["begin_ingestion"].input_schema
     assert set(begin_schema["required"]) == {
         "mode",
         "accessible_sources",
@@ -56,6 +72,34 @@ def test_ingestion_tools_have_strict_generated_schemas() -> None:
         "idempotency_key",
     }
     assert begin_schema.get("additionalProperties") is False
+
+
+@pytest.mark.parametrize("server_kind", ["local", "edge"])
+def test_public_mcp_call_rejects_unexpected_tool_arguments(server_kind: str) -> None:
+    if server_kind == "local":
+        server = build_mcp()
+    else:
+        provider = SimpleNamespace(
+            public_url="https://edge.example.test",
+            resource="https://edge.example.test/mcp",
+        )
+        server = edge_mcp.build_edge_mcp(SimpleNamespace(), provider, vault_id="vault-1")
+
+    with pytest.raises(ToolError):
+        anyio.run(server.call_tool, "context_status", {"unexpected": "value"})
+
+
+def test_edge_mcp_app_uses_atc_request_limit() -> None:
+    provider = SimpleNamespace(
+        public_url="https://edge.example.test",
+        resource="https://edge.example.test/mcp",
+    )
+    server = edge_mcp.build_edge_mcp(SimpleNamespace(), provider, vault_id="vault-1")
+
+    build_edge_mcp_app(server, provider)
+
+    assert MAX_EDGE_MCP_REQUEST_BYTES == 256 * 1024
+    assert server.session_manager.max_request_body_size == MAX_EDGE_MCP_REQUEST_BYTES
 
 
 def test_server_instructions_make_context_use_automatic() -> None:
@@ -72,8 +116,8 @@ def test_server_instructions_make_context_use_automatic() -> None:
 
 
 def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
-    tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
-    schema = tools["propose_memory"].parameters
+    tools = _tools(build_mcp())
+    schema = tools["propose_memory"].input_schema
     description = (tools["propose_memory"].description or "").casefold()
 
     assert set(schema["required"]) == {"kind", "content", "scope", "confidence"}
@@ -102,19 +146,22 @@ def test_local_propose_memory_forwards_automatic_policy_fields(monkeypatch) -> N
             return {"disposition": "applied", "record_id": "record-1"}
 
     monkeypatch.setattr(local_mcp, "_client", Client)
-    tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
-    result = tools["propose_memory"].fn(
-        kind="preference",
-        content="Prefer direct answers",
-        scope="general",
-        confidence=1.0,
-        source_reference="conversation:turn-7",
-        evidence="The user stated this preference.",
-        explicit_user_statement=True,
-        entity_key="user",
-        attribute_key="answer_style",
-        supersedes="record-0",
-        observed_at="2026-07-23T12:00:00-04:00",
+    result = _call_tool(
+        build_mcp(),
+        "propose_memory",
+        {
+            "kind": "preference",
+            "content": "Prefer direct answers",
+            "scope": "general",
+            "confidence": 1.0,
+            "source_reference": "conversation:turn-7",
+            "evidence": "The user stated this preference.",
+            "explicit_user_statement": True,
+            "entity_key": "user",
+            "attribute_key": "answer_style",
+            "supersedes": "record-0",
+            "observed_at": "2026-07-23T12:00:00-04:00",
+        },
     )
 
     assert result["disposition"] == "applied"
@@ -147,11 +194,14 @@ def test_local_report_context_error_keeps_description_and_correction_distinct(
             return {"disposition": "applied", "record_id": "record-2"}
 
     monkeypatch.setattr(local_mcp, "_client", Client)
-    tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
-    result = tools["report_context_error"].fn(
-        record_id="record-1",
-        description="The stored city is out of date.",
-        suggested_correction="The user lives in Boston.",
+    result = _call_tool(
+        build_mcp(),
+        "report_context_error",
+        {
+            "record_id": "record-1",
+            "description": "The stored city is out of date.",
+            "suggested_correction": "The user lives in Boston.",
+        },
     )
 
     assert result["disposition"] == "applied"
@@ -171,15 +221,19 @@ def test_local_forget_context_requires_explicit_record_and_reason(monkeypatch) -
             return {"disposition": "applied", "record_id": "record-1"}
 
     monkeypatch.setattr(local_mcp, "_client", Client)
-    tools = {tool.name: tool for tool in build_mcp()._tool_manager.list_tools()}
-    tool = tools["forget_context"]
+    server = build_mcp()
+    tool = _tools(server)["forget_context"]
 
-    assert set(tool.parameters["required"]) == {"record_id", "reason"}
-    assert tool.parameters.get("additionalProperties") is False
+    assert set(tool.input_schema["required"]) == {"record_id", "reason"}
+    assert tool.input_schema.get("additionalProperties") is False
     assert "only on an explicit user request" in tool.description
     assert tool.annotations is not None
-    assert tool.annotations.destructiveHint is True
-    result = tool.fn(record_id="record-1", reason="The user asked to forget this.")
+    assert tool.annotations.destructive_hint is True
+    result = _call_tool(
+        server,
+        "forget_context",
+        {"record_id": "record-1", "reason": "The user asked to forget this."},
+    )
 
     assert result == {"disposition": "applied", "record_id": "record-1"}
     assert captured == {
@@ -457,16 +511,19 @@ def test_edge_propose_stages_observation_for_automatic_core_evaluation(monkeypat
         ),
         vault_id="vault-1",
     )
-    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    result = tools["propose_memory"].fn(
-        kind="preference",
-        content="Prefer direct answers",
-        scope="general",
-        confidence=1.0,
-        explicit_user_statement=True,
-        entity_key="user",
-        attribute_key="answer_style",
-        observed_at="2026-07-23T16:00:00+00:00",
+    result = _call_tool(
+        server,
+        "propose_memory",
+        {
+            "kind": "preference",
+            "content": "Prefer direct answers",
+            "scope": "general",
+            "confidence": 1.0,
+            "explicit_user_statement": True,
+            "entity_key": "user",
+            "attribute_key": "answer_style",
+            "observed_at": "2026-07-23T16:00:00+00:00",
+        },
     )
 
     assert result == {
@@ -522,11 +579,15 @@ def test_edge_forget_stages_without_claiming_deletion(monkeypatch) -> None:
         ),
         vault_id="vault-1",
     )
-    tool = next(tool for tool in server._tool_manager.list_tools() if tool.name == "forget_context")
-    result = tool.fn(record_id="record-1", reason="The user asked to forget this.")
+    tool = _tools(server)["forget_context"]
+    result = _call_tool(
+        server,
+        "forget_context",
+        {"record_id": "record-1", "reason": "The user asked to forget this."},
+    )
 
     assert tool.annotations is not None
-    assert tool.annotations.destructiveHint is True
+    assert tool.annotations.destructive_hint is True
     assert result["disposition"] == "staged"
     assert result["user_action_required"] is False
     assert "deleted_at" not in result

@@ -27,14 +27,13 @@ import subprocess
 import tempfile
 import time
 import tomllib
-import urllib.error
-import urllib.request
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, TextIO
 
 import anyio
+import httpx2 as httpx
 from allthecontext import __version__
 from allthecontext.credentials import (
     DEVELOPMENT_FALLBACK_ENV,
@@ -87,6 +86,9 @@ _SENSITIVE_SETUP_PRESENCE_KEYS = (
     "diagnostics_path",
 )
 _MAX_REDACTED_ERROR_CHARS = 500
+_MAX_SMOKE_RESPONSE_BYTES = 1_048_576
+_SMOKE_RESPONSE_CHUNK_BYTES = 64 * 1024
+_SMOKE_RESPONSE_LIMIT_ERROR = "smoke response exceeded maximum size"
 _CLOSED_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -117,14 +119,37 @@ def available_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def _read_http_response(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+    timeout: float = 3.0,
+) -> tuple[int, bytes]:
+    """Read one bounded smoke response with urllib-compatible redirects."""
+
+    with (
+        httpx.Client(timeout=timeout, follow_redirects=True) as client,
+        client.stream(method, url, headers=headers) as response,
+    ):
+        response.raise_for_status()
+        content = bytearray()
+        received = 0
+        for chunk in response.iter_bytes(chunk_size=_SMOKE_RESPONSE_CHUNK_BYTES):
+            received += len(chunk)
+            if received > _MAX_SMOKE_RESPONSE_BYTES:
+                raise RuntimeError(_SMOKE_RESPONSE_LIMIT_ERROR)
+            content.extend(chunk)
+        return response.status_code, bytes(content)
+
+
 def api_request(url: str, token: str, *, method: str = "GET") -> dict[str, Any]:
-    request = urllib.request.Request(
+    _, content = _read_http_response(
         url,
         method=method,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=3) as response:
-        value = json.loads(response.read().decode("utf-8"))
+    value = json.loads(content.decode("utf-8"))
     if not isinstance(value, dict):
         raise RuntimeError(f"unexpected API response from {url}")
     return value
@@ -140,14 +165,13 @@ def browser_session_from_handoff_html(handoff_html: str) -> str | None:
 
 
 def stop_core(base_url: str, admin_token: str) -> None:
-    with suppress(OSError, urllib.error.URLError):
+    with suppress(OSError, httpx.HTTPError):
         api_request(f"{base_url}/v1/admin/shutdown", admin_token, method="POST")
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(f"{base_url}/health", timeout=0.2):
-                pass
-        except (OSError, urllib.error.URLError):
+            _read_http_response(f"{base_url}/health", timeout=0.2)
+        except (OSError, httpx.HTTPError):
             return
         time.sleep(0.1)
     raise RuntimeError("installed Core did not shut down within ten seconds")
@@ -159,7 +183,7 @@ def wait_for_core(base_url: str, token: str) -> None:
         try:
             if api_request(f"{base_url}/v1/context/status", token).get("core_online") is True:
                 return
-        except (OSError, urllib.error.URLError):
+        except (OSError, httpx.HTTPError):
             pass
         time.sleep(0.1)
     raise RuntimeError("transactional updater did not restart Core within twenty seconds")
@@ -337,10 +361,10 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
         if not names.issuperset(required):
             raise RuntimeError(f"packaged MCP tools are missing: {sorted(required - names)}")
         status = await session.call_tool("context_status", {})
-        if status.isError is True or not status.structuredContent:
+        if status.is_error is True or not status.structured_content:
             raise RuntimeError(f"packaged MCP status failed: {status}")
-        if status.structuredContent.get("core_online") is not True:
-            raise RuntimeError(f"packaged MCP did not reach Core: {status.structuredContent}")
+        if status.structured_content.get("core_online") is not True:
+            raise RuntimeError(f"packaged MCP did not reach Core: {status.structured_content}")
 
 
 def redact_smoke_diagnostic_text(value: str) -> str:
@@ -891,23 +915,22 @@ def main() -> int:
         dashboard_url = str(report.get("dashboard_url", ""))
         if "atc_token" in dashboard_url or "/v1/browser/connect?ticket=" not in dashboard_url:
             raise SystemExit(f"unsafe or invalid dashboard handoff URL: {dashboard_url}")
-        with urllib.request.urlopen(dashboard_url, timeout=3) as response:
-            if response.status != 200:
-                raise SystemExit(f"browser handoff did not reach dashboard: {response.status}")
-            handoff_html = response.read().decode("utf-8")
+        status, content = _read_http_response(dashboard_url)
+        if status != 200:
+            raise SystemExit(f"browser handoff did not reach dashboard: {status}")
+        handoff_html = content.decode("utf-8")
         browser_session = browser_session_from_handoff_html(handoff_html)
         if browser_session is None or admin_token in handoff_html:
             raise SystemExit("browser handoff exposed no safe opaque session")
-        browser_request = urllib.request.Request(
+        _, browser_content = _read_http_response(
             f"http://127.0.0.1:{port}/v1/context/status",
             headers={
                 "Authorization": f"Browser {browser_session}",
                 "X-ATC-Dashboard": "1",
             },
         )
-        with urllib.request.urlopen(browser_request, timeout=3) as response:
-            if json.loads(response.read().decode("utf-8")).get("core_online") is not True:
-                raise SystemExit("browser session did not authenticate to Core")
+        if json.loads(browser_content.decode("utf-8")).get("core_online") is not True:
+            raise SystemExit("browser session did not authenticate to Core")
 
         status = api_request(f"{base_url}/v1/context/status", token)
         if status.get("core_online") is not True:

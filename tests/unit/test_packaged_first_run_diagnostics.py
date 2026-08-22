@@ -42,6 +42,28 @@ DASHBOARD_CANARY = (
 RAW_STATEMENT = "User said their password is hunter2-never-store"
 
 
+def test_read_http_response_rejects_oversized_content_without_logging_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = b"x" * (smoke._MAX_SMOKE_RESPONSE_BYTES + 1)
+    real_client = smoke.httpx.Client
+
+    def fake_client(*args: object, **kwargs: object) -> object:
+        def handler(_request: object) -> object:
+            return smoke.httpx.Response(200, content=oversized)
+
+        kwargs["transport"] = smoke.httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(smoke.httpx, "Client", fake_client)
+
+    with pytest.raises(RuntimeError) as error:
+        smoke._read_http_response("http://127.0.0.1:1/oversized")
+
+    assert str(error.value) == smoke._SMOKE_RESPONSE_LIMIT_ERROR
+    assert str(oversized[:32], "utf-8") not in str(error.value)
+
+
 def test_packaged_smoke_parent_override_must_be_absolute_and_external(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -402,6 +424,10 @@ def test_source_contract_never_retains_full_work_tree() -> None:
     assert "recover_disposable_admin_token" in text
     assert "scrub_sensitive_work_tree" in text
     assert "remove_work_tree" in text
+    assert "status.is_error" in text
+    assert "status.structured_content" in text
+    assert "status.isError" not in text
+    assert "status.structuredContent" not in text
     assert "raise SystemExit(str(exc))" not in text
     assert "packaged-first-run-diagnostics" in text
     # Must not print raw subprocess streams.
