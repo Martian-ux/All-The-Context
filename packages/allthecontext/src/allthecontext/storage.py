@@ -821,6 +821,13 @@ class CoreStore:
             try:
                 self._ensure_user_mutation_boundary_tx(connection)
                 self._ensure_typed_user_action_evidence_tx(connection)
+                # Migration 015 owns the additive capture ledger.  Keep its
+                # repair probe here so a process interrupted after the SQL
+                # marker but before all CREATE statements can self-heal on
+                # the next startup without re-running older migrations.
+                from .capture import ensure_capture_schema
+
+                ensure_capture_schema(connection)
             except BaseException:
                 connection.rollback()
                 raise

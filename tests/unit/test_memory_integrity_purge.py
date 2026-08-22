@@ -113,7 +113,7 @@ def test_schema_upgrade_adds_optional_slot_and_purge_contracts(tmp_path: Path) -
             ),
         )
     store = CoreStore(database)
-    assert store.migrate() == 14
+    assert store.migrate() == 15
     with store.connect() as connection:
         candidate_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(context_candidates)")

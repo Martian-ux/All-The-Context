@@ -36,16 +36,44 @@ evidence for this integrated checkout.
 - Focused dashboard tests cover normalization, terminal/item split, coverage
   fallback, truth races, mutation refresh, and rendered statuses. Adversarial
   normalization and coverage recovery/race checks bring the suite to 54 tests
-  across 2 files. Synthetic loopback browser checks are local review evidence
-  only; fresh independent
-  Product Design/API acceptance remains required. No release, publish, merge,
-  or live/private Core/data work is claimed here.
+  across 2 files. Fresh independent API/DOM review accepted the exact local
+  hardening commit. Synthetic loopback browser checks remain local evidence
+  only, and fresh visual Product Design acceptance is still pending because the
+  required in-app browser verifier was unavailable. No release, publish, or
+  live/private Core/data work is claimed here.
 
 The integrated truth boundary is explicit: import `closed_coverage` counts
 logical source items; source terminal failure/cancellation is separate; Memory
 Truth coverage counts durable Core entities; and Retrieval `pack_metadata`
 describes one bounded transient bootstrap selection. These dimensions are not
 combined or presented as release evidence.
+
+## Stage 4 Continuous Capture foundation (2026-08-22)
+
+This isolated first slice adds migration 015 and provider-neutral Core contracts
+for a bounded Continuous Capture ledger: source lifecycle, checkpoints,
+durable staged events, source-scoped item lineage, and foreground run telemetry.
+The coordinator is local-only and opt-in, requires explicit acknowledgement,
+has no scheduler, and makes no adapter call for disabled, paused, or revoked
+sources. Focused synthetic tests cover migration repair, lifecycle guards,
+ordered multi-page upsert/update/delete, duplicate replay, idempotent sink
+recovery, gaps/cursors/limits/backoff/leases, API authentication, CLI output,
+and secret-marker absence.
+
+Fresh independent security/correctness review accepted the exact cumulative
+foundation after reproducing and closing schema-repair and stale-lease authority
+defects. The review passed 17 capture tests, 14 migration regressions, Ruff,
+mypy, diff checks, and independent temporary-database probes. Full pytest was
+not run. A pre-existing `test_client_witness.py` reason-string assertion remains
+an unrelated baseline residual and was not changed in this slice.
+
+This is infrastructure, not a claim that a provider supports continuous
+capture. No real connector, network implementation, OAuth/credential handling,
+dashboard or package-startup change, live/private Core/data inspection, current
+product availability, release, publication, beta acceptance, or macOS work is
+claimed. The beta.6 identity and unsupported-macOS posture remain unchanged.
+Full snapshot/rescan deletion is deferred until a provider-specific snapshot
+contract exists.
 
 The separately published `0.1.0-beta.6` remains the public, immutable,
 current downloadable release; this local integration neither publishes nor
@@ -77,8 +105,8 @@ no replacement current record. Stable record identity includes source address
 and value identity, so repeated source references with different values remain
 distinct.
 
-Migrations `010`–`014` are the Memory Truth foundation; the next free Core
-migration number is `015`.
+Migrations `010`–`014` are the Memory Truth foundation. Migration `015` is the
+additive Continuous Capture contracts/ledger foundation described below.
 
 This is a Memory Truth foundation, not a complete memory-audit product. A
 replayable append-only decision event stream, configurable tentative expiry or
@@ -1730,3 +1758,20 @@ or papered over in this integration.
   and index repair, all typed local action paths, and duplicate import counts.
   This remains local review evidence only; encrypted package possession is not
   an external signature over a fully rewritten and re-encrypted archive.
+
+## Continuous Capture repair and lease-authority correction (2026-08-22)
+
+- Marker-present migration-015 repair now reads the packaged migration SQL and
+  executes its complete statements transactionally, so interrupted startup
+  repair and fresh migration share the exact capture table, constraint, and
+  index definitions. Focused damage/restart probes cover every capture table
+  and index plus representative malformed-row rejection.
+- Run-owned writes now require an opaque typed run handle with exact source and
+  lease-token binding, a live strictly-future lease, and a source still in
+  `reconciling`. Renewal uses the same guard. Complete event identity is
+  revalidated before application commit; stale, paused, revoked, abandoned, or
+  replaced runs cannot write events, items, checkpoints, or lifecycle state.
+- Leaving `reconciling` abandons active runs atomically, and expiry recovery
+  degrades only a source that remains reconciling. Sink-expiry replay retains
+  the same idempotency key. This is local beta.6 review evidence only; fresh
+  independent acceptance remains required.

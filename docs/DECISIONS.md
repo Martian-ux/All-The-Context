@@ -3167,9 +3167,9 @@ developer evidence only.
 
 ## ADR-117: Dashboard truth surfaces preserve backend accounting boundaries
 
-**Status:** implemented in the isolated 2026-08-22 beta.6 review candidate,
-including the post-review wire-safety/count/coverage hardening; fresh Product
-Design/API acceptance remains required.
+**Status:** API/DOM behavior accepted locally on 2026-08-22 after independent
+review of the post-review wire-safety/count/coverage hardening. Fresh visual
+Product Design acceptance remains pending; this is not release acceptance.
 
 Sources UI treats item closure and source processing as different dimensions.
 The wire normalizer accepts the exact seven-key `closed_coverage` contract,
@@ -3193,3 +3193,49 @@ count shapes, and a failed coverage refresh clears cached truth metrics while
 retaining the independent search window. The slice is local-only review
 evidence and does not change routes, Core authority, release state, or the
 beta.6 public identity.
+
+## ADR-118: Continuous Capture begins as a provider-neutral local ledger
+
+**Status:** accepted locally on 2026-08-22 after fresh independent
+security/correctness/API review; this is not release or provider acceptance.
+
+Continuous Capture starts with migration 015 contracts only. Core stores
+content-free source metadata, bounded opaque checkpoints, normalized inert
+events, source-scoped provider-item lineage, and foreground run telemetry.
+Creation is disabled; enabling/resuming requires explicit local-only
+acknowledgement; revocation is terminal and clears the reserved credential
+reference. Disabled, paused, and revoked sources make zero adapter calls.
+
+The coordinator durably stages an event, calls an injected idempotent sink with
+a deterministic key, and atomically commits the application receipt, item
+mapping, and checkpoint. Page cursors advance only after all page events apply.
+Duplicate replay is a no-op, while gaps, malformed pages, invalid cursors,
+bounded-limit failures, sink failures, and expired leases degrade the source
+with canonical retry metadata. Provider deletes are constrained to one source
+and item lineage; local corrections remain an explicit sink contract. Full
+snapshot/rescan deletion is deferred rather than inferred from page absence.
+
+No real connector, provider/network implementation, OAuth or credential flow,
+background scheduler, dashboard/package-startup change, current product
+availability, beta.6 identity change, release/publication/acceptance claim,
+live/private Core/data work, or macOS work is included. The unsupported-macOS
+posture and Core authority boundary remain unchanged.
+
+## ADR-119: Continuous Capture repair and lease capability authority
+
+**Status:** accepted locally on 2026-08-22 after fresh independent
+security/correctness review; this is not release or provider acceptance.
+
+Migration-015 startup repair reads the packaged authoritative migration and
+executes its statements one at a time inside the existing transaction. This
+keeps marker-present repair invariant-equivalent to fresh migration without a
+second weakened schema definition or `executescript` auto-commit behavior.
+
+After `begin_run`, every run-owned mutation carries a typed handle binding the
+run ID, source ID, and lease token. The ledger checks that exact capability,
+`running` state, strictly future expiry, and `reconciling` source state in the
+mutation transaction. Renewal has the same guard. Leaving `reconciling`
+atomically abandons active runs, and expiry recovery only degrades sources
+that still reconcile; a sink result crossing expiry is not committed and is
+safe to replay under the same idempotency key. These changes preserve the
+provider-neutral, foreground-only, beta.6 and unsupported-macOS boundaries.

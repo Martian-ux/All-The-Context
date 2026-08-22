@@ -30,10 +30,19 @@ state:
   preserving the independent search result counts. The dashboard suite is 54
   tests across 2 files.
 
-This is a local-only beta.6 review candidate. Synthetic loopback browser checks
-do not inspect real exports or live/private Core data, and do not constitute
-release, Product Design, or API acceptance; fresh independent acceptance
-remains required.
+This is a local-only beta.6 review candidate. Fresh independent API/DOM review
+accepted the exact hardening commit. Synthetic loopback browser checks do not
+inspect real exports or live/private Core data and do not constitute release or
+fresh visual Product Design acceptance; visual acceptance remains pending.
+
+### 2026-08-22 Continuous Capture foundation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Provider-neutral capture contracts and bounded ledger | `capture.py`; migration `015_continuous_capture.sql`; `docs/protocols/CAPTURE.md`; `tests/unit/test_capture.py` | Implemented locally for source/checkpoint/event/item/run storage, canonical marker-present repair, exact schema constraints/indexes, lifecycle transitions, typed lease capability authority, ordered page replay, stable lineage, canonical errors, lag/backoff/lease telemetry, and content-free projections. No real provider, network, OAuth, scheduler, dashboard, or package-startup behavior is implemented or claimed |
+| Exact stage/apply/commit replay semantics | `CaptureCoordinator`; `CaptureApplicationSink`; deterministic fake adapter/sink; crash-before-commit replay tests | Implemented locally: durable staging precedes the injected idempotent sink; receipt, item mapping, and event checkpoint commit atomically; duplicate replay is a no-op; failed/out-of-order/gap events do not advance the checkpoint. Full snapshot/rescan deletion is deferred |
+| Authenticated content-free admin API and CLI | `/v1/admin/capture/*`; `atc capture ...`; API/CLI tests | Implemented locally with existing admin authentication and loopback defaults. Cursors, payloads, credential references, provider tokens, and raw errors are not exposed. If no adapter is registered, run fails safely with `capture_adapter_unavailable` and no network call |
+| Current product/release availability | beta.6 status and identity docs retained; no dashboard/package startup edits | Independent security/correctness/API review accepted the local foundation only. Real provider availability, hosted CI, release acceptance, publication, live/private data review, and macOS acceptance remain outside scope |
 
 ### 2026-08-22 provider-terminal Import Truth correction
 
