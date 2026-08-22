@@ -93,6 +93,14 @@ class InvalidStateError(StorageError):
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 SOURCE_BLOB_CHUNK_BYTES = 8 * 1024 * 1024
 SOURCE_REBUILD_REASON = "replaced by source rebuild"
+UserMutationKind = Literal[
+    "restore",
+    "correction",
+    "availability_change",
+    "delete",
+    "source_delete",
+    "legacy_user_edit",
+]
 # Import-operation liveness must never sit on the full 10s busy budget: qualified
 # Linux gaps clustered near that ceiling when BEGIN IMMEDIATE waited out a lock.
 # Fail-fast and let the heartbeat scheduler retry within the public 5s allowance.
@@ -2032,6 +2040,7 @@ class CoreStore:
                     reason=f"source deleted: {reason}",
                     actor=actor,
                     recompute_integrity=False,
+                    user_mutation="source_delete",
                 )
                 connection.execute(
                     "INSERT INTO source_deletion_members"
@@ -2068,6 +2077,7 @@ class CoreStore:
                 source_id,
                 reason=reason,
                 actor=actor,
+                user_mutation=True,
             )
 
     def _restore_source_tx(
@@ -2077,6 +2087,7 @@ class CoreStore:
         *,
         reason: str,
         actor: str,
+        user_mutation: bool = False,
     ) -> dict[str, Any]:
         source = connection.execute(
             "SELECT * FROM source_records WHERE id=?", (source_id,)
@@ -2118,6 +2129,7 @@ class CoreStore:
                     reason=f"source restored: {reason}",
                     actor=actor,
                     recompute_integrity=False,
+                    user_mutation=user_mutation,
                 )
                 restored_record_ids.append(record_id)
             connection.execute(
@@ -2505,23 +2517,41 @@ class CoreStore:
             return withdrawn
 
     @staticmethod
-    def _record_has_user_edit_tx(connection: sqlite3.Connection, record_id: str) -> bool:
-        correction = connection.execute(
-            "SELECT 1 FROM context_candidates WHERE supersedes=? "
-            "AND lower(kind)='correction' LIMIT 1",
-            (record_id,),
+    def _record_user_mutation_tx(
+        connection: sqlite3.Connection,
+        record_id: str,
+        *,
+        mutation_kind: UserMutationKind,
+        actor: str,
+    ) -> None:
+        record = connection.execute(
+            "SELECT vault_id FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
-        if correction is not None:
-            return True
-        versions = connection.execute(
-            "SELECT reason FROM context_record_versions WHERE record_id=?",
-            (record_id,),
-        ).fetchall()
-        return any(
-            "availability changed" in str(row["reason"] or "").casefold()
-            or "by user" in str(row["reason"] or "").casefold()
-            or "explicit user correction" in str(row["reason"] or "").casefold()
-            for row in versions
+        if record is None:
+            raise NotFoundError("context record not found")
+        connection.execute(
+            "INSERT INTO context_user_mutations"
+            "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                new_id(),
+                record["vault_id"],
+                record_id,
+                mutation_kind,
+                "local_user",
+                actor,
+                utc_now(),
+            ),
+        )
+
+    @staticmethod
+    def _record_has_user_edit_tx(connection: sqlite3.Connection, record_id: str) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM context_user_mutations WHERE record_id=? LIMIT 1",
+                (record_id,),
+            ).fetchone()
+            is not None
         )
 
     def create_client(self, request: ClientCreate) -> tuple[ClientPrincipal, str]:
@@ -4434,6 +4464,9 @@ class CoreStore:
                     record_id,
                     reason="Explicit user forget request",
                     actor=actor,
+                    user_mutation=(
+                        None if origin == ObservationOrigin.ARCHIVE_IMPORT else "delete"
+                    ),
                 )
         elif decision.disposition == ObservationDisposition.IGNORED:
             self._set_observation_decision_tx(
@@ -4990,6 +5023,12 @@ class CoreStore:
             ).fetchone()
             assert updated is not None
             self._insert_version(connection, updated, reason)
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind="correction",
+                actor=actor,
+            )
             self._replace_fts(connection, updated)
             if str(updated["availability"]) == Availability.ALWAYS.value:
                 self._emit_event(
@@ -5035,6 +5074,12 @@ class CoreStore:
             ).fetchone()
             assert updated is not None
             self._insert_version(connection, updated, "availability changed")
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind="availability_change",
+                actor=actor,
+            )
             if availability == Availability.ALWAYS:
                 self._emit_event(
                     connection, updated, "record_upserted", self._relay_payload(updated)
@@ -5053,6 +5098,7 @@ class CoreStore:
                 record_id,
                 reason=reason,
                 actor=actor,
+                user_mutation="delete",
             )
 
     def _delete_record_tx(
@@ -5063,6 +5109,7 @@ class CoreStore:
         reason: str,
         actor: str,
         recompute_integrity: bool = True,
+        user_mutation: UserMutationKind | None = None,
     ) -> dict[str, Any]:
         record = connection.execute(
             "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)
@@ -5075,6 +5122,13 @@ class CoreStore:
                 return dict(existing)
             raise NotFoundError("context record not found")
         safe_reason = redact_secret_reason(reason)
+        if user_mutation is not None:
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind=user_mutation,
+                actor=actor,
+            )
         now = utc_now()
         version = int(record["version"]) + 1
         tombstone_hash = _hash_text(f"{record_id}:{version}:{now}")
@@ -5143,6 +5197,7 @@ class CoreStore:
                     current,
                     reason=reason,
                     actor=actor,
+                    user_mutation=True,
                 )
             else:
                 historical = connection.execute(
@@ -5238,6 +5293,12 @@ class CoreStore:
             ).fetchone()
             assert restored is not None
             self._insert_version(connection, restored, reason)
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind="restore",
+                actor=actor,
+            )
             self._replace_fts(connection, restored)
             if target_availability == Availability.ALWAYS:
                 self._emit_event(
@@ -5263,6 +5324,7 @@ class CoreStore:
         reason: str,
         actor: str,
         recompute_integrity: bool = True,
+        user_mutation: bool = False,
     ) -> ContextRecordOut:
         if current["deleted_at"] is None:
             return self._record_out(current)
@@ -5281,6 +5343,13 @@ class CoreStore:
         ).fetchone()
         assert restored is not None
         self._insert_version(connection, restored, reason)
+        if user_mutation:
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind="restore",
+                actor=actor,
+            )
         self._replace_fts(connection, restored)
         if availability == Availability.ALWAYS:
             self._emit_event(

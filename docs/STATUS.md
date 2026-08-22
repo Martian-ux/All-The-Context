@@ -119,9 +119,11 @@ idempotent session when source finalization is interrupted; a generation/session
 publish marker written in the cutover transaction prevents a retry from
 withdrawing the replacement a second time.
 
-Only current approved records with Core origin `archive_import` and no detected
-correction, user edit, availability/privacy change, or deletion are replacement
-targets. Direct/local-admin records that retain the source ID remain in place.
+Only current approved records with Core origin `archive_import` and no typed
+local mutation, ordinary deletion, or invalid identity are replacement targets.
+Direct/local-admin records that retain the source ID remain in place; public
+restore retains their truthful source provenance while the ledger blocks later
+replacement.
 Synthetic focused coverage passes for parse failure, injected policy-ingestion
 rollback, cancellation, corrected records, and local-authored records. Full
 Ruff passes; mypy reports no issues across 81 source files; and pytest passes
@@ -1549,3 +1551,22 @@ state is already noncurrent and creates no user queue.
   migration, export/restore, Core API, provider-rebuild, purge, and relay
   checks pass locally; full-suite and hosted CI evidence remain outside this
   lane.
+
+## Memory Truth restore-boundary correction (2026-08-22)
+
+- Core migration `013_user_mutation_boundary.sql` adds an append-only,
+  constraint-backed `context_user_mutations` ledger. Public/local restore,
+  correction, availability, and explicit deletion paths write typed
+  `local_user` rows; source rebuild checks the ledger instead of inferring
+  edits from free-form version reasons. Original `archive_import` provenance
+  remains truthful.
+- Internal duplicate-import recovery and source-rebuild reapply paths do not
+  write user-mutation rows. The ledger survives restart, portable export/restore,
+  and purge; imported rebuild tombstones remain ordinary barriers. Legacy
+  databases and pre-013 exports infer one deterministic `legacy_user_edit` row
+  per affected record at most, and repeated restores remain idempotent.
+- Focused Memory Truth/storage/migration/export checks cover benign and
+  internal-looking restore reasons, restart/portable restore, append-only and
+  tamper barriers, legacy/partial migration, and stable-ID rebuild behavior.
+  This is an isolated review candidate; final acceptance, full-suite, hosted
+  CI, live Core, and private-export inspection remain outside this lane.

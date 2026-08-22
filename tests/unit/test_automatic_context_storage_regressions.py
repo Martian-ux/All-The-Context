@@ -161,8 +161,8 @@ def test_migration_005_recovers_after_partial_application_and_restart(
         )
 
     store = CoreStore(database)
-    assert store.migrate() == 12
-    assert store.migrate() == 12
+    assert store.migrate() == 13
+    assert store.migrate() == 13
 
     with store.connect() as connection:
         assert (
@@ -216,8 +216,8 @@ def test_memory_truth_migrations_recover_after_unrecorded_alter_and_restart(
         connection.execute("ALTER TABLE context_candidates ADD COLUMN record_key TEXT")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 12
-    assert restarted.migrate() == 12
+    assert restarted.migrate() == 13
+    assert restarted.migrate() == 13
     with restarted.connect() as connection:
         candidate_columns = {
             str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
@@ -232,13 +232,13 @@ def test_memory_truth_migrations_recover_after_unrecorded_alter_and_restart(
         versions = {
             int(row["version"])
             for row in connection.execute(
-                "SELECT version FROM schema_migrations WHERE version IN (10,11,12)"
+                "SELECT version FROM schema_migrations WHERE version IN (10,11,12,13)"
             )
         }
         assert "record_key" in candidate_columns
         assert "record_key" in record_columns
         assert {"deletion_origin", "deletion_source_id"} <= tombstone_columns
-        assert versions == {10, 11, 12}
+        assert versions == {10, 11, 12, 13}
 
 
 def test_delete_history_is_contiguous_and_historical_restore_recovers_provenance(

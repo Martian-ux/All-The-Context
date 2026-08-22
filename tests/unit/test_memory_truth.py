@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
+from allthecontext.export import create_export, restore_export
 from allthecontext.models import (
     ApprovalRequest,
     CandidateInput,
@@ -13,7 +15,12 @@ from allthecontext.models import (
     MemoryTruthStatus,
     ObservationDisposition,
 )
-from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
+from allthecontext.storage import (
+    SOURCE_REBUILD_REASON,
+    CoreStore,
+    InvalidStateError,
+    source_rebuild_marker,
+)
 from fastapi.testclient import TestClient
 
 
@@ -61,6 +68,62 @@ def _archive_observation(
         CoverageReport(available=["fiction-archive"], complete=True),
     )
     return str(batch["candidate_ids"][0])
+
+
+def _publish_rebuild(
+    store: CoreStore,
+    source_id: str,
+    *,
+    content: str,
+    source_reference: str,
+    session_key: str,
+    generation: int = 1,
+) -> tuple[list[str], str]:
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source_id],
+        unavailable_sources=[],
+        idempotency_key=f"archive:{source_id}:fixture:rebuild:{generation}",
+    )
+    session_id = str(session["session_id"])
+    batch = store.submit_batch(
+        session_id,
+        f"batch-{session_key}",
+        [
+            CandidateInput(
+                kind="preference",
+                content=content,
+                source_id=source_id,
+                source_reference=source_reference,
+                source_service="fiction-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fiction-archive"], complete=True),
+        publish=False,
+    )
+    marker = source_rebuild_marker(
+        source_id, store.get_source(source_id).content_hash, generation
+    )
+    store.update_source_import(
+        source_id,
+        import_status="processing",
+        metadata={
+            "rebuild_generation": generation,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": marker,
+        },
+        parser_warnings=[],
+    )
+    return store.publish_source_rebuild(
+        source_id,
+        session_id,
+        rebuild_generation=generation,
+    ), str(batch["candidate_ids"][0])
 
 
 def test_public_source_withdrawal_cannot_mint_rebuild_tombstone(tmp_path: Path) -> None:
@@ -171,6 +234,280 @@ def test_valid_publish_binds_rebuild_tombstone_to_session_generation_and_marker(
     # replacement observation, so the stable-ID history is the durable proof.
     assert tombstone is None
     assert store.record_history(record_id)
+
+
+@pytest.mark.parametrize("reason", ["audited restore", SOURCE_REBUILD_REASON])
+def test_user_restore_marker_blocks_later_source_rebuild_without_replacement(
+    tmp_path: Path, reason: str
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"restore boundary archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="I prefer concise answers.",
+        source_reference="message:restore-boundary",
+        session_key="restore-boundary-initial",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+
+    store.delete_record(record_id, reason="ordinary deletion before restore")
+    store.restore_record(record_id, reason=reason)
+
+    with store.connect() as connection:
+        mutation = connection.execute(
+            "SELECT mutation_kind,mutation_origin FROM context_user_mutations "
+            "WHERE record_id=? ORDER BY created_at DESC,id LIMIT 1",
+            (record_id,),
+        ).fetchone()
+    assert mutation is not None
+    assert tuple(mutation) == ("restore", "local_user")
+
+    withdrawn, replacement_observation_id = _publish_rebuild(
+        store,
+        source.id,
+        content="I prefer concise answers.",
+        source_reference="message:restore-boundary",
+        session_key="restore-boundary-rebuild",
+    )
+
+    assert withdrawn == []
+    assert store.get_observation(replacement_observation_id).record_id == record_id
+    assert store.get_record(record_id).id == record_id
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_records WHERE source_id=? AND record_key IS NOT NULL",
+            (source.id,),
+        ).fetchone()[0] == 1
+
+
+def test_user_mutation_marker_survives_restart_export_restore_and_purge(tmp_path: Path) -> None:
+    database = tmp_path / "source.sqlite3"
+    store = CoreStore(database)
+    store.initialize_vault()
+    source = store.add_source(
+        b"portable restore boundary archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="I prefer local backups.",
+        source_reference="message:portable-boundary",
+        session_key="portable-boundary-initial",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+    pre_marker_package = tmp_path / "pre-marker.atcexp"
+    create_export(
+        database,
+        pre_marker_package,
+        "correct horse battery staple",
+        include_sources=True,
+    )
+    store.delete_record(record_id, reason="delete before portable restore")
+    store.restore_record(record_id, reason="portable restore")
+
+    restarted = CoreStore(database)
+    restarted.initialize_vault()
+    with restarted.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+        ).fetchone()[0] == 2
+
+    # An older backup has no ledger row and must not be able to clear the
+    # destination's already-recorded user mutation.
+    restore_export(pre_marker_package, database, "correct horse battery staple")
+    with restarted.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+        ).fetchone()[0] == 3
+        assert connection.execute(
+            "SELECT 1 FROM context_user_mutations WHERE record_id=? AND mutation_kind='restore'",
+            (record_id,),
+        ).fetchone() is not None
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations "
+            "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
+            (record_id,),
+        ).fetchone()[0] == 1
+
+    # Repeating the same older restore must not accumulate inferred rows or
+    # create another typed user action.
+    restore_export(pre_marker_package, database, "correct horse battery staple")
+    with restarted.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+        ).fetchone()[0] == 3
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations "
+            "WHERE record_id=? AND mutation_kind IN ('delete','restore')",
+            (record_id,),
+        ).fetchone()[0] == 2
+
+    package = tmp_path / "portable-boundary.atcexp"
+    create_export(database, package, "correct horse battery staple", include_sources=True)
+    destination = tmp_path / "restored.sqlite3"
+    restored = CoreStore(destination)
+    restored.initialize_vault()
+    restore_export(package, destination, "correct horse battery staple")
+    with restored.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+        ).fetchone()[0] == 3
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations "
+            "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
+            (record_id,),
+        ).fetchone()[0] == 1
+
+    purge = restored.purge(
+        "record",
+        record_id,
+        confirmation=restored.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    assert purge["target_id"] == record_id
+    with restored.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+        ).fetchone()[0] == 3
+
+
+def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restore(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    store = CoreStore(database)
+    store.initialize_vault()
+    source = store.add_source(
+        b"legacy restore boundary archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="I prefer durable history.",
+        source_reference="message:legacy-boundary",
+        session_key="legacy-boundary-initial",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+    store.delete_record(record_id, reason="legacy delete")
+    store.restore_record(record_id, reason="arbitrary legacy restore reason")
+
+    with store.connect() as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute("DELETE FROM context_user_mutations WHERE record_id=?", (record_id,))
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE context_user_mutations SET actor='tampered' WHERE record_id=?",
+                (record_id,),
+            )
+
+    partial_database = tmp_path / "partial-013.sqlite3"
+    partial = CoreStore(partial_database)
+    partial.initialize_vault()
+    with sqlite3.connect(partial_database) as connection:
+        connection.execute("DROP TRIGGER reject_context_user_mutations_delete")
+        connection.execute("DELETE FROM schema_migrations WHERE version=13")
+        vault_id = str(connection.execute("SELECT id FROM vaults LIMIT 1").fetchone()[0])
+        connection.execute(
+            "INSERT INTO context_user_mutations"
+            "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                "partial-marker",
+                vault_id,
+                "missing-record",
+                "restore",
+                "local_user",
+                "test",
+                "2026-08-22T00:00:00Z",
+            ),
+        )
+    partial_restarted = CoreStore(partial_database)
+    assert partial_restarted.migrate() == 13
+    assert partial_restarted.migrate() == 13
+    with partial_restarted.connect() as connection, pytest.raises(
+        sqlite3.IntegrityError, match="append-only"
+    ):
+        connection.execute(
+            "DELETE FROM context_user_mutations WHERE record_id='missing-record'"
+        )
+
+    # Recreate a pre-013 database boundary: the record history remains, but the
+    # migration marker and new ledger table are absent when Core restarts.
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE context_user_mutations")
+        connection.execute("DELETE FROM schema_migrations WHERE version=13")
+    legacy_restarted = CoreStore(database)
+    assert legacy_restarted.migrate() == 13
+    assert legacy_restarted.migrate() == 13
+    with legacy_restarted.connect() as connection:
+        marker = connection.execute(
+            "SELECT mutation_kind,mutation_origin,actor FROM context_user_mutations "
+            "WHERE record_id=?",
+            (record_id,),
+        ).fetchone()
+    assert marker is not None
+    assert tuple(marker) == ("legacy_user_edit", "local_user", "migration-013")
+
+
+def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy-rebuild.sqlite3"
+    store = CoreStore(database)
+    store.initialize_vault()
+    source = store.add_source(
+        b"legacy automatic rebuild archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="The original automatic value.",
+        source_reference="message:legacy-automatic",
+        session_key="legacy-automatic-initial",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+
+    withdrawn, _ = _publish_rebuild(
+        store,
+        source.id,
+        content="A changed automatic value.",
+        source_reference="message:legacy-automatic-new",
+        session_key="legacy-automatic-rebuild",
+    )
+    assert withdrawn == [record_id]
+    with store.connect() as connection:
+        tombstone = connection.execute(
+            "SELECT deletion_origin FROM deletion_tombstones WHERE record_id=?",
+            (record_id,),
+        ).fetchone()
+    assert tombstone is not None
+    assert tombstone[0] == "source_rebuild"
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("DROP TABLE context_user_mutations")
+        connection.execute("DELETE FROM schema_migrations WHERE version=13")
+    restarted = CoreStore(store.database_path)
+    assert restarted.migrate() == 13
+    with restarted.connect() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM context_user_mutations WHERE record_id=?",
+            (record_id,),
+        ).fetchone() is None
 
 
 def test_manual_approval_override_rekeys_candidate_and_preserves_delete_barrier(

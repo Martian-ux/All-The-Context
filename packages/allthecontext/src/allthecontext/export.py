@@ -536,6 +536,43 @@ def _normalize_deletion_tombstone_row(row: dict[str, Any]) -> None:
     row["rebuild_source_marker"] = None
 
 
+def _backfill_legacy_user_mutations(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    """Recover pre-013 user-edit evidence while keeping new writes explicit."""
+
+    required_records = {"id", "vault_id", "observation_origin", "updated_at", "created_at"}
+    if not {
+        "context_user_mutations",
+        "context_records",
+        "context_record_versions",
+        "deletion_tombstones",
+    }.issubset(tables) or not required_records.issubset(
+        columns_by_table.get("context_records", set())
+    ) or "deletion_origin" not in columns_by_table.get("deletion_tombstones", set()):
+        return
+    connection.execute(
+        "INSERT OR IGNORE INTO context_user_mutations"
+        "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
+        "SELECT 'legacy-013:' || r.id,r.vault_id,r.id,'legacy_user_edit',"
+        "'local_user','migration-013',COALESCE(r.updated_at,r.created_at) "
+        "FROM context_records r WHERE r.observation_origin='archive_import' "
+        "AND NOT EXISTS (SELECT 1 FROM deletion_tombstones t "
+        "WHERE t.record_id=r.id AND t.deletion_origin='source_rebuild') AND ("
+        "EXISTS (SELECT 1 FROM context_candidates c "
+        "WHERE c.supersedes=r.id AND lower(c.kind)='correction') OR "
+        "EXISTS (SELECT 1 FROM context_record_versions v WHERE v.record_id=r.id AND ("
+        "lower(v.reason) LIKE '%availability changed%' OR "
+        "lower(v.reason) LIKE '%by user%' OR "
+        "lower(v.reason) LIKE '%explicit user correction%' OR "
+        "CASE WHEN json_valid(v.snapshot_json) THEN "
+        "json_type(v.snapshot_json,'$.deleted_at') END='text'))"
+        ")"
+    )
+
+
 def _recompute_record_keys(
     connection: sqlite3.Connection,
     tables: set[str],
@@ -625,6 +662,7 @@ def _post_restore_upgrade(
         if assignments:
             connection.execute(f"UPDATE context_records SET {','.join(assignments)}")
 
+    _backfill_legacy_user_mutations(connection, tables, columns_by_table)
     _recompute_record_keys(connection, tables, columns_by_table)
 
     if "vaults" in tables and destination_schema:

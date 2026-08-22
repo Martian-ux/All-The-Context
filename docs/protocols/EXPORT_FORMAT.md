@@ -16,8 +16,11 @@ entries, verifies every manifest hash, and uses duplicate-safe inserts into an
 already migrated clean Core. `--dry-run` verifies without writing.
 
 The automatic-policy schema exports observations, disposition fields, policy
-versions, observation/record evidence links, optional slot metadata, and opaque
-purge tombstones/jobs. Derived integrity groups and search indexes are excluded.
+versions, observation/record evidence links, optional slot metadata, opaque
+purge tombstones/jobs, and the append-only `context_user_mutations` ledger.
+Derived integrity groups and search indexes are excluded. A legacy package that
+does not contain the ledger is upgraded from durable historical evidence with
+one deterministic `legacy_user_edit` row per affected record at most.
 During restore, both existing and incoming purge tombstones are loaded before
 content rows. A pre-purge record or source with a tombstoned stable ID, its
 observation/history/deletion event, its source blob, and attributable batch hash

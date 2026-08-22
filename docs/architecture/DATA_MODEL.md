@@ -20,6 +20,7 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | `client_registration` / `permission_grant` | Identity, credential hash, scopes, and server-known client origin |
 | `replication_event` / `replication_checkpoint` | Ordered signed Core projection; never an alternate authority |
 | `deletion_tombstone` | Durable evidence that content is reversibly absent |
+| `context_user_mutation` | Append-only typed local mutation ledger used as a rebuild barrier |
 | integrity group/member | Derived duplicate/conflict diagnostics; never authority or a user task queue |
 | `purge_tombstone` | Minimum opaque stable-ID replay barrier, with no raw content hash |
 | `purge_job` | Crash-resumable logical-delete/compaction phase metadata |
@@ -64,7 +65,14 @@ source ID/reference, kind and slot keys, and a canonical value fingerprint.
 Only an untouched automatic record with a matching internal source-rebuild
 tombstone can reuse its record ID. An ordinary user deletion blocks matching
 archive evidence from creating any replacement current record until an
-authorized restore. Distinct values that reuse one source reference remain
+authorized restore. Every public/local restore, correction, availability
+change, and explicit deletion path writes a typed `local_user` row to
+`context_user_mutations`; source rebuild checks that ledger rather than
+interpreting free-form version reasons. The ledger has no record foreign key so
+purge can remove record content while retaining the opaque mutation barrier.
+Legacy databases and pre-ledger exports infer at most one
+`legacy_user_edit` row from durable historical evidence, with a unique
+per-record boundary. Distinct values that reuse one source reference remain
 distinct records.
 
 ## Slots, conflicts, and reinforcement

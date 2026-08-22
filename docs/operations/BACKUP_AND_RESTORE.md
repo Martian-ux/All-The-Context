@@ -3,7 +3,8 @@
 Exports are application-level packages, not copies of a live SQLite file. They
 include a manifest, schema version, content hashes, current-context history,
 observations, automatic dispositions and policy versions, evidence links,
-source metadata and blobs, permissions, and tombstones.
+source metadata and blobs, permissions, tombstones, and the typed local user
+mutation ledger that guards source-rebuild reapplication.
 
 The dashboard **Backup** page creates and downloads a complete encrypted export
 in one operation. It includes source material and audit events. The passphrase
@@ -49,6 +50,12 @@ tombstoned record or source stable ID from an older export. Do not discard the
 current tombstone-bearing vault and then expect a pre-purge export to remember a
 purge it predates. Existing backups remain external copies outside Core's purge
 boundary and must be expired or destroyed under the operator's backup policy.
+
+`context_user_mutations` is append-only. Restoring an older package never
+deletes destination-local mutation rows; a pre-013 package may cause Core to
+infer one deterministic `legacy_user_edit` barrier from a prior deleted
+snapshot, but repeated restores do not add another inferred row. Imported
+source-rebuild provenance is still downgraded to an ordinary deletion barrier.
 
 A one-click dashboard restore is not a beta requirement. The required packaged
 helper may remain a documented CLI/native mode, but it must implement the safe

@@ -50,6 +50,12 @@ Relay compatibility, it remains a staged observation until Core evaluates it.
 Administrative permission, availability, restoration, and irreversible purge
 tools remain absent from the model-facing MCP surface.
 
+The separate authenticated Core administrator endpoints for record/source
+restore are local user mutation boundaries. A successful restore preserves the
+record's original source provenance and writes a typed append-only mutation
+ledger row; the free-form request reason is descriptive only. Automatic
+duplicate-import recovery and source-rebuild reapply do not write that row.
+
 `search_context` reports the exact count after authorization, request filters,
 temporal selection, and admissibility; its cursor can page through every
 permitted match. `bootstrap_context` remains a separate bounded retrieval and

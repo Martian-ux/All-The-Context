@@ -2921,3 +2921,26 @@ regressions cover tampered provenance, delete/reimport replacement prevention,
 idempotent approval evidence, and near-constant query count as the database
 grows. This is additive to the existing purge, restore, relay, export, and
 provider contracts.
+
+## ADR-109: Explicit local mutation ledger guards restore/rebuild boundaries
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Source-rebuild eligibility must not infer human edits from free-form version
+reasons. Migration 013 adds the append-only `context_user_mutations` ledger.
+Public/local record restore, source restore, correction, availability change,
+and explicit deletion paths write typed rows with `mutation_origin='local_user'`.
+The original record/source observation provenance is not rewritten. Automatic
+duplicate-import recovery, archive-import forget evaluation, and source-rebuild
+reapply remain distinct because they do not write a local mutation row.
+
+The ledger deliberately has no record foreign key: purge removes record content
+but retains the opaque stable-ID mutation barrier. Export/restore uses
+duplicate-safe inserts and never deletes destination rows. Imported
+source-rebuild tombstones remain ordinary barriers. A pre-013 database or
+export is upgraded by a deterministic, unique-per-record `legacy_user_edit`
+row derived from durable correction or deleted-snapshot evidence; this one
+compatibility fact is distinct from typed explicit actions and repeated legacy
+restores are idempotent. SQLite checks and append-only triggers fail closed on
+invalid, copied, or tampered ledger mutations.
