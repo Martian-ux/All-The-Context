@@ -3408,3 +3408,23 @@ An oversized standalone CSV is one `unavailable` item; malformed CSV remains
 one `unparsed` item. The focused synthetic tests assert no exception, one
 closed item, exact bucket identity, and incomplete coverage. No provider,
 network, private data, release state, or unsupported-macOS posture changes.
+
+## ADR-128: Forwarded context-pack accounting is boundary-reconciled
+
+**Status:** accepted locally on 2026-08-22 after synthetic Edge filter and
+envelope-trim reproduction; this is not release or provider acceptance.
+
+`pack_metadata` is provider-facing accounting for the pack at the boundary
+where it is emitted. Core reports its bounded selection; Edge recomputes the
+returned-item count, exact omission complement, character usage, and
+provenance-backed returned-item count after any ACL or envelope projection.
+The model rejects `selected_count > candidate_count`, an incorrect omission
+complement, provenance exceeding selected items, or suppression counts
+exceeding omitted items.
+
+Duplicate/conflict suppression counts remain explicitly Core-selection-scoped,
+because Edge receives no Core suppression-group identities from which to
+recompute those reason-specific counts. Edge therefore preserves only bounded
+claims about candidates still omitted and never presents ACL or envelope
+removals as duplicate/conflict suppression. No Core authority, transport,
+provider support, release state, or macOS posture changes.

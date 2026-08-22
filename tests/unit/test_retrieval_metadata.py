@@ -17,9 +17,9 @@ from pydantic import ValidationError
 
 def _metadata_payload() -> dict[str, object]:
     return {
-        "candidate_count": 5,
+        "candidate_count": MAX_CONTEXT_PACK_CANDIDATE_COUNT,
         "selected_count": 2,
-        "omitted_count": 3,
+        "omitted_count": MAX_CONTEXT_PACK_CANDIDATE_COUNT - 2,
         "budget_chars": 12_000,
         "used_chars": 1_024,
         "provenance_backed_count": 1,
@@ -58,8 +58,45 @@ def test_context_pack_metadata_accepts_each_explicit_count_boundary(
 ) -> None:
     payload = _metadata_payload()
     payload[field] = maximum
+    if field == "omitted_count":
+        payload["selected_count"] = 0
+        payload["provenance_backed_count"] = 0
+        payload["duplicate_suppressed_count"] = 0
+        payload["conflict_suppressed_count"] = 0
+    elif field == "selected_count":
+        payload["omitted_count"] = MAX_CONTEXT_PACK_CANDIDATE_COUNT - maximum
+        payload["provenance_backed_count"] = min(
+            int(payload["provenance_backed_count"]), maximum
+        )
+    elif field == "provenance_backed_count":
+        payload["selected_count"] = maximum
+        payload["omitted_count"] = MAX_CONTEXT_PACK_CANDIDATE_COUNT - maximum
+    elif field in {"duplicate_suppressed_count", "conflict_suppressed_count"}:
+        payload["selected_count"] = 0
+        payload["omitted_count"] = MAX_CONTEXT_PACK_CANDIDATE_COUNT
+        payload["provenance_backed_count"] = 0
 
     assert ContextPackMetadata.model_validate(payload).model_dump(mode="json")[field] == maximum
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"candidate_count": 1},
+        {"omitted_count": 2},
+        {"provenance_backed_count": 3},
+        {"duplicate_suppressed_count": MAX_CONTEXT_PACK_CANDIDATE_COUNT},
+        {"conflict_suppressed_count": MAX_CONTEXT_PACK_CANDIDATE_COUNT},
+    ],
+)
+def test_context_pack_metadata_rejects_cross_field_count_contradictions(
+    changes: dict[str, object],
+) -> None:
+    payload = _metadata_payload()
+    payload.update(changes)
+
+    with pytest.raises(ValidationError):
+        ContextPackMetadata.model_validate(payload)
 
 
 @pytest.mark.parametrize(

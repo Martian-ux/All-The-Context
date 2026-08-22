@@ -1486,6 +1486,13 @@ state is already noncurrent and creates no user queue.
   exact character budgets. Its standalone benchmark passes all 11 gates with
   semantic coverage `1.0`, zero set violations, and deterministic input-order
   behavior.
+- Edge forwarding now reconciles context-pack metadata to the final returned
+  items after scope filtering or envelope trimming: selected, omitted, used,
+  and provenance counts are recomputed; duplicate/conflict aggregates are
+  explicitly Core-selection-scoped and bounded by final omissions; and the
+  public schema rejects contradictory count relationships. Focused synthetic
+  filter/trim regressions cover the former provenance contradiction. This is
+  local correctness evidence only.
 - The optional 384-dimensional float32 dense shadow remains disabled,
   in-memory, nonauthoritative, and outside default packaging. Synthetic exact scan
   is deterministic but misses its 10k target: `400.294955 ms` warm p95 versus

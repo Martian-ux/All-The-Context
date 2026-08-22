@@ -402,7 +402,12 @@ def test_forwarding_record_scope_matching_matches_relay_semantics(
 
 def test_edge_bootstrap_metadata_reconciles_filtered_items() -> None:
     payload: dict[str, object] = {
-        "items": [{"content": "forwarded"}],
+        "items": [
+            {
+                "content": "forwarded",
+                "provenance": {"source_reference": "synthetic-core-pack"},
+            }
+        ],
         "used_chars": 0,
         "pack_metadata": {
             "candidate_count": 5,
@@ -412,6 +417,9 @@ def test_edge_bootstrap_metadata_reconciles_filtered_items() -> None:
             "candidate_pool_truncated": True,
             "truncated": True,
             "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 2,
+            "duplicate_suppressed_count": 99,
+            "conflict_suppressed_count": 99,
         },
     }
 
@@ -424,6 +432,12 @@ def test_edge_bootstrap_metadata_reconciles_filtered_items() -> None:
     assert metadata["omitted_count"] == 4
     assert metadata["used_chars"] == len("forwarded") + 64
     assert payload["used_chars"] == metadata["used_chars"]
+    assert metadata["provenance_backed_count"] == 1
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] == 4
+    assert metadata["conflict_suppressed_count"] == 4
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
     assert metadata["candidate_pool_truncated"] is True
     assert metadata["truncated"] is True
     assert metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
@@ -459,7 +473,13 @@ def test_edge_reconciliation_drops_untrusted_reasons_and_unknown_edge_reason() -
 
 
 def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
-    items = [{"content": "x" * 5_000} for _ in range(20)]
+    items = [
+        {
+            "content": "x" * 5_000,
+            "source_service": "synthetic-core",
+        }
+        for _ in range(20)
+    ]
     original_item_count = len(items)
     payload: dict[str, object] = {
         "state": "available",
@@ -473,6 +493,9 @@ def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
             "candidate_pool_truncated": True,
             "truncated": True,
             "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 20,
+            "duplicate_suppressed_count": 4,
+            "conflict_suppressed_count": 4,
         },
     }
 
@@ -488,6 +511,10 @@ def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
     expected_used = sum(len(str(item["content"])) + 64 for item in bounded_items)
     assert metadata["used_chars"] == expected_used
     assert bounded["used_chars"] == expected_used
+    assert metadata["provenance_backed_count"] == len(bounded_items)
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
     assert metadata["candidate_pool_truncated"] is True
     assert metadata["truncated"] is True
     assert metadata["truncation_reasons"] == ["candidate_pool", "edge_envelope"]
@@ -495,7 +522,13 @@ def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
 
 
 def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() -> None:
-    items = [{"content": "x" * 5_000} for _ in range(20)]
+    items = [
+        {
+            "content": "x" * 5_000,
+            "provenance": {"source_reference": "synthetic-core-pack"},
+        }
+        for _ in range(20)
+    ]
     payload: dict[str, object] = {
         "state": "available",
         "items": items,
@@ -508,6 +541,9 @@ def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() 
             "candidate_pool_truncated": True,
             "truncated": True,
             "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 20,
+            "duplicate_suppressed_count": 4,
+            "conflict_suppressed_count": 4,
         },
     }
 
@@ -517,6 +553,9 @@ def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() 
     assert isinstance(filtered_metadata, dict)
     assert filtered_metadata["selected_count"] == 19
     assert filtered_metadata["omitted_count"] == 5
+    assert filtered_metadata["provenance_backed_count"] == 19
+    assert filtered_metadata["duplicate_suppressed_count"] == 4
+    assert filtered_metadata["conflict_suppressed_count"] == 4
     assert filtered_metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
 
     bounded = EdgeSyncManager._bounded_forward_response(payload)
@@ -530,6 +569,10 @@ def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() 
     expected_used = sum(len(str(item["content"])) + 64 for item in bounded_items)
     assert metadata["used_chars"] == expected_used
     assert bounded["used_chars"] == expected_used
+    assert metadata["provenance_backed_count"] == len(bounded_items)
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
     assert metadata["truncation_reasons"] == [
         "candidate_pool",
         "edge_filter",

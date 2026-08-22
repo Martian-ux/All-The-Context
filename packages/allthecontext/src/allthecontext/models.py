@@ -590,6 +590,10 @@ class ContextPackMetadata(StrictModel):
 
     Truncation reasons are intentionally closed: Core may emit the first three
     values and Edge may append only ``edge_filter`` or ``edge_envelope``.
+    Selection and provenance counts describe the items in the final forwarded
+    pack. Duplicate/conflict suppression counts remain explicitly scoped to
+    Core's selection and are bounded by the final omitted population because
+    Edge does not receive Core's suppression-group identities.
     """
 
     pack_schema: Literal["atc.context-pack.v1"] = Field(
@@ -625,6 +629,20 @@ class ContextPackMetadata(StrictModel):
         if len(value) != len(set(value)):
             raise ValueError("truncation_reasons must not contain duplicates")
         return value
+
+    @model_validator(mode="after")
+    def validate_accounting_invariants(self) -> Self:
+        if self.selected_count > self.candidate_count:
+            raise ValueError("selected_count must not exceed candidate_count")
+        if self.omitted_count != self.candidate_count - self.selected_count:
+            raise ValueError("omitted_count must equal candidate_count - selected_count")
+        if self.provenance_backed_count > self.selected_count:
+            raise ValueError("provenance_backed_count must not exceed selected_count")
+        if self.duplicate_suppressed_count > self.omitted_count:
+            raise ValueError("duplicate_suppressed_count must not exceed omitted_count")
+        if self.conflict_suppressed_count > self.omitted_count:
+            raise ValueError("conflict_suppressed_count must not exceed omitted_count")
+        return self
 
 
 class BootstrapResponse(StrictModel):

@@ -99,6 +99,16 @@ of the catalog API's `total`. Its optional `pack_metadata` envelope is
 provider-facing accounting, not ranking diagnostics, and does not expose query
 text or record IDs beyond the selected items already returned.
 
+Pack accounting is reconciled at each forwarding boundary: `selected_count`
+equals the returned item count, `omitted_count` equals
+`candidate_count - selected_count`, `used_chars` is recomputed from the
+returned items, and `provenance_backed_count` counts only returned items with
+forwarded provenance. Core's duplicate/conflict suppression aggregates are
+explicitly Core-selection-scoped; Edge has no suppression-group identities, so
+it preserves only bounded claims about candidates still omitted and does not
+attribute ACL or envelope removals to those reasons. The public model rejects
+contradictory cross-field counts.
+
 ## Reproducible V1 baseline
 
 The offline harness, sanitized synthetic corpus, graded gold judgments, usage,

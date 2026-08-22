@@ -1126,12 +1126,27 @@ class EdgeSyncManager:
         selected_count = len(items)
         omitted_count = previous_omitted + removed_count
         candidate_count = max(candidate_count, selected_count + omitted_count)
+        omitted_count = candidate_count - selected_count
 
         metadata["candidate_count"] = candidate_count
         metadata["selected_count"] = selected_count
         metadata["omitted_count"] = omitted_count
         metadata["used_chars"] = used_chars
         payload["used_chars"] = used_chars
+        metadata["provenance_backed_count"] = sum(
+            EdgeSyncManager._item_has_forwarded_provenance(item) for item in items
+        )
+        # Edge receives no Core duplicate/conflict group identities, so it
+        # cannot recompute those reason-specific aggregates after projection.
+        # Retain only bounded claims about candidates still omitted from the
+        # final forwarded pack; never let stale upstream values exceed that
+        # population.
+        metadata["duplicate_suppressed_count"] = min(
+            _count(metadata.get("duplicate_suppressed_count"), 0), omitted_count
+        )
+        metadata["conflict_suppressed_count"] = min(
+            _count(metadata.get("conflict_suppressed_count"), 0), omitted_count
+        )
 
         raw_reasons = metadata.get("truncation_reasons", [])
         reasons: list[str] = []
@@ -1151,6 +1166,20 @@ class EdgeSyncManager:
         metadata["truncation_reasons"] = reasons
         metadata["truncated"] = (
             bool(metadata["truncation_reasons"]) or metadata.get("truncated") is True
+        )
+
+    @staticmethod
+    def _item_has_forwarded_provenance(item: object) -> bool:
+        if not isinstance(item, dict):
+            return False
+        provenance = item.get("provenance")
+        return bool(
+            (isinstance(provenance, dict) and provenance)
+            or item.get("source_reference")
+            or item.get("source_id")
+            or item.get("source_service")
+            or item.get("source_type")
+            or item.get("evidence")
         )
 
     @staticmethod
