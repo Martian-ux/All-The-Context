@@ -846,11 +846,19 @@ def normalize_github_release_state(
         if not isinstance(name, str) or SAFE_FILE_NAME.fullmatch(name) is None:
             raise ManifestError("GitHub beta release contains an invalid asset name")
         asset_id = asset.get("id")
+        numeric_asset_id = (
+            not isinstance(asset_id, bool) and isinstance(asset_id, int) and asset_id >= 1
+        )
+        opaque_cli_asset_id = (
+            not rest_shape
+            and isinstance(asset_id, str)
+            and 1 <= len(asset_id) <= 256
+            and asset_id.isascii()
+            and asset_id.isprintable()
+        )
         size = asset.get("size")
         digest = asset.get("digest")
-        if asset_id is not None and (
-            isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id < 1
-        ):
+        if asset_id is not None and not numeric_asset_id and not opaque_cli_asset_id:
             raise ManifestError("GitHub release asset ID is invalid")
         if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
             raise ManifestError("GitHub release asset size is invalid")
@@ -861,12 +869,16 @@ def normalize_github_release_state(
         ):
             raise ManifestError("GitHub release asset digest is invalid")
         if require_asset_api_metadata and (
-            asset_id is None or size is None or not isinstance(digest, str)
+            not numeric_asset_id or size is None or not isinstance(digest, str)
         ):
-            raise ManifestError("GitHub release asset API metadata requires ID, size, and SHA-256")
+            raise ManifestError(
+                "GitHub release asset API metadata requires numeric REST ID, size, and SHA-256"
+            )
         normalized_assets.append(
             {
-                "id": asset_id,
+                # ``gh release view --json assets`` returns an opaque GraphQL node ID.
+                # Never reinterpret that value as the numeric REST ID used by mutation URLs.
+                "id": asset_id if numeric_asset_id else None,
                 "name": name,
                 "size": size,
                 "digest": digest,

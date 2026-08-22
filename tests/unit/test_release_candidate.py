@@ -701,6 +701,57 @@ def test_release_asset_descriptor_mismatch_is_rejected() -> None:
         )
 
 
+def test_published_cli_state_accepts_opaque_graphql_asset_ids() -> None:
+    state = {
+        "assets": [
+            {
+                "id": "RA_kwDOTesF6s4fQ0j8",
+                "name": CANDIDATE_FILE_NAME,
+                "size": 123,
+                "digest": f"sha256:{'e' * 64}",
+            }
+        ],
+        "isDraft": False,
+        "isImmutable": True,
+        "isPrerelease": True,
+        "tagName": f"v{VERSION}",
+        "targetCommitish": SOURCE_COMMIT,
+    }
+
+    normalized = normalize_github_release_state(state)
+
+    assert normalized["assets"][0]["id"] is None
+    validate_github_release_state(
+        normalized,
+        tag=f"v{VERSION}",
+        source_commit=SOURCE_COMMIT,
+        draft=False,
+        immutable=True,
+        expected_asset_descriptors={CANDIDATE_FILE_NAME: ("e" * 64, 123)},
+    )
+
+
+def test_opaque_graphql_asset_id_is_not_accepted_as_rest_api_metadata() -> None:
+    state = {
+        "assets": [
+            {
+                "id": "RA_kwDOTesF6s4fQ0j8",
+                "name": CANDIDATE_FILE_NAME,
+                "size": 123,
+                "digest": f"sha256:{'e' * 64}",
+            }
+        ],
+        "isDraft": False,
+        "isImmutable": True,
+        "isPrerelease": True,
+        "tagName": f"v{VERSION}",
+        "targetCommitish": SOURCE_COMMIT,
+    }
+
+    with pytest.raises(ManifestError, match="numeric REST ID"):
+        normalize_github_release_state(state, require_asset_api_metadata=True)
+
+
 def test_release_cli_resolves_draft_id_and_lists_safe_asset_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

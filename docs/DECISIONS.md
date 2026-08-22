@@ -2580,3 +2580,23 @@ exact prepublication ledger. A commit cannot truthfully self-record a candidate
 created only after that commit. This decision changes no feature, support
 target, signing key, custody floor, macOS claim, human approval requirement,
 signature, or publication authorization.
+
+## ADR-096: Opaque GitHub CLI asset IDs are validation-only metadata
+
+**Status:** accepted 2026-08-22 UTC after beta.6 publication.
+
+The protected beta.6 publisher successfully created immutable prerelease
+`v0.1.0-beta.6`, then its final local verifier rejected the already-published
+state because `gh release view --json assets` returned opaque GraphQL node IDs
+such as `RA_...` while the normalizer accepted only positive numeric REST asset
+IDs. GitHub's release attestation, exact tag, immutable state, and all 34 asset
+digests independently verified; the failure was a post-publication compatibility
+defect, not an asset or release-integrity failure.
+
+Release-state validation may accept a bounded printable ASCII GraphQL asset ID
+from the GitHub CLI shape, but normalizes it to no numeric ID. Operations that
+address REST mutation/download endpoints continue to require a positive numeric
+REST asset ID, size, and SHA-256 from authenticated REST metadata. An opaque
+node ID is never parsed, converted, or interpolated into a REST URL. This keeps
+published-state checks compatible without weakening the numeric-ID authority
+used before publication or channel promotion.
