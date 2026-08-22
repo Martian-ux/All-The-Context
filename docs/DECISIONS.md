@@ -2828,5 +2828,18 @@ The default ZIP safety limits are 10,000 entries, 512 MiB per member, 2 GiB
 total declared uncompressed expansion, 500:1 compression ratio, 1 MiB stream
 reads, 128 MiB JSON item parsing, and 8 MiB attachment-text reads. These limits
 are independent of the 2,000,000,000-byte raw import boundary. Path traversal,
-absolute/drive-qualified paths, encrypted entries, and malformed bounded reads
+absolute, drive-relative, or drive-qualified paths, encrypted entries, and
+malformed bounded reads
 fail closed. Synthetic ZIP fixtures are the only attachment test inputs.
+
+The post-review boundary is explicit: attachment inventory and `.dat` text
+extraction run only for an explicit ChatGPT hint or an auto/generic archive
+with a structurally confirmed ChatGPT mapping graph. Explicit Claude/Grok and
+unconfirmed auto/generic imports retain those members raw without invoking
+ChatGPT control-file parsing. Each inventory `asset_id` preserves the unique
+safe archive member identity. Linkage is stored as exact conversation/message
+pairs; a colliding stem produces no inferred link. MIME conflicts persist as
+`mime_type_status=ambiguous` with no selected MIME value or synthetic provenance
+source. Total link accumulation is bounded at 10,000 pairs, with per-document
+link scanning bounded to 64 levels and 10,000 nodes; either truncation is
+visible and leaves coverage incomplete.

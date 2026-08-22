@@ -178,7 +178,7 @@ def test_chatgpt_dat_attachments_are_hashed_linked_and_text_bounded() -> None:
                 "library_files.json": json.dumps(
                     [{"file_name": "preview.png", "mime_type": "image/png"}]
                 ),
-                "conversations.json": json.dumps(conversations),
+                "exports/conversations-2025.json": json.dumps(conversations),
                 "file-notes.dat": notes,
                 "file-data.dat": data,
                 "file-image.dat": b"\x89PNG\r\nsynthetic-binary",
@@ -188,18 +188,26 @@ def test_chatgpt_dat_attachments_are_hashed_linked_and_text_bounded() -> None:
     )
 
     by_id = {item.asset_id: item for item in parsed.attachments}
-    assert set(by_id) == {"file-notes", "file-data", "file-image"}
-    assert by_id["file-notes"].content_sha256 == sha256(notes).hexdigest()
-    assert by_id["file-notes"].original_filename == "notes.txt"
-    assert by_id["file-notes"].mime_type == "text/plain"
-    assert by_id["file-notes"].conversation_ids == ("conversation-synthetic",)
-    assert by_id["file-notes"].message_ids == ("message-synthetic",)
-    assert by_id["file-notes"].extraction_status == "text_extracted"
-    assert by_id["file-data"].extraction_status == "text_extracted"
-    assert by_id["file-data"].extracted_format == "json"
-    assert by_id["file-image"].extraction_status == "unsupported_binary"
-    assert by_id["file-image"].mime_type == "image/png"
-    assert by_id["file-image"].mime_type_source == "library_files"
+    assert set(by_id) == {"file-notes.dat", "file-data.dat", "file-image.dat"}
+    assert by_id["file-notes.dat"].content_sha256 == sha256(notes).hexdigest()
+    assert by_id["file-notes.dat"].original_filename == "notes.txt"
+    assert by_id["file-notes.dat"].mime_type == "text/plain"
+    assert by_id["file-notes.dat"].mime_type_status == "known"
+    assert by_id["file-notes.dat"].links == (
+        importers_module.AttachmentLink("conversation-synthetic", "message-synthetic"),
+    )
+    assert "exports/conversations-2025.json:message.metadata.attachments" in (
+        by_id["file-notes.dat"].provenance
+    )
+    assert (
+        "conversations.json:message.metadata.attachments" not in by_id["file-notes.dat"].provenance
+    )
+    assert by_id["file-notes.dat"].extraction_status == "text_extracted"
+    assert by_id["file-data.dat"].extraction_status == "text_extracted"
+    assert by_id["file-data.dat"].extracted_format == "json"
+    assert by_id["file-image.dat"].extraction_status == "unsupported_binary"
+    assert by_id["file-image.dat"].mime_type == "image/png"
+    assert by_id["file-image.dat"].mime_type_source == "library_files"
     assert parsed.stats["attachment_entries"] == 3
     assert parsed.stats["attachment_hashed"] == 3
     assert parsed.stats["attachment_text_extracted"] == 2
@@ -219,6 +227,7 @@ def test_chatgpt_dat_attachment_text_read_limit_retains_binary_raw() -> None:
                 "file-notes.dat": b"Preference: " + b"x" * 64,
             }
         ),
+        provider="chatgpt",
         max_attachment_text_bytes=16,
     )
 
@@ -250,6 +259,239 @@ def test_chatgpt_dat_malformed_supported_text_is_counted_as_supported_but_not_ex
     assert parsed.stats["attachment_text_parse_failed"] == 1
 
 
+@pytest.mark.parametrize(
+    ("provider", "conversation"),
+    [
+        (
+            "claude",
+            [{"uuid": "claude-conversation", "chat_messages": [{"sender": "human", "text": "ok"}]}],
+        ),
+        (
+            "grok",
+            {"grok_conversations": [{"id": "grok-conversation", "messages": []}]},
+        ),
+    ],
+)
+def test_chatgpt_attachment_slice_is_disabled_for_explicit_other_providers(
+    provider: str,
+    conversation: Any,
+) -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": b"{malformed",
+                "conversation_asset_file_names.json": b"{malformed",
+                "conversations.json": json.dumps(conversation),
+                "file-secret.dat": b"not parsed as attachment",
+            }
+        ),
+        provider=provider,
+    )
+
+    assert parsed.attachments == []
+    assert parsed.stats["attachment_entries"] == 0
+    assert parsed.complete is True
+
+
+def test_generic_structurally_confirmed_chatgpt_archive_enables_attachment_slice() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "conversations.json": json.dumps(_chatgpt_export()),
+                "file-generic.dat": b"raw attachment",
+            }
+        ),
+        provider="generic",
+    )
+
+    assert [item.asset_id for item in parsed.attachments] == ["file-generic.dat"]
+
+
+def test_attachment_json_trailing_data_is_parse_failed_unparsed_and_incomplete() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": json.dumps(
+                    {"logical_files": {"file-json.dat": {"files": ["file-json.dat"]}}}
+                ),
+                "conversation_asset_file_names.json": json.dumps({"file-json.dat": "data.json"}),
+                "file-json.dat": b'[{"kind":"goal","content":"bounded"}] trailing',
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert parsed.attachments[0].extraction_status == "text_parse_failed"
+    assert parsed.closed_coverage["unparsed"] >= 1
+    assert parsed.complete is False
+
+
+def test_streaming_json_reader_rejects_trailing_data_after_any_root() -> None:
+    for payload in (b"{} trailing", b"[{}]\ntrailing"):
+        with pytest.raises(json.JSONDecodeError, match=r"[Ee]xtra data"):
+            list(importers_module._iter_json_documents(io.BytesIO(payload)))
+
+
+def test_zip_rejects_windows_drive_relative_member_names() -> None:
+    with pytest.raises(InvalidStateError, match="unsafe member path"):
+        parse_zip_bundle(_zip({"C:evil.dat": b"must not be accepted"}))
+
+
+def test_safe_zip_name_preserves_leading_dot_attachment_identity() -> None:
+    parsed = parse_zip_bundle(_zip({".hidden.dat": b"hidden"}), provider="chatgpt")
+
+    assert parsed.attachments[0].asset_id == ".hidden.dat"
+    assert parsed.attachments[0].archive_name == ".hidden.dat"
+
+
+def test_attachment_stems_colliding_across_members_have_no_invented_links() -> None:
+    conversations = [
+        {
+            "id": "conversation-collision",
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": "message-collision",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["attached"]},
+                        "metadata": {"attachments": [{"id": "foo"}]},
+                    }
+                }
+            },
+        }
+    ]
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "conversations.json": json.dumps(conversations),
+                "dir-a/foo.dat": b"one",
+                "dir-b/foo.dat": b"two",
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert {item.asset_id for item in parsed.attachments} == {"dir-a/foo.dat", "dir-b/foo.dat"}
+    assert all(item.links == () for item in parsed.attachments)
+    assert all("conversation_ids" not in item.as_dict() for item in parsed.attachments)
+    assert all("message_ids" not in item.as_dict() for item in parsed.attachments)
+
+
+def test_control_and_json_members_do_not_collide_with_dat_attachment_stem() -> None:
+    conversations = [
+        {
+            "id": "conversation-stem",
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": "message-stem",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["attached"]},
+                        "metadata": {"attachments": [{"id": "foo"}]},
+                    }
+                }
+            },
+        }
+    ]
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "conversations.json": json.dumps(conversations),
+                "foo.json": b'{"kind":"fact","content":"json"}',
+                "foo.dat": b"attachment",
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert parsed.attachments[0].links == (
+        importers_module.AttachmentLink("conversation-stem", "message-stem"),
+    )
+
+
+def test_conflicting_mime_declarations_are_ambiguous_without_fake_provenance() -> None:
+    conversations = [
+        {
+            "id": "conversation-mime",
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": "message-mime",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["attached"]},
+                        "metadata": {
+                            "attachments": [
+                                {"id": "mime", "mime_type": "text/plain"},
+                                {"id": "mime", "mime_type": "application/json"},
+                            ]
+                        },
+                    }
+                }
+            },
+        }
+    ]
+    parsed = parse_zip_bundle(
+        _zip({"conversations.json": json.dumps(conversations), "mime.dat": b"raw"}),
+        provider="chatgpt",
+    )
+
+    attachment = parsed.attachments[0]
+    assert attachment.mime_type is None
+    assert attachment.mime_type_source is None
+    assert attachment.mime_type_status == "ambiguous"
+    assert "ambiguous" not in attachment.provenance
+
+
+def test_attachment_link_accumulation_is_bounded_and_reported() -> None:
+    nodes = {
+        f"node-{index}": {
+            "message": {
+                "id": f"message-{index}",
+                "author": {"role": "user"},
+                "content": {"parts": ["attached"]},
+                "metadata": {"attachments": [{"id": f"file-{index}"}]},
+            }
+        }
+        for index in range(2)
+    }
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "conversations.json": json.dumps([{"id": "conversation-links", "mapping": nodes}]),
+                "file-0.dat": b"zero",
+                "file-1.dat": b"one",
+            }
+        ),
+        provider="chatgpt",
+        max_attachment_link_pairs=1,
+    )
+
+    assert parsed.stats["attachment_link_pairs"] == 1
+    assert parsed.stats["attachment_links_truncated"] is True
+    assert parsed.complete is False
+    assert any("link accumulation was truncated" in warning for warning in parsed.warnings)
+
+
+def test_attachment_link_scan_is_iterative_and_depth_bounded() -> None:
+    value: Any = {"mapping": {}}
+    for _ in range(importers_module.MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH + 10):
+        value = {"data": value}
+    context = importers_module._ChatGPTAttachmentContext()
+
+    importers_module._collect_chatgpt_attachment_links(value, context)
+
+    assert context.scan_truncated is True
+
+
+def test_attachment_scan_node_budget_resets_for_each_json_document() -> None:
+    context = importers_module._ChatGPTAttachmentContext()
+
+    importers_module._collect_chatgpt_attachment_links(list(range(6_000)), context)
+    importers_module._collect_chatgpt_attachment_links(list(range(6_000)), context)
+
+    assert context.scan_truncated is False
+
+
 def test_zip_attachment_member_and_total_limits_cover_opaque_assets() -> None:
     with pytest.raises(InvalidStateError, match="too many entries"):
         parse_zip_bundle(_zip({"one.bin": b"1", "two.bin": b"2"}), max_entries=1)
@@ -276,7 +518,11 @@ def test_zip_attachment_hashing_checks_cancellation_inside_stream(
     monkeypatch.setattr(ImportProgressTracker, "check_cancelled", cancel_on_hash_check)
     try:
         with pytest.raises(ImportCancelledError, match="synthetic cancellation"):
-            parse_zip_bundle(_zip({"file-cancel.dat": b"attachment"}), progress=tracker)
+            parse_zip_bundle(
+                _zip({"file-cancel.dat": b"attachment"}),
+                provider="chatgpt",
+                progress=tracker,
+            )
     finally:
         tracker.close()
     assert calls >= 2
@@ -286,7 +532,7 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
     with pytest.raises(InvalidStateError, match="encrypted ZIP"):
         parse_zip_bundle(_mark_zip_entry_encrypted(_zip({"file-secret.dat": b"bytes"})))
 
-    duplicate = parse_zip_bundle(_zip_with_duplicate_names())
+    duplicate = parse_zip_bundle(_zip_with_duplicate_names(), provider="chatgpt")
     assert len(duplicate.attachments) == 1
     assert any("duplicate entry skipped" in warning for warning in duplicate.warnings)
 
@@ -300,7 +546,8 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
                     "export_manifest.json": b"{malformed",
                     "file-metadata.dat": b"bytes",
                 }
-            )
+            ),
+            provider="chatgpt",
         )
 
 
@@ -324,7 +571,7 @@ def test_attachment_inventory_is_persisted_in_source_metadata(tmp_path: Path) ->
     source = result["source"]
     inventory = source["metadata"]["attachments"]
     assert len(inventory) == 1
-    assert inventory[0]["asset_id"] == "file-persisted"
+    assert inventory[0]["asset_id"] == "file-persisted.dat"
     assert (
         inventory[0]["content_sha256"]
         == sha256(b"Preference: Preserve attachment identity.").hexdigest()

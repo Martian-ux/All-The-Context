@@ -52,6 +52,9 @@ DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
 DEFAULT_MAX_ZIP_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_TEXT_BYTES = 8 * 1024 * 1024
+DEFAULT_MAX_ATTACHMENT_LINK_PAIRS = 10_000
+MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH = 64
+MAX_CHATGPT_ATTACHMENT_SCAN_NODES = 10_000
 _OPERATION_COOPERATIVE_YIELD_SECONDS = 0.001
 
 _KIND_MAP = {
@@ -83,12 +86,21 @@ _SECRET_HINT = re.compile(
 )
 _SUPPORTED_TEXT_SUFFIXES = {".csv", ".json", ".jsonl", ".md", ".markdown", ".txt"}
 _SUPPORTED_ATTACHMENT_SUFFIXES = frozenset(_SUPPORTED_TEXT_SUFFIXES)
+_CHATGPT_CONTROL_BASENAMES = frozenset(
+    {"conversation_asset_file_names.json", "export_manifest.json", "library_files.json"}
+)
 
 
 @dataclass(frozen=True, slots=True)
 class AttachmentLink:
     conversation_id: str
     message_id: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "conversation_id": self.conversation_id,
+            "message_id": self.message_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,8 +114,8 @@ class AttachmentInventory:
     original_filename: str | None
     mime_type: str | None
     mime_type_source: str | None
-    conversation_ids: tuple[str, ...]
-    message_ids: tuple[str, ...]
+    mime_type_status: str
+    links: tuple[AttachmentLink, ...]
     extraction_status: str
     extracted_format: str | None
     provenance: tuple[str, ...]
@@ -117,8 +129,8 @@ class AttachmentInventory:
             "original_filename": self.original_filename,
             "mime_type": self.mime_type,
             "mime_type_source": self.mime_type_source,
-            "conversation_ids": list(self.conversation_ids),
-            "message_ids": list(self.message_ids),
+            "mime_type_status": self.mime_type_status,
+            "links": [item.as_dict() for item in self.links],
             "extraction_status": self.extraction_status,
             "extracted_format": self.extracted_format,
             "provenance": list(self.provenance),
@@ -562,10 +574,49 @@ def _parse_jsonl_stream(
 class _ChatGPTAttachmentContext:
     original_filenames: dict[str, str] = field(default_factory=dict)
     manifest_members: set[str] = field(default_factory=set)
-    mime_types: dict[str, tuple[str, str]] = field(default_factory=dict)
-    mime_types_by_filename: dict[str, str] = field(default_factory=dict)
+    mime_types: dict[str, tuple[str | None, str]] = field(default_factory=dict)
+    mime_types_by_filename: dict[str, str | None] = field(default_factory=dict)
+    ambiguous_mime_filenames: set[str] = field(default_factory=set)
+    mime_types_by_member: dict[str, tuple[str | None, str]] = field(default_factory=dict)
     links: dict[str, set[AttachmentLink]] = field(default_factory=dict)
+    link_sources: dict[str, set[str]] = field(default_factory=dict)
+    member_names_by_reference: dict[str, set[str]] = field(default_factory=dict)
     control_members: set[str] = field(default_factory=set)
+    max_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS
+    link_pairs: int = 0
+    links_truncated: bool = False
+    scan_nodes: int = 0
+    scan_truncated: bool = False
+
+    def add_link(self, reference: str, link: AttachmentLink) -> bool:
+        existing = self.links.get(reference)
+        if existing is None:
+            if self.link_pairs >= self.max_link_pairs:
+                self.links_truncated = True
+                return False
+            existing = set()
+            self.links[reference] = existing
+        if link in existing:
+            return True
+        if self.link_pairs >= self.max_link_pairs:
+            self.links_truncated = True
+            return False
+        existing.add(link)
+        self.link_pairs += 1
+        return True
+
+    def note_scan_node(self, depth: int) -> bool:
+        if depth > MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH:
+            self.scan_truncated = True
+            return False
+        if self.scan_nodes >= MAX_CHATGPT_ATTACHMENT_SCAN_NODES:
+            self.scan_truncated = True
+            return False
+        self.scan_nodes += 1
+        return True
+
+    def begin_scan(self) -> None:
+        self.scan_nodes = 0
 
 
 def _normalize_attachment_member_name(value: str) -> str:
@@ -573,7 +624,17 @@ def _normalize_attachment_member_name(value: str) -> str:
 
 
 def _attachment_id_from_member_name(safe_name: str) -> str:
-    return PurePosixPath(safe_name).stem
+    """Return the archive member identity, not a collision-prone filename stem."""
+    return safe_name
+
+
+def _attachment_reference_from_member_name(safe_name: str) -> str:
+    """Return the provider attachment reference used to resolve a member link."""
+    return PurePosixPath(safe_name).stem.casefold()
+
+
+def _normalize_attachment_reference(value: str) -> str:
+    return value.strip().casefold()[:512]
 
 
 def _safe_attachment_filename(value: str) -> str | None:
@@ -591,53 +652,110 @@ def _first_mapping_string(value: Mapping[str, Any], keys: Sequence[str]) -> str 
     return None
 
 
+def _merge_mime_declaration(
+    current: tuple[str | None, str] | None,
+    incoming: tuple[str | None, str],
+) -> tuple[str | None, str]:
+    if current is None:
+        return incoming
+    if current[0] is None or incoming[0] is None:
+        return (None, "ambiguous")
+    if current[0].casefold() != incoming[0].casefold():
+        return (None, "ambiguous")
+    return current
+
+
+def _declare_mime(
+    context: _ChatGPTAttachmentContext,
+    reference: str,
+    mime_type: str,
+    source: str,
+) -> None:
+    normalized = mime_type.strip()[:256]
+    if not normalized:
+        return
+    key = _normalize_attachment_reference(reference)
+    if not key:
+        return
+    context.mime_types[key] = _merge_mime_declaration(
+        context.mime_types.get(key), (normalized, source)
+    )
+
+
+def _declare_member_mime(
+    context: _ChatGPTAttachmentContext,
+    member_name: str,
+    declaration: tuple[str | None, str],
+) -> None:
+    context.mime_types_by_member[member_name] = _merge_mime_declaration(
+        context.mime_types_by_member.get(member_name), declaration
+    )
+
+
 def _collect_chatgpt_attachment_links(
     value: Any,
     context: _ChatGPTAttachmentContext,
+    *,
+    source_name: str | None = None,
 ) -> None:
-    if isinstance(value, list):
-        for item in value:
-            _collect_chatgpt_attachment_links(item, context)
-        return
-    if not isinstance(value, dict):
-        return
-    mapping = value.get("mapping")
-    if isinstance(mapping, dict):
-        conversation_id = _first_mapping_string(value, ("conversation_id", "id", "uuid", "chat_id"))
-        if conversation_id is None:
-            return
-        for node_id, node in mapping.items():
-            if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+    context.begin_scan()
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if not context.note_scan_node(depth):
+            continue
+        if isinstance(current, list):
+            pending.extend((item, depth + 1) for item in reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        mapping = current.get("mapping")
+        if isinstance(mapping, dict):
+            conversation_id = _first_mapping_string(
+                current, ("conversation_id", "id", "uuid", "chat_id")
+            )
+            if conversation_id is None:
                 continue
-            message = node["message"]
-            message_id = _first_mapping_string(message, ("id", "uuid", "message_id"))
-            if message_id is None:
-                message_id = str(node_id)[:512]
-            metadata = message.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            attachments = metadata.get("attachments")
-            if not isinstance(attachments, list):
-                continue
-            for attachment in attachments:
-                if not isinstance(attachment, dict):
+            for node_id, node in mapping.items():
+                if not context.note_scan_node(depth + 1):
+                    break
+                if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
                     continue
-                asset_id = _first_mapping_string(attachment, ("id", "asset_id"))
-                if asset_id is None:
+                message = node["message"]
+                message_id = _first_mapping_string(message, ("id", "uuid", "message_id"))
+                if message_id is None:
+                    message_id = str(node_id)[:512]
+                metadata = message.get("metadata")
+                if not isinstance(metadata, dict):
                     continue
-                context.links.setdefault(asset_id, set()).add(
-                    AttachmentLink(conversation_id, message_id)
-                )
-                mime_type = attachment.get("mime_type")
-                if isinstance(mime_type, str) and mime_type.strip():
-                    context.mime_types.setdefault(
-                        asset_id, (mime_type.strip()[:256], "conversation_attachment")
-                    )
-        return
-    for key in ("conversations", "conversation_history", "items", "data", "export"):
-        nested = value.get(key)
-        if isinstance(nested, (dict, list)):
-            _collect_chatgpt_attachment_links(nested, context)
+                attachments = metadata.get("attachments")
+                if not isinstance(attachments, list):
+                    continue
+                for attachment in attachments:
+                    if not context.note_scan_node(depth + 2):
+                        break
+                    if not isinstance(attachment, dict):
+                        continue
+                    asset_id = _first_mapping_string(attachment, ("id", "asset_id"))
+                    if asset_id is None:
+                        continue
+                    reference = _normalize_attachment_reference(asset_id)
+                    link = AttachmentLink(conversation_id, message_id)
+                    if context.add_link(reference, link) and source_name is not None:
+                        context.link_sources.setdefault(reference, set()).add(source_name)
+                    mime_type = attachment.get("mime_type")
+                    if isinstance(mime_type, str) and mime_type.strip():
+                        _declare_mime(
+                            context,
+                            reference,
+                            mime_type,
+                            "conversation_attachment",
+                        )
+            continue
+        for key in ("conversations", "conversation_history", "items", "data", "export"):
+            nested = current.get(key)
+            if isinstance(nested, (dict, list)):
+                pending.append((nested, depth + 1))
 
 
 def _collect_library_mime_types(value: Any, context: _ChatGPTAttachmentContext) -> None:
@@ -657,7 +775,11 @@ def _collect_library_mime_types(value: Any, context: _ChatGPTAttachmentContext) 
         by_filename.setdefault(safe_filename, set()).add(mime_type.strip()[:256])
     # A repeated filename with conflicting declarations is not safe to resolve.
     context.mime_types_by_filename = {
-        filename: next(iter(values)) for filename, values in by_filename.items() if len(values) == 1
+        filename: next(iter(values)) if len(values) == 1 else None
+        for filename, values in by_filename.items()
+    }
+    context.ambiguous_mime_filenames = {
+        filename for filename, values in by_filename.items() if len(values) > 1
     }
 
 
@@ -734,12 +856,17 @@ def _attachment_context(
     members: Sequence[zipfile.ZipInfo],
     *,
     max_item_chars: int,
+    max_link_pairs: int,
 ) -> _ChatGPTAttachmentContext:
-    context = _ChatGPTAttachmentContext()
+    context = _ChatGPTAttachmentContext(max_link_pairs=max_link_pairs)
     by_basename: dict[str, zipfile.ZipInfo] = {}
     for member in members:
         safe_name = _safe_zip_name(member.filename)
         by_basename.setdefault(PurePosixPath(safe_name).name.casefold(), member)
+        if PurePosixPath(safe_name).suffix.casefold() == ".dat":
+            reference = _attachment_reference_from_member_name(safe_name)
+            if reference:
+                context.member_names_by_reference.setdefault(reference, set()).add(safe_name)
 
     asset_member = by_basename.get("conversation_asset_file_names.json")
     if asset_member is not None:
@@ -794,12 +921,111 @@ def _attachment_context(
             context,
         )
         for safe_name, original_filename in context.original_filenames.items():
+            if original_filename in context.ambiguous_mime_filenames:
+                _declare_member_mime(context, safe_name, (None, "ambiguous"))
+                continue
             mime_type = context.mime_types_by_filename.get(original_filename)
             if mime_type is not None:
-                asset_id = _attachment_id_from_member_name(safe_name)
-                context.mime_types.setdefault(asset_id, (mime_type, "library_files"))
+                _declare_member_mime(context, safe_name, (mime_type, "library_files"))
 
     return context
+
+
+def _mime_for_member(
+    context: _ChatGPTAttachmentContext,
+    safe_name: str,
+) -> tuple[str | None, str | None, str]:
+    declarations: list[tuple[str | None, str]] = []
+    member_declaration = context.mime_types_by_member.get(safe_name)
+    if member_declaration is not None:
+        declarations.append(member_declaration)
+    reference = _attachment_reference_from_member_name(safe_name)
+    reference_declaration = context.mime_types.get(reference)
+    if reference_declaration is not None:
+        matching_members = context.member_names_by_reference.get(reference, set())
+        if len(matching_members) == 1:
+            declarations.append(reference_declaration)
+        else:
+            declarations.append((None, "ambiguous"))
+    if not declarations:
+        return None, None, "unknown"
+    merged = declarations[0]
+    for declaration in declarations[1:]:
+        merged = _merge_mime_declaration(merged, declaration)
+    if merged[0] is None:
+        return None, None, "ambiguous"
+    return merged[0], merged[1], "known"
+
+
+def _links_for_member(
+    context: _ChatGPTAttachmentContext,
+    safe_name: str,
+) -> tuple[list[AttachmentLink], list[str]]:
+    reference = _attachment_reference_from_member_name(safe_name)
+    if len(context.member_names_by_reference.get(reference, set())) != 1:
+        return [], []
+    links = sorted(
+        context.links.get(reference, set()),
+        key=lambda item: (item.conversation_id, item.message_id),
+    )
+    sources = sorted(context.link_sources.get(reference, set())) if links else []
+    return links, sources
+
+
+def _looks_like_chatgpt_structure(value: Any) -> bool:
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    nodes = 0
+    while pending:
+        current, depth = pending.pop()
+        if depth > MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH or nodes >= MAX_CHATGPT_ATTACHMENT_SCAN_NODES:
+            return False
+        nodes += 1
+        if isinstance(current, list):
+            pending.extend((item, depth + 1) for item in reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        if isinstance(current.get("mapping"), dict):
+            return True
+        pending.extend(
+            (current[key], depth + 1)
+            for key in ("conversations", "conversation_history", "items", "data", "export")
+            if isinstance(current.get(key), (dict, list))
+        )
+    return False
+
+
+def _is_conversation_json_member(safe_name: str) -> bool:
+    path = PurePosixPath(safe_name)
+    return path.suffix.casefold() == ".json" and "conversation" in path.stem.casefold()
+
+
+def _is_chatgpt_control_member(safe_name: str) -> bool:
+    return PurePosixPath(safe_name).name.casefold() in _CHATGPT_CONTROL_BASENAMES
+
+
+def _archive_has_chatgpt_structure(
+    archive: zipfile.ZipFile,
+    members: Sequence[zipfile.ZipInfo],
+    *,
+    max_item_chars: int,
+    progress: ImportProgressTracker | None = None,
+) -> bool:
+    for member in members:
+        safe_name = _safe_zip_name(member.filename)
+        if not _is_conversation_json_member(safe_name):
+            continue
+        try:
+            with archive.open(member) as stream:
+                for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
+                    if _looks_like_chatgpt_structure(document):
+                        return True
+        except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
+            continue
+        finally:
+            if progress is not None:
+                progress.check_cancelled()
+    return False
 
 
 def _attachment_text_format(original_filename: str | None) -> str | None:
@@ -837,14 +1063,21 @@ def parse_zip_bundle(
     max_compression_ratio: int = 500,
     max_json_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
     max_attachment_text_bytes: int = DEFAULT_MAX_ATTACHMENT_TEXT_BYTES,
+    max_attachment_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS,
     progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
     """Parse bounded ZIP members in place; archive paths are never extracted."""
     if max_entries < 1 or max_uncompressed_bytes < 1 or max_member_uncompressed_bytes < 1:
         raise ValueError("ZIP limits must be positive")
-    if max_compression_ratio < 1 or max_json_item_chars < 1 or max_attachment_text_bytes < 1:
+    if (
+        max_compression_ratio < 1
+        or max_json_item_chars < 1
+        or max_attachment_text_bytes < 1
+        or max_attachment_link_pairs < 1
+    ):
         raise ValueError("ZIP read limits must be positive")
-    builder = _builder(provider)
+    provider_hint = normalize_provider(provider)
+    builder = _builder(provider_hint)
     generic: list[CandidateInput] = []
     warnings: list[str] = []
     coverage = _GenericCoverage()
@@ -888,31 +1121,46 @@ def parse_zip_bundle(
                 seen_names.add(folded)
                 unique_members.append(member)
 
-            context = _attachment_context(
-                archive,
-                unique_members,
-                max_item_chars=max_json_item_chars,
+            attachment_enabled = provider_hint == ArchiveProvider.CHATGPT
+            if provider_hint in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+                attachment_enabled = _archive_has_chatgpt_structure(
+                    archive,
+                    unique_members,
+                    max_item_chars=max_json_item_chars,
+                    progress=progress,
+                )
+            context = (
+                _attachment_context(
+                    archive,
+                    unique_members,
+                    max_item_chars=max_json_item_chars,
+                    max_link_pairs=max_attachment_link_pairs,
+                )
+                if attachment_enabled
+                else _ChatGPTAttachmentContext(max_link_pairs=max_attachment_link_pairs)
             )
             for member in unique_members:
                 safe_name = _safe_zip_name(member.filename)
-                if (
-                    PurePosixPath(safe_name).suffix.casefold() != ".json"
-                    or "conversation" not in PurePosixPath(safe_name).stem.casefold()
-                ):
+                if not _is_conversation_json_member(safe_name):
                     continue
                 try:
                     with archive.open(member) as stream:
                         for document in _iter_json_documents(
                             stream, max_item_chars=max_json_item_chars
                         ):
-                            _collect_chatgpt_attachment_links(document, context)
+                            if attachment_enabled:
+                                _collect_chatgpt_attachment_links(
+                                    document,
+                                    context,
+                                    source_name=safe_name,
+                                )
                 except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
                     continue
 
             for member in unique_members:
                 safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
-                if suffix == ".dat":
+                if suffix == ".dat" and attachment_enabled:
                     if progress is not None:
                         progress.check_cancelled()
                     asset_id = _attachment_id_from_member_name(safe_name)
@@ -923,7 +1171,7 @@ def parse_zip_bundle(
                         progress=progress,
                     )
                     original_filename = context.original_filenames.get(safe_name)
-                    mime_type, mime_source = context.mime_types.get(asset_id, (None, None))
+                    mime_type, mime_source, mime_status = _mime_for_member(context, safe_name)
                     text_format = (
                         _attachment_text_format(original_filename)
                         if safe_name in context.manifest_members
@@ -942,7 +1190,14 @@ def parse_zip_bundle(
                                     for document in _iter_json_documents(
                                         io.BytesIO(raw_text), max_item_chars=max_json_item_chars
                                     ):
-                                        _collect_chatgpt_attachment_links(document, context)
+                                        if attachment_enabled and _is_conversation_json_member(
+                                            safe_name
+                                        ):
+                                            _collect_chatgpt_attachment_links(
+                                                document,
+                                                context,
+                                                source_name=safe_name,
+                                            )
                                         _consume_json_value(
                                             builder,
                                             source_name,
@@ -987,19 +1242,18 @@ def parse_zip_bundle(
                     if extraction_status != "text_extracted":
                         unsupported_attachments += 1
                         unsupported_entries += 1
-                    links = sorted(
-                        context.links.get(asset_id, set()),
-                        key=lambda item: (item.conversation_id, item.message_id),
-                    )
+                    links, link_sources = _links_for_member(context, safe_name)
                     provenance = (
                         ["export_manifest.json"] if safe_name in context.manifest_members else []
                     )
                     if original_filename is not None:
                         provenance.append("conversation_asset_file_names.json")
-                    if mime_source is not None:
+                    if mime_source is not None and mime_status == "known":
                         provenance.append(mime_source)
                     if links:
-                        provenance.append("conversations.json:message.metadata.attachments")
+                        provenance.extend(
+                            f"{source}:message.metadata.attachments" for source in link_sources
+                        )
                     attachments.append(
                         AttachmentInventory(
                             asset_id=asset_id,
@@ -1009,15 +1263,18 @@ def parse_zip_bundle(
                             original_filename=original_filename,
                             mime_type=mime_type,
                             mime_type_source=mime_source,
-                            conversation_ids=tuple(
-                                dict.fromkeys(item.conversation_id for item in links)
-                            ),
-                            message_ids=tuple(dict.fromkeys(item.message_id for item in links)),
+                            mime_type_status=mime_status,
+                            links=tuple(links),
                             extraction_status=extraction_status,
                             extracted_format=extracted_format,
                             provenance=tuple(provenance),
                         )
                     )
+                    continue
+                if suffix == ".dat":
+                    unsupported_entries += 1
+                    continue
+                if suffix == ".json" and _is_chatgpt_control_member(safe_name):
                     continue
                 if suffix not in _SUPPORTED_TEXT_SUFFIXES:
                     unsupported_entries += 1
@@ -1045,7 +1302,6 @@ def parse_zip_bundle(
                             for document in _iter_json_documents(
                                 stream, max_item_chars=max_json_item_chars
                             ):
-                                _collect_chatgpt_attachment_links(document, context)
                                 _consume_json_value(
                                     builder,
                                     safe_name,
@@ -1101,14 +1357,27 @@ def parse_zip_bundle(
             f"{unsupported_attachments} binary or over-limit attachments were retained raw "
             "but were not text-extracted",
         )
+    if context.links_truncated:
+        _append_warning(
+            warnings,
+            "attachment conversation/message link accumulation was truncated at the configured "
+            f"limit of {context.max_link_pairs} pairs",
+        )
+    if context.scan_truncated:
+        _append_warning(
+            warnings,
+            "attachment link scanning was truncated at the configured depth/node bound",
+        )
     result = _combine(builder.finish(), generic, warnings, coverage, attachments)
     result.stats.update(
         {
             "attachment_entries": len(attachments),
             "attachment_hashed": len(attachments),
-            "attachment_linked": sum(
-                bool(item.conversation_ids or item.message_ids) for item in attachments
-            ),
+            "attachment_linked": sum(bool(item.links) for item in attachments),
+            "attachment_link_pairs": sum(len(item.links) for item in attachments),
+            "attachment_link_limit": max_attachment_link_pairs,
+            "attachment_links_truncated": context.links_truncated,
+            "attachment_link_scan_truncated": context.scan_truncated,
             "attachment_text_supported": sum(
                 item.extraction_status in {"text_extracted", "text_read_limit", "text_parse_failed"}
                 for item in attachments
@@ -1189,6 +1458,16 @@ def _iter_json_documents(
         eof = True
         return False
 
+    def reject_trailing_data() -> None:
+        nonlocal position
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position < len(buffer):
+                raise json.JSONDecodeError("extra data after JSON document", buffer, position)
+            if not fill():
+                return
+
     while True:
         if not buffer and not fill():
             raise json.JSONDecodeError("empty JSON document", "", 0)
@@ -1222,6 +1501,8 @@ def _iter_json_documents(
                 raise json.JSONDecodeError("unterminated JSON array", buffer, position)
         if buffer[position] == "]":
             if first_item:
+                position += 1
+                reject_trailing_data()
                 return
             raise json.JSONDecodeError("trailing comma in JSON array", buffer, position)
         while True:
@@ -1247,6 +1528,8 @@ def _iter_json_documents(
             if not fill():
                 raise json.JSONDecodeError("unterminated JSON array", buffer, position)
         if buffer[position] == "]":
+            position += 1
+            reject_trailing_data()
             return
         if buffer[position] != ",":
             raise json.JSONDecodeError("expected ',' or ']'", buffer, position)
@@ -1272,6 +1555,7 @@ def _validate_zip_member_name(filename: str) -> str:
         path.is_absolute()
         or ".." in path.parts
         or first.endswith(":")
+        or re.match(r"^[A-Za-z]:", first) is not None
         or normalized.startswith("//")
     ):
         raise InvalidStateError("ZIP bundle contains an unsafe member path")
@@ -1279,7 +1563,11 @@ def _validate_zip_member_name(filename: str) -> str:
 
 
 def _safe_zip_name(filename: str) -> str:
-    return filename.replace("\\", "/").lstrip("./")[-1_000:] or "archive-entry"
+    normalized = filename.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    return normalized[-1_000:] or "archive-entry"
 
 
 class ArchiveImportService:

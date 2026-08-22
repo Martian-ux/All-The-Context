@@ -57,10 +57,14 @@ Grok-style Markdown transcripts have explicit adapters. Imported text is
 untrusted data and imported instructions remain inert.
 
 The ChatGPT attachment slice is deliberately narrower than the raw-source
-boundary. Every `.dat` member is retained in the preserved ZIP, streamed and
-SHA-256 hashed as `content_sha256`, and recorded in source metadata with its
-archive identity, bounded filename/MIME provenance, and any attachment-ID conversation/message
-links found in `conversations*.json`. `conversation_asset_file_names.json` and
+boundary. For an explicit ChatGPT import, or an auto/generic archive with a
+structurally confirmed ChatGPT conversation graph, every `.dat` member is
+retained in the preserved ZIP, streamed and SHA-256 hashed as `content_sha256`,
+and recorded in source metadata with its unique archive-member identity,
+bounded filename/MIME provenance, and exact conversation/message link pairs
+found in the actual `conversations*.json` member. Explicit Claude/Grok imports
+and unconfirmed auto/generic archives retain `.dat` bytes raw without entering
+the ChatGPT attachment inventory. `conversation_asset_file_names.json` and
 `export_manifest.json` are required before a `.dat` filename can authorize text
 extraction. Only manifest-proven `.txt`, `.json`, `.jsonl`, `.csv`, `.md`, or
 `.markdown` assets are decoded; CSV uses the Python standard-library parser.
@@ -71,12 +75,14 @@ implementation does not claim that all `.dat` contents are searchable.
 
 ZIP parsing enforces 10,000 entries, 512 MiB per member, 2 GiB total declared
 uncompressed expansion by default, a 500:1 compression-ratio ceiling, bounded
-1 MiB streaming reads, 128 MiB JSON item parsing, and an 8 MiB attachment-text
-read limit. These are parser limits in addition to the 2,000,000,000-byte raw
-import boundary. Path traversal, absolute/drive-qualified names, encrypted
-entries, duplicate case-insensitive names, and over-limit members fail closed
-or remain explicitly unavailable; raw source preservation is not treated as
-searchable extraction.
+1 MiB streaming reads, 128 MiB JSON item parsing, an 8 MiB attachment-text
+read limit, and a 10,000-pair total attachment-link cap. Link scanning is
+bounded to 64 nesting levels and 10,000 nodes per JSON document; truncation is
+reported as incomplete coverage. These are parser limits in addition to the
+2,000,000,000-byte raw import boundary. Path traversal, absolute/drive-relative
+names, encrypted entries, duplicate case-insensitive names, and over-limit
+members fail closed or remain explicitly unavailable; raw source preservation
+is not treated as searchable extraction.
 
 Provider imports use a versioned archive session keyed by source ID and parser
 version. Batches use the source hash, parser version, and stable batch ordinal

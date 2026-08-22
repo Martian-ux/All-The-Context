@@ -114,6 +114,18 @@ unsupported binaries, traversal, member/total expansion, and text read bounds.
 Real-export structural inspection was content-free; no real export bytes or
 personal values enter the repository, tests, logs, or receipts.
 
+### 2026-08-22 attachment review-boundary corrections
+
+The ChatGPT `.dat` inventory and bounded text slice now run only for explicit
+ChatGPT imports or auto/generic archives with a structurally confirmed ChatGPT
+mapping graph. Explicit Claude/Grok and unconfirmed archives leave those
+members raw, so malformed ChatGPT control files cannot fail unrelated provider
+imports. Inventory IDs preserve unique archive-member names, links persist as
+exact conversation/message pairs, and colliding stems do not produce inferred
+links. MIME conflicts are explicit `ambiguous` status with no selected type or
+fake provenance source. Link accumulation is capped at 10,000 pairs and
+per-document scanning is bounded; truncation is reported as incomplete.
+
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
 `080d90669dd5936206c088ae0f4fe4cca24d327e`. PR 64 then landed the ADR-088
