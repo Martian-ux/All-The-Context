@@ -32,11 +32,20 @@ The adapter is transport glue, not an authority. Generated config pins a target,
 client ID, and credential source so models can retrieve and propose memory
 without repeated setup.
 
-## ADR-005: Official MCP v1 during v2 transition
+## ADR-005: Official MCP v2 compatibility lane
 
-As of 2026-07-21 the official Python SDK documents v1 as stable and v2 as alpha,
-with v2 stable targeted later in July. The dependency is constrained to
-`mcp>=1.27,<2` and isolated in `mcp_adapter.py` for a controlled v2 migration.
+As of 2026-08-22 the official Python SDK v2 line is stable. ATC constrains the
+runtime to `mcp>=2,<3` and raises the MCP-required Pydantic/AnyIO floors. The
+local and Edge adapters use the supported `MCPServer` registration surface;
+STDIO uses the SDK's descriptor-isolated runner, and Streamable HTTP transport
+options are supplied at app construction. Edge OAuth provider settings remain
+on the server's supported auth surface, while bearer protection, Core
+authority, loopback defaults, and content bounds remain ATC-owned boundaries.
+
+The v2 SDK serves both modern and 2025-era MCP clients on the same Streamable
+HTTP app. This is an interoperability migration only: ordinary MCP remains an
+L0 integration and does not provide lifecycle-aware L1-L3 hooks or make such a
+claim for ATC.
 
 ## ADR-006: Bundle the dashboard with Core
 

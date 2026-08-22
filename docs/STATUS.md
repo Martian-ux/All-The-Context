@@ -15,6 +15,19 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## MCP v2 compatibility lane (2026-08-22)
+
+The bounded MCP lane now uses the stable official Python SDK v2 line
+(`mcp>=2,<3`, locked at `2.0.0`) with the MCP-required Pydantic and AnyIO
+floors. The local adapter uses `MCPServer`, the SDK's public descriptor-isolated
+STDIO runner, and app-level Streamable HTTP options; the Edge adapter keeps
+OAuth/bearer settings and Core authority intact while moving transport settings
+to the v2 app builder. Focused MCP contract, legacy 2025-era Streamable HTTP,
+managed STDIO/restart, PKCE refresh/revocation, and bearer/content-boundary
+tests pass locally. This remains ordinary L0 MCP integration; no lifecycle-aware
+L1-L3 hooks are supplied or claimed. Full pytest and hosted CI remain outside
+this local validation note.
+
 ## Privacy ACL boundary repair (2026-08-22)
 
 The canonical observation merge now treats a restrictive allowlist as content-

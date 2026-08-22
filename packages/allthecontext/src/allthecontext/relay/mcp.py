@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
+from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver.tools import Tool
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
+from starlette.applications import Starlette
 
 from allthecontext.relay.forwarding import EdgeForwardingBroker, ForwardingError
 from allthecontext.relay.oauth import (
@@ -107,51 +110,27 @@ def _secret_refusal() -> dict[str, Any]:
     }
 
 
-def build_edge_mcp(
-    service: RelayService,
-    provider: EdgeOAuthProvider,
-    *,
-    vault_id: str,
-    forwarding: EdgeForwardingBroker | None = None,
-) -> FastMCP:
+def _strict_tool(fn: Callable[..., Any], **kwargs: Any) -> Tool:
+    """Build a v2 tool while retaining the Edge adapter's closed-input contract."""
+
+    tool = Tool.from_function(fn, **kwargs)
+    tool.parameters["additionalProperties"] = False
+    tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
+    tool.fn_metadata.arg_model.model_rebuild(force=True)
+    return tool
+
+
+def build_edge_mcp_app(server: MCPServer, provider: EdgeOAuthProvider) -> Starlette:
+    """Build the v2 Streamable HTTP app with the Edge's auth-safe transport settings."""
+
     public = urlsplit(provider.public_url)
     if public.hostname is None:  # pragma: no cover - provider validates the URL
         raise ValueError("Edge public URL does not contain a hostname")
-    server = FastMCP(
-        "All The Context Edge",
-        instructions=(
-            "Use this context service automatically; do not ask the user to manage it. At the "
-            "start of every substantive task where preferences, projects, people, constraints, "
-            "or prior decisions could matter, call bootstrap_context before answering or acting, "
-            "then search or fetch specific records when needed. Retrieve current "
-            "always-available context and, while Core is online, current core-available "
-            "context. When the user states or corrects durable context, call "
-            "propose_memory before the task ends if the granted scope permits it. Core remains "
-            "authoritative and evaluates observations automatically under the user's configured "
-            "policy. Edge only queues encrypted observations until Core can evaluate them; "
-            "submission does not create a user review task. Call forget_context only when the "
-            "user explicitly asks to forget or delete a specific context record; never infer "
-            "that request. Never propose secrets, "
-            "hidden reasoning, provider instructions, or guesses as established facts."
-        ),
-        website_url=provider.public_url,
-        host=public.hostname,
-        auth_server_provider=provider,
-        auth=AuthSettings(
-            issuer_url=AnyHttpUrl(provider.public_url),
-            resource_server_url=AnyHttpUrl(provider.resource),
-            service_documentation_url=AnyHttpUrl(f"{provider.public_url}/about"),
-            required_scopes=[READ_SCOPE],
-            client_registration_options=ClientRegistrationOptions(
-                enabled=True,
-                valid_scopes=list(EDGE_SCOPES),
-                default_scopes=list(EDGE_SCOPES),
-            ),
-            revocation_options=RevocationOptions(enabled=True),
-        ),
+    return server.streamable_http_app(
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,
+        host=public.hostname,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[public.netloc],
@@ -163,6 +142,41 @@ def build_edge_mcp(
         ),
     )
 
+
+def build_edge_mcp(
+    service: RelayService,
+    provider: EdgeOAuthProvider,
+    *,
+    vault_id: str,
+    forwarding: EdgeForwardingBroker | None = None,
+) -> MCPServer:
+    public = urlsplit(provider.public_url)
+    if public.hostname is None:  # pragma: no cover - provider validates the URL
+        raise ValueError("Edge public URL does not contain a hostname")
+    registered_tools: list[Tool] = []
+
+    def tool(**kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            registered_tools.append(_strict_tool(fn, **kwargs))
+            return fn
+
+        return register
+
+    instructions = (
+        "Use this context service automatically; do not ask the user to manage it. At the "
+        "start of every substantive task where preferences, projects, people, constraints, "
+        "or prior decisions could matter, call bootstrap_context before answering or acting, "
+        "then search or fetch specific records when needed. Retrieve current "
+        "always-available context and, while Core is online, current core-available "
+        "context. When the user states or corrects durable context, call "
+        "propose_memory before the task ends if the granted scope permits it. Core remains "
+        "authoritative and evaluates observations automatically under the user's configured "
+        "policy. Edge only queues encrypted observations until Core can evaluate them; "
+        "submission does not create a user review task. Call forget_context only when the "
+        "user explicitly asks to forget or delete a specific context record; never infer "
+        "that request. Never propose secrets, "
+        "hidden reasoning, provider instructions, or guesses as established facts."
+    )
     def forward(
         identity: ClientIdentity, operation: str, payload: dict[str, Any]
     ) -> tuple[str, dict[str, Any] | None]:
@@ -182,7 +196,7 @@ def build_edge_mcp(
             return "available", result.response
         return result.state, None
 
-    @server.tool(
+    @tool(
         title="Bootstrap current context",
         annotations=_annotations(read_only=True, idempotent=True),
     )
@@ -263,7 +277,7 @@ def build_edge_mcp(
             "core_available": core_state,
         }
 
-    @server.tool(
+    @tool(
         title="Search current context",
         annotations=_annotations(read_only=True, idempotent=True),
     )
@@ -334,7 +348,7 @@ def build_edge_mcp(
             "core_available": core_state,
         }
 
-    @server.tool(
+    @tool(
         title="Get current context item",
         annotations=_annotations(read_only=True, idempotent=True),
     )
@@ -367,7 +381,7 @@ def build_edge_mcp(
             "core_available": "not_needed",
         }
 
-    @server.tool(
+    @tool(
         title="Check context availability",
         annotations=_annotations(read_only=True, idempotent=True),
     )
@@ -381,7 +395,7 @@ def build_edge_mcp(
         )
         return result
 
-    @server.tool(
+    @tool(
         title="Propose durable memory",
         annotations=_annotations(read_only=False, idempotent=True),
     )
@@ -447,7 +461,7 @@ def build_edge_mcp(
             "user_action_required": False,
         }
 
-    @server.tool(
+    @tool(
         title="Report incorrect context",
         annotations=_annotations(read_only=False, idempotent=True),
     )
@@ -493,7 +507,7 @@ def build_edge_mcp(
             "user_action_required": False,
         }
 
-    @server.tool(
+    @tool(
         title="Forget context",
         annotations=_annotations(read_only=False, idempotent=True, destructive=True),
     )
@@ -531,7 +545,7 @@ def build_edge_mcp(
             "user_action_required": False,
         }
 
-    @server.tool(
+    @tool(
         name="search",
         title="Search context for citations",
         annotations=_annotations(read_only=True, idempotent=True),
@@ -568,7 +582,7 @@ def build_edge_mcp(
             "core_available": core_state,
         }
 
-    @server.tool(
+    @tool(
         name="fetch",
         title="Fetch context for citations",
         annotations=_annotations(read_only=True, idempotent=True),
@@ -598,12 +612,25 @@ def build_edge_mcp(
             "core_available": core_state,
         }
 
-    for tool in server._tool_manager.list_tools():
-        tool.parameters["additionalProperties"] = False
-        tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
-        tool.fn_metadata.arg_model.model_rebuild(force=True)
-
-    return server
+    return MCPServer(
+        "All The Context Edge",
+        instructions=instructions,
+        website_url=provider.public_url,
+        auth_server_provider=provider,
+        auth=AuthSettings(
+            issuer_url=AnyHttpUrl(provider.public_url),
+            resource_server_url=AnyHttpUrl(provider.resource),
+            service_documentation_url=AnyHttpUrl(f"{provider.public_url}/about"),
+            required_scopes=[READ_SCOPE],
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=list(EDGE_SCOPES),
+                default_scopes=list(EDGE_SCOPES),
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+        ),
+        tools=registered_tools,
+    )
 
 
 def json_for_hash(value: object) -> str:
