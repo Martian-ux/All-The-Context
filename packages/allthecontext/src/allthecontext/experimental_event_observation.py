@@ -219,11 +219,8 @@ class AuthorizationApplicability:
         object.__setattr__(self, "denied_principals", _labels(self.denied_principals))
         object.__setattr__(self, "denied_scopes", _labels(self.denied_scopes))
         if (
-            self.allowed_principals is not None
-            and self.allowed_principals & self.denied_principals
-        ) or (
-            self.allowed_scopes is not None and self.allowed_scopes & self.denied_scopes
-        ):
+            self.allowed_principals is not None and self.allowed_principals & self.denied_principals
+        ) or (self.allowed_scopes is not None and self.allowed_scopes & self.denied_scopes):
             raise ContractViolation(ContractErrorCode.AUTHORIZATION_CONFLICT)
 
     def applies_to(self, principal: str, *, required_scopes: Iterable[str] = ()) -> bool:
@@ -313,9 +310,7 @@ def _validate_observation_contract(
         or not isinstance(item, ItemLineage)
     ):
         raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-    if not isinstance(witness_class, WitnessClass) or not isinstance(
-        evidence_class, EvidenceClass
-    ):
+    if not isinstance(witness_class, WitnessClass) or not isinstance(evidence_class, EvidenceClass):
         raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     if not isinstance(retention, RetentionPolicy) or not isinstance(
         authorization, AuthorizationApplicability

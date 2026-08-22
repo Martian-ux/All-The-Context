@@ -280,9 +280,7 @@ class PayloadReference:
         if self.sha256 is not None and (
             type(self.sha256) is not str or _SHA256.fullmatch(self.sha256) is None
         ):
-            raise ClientRuntimeContractError(
-                "payload reference digest is not a lowercase SHA-256"
-            )
+            raise ClientRuntimeContractError("payload reference digest is not a lowercase SHA-256")
         if self.untrusted is not True:
             raise EvidenceBoundaryError("payload references must remain untrusted")
 
@@ -335,13 +333,10 @@ class HookCapability:
             raise ClientRuntimeContractError("consequence kinds belong only to consequence hooks")
         if any(type(kind) is not str for kind in self.supported_consequence_kinds):
             raise ClientRuntimeContractError("consequence kinds must be string literals")
-        if len(set(self.supported_consequence_kinds)) != len(
-            self.supported_consequence_kinds
-        ):
+        if len(set(self.supported_consequence_kinds)) != len(self.supported_consequence_kinds):
             raise ClientRuntimeContractError("consequence kinds must be unique")
         if any(
-            kind not in CONSEQUENCE_CHECKPOINT_KINDS
-            for kind in self.supported_consequence_kinds
+            kind not in CONSEQUENCE_CHECKPOINT_KINDS for kind in self.supported_consequence_kinds
         ):
             raise ClientRuntimeContractError("unknown consequence checkpoint kind")
         if self.status == "unsupported" and self.supported_consequence_kinds:
@@ -720,9 +715,7 @@ class ConsequenceCheckpointPayload:
                 "not-observed consequence checkpoints cannot carry evidence"
             )
         if self.status == "observed" and not isinstance(self.evidence_ref, PayloadReference):
-            raise ClientRuntimeContractError(
-                "observed consequence checkpoints require evidence"
-            )
+            raise ClientRuntimeContractError("observed consequence checkpoints require evidence")
         allowed_kinds: dict[str, set[ReferenceKind]] = {
             "context_delivered": {"context_pack"},
             "tool_result_observed": {"tool_result", "external_artifact"},
@@ -730,9 +723,10 @@ class ConsequenceCheckpointPayload:
             "task_outcome_observed": {"outcome", "external_artifact"},
             "correction_available": {"user_turn"},
         }
-        if self.evidence_ref is not None and self.evidence_ref.kind not in allowed_kinds[
-            self.checkpoint_kind
-        ]:
+        if (
+            self.evidence_ref is not None
+            and self.evidence_ref.kind not in allowed_kinds[self.checkpoint_kind]
+        ):
             raise ClientRuntimeContractError(
                 "consequence evidence reference does not match checkpoint kind"
             )

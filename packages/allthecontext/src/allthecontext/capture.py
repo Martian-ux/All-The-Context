@@ -456,10 +456,7 @@ class CaptureRateLimitPolicy:
             "unavailable",
         }:
             raise ValueError("invalid capture rate-limit mode")
-        if (
-            type(self.max_delay_seconds) is not int
-            or not 0 <= self.max_delay_seconds <= 86_400
-        ):
+        if type(self.max_delay_seconds) is not int or not 0 <= self.max_delay_seconds <= 86_400:
             raise ValueError("invalid capture rate-limit delay")
         if self.mode in {"none", "unavailable"} and self.max_delay_seconds != 0:
             raise ValueError("invalid capture rate-limit declaration")
@@ -677,7 +674,13 @@ class CaptureCapabilityManifest:
             errors.append("availability")
         if not choice(
             self.acquisition_mode,
-            {"initial_snapshot", "incremental", "snapshot_and_incremental", "unavailable", "legacy"},
+            {
+                "initial_snapshot",
+                "incremental",
+                "snapshot_and_incremental",
+                "unavailable",
+                "legacy",
+            },
         ):
             errors.append("acquisition_mode")
         for value in (
@@ -730,7 +733,9 @@ class CaptureCapabilityManifest:
                 errors.append("network_egress_truth")
             if self.network_access == "denied" and self.data_egress:
                 errors.append("data_egress")
-            if any(not safe_id(destination, MAX_PROVIDER_CHARS) for destination in self.data_egress):
+            if any(
+                not safe_id(destination, MAX_PROVIDER_CHARS) for destination in self.data_egress
+            ):
                 errors.append("data_egress")
         elif self.network_access != "unknown":
             errors.append("network_egress_truth")

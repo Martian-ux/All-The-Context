@@ -45,9 +45,9 @@ from allthecontext.memory_lab_m3 import InfluenceClass, MutationKind
 T0 = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
 
-def _lineage(*, source_revision: str = "source-r1", item_revision: str = "item-r1") -> tuple[
-    SourceLineage, EventLineage, ItemLineage
-]:
+def _lineage(
+    *, source_revision: str = "source-r1", item_revision: str = "item-r1"
+) -> tuple[SourceLineage, EventLineage, ItemLineage]:
     source = SourceLineage("source-synthetic", generation=1, revision=source_revision)
     event = EventLineage(
         "event-synthetic-1",
@@ -116,17 +116,13 @@ def _plan() -> ProjectionPlan:
             ProjectionDeclaration(
                 "index-synthetic",
                 ProjectionKind.INDEX,
-                dependencies=(
-                    DependencyDeclaration("source-synthetic", InfluenceClass.CONTENT),
-                ),
+                dependencies=(DependencyDeclaration("source-synthetic", InfluenceClass.CONTENT),),
                 invalidation_declarations=invalidations,
             ),
             ProjectionDeclaration(
                 "summary-synthetic",
                 ProjectionKind.SUMMARY,
-                dependencies=(
-                    DependencyDeclaration("index-synthetic", InfluenceClass.CONTENT),
-                ),
+                dependencies=(DependencyDeclaration("index-synthetic", InfluenceClass.CONTENT),),
                 invalidation_declarations=invalidations,
             ),
             ProjectionDeclaration(
@@ -148,9 +144,7 @@ def _plan() -> ProjectionPlan:
             ProjectionDeclaration(
                 "relation-synthetic",
                 ProjectionKind.RELATION,
-                dependencies=(
-                    DependencyDeclaration("summary-synthetic", InfluenceClass.CONTENT),
-                ),
+                dependencies=(DependencyDeclaration("summary-synthetic", InfluenceClass.CONTENT),),
                 invalidation_declarations=invalidations,
             ),
             ProjectionDeclaration(

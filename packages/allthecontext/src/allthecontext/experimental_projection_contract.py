@@ -333,9 +333,7 @@ class ProjectionValue:
         _reference(self.projection_ref)
         if not isinstance(self.kind, ProjectionKind):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-        if not isinstance(self.input_refs, tuple) or not isinstance(
-            self.source_versions, tuple
-        ):
+        if not isinstance(self.input_refs, tuple) or not isinstance(self.source_versions, tuple):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         object.__setattr__(self, "input_refs", _references(self.input_refs))
         versions = self.source_versions
@@ -381,13 +379,13 @@ def _topological_order(
     ordered: list[str] = []
     while remaining:
         ready = sorted(
-                reference
-                for reference in remaining
-                if all(
-                    dependency.predecessor_ref in resolved
-                    or dependency.predecessor_ref in external_refs
-                    for dependency in by_ref[reference].dependencies
-                )
+            reference
+            for reference in remaining
+            if all(
+                dependency.predecessor_ref in resolved
+                or dependency.predecessor_ref in external_refs
+                for dependency in by_ref[reference].dependencies
+            )
         )
         if not ready:
             raise ProjectionContractViolation(ProjectionErrorCode.CYCLIC_DEPENDENCY)
