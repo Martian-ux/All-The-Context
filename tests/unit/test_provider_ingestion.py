@@ -95,6 +95,43 @@ def test_chatgpt_zip_auto_detects_graph_and_ignores_assistant_claims() -> None:
     assert parsed.candidates[-1].explicit_user_statement is False
 
 
+def test_provider_preference_slots_use_subject_not_value() -> None:
+    parsed = parse_text(
+        "## User\nI prefer dark mode. I prefer light mode.",
+        provider="chatgpt",
+        source_name="synthetic-preferences.md",
+    )
+
+    preferences = [
+        item for item in parsed.candidates if item.kind == "interaction_preference"
+    ]
+    assert len(preferences) == 2
+    assert preferences[0].entity_key == preferences[1].entity_key == "archive_slot"
+    assert preferences[0].attribute_key == preferences[1].attribute_key
+    assert preferences[0].attribute_key is not None
+    assert "dark" not in preferences[0].attribute_key
+    assert "light" not in preferences[0].attribute_key
+
+
+def test_provider_preference_choice_slots_use_purpose_subject() -> None:
+    parsed = parse_text(
+        "## User\nI prefer Python for fiction project Alpha. "
+        "I prefer Rust for fiction project Alpha.",
+        provider="chatgpt",
+        source_name="synthetic-choice-preferences.md",
+    )
+
+    preferences = [
+        item for item in parsed.candidates if item.kind == "interaction_preference"
+    ]
+    assert len(preferences) == 2
+    assert preferences[0].attribute_key == preferences[1].attribute_key
+    assert preferences[0].attribute_key is not None
+    assert "python" not in preferences[0].attribute_key
+    assert "rust" not in preferences[0].attribute_key
+    assert "fiction project alpha" in preferences[0].attribute_key
+
+
 def test_chatgpt_numbered_conversation_files_are_combined() -> None:
     first = _chatgpt_export()[0]
     second = {

@@ -340,6 +340,140 @@ def test_archive_lineage_key_collapses_same_subject_not_kind() -> None:
     assert archive_lineage_key("note", "Unrelated kind has no archive slot.") is None
 
 
+def test_archive_lineage_key_separates_preference_subjects_from_values() -> None:
+    dark_mode = archive_lineage_key(
+        "interaction_preference",
+        "I prefer dark mode",
+    )
+    light_mode = archive_lineage_key(
+        "interaction_preference",
+        "I prefer light mode",
+    )
+    concise_answers = archive_lineage_key(
+        "interaction_preference",
+        "I prefer concise answers",
+    )
+
+    assert dark_mode is not None
+    assert dark_mode == light_mode
+    assert dark_mode != concise_answers
+
+
+def test_preference_choice_values_share_lineage_only_when_purpose_matches() -> None:
+    python_alpha = archive_lineage_key(
+        "preference",
+        "I prefer Python for fiction project Alpha",
+    )
+    rust_alpha = archive_lineage_key(
+        "preference",
+        "I prefer Rust for fiction project Alpha",
+    )
+    python_beta = archive_lineage_key(
+        "preference",
+        "I prefer Python for fiction project Beta",
+    )
+    python_examples = archive_lineage_key(
+        "preference",
+        "I prefer Python examples",
+    )
+    rust_examples = archive_lineage_key(
+        "preference",
+        "I prefer Rust examples",
+    )
+
+    assert python_alpha is not None
+    assert python_alpha == rust_alpha
+    assert python_alpha != python_beta
+    assert python_examples != rust_examples
+
+
+def test_archive_preference_revisions_share_lineage_but_direct_records_do_not(
+    tmp_path: Path,
+) -> None:
+    revision_store = _store(tmp_path / "revisions.db")
+    observations = _import_archive_statements(
+        revision_store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer dark mode",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            },
+            {
+                "content": "I prefer light mode",
+                "observed_at": "2025-01-01T00:00:00+00:00",
+            },
+        ],
+        scenario_id="preference-values",
+    )
+
+    assert observations[0].record_id is not None
+    assert observations[1].record_id == observations[0].record_id
+    assert observations[1].disposition == ObservationDisposition.APPLIED
+    assert revision_store.get_record(observations[1].record_id).content == (
+        "I prefer light mode"
+    )
+    assert revision_store.status()["counts"]["active_records"] == 1
+
+    direct_store = _store(tmp_path / "direct.db")
+    direct = direct_store.add_candidate(
+        CandidateInput(
+            kind="interaction_preference",
+            content="I prefer dark mode",
+            explicit_user_statement=True,
+        )
+    )
+    assert direct.record_id is not None
+    archive_observation = _import_archive_statements(
+        direct_store,
+        kind="interaction_preference",
+        statements=[
+            {
+                "content": "I prefer light mode",
+                "observed_at": "2025-01-01T00:00:00+00:00",
+            },
+        ],
+        scenario_id="preference-vs-direct",
+    )
+
+    assert archive_observation[0].record_id is not None
+    assert archive_observation[0].record_id != direct.record_id
+    assert direct_store.get_record(archive_observation[0].record_id).content == (
+        "I prefer light mode"
+    )
+    assert direct_store.get_record(direct.record_id).content == "I prefer dark mode"
+    assert direct_store.status()["counts"]["active_records"] == 2
+
+
+def test_archive_preference_choices_for_same_purpose_supersede(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    observations = _import_archive_statements(
+        store,
+        kind="preference",
+        statements=[
+            {
+                "content": "I prefer Python for fiction project Alpha",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            },
+            {
+                "content": "I prefer Rust for fiction project Alpha",
+                "observed_at": "2025-01-01T00:00:00+00:00",
+            },
+        ],
+        scenario_id="preference-choice-purpose",
+    )
+
+    assert observations[0].record_id is not None
+    assert observations[1].record_id == observations[0].record_id
+    assert observations[1].disposition == ObservationDisposition.APPLIED
+    assert store.get_record(observations[1].record_id).content == (
+        "I prefer Rust for fiction project Alpha"
+    )
+    assert store.status()["counts"]["active_records"] == 1
+
+
 def test_classify_sensitivity_is_conservative_for_health_and_location() -> None:
     assert classify_sensitivity("I prefer concise technical answers.") == Sensitivity.NORMAL
     assert (

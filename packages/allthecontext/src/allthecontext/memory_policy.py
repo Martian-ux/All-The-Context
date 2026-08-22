@@ -110,8 +110,8 @@ _NUMBER = (
     r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
     r"hundred|thousand|million|billion)"
 )
-_PREFERENCE_INTENSITY = (
-    r"short|long|brief|detailed|concise|verbose|simple|complex|quick|thorough"
+_PREFERENCE_VALUE_TERMS = (
+    r"short|long|brief|detailed|concise|verbose|simple|complex|quick|thorough|dark|light"
 )
 _LEADING_REMEMBER = re.compile(
     r"^(?:please\s+)?(?:remember(?:\s+that)?|keep in mind(?:\s+that)?)\s+",
@@ -176,7 +176,9 @@ _QUANTITY_BOUND = re.compile(
     rf"\b(?:under|over|at most|at least|no more than)\s+{_NUMBER}\b",
     flags=re.IGNORECASE,
 )
-_INTENSITY = re.compile(rf"\b(?:{_PREFERENCE_INTENSITY})\b", flags=re.IGNORECASE)
+_PREFERENCE_VALUE = re.compile(
+    rf"\b(?:{_PREFERENCE_VALUE_TERMS})\b", flags=re.IGNORECASE
+)
 _CHOICE_BEFORE_FOR = re.compile(r"\b[\w.+-]+(?=\s+for\b)", flags=re.IGNORECASE)
 
 
@@ -198,7 +200,7 @@ def classify_sensitivity(content: str, declared: Sensitivity = Sensitivity.NORMA
 
 
 def archive_lineage_key(kind: str, content: str) -> str | None:
-    """Stable subject identity for unkeyed archive statements of one kind.
+    """Stable subject-only identity for unkeyed archive statements of one kind.
 
     Returns None when the statement has no extractable subject. Callers must
     keep those records independent rather than collapsing them by kind.
@@ -216,13 +218,26 @@ def archive_lineage_key(kind: str, content: str) -> str | None:
     text = _YEAR.sub(" ", text)
     text = _QUANTITY.sub(" ", text)
     text = _QUANTITY_BOUND.sub(" ", text)
+    preference_value_removed = False
     if normalized_kind in {"preference", "interaction_preference", "editor_preference"}:
-        text = _INTENSITY.sub(" ", text)
-    if normalized_kind in {"project_decision", "workflow"}:
+        text, removed = _PREFERENCE_VALUE.subn(" ", text)
+        preference_value_removed = removed > 0
+    if normalized_kind in {
+        "preference",
+        "interaction_preference",
+        "editor_preference",
+        "project_decision",
+        "workflow",
+    }:
         text = _CHOICE_BEFORE_FOR.sub("$choice", text)
     remainder = " ".join(text.split())
     tokens = [token for token in remainder.split() if len(token) > 1]
-    if len(tokens) < 2:
+    # A one-token subject is useful only when the bounded preference-value
+    # vocabulary exposed the subject (for example, ``dark mode`` -> ``mode``).
+    # Unknown or value-free text still needs two subject tokens so this slot
+    # cannot become a broad kind-only collapse.
+    minimum_tokens = 1 if preference_value_removed else 2
+    if len(tokens) < minimum_tokens:
         return None
     return f"{normalized_kind}:{' '.join(tokens[:12])}"[:256]
 

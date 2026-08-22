@@ -513,7 +513,9 @@ parts of B-101, B-102, and B-104:
   attest direct user statements;
 - B-102 chronological conflict safety: unkeyed archive-import
   preferences/goals/projects/decisions/workflows/constraints share a lineage
-  only when a derived subject key matches, ordered by explicitness then
+  only when a derived subject-only key matches (bounded preference values
+  such as answer style and dark/light, plus a literal choice-before-`for`
+  placeholder, are excluded from that key), ordered by explicitness then
   `observed_at`, with synthetic fixture
   `tests/fixtures/b102_chronological_conflicts.json` and reverse-order
   coverage. Unrelated same-kind archive statements remain independent current

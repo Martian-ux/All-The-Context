@@ -2611,12 +2611,18 @@ project, decision, workflow, and constraint into one current lineage per kind.
 That prevented contradictory imported history from remaining concurrent truth,
 but it also merged unrelated statements into fake version histories.
 
-Core now derives a deterministic subject key from kind-specific framing,
-temporal/quantity modifiers, and preference intensity. Archive observations
-share a lineage only when that key matches. If no subject can be extracted,
-the records remain independent current memories. Exact content still
-reinforces. Direct client unkeyed records stay independent. Version history
-means a revision of the same memory.
+Core now derives a deterministic subject-only key from kind-specific framing,
+temporal/quantity modifiers, a deliberately bounded preference-value
+vocabulary (answer-style terms plus dark/light), and a literal choice-before-
+`for` placeholder for clear preference forms. Archive observations share a
+lineage only when that subject key matches; for a recognized preference value,
+one remaining subject token is sufficient (for example, `dark mode` and
+`light mode` both key to `mode`), while `Python for project Alpha` and `Rust
+for project Alpha` retain `project Alpha` as the subject. Unknown wording still
+requires at least two subject tokens. If no subject can be extracted, the
+records remain independent current memories. Exact content still reinforces.
+Direct client unkeyed records stay independent. Version history means a
+revision of the same memory.
 
 Provider extraction (`provider-archives-v2`) no longer auto-publishes broad
 low-confidence first-person fragments. Specific durable kinds still apply.
