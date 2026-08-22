@@ -429,6 +429,35 @@ def test_edge_bootstrap_metadata_reconciles_filtered_items() -> None:
     assert metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
 
 
+def test_edge_reconciliation_drops_untrusted_reasons_and_unknown_edge_reason() -> None:
+    payload: dict[str, object] = {
+        "items": [{"content": "forwarded"}],
+        "used_chars": 0,
+        "pack_metadata": {
+            "candidate_count": 2,
+            "selected_count": 1,
+            "omitted_count": 1,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": [
+                "candidate_pool",
+                "attacker-controlled",
+                1,
+                "candidate_pool",
+                "budget",
+            ],
+        },
+    }
+
+    EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="attacker-controlled")
+
+    metadata = payload["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["truncation_reasons"] == ["candidate_pool", "budget"]
+    assert metadata["truncated"] is True
+
+
 def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
     items = [{"content": "x" * 5_000} for _ in range(20)]
     original_item_count = len(items)
@@ -463,6 +492,49 @@ def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
     assert metadata["truncated"] is True
     assert metadata["truncation_reasons"] == ["candidate_pool", "edge_envelope"]
     assert len(json.dumps(bounded, ensure_ascii=False).encode("utf-8")) <= 60_000
+
+
+def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() -> None:
+    items = [{"content": "x" * 5_000} for _ in range(20)]
+    payload: dict[str, object] = {
+        "state": "available",
+        "items": items,
+        "used_chars": sum(len(str(item["content"])) + 64 for item in items),
+        "pack_metadata": {
+            "candidate_count": 24,
+            "selected_count": 20,
+            "omitted_count": 4,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": ["candidate_pool"],
+        },
+    }
+
+    items.pop()
+    EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="edge_filter")
+    filtered_metadata = payload["pack_metadata"]
+    assert isinstance(filtered_metadata, dict)
+    assert filtered_metadata["selected_count"] == 19
+    assert filtered_metadata["omitted_count"] == 5
+    assert filtered_metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
+
+    bounded = EdgeSyncManager._bounded_forward_response(payload)
+
+    bounded_items = bounded["items"]
+    assert isinstance(bounded_items, list)
+    metadata = bounded["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["selected_count"] == len(bounded_items)
+    assert metadata["omitted_count"] == 24 - len(bounded_items)
+    expected_used = sum(len(str(item["content"])) + 64 for item in bounded_items)
+    assert metadata["used_chars"] == expected_used
+    assert bounded["used_chars"] == expected_used
+    assert metadata["truncation_reasons"] == [
+        "candidate_pool",
+        "edge_filter",
+        "edge_envelope",
+    ]
 
 
 def test_wait_timeout_cancels_request(tmp_path: Path) -> None:

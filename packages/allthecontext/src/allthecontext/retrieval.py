@@ -28,6 +28,7 @@ from .models import (
     BootstrapRequest,
     BootstrapResponse,
     ContextPackMetadata,
+    ContextPackTruncationReason,
     ContextRecordOut,
     SearchRequest,
     SearchResponse,
@@ -1037,17 +1038,13 @@ class ContextCompiler:
         record_limit_reached = len(selected) >= _MAX_CONTEXT_PACK_ITEMS and bool(omitted)
         candidate_count = max(len(ordered), candidate_pool_count or 0)
         pool_omitted_count = candidate_count - len(ordered)
-        reasons = list(
-            dict.fromkeys(
-                reason
-                for reason, enabled in (
-                    ("candidate_pool", candidate_pool_truncated),
-                    ("budget", budget_limited),
-                    ("record_limit", record_limit_reached),
-                )
-                if enabled
-            )
-        )
+        reasons: list[ContextPackTruncationReason] = []
+        if candidate_pool_truncated:
+            reasons.append("candidate_pool")
+        if budget_limited:
+            reasons.append("budget")
+        if record_limit_reached:
+            reasons.append("record_limit")
         metadata = ContextPackMetadata(
             candidate_count=candidate_count,
             selected_count=len(selected),

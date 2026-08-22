@@ -42,7 +42,13 @@ from .edge_setup import (
     normalize_edge_url,
     proof_matches,
 )
-from .models import Availability, BootstrapRequest, SearchRequest
+from .models import (
+    CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST,
+    EDGE_CONTEXT_PACK_TRUNCATION_REASONS,
+    Availability,
+    BootstrapRequest,
+    SearchRequest,
+)
 from .relay.forwarding import EdgeForwardingBroker
 from .retrieval import RetrievalEngine
 from .storage import CoreStore
@@ -1127,14 +1133,22 @@ class EdgeSyncManager:
         metadata["used_chars"] = used_chars
         payload["used_chars"] = used_chars
 
-        reasons = [
-            str(value)
-            for value in metadata.get("truncation_reasons", [])
-            if isinstance(value, str) and value
-        ]
-        if reason is not None and reason not in reasons:
+        raw_reasons = metadata.get("truncation_reasons", [])
+        reasons: list[str] = []
+        seen_reasons: set[str] = set()
+        if isinstance(raw_reasons, list):
+            for value in raw_reasons[: len(CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST)]:
+                if (
+                    type(value) is str
+                    and value in CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST
+                    and value not in seen_reasons
+                ):
+                    reasons.append(value)
+                    seen_reasons.add(value)
+        if reason in EDGE_CONTEXT_PACK_TRUNCATION_REASONS and reason not in seen_reasons:
             reasons.append(reason)
-        metadata["truncation_reasons"] = list(dict.fromkeys(reasons))
+            seen_reasons.add(reason)
+        metadata["truncation_reasons"] = reasons
         metadata["truncated"] = bool(metadata["truncation_reasons"]) or metadata.get(
             "truncated"
         ) is True

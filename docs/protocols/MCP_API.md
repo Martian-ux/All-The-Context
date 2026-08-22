@@ -59,6 +59,13 @@ counts, budget usage, provenance-backed selected-item count, and explicit
 candidate-pool, budget, or record-limit truncation reasons. It contains no raw
 query or ranking diagnostics.
 
+The v1 metadata contract is closed and bounded: candidate and omitted counts
+are limited to 50,000, selected and provenance-backed counts to 32, and budget
+and used-character counts to 100,000; duplicate- and conflict-suppression
+counts are limited to 50,000. Its boolean flags are strict booleans.
+`truncation_reasons` is a unique list of at most five values from exactly
+`candidate_pool`, `budget`, `record_limit`, `edge_filter`, and `edge_envelope`.
+
 ## One-time local configuration
 
 The desktop wizard detects installed AI clients, creates a distinct
