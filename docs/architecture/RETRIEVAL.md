@@ -137,6 +137,19 @@ stage diagnosis. The set-selection harness adds compatibility, semantic
 coverage, diversity, supporting-evidence, mandatory-preference, conflict,
 redundancy, and budget scenarios; all 11 local gates pass.
 
+## Synthetic retrieval usefulness
+
+`python -m bench.retrieval_usefulness` is a developer-facing eval of whether
+current search, bootstrap, and get packaging return the right current facts,
+exclude stale, conflicting, withdrawn, tentative, and denied items, keep
+sensitive records within client allow/deny and sensitivity labels, preserve
+provenance fields, stay inside character budgets, and emit the provider JSON
+shape used by Core HTTP/MCP. It uses public observation APIs and an isolated
+synthetic vault only. It does not change production ranking, ingestion, schema,
+MCP behavior, or live user data, and it is not a beta-acceptance gate. Usage
+and the compact baseline scorecard are in
+[`bench/README.md`](../../bench/README.md).
+
 ## Optional shadow research
 
 The repository contains two research-only paths under `bench/`; neither is

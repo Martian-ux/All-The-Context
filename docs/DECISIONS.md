@@ -2780,3 +2780,22 @@ encrypted, one-time-use, expiry-bound, or a snapshot-consistency token; record
 changes between pages retain the existing retrieval semantics. This decision
 changes only the Core search request/response contract and its focused API
 coverage, not ranking, totals, or retrieval selection.
+
+## ADR-104: Isolate synthetic retrieval usefulness evaluation
+
+**Status:** accepted 2026-08-21.
+
+Provider-facing retrieval usefulness is evaluated with a synthetic, sanitized
+corpus and public Core observation/retrieval APIs. The harness may measure
+current-fact recall, stale/conflict and withdrawn exclusion, sensitivity and
+provenance packaging, character-budget compliance, and the JSON shape returned
+to search, bootstrap, and get callers.
+
+The eval has no production authority. It must not change ingestion, storage
+schema, memory identity, sensitivity classification, dashboard Context,
+retrieval ranking, MCP production behavior, release state, or live user data.
+It must refuse the operator Core data directory and any existing `core.sqlite3`,
+and it must not log raw personal context. Results are developer evidence only
+and grant no beta-acceptance credit. Core-correctness work remains the
+authority for observation/policy behavior; this harness should follow those
+public APIs rather than inserting fixture rows into canonical tables.

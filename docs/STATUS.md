@@ -1246,6 +1246,13 @@ state is already noncurrent and creates no user queue.
   token MaxSim reduces measured redundancy from `0.083334` to zero; the final
   256-source warm p95 is `18.9572 ms`. Neural late interaction remains
   unexercised and there is no runtime integration.
+- A synthetic retrieval-usefulness harness now scores current-fact recall,
+  stale/conflict exclusion, withdrawn exclusion, sensitivity, provenance,
+  budget compliance, and provider-facing packaging through public
+  observation/search/bootstrap/get APIs on an isolated vault. It refuses the
+  live Core data directory, does not change production ranking or MCP behavior,
+  and grants no beta-acceptance credit. The checked-in baseline is
+  `bench/baselines/retrieval_usefulness_v1.json`.
 - Integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
   macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
