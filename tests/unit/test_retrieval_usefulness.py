@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
+from allthecontext.admissibility import ConflictState
 from allthecontext.config import CoreConfig
+from allthecontext.models import ApprovalRequest, BootstrapRequest, CandidateInput, SearchRequest
+from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, parse_query_intent
+from allthecontext.storage import CoreStore
 
 from bench.retrieval_usefulness import (
     DIMENSIONS,
@@ -15,6 +19,9 @@ from bench.retrieval_usefulness import (
     SCORECARD_SCHEMA,
     CaseOutcome,
     UsefulnessError,
+    _apply_corpus,
+    _bootstrap_request,
+    _principal,
     _scorecard,
     assert_isolated_work_dir,
     compare_to_baseline,
@@ -27,7 +34,7 @@ from bench.retrieval_usefulness import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "bench" / "baselines" / "retrieval_usefulness_v1.json"
-FIXTURE_SHA256 = "dd84421d23573cd96f1fd310cbf4975efbafa0a32df881f086c73723232edfad"
+FIXTURE_SHA256 = "910e85defe71305f5554f4730b02e4261d0cf806da96bed8f1bfc8185c031022"
 
 
 def _fixture() -> dict[str, object]:
@@ -120,6 +127,103 @@ def test_repeat_runs_are_deterministic(tmp_path: Path) -> None:
     assert first["scorecard"] == second["scorecard"]
     assert first["cases"] == second["cases"]
     assert first["fixture_sha256"] == second["fixture_sha256"]
+
+
+def test_query_intent_uses_bounded_local_features() -> None:
+    intent = parse_query_intent("Where is the latest Helios rollback runbook?")
+
+    assert intent.raw_tokens == ("where", "is", "the", "latest", "helios", "rollback", "runbook")
+    assert intent.focus_tokens == ("latest", "helios", "rollback", "runbook")
+    assert {"current", "recent", "restore"} <= set(intent.expanded_tokens)
+    assert intent.asks_current is True
+    assert intent.asks_location is True
+    assert intent.asks_procedure is True
+
+
+def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    candidate = store.add_candidate(
+        CandidateInput(
+            kind="location",
+            content="Helios",
+            scopes=["project:helios"],
+            idempotency_key="raw-query-admissibility",
+        )
+    )
+    record = store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record.id,)
+            ).fetchone()
+            assert row is not None
+            inputs, _context = _admissibility_inputs(
+                [row],
+                SearchRequest(query="what is Helios", current_project="helios"),
+                {record.id: ConflictState.CLEAR},
+            )
+            assert inputs[0].signals.task_query_coverage == round(1 / 3, 6)
+
+            alias_inputs, _alias_context = _admissibility_inputs(
+                [row],
+                SearchRequest(query="where", current_project="helios"),
+                {record.id: ConflictState.CLEAR},
+            )
+            assert alias_inputs[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
+
+
+def test_empty_query_bootstrap_reports_omitted_bounded_pool(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "empty-pool.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    for index in range(101):
+        candidate = store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"empty pool record {index}",
+                idempotency_key=f"empty-pool-{index}",
+            )
+        )
+        store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    principal = _principal(
+        {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query="", requested_scopes=[], budget_chars=50_000), principal
+        )
+        metadata = response.pack_metadata
+        assert metadata is not None
+        assert metadata.candidate_pool_truncated is True
+        assert metadata.candidate_count == 101
+        assert metadata.selected_count == len(response.items) == 32
+        assert metadata.omitted_count == metadata.candidate_count - metadata.selected_count
+        assert metadata.used_chars == response.used_chars
+        assert "candidate_pool" in metadata.truncation_reasons
+    finally:
+        store.close()
+
+
+def test_bootstrap_pack_metadata_is_truthful_for_budget_truncation(tmp_path: Path) -> None:
+    fixture = _fixture()
+    assert isinstance(fixture["vault"], dict)
+    assert isinstance(fixture["principals"], dict)
+
+    store = CoreStore(tmp_path / "pack.sqlite3")
+    store.initialize_vault(str(fixture["vault"]["name"]), str(fixture["vault"]["display_timezone"]))
+    _apply_corpus(store, fixture)
+    principal = _principal(fixture["principals"]["reader"])
+    request = _bootstrap_request(fixture["cases"][12]["request"])
+
+    response = RetrievalEngine(store).bootstrap(request, principal)
+    assert response.pack_metadata is not None
+    assert response.pack_metadata.truncated is True
+    assert response.pack_metadata.truncation_reasons == ["budget"]
+    assert response.pack_metadata.used_chars == response.used_chars
+    assert response.pack_metadata.omitted_count > 0
+    store.close()
 
 
 def test_scorecard_fails_closed_on_leaks_and_budget() -> None:

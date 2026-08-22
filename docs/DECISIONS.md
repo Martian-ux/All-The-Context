@@ -3140,3 +3140,27 @@ not an external author signature: a holder who rewrites and re-encrypts every
 package member can rewrite both canonical history and ledger data. This
 decision closes row-only forgery without claiming provenance that the package
 trust model cannot establish.
+## ADR-116: Retrieval usefulness reranks only after hard boundaries
+
+**Status:** accepted 2026-08-22. This focused post-beta retrieval slice does
+not change Core authority, import policy, storage schema, lifecycle semantics,
+release state, or acceptance credit.
+
+Production Retrieval V3 keeps authorization, temporal resolution, and numeric
+admissibility ahead of relevance. After those boundaries, the default lexical
+candidate order receives a deterministic local-usefulness rerank using bounded
+query-intent features and record metadata: salient-token/field coverage,
+recency, confidence, availability, sensitivity, conflict state, provenance,
+and actionability. The feature projection never accepts raw unauthorized rows,
+learned model output, network data, or imported instructions, and the frozen V2
+comparator remains unchanged.
+
+Bootstrap remains a separate 100-record evidence pool followed by metadata-only
+set selection. The compiler caps a pack at 32 records, preserves mandatory
+preferences, deduplicates and excludes same-slot conflicts, and enforces the
+exact character budget. Its additive `pack_metadata` envelope reports bounded
+counts, provenance-backed selected items, and explicit candidate-pool/budget/
+record-limit truncation reasons so providers can distinguish omission from an
+empty result. The synthetic usefulness fixture adds sparse location/latest
+intent cases and budget-metadata assertions; its 17-case scorecard is
+developer evidence only.

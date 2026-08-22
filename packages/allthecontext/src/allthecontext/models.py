@@ -11,6 +11,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    Strict,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -44,6 +45,37 @@ ClosedCoverageCount = Annotated[
 MAX_TRUTH_CONFLICT_GROUPS = 64
 MAX_TRUTH_SUPERSEDED_BY = 64
 MAX_TRUTH_EVIDENCE = 512
+
+# These bounds mirror the production retrieval and bootstrap contracts. The
+# candidate count may represent the complete bounded eligible pool rather than
+# only the 100-record retrieval page; the selected pack remains capped at 32
+# items and the public bootstrap budget at 100,000 characters.
+MAX_CONTEXT_PACK_CANDIDATE_COUNT = 50_000
+MAX_CONTEXT_PACK_SELECTED_COUNT = 32
+MAX_CONTEXT_PACK_OMITTED_COUNT = MAX_CONTEXT_PACK_CANDIDATE_COUNT
+MAX_CONTEXT_PACK_BUDGET_CHARS = 100_000
+MAX_CONTEXT_PACK_USED_CHARS = MAX_CONTEXT_PACK_BUDGET_CHARS
+MAX_CONTEXT_PACK_PROVENANCE_COUNT = MAX_CONTEXT_PACK_SELECTED_COUNT
+MAX_CONTEXT_PACK_SUPPRESSED_COUNT = MAX_CONTEXT_PACK_CANDIDATE_COUNT
+
+ContextPackTruncationReason = Literal[
+    "candidate_pool",
+    "budget",
+    "record_limit",
+    "edge_filter",
+    "edge_envelope",
+]
+CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST = frozenset(
+    {
+        "candidate_pool",
+        "budget",
+        "record_limit",
+        "edge_filter",
+        "edge_envelope",
+    }
+)
+EDGE_CONTEXT_PACK_TRUNCATION_REASONS = frozenset({"edge_filter", "edge_envelope"})
+MAX_CONTEXT_PACK_TRUNCATION_REASONS = len(CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST)
 
 RecordListItem = Annotated[
     str,
@@ -561,12 +593,61 @@ class SearchResponse(StrictModel):
     trace_id: str
 
 
+class ContextPackMetadata(StrictModel):
+    """Strict, content-free accounting for a bounded provider context pack.
+
+    Truncation reasons are intentionally closed: Core may emit the first three
+    values and Edge may append only ``edge_filter`` or ``edge_envelope``.
+    """
+
+    pack_schema: Literal["atc.context-pack.v1"] = Field(
+        default="atc.context-pack.v1", alias="schema"
+    )
+    candidate_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_CANDIDATE_COUNT)
+    selected_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_SELECTED_COUNT)
+    omitted_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_OMITTED_COUNT)
+    budget_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_BUDGET_CHARS)
+    used_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_USED_CHARS)
+    provenance_backed_count: StrictInt = Field(
+        ge=0, le=MAX_CONTEXT_PACK_PROVENANCE_COUNT
+    )
+    candidate_pool_truncated: StrictBool = False
+    truncated: StrictBool = False
+    # Core emits up to three reasons; Edge may add filtering and envelope
+    # trimming while preserving those upstream reasons. Every value is an
+    # explicit allowlisted literal, and duplicates are rejected.
+    truncation_reasons: Annotated[
+        list[ContextPackTruncationReason], Strict()
+    ] = Field(
+        default_factory=list, max_length=MAX_CONTEXT_PACK_TRUNCATION_REASONS
+    )
+    duplicate_suppressed_count: StrictInt = Field(
+        default=0, ge=0, le=MAX_CONTEXT_PACK_SUPPRESSED_COUNT
+    )
+    conflict_suppressed_count: StrictInt = Field(
+        default=0, ge=0, le=MAX_CONTEXT_PACK_SUPPRESSED_COUNT
+    )
+    selection_policy: Literal["deterministic_usefulness_v1"] = (
+        "deterministic_usefulness_v1"
+    )
+
+    @field_validator("truncation_reasons")
+    @classmethod
+    def reject_duplicate_truncation_reasons(
+        cls, value: list[ContextPackTruncationReason]
+    ) -> list[ContextPackTruncationReason]:
+        if len(value) != len(set(value)):
+            raise ValueError("truncation_reasons must not contain duplicates")
+        return value
+
+
 class BootstrapResponse(StrictModel):
     items: list[ContextRecordOut]
     context_mode: Literal["local_core"] = "local_core"
     omitted_scopes: list[str]
     audit_trace_id: str
     used_chars: int
+    pack_metadata: ContextPackMetadata | None = None
 
 
 class ContextErrorRequest(StrictModel):

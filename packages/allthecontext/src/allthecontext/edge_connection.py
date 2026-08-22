@@ -42,7 +42,13 @@ from .edge_setup import (
     normalize_edge_url,
     proof_matches,
 )
-from .models import Availability, BootstrapRequest, SearchRequest
+from .models import (
+    CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST,
+    EDGE_CONTEXT_PACK_TRUNCATION_REASONS,
+    Availability,
+    BootstrapRequest,
+    SearchRequest,
+)
 from .relay.forwarding import EdgeForwardingBroker
 from .retrieval import RetrievalEngine
 from .storage import CoreStore
@@ -1025,6 +1031,7 @@ class EdgeSyncManager:
             # Bootstrap through the existing policy/ranking path, then enforce the
             # forwarding availability boundary before anything leaves Core.
             result = self.retrieval.bootstrap(bootstrap_request, principal).model_dump(mode="json")
+            upstream_items = result.get("items")
             result["items"] = [
                 self._forward_record(item)
                 for item in result.get("items", [])
@@ -1034,9 +1041,10 @@ class EdgeSyncManager:
                     and self._record_matches_approved_context_scopes(item, approved_context_scopes)
                 )
             ]
-            result["used_chars"] = sum(
-                len(str(item.get("content", ""))) + 64 for item in result["items"]
-            )
+            if isinstance(upstream_items, list) and len(result["items"]) != len(upstream_items):
+                self._reconcile_bootstrap_pack_metadata(result, reason="edge_filter")
+            else:
+                self._reconcile_bootstrap_pack_metadata(result)
             result["context_mode"] = "core_via_edge"
             return self._bounded_forward_response({"state": "available", **result})
         return {"state": "unavailable"}
@@ -1087,13 +1095,77 @@ class EdgeSyncManager:
         }
 
     @staticmethod
+    def _reconcile_bootstrap_pack_metadata(
+        payload: dict[str, Any], *, reason: str | None = None
+    ) -> None:
+        """Keep bootstrap accounting aligned with the items that Edge forwards."""
+
+        items = payload.get("items")
+        metadata = payload.get("pack_metadata")
+        if not isinstance(items, list):
+            return
+        used_chars = sum(len(str(item.get("content", ""))) + 64 for item in items)
+        if not isinstance(metadata, dict):
+            if "used_chars" in payload:
+                payload["used_chars"] = used_chars
+            return
+
+        def _count(value: object, default: int) -> int:
+            return (
+                value
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                else default
+            )
+
+        previous_selected = _count(metadata.get("selected_count"), len(items))
+        previous_omitted = _count(metadata.get("omitted_count"), 0)
+        candidate_count = _count(
+            metadata.get("candidate_count"), previous_selected + previous_omitted
+        )
+        removed_count = max(0, previous_selected - len(items))
+        selected_count = len(items)
+        omitted_count = previous_omitted + removed_count
+        candidate_count = max(candidate_count, selected_count + omitted_count)
+
+        metadata["candidate_count"] = candidate_count
+        metadata["selected_count"] = selected_count
+        metadata["omitted_count"] = omitted_count
+        metadata["used_chars"] = used_chars
+        payload["used_chars"] = used_chars
+
+        raw_reasons = metadata.get("truncation_reasons", [])
+        reasons: list[str] = []
+        seen_reasons: set[str] = set()
+        if isinstance(raw_reasons, list):
+            for value in raw_reasons[: len(CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST)]:
+                if (
+                    type(value) is str
+                    and value in CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST
+                    and value not in seen_reasons
+                ):
+                    reasons.append(value)
+                    seen_reasons.add(value)
+        if reason in EDGE_CONTEXT_PACK_TRUNCATION_REASONS and reason not in seen_reasons:
+            reasons.append(reason)
+            seen_reasons.add(reason)
+        metadata["truncation_reasons"] = reasons
+        metadata["truncated"] = bool(metadata["truncation_reasons"]) or metadata.get(
+            "truncated"
+        ) is True
+
+    @staticmethod
     def _bounded_forward_response(payload: dict[str, Any]) -> dict[str, Any]:
         # Edge has a hard 64 KiB envelope. Reduce whole items, never slice context
         # text into an ambiguous partial record.
         items = payload.get("items")
+        original_item_count = len(items) if isinstance(items, list) else 0
         if isinstance(items, list):
             while items and len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 60_000:
                 items.pop()
+        if isinstance(items, list) and len(items) != original_item_count:
+            EdgeSyncManager._reconcile_bootstrap_pack_metadata(
+                payload, reason="edge_envelope"
+            )
         if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 60_000:
             return {"state": "error", "error": "Core response exceeded the safe size limit"}
         return payload
