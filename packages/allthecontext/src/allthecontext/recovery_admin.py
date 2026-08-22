@@ -31,7 +31,7 @@ from .export import (
     create_export,
     restore_export,
 )
-from .storage import CoreStore, InvalidStateError
+from .storage import CoreStore, InvalidStateError, _normalize_actor
 
 PURGE_CONFIRMATION_TEMPLATE = "PURGE {target_type} {target_id}"
 VAULT_FILE_NAMES = (
@@ -260,36 +260,70 @@ def carry_forward_purge_tombstones(
     """
 
     if not active_database.is_file():
-        return {"carried_purge_tombstones": 0, "active_present": False, "vault_id": None}
+        return {
+            "carried_purge_tombstones": 0,
+            "carried_user_mutations": 0,
+            "active_present": False,
+            "vault_id": None,
+        }
     # sqlite3 Connection context managers do not close handles; close explicitly
     # so Windows can rename the active vault during cutover.
     active = sqlite3.connect(str(active_database), timeout=30)
     try:
         active.row_factory = sqlite3.Row
-        if not _table_exists(active, "purge_tombstones"):
-            vault_id = None
-            if _table_exists(active, "vaults"):
-                row = active.execute("SELECT id FROM vaults LIMIT 1").fetchone()
-                if row is not None:
-                    vault_id = str(row["id"])
-            return {
-                "carried_purge_tombstones": 0,
-                "active_present": True,
-                "vault_id": vault_id,
+        vault = (
+            active.execute(
+                "SELECT id,name,display_timezone,created_at,schema_version FROM vaults LIMIT 1"
+            ).fetchone()
+            if _table_exists(active, "vaults")
+            else None
+        )
+        tombs = (
+            active.execute(
+                "SELECT stable_id,vault_id,target_type,purged_at,"
+                "replication_sequence,replication_event_id FROM purge_tombstones"
+            ).fetchall()
+            if _table_exists(active, "purge_tombstones")
+            else []
+        )
+        mutations = []
+        if _table_exists(active, "context_user_mutations"):
+            mutation_columns = {
+                str(row[1])
+                for row in active.execute('PRAGMA table_info("context_user_mutations")')
             }
-        vault = active.execute(
-            "SELECT id,name,display_timezone,created_at,schema_version FROM vaults LIMIT 1"
-        ).fetchone()
-        tombs = active.execute(
-            "SELECT stable_id,vault_id,target_type,purged_at,"
-            "replication_sequence,replication_event_id FROM purge_tombstones"
-        ).fetchall()
+            base_columns = {
+                "id",
+                "vault_id",
+                "record_id",
+                "mutation_kind",
+                "mutation_origin",
+                "actor",
+                "created_at",
+            }
+            if base_columns.issubset(mutation_columns):
+                extra = [
+                    column
+                    for column in (
+                        "evidence_kind",
+                        "evidence_id",
+                        "evidence_version",
+                        "evidence_hash",
+                        "intent_key",
+                    )
+                    if column in mutation_columns
+                ]
+                selected = ",".join(sorted(base_columns | set(extra)))
+                mutations = active.execute(
+                    f"SELECT {selected} FROM context_user_mutations ORDER BY created_at,id"
+                ).fetchall()
     finally:
         active.close()
     vault_id = str(vault["id"]) if vault is not None else None
-    if not tombs:
+    if not tombs and not mutations:
         return {
             "carried_purge_tombstones": 0,
+            "carried_user_mutations": 0,
             "active_present": True,
             "vault_id": vault_id,
         }
@@ -310,7 +344,7 @@ def carry_forward_purge_tombstones(
             )
         carried = 0
         for tomb in tombs:
-            isolated.execute(
+            inserted = isolated.execute(
                 "INSERT OR IGNORE INTO purge_tombstones"
                 "(stable_id,vault_id,target_type,purged_at,"
                 "replication_sequence,replication_event_id) VALUES(?,?,?,?,?,?)",
@@ -323,12 +357,71 @@ def carry_forward_purge_tombstones(
                     tomb["replication_event_id"],
                 ),
             )
-            carried += 1
+            if inserted.rowcount == 1:
+                carried += 1
+        carried_mutations = 0
+        allowed_kinds = {
+            "restore",
+            "correction",
+            "availability_change",
+            "delete",
+            "source_delete",
+            "legacy_user_edit",
+        }
+        for mutation in mutations:
+            if (
+                vault_id is None
+                or str(mutation["vault_id"]) != vault_id
+                or str(mutation["mutation_origin"]) != "local_user"
+                or str(mutation["mutation_kind"]) not in allowed_kinds
+                or not str(mutation["record_id"])
+            ):
+                continue
+            available = set(mutation.keys())
+            columns = [
+                "id",
+                "vault_id",
+                "record_id",
+                "mutation_kind",
+                "mutation_origin",
+                "actor",
+                "created_at",
+            ]
+            columns.extend(
+                column
+                for column in (
+                    "evidence_kind",
+                    "evidence_id",
+                    "evidence_version",
+                    "evidence_hash",
+                    "intent_key",
+                )
+                if column in available
+            )
+            quoted = ",".join(f'"{column}"' for column in columns)
+            placeholders = ",".join("?" for _ in columns)
+            values = [
+                str(mutation["id"]),
+                vault_id,
+                str(mutation["record_id"]),
+                str(mutation["mutation_kind"]),
+                "local_user",
+                _normalize_actor(str(mutation["actor"])),
+                str(mutation["created_at"]),
+            ]
+            values.extend(mutation[column] for column in columns[7:])
+            inserted = isolated.execute(
+                f'INSERT OR IGNORE INTO context_user_mutations ({quoted}) VALUES ({placeholders})',
+                values,
+            )
+            if inserted.rowcount == 1:
+                carried_mutations += 1
         isolated.commit()
     finally:
         isolated.close()
     return {
         "carried_purge_tombstones": carried,
+        "carried_user_mutations": carried_mutations,
         "active_present": True,
         "vault_id": vault_id,
     }

@@ -24,7 +24,7 @@ from allthecontext.importers import (
     parse_zip_bundle,
 )
 from allthecontext.models import Availability, CandidateInput, SubmitBatchRequest
-from allthecontext.storage import InvalidStateError, NotFoundError
+from allthecontext.storage import InvalidStateError
 
 
 def _zip(entries: dict[str, bytes | str]) -> bytes:
@@ -2134,8 +2134,9 @@ def test_complete_source_rebuild_is_non_destructive(tmp_path: Path) -> None:
     assert store.get_record(local_only_record.record_id).content == local_only_record.content
     assert store.get_record(privacy_record).content == privacy_content
     for withdrawn_id in rebuilt["withdrawn_record_ids"]:
-        with pytest.raises(NotFoundError):
-            store.get_record(withdrawn_id)
+        # Stable source identity lets an unchanged automatic archive row be
+        # re-applied under the same canonical record ID during cutover.
+        assert store.get_record(withdrawn_id).id == withdrawn_id
         assert store.record_history(withdrawn_id)
 
 

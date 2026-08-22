@@ -18,7 +18,14 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
-from .storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore
+from .storage import (
+    SOURCE_BLOB_CHUNK_BYTES,
+    CoreStore,
+    _mutation_evidence_hash,
+    _normalize_actor,
+    _stable_record_key_from_row,
+    _user_action_evidence_hash,
+)
 
 MAGIC = b"ATCEXP1\x00"
 SALT_SIZE = 16
@@ -104,6 +111,10 @@ def _repair_secret_boundary(database_path: Path) -> None:
     if not _has_secret_boundary(database_path):
         return
     store = CoreStore(database_path)
+    # Export is also a restart boundary for databases that already recorded
+    # migration 013 before evidence columns existed.  Repair those rows before
+    # they become portable material.
+    store.migrate()
     store.repair_preledger_secrets()
 
 
@@ -515,6 +526,232 @@ def _normalize_record_row(
     row.setdefault("policy_version", "legacy-review-v1")
 
 
+def _normalize_deletion_tombstone_row(row: dict[str, Any]) -> None:
+    """Never import source-rebuild authority from an untrusted archive.
+
+    A portable export authenticates the archive as a whole, but its JSONL rows
+    are still input data at restore time.  Rebuild provenance is an internal
+    Core capability, so an imported marker is deliberately downgraded to the
+    ordinary, non-resurrecting barrier.  This preserves restore compatibility
+    while making row tampering fail closed.
+    """
+
+    if str(row.get("deletion_origin", "ordinary")) != "ordinary":
+        row["deletion_origin"] = "ordinary"
+    row["deletion_source_id"] = None
+    # Rebuild session/generation markers are process-local authority.  An
+    # export row, including one from a valid source database, must reopen only
+    # after a fresh in-process publish ceremony on the destination.
+    row["rebuild_session_id"] = None
+    row["rebuild_generation"] = None
+    row["rebuild_source_marker"] = None
+
+
+def _backfill_legacy_user_mutations(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    """Recover pre-013 user-edit evidence while keeping new writes explicit."""
+
+    required_records = {"id", "vault_id", "observation_origin", "updated_at", "created_at"}
+    if not {
+        "context_user_mutations",
+        "context_records",
+        "context_record_versions",
+        "deletion_tombstones",
+    }.issubset(tables) or not required_records.issubset(
+        columns_by_table.get("context_records", set())
+    ) or "deletion_origin" not in columns_by_table.get("deletion_tombstones", set()):
+        return
+    connection.execute(
+        "INSERT OR IGNORE INTO context_user_mutations"
+        "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
+        "SELECT 'legacy-013:' || r.id,r.vault_id,r.id,'legacy_user_edit',"
+        "'local_user','migration-013',COALESCE(r.updated_at,r.created_at) "
+        "FROM context_records r JOIN source_records s ON s.id=r.source_id "
+        "AND s.vault_id=r.vault_id WHERE r.source_id IS NOT NULL AND ("
+        "r.observation_origin='local_admin' OR "
+        "EXISTS (SELECT 1 FROM context_candidates c WHERE c.supersedes=r.id "
+        "AND lower(c.kind)='correction' AND c.source_id IS NOT NULL "
+        "AND c.observation_origin='local_admin') OR "
+        "EXISTS (SELECT 1 FROM context_record_versions v WHERE v.record_id=r.id "
+        "AND json_valid(v.snapshot_json) AND json_type(v.snapshot_json,'$.source_id')='text' "
+        "AND (json_type(v.snapshot_json,'$.deleted_at')='text' OR "
+        "json_extract(v.snapshot_json,'$.observation_origin')='local_admin' OR "
+        "lower(v.reason) IN ('availability changed','availability_changed'))) OR "
+        "EXISTS (SELECT 1 FROM source_deletion_members m WHERE m.source_id=r.source_id "
+        "AND m.record_id=r.id)) AND NOT EXISTS (SELECT 1 FROM deletion_tombstones t "
+        "WHERE t.record_id=r.id AND t.deletion_origin='source_rebuild') AND NOT EXISTS ("
+        "SELECT 1 FROM context_observation_links l WHERE l.record_id=r.id "
+        "AND l.observation_id=r.candidate_id AND l.relationship='reapplied')"
+    )
+
+
+def _validate_imported_user_mutation(
+    connection: sqlite3.Connection,
+    row: dict[str, Any],
+    columns: set[str],
+    version_columns: set[str],
+) -> bool:
+    """Accept only typed same-package action evidence or legacy compatibility facts."""
+
+    required = {
+        "id",
+        "vault_id",
+        "record_id",
+        "mutation_kind",
+        "mutation_origin",
+        "actor",
+        "created_at",
+        "evidence_kind",
+        "evidence_id",
+        "evidence_version",
+        "evidence_hash",
+        "intent_key",
+    }
+    if not required.issubset(columns) or not required.issubset(row):
+        return False
+    mutation_kind = str(row.get("mutation_kind"))
+    if mutation_kind not in {
+        "restore",
+        "correction",
+        "availability_change",
+        "delete",
+        "source_delete",
+        "legacy_user_edit",
+    } or str(row.get("mutation_origin")) != "local_user":
+        return False
+    actor = str(row.get("actor") or "")
+    if not actor or actor != _normalize_actor(actor):
+        return False
+    vault_id = str(row.get("vault_id"))
+    record_id = str(row.get("record_id"))
+    vault = connection.execute("SELECT id FROM vaults WHERE id=?", (vault_id,)).fetchone()
+    record = connection.execute(
+        "SELECT id,vault_id FROM context_records WHERE id=?", (record_id,)
+    ).fetchone()
+    if vault is None or record is None or str(record["vault_id"]) != vault_id:
+        return False
+    evidence_kind = str(row.get("evidence_kind"))
+    if evidence_kind not in {"record_version", "user_action"}:
+        return False
+    evidence_id = str(row.get("evidence_id") or "")
+    try:
+        evidence_version = int(str(row.get("evidence_version")))
+    except (TypeError, ValueError):
+        return False
+    if evidence_version < 1 or not evidence_id:
+        return False
+    evidence = connection.execute(
+        "SELECT id,record_id,version,snapshot_json,reason,user_action_kind,user_action_key "
+        "FROM context_record_versions "
+        "WHERE id=? AND record_id=? AND version=?",
+        (evidence_id, record_id, evidence_version),
+    ).fetchone()
+    if evidence is None:
+        return False
+    intent = str(row.get("intent_key") or "")
+    if evidence_kind == "user_action":
+        if not {"user_action_kind", "user_action_key"}.issubset(version_columns):
+            return False
+        user_action_kind = str(evidence["user_action_kind"] or "")
+        user_action_key = str(evidence["user_action_key"] or "")
+        if user_action_kind != mutation_kind or not user_action_key:
+            return False
+        if intent != user_action_key:
+            return False
+        expected_hash = _user_action_evidence_hash(
+            mutation_kind=mutation_kind,
+            user_action_key=user_action_key,
+            vault_id=vault_id,
+            record_id=record_id,
+            evidence_id=evidence_id,
+            evidence_version=evidence_version,
+            snapshot_json=str(evidence["snapshot_json"]),
+        )
+        if str(row.get("evidence_hash")) != expected_hash:
+            return False
+    else:
+        # The pre-014 generic coordinate is retained only for the explicitly
+        # compatibility-scoped legacy inference fact.  It is never authority
+        # for a typed correction, restore, availability, or delete action.
+        if mutation_kind != "legacy_user_edit":
+            return False
+        expected_hash = _mutation_evidence_hash(
+            mutation_kind=mutation_kind,
+            evidence_kind="record_version",
+            vault_id=vault_id,
+            record_id=record_id,
+            evidence_id=evidence_id,
+            evidence_version=evidence_version,
+            snapshot_json=str(evidence["snapshot_json"]),
+        )
+        if str(row.get("evidence_hash")) != expected_hash:
+            return False
+        if intent != f"legacy-row:{row['id']}" and intent != (
+            f"{mutation_kind}:{record_id}:{evidence_id}"
+        ):
+            return False
+
+    try:
+        snapshot = json.loads(str(evidence["snapshot_json"]))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(snapshot, dict) or str(snapshot.get("id")) != record_id:
+        return False
+    source_id = snapshot.get("source_id")
+    if source_id is not None:
+        source = connection.execute(
+            "SELECT id,vault_id FROM source_records WHERE id=?", (str(source_id),)
+        ).fetchone()
+        if source is None or str(source["vault_id"]) != vault_id:
+            return False
+    expected_reasons = {
+        "restore": "record_restored",
+        "correction": "record_corrected",
+        "availability_change": "availability_changed",
+        "delete": "record_deleted",
+        "source_delete": "source_deleted",
+    }
+    if mutation_kind != "legacy_user_edit" and str(evidence["reason"]) != expected_reasons[
+        mutation_kind
+    ]:
+        return False
+    if mutation_kind in {"delete", "source_delete"} and not isinstance(
+        snapshot.get("deleted_at"), str
+    ):
+        return False
+    if mutation_kind == "source_delete" and source_id is None:
+        return False
+    if mutation_kind == "legacy_user_edit":
+        if source_id is None:
+            return False
+        local_origin = snapshot.get("observation_origin") == "local_admin"
+        deleted_snapshot = isinstance(snapshot.get("deleted_at"), str)
+        if not (local_origin or deleted_snapshot):
+            return False
+    return True
+
+
+def _recompute_record_keys(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    """Recompute identity keys from imported fields instead of trusting JSON."""
+
+    for table in ("context_candidates", "context_records"):
+        if table not in tables or "record_key" not in columns_by_table.get(table, set()):
+            continue
+        rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
+        for row in rows:
+            connection.execute(
+                f'UPDATE "{table}" SET record_key=? WHERE id=?',
+                (_stable_record_key_from_row(row), row["id"]),
+            )
+
+
 def _rebuild_context_fts(connection: sqlite3.Connection, tables: set[str]) -> None:
     if "context_fts" not in tables or "context_records" not in tables:
         return
@@ -586,6 +823,9 @@ def _post_restore_upgrade(
         if assignments:
             connection.execute(f"UPDATE context_records SET {','.join(assignments)}")
 
+    _backfill_legacy_user_mutations(connection, tables, columns_by_table)
+    _recompute_record_keys(connection, tables, columns_by_table)
+
     if "vaults" in tables and destination_schema:
         connection.execute(
             "UPDATE vaults SET schema_version=? WHERE schema_version<?",
@@ -646,6 +886,7 @@ def restore_export(
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
+            connection.row_factory = sqlite3.Row
             try:
                 all_tables = {
                     str(row[0])
@@ -671,6 +912,9 @@ def restore_export(
                 include_sources = bool(manifest.get("include_sources", False))
                 blocked_records: set[str] = set()
                 blocked_sources: set[str] = set()
+                imported_user_mutations: list[dict[str, Any]] = []
+                accepted_user_mutations = 0
+                ignored_user_mutations = 0
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
                         "SELECT stable_id,target_type FROM purge_tombstones"
@@ -733,6 +977,13 @@ def restore_export(
                         name = f"tables/{table}.jsonl"
                         with archive.open(name) as stream:
                             for row in _iter_jsonl(stream):
+                                if table == "context_user_mutations":
+                                    # Ledger rows are not ordinary portable
+                                    # data.  Hold them until every referenced
+                                    # record/version has been restored and
+                                    # validate the typed evidence below.
+                                    imported_user_mutations.append(row)
+                                    continue
                                 if table == "context_records" and (
                                     str(row.get("id")) in blocked_records
                                     or str(row.get("source_id")) in blocked_sources
@@ -791,6 +1042,8 @@ def restore_export(
                                     row["request_hash"] = secrets.token_hex(16)
                                 if not include_sources:
                                     row = _without_source_reference(table, row)
+                                if table == "deletion_tombstones":
+                                    _normalize_deletion_tombstone_row(row)
                                 if table == "context_candidates":
                                     _normalize_candidate_row(
                                         row,
@@ -826,6 +1079,45 @@ def restore_export(
                         all_tables,
                     )
                     _post_restore_upgrade(connection, all_tables, columns_by_table)
+                    if "context_user_mutations" in all_tables:
+                        # The post-restore legacy inference may have created
+                        # rows.  Repair evidence and canonical actor fields
+                        # before considering package rows.
+                        CoreStore._ensure_user_mutation_boundary_tx(connection)
+                        mutation_columns = columns_by_table["context_user_mutations"]
+                        for row in imported_user_mutations:
+                            if not _validate_imported_user_mutation(
+                                connection,
+                                row,
+                                mutation_columns,
+                                columns_by_table.get("context_record_versions", set()),
+                            ):
+                                ignored_user_mutations += 1
+                                continue
+                            inserted = connection.execute(
+                                "INSERT OR IGNORE INTO context_user_mutations"
+                                "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,"
+                                "created_at,evidence_kind,evidence_id,evidence_version,"
+                                "evidence_hash,intent_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                                (
+                                    str(row["id"]),
+                                    str(row["vault_id"]),
+                                    str(row["record_id"]),
+                                    str(row["mutation_kind"]),
+                                    "local_user",
+                                    str(row["actor"]),
+                                    str(row["created_at"]),
+                                    str(row["evidence_kind"]),
+                                    str(row["evidence_id"]),
+                                    int(row["evidence_version"]),
+                                    str(row["evidence_hash"]),
+                                    str(row["intent_key"]),
+                                ),
+                            )
+                            if inserted.rowcount == 1:
+                                accepted_user_mutations += 1
+                            else:
+                                ignored_user_mutations += 1
                     _validate_source_blob_storage(
                         connection,
                         all_tables,
@@ -839,4 +1131,12 @@ def restore_export(
             finally:
                 connection.close()
     _repair_secret_boundary(database_path)
-    return {"valid": True, "dry_run": False, "manifest": manifest}
+    return {
+        "valid": True,
+        "dry_run": False,
+        "manifest": manifest,
+        "user_mutations": {
+            "accepted": accepted_user_mutations,
+            "ignored": ignored_user_mutations,
+        },
+    }

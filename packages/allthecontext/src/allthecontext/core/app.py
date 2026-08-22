@@ -88,6 +88,7 @@ from ..models import (
     CorrectionRequest,
     FinishIngestionRequest,
     ForgetContextRequest,
+    MemoryTruthStatus,
     ObservationDisposition,
     PurgeRequest,
     RejectRequest,
@@ -610,6 +611,24 @@ def create_app(
         require(principal, "context:status")
         return core.store.status()
 
+    @app.get("/v1/context/coverage")
+    def context_truth_coverage(principal: Principal) -> dict[str, Any]:
+        """Return content-free memory/source accounting for provider clients."""
+        require(principal, "context:status")
+        return core.store.memory_truth_coverage().model_dump(mode="json")
+
+    @app.get("/v1/context/truth/{record_id}")
+    def context_truth(record_id: str, principal: Principal) -> dict[str, Any]:
+        """Return the authorized canonical record and its deterministic evidence."""
+        require(principal, "context:read")
+        if core.retrieval.get(record_id, principal) is None:
+            raise HTTPException(status_code=404, detail="Context item not found")
+        return core.store.get_memory_truth(
+            record_id,
+            include_deleted=False,
+            principal=principal,
+        ).model_dump(mode="json")
+
     @app.get("/v1/context/{record_id}")
     def get_context_item(record_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "context:read")
@@ -878,6 +897,28 @@ def create_app(
             offset=offset,
         )
         return {"items": [item.model_dump(mode="json") for item in items], "total": total}
+
+    @app.get("/v1/admin/memory-truth")
+    def list_memory_truth(
+        principal: Principal,
+        status: MemoryTruthStatus | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return the full record truth projection, including non-current records."""
+        require(principal, "admin")
+        return core.store.list_memory_truth(
+            status=status,
+            source_id=source_id,
+            limit=limit,
+            offset=offset,
+        ).model_dump(mode="json")
+
+    @app.get("/v1/admin/memory-truth/{record_id}")
+    def get_memory_truth(record_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.store.get_memory_truth(record_id).model_dump(mode="json")
 
     @app.get("/v1/admin/sources")
     def list_sources(principal: Principal, limit: int = 100, offset: int = 0) -> dict[str, Any]:

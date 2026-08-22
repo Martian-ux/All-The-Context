@@ -3005,3 +3005,138 @@ publishing a member observation. Only valid ChatGPT-shaped content promotes
 such a member before attachment link scanning. A malformed or over-limit
 neutral alternate remains generic and does not activate ChatGPT attachment
 inventory; filename alone is insufficient.
+## ADR-111: Core owns the Memory Truth projection and deletion barriers
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth is an additive Core projection over existing observations,
+current-record versions, evidence links, source metadata, integrity groups, and
+tombstones. It gives authorized clients a canonical record status (`current`,
+`tentative`, `superseded`, `conflicted`, or `deleted`), bounded evidence and
+history, source identity, decision metadata, confidence, sensitivity, and
+separate effective/observed/recorded times. Content-free coverage is exposed
+separately so a client can report source and decision accounting without
+revealing memory text. The public record endpoint remains authorization-first;
+admin list/detail endpoints are the inspection surface for deleted records and
+detached tentative observations. No new model-facing MCP tool is added.
+
+Reprocessing identity is source-scoped and value-aware. A stable key includes
+the source ID and reference, kind/slot keys, and a canonical value fingerprint;
+the source reference alone is never an identity. Complete-source rebuild
+withdrawal marks its tombstone with the exact internal source and origin. Core
+may reapply only an untouched automatic archive record whose tombstone proves
+that same source-rebuild removal. Ordinary user or source deletion is not
+eligible: matching archive evidence receives an explicit ignored disposition
+linked to the deleted record, and cannot create a replacement current record.
+An authorized restore is required before that lineage can become current again.
+
+This slice does not add a replayable append-only decision event stream,
+tentative expiration/decay, provider extraction changes, retrieval/ranking
+changes, dashboard wiring, or source-content history/purge presentation.
+
+## ADR-112: Memory Truth review corrections fail closed at storage boundaries
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth identity is derived from the current durable source address, kind,
+slot keys, and value. Every path that changes those fields recomputes the
+identity key before recording the next version, so an ordinary deletion remains
+a barrier after an observation update or restore. Manual approval links its
+originating observation through the same unique durable link used by automatic
+application; retries update no duplicate row.
+
+Migration 010/011 statement inspection strips leading SQL comments before
+idempotent `ALTER TABLE` recovery. Rebuild deletion provenance is constrained
+to a Core-internal validated cutover helper, with SQLite provenance checks and
+record/source/version/hash invariants before reuse. Portable restore treats all
+rebuild markers as untrusted input and imports them as ordinary deletion
+barriers; a valid rebuild marker is never sufficient authority merely because
+it appears in an authenticated export.
+
+Truth list pagination and status coverage use bounded SQL selection/counting.
+Projection arrays use the public limits of 64 superseders, 64 conflict groups,
+and 512 evidence links. This correction is additive and preserves existing
+purge, relay, authorization, and source-restore contracts.
+
+## ADR-113: Bind reopenable rebuild tombstones to one validated ceremony
+
+**Status:** accepted 2026-08-22.
+
+Only the atomic `publish_source_rebuild` transaction may mint a trusted
+source-rebuild tombstone. Its private withdrawal capability requires a binding
+containing the exact finished archive session, rebuild generation, and
+content-hash-derived source marker. The storage checks also require archive
+mode, finished status, client-free and source-accessible session state,
+source-rebuild-in-progress metadata, stable identity, tombstone hash/version,
+and no user edit. The public compatibility withdrawal method fails closed;
+legacy or portable rows without the binding are ordinary deletion barriers.
+Reapply verifies the same source/session/generation and marker relationships in
+the transaction, preserving stable IDs only for a valid untouched lineage.
+
+Manual approval derives the candidate and record keys from the final persisted
+identity-bearing values, including content, source reference, kind, slots, and
+structured value. Truth list projection counts and pages in SQL, avoids
+read-time integrity rebuilding, and uses page-scoped SQL set prefetch with
+per-record limits for superseders, conflict groups, and evidence. Focused
+regressions cover tampered provenance, delete/reimport replacement prevention,
+idempotent approval evidence, and near-constant query count as the database
+grows. This is additive to the existing purge, restore, relay, export, and
+provider contracts.
+
+## ADR-114: Explicit local mutation ledger guards restore/rebuild boundaries
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Source-rebuild eligibility must not infer human edits from free-form version
+reasons. Migration 013 adds the append-only `context_user_mutations` ledger.
+Public/local record restore, source restore, correction, availability change,
+and explicit deletion paths write typed rows with `mutation_origin='local_user'`.
+The original record/source observation provenance is not rewritten. Automatic
+duplicate-import recovery, archive-import forget evaluation, and source-rebuild
+reapply remain distinct because they do not write a local mutation row.
+
+The ledger deliberately has no record foreign key: purge removes record content
+but retains the opaque stable-ID mutation barrier. Export/restore uses
+duplicate-safe inserts and never deletes destination rows. Imported
+source-rebuild tombstones remain ordinary barriers. A pre-013 database or
+export is upgraded by a deterministic, unique-per-record `legacy_user_edit`
+row derived from durable correction or deleted-snapshot evidence; this one
+compatibility fact is distinct from typed explicit actions and repeated legacy
+restores are idempotent. New rows bind a canonical actor, version evidence
+coordinates/digest, and deterministic intent key. Portable restore stages and
+validates ledger rows only after same-package records, versions, tombstones,
+and source relationships exist; forged or incomplete rows are ignored.
+Recovery carries verified destination-local barriers and purge tombstones into
+an isolated restore transaction, including no-record/purged targets. All
+version/source/tombstone reasons are canonical codes, and restore of an already
+current record is one version-backed, exact-retry-idempotent barrier. SQLite
+checks and append-only triggers fail closed on invalid, copied, or tampered
+ledger mutations.
+
+## ADR-115: Require typed canonical action evidence for portable mutation authority
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Migration 014 adds nullable `user_action_kind` and deterministic
+`user_action_key` fields to `context_record_versions`. Core emits those fields
+only in the local correction, availability-change, restore, delete, and
+source-delete paths. New `context_user_mutations` rows use
+`evidence_kind='user_action'`; portable restore recomputes the typed digest and
+requires the history action kind/key, canonical reason, exact vault/record/
+source relationship, and ledger intent to agree. A generic `record_version`
+coordinate can remain a compatibility-scoped `legacy_user_edit` fact but cannot
+authorize a typed action.
+
+Migration repair drops and recreates both append-only ledger triggers on every
+restart-safe repair pass, including when migration 013 is already marked
+applied. The same pass probes the schema-014 history table, adds any missing
+typed-action columns, and recreates the typed-action unique index idempotently
+when migration 014 is already marked applied. Duplicate-safe restore and
+isolated carry-forward counters increment only when SQLite actually inserts a
+row. The encrypted export passphrase is
+not an external author signature: a holder who rewrites and re-encrypts every
+package member can rewrite both canonical history and ledger data. This
+decision closes row-only forgery without claiming provenance that the package
+trust model cannot establish.

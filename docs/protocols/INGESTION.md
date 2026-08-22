@@ -198,9 +198,12 @@ batch submission, cancellation, interruption, or policy-evaluation failure
 leaves the prior current records in place; the staged session remains resumable
 from the preserved blob. Rebuild eligibility is limited to current approved
 records whose Core origin is `archive_import`; independently deleted records,
-direct/local user-authored records, user corrections, and user
-privacy/availability changes are excluded. The raw blob and all history remain
-in place.
+direct/local user-authored records, and any record with a typed local mutation
+ledger row are excluded. The raw blob and all history remain in place. Public
+record/source restores retain truthful original source provenance but write a
+durable local mutation row, so a later valid rebuild fails closed without
+replacing that record ID. Internal duplicate-import recovery and rebuild
+reapply do not write local mutation rows.
 
 For this rebuild path, `finish_ingestion` stores coverage while leaving the new
 candidates staged. Core's rebuild-publish transaction then withdraws eligible

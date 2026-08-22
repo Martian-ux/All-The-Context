@@ -80,6 +80,34 @@ publication record. GitHub release attestation verification passes for all 34
 assets. No occupied historical draft was retargeted, deleted, reused, signed,
 or published.
 
+### 2026-08-22 Memory Truth foundation
+
+Core now has an additive canonical Memory Truth projection for authorized
+clients and providers. It exposes current, tentative, superseded, conflicted,
+and deleted semantics; deterministic observation evidence; source identity;
+decision reason and policy metadata; effective, observed, and recorded times;
+confidence and sensitivity; bounded version-history counts; and content-free
+coverage/accounting. `GET /v1/context/truth/{record_id}` and
+`GET /v1/context/coverage` are the smallest read contracts for authorized
+clients. Admin-only list/detail endpoints include non-current records and
+detached tentative observations.
+
+Source rebuild withdrawal now records the exact rebuild source on its tombstone.
+Only an untouched automatic archive record with that matching internal
+source-rebuild tombstone may be re-applied under its stable identity. An
+ordinary user deletion is a hard automatic reappearance barrier: matching
+archive evidence is retained as ignored and linked to the deleted record, with
+no replacement current record. Stable record identity includes source address
+and value identity, so repeated source references with different values remain
+distinct.
+
+This is a Memory Truth foundation, not a complete memory-audit product. A
+replayable append-only decision event stream, configurable tentative expiry or
+decay, source-content history/purge presentation, provider extraction changes,
+retrieval/ranking changes, and dashboard wiring remain outside this slice.
+Focused truth, storage, policy, migration, and API tests pass locally; hosted
+CI and release state are unchanged.
+
 ### 2026-08-22 source-rebuild safety correction
 
 Complete-source rebuild now stages its parser-versioned candidates while the
@@ -91,9 +119,11 @@ idempotent session when source finalization is interrupted; a generation/session
 publish marker written in the cutover transaction prevents a retry from
 withdrawing the replacement a second time.
 
-Only current approved records with Core origin `archive_import` and no detected
-correction, user edit, availability/privacy change, or deletion are replacement
-targets. Direct/local-admin records that retain the source ID remain in place.
+Only current approved records with Core origin `archive_import` and no typed
+local mutation, ordinary deletion, or invalid identity are replacement targets.
+Direct/local-admin records that retain the source ID remain in place; public
+restore retains their truthful source provenance while the ledger blocks later
+replacement.
 Synthetic focused coverage passes for parse failure, injected policy-ingestion
 rollback, cancellation, corrected records, and local-authored records. Full
 Ruff passes; mypy reports no issues across 81 source files; and pytest passes
@@ -1608,3 +1638,89 @@ state is already noncurrent and creates no user queue.
   `v1-engineering-1b894dd` Windows engineering set also scans clean. It is not
   built from this scanner commit or the still-unfrozen exact candidate; Linux
   tar.gz and macOS DMG contents are not claimed as inspected by this scanner.
+
+## Memory Truth review-fix amendment (2026-08-22)
+
+- Core migrations 010/011/012 are restart-safe after an interrupted `ALTER TABLE`,
+  including statements preceded by SQL comments; the focused probe covers an
+  unrecorded partial application and a second restart. Migration 012
+  downgrades legacy/unbound rebuild rows to ordinary deletion barriers.
+- Observation, correction, historical-restore, and portable-restore paths now
+  recompute source/value identity keys from their durable identity-bearing
+  fields. A V1-to-V2 update therefore cannot bypass an ordinary deletion
+  barrier on matching archive reimport.
+- Source-rebuild tombstones are minted only by the validated atomic
+  `publish_source_rebuild` ceremony. The public withdrawal compatibility path
+  fails closed; trusted rows bind the exact finished archive session,
+  generation, and content-hash marker, while reapply checks source/session
+  accessibility, in-progress metadata, stable identity, tombstone hash/version,
+  and user-edit absence. Imported or copied markers remain ordinary barriers.
+- Manual approval recomputes the candidate and canonical record key from every
+  final identity-bearing override, including content, slot, source reference,
+  kind, and structured value. Delete/reimport and retry/evidence regressions
+  prove no replacement current record or duplicate link is created.
+- Truth list/count projections page and count at SQL level without rebuilding
+  global integrity state on reads. Page-scoped set queries use SQL row limits
+  for superseded IDs, conflict IDs, and evidence; a query-count regression
+  stays near-constant as the database grows. Focused Memory Truth, storage,
+  migration, export/restore, Core API, provider-rebuild, purge, and relay
+  checks pass locally; full-suite and hosted CI evidence remain outside this
+  lane.
+
+## Memory Truth restore-boundary correction (2026-08-22)
+
+- Core migration `013_user_mutation_boundary.sql` adds an append-only,
+  constraint-backed `context_user_mutations` ledger. Public/local restore,
+  correction, availability, and explicit deletion paths write typed
+  `local_user` rows; source rebuild checks the ledger instead of inferring
+  edits from free-form version reasons. Original `archive_import` provenance
+  remains truthful.
+- Internal duplicate-import recovery and source-rebuild reapply paths do not
+  write user-mutation rows. The ledger survives restart, portable export/restore,
+  and purge; imported rebuild tombstones remain ordinary barriers. Legacy
+  databases and pre-013 exports infer one deterministic `legacy_user_edit` row
+  per affected record at most, and repeated restores remain idempotent.
+- Focused Memory Truth/storage/migration/export checks cover benign and
+  internal-looking restore reasons, restart/portable restore, append-only and
+  tamper barriers, legacy/partial migration, and stable-ID rebuild behavior.
+  This is an isolated review candidate; final acceptance, full-suite, hosted
+  CI, live Core, and private-export inspection remain outside this lane.
+
+## Memory Truth ledger-authority closure (2026-08-22)
+
+- The 013 ledger now carries typed version evidence, bounded normalized actor
+  material, canonical reason codes, and deterministic intent keys. Export
+  restore validates those fields against same-package record history and exact
+  vault/record/source relationships; a syntactically valid forged row is
+  ignored and cannot block a valid source rebuild.
+- Isolated recovery carries verified active destination-local mutation barriers
+  transactionally with purge tombstones before import, idempotently covering
+  ordinary, missing-record, and purged-record cases. An explicit restore of an
+  already-current record creates one stable version-backed barrier per retry
+  contract.
+- Legacy inference uses source-backed typed state/version relationships and
+  excludes source-free manual records and validated automatic reapplications.
+  Version/source/tombstone reasons and persisted actor fields are content-free;
+  focused adversarial probes cover secret-marker absence in SQLite, exports,
+  and returned durable structures. Fresh reviewer acceptance remains pending.
+
+## Memory Truth final-authority repair (2026-08-22)
+
+- Schema 014 adds typed canonical user-action kind/key evidence to record
+  history. New portable mutation rows require that evidence and a matching
+  typed digest; a generic same-package `record_restored` version cannot grant a
+  forged restore barrier. Legacy generic rows remain compatibility-only
+  `legacy_user_edit` facts, and old packages are handled explicitly rather than
+  treated as typed action proof.
+- Migration repair recreates both append-only mutation triggers on every pass,
+  including databases where migration 013 is already marked applied. The same
+  restart/migrate pass repairs any missing schema-014 typed-action columns and
+  recreates its partial unique index idempotently when migration 014 is already
+  marked applied. Restore and isolated recovery counters now report only actual
+  inserts, so repeated imports are ignored rather than reported accepted.
+- Focused adversarial coverage includes zero-source-ledger evidence-only
+  forgery with stable-ID rebuild reuse, genuine typed mutation round-trip and
+  rebuild blocking, trigger loss/restart/idempotence, schema-014 partial-column
+  and index repair, all typed local action paths, and duplicate import counts.
+  This remains local review evidence only; encrypted package possession is not
+  an external signature over a fully rewritten and re-encrypted archive.
