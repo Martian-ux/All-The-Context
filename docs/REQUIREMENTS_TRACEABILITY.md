@@ -6,6 +6,19 @@ does not claim hosted CI, release publication, exact artifact/client/provider
 acceptance, or live/private data inspection. Earlier evidence is retained only
 as historical context and does not become evidence for this checkout.
 
+### 2026-08-22 ZF-004 Wave 1 event reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Exact capture and lifecycle envelopes normalize into one bounded reference-only input | `experimental_event_reconciliation.py`; `tests/unit/test_experimental_event_reconciliation.py` | Implemented locally: existing IDs, source generation/order/cursor/idempotency, capture commitment/size, lifecycle hook/payload/ownership/version truth, context references, timestamps, retention, sensitivity, authorization, and typed dependency withdrawals are preserved without raw content |
+| Secret-like metadata and malformed evidence fail before a normalized input | `ReconciliationViolation`; isolated secret, exact-type, operation/generation, normalizer, payload-pairing, cursor-bound, and content-free error tests | Implemented locally with code-only failures; `as_dict()` exposes metadata and references only |
+| Correction, delete, expiry, and purge dependencies withdraw safely | `DependencyWithdrawal`; delete-match and purge-action tests | Implemented locally: ordinary delete requires an authorized matching provider-item withdrawal, and terminal purge requires explicit `ERASE` |
+| The slice does not create a second authority or persistence path | AST structural test; no storage/SQLite/network/provider SDK imports; no persistence, replay, cursor-advance, or observation/current-ID APIs | Implemented locally; Wave 2 Core/harness integration and provider capability claims remain out of scope |
+
+Evidence is limited to deterministic synthetic unit tests and static structural
+checks. Full repository pytest/mypy, hosted CI, provider access, private data,
+release acceptance, and stable SDK/MCP lifecycle claims are not implied.
+
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 
 | Requirement | Implementation/evidence | Status |

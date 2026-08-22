@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## ADR-130: Wave 1 reconciliation is an opaque metadata boundary
+
+**Status:** accepted locally on 2026-08-22 after isolated synthetic contract
+tests; this is not provider, SDK, MCP lifecycle, release, or hosted acceptance.
+
+ZF-004 Wave 1 composes the existing `CaptureEvent` and exact
+`ClientLifecycleEnvelope` into one immutable `EventReconciliationInput` for a
+later formation step. The slice reuses source/event IDs, capture generation and
+order, the existing capture normalizer's commitment and bounded byte size,
+source cursor and idempotency material, client payload references, lifecycle
+hook/payload/ownership/version truth, and bounded account/client/conversation/
+task/workspace/project/artifact references. Raw source text is never copied or
+returned by `as_dict()`.
+
+Dependency withdrawals are actual immutable tuples of typed Packet C
+cause/action declarations. Authorized ordinary-delete withdrawals must match
+the deleted provider item; terminal purge is allowed only with `ERASE`.
+Secret-like direct metadata and malformed exact-contract evidence fail with
+codes only. The module has no persistence, replay, cursor advancement, ID
+minting, storage/network/provider import, or stable integration claim. Any
+formation, Core policy, storage, and harness wiring belongs to the later
+integration-owned seam.
+
 ## ADR-001: Core is the sole authority
 
 Relay stores a projection and proposal queue only. Application events, not

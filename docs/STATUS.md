@@ -15,6 +15,24 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## ZF-004 Wave 1 event reconciliation (2026-08-22)
+
+The integration-owned Wave 1 slice now has a bounded pure reference boundary in
+`experimental_event_reconciliation.py` with isolated synthetic tests. It
+accepts the exact existing `CaptureEvent` and `ClientLifecycleEnvelope`
+contracts, carries stable IDs, source generation/order/cursor/idempotency,
+payload commitment/size, lifecycle references, timestamps, retention,
+sensitivity, authorization, version, ownership, and dependency withdrawal
+metadata without copying raw payload content.
+
+The boundary fails closed for malformed operation/generation/normalization,
+lookalike lifecycle envelopes, secret-like direct metadata, wrong nested
+withdrawal types, unmatched capture deletes, and non-`ERASE` terminal purges.
+It does not persist, advance a cursor/checkpoint, replay, mint an observation or
+current ID, import storage/network/provider SDKs, or claim provider support,
+stable SDK, or MCP lifecycle capability. Wave 2 harness integration remains
+separate.
+
 ## MCP v2 and HTTPX2 compatibility lane (2026-08-22)
 
 The bounded MCP lane now uses the stable official Python SDK v2 line
