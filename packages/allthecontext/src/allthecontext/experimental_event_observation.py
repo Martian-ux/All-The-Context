@@ -413,6 +413,7 @@ class ObservationProposal:
     retention: RetentionPolicy
     authorization: AuthorizationApplicability
     observed_at: datetime
+    payload_kind: PayloadKind
     disposition: ObservationDisposition
     content: str | None
     content_interpretation: ContentInterpretation
@@ -430,7 +431,7 @@ class ObservationProposal:
             authorization=self.authorization,
             observed_at=self.observed_at,
             content=self.content,
-            payload_kind=None,
+            payload_kind=self.payload_kind,
             content_interpretation=self.content_interpretation,
             disposition=self.disposition,
             supersedes_observation_ref=self.supersedes_observation_ref,
@@ -558,6 +559,7 @@ def form_observation(
         retention=formation_input.retention,
         authorization=formation_input.authorization,
         observed_at=formation_input.observed_at,
+        payload_kind=formation_input.payload_kind,
         disposition=disposition,
         content=formation_input.content,
         content_interpretation=formation_input.content_interpretation,

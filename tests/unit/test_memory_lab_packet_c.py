@@ -241,6 +241,23 @@ def test_instruction_like_imported_text_remains_inert_and_tentative() -> None:
     assert result.proposal.disposition is ObservationDisposition.TENTATIVE
 
 
+def test_payload_kind_round_trips_for_inline_and_authoritative_reference_modes() -> None:
+    inline = form_observation(_formation_input(payload_kind=PayloadKind.BOUNDED_INLINE))
+    source_reference = form_observation(
+        _formation_input(
+            payload_kind=PayloadKind.AUTHORITATIVE_SOURCE_REFERENCE,
+            content=None,
+        )
+    )
+
+    assert inline.proposal is not None
+    assert source_reference.proposal is not None
+    assert inline.proposal.payload_kind is PayloadKind.BOUNDED_INLINE
+    assert inline.proposal.content == "synthetic evidence datum"
+    assert source_reference.proposal.payload_kind is PayloadKind.AUTHORITATIVE_SOURCE_REFERENCE
+    assert source_reference.proposal.content is None
+
+
 def test_authorization_can_only_narrow_and_correction_supersession_preserves_lineage() -> None:
     result = form_observation(
         _formation_input(
@@ -358,6 +375,10 @@ def test_dependency_closure_covers_correction_drift_expiry_delete_and_destructiv
         InvalidationCause.TERMINAL_PURGE,
     ):
         assert set(dependency_closure(plan, ("source-synthetic",), cause)) == expected
+    with pytest.raises(ProjectionContractViolation) as unknown_root:
+        dependency_closure(plan, ("unknown-synthetic",), InvalidationCause.CORRECTION)
+    assert unknown_root.value.code.value == "unknown_closure_root"
+    assert "unknown-synthetic" not in str(unknown_root.value)
 
 
 def test_rebuild_is_deterministic_and_withdraws_ineligible_inputs() -> None:
@@ -429,6 +450,60 @@ def test_rebuild_is_deterministic_and_withdraws_ineligible_inputs() -> None:
     )
 
 
+def test_projection_commitment_binds_dependency_invalidation_and_recipe_version() -> None:
+    plan = _plan()
+    baseline = rebuild_projection(
+        plan,
+        (_seed(),),
+        principal="alice",
+        policy_generation=3,
+        required_scopes=("synthetic-project",),
+    )
+    assert baseline
+
+    influence_changed = replace(
+        plan.declarations[0],
+        dependencies=(DependencyDeclaration("source-synthetic", InfluenceClass.SELECTION),),
+    )
+    influence_plan = replace(
+        plan,
+        declarations=(influence_changed, *plan.declarations[1:]),
+    )
+    action_changed = replace(
+        plan.declarations[0],
+        invalidation_declarations=tuple(
+            InvalidationDeclaration(
+                item.cause,
+                InvalidationAction.WITHDRAW_ONLY
+                if item.cause is InvalidationCause.CORRECTION
+                else item.action,
+            )
+            for item in plan.declarations[0].invalidation_declarations
+        ),
+    )
+    action_plan = replace(plan, declarations=(action_changed, *plan.declarations[1:]))
+    version_plan = replace(
+        plan,
+        declarations=(replace(plan.declarations[0], recipe_version=2), *plan.declarations[1:]),
+    )
+
+    def first_commitment(candidate: ProjectionPlan) -> str:
+        rebuilt = rebuild_projection(
+            candidate,
+            (_seed(),),
+            principal="alice",
+            policy_generation=3,
+            required_scopes=("synthetic-project",),
+        )
+        assert rebuilt
+        return rebuilt[0].semantic_commitment
+
+    baseline_commitment = baseline[0].semantic_commitment
+    assert first_commitment(influence_plan) != baseline_commitment
+    assert first_commitment(action_plan) != baseline_commitment
+    assert first_commitment(version_plan) != baseline_commitment
+
+
 def test_projection_declarations_require_typed_recipes_and_all_invalidation_causes() -> None:
     invalidations = _all_invalidations()
     dependency = (DependencyDeclaration("external-synthetic", InfluenceClass.CONTENT),)
@@ -464,6 +539,13 @@ def test_projection_declarations_require_typed_recipes_and_all_invalidation_caus
             invalidation_declarations=invalidations[:-1],
         )
     assert missing.value.code.value == "missing_invalidation"
+
+
+def test_terminal_purge_requires_erase_action() -> None:
+    for action in (InvalidationAction.WITHDRAW_ONLY, InvalidationAction.WITHDRAW_AND_REBUILD):
+        with pytest.raises(ProjectionContractViolation) as failure:
+            InvalidationDeclaration(InvalidationCause.TERMINAL_PURGE, action)
+        assert failure.value.code.value == "purge_requires_erase"
 
 
 def test_rebuild_rejects_unknown_and_derived_seed_references() -> None:

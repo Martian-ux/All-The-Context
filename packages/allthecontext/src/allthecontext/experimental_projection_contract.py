@@ -33,8 +33,10 @@ class ProjectionErrorCode(StrEnum):
     INVALID_SCHEDULE = "invalid_schedule"
     INVALID_SEED = "invalid_seed"
     UNKNOWN_SEED = "unknown_seed"
+    UNKNOWN_CLOSURE_ROOT = "unknown_closure_root"
     EMPTY_DEPENDENCIES = "empty_dependencies"
     MISSING_INVALIDATION = "missing_invalidation"
+    PURGE_REQUIRES_ERASE = "purge_requires_erase"
     EMPTY_INPUT = "empty_input"
 
 
@@ -152,6 +154,11 @@ class InvalidationDeclaration:
             self.action, InvalidationAction
         ):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        if (
+            self.cause is InvalidationCause.TERMINAL_PURGE
+            and self.action is not InvalidationAction.ERASE
+        ):
+            raise ProjectionContractViolation(ProjectionErrorCode.PURGE_REQUIRES_ERASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,10 +169,13 @@ class ProjectionDeclaration:
     kind: ProjectionKind
     dependencies: tuple[DependencyDeclaration, ...] = ()
     invalidation_declarations: tuple[InvalidationDeclaration, ...] = ()
+    recipe_version: int = 1
 
     def __post_init__(self) -> None:
         _reference(self.projection_ref)
         if not isinstance(self.kind, ProjectionKind):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        if type(self.recipe_version) is not int or self.recipe_version < 1:
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         if not isinstance(self.dependencies, tuple):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
@@ -252,6 +262,9 @@ class ProjectionPlan:
         if not isinstance(cause, InvalidationCause):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         changed = _references(changed_refs)
+        known_refs = set(self.by_ref) | self.external_refs
+        if set(changed) - known_refs:
+            raise ProjectionContractViolation(ProjectionErrorCode.UNKNOWN_CLOSURE_ROOT)
         reverse: dict[str, set[str]] = {}
         for declaration in self.declarations:
             for dependency in declaration.dependencies:
@@ -401,9 +414,24 @@ def _commitment(
     policy_generation: int,
 ) -> str:
     fields = [
-        "atc-packet-c-projection-v1",
+        "atc-packet-c-projection-v2",
         declaration.projection_ref,
         declaration.kind.value,
+        str(declaration.recipe_version),
+        *(
+            f"dependency={dependency.predecessor_ref}:{dependency.influence_class.value}"
+            for dependency in sorted(
+                declaration.dependencies,
+                key=lambda item: (item.predecessor_ref, item.influence_class.value),
+            )
+        ),
+        *(
+            f"invalidation={invalidation.cause.value}:{invalidation.action.value}"
+            for invalidation in sorted(
+                declaration.invalidation_declarations,
+                key=lambda item: (item.cause.value, item.action.value),
+            )
+        ),
         str(policy_generation),
         *(f"{reference}={value}" for reference, value in sorted(input_values)),
         *(f"{reference}@{version}" for reference, version in sorted(source_versions)),
