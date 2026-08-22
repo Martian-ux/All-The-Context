@@ -5,6 +5,7 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
+| Current execution frontier | Reconcile the merged Continuous Capture foundation, then prove the loop in a disposable harness |
 | Early interface status | Experimental v0 until exercised by a fake harness and one real vertical slice |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
@@ -18,14 +19,18 @@ connection.
 The execution order is:
 
 ```text
-capture automatically
-→ form memory automatically
-→ organize automatically
-→ deliver automatically
-→ preserve working continuity
-→ measure observable outcomes
-→ maintain automatically
+Import Truth
+→ Memory Truth
+→ Retrieval usefulness
+→ Continuous Capture
+→ project continuity and capsules
+→ graphs and conservative learning
 ```
+
+The first three foundations and the provider-neutral capture ledger are merged.
+The immediate product frontier is therefore compositional: extend the existing
+capture contracts, prove automatic formation and pre-generation delivery in a
+disposable zero-dashboard harness, and only then add one real integration pair.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -69,6 +74,7 @@ Post-V1 work extends the current implementation rather than replacing it.
 | Memory Lab M1 | Provides the initial observable-use/outcome event contract and falsification cases |
 | Memory Lab M3 | Provides the initial influence-closure contract and full-rebuild oracle |
 | Earlier Project Context Capsule research | Becomes the starting capsule design, not a separate project-memory authority |
+| Continuous Capture foundation | `CaptureProviderAdapter`, `CaptureEvent`, `CaptureApplicationSink`, `CaptureCoordinator`, checkpoints, leases, lineage, and replay remain the sole source-acquisition path; v0 connector work extends this boundary rather than creating another event ledger |
 
 A work package that creates a parallel version of one of these systems must
 first show why extension is impossible and receive a separate production ADR.
@@ -77,19 +83,20 @@ first show why extension is impossible and receive a separate production ADR.
 
 ```mermaid
 flowchart LR
-  T["Reconcile beta tracker"] --> V1["Publish and verify the initial lean beta"]
-  V1 --> F["v0 contracts and event foundation"]
-  F --> S["Continuous source + runtime vertical slice"]
-  S --> P["Automatic project intelligence and capsules"]
+  B["Published beta.6 + merged truth foundations"] --> C["Reconcile capture and runtime contracts"]
+  C --> H["Disposable zero-dashboard harness"]
+  H --> S["One real source + lifecycle host"]
+  S --> P["Stable project identity + capsules"]
   S --> W["Working-state continuity"]
-  P --> O["Observable use, outcomes, and consolidation"]
+  P --> G["Graph shadow evaluation"]
+  G --> O["Observable use, outcomes, and consolidation"]
   W --> O
   O --> M["Invisible operations and broader ecosystem"]
   M --> R["Secure remote/mobile continuity"]
 
-  H["Successor-beta / stable hardening"] -. "parallel prerequisites" .-> F
-  H -.-> S
-  H -.-> M
+  X["Successor-beta / stable hardening"] -. "separate lane" .-> C
+  X -.-> S
+  X -.-> M
 ```
 
 Project intelligence and working continuity may proceed in parallel only after
@@ -102,58 +109,59 @@ updates, forward-version refusal, migration identity, compatibility policy,
 recovery improvements, support bundles, stable APIs/schemas/exports, and
 release-channel hardening remain a separate post-V1 track.
 
-## 5. Phase 0 — Reconcile and complete the release foundation
+## 5. Phase 0 — Published release and truth foundation (complete)
 
 ### Goal
 
-Publish the first usable `0.1.0-beta.6` without importing post-V1 product claims
-or carrying a misleading execution tracker forward.
+Establish a public beta and the Import Truth, Memory Truth, Retrieval, Context
+UI, and provider-neutral Continuous Capture foundations without importing
+post-V1 product claims into the release.
 
-### Tracker reconciliation
+### Established state
 
-Before creating `ZF-*` issues:
-
-- update or supersede open beta issue language that still describes beta.1 or
-  mandatory macOS acceptance;
-- preserve historical beta.1/macOS requirements as history rather than
-  relabelling them passed, skipped, or waived;
-- align active acceptance work with the current Windows/Ubuntu lean-beta source;
-- separate source-level implementation readiness from exact-downloaded-candidate
-  acceptance; and
-- remove dependency cycles in which candidate creation requires a test that can
-  run only after the candidate already exists.
-
-The B-109/B-107/B-201 relationship requires particular review: packaged
-recovery behavior may be source-ready before candidate freeze, while
-exact-downloaded-artifact recovery acceptance necessarily follows candidate
-creation. Those must not be represented as one circular prerequisite.
-
-### Release work
-
-- finish exact-candidate Windows and Ubuntu acceptance;
-- finish current-real-export provider acceptance;
-- finish the accepted raw-import boundary evidence;
-- finish packaged browser, client, recovery, purge, and security acceptance;
-- publish only the approved immutable candidate; and
-- record the exact public smoke and human go/no-go decision.
+- `0.1.0-beta.6` is the public immutable downloadable release;
+- Windows and supported Linux remain the product support boundary;
+- retained macOS portability code creates no support, asset, gate, or acceptance
+  claim;
+- PR #73 merged the Import Truth, Memory Truth, Retrieval, Context UI, and
+  provider-neutral Continuous Capture foundations;
+- migration 015 owns capture sources, checkpoints, staged events, source-item
+  lineage, foreground runs, leases, retry, and idempotent replay; and
+- successor-beta migration, updater, recovery, compatibility, and release work
+  remains a separate maintenance lane.
 
 ### Exit
 
-- another person can install and use the beta through its documented boundary;
-- the active issue tracker reflects the actual release scope and acyclic
-  evidence order;
-- the beta provides the authoritative Core, automatic policy, deterministic
-  retrieval, import, client setup, backup, recovery, and purge foundation; and
-- no graph, recurring-sync, working-state, learned-retrieval, or remote claim is
-  made merely because research or source-level code exists.
+- the public release and merged source retain their exact historical identities;
+- the zero-friction work may begin without relabelling existing release evidence;
+- no real connector, scheduler, lifecycle-aware client, graph, recurring-sync,
+  working-state, learned-retrieval, or remote claim is inherited from the
+  foundations; and
+- `ZF-*` work remains independently reviewed and accepted.
 
-## 6. Phase 1 — Define the experimental zero-friction substrate
+## 6. Phase 1 — Reconcile the experimental zero-friction seams
 
 ### Goal
 
-Define conceptual seams for continuous capture and runtime delivery without
-prematurely promising stable ABIs or allowing provider-specific behavior to
-shape authority.
+Extend the merged Continuous Capture foundation into a complete experimental
+contract set without creating a second source ledger, replay authority, or
+current-memory path.
+
+### Required contract mapping
+
+| Proposed seam | Canonical starting point | Allowed change |
+|---|---|---|
+| Source acquisition | `CaptureProviderAdapter` and `CapturePage` | Add a versioned capability manifest and conformance requirements |
+| Source event | `CaptureEvent` and `capture_events` | Extend only when acquisition semantics require it; do not add another source-event ledger |
+| Application | `CaptureApplicationSink` | Form observations through the existing Core policy boundary using the supplied idempotency and source/item lineage |
+| Coordination | `CaptureCoordinator`, runs, leases, and checkpoints | Add scheduling around this authority; do not replace its replay or lease rules |
+| Runtime lifecycle | New experimental `ClientRuntimeAdapterV0` | Add only the hooks truthfully available at the declared L0–L3 level |
+| Derived state | Existing observation/current-record, Retrieval V3, and M3 invalidation boundaries | Add dependency metadata and disposable projections, never a parallel truth authority |
+
+Where source-acquisition events cannot truthfully represent client lifecycle or
+observable-outcome events, a separate bounded envelope may reference capture
+event IDs. It must not duplicate source payloads, cursors, checkpoints,
+idempotency, or replay authority.
 
 ### ZF-001: Friction budget and notification policy
 
@@ -170,9 +178,10 @@ Define:
 **Exit:** every proposed prompt or dashboard dependency maps to a permitted
 consent, security, ambiguity, or recovery boundary.
 
-### ZF-002: `SourceConnector` v0 contract
+### ZF-002: Capture connector v0 capability contract
 
-Define an experimental versioned connector seam covering:
+Extend `CaptureProviderAdapter` with an experimental versioned capability
+manifest and conformance contract covering:
 
 - identity, acquisition method, and capabilities;
 - authorization and protected credential references;
@@ -184,9 +193,10 @@ Define an experimental versioned connector seam covering:
 - data egress and network declarations; and
 - bounded health diagnostics.
 
-**Exit:** a synthetic connector proves complete, partial, unavailable,
+**Exit:** the deterministic fake adapter proves complete, partial, unavailable,
 reauthorization-required, retryable-failure, disconnect, deletion, restart, and
-replay behavior. This does not yet freeze a stable public ABI.
+replay behavior through the existing coordinator and ledger. This does not
+freeze a stable public ABI or introduce `SourceConnector` as a parallel path.
 
 ### ZF-003: `ClientRuntimeAdapter` v0 contract
 
@@ -207,9 +217,10 @@ direct user evidence is captured without model self-attestation, and
 unsupported hooks are reported rather than assumed. No stable SDK promise is
 made.
 
-### ZF-004: Evidence and experience event v0 schema
+### ZF-004: Capture and lifecycle event reconciliation
 
-Define a normalized Core-owned event contract with:
+Define how the existing `CaptureEvent` acquisition envelope and any required
+client-lifecycle envelope compose. The combined contract must cover:
 
 - stable event and source IDs;
 - origin and witness class;
@@ -231,8 +242,9 @@ Authorized retention expiry and destructive purge may remove content-bearing
 events and derivatives while preserving only opaque resurrection barriers.
 
 **Exit:** deterministic replay within the retained boundary produces the same
-candidate observations and projection inputs. Secret-like direct payloads never
-enter the durable event store.
+candidate observations and projection inputs through the existing capture
+idempotency authority. Secret-like direct payloads never enter durable event
+storage, and no second source cursor or checkpoint can advance independently.
 
 ### ZF-005: Projection lineage and invalidation v0 contract
 
@@ -248,6 +260,7 @@ external providers.
 
 - no provider-specific or graph-specific implementation defines shared
   authority;
+- the contract map above is enforced by structural tests;
 - synthetic contracts pass restart, replay, permission, retention, deletion,
   and purge scenarios;
 - the v0 contracts remain changeable based on the vertical slice; and
@@ -261,7 +274,25 @@ Demonstrate the actual zero-friction loop with one strong source connector and
 one strong lifecycle-aware AI client integration before expanding breadth or
 stabilizing interfaces.
 
-### ZF-006: Connector scheduler and health state
+### ZF-006: Disposable zero-dashboard harness
+
+Compose the entire path using only sanitized synthetic evidence:
+
+- the deterministic fake capture adapter and idempotent application sink;
+- a fake lifecycle-aware client with genuine pre-generation and direct-turn
+  hooks;
+- deterministic event-to-observation formation through Core policy;
+- existing authorized Retrieval V3 compilation;
+- restart, replay, correction, permission, retention, expiry, delete, and purge
+  fixtures; and
+- a full journey that never opens the dashboard or touches an operator vault.
+
+**Exit:** replay produces identical effective observations and context with zero
+duplicate current records; corrections affect the next eligible context compile;
+deleted or purged evidence has zero future ATC influence; unauthorized and
+secret-like content fails before disclosure or durable event storage.
+
+### ZF-007: Connector scheduler and health state
 
 Build Core-owned scheduling for:
 
@@ -279,9 +310,12 @@ Build Core-owned scheduling for:
 publication, while genuine authorization failure emits one bounded actionable
 notification.
 
-### ZF-007: First continuous source connector
+### ZF-008: First continuous source connector
 
-Select a source with:
+The first implementation target is an explicit-root, read-only local
+Git/workspace connector because it offers controlled identity, incremental
+state, project relevance, sanitizable fixtures, and no OAuth or scraping. It
+must provide:
 
 - an official or locally controlled acquisition path;
 - stable identity and cursor semantics;
@@ -290,20 +324,27 @@ Select a source with:
 - representative project or conversational evidence; and
 - sanitizable fixtures.
 
+The connector may read only operator-authorized roots, must declare exclusions
+and incomplete coverage, and must not treat workspace text as instructions.
+Changing the first source requires an explicit comparison showing stronger
+lifecycle semantics or a more representative zero-friction journey.
+
 **Exit:** installation plus one account connection produces an initial snapshot
 and later incremental evidence with no repeat archive import or manual
 classification.
 
-### ZF-008: First lifecycle-aware client adapter
+### ZF-009: First lifecycle-aware client adapter
 
-Select one client or reference host that can provide pre-turn, post-turn, tool,
-compaction, and task events.
+Build one controlled in-repository reference host that can provide pre-turn,
+post-turn, tool, compaction, task, restart, and session-transition events. This
+host proves the lifecycle contract; it does not create a provider-support claim.
+Ordinary MCP remains L0 and cannot satisfy this gate by itself.
 
 **Exit:** the client receives context before generation, directly observed user
 corrections reach Core automatically, integration capability is negotiated
 truthfully, and task checkpoints survive restart and session transition.
 
-### ZF-009: Automatic formation over retained events
+### ZF-010: Automatic formation over retained events
 
 Begin with conservative, inspectable classes:
 
@@ -334,7 +375,25 @@ review queue, while uncertain extraction cannot silently become current truth.
 9. verify future ATC context uses the correction;
 10. restart Core and the client;
 11. resume synchronization without duplication; and
-12. complete the journey without opening the dashboard.
+12. delete or purge the information and verify zero future ATC influence; and
+13. complete the journey without opening the dashboard.
+
+### Phase evidence scorecard
+
+Every harness and real-slice receipt reports the same measures:
+
+| Measure | Required evidence |
+|---|---|
+| First useful context | The first eligible new session after backfill contains every fixture-required fact without another user action |
+| Context correctness | Zero forbidden, superseded, unauthorized, deleted, expired, purged, or wrong-project facts are emitted |
+| Correction propagation | The next eligible pre-generation compile uses the accepted correction and excludes the displaced value |
+| Replay duplicates | Zero duplicate capture events, observations, current records, or issued context items after restart/retry |
+| User intervention | Zero save, classify, review-inbox, retrieval-tuning, or dashboard actions during the acceptance journey |
+| Resume behavior | Cursor recovery, time to first post-restart context, and context-compile latency are recorded with a declared bound |
+| Capability truth | Every exercised hook is declared; every absent hook remains unsupported rather than inferred |
+
+A broader usefulness benchmark may supplement these gates but cannot average
+away any authorization, false-memory, correction, duplication, or purge failure.
 
 ### Phase exit
 
@@ -349,7 +408,7 @@ this proof.
 Identify, organize, and brief ongoing projects without manual project creation,
 tagging, or graph curation.
 
-### ZF-010: Stable project identity and discovery
+### ZF-011: Stable project identity and discovery
 
 Define:
 
@@ -367,13 +426,25 @@ Define:
 abstains from project-specific injection rather than silently attaching the
 wrong project.
 
-### ZF-011: Project graph in Memory Lab
+### ZF-012: Project Context Capsule compiler
 
-Start with an ephemeral graph over an already-authorized temporal snapshot.
-Compare:
+Extend the existing Retrieval V3 compiler path to produce a structured project
+capsule containing current objective, constraints, decisions, components,
+blockers, working state, failed approaches, open questions, next actions,
+provenance, capability level, and freshness.
+
+**Exit:** a client entering a resolved project cold receives a deterministic
+bounded briefing without user curation. Ambiguous projects receive no
+project-specific capsule. Every capsule invalidates when a dependency changes.
+
+### ZF-013: Project graph in Memory Lab
+
+Only after stable project identity and the deterministic capsule baseline, start
+an ephemeral graph over an already-authorized temporal snapshot. Compare:
 
 - current Retrieval V3;
 - structured project filters;
+- deterministic Project Context Capsules;
 - lexical seeds plus typed one-hop expansion;
 - lexical seeds plus bounded two-hop expansion; and
 - relation-family ablations.
@@ -387,18 +458,7 @@ separately proven.
 strongest simpler baseline and passes cross-project isolation, ambiguity,
 correction, historical, deletion, purge, cycle, and high-fan-out tests.
 
-### ZF-012: Project Context Capsule compiler
-
-Extend the existing Retrieval V3 compiler path to produce a structured project
-capsule containing current objective, constraints, decisions, components,
-blockers, working state, failed approaches, open questions, next actions,
-provenance, capability level, and freshness.
-
-**Exit:** a client entering a resolved project cold receives a deterministic
-bounded briefing without user curation. Ambiguous projects receive no
-project-specific capsule. Every capsule invalidates when a dependency changes.
-
-### ZF-013: Optional project inspection
+### ZF-014: Optional project inspection
 
 Provide actionable views for:
 
@@ -424,7 +484,7 @@ ATC.
 
 ## 9. Phase 4 — Cross-session working continuity
 
-### ZF-014: Versioned working checkpoints
+### ZF-015: Versioned working checkpoints
 
 A checkpoint records:
 
@@ -442,7 +502,7 @@ A checkpoint records:
 reasoning, and fails closed when source, project, permission, or policy drift
 makes it stale.
 
-### ZF-015: Working-state reconciliation
+### ZF-016: Working-state reconciliation
 
 Support three-way repair between:
 
@@ -462,7 +522,7 @@ context still exists.
 
 ## 10. Phase 5 — Observable outcomes and conservative learning
 
-### ZF-016: Memory-use and outcome ledger
+### ZF-017: Memory-use and outcome ledger
 
 Promote the M1 contract into a Core-owned product slice that records:
 
@@ -478,7 +538,7 @@ Promote the M1 contract into a Core-owned product slice that records:
 **Exit:** ATC can reconstruct what it supplied and what observable result
 followed without hidden chain-of-thought or a parallel truth authority.
 
-### ZF-017: Background consolidation in shadow
+### ZF-018: Background consolidation in shadow
 
 Compare simple controls before learned consolidation:
 
@@ -494,7 +554,7 @@ Compare simple controls before learned consolidation:
 success, minimum disclosure, or maintenance cost without hard lifecycle
 failures.
 
-### ZF-018: Procedural-memory gates
+### ZF-019: Procedural-memory gates
 
 A procedure requires:
 
@@ -517,7 +577,7 @@ cross-domain leakage, or negative transfer.
 
 ## 11. Phase 6 — Invisible operations and integration breadth
 
-### ZF-019: Automatic backup, repair, and storage policy
+### ZF-020: Automatic backup, repair, and storage policy
 
 Add:
 
@@ -533,7 +593,7 @@ Add:
 **Exit:** healthy maintenance is silent; failure emits one actionable state; no
 automatic cleanup weakens purge, audit, or recovery guarantees.
 
-### ZF-020: Stabilize connector and client SDKs
+### ZF-021: Stabilize connector and client SDKs
 
 Only after the fake harness and first real vertical slice, publish versioned
 contracts, conformance fixtures, capability negotiation, permission boundaries,
@@ -543,7 +603,7 @@ and compatibility policy.
 network, egress, correction, retention, and deletion behavior without becoming
 an alternate authority. This is the first stable ABI/SDK milestone.
 
-### ZF-021: Expand integrations one at a time
+### ZF-022: Expand integrations one at a time
 
 Each integration passes the common contracts plus source-specific acceptance.
 Integration count is not a success metric if coverage, identity, or lifecycle
@@ -560,7 +620,7 @@ clients.
 
 ## 12. Phase 7 — Secure remote and mobile continuity
 
-### ZF-022: Direct-Core remote/mobile product
+### ZF-023: Direct-Core remote/mobile product
 
 Required foundations include:
 
@@ -578,80 +638,97 @@ Remote availability must not precede local automatic reliability. Making an
 incomplete memory loop reachable from more devices does not advance the core
 product.
 
-## 13. First implementation PRs after contract acceptance
+## 13. Swarm-ready first implementation packets
 
-These PRs begin only after Phase 0 tracker reconciliation and beta publication.
+Phase 0 is complete. These packets may begin after this plan revision is
+accepted. Each packet uses a fresh standalone task and branch, owns a disjoint
+primary file set, runs focused tests, and hands off a commit for independent
+integration. Before replacing a task that appears not to have started, confirm
+that no duplicate task or worktree exists.
 
-### PR A — v0 contracts and fixtures
+Workers do not merge, publish, access private data, change release state, claim
+provider support, or run the long repository-wide suite. The integrating task
+reviews every diff, resolves shared-file changes serially, runs the required
+repository gates, and leaves hosted CI as the final full-matrix authority.
 
-Add only:
+### Wave 1 — parallel contract packets
 
-- `SourceConnector` v0 protocol and capability manifest;
-- `ClientRuntimeAdapter` v0 protocol and capability levels;
-- event and retention schemas;
-- projection dependency schemas;
-- sanitized synthetic fixtures; and
-- structural tests.
+| Packet | Primary ownership | Output | Focused evidence |
+|---|---|---|---|
+| A — capture capability reconciliation | `capture.py`, new capture conformance fixtures, capture tests | Versioned capability manifest extending `CaptureProviderAdapter`; no second source-event API | Existing capture tests plus new manifest/state conformance cases |
+| B — lifecycle client contract | New bounded runtime-adapter module and its tests | `ClientRuntimeAdapterV0`, L0–L3 capability declarations, deterministic fake host | Hook/capability truthfulness, pre-generation ordering, unsupported-hook cases |
+| C — formation and dependency contract | New formation/lineage contract module and isolated tests | Event-to-observation input, retention class, dependency/invalidation declarations | Secret refusal, authorization, correction, expiry, delete, purge, rebuild-oracle cases |
 
-No provider, production scheduler, graph, model, network call, stable ABI claim,
-or migration.
+Shared exports, `models.py`, `storage.py`, Core service wiring, migrations, and
+the required status/decision/traceability documents are integration-owned in
+Wave 1. A worker must stop and hand off a design note rather than editing those
+shared surfaces.
 
-### PR B — Disposable vertical-slice harness
+### Wave 2 — serial disposable-harness integration
 
-Add:
+Packet D integrates A–C into the zero-dashboard harness. It owns the new harness
+and end-to-end synthetic tests and may make reviewed shared-file edits. It must
+reuse the capture ledger, Core observation/policy boundary, and authorized
+Retrieval path. It cannot add a scheduler, network connector, operator-vault
+access, dashboard dependency, provider claim, or stable SDK promise.
 
-- fake continuous connector;
-- fake lifecycle-aware client;
-- disposable event stream;
-- deterministic formation baseline feeding the existing observation ledger;
-- restart/replay/retention/correction/purge fixtures; and
-- a zero-dashboard end-to-end harness.
+**Exit:** the complete synthetic journey and phase scorecard pass, including
+restart/replay, correction, authorization, retention, expiry, deletion, purge,
+zero duplicates, and zero routine user actions.
 
-No operator Core or personal data.
+### Wave 3 — parallel real-slice components
 
-### PR C — Core-owned event substrate behind a disabled flag
+Only after Packet D passes:
 
-After PR B passes, add:
+| Packet | Primary ownership | Output | Stop condition |
+|---|---|---|---|
+| E — scheduler and health | New scheduler module plus isolated tests; minimal reviewed capture integration | Disabled-by-default Core-owned scheduling around existing coordinator leases/checkpoints | Stop if replay, lease, retry, or source lifecycle authority must be duplicated |
+| F — local Git/workspace connector | New connector module and sanitized repository fixtures | Explicit-root, read-only snapshot/incremental adapter with truthful exclusions and coverage | Stop on network/OAuth, implicit root access, instruction execution, or undeclared secret/raw-history retention |
+| G — controlled reference host | New reference-host module and sanitized lifecycle fixtures | Real pre-generation/direct-turn/checkpoint/restart hooks with truthful capability negotiation | Stop if only ordinary MCP hooks are available or a provider-support claim would be required |
 
-- migrations and storage APIs;
-- cursor/idempotency support;
-- content ownership and retention enforcement;
-- pre-persistence direct-secret refusal;
-- lineage and invalidation records;
-- feature-disabled scheduler seams; and
-- export, restore, expiry, delete, and purge coverage.
+### Wave 4 — serial product-proof integration
 
-No live provider is promoted in the same PR.
+Packet H integrates E–G with conservative automatic formation and runs the real
+phase journey against a disposable Core. It records the phase scorecard and
+compares the issued context with the accepted Retrieval baseline. Shared API,
+storage, migration, CLI, package, and documentation edits occur only here after
+review of the component handoffs.
+
+No interface becomes stable and no additional source/client support is claimed
+from this proof. Breadth begins only after the real slice passes and the v0
+contracts are revised from its evidence.
 
 ## 14. Proposed GitHub issue hierarchy
 
-Create one zero-friction epic only after tracker reconciliation and beta.3
-publication. Keep successor-beta/stable issue #30 or its successor separate.
+The publication and tracker prerequisites are satisfied. Create one
+zero-friction epic when the Wave 1 owners are assigned; keep successor-beta and
+stable-release hardening separate.
 
 | Issue | Scope |
 |---|---|
 | ZF-001 | Friction budget and notification policy |
-| ZF-002 | SourceConnector v0 and conformance fixture |
+| ZF-002 | Capture connector v0 capability and conformance contract |
 | ZF-003 | ClientRuntimeAdapter v0 and capability levels |
-| ZF-004 | Evidence/experience event and retention contract |
+| ZF-004 | Capture and lifecycle event/retention reconciliation |
 | ZF-005 | Projection lineage and invalidation contract |
-| ZF-006 | Connector scheduler and health state |
-| ZF-007 | First continuous source connector |
-| ZF-008 | First lifecycle-aware client adapter |
-| ZF-009 | Automatic formation over retained events |
-| ZF-010 | Automatic project identity, ambiguity, and discovery |
-| ZF-011 | Typed project graph research and ablations |
+| ZF-006 | Disposable zero-dashboard vertical-slice harness |
+| ZF-007 | Connector scheduler and health state |
+| ZF-008 | First continuous local Git/workspace connector |
+| ZF-009 | First controlled lifecycle-aware reference host |
+| ZF-010 | Automatic formation over retained events |
+| ZF-011 | Automatic project identity, ambiguity, and discovery |
 | ZF-012 | Project Context Capsule compiler |
-| ZF-013 | Optional project inspection UI |
-| ZF-014 | Versioned working checkpoints |
-| ZF-015 | Working-state reconciliation |
-| ZF-016 | Memory-use and outcome ledger |
-| ZF-017 | Background consolidation shadow program |
-| ZF-018 | Procedural-memory promotion gates |
-| ZF-019 | Automatic backup, repair, and storage policy |
-| ZF-020 | Stable connector and client SDKs |
-| ZF-021 | Integration expansion program |
-| ZF-022 | Secure direct-Core remote/mobile product |
+| ZF-013 | Typed project graph shadow research and ablations |
+| ZF-014 | Optional project inspection UI |
+| ZF-015 | Versioned working checkpoints |
+| ZF-016 | Working-state reconciliation |
+| ZF-017 | Memory-use and outcome ledger |
+| ZF-018 | Background consolidation shadow program |
+| ZF-019 | Procedural-memory promotion gates |
+| ZF-020 | Automatic backup, repair, and storage policy |
+| ZF-021 | Stable connector and client SDKs |
+| ZF-022 | Integration expansion program |
+| ZF-023 | Secure direct-Core remote/mobile product |
 
 ## 15. Cross-phase hard gates
 

@@ -171,8 +171,9 @@ def test_integrated_docs_keep_local_and_historical_release_truth_distinct() -> N
     current_and_release = status.split("## Current milestone", 1)[1].split(
         "## V1 recovery/import/release integration reconciliation", 1
     )[0]
-    assert "local integration baseline" in current_milestone
-    assert "does not assert release\npublication" in current_milestone
+    assert "protected main contains the merged Import Truth" in current_milestone
+    assert "current downloadable release" in current_milestone
+    assert "does not\nbecome release" in current_milestone
     assert (
         "`0.1.0-beta.6` is published as immutable prerelease ID `374723649`"
         not in current_milestone
