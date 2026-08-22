@@ -2719,7 +2719,11 @@ and evaluates the staged replacement. A parser error, batch/ingestion error,
 cancellation, process interruption, or policy failure therefore leaves the
 prior current context unchanged; SQLite rollback covers a failure after the
 cutover transaction begins, and a committed staged session can be resumed
-idempotently if source-finalization is interrupted.
+idempotently if source-finalization is interrupted. The publish transaction
+also writes the generation and session ID into the source metadata before it
+commits. A retry uses that durable marker to finalize metadata without
+withdrawing the already-published replacement; a pre-commit failure has no
+marker and retries the full cutover.
 
 The replacement set is deliberately narrow: current approved records must have
 Core origin `archive_import` and must not have a correction, user edit,

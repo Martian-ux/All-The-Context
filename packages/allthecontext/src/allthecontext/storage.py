@@ -2073,6 +2073,7 @@ class CoreStore:
         source_id: str,
         session_id: str,
         *,
+        rebuild_generation: int,
         actor: str = "local-core",
     ) -> list[str]:
         """Atomically replace one source's automatic archive records.
@@ -2082,6 +2083,9 @@ class CoreStore:
         fails, SQLite rolls back both the old-record withdrawals and all new
         decisions, leaving the prior current context intact.
         """
+
+        if rebuild_generation < 1:
+            raise InvalidStateError("source rebuild generation must be positive")
 
         with self.transaction() as connection:
             session = connection.execute(
@@ -2099,12 +2103,28 @@ class CoreStore:
             if source_id not in accessible_sources:
                 raise InvalidStateError("source rebuild session does not cover the source")
             source = connection.execute(
-                "SELECT id FROM source_records "
+                "SELECT id,metadata_json FROM source_records "
                 "WHERE id=? AND deleted_at IS NULL AND import_status IS NOT NULL",
                 (source_id,),
             ).fetchone()
             if source is None:
                 raise NotFoundError("source not found")
+            source_metadata = cast(dict[str, Any], _loads(source["metadata_json"], {}))
+            published_generation_raw = source_metadata.get("rebuild_published_generation")
+            published_session_id = source_metadata.get("rebuild_published_session_id")
+            if published_generation_raw is not None:
+                try:
+                    published_generation = int(published_generation_raw)
+                except (TypeError, ValueError) as error:
+                    raise InvalidStateError("source rebuild publish marker is invalid") from error
+                if published_generation > rebuild_generation:
+                    return []
+                if published_generation == rebuild_generation:
+                    if published_session_id == session_id:
+                        return []
+                    raise InvalidStateError("source rebuild generation belongs to another session")
+            elif not bool(source_metadata.get("rebuild_in_progress")):
+                raise InvalidStateError("source rebuild publish marker is missing")
 
             withdrawn = self._withdraw_automatic_source_records_tx(
                 connection,
@@ -2134,6 +2154,12 @@ class CoreStore:
                     [source_id],
                     metadata={"withdrawn_record_count": len(withdrawn)},
                 )
+            source_metadata["rebuild_published_generation"] = rebuild_generation
+            source_metadata["rebuild_published_session_id"] = session_id
+            connection.execute(
+                "UPDATE source_records SET metadata_json=? WHERE id=?",
+                (_json(source_metadata), source_id),
+            )
             return withdrawn
 
     @staticmethod

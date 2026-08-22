@@ -863,6 +863,7 @@ def test_rebuild_ingestion_failure_rolls_back_withdrawal(
         assert store.record_history(record_id) == history
     sources, _ = store.list_sources()
     assert sources[0]["import_status"] == "failed"
+    assert "rebuild_published_generation" not in sources[0]["metadata"]
     candidates, _ = store.list_candidates(status=None, source_id=source_id)
     assert any(item.disposition.value == "staged" for item in candidates)
 
@@ -871,6 +872,56 @@ def test_rebuild_ingestion_failure_rolls_back_withdrawal(
     assert resumed["rebuild"] is True
     assert resumed["source"]["import_status"] == "complete"
     assert set(resumed["withdrawn_record_ids"]) == set(first["record_ids"])
+
+
+def test_rebuild_post_cutover_finalization_retry_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = CoreService.in_directory(tmp_path).store
+    service = ArchiveImportService(store)
+    first = service.import_bytes(
+        "chatgpt.zip", _zip({"conversations.json": json.dumps(_chatgpt_export())})
+    )
+    assert len(first["record_ids"]) == 3
+    source_id = str(first["source"]["id"])
+    original_update = store.update_source_import
+
+    def fail_after_cutover(source_id_arg: str, **kwargs: Any) -> None:
+        if (
+            kwargs["import_status"] == "complete"
+            and kwargs["metadata"].get("rebuild_in_progress") is False
+        ):
+            raise RuntimeError("synthetic post-cutover finalization failure")
+        original_update(source_id_arg, **kwargs)
+
+    monkeypatch.setattr(store, "update_source_import", fail_after_cutover)
+    with pytest.raises(RuntimeError, match="synthetic post-cutover finalization failure"):
+        service.reprocess_source(source_id, rebuild=True)
+
+    failed = store.get_source(source_id, duplicate=True)
+    assert failed.import_status == "failed"
+    assert failed.metadata["rebuild_in_progress"] is True
+    assert failed.metadata["rebuild_generation"] == 1
+    assert failed.metadata["rebuild_published_generation"] == 1
+    assert failed.metadata["rebuild_published_session_id"]
+    assert store.status()["counts"]["active_records"] == 3
+
+    monkeypatch.setattr(store, "update_source_import", original_update)
+    retried = ArchiveImportService(store).reprocess_source(source_id)
+
+    assert retried["rebuild"] is True
+    assert retried["withdrawn_record_ids"] == []
+    assert retried["source"]["import_status"] == "complete"
+    assert len(retried["record_ids"]) == 3
+    assert store.status()["counts"]["active_records"] == 3
+
+    duplicate_publish = store.publish_source_rebuild(
+        source_id,
+        str(retried["session"]["session_id"]),
+        rebuild_generation=1,
+    )
+    assert duplicate_publish == []
+    assert store.status()["counts"]["active_records"] == 3
 
 
 def test_rebuild_cancellation_keeps_prior_current_records(

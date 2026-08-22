@@ -13,9 +13,10 @@ The idempotent/resumable ingestion and full provider-history requirements now
 include staged complete-source rebuilds. A rebuild leaves prior current context
 untouched while parsing and submitting replacement candidates, then performs
 old-record eligibility checks and new policy publication in one Core/SQLite
-transaction. Focused synthetic regressions cover parser failure, injected
+transaction, with a durable generation/session marker for post-cutover retry.
+Focused synthetic regressions cover parser failure, injected
 ingestion/policy rollback, cancellation, corrected records, and local-authored
-records. Full Ruff and mypy checks pass, and the full Python suite passes 1,064
+records. Full Ruff and mypy checks pass, and the full Python suite passes 1,065
 tests with 4 host-limited symlink skips. The existing exact-candidate
 interruption and provider-export receipts remain separate release evidence
 requirements.

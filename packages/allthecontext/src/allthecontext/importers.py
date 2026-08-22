@@ -977,6 +977,11 @@ class ArchiveImportService:
         """
         source = self.store.get_source(source_id, duplicate=True)
         resume_rebuild = bool(source.metadata.get("rebuild_in_progress"))
+        resume_published_rebuild = resume_rebuild and (
+            source.metadata.get("rebuild_published_generation") is not None
+            and str(source.metadata.get("rebuild_published_generation"))
+            == str(source.metadata.get("rebuild_generation"))
+        )
         rebuild_generation: int | None = None
         withdrawn_record_ids: list[str] = []
         if rebuild or resume_rebuild:
@@ -986,7 +991,7 @@ class ArchiveImportService:
                 and not resumable_rebuild
             ):
                 raise InvalidStateError("rebuild requires a terminal source")
-            if source.import_status == "complete":
+            if source.import_status == "complete" and not resume_published_rebuild:
                 rebuild_generation = int(source.metadata.get("rebuild_generation") or 0) + 1
                 metadata = dict(source.metadata)
                 metadata["rebuild_generation"] = rebuild_generation
@@ -1000,6 +1005,16 @@ class ArchiveImportService:
                 source = self.store.get_source(source.id, duplicate=True)
             elif resume_rebuild:
                 rebuild_generation = int(source.metadata.get("rebuild_generation") or 1)
+                if resume_published_rebuild and source.import_status == "complete":
+                    metadata = dict(source.metadata)
+                    metadata["rebuild_in_progress"] = True
+                    self.store.update_source_import(
+                        source.id,
+                        import_status="processing",
+                        metadata=metadata,
+                        parser_warnings=source.parser_warnings,
+                    )
+                    source = self.store.get_source(source.id, duplicate=True)
         if source.import_status == "complete":
             candidate_ids = self.store.candidate_ids_for_source(source.id)
             observations = [self.store.get_candidate(item) for item in candidate_ids]
@@ -1133,6 +1148,12 @@ class ArchiveImportService:
                 if rebuild_generation is not None:
                     metadata["rebuild_generation"] = rebuild_generation
                     metadata["rebuild_in_progress"] = True
+                    for marker in (
+                        "rebuild_published_generation",
+                        "rebuild_published_session_id",
+                    ):
+                        if marker in source.metadata:
+                            metadata[marker] = source.metadata[marker]
                 self.store.update_source_import(
                     source.id,
                     import_status="processing",
@@ -1346,6 +1367,7 @@ class ArchiveImportService:
                 withdrawn_record_ids = self.store.publish_source_rebuild(
                     source.id,
                     str(begin["session_id"]),
+                    rebuild_generation=rebuild_generation,
                 )
             metadata = _source_metadata(parsed)
             # Preserve preflight and any earlier durable progress fields.
@@ -1355,6 +1377,8 @@ class ArchiveImportService:
                 metadata["rebuild_generation"] = rebuild_generation
                 metadata["rebuild_in_progress"] = False
                 metadata["withdrawn_automatic_record_count"] = len(withdrawn_record_ids or [])
+                metadata["rebuild_published_generation"] = rebuild_generation
+                metadata["rebuild_published_session_id"] = str(begin["session_id"])
             progress.complete(message="import complete")
             metadata = merge_progress_metadata(metadata, progress.snapshot())
             self.store.update_source_import(

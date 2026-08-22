@@ -133,4 +133,7 @@ in place.
 For this rebuild path, `finish_ingestion` stores coverage while leaving the new
 candidates staged. Core's rebuild-publish transaction then withdraws eligible
 old records and evaluates the staged candidates together. SQLite rollback
-covers both sides if any part of that replacement fails.
+covers both sides if any part of that replacement fails. The same transaction
+records the published rebuild generation and session ID in source metadata, so
+a retry after source-finalization failure recognizes the committed cutover and
+only finalizes source state; a failed transaction leaves no publish marker.
