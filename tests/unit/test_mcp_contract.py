@@ -23,8 +23,13 @@ from allthecontext.mcp_adapter import (
     build_mcp,
 )
 from allthecontext.relay import mcp as edge_mcp
+from allthecontext.relay.mcp import (
+    MAX_EDGE_MCP_REQUEST_BYTES,
+    build_edge_mcp_app,
+)
 from allthecontext.relay.mcp import _automatic_proposal_key as edge_proposal_key
 from allthecontext.relay.service import ClientIdentity
+from mcp.server.mcpserver.exceptions import ToolError
 
 
 def _tools(server: Any) -> dict[str, Any]:
@@ -67,6 +72,34 @@ def test_ingestion_tools_have_strict_generated_schemas() -> None:
         "idempotency_key",
     }
     assert begin_schema.get("additionalProperties") is False
+
+
+@pytest.mark.parametrize("server_kind", ["local", "edge"])
+def test_public_mcp_call_rejects_unexpected_tool_arguments(server_kind: str) -> None:
+    if server_kind == "local":
+        server = build_mcp()
+    else:
+        provider = SimpleNamespace(
+            public_url="https://edge.example.test",
+            resource="https://edge.example.test/mcp",
+        )
+        server = edge_mcp.build_edge_mcp(SimpleNamespace(), provider, vault_id="vault-1")
+
+    with pytest.raises(ToolError):
+        anyio.run(server.call_tool, "context_status", {"unexpected": "value"})
+
+
+def test_edge_mcp_app_uses_atc_request_limit() -> None:
+    provider = SimpleNamespace(
+        public_url="https://edge.example.test",
+        resource="https://edge.example.test/mcp",
+    )
+    server = edge_mcp.build_edge_mcp(SimpleNamespace(), provider, vault_id="vault-1")
+
+    build_edge_mcp_app(server, provider)
+
+    assert MAX_EDGE_MCP_REQUEST_BYTES == 256 * 1024
+    assert server.session_manager.max_request_body_size == MAX_EDGE_MCP_REQUEST_BYTES
 
 
 def test_server_instructions_make_context_use_automatic() -> None:

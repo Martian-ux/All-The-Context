@@ -31,6 +31,8 @@ from allthecontext.secret_boundary import (
     contains_secret_like_value,
 )
 
+MAX_EDGE_MCP_REQUEST_BYTES = 256 * 1024
+
 
 def _annotations(
     *,
@@ -130,6 +132,7 @@ def build_edge_mcp_app(server: MCPServer, provider: EdgeOAuthProvider) -> Starle
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,
+        max_request_body_size=MAX_EDGE_MCP_REQUEST_BYTES,
         host=public.hostname,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,

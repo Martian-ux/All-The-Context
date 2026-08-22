@@ -31,7 +31,11 @@ from allthecontext.edge_setup import (
     normalize_edge_url,
 )
 from allthecontext.relay.forwarding import EdgeForwardingBroker, ForwardingError
-from allthecontext.relay.mcp import build_edge_mcp, build_edge_mcp_app
+from allthecontext.relay.mcp import (
+    MAX_EDGE_MCP_REQUEST_BYTES,
+    build_edge_mcp,
+    build_edge_mcp_app,
+)
 from allthecontext.relay.oauth import EdgeOAuthProvider, EdgeOAuthStore
 from allthecontext.relay.service import (
     AuthorizationError,
@@ -190,7 +194,7 @@ class _RequestSizeLimitMiddleware:
         self,
         app: ASGIApp,
         *,
-        max_body_bytes: int = 256 * 1024,
+        max_body_bytes: int = MAX_EDGE_MCP_REQUEST_BYTES,
         max_replication_body_bytes: int = MAX_EDGE_REPLICATION_REQUEST_BYTES,
         max_query_bytes: int = 16 * 1024,
     ) -> None:
