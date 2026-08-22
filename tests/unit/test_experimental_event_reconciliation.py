@@ -382,6 +382,49 @@ def test_direct_constructor_revalidates_all_required_boundary_fields() -> None:
     assert invalid_kind.value.code is ReconciliationErrorCode.INVALID_LINEAGE
 
 
+def test_direct_constructor_delete_operation_requires_matching_withdrawal() -> None:
+    capture = normalize_capture_event(
+        _capture(),
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        event_time=T0,
+        observed_time=T0,
+    )
+    with pytest.raises(ReconciliationViolation) as missing:
+        replace(capture, capture_operation="delete")
+    assert missing.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    deleted = normalize_capture_event(
+        _capture(operation="delete"),
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        dependency_withdrawals=(_withdrawal(),),
+        event_time=T0,
+        observed_time=T0,
+    )
+    assert replace(deleted, capture_operation="delete").capture_operation == "delete"
+
+
+def test_direct_constructor_pairs_lifecycle_witness_with_hook() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
+    direct_envelope = host.observe_direct_user_turn(PayloadReference("turn-witness", "user_turn"))
+    assert isinstance(direct_envelope, ClientLifecycleEnvelope)
+    direct = normalize_lifecycle_event(direct_envelope, event_time=T0, observed_time=T0)
+    with pytest.raises(ReconciliationViolation) as direct_failure:
+        replace(direct, witness_class=WitnessClass.HOST_ARTIFACT)
+    assert direct_failure.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    other_envelope = host.request_pre_generation_context(
+        generation_id="generation-witness",
+        requested_scopes=("project-1",),
+    )
+    assert isinstance(other_envelope, ClientLifecycleEnvelope)
+    other = normalize_lifecycle_event(other_envelope, event_time=T0, observed_time=T0)
+    with pytest.raises(ReconciliationViolation) as other_failure:
+        replace(other, witness_class=WitnessClass.DIRECT_USER)
+    assert other_failure.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+
 def test_mutated_lifecycle_reference_commitment_and_time_are_revalidated() -> None:
     host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
     envelope = host.observe_direct_user_turn(PayloadReference("turn-1", "user_turn"))

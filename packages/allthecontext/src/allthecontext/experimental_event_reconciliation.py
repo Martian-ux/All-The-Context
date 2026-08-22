@@ -305,7 +305,11 @@ def _withdrawals(value: object) -> tuple[DependencyWithdrawal, ...]:
     return items
 
 
-def _validate_origin_fields(value: EventReconciliationInput, artifacts: tuple[str, ...]) -> None:
+def _validate_origin_fields(
+    value: EventReconciliationInput,
+    artifacts: tuple[str, ...],
+    withdrawals: tuple[DependencyWithdrawal, ...],
+) -> None:
     required = (
         value.source_id,
         value.source_event_id,
@@ -334,6 +338,14 @@ def _validate_origin_fields(value: EventReconciliationInput, artifacts: tuple[st
             and value.payload_reference_kind is None
             and value.payload_commitment is not None
             and type(value.payload_size_bytes) is int
+            and (
+                value.capture_operation == "upsert"
+                or any(
+                    item.cause is InvalidationCause.ORDINARY_DELETE
+                    and item.provider_item_id == value.provider_item_id
+                    for item in withdrawals
+                )
+            )
             and value.event_id == value.source_event_id
             and value.provider_item_id in artifacts
             and value.idempotency_material
@@ -367,6 +379,10 @@ def _validate_origin_fields(value: EventReconciliationInput, artifacts: tuple[st
             and value.sequence is not None
             and type(value.lifecycle_hook) is str
             and value.lifecycle_hook in ALL_LIFECYCLE_HOOKS
+            and (
+                (value.lifecycle_hook == "direct_user_turn")
+                == (value.witness_class is WitnessClass.DIRECT_USER)
+            )
             and value.session_ref is not None
             and value.capture_operation is None
             and payload_valid
@@ -498,7 +514,7 @@ class EventReconciliationInput:
         withdrawals = _withdrawals(self.dependency_withdrawals)
         object.__setattr__(self, "artifact_refs", artifacts)
         object.__setattr__(self, "dependency_withdrawals", withdrawals)
-        _validate_origin_fields(self, artifacts)
+        _validate_origin_fields(self, artifacts, withdrawals)
 
     def as_dict(self) -> dict[str, object]:
         data = asdict(self)
