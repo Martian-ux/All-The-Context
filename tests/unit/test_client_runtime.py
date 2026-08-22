@@ -25,6 +25,7 @@ from allthecontext.client_runtime import (
     DirectUserTurnPayload,
     EvidenceBoundaryError,
     GenerationReceipt,
+    HookResult,
     ModelProviderSelfAttestation,
     OrderingViolation,
     PayloadReference,
@@ -145,6 +146,14 @@ def test_capabilities_reject_overstatement_and_non_misleading_metadata() -> None
             l3.for_hook("manual_context_request"),
             status="supported",
         )
+    with pytest.raises(ClientRuntimeContractError):
+        replace(
+            l3.for_hook("consequence_checkpoint"),
+            supported_consequence_kinds=(
+                "task_outcome_observed",
+                "task_outcome_observed",
+            ),
+        )
 
 
 def test_l1_context_delivery_is_proven_to_precede_generation() -> None:
@@ -203,9 +212,8 @@ def test_session_transition_requires_valid_combinations_and_current_predecessor(
         host.record_session_transition(transition="restart", next_session_id="session-2")
     with pytest.raises(ClientRuntimeContractError):
         host.record_session_transition(
-            transition="session_start",
+            transition="session_transition",
             previous_session_id=current,
-            next_session_id="session-2",
         )
     with pytest.raises(OrderingViolation):
         host.record_session_transition(
@@ -223,7 +231,6 @@ def test_session_transition_requires_valid_combinations_and_current_predecessor(
     )
     assert isinstance(result, ClientLifecycleEnvelope)
     assert host.current_session_id == "session-2"
-
     with pytest.raises(OrderingViolation):
         host.record_session_transition(
             transition="restart",
@@ -231,6 +238,39 @@ def test_session_transition_requires_valid_combinations_and_current_predecessor(
             next_session_id="session-3",
         )
     assert host.current_session_id == "session-2"
+
+
+def emit_identifier_rich_hooks(
+    adapter: ClientRuntimeAdapterV0,
+) -> tuple[HookResult, HookResult]:
+    request = adapter.request_pre_generation_context(
+        generation_id="generation-identifiers",
+        conversation_id="conversation-1",
+        task_id="task-1",
+        workspace_id="workspace-1",
+        project_id="project-1",
+    )
+    direct = adapter.observe_direct_user_turn(
+        reference("turn-identifiers", "user_turn"),
+        conversation_id="conversation-1",
+        task_id="task-1",
+    )
+    return request, direct
+
+
+def test_adapter_protocol_expresses_identifier_rich_hooks() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L3")
+
+    request, direct = emit_identifier_rich_hooks(host)
+
+    assert isinstance(request, ClientLifecycleEnvelope)
+    assert request.conversation_id == "conversation-1"
+    assert request.task_id == "task-1"
+    assert request.workspace_id == "workspace-1"
+    assert request.project_id == "project-1"
+    assert isinstance(direct, ClientLifecycleEnvelope)
+    assert direct.conversation_id == "conversation-1"
+    assert direct.task_id == "task-1"
 
 
 def test_unsupported_hooks_are_reported_without_inference_or_event_creation() -> None:

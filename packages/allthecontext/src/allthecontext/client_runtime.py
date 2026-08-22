@@ -335,6 +335,10 @@ class HookCapability:
             raise ClientRuntimeContractError("consequence kinds belong only to consequence hooks")
         if any(type(kind) is not str for kind in self.supported_consequence_kinds):
             raise ClientRuntimeContractError("consequence kinds must be string literals")
+        if len(set(self.supported_consequence_kinds)) != len(
+            self.supported_consequence_kinds
+        ):
+            raise ClientRuntimeContractError("consequence kinds must be unique")
         if any(
             kind not in CONSEQUENCE_CHECKPOINT_KINDS
             for kind in self.supported_consequence_kinds
@@ -628,31 +632,19 @@ class CompactionTaskCheckpointPayload:
 
 @dataclass(frozen=True, slots=True)
 class RestartSessionTransitionPayload:
-    transition: Literal["session_start", "session_end", "restart", "session_transition"]
+    transition: Literal["restart", "session_transition"]
     previous_session_id: str | None = None
     next_session_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_literal(
             self.transition,
-            {"session_start", "session_end", "restart", "session_transition"},
+            {"restart", "session_transition"},
             label="session transition",
         )
         _validate_identifier(self.previous_session_id, label="previous session ID")
         _validate_identifier(self.next_session_id, label="next session ID")
-        if self.transition == "session_start" and (
-            self.previous_session_id is not None or self.next_session_id is None
-        ):
-            raise ClientRuntimeContractError(
-                "session_start requires no previous and a next session"
-            )
-        if self.transition == "session_end" and (
-            self.previous_session_id is None or self.next_session_id is not None
-        ):
-            raise ClientRuntimeContractError(
-                "session_end requires a previous and no next session"
-            )
-        if self.transition in {"restart", "session_transition"} and (
+        if (
             self.previous_session_id is None
             or self.next_session_id is None
             or self.previous_session_id == self.next_session_id
@@ -1006,9 +998,19 @@ class ClientRuntimeAdapterV0(Protocol):
         generation_id: str,
         requested_scopes: Sequence[str] = (),
         budget_chars: int = 8_000,
+        conversation_id: str | None = None,
+        task_id: str | None = None,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
     ) -> HookResult: ...
 
-    def observe_direct_user_turn(self, turn_ref: PayloadReference) -> HookResult: ...
+    def observe_direct_user_turn(
+        self,
+        turn_ref: PayloadReference,
+        *,
+        conversation_id: str | None = None,
+        task_id: str | None = None,
+    ) -> HookResult: ...
 
     def observe_tool_result(
         self,
@@ -1039,7 +1041,7 @@ class ClientRuntimeAdapterV0(Protocol):
     def record_session_transition(
         self,
         *,
-        transition: Literal["session_start", "session_end", "restart", "session_transition"],
+        transition: Literal["restart", "session_transition"],
         previous_session_id: str | None = None,
         next_session_id: str | None = None,
     ) -> HookResult: ...
@@ -1415,7 +1417,7 @@ class DeterministicFakeClientRuntimeHost:
     def record_session_transition(
         self,
         *,
-        transition: Literal["session_start", "session_end", "restart", "session_transition"],
+        transition: Literal["restart", "session_transition"],
         previous_session_id: str | None = None,
         next_session_id: str | None = None,
     ) -> HookResult:
