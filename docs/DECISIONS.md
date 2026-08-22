@@ -3186,3 +3186,31 @@ sequence guards prevent stale responses from replacing a newer selection, and
 mutations refresh coverage and the selected truth at bounded times. The slice is
 local-only review evidence and does not change routes, Core authority, release
 state, or the beta.6 public identity.
+
+## ADR-118: Continuous Capture begins as a provider-neutral local ledger
+
+**Status:** implemented in the isolated 2026-08-22 Stage 4 first-slice
+candidate; fresh independent security/correctness/API acceptance remains
+required.
+
+Continuous Capture starts with migration 015 contracts only. Core stores
+content-free source metadata, bounded opaque checkpoints, normalized inert
+events, source-scoped provider-item lineage, and foreground run telemetry.
+Creation is disabled; enabling/resuming requires explicit local-only
+acknowledgement; revocation is terminal and clears the reserved credential
+reference. Disabled, paused, and revoked sources make zero adapter calls.
+
+The coordinator durably stages an event, calls an injected idempotent sink with
+a deterministic key, and atomically commits the application receipt, item
+mapping, and checkpoint. Page cursors advance only after all page events apply.
+Duplicate replay is a no-op, while gaps, malformed pages, invalid cursors,
+bounded-limit failures, sink failures, and expired leases degrade the source
+with canonical retry metadata. Provider deletes are constrained to one source
+and item lineage; local corrections remain an explicit sink contract. Full
+snapshot/rescan deletion is deferred rather than inferred from page absence.
+
+No real connector, provider/network implementation, OAuth or credential flow,
+background scheduler, dashboard/package-startup change, current product
+availability, beta.6 identity change, release/publication/acceptance claim,
+live/private Core/data work, or macOS work is included. The unsupported-macOS
+posture and Core authority boundary remain unchanged.

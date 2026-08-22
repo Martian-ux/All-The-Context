@@ -37,6 +37,26 @@ Truth coverage counts durable Core entities; and Retrieval `pack_metadata`
 describes one bounded transient bootstrap selection. These dimensions are not
 combined or presented as release evidence.
 
+## Stage 4 Continuous Capture foundation (2026-08-22)
+
+This isolated first slice adds migration 015 and provider-neutral Core contracts
+for a bounded Continuous Capture ledger: source lifecycle, checkpoints,
+durable staged events, source-scoped item lineage, and foreground run telemetry.
+The coordinator is local-only and opt-in, requires explicit acknowledgement,
+has no scheduler, and makes no adapter call for disabled, paused, or revoked
+sources. Focused synthetic tests cover migration repair, lifecycle guards,
+ordered multi-page upsert/update/delete, duplicate replay, idempotent sink
+recovery, gaps/cursors/limits/backoff/leases, API authentication, CLI output,
+and secret-marker absence.
+
+This is infrastructure, not a claim that a provider supports continuous
+capture. No real connector, network implementation, OAuth/credential handling,
+dashboard or package-startup change, live/private Core/data inspection, current
+product availability, release, publication, beta acceptance, or macOS work is
+claimed. The beta.6 identity and unsupported-macOS posture remain unchanged.
+Full snapshot/rescan deletion is deferred until a provider-specific snapshot
+contract exists.
+
 The separately published `0.1.0-beta.6` remains the public, immutable,
 current downloadable release; this local integration neither publishes nor
 alters it. Its exact release identity is ID `374723649`, source
@@ -67,8 +87,8 @@ no replacement current record. Stable record identity includes source address
 and value identity, so repeated source references with different values remain
 distinct.
 
-Migrations `010`–`014` are the Memory Truth foundation; the next free Core
-migration number is `015`.
+Migrations `010`–`014` are the Memory Truth foundation. Migration `015` is the
+additive Continuous Capture contracts/ledger foundation described below.
 
 This is a Memory Truth foundation, not a complete memory-audit product. A
 replayable append-only decision event stream, configurable tentative expiry or

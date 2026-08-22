@@ -6,6 +6,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Literal
 
+from ..capture import CaptureCoordinator
 from ..config import CoreConfig
 from ..import_operations import ImportOperationService
 from ..importers import ArchiveImportService
@@ -20,6 +21,7 @@ class CoreService:
         self.config.prepare()
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
+        self.capture = CaptureCoordinator(self.store)
         self.store.repair_preledger_secrets()
         while self.store.evaluate_staged_observations():
             pass

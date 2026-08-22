@@ -435,8 +435,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
             ),
         )
     partial_restarted = CoreStore(partial_database)
-    assert partial_restarted.migrate() == 14
-    assert partial_restarted.migrate() == 14
+    assert partial_restarted.migrate() == 15
+    assert partial_restarted.migrate() == 15
     with partial_restarted.connect() as connection, pytest.raises(
         sqlite3.IntegrityError, match="append-only"
     ):
@@ -450,8 +450,8 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     legacy_restarted = CoreStore(database)
-    assert legacy_restarted.migrate() == 14
-    assert legacy_restarted.migrate() == 14
+    assert legacy_restarted.migrate() == 15
+    assert legacy_restarted.migrate() == 15
     with legacy_restarted.connect() as connection:
         marker = connection.execute(
             "SELECT mutation_kind,mutation_origin,actor FROM context_user_mutations "
@@ -499,8 +499,8 @@ def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
         )
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 14
-    assert restarted.migrate() == 14
+    assert restarted.migrate() == 15
+    assert restarted.migrate() == 15
     with restarted.connect() as connection:
         triggers = {
             str(row[0])
@@ -528,12 +528,12 @@ def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
 def test_migration_014_fresh_and_restart_passes_are_idempotent(tmp_path: Path) -> None:
     database = tmp_path / "fresh-014.sqlite3"
     store = CoreStore(database)
-    assert store.migrate() == 14
-    assert store.migrate() == 14
+    assert store.migrate() == 15
+    assert store.migrate() == 15
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 14
-    assert restarted.migrate() == 14
+    assert restarted.migrate() == 15
+    assert restarted.migrate() == 15
     with restarted.connect() as connection:
         columns = {
             str(row["name"])
@@ -584,8 +584,8 @@ def test_migration_014_repairs_missing_typed_action_columns_when_already_applied
             connection.execute(f"ALTER TABLE context_record_versions DROP COLUMN {column}")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 14
-    assert restarted.migrate() == 14
+    assert restarted.migrate() == 15
+    assert restarted.migrate() == 15
     with restarted.connect() as connection:
         columns = {
             str(row["name"])
@@ -642,8 +642,8 @@ def test_migration_014_repairs_missing_index_without_changing_typed_rows(
         connection.execute("DROP INDEX uq_context_record_versions_user_action")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 14
-    assert restarted.migrate() == 14
+    assert restarted.migrate() == 15
+    assert restarted.migrate() == 15
     with restarted.connect() as connection:
         assert [
             tuple(row)
@@ -684,8 +684,8 @@ def test_migration_014_repair_keeps_all_typed_local_action_paths_operational(
         connection.execute("ALTER TABLE context_record_versions DROP COLUMN user_action_key")
 
     repaired = CoreStore(database)
-    assert repaired.migrate() == 14
-    assert repaired.migrate() == 14
+    assert repaired.migrate() == 15
+    assert repaired.migrate() == 15
 
     correction_source = repaired.add_source(
         b"correction action",
@@ -809,7 +809,7 @@ def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
         connection.execute("DROP TABLE context_user_mutations")
         connection.execute("DELETE FROM schema_migrations WHERE version=13")
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 14
+    assert restarted.migrate() == 15
     with restarted.connect() as connection:
         assert connection.execute(
             "SELECT 1 FROM context_user_mutations WHERE record_id=?",

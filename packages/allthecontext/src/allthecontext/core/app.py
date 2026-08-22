@@ -37,7 +37,7 @@ from fastapi import (
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -50,6 +50,7 @@ from ..browser_session import (
     BrowserSessions,
     BrowserSessionTickets,
 )
+from ..capture import CaptureError
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -235,6 +236,16 @@ class UpdatePreferencesRequest(BaseModel):
     channel: Channel
 
 
+class CaptureCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    account_label: str
+    account_fingerprint: str | None = None
+    requested_scopes: list[str] = Field(default_factory=list, max_length=64)
+    local_only_acknowledged: bool = False
+
+
 def create_app(
     config: CoreConfig | None = None,
     *,
@@ -338,14 +349,22 @@ def create_app(
     async def handle_storage_error(_request: Request, error: StorageError) -> JSONResponse:
         status = 500
         code = "storage_error"
-        if isinstance(error, NotFoundError):
+        if isinstance(error, CaptureError):
+            status, code = 422, error.code
+        elif isinstance(error, NotFoundError):
             status, code = 404, "not_found"
         elif isinstance(error, ConflictError):
             status, code = 409, "conflict"
         elif isinstance(error, InvalidStateError):
             status, code = 422, "invalid_state"
         return JSONResponse(
-            status_code=status, content={"error": {"code": code, "message": str(error)}}
+            status_code=status,
+            content={
+                "error": {
+                    "code": code,
+                    "message": code if isinstance(error, CaptureError) else str(error),
+                }
+            },
         )
 
     def _credential_from_header(
@@ -925,6 +944,78 @@ def create_app(
         require(principal, "admin")
         items, total = core.store.list_sources(limit=limit, offset=offset)
         return {"items": items, "total": total}
+
+    @app.post("/v1/admin/capture/sources")
+    def create_capture_source(
+        request: CaptureCreateRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        source = core.capture.create_source(
+            provider=request.provider,
+            account_label=request.account_label,
+            account_fingerprint=request.account_fingerprint,
+            requested_scopes=request.requested_scopes,
+            local_only_acknowledged=request.local_only_acknowledged,
+        )
+        return source.model_dump(mode="json")
+
+    @app.get("/v1/admin/capture/sources")
+    def list_capture_sources(
+        principal: Principal, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        items, total = core.capture.list_sources(limit=limit, offset=offset)
+        return {"items": [item.model_dump(mode="json") for item in items], "total": total}
+
+    @app.get("/v1/admin/capture/status")
+    def capture_status(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        items, total = core.capture.list_sources()
+        return {
+            "items": [core.capture.status(item.id) for item in items],
+            "total": total,
+        }
+
+    @app.get("/v1/admin/capture/sources/{source_id}/status")
+    def capture_source_status(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.status(source_id)
+
+    @app.get("/v1/admin/capture/sources/{source_id}")
+    def get_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.get_source(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/enable")
+    def enable_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.enable(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/pause")
+    def pause_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.pause(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/resume")
+    def resume_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.resume(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/disable")
+    def disable_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.disable(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/revoke")
+    def revoke_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture.revoke(source_id).model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/sources/{source_id}/run")
+    async def run_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        result = await run_in_threadpool(core.capture.run, source_id)
+        return result.model_dump(mode="json")
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
     async def reprocess_source(
