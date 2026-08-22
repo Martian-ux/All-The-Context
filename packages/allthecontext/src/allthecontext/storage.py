@@ -13,6 +13,7 @@ import threading
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, cast
@@ -99,6 +100,16 @@ LIVENESS_BUSY_TIMEOUT_MS = 250
 LIVENESS_CONNECT_TIMEOUT_SECONDS = 0.25
 
 
+@dataclass(frozen=True)
+class _SourceRebuildBinding:
+    """Opaque-in-practice binding minted only after publish validation."""
+
+    source_id: str
+    session_id: str
+    generation: int
+    source_marker: str
+
+
 def durable_sqlite_footprint(database_path: Path) -> int:
     """Return bytes needed for durable SQLite state (main database plus WAL)."""
     resolved = database_path.resolve()
@@ -120,8 +131,36 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def source_rebuild_marker(source_id: str, content_hash: str, generation: int) -> str:
+    """Derive the source/generation marker stored in trusted rebuild tombstones."""
+
+    return _hash_text(_json(["source-rebuild-v2", source_id, content_hash, generation]))
+
+
 def _loads(value: str | None, default: Any) -> Any:
     return default if value is None else json.loads(value)
+
+
+def _json_object(value: str | None) -> dict[str, Any] | None:
+    """Decode a persisted object, treating malformed input as unusable."""
+
+    try:
+        loaded = _loads(value, {})
+    except (TypeError, ValueError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _json_string_list(value: str | None) -> list[str] | None:
+    """Decode a persisted string list without accepting scalar-like input."""
+
+    try:
+        loaded = _loads(value, [])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+        return None
+    return loaded
 
 
 def _normalized_slot_key(value: str | None) -> str | None:
@@ -2115,29 +2154,19 @@ class CoreStore:
         reason: str = "replaced by source rebuild",
         actor: str = "local-core",
     ) -> list[str]:
-        """Reversibly hide current auto-applied records from one source.
+        """Reject the legacy withdrawal capability at the public boundary.
 
-        User-corrected records, independently deleted records, history, and
-        the preserved raw blob are left unchanged.
+        Reopenable source-rebuild tombstones must be minted by the validated
+        ``publish_source_rebuild`` ceremony, which binds them to one finished
+        archive session and generation.  A caller that only has a source ID
+        cannot establish that binding, so this compatibility method fails
+        closed instead of creating a deletion row.
         """
 
-        with self.transaction() as connection:
-            withdrawn = self._withdraw_automatic_source_records_tx(
-                connection,
-                source_id,
-                reason=reason,
-                actor=actor,
-            )
-            if withdrawn:
-                self._recompute_integrity(connection)
-                self._audit(
-                    connection,
-                    actor,
-                    "source_rebuild_withdrew_automatic_records",
-                    [source_id],
-                    metadata={"withdrawn_record_count": len(withdrawn)},
-                )
-            return withdrawn
+        del source_id, reason, actor
+        raise InvalidStateError(
+            "automatic source withdrawal is only available through publish_source_rebuild"
+        )
 
     def _withdraw_automatic_source_records_tx(
         self,
@@ -2146,8 +2175,9 @@ class CoreStore:
         *,
         reason: str,
         actor: str,
+        binding: _SourceRebuildBinding | None = None,
     ) -> list[str]:
-        """Withdraw only current records produced by the archive importer.
+        """Withdraw automatic records under a validated publish binding.
 
         The origin check is intentional: a direct/local-admin record can retain
         an imported source reference, but it is not an automatic rebuild target.
@@ -2155,8 +2185,13 @@ class CoreStore:
         transaction so eligibility cannot go stale between staging and publish.
         """
 
+        if binding is None or binding.source_id != source_id:
+            raise InvalidStateError(
+                "source-rebuild withdrawal requires the publish ceremony binding"
+            )
+
         rows = connection.execute(
-            "SELECT id FROM context_records "
+            "SELECT * FROM context_records "
             "WHERE source_id=? AND deleted_at IS NULL AND approval_status='approved' "
             "AND observation_origin=? ORDER BY id",
             (source_id, ObservationOrigin.ARCHIVE_IMPORT.value),
@@ -2166,13 +2201,30 @@ class CoreStore:
             record_id = str(row["id"])
             if self._record_has_user_edit_tx(connection, record_id):
                 continue
-            self._delete_record_for_source_rebuild_tx(
-                connection,
-                record_id,
-                source_id=source_id,
-                actor=actor,
-                recompute_integrity=False,
-            )
+            # A row whose durable identity is missing or inconsistent cannot
+            # receive trusted reopenable provenance.  It still becomes an
+            # ordinary deletion barrier, so a later imported row cannot use it
+            # as a resurrection capability.
+            if (
+                row["record_key"] is not None
+                and _stable_record_key_from_row(row) == str(row["record_key"])
+            ):
+                self._delete_record_for_source_rebuild_tx(
+                    connection,
+                    record_id,
+                    source_id=source_id,
+                    actor=actor,
+                    recompute_integrity=False,
+                    binding=binding,
+                )
+            else:
+                self._delete_record_tx(
+                    connection,
+                    record_id,
+                    reason=SOURCE_REBUILD_REASON,
+                    actor=actor,
+                    recompute_integrity=False,
+                )
             withdrawn.append(record_id)
         return withdrawn
 
@@ -2184,28 +2236,77 @@ class CoreStore:
         source_id: str,
         actor: str,
         recompute_integrity: bool,
+        binding: _SourceRebuildBinding | None = None,
     ) -> dict[str, Any]:
-        """Use the only Core-internal capability that can mint rebuild provenance."""
+        """Mint trusted provenance only when called with a publish binding."""
 
-        if not source_id:
-            raise InvalidStateError("source-rebuild provenance requires a source")
+        if (
+            binding is None
+            or not source_id
+            or binding.source_id != source_id
+            or binding.generation < 1
+            or not binding.session_id
+            or not binding.source_marker
+        ):
+            raise InvalidStateError(
+                "source-rebuild provenance requires the validated publish ceremony"
+            )
         record = connection.execute(
             "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL",
             (record_id,),
         ).fetchone()
         source = connection.execute(
-            "SELECT id,deleted_at,import_status FROM source_records WHERE id=?",
+            "SELECT id,content_hash,metadata_json,deleted_at,import_status FROM source_records "
+            "WHERE id=?",
             (source_id,),
         ).fetchone()
+        session = connection.execute(
+            "SELECT mode,status,client_id,accessible_sources_json,unavailable_sources_json "
+            "FROM ingestion_sessions WHERE id=?",
+            (binding.session_id,),
+        ).fetchone()
+        source_metadata = (
+            _json_object(cast(str | None, source["metadata_json"]))
+            if source is not None
+            else None
+        )
+        accessible_sources = _json_string_list(
+            session["accessible_sources_json"] if session is not None else None
+        )
+        unavailable_sources = _json_string_list(
+            session["unavailable_sources_json"] if session is not None else None
+        )
+        try:
+            source_generation = int((source_metadata or {}).get("rebuild_generation", 0))
+        except (TypeError, ValueError):
+            source_generation = 0
         if (
             record is None
             or source is None
             or source["deleted_at"] is not None
-            or source["import_status"] is None
+            or str(source["import_status"]) != "processing"
             or str(record["source_id"]) != source_id
             or str(record["observation_origin"] or "")
             != ObservationOrigin.ARCHIVE_IMPORT.value
+            or record["record_key"] is None
+            or _stable_record_key_from_row(record) != str(record["record_key"])
             or self._record_has_user_edit_tx(connection, record_id)
+            or session is None
+            or str(session["mode"]) != IngestionMode.ARCHIVE.value
+            or str(session["status"]) != "finished"
+            or session["client_id"] is not None
+            or source_metadata is None
+            or accessible_sources is None
+            or unavailable_sources is None
+            or source_id not in accessible_sources
+            or source_id in unavailable_sources
+            or source_metadata.get("rebuild_in_progress") is not True
+            or source_generation != binding.generation
+            or source_metadata.get("rebuild_source_marker") != binding.source_marker
+            or source_rebuild_marker(
+                source_id, str(source["content_hash"]), binding.generation
+            )
+            != binding.source_marker
         ):
             raise InvalidStateError("record is not a valid automatic source-rebuild target")
 
@@ -2221,8 +2322,26 @@ class CoreStore:
         )
         connection.execute(
             "UPDATE deletion_tombstones SET deletion_origin='source_rebuild',"
-            "deletion_source_id=? WHERE record_id=?",
-            (source_id, record_id),
+            "deletion_source_id=?,rebuild_session_id=?,rebuild_generation=?,"
+            "rebuild_source_marker=? WHERE record_id=? AND deletion_origin='ordinary'",
+            (
+                source_id,
+                binding.session_id,
+                binding.generation,
+                binding.source_marker,
+                record_id,
+            ),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise InvalidStateError("source-rebuild tombstone binding was not created")
+        tombstone.update(
+            {
+                "deletion_origin": "source_rebuild",
+                "deletion_source_id": source_id,
+                "rebuild_session_id": binding.session_id,
+                "rebuild_generation": binding.generation,
+                "rebuild_source_marker": binding.source_marker,
+            }
         )
         return tombstone
 
@@ -2257,38 +2376,103 @@ class CoreStore:
                 raise InvalidStateError("source rebuild cannot publish a client session")
             if str(session["status"]) != "finished":
                 raise InvalidStateError("source rebuild session is not finished")
-            accessible_sources = _loads(session["accessible_sources_json"], [])
-            if source_id not in accessible_sources:
+            accessible_sources = _json_string_list(session["accessible_sources_json"])
+            unavailable_sources = _json_string_list(session["unavailable_sources_json"])
+            if (
+                accessible_sources is None
+                or unavailable_sources is None
+                or source_id not in accessible_sources
+                or source_id in unavailable_sources
+            ):
                 raise InvalidStateError("source rebuild session does not cover the source")
             source = connection.execute(
-                "SELECT id,metadata_json FROM source_records "
-                "WHERE id=? AND deleted_at IS NULL AND import_status IS NOT NULL",
+                "SELECT id,content_hash,metadata_json,deleted_at,import_status FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL",
                 (source_id,),
             ).fetchone()
             if source is None:
                 raise NotFoundError("source not found")
-            source_metadata = cast(dict[str, Any], _loads(source["metadata_json"], {}))
+            source_metadata = _json_object(cast(str | None, source["metadata_json"]))
+            if source_metadata is None:
+                raise InvalidStateError("source rebuild metadata is invalid")
+            try:
+                source_generation = int(
+                    cast(str | int | float, source_metadata.get("rebuild_generation"))
+                )
+            except (TypeError, ValueError) as error:
+                raise InvalidStateError("source rebuild generation marker is invalid") from error
+            expected_marker = source_rebuild_marker(
+                source_id, str(source["content_hash"]), rebuild_generation
+            )
             published_generation_raw = source_metadata.get("rebuild_published_generation")
             published_session_id = source_metadata.get("rebuild_published_session_id")
+            published_generation: int | None = None
             if published_generation_raw is not None:
                 try:
                     published_generation = int(published_generation_raw)
                 except (TypeError, ValueError) as error:
                     raise InvalidStateError("source rebuild publish marker is invalid") from error
                 if published_generation > rebuild_generation:
-                    return []
+                    raise InvalidStateError("source rebuild generation is stale")
                 if published_generation == rebuild_generation:
                     if published_session_id == session_id:
+                        if (
+                            source_generation != rebuild_generation
+                            or source_metadata.get("rebuild_source_marker") != expected_marker
+                        ):
+                            raise InvalidStateError("source rebuild marker is invalid")
+                        coverage = _loads(session["coverage_json"], {})
+                        idempotency_key = str(session["idempotency_key"] or "")
+                        if not isinstance(coverage, dict) or coverage.get("complete") is not True:
+                            raise InvalidStateError("source rebuild coverage is not complete")
+                        if not (
+                            idempotency_key.startswith(f"archive:{source_id}:")
+                            and idempotency_key.endswith(f":rebuild:{rebuild_generation}")
+                        ):
+                            raise InvalidStateError("source rebuild session marker is invalid")
                         return []
                     raise InvalidStateError("source rebuild generation belongs to another session")
-            elif not bool(source_metadata.get("rebuild_in_progress")):
-                raise InvalidStateError("source rebuild publish marker is missing")
+            elif published_session_id is not None:
+                raise InvalidStateError("source rebuild publish session marker is invalid")
+
+            if (
+                str(source["import_status"]) != "processing"
+                or source_metadata.get("rebuild_in_progress") is not True
+                or source_generation != rebuild_generation
+                or source_metadata.get("rebuild_source_marker") != expected_marker
+            ):
+                raise InvalidStateError("source rebuild is not in a validated in-progress state")
+
+            coverage = _loads(session["coverage_json"], {})
+            if not isinstance(coverage, dict) or coverage.get("complete") is not True:
+                raise InvalidStateError("source rebuild coverage is not complete")
+            idempotency_key = str(session["idempotency_key"] or "")
+            if not (
+                idempotency_key.startswith(f"archive:{source_id}:")
+                and idempotency_key.endswith(f":rebuild:{rebuild_generation}")
+            ):
+                raise InvalidStateError("source rebuild session marker is invalid")
+            foreign_staged = connection.execute(
+                "SELECT 1 FROM context_candidates WHERE session_id=? "
+                "AND (source_id IS NULL OR source_id<>?) LIMIT 1",
+                (session_id, source_id),
+            ).fetchone()
+            if foreign_staged is not None:
+                raise InvalidStateError("source rebuild session contains another source")
+
+            binding = _SourceRebuildBinding(
+                source_id=source_id,
+                session_id=session_id,
+                generation=rebuild_generation,
+                source_marker=expected_marker,
+            )
 
             withdrawn = self._withdraw_automatic_source_records_tx(
                 connection,
                 source_id,
                 reason="replaced by source rebuild",
                 actor=actor,
+                binding=binding,
             )
             staged = connection.execute(
                 "SELECT id FROM context_candidates "
@@ -3675,28 +3859,75 @@ class CoreStore:
         """
 
         record_key = cast(str | None, observation["record_key"])
-        if origin != ObservationOrigin.ARCHIVE_IMPORT or record_key is None:
+        observation_source_id = cast(str | None, observation["source_id"])
+        observation_session_id = cast(str | None, observation["session_id"])
+        if (
+            origin != ObservationOrigin.ARCHIVE_IMPORT
+            or record_key is None
+            or observation_source_id is None
+            or observation_session_id is None
+        ):
             return None
         prior = connection.execute(
             "SELECT r.*,t.deleted_version,t.reason AS tombstone_reason,"
-            "t.content_hash AS tombstone_hash,t.deleted_at AS tombstone_deleted_at "
+            "t.content_hash AS tombstone_hash,t.deleted_at AS tombstone_deleted_at,"
+            "t.deletion_origin,t.deletion_source_id,t.rebuild_session_id,"
+            "t.rebuild_generation,t.rebuild_source_marker,"
+            "s.content_hash AS source_content_hash,s.metadata_json AS source_metadata_json,"
+            "s.deleted_at AS source_deleted_at,s.import_status AS source_import_status,"
+            "rs.mode AS rebuild_mode,rs.status AS rebuild_status,"
+            "rs.client_id AS rebuild_client_id,"
+            "rs.accessible_sources_json AS rebuild_accessible_sources_json,"
+            "rs.unavailable_sources_json AS rebuild_unavailable_sources_json "
             "FROM context_records r JOIN deletion_tombstones t ON t.record_id=r.id "
             "JOIN source_records s ON s.id=t.deletion_source_id "
+            "JOIN ingestion_sessions rs ON rs.id=t.rebuild_session_id "
             "WHERE r.vault_id=? AND r.record_key=? AND r.deleted_at IS NOT NULL "
             "AND r.source_id=? AND r.observation_origin=? "
-            "AND s.id=? AND s.deleted_at IS NULL AND s.import_status IS NOT NULL "
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
+            "AND t.rebuild_session_id=? AND rs.id=? "
+            "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
             "AND t.reason=? ORDER BY r.version DESC,r.id LIMIT 1",
             (
                 observation["vault_id"],
                 record_key,
-                observation["source_id"],
+                observation_source_id,
                 ObservationOrigin.ARCHIVE_IMPORT.value,
-                observation["source_id"],
-                observation["source_id"],
+                observation_source_id,
+                observation_session_id,
+                observation_session_id,
+                observation["id"],
                 SOURCE_REBUILD_REASON,
             ),
         ).fetchone()
+        source_metadata = (
+            _json_object(cast(str | None, prior["source_metadata_json"]))
+            if prior is not None
+            else None
+        )
+        accessible_sources = _json_string_list(
+            prior["rebuild_accessible_sources_json"] if prior is not None else None
+        )
+        unavailable_sources = _json_string_list(
+            prior["rebuild_unavailable_sources_json"] if prior is not None else None
+        )
+        try:
+            rebuild_generation = int(prior["rebuild_generation"]) if prior is not None else 0
+        except (TypeError, ValueError):
+            rebuild_generation = 0
+        expected_marker = (
+            source_rebuild_marker(
+                observation_source_id,
+                str(prior["source_content_hash"]),
+                rebuild_generation,
+            )
+            if prior is not None and rebuild_generation > 0
+            else None
+        )
+        try:
+            source_generation = int((source_metadata or {}).get("rebuild_generation", 0))
+        except (TypeError, ValueError):
+            source_generation = 0
         if (
             prior is None
             or self._record_has_user_edit_tx(connection, str(prior["id"]))
@@ -3708,6 +3939,26 @@ class CoreStore:
             != str(prior["tombstone_hash"])
             or _stable_record_key_from_row(prior) != record_key
             or _stable_record_key_from_row(observation) != record_key
+            or str(prior["deletion_source_id"]) != observation_source_id
+            or str(prior["rebuild_session_id"]) != observation_session_id
+            or prior["rebuild_generation"] is None
+            or rebuild_generation < 1
+            or prior["rebuild_source_marker"] != expected_marker
+            or source_metadata is None
+            or source_metadata.get("rebuild_in_progress") is not True
+            or source_generation != rebuild_generation
+            or source_metadata.get("rebuild_source_marker") != expected_marker
+            or prior["source_deleted_at"] is not None
+            or str(prior["source_import_status"]) != "processing"
+            or str(prior["rebuild_mode"]) != IngestionMode.ARCHIVE.value
+            or str(prior["rebuild_status"]) != "finished"
+            or prior["rebuild_client_id"] is not None
+            or accessible_sources is None
+            or unavailable_sources is None
+            or observation_source_id not in accessible_sources
+            or observation_source_id in unavailable_sources
+            or str(observation["session_id"]) != str(prior["rebuild_session_id"])
+            or str(observation["source_id"]) != str(prior["deletion_source_id"])
         ):
             return None
 
@@ -4436,6 +4687,46 @@ class CoreStore:
             record_id = new_id()
             now = utc_now()
             content = request.content or str(row["content"])
+            kind = request.kind if request.kind is not None else str(row["kind"])
+            source_reference = (
+                request.source_reference
+                if request.source_reference is not None
+                else cast(str | None, row["source_reference"])
+            )
+            entity_key = (
+                _normalized_slot_key(request.entity_key)
+                if request.entity_key is not None
+                else cast(str | None, row["entity_key"])
+            )
+            attribute_key = (
+                _normalized_slot_key(request.attribute_key)
+                if request.attribute_key is not None
+                else cast(str | None, row["attribute_key"])
+            )
+            structured_value = (
+                request.structured_value
+                if "structured_value" in request.model_fields_set
+                else _loads(row["structured_value_json"], None)
+            )
+            structured_value_json = (
+                _json(structured_value) if structured_value is not None else None
+            )
+            # Approval overrides change canonical identity.  Recompute from
+            # the exact values persisted to context_records, then repair the
+            # candidate's durable key before linking evidence.
+            record_key = _stable_record_key_from_values(
+                source_id=cast(str | None, row["source_id"]),
+                source_reference=source_reference,
+                kind=kind,
+                entity_key=entity_key,
+                attribute_key=attribute_key,
+                content=content,
+                structured_value=structured_value,
+            )
+            connection.execute(
+                "UPDATE context_candidates SET record_key=? WHERE id=?",
+                (record_key, candidate_id),
+            )
             allowed_clients = (
                 request.allowed_clients
                 if request.allowed_clients is not None
@@ -4450,18 +4741,14 @@ class CoreStore:
                 record_id,
                 row["vault_id"],
                 candidate_id,
-                row["record_key"],
+                record_key,
                 row["source_id"],
-                row["source_reference"],
-                row["kind"],
+                source_reference,
+                kind,
                 content,
-                row["structured_value_json"],
-                _normalized_slot_key(request.entity_key)
-                if request.entity_key is not None
-                else row["entity_key"],
-                _normalized_slot_key(request.attribute_key)
-                if request.attribute_key is not None
-                else row["attribute_key"],
+                structured_value_json,
+                entity_key,
+                attribute_key,
                 row["scopes_json"],
                 row["tags_json"],
                 row["source_service"],
@@ -5482,6 +5769,10 @@ class CoreStore:
         ).fetchone()
         if row is None:
             return None
+        return self._truth_source_out(row)
+
+    @staticmethod
+    def _truth_source_out(row: sqlite3.Row) -> TruthSourceOut:
         return TruthSourceOut(
             id=str(row["id"]),
             content_hash=str(row["content_hash"]),
@@ -5498,6 +5789,32 @@ class CoreStore:
             deleted_reason=cast(str | None, row["deleted_reason"]),
         )
 
+    @staticmethod
+    def _truth_evidence_out(row: sqlite3.Row, record_id: str) -> TruthEvidenceOut:
+        return TruthEvidenceOut(
+            observation_id=str(row["id"]),
+            record_id=record_id,
+            relationship=str(row["relationship"]),
+            link_created_at=str(row["link_created_at"]),
+            disposition=ObservationDisposition(str(row["disposition"])),
+            decision_reason=cast(str | None, row["decision_reason"]),
+            decided_at=cast(str | None, row["decided_at"]),
+            observation_origin=cast(str | None, row["observation_origin"]),
+            policy_version=cast(str | None, row["policy_version"]),
+            content=str(row["content"]),
+            evidence=cast(str | None, row["evidence"]),
+            confidence=float(row["confidence"]),
+            sensitivity=Sensitivity(str(row["sensitivity"])),
+            source_id=cast(str | None, row["source_id"]),
+            source_reference=cast(str | None, row["source_reference"]),
+            source_service=cast(str | None, row["source_service"]),
+            source_type=cast(str | None, row["source_type"]),
+            effective_at=cast(str | None, row["valid_from"]),
+            observed_at=cast(str | None, row["observed_at"]),
+            recorded_at=str(row["created_at"]),
+            content_hash=str(row["content_hash"]),
+        )
+
     def _truth_evidence_tx(
         self, connection: sqlite3.Connection, record_id: str
     ) -> list[TruthEvidenceOut]:
@@ -5508,57 +5825,160 @@ class CoreStore:
             "WHERE l.record_id=? ORDER BY c.observed_at,c.created_at,c.id LIMIT ?",
             (record_id, MAX_TRUTH_EVIDENCE),
         ).fetchall()
-        return [
-            TruthEvidenceOut(
-                observation_id=str(row["id"]),
-                record_id=record_id,
-                relationship=str(row["relationship"]),
-                link_created_at=str(row["link_created_at"]),
-                disposition=ObservationDisposition(str(row["disposition"])),
-                decision_reason=cast(str | None, row["decision_reason"]),
-                decided_at=cast(str | None, row["decided_at"]),
-                observation_origin=cast(str | None, row["observation_origin"]),
-                policy_version=cast(str | None, row["policy_version"]),
-                content=str(row["content"]),
-                evidence=cast(str | None, row["evidence"]),
-                confidence=float(row["confidence"]),
-                sensitivity=Sensitivity(str(row["sensitivity"])),
-                source_id=cast(str | None, row["source_id"]),
-                source_reference=cast(str | None, row["source_reference"]),
-                source_service=cast(str | None, row["source_service"]),
-                source_type=cast(str | None, row["source_type"]),
-                effective_at=cast(str | None, row["valid_from"]),
-                observed_at=cast(str | None, row["observed_at"]),
-                recorded_at=str(row["created_at"]),
-                content_hash=str(row["content_hash"]),
-            )
-            for row in rows
-        ]
+        return [self._truth_evidence_out(row, record_id) for row in rows]
 
     def _truth_record_tx(
         self, connection: sqlite3.Connection, record: sqlite3.Row
     ) -> MemoryTruthRecordOut:
-        status, reason, conflict_state, group_ids, superseded_by = self._truth_status_tx(
-            connection, record
+        return self._truth_records_tx(connection, [record])[0]
+
+    def _truth_records_tx(
+        self, connection: sqlite3.Connection, records: Sequence[sqlite3.Row]
+    ) -> list[MemoryTruthRecordOut]:
+        """Project a page using bounded set queries instead of row-by-row reads."""
+
+        if not records:
+            return []
+        record_ids = [str(record["id"]) for record in records]
+        placeholders = ",".join("?" for _ in record_ids)
+        tombstone_reasons = {
+            str(row["record_id"]): str(row["reason"])
+            for row in connection.execute(
+                "SELECT record_id,reason FROM deletion_tombstones "
+                f"WHERE record_id IN ({placeholders})",
+                record_ids,
+            ).fetchall()
+        }
+        superseded_by: dict[str, list[str]] = {}
+        for row in connection.execute(
+            "WITH ranked AS ("
+            "SELECT id,supersedes,ROW_NUMBER() OVER "
+            "(PARTITION BY supersedes ORDER BY id) AS row_number "
+            "FROM context_records "
+            f"WHERE supersedes IN ({placeholders}) "
+            "AND approval_status='approved' AND deleted_at IS NULL) "
+            "SELECT id,supersedes FROM ranked WHERE row_number<=? "
+            "ORDER BY supersedes,id",
+            [*record_ids, MAX_TRUTH_SUPERSEDED_BY],
+        ).fetchall():
+            target = str(row["supersedes"])
+            values = superseded_by.setdefault(target, [])
+            values.append(str(row["id"]))
+
+        active_groups: dict[str, list[str]] = {}
+        resolved_groups: dict[str, list[str]] = {}
+        for row in connection.execute(
+            "WITH ranked AS ("
+            "SELECT gm.record_id,ig.id,ig.status,ROW_NUMBER() OVER "
+            "(PARTITION BY gm.record_id,ig.status ORDER BY ig.id) AS row_number "
+            "FROM integrity_group_members gm "
+            "JOIN integrity_groups ig ON ig.id=gm.group_id "
+            f"WHERE gm.record_id IN ({placeholders}) "
+            "AND ig.group_type='conflict' AND ig.status IN ('open','resolved')) "
+            "SELECT record_id,id,status FROM ranked WHERE row_number<=? "
+            "ORDER BY record_id,id",
+            [*record_ids, MAX_TRUTH_CONFLICT_GROUPS],
+        ).fetchall():
+            target = str(row["record_id"])
+            destination = (
+                active_groups if str(row["status"]) == "open" else resolved_groups
+            )
+            values = destination.setdefault(target, [])
+            values.append(str(row["id"]))
+
+        source_ids = sorted(
+            {str(record["source_id"]) for record in records if record["source_id"] is not None}
         )
-        record_out = self._record_out(record).model_copy(update={"status": status})
-        history_count = int(
-            connection.execute(
-                "SELECT COUNT(*) FROM context_record_versions WHERE record_id=?",
-                (record["id"],),
-            ).fetchone()[0]
-        )
-        return MemoryTruthRecordOut(
-            record=record_out,
-            status=status,
-            status_reason=reason,
-            conflict_state=conflict_state,
-            conflict_group_ids=group_ids,
-            superseded_by=superseded_by,
-            source=self._truth_source_tx(connection, cast(str | None, record["source_id"])),
-            evidence=self._truth_evidence_tx(connection, str(record["id"])),
-            history_count=history_count,
-        )
+        sources: dict[str, TruthSourceOut] = {}
+        if source_ids:
+            source_placeholders = ",".join("?" for _ in source_ids)
+            source_rows = connection.execute(
+                "SELECT sr.*,sb.byte_size,sb.media_type,"
+                "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+                "AS candidate_count FROM source_records sr "
+                "JOIN source_blobs sb ON sb.content_hash=sr.content_hash "
+                f"WHERE sr.id IN ({source_placeholders})",
+                source_ids,
+            ).fetchall()
+            sources = {str(row["id"]): self._truth_source_out(row) for row in source_rows}
+
+        evidence: dict[str, list[TruthEvidenceOut]] = {}
+        for row in connection.execute(
+            "WITH ranked AS ("
+            "SELECT l.record_id,l.relationship,l.created_at AS link_created_at,c.*,"
+            "ROW_NUMBER() OVER "
+            "(PARTITION BY l.record_id ORDER BY c.observed_at,c.created_at,c.id) AS row_number "
+            "FROM context_observation_links l "
+            "JOIN context_candidates c ON c.id=l.observation_id "
+            f"WHERE l.record_id IN ({placeholders})) "
+            "SELECT * FROM ranked WHERE row_number<=? "
+            "ORDER BY record_id,observed_at,created_at,id",
+            [*record_ids, MAX_TRUTH_EVIDENCE],
+        ).fetchall():
+            target = str(row["record_id"])
+            evidence_values = evidence.setdefault(target, [])
+            evidence_values.append(self._truth_evidence_out(row, target))
+
+        history_counts = {
+            str(row["record_id"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT record_id,COUNT(*) AS count FROM context_record_versions "
+                f"WHERE record_id IN ({placeholders}) GROUP BY record_id",
+                record_ids,
+            ).fetchall()
+        }
+        result: list[MemoryTruthRecordOut] = []
+        for record in records:
+            record_id = str(record["id"])
+            if record["deleted_at"] is not None:
+                status = MemoryTruthStatus.DELETED
+                reason = tombstone_reasons.get(record_id, "record is soft-deleted")
+                conflict_state = TruthConflictState.NONE
+                group_ids: list[str] = []
+                replaced_by: list[str] = []
+            elif superseded_by.get(record_id):
+                status = MemoryTruthStatus.SUPERSEDED
+                reason = "replaced by a newer canonical record"
+                conflict_state = TruthConflictState.NONE
+                group_ids = []
+                replaced_by = superseded_by[record_id]
+            elif active_groups.get(record_id):
+                status = MemoryTruthStatus.CONFLICTED
+                reason = "multiple current values remain for the same memory slot"
+                conflict_state = TruthConflictState.ACTIVE
+                group_ids = active_groups[record_id]
+                replaced_by = []
+            elif resolved_groups.get(record_id):
+                status = MemoryTruthStatus.CURRENT
+                reason = "current value; an earlier slot conflict was resolved"
+                conflict_state = TruthConflictState.RESOLVED
+                group_ids = resolved_groups[record_id]
+                replaced_by = []
+            else:
+                status = MemoryTruthStatus.CURRENT
+                reason = "current applied record"
+                conflict_state = TruthConflictState.NONE
+                group_ids = []
+                replaced_by = []
+            record_out = self._record_out(record).model_copy(update={"status": status})
+            result.append(
+                MemoryTruthRecordOut(
+                    record=record_out,
+                    status=status,
+                    status_reason=reason,
+                    conflict_state=conflict_state,
+                    conflict_group_ids=group_ids,
+                    superseded_by=replaced_by,
+                    source=(
+                        sources.get(str(record["source_id"]))
+                        if record["source_id"] is not None
+                        else None
+                    ),
+                    evidence=evidence.get(record_id, []),
+                    history_count=history_counts.get(record_id, 0),
+                )
+            )
+        return result
 
     def _truth_coverage_tx(self, connection: sqlite3.Connection) -> TruthCoverageOut:
         source_count = int(
@@ -5591,31 +6011,23 @@ class CoreStore:
             status_value = str(row["truth_status"])
             if status_value in records_by_status:
                 records_by_status[status_value] = int(row["count"])
-        session_rows = connection.execute(
-            "SELECT status,coverage_json,unavailable_sources_json "
+        session_summary = connection.execute(
+            "SELECT COUNT(*) AS total,"
+            "SUM(CASE WHEN status<>'finished' OR coverage_json IS NULL "
+            "OR json_valid(coverage_json)=0 "
+            "OR COALESCE(json_extract(coverage_json,'$.complete'),0)<>1 "
+            "THEN 1 ELSE 0 END) AS incomplete,"
+            "SUM(CASE WHEN unavailable_sources_json IS NOT NULL "
+            "AND unavailable_sources_json<>'[]' "
+            "OR json_valid(coverage_json)=0 "
+            "OR (json_valid(coverage_json)=1 AND "
+            "COALESCE(json_array_length(json_extract(coverage_json,'$.unavailable')),0)>0) "
+            "THEN 1 ELSE 0 END) AS unavailable "
             "FROM ingestion_sessions"
-        ).fetchall()
-        incomplete = 0
-        unavailable = 0
-        for row in session_rows:
-            try:
-                coverage = _loads(cast(str | None, row["coverage_json"]), {})
-                unavailable_sources = _loads(row["unavailable_sources_json"], [])
-            except (TypeError, ValueError):
-                coverage = {}
-                unavailable_sources = ["invalid-coverage"]
-            coverage_complete = (
-                bool(coverage.get("complete", False))
-                if isinstance(coverage, dict)
-                else False
-            )
-            if str(row["status"]) != "finished" or not coverage_complete:
-                incomplete += 1
-            coverage_unavailable = (
-                coverage.get("unavailable", []) if isinstance(coverage, dict) else []
-            )
-            if unavailable_sources or coverage_unavailable:
-                unavailable += 1
+        ).fetchone()
+        session_count = int(session_summary["total"] or 0)
+        incomplete = int(session_summary["incomplete"] or 0)
+        unavailable = int(session_summary["unavailable"] or 0)
         conflict_group_count = int(
             connection.execute(
                 "SELECT COUNT(*) FROM integrity_groups "
@@ -5630,13 +6042,12 @@ class CoreStore:
             record_count=sum(records_by_status.values()),
             records_by_status=records_by_status,
             conflict_group_count=conflict_group_count,
-            ingestion_session_count=len(session_rows),
+            ingestion_session_count=session_count,
             incomplete_ingestion_session_count=incomplete,
             sessions_with_unavailable_sources=unavailable,
         )
 
     def memory_truth_coverage(self) -> TruthCoverageOut:
-        self.rebuild_integrity_groups()
         with self.connect() as connection:
             return self._truth_coverage_tx(connection)
 
@@ -5647,7 +6058,6 @@ class CoreStore:
         include_deleted: bool = True,
         principal: ClientPrincipal | None = None,
     ) -> MemoryTruthRecordOut:
-        self.rebuild_integrity_groups()
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM context_records WHERE id=?", (record_id,)
@@ -5666,7 +6076,6 @@ class CoreStore:
         limit: int = 100,
         offset: int = 0,
     ) -> MemoryTruthResponse:
-        self.rebuild_integrity_groups()
         bounded_limit = min(max(limit, 1), 500)
         bounded_offset = max(offset, 0)
         with self.connect() as connection:
@@ -5691,7 +6100,7 @@ class CoreStore:
                 + " ORDER BY updated_at DESC,id LIMIT ? OFFSET ?",
                 [*parameters, bounded_limit, bounded_offset],
             ).fetchall()
-            page = [self._truth_record_tx(connection, row) for row in rows]
+            page = self._truth_records_tx(connection, rows)
             tentative_rows = []
             if status is None or status == MemoryTruthStatus.TENTATIVE:
                 tentative_rows = connection.execute(
@@ -5826,7 +6235,6 @@ class CoreStore:
     ) -> dict[str, Any]:
         if status not in {"open", "resolved", "all"}:
             raise InvalidStateError("integrity group status is invalid")
-        self.rebuild_integrity_groups()
         conditions = ["g.vault_id=?"]
         parameters: list[Any] = [self.vault_id()]
         if status != "all":

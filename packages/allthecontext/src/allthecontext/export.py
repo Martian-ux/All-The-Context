@@ -528,6 +528,12 @@ def _normalize_deletion_tombstone_row(row: dict[str, Any]) -> None:
     if str(row.get("deletion_origin", "ordinary")) != "ordinary":
         row["deletion_origin"] = "ordinary"
     row["deletion_source_id"] = None
+    # Rebuild session/generation markers are process-local authority.  An
+    # export row, including one from a valid source database, must reopen only
+    # after a fresh in-process publish ceremony on the destination.
+    row["rebuild_session_id"] = None
+    row["rebuild_generation"] = None
+    row["rebuild_source_marker"] = None
 
 
 def _recompute_record_keys(

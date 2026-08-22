@@ -213,14 +213,32 @@ class FinishIngestionRequest(StrictModel):
 
 class ApprovalRequest(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=MAX_CONTEXT_CHARS)
+    kind: str | None = Field(default=None, min_length=1, max_length=128)
+    structured_value: dict[str, Any] | None = None
     entity_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
     attribute_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
+    source_reference: str | None = Field(default=None, min_length=1, max_length=2_000)
     availability: Availability | None = None
     sensitivity: Sensitivity | None = None
     allowed_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     denied_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     reason: str | None = Field(default=None, max_length=2_000)
     explicit_sensitive_replication: bool = False
+
+    @field_validator("kind")
+    @classmethod
+    def normalize_kind(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("kind must contain non-whitespace text")
+        return normalized
+
+    @field_validator("structured_value")
+    @classmethod
+    def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _bounded_structured_value(value)
 
     @model_validator(mode="after")
     def validate_slot(self) -> Self:

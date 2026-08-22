@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.models import (
+    ApprovalRequest,
     CandidateInput,
     CoverageReport,
     IngestionMode,
     MemoryTruthStatus,
     ObservationDisposition,
 )
-from allthecontext.storage import CoreStore
+from allthecontext.storage import CoreStore, InvalidStateError, source_rebuild_marker
 from fastapi.testclient import TestClient
 
 
@@ -61,7 +63,7 @@ def _archive_observation(
     return str(batch["candidate_ids"][0])
 
 
-def test_source_rebuild_reuses_identity_only_for_rebuild_tombstones(tmp_path: Path) -> None:
+def test_public_source_withdrawal_cannot_mint_rebuild_tombstone(tmp_path: Path) -> None:
     store = _store(tmp_path)
     source = store.add_source(
         b"fiction archive",
@@ -81,17 +83,172 @@ def test_source_rebuild_reuses_identity_only_for_rebuild_tombstones(tmp_path: Pa
     assert first.record_id is not None
     record_id = first.record_id
 
-    assert store.withdraw_automatic_source_records(source.id) == [record_id]
-    replacement_observation_id = _archive_observation(
+    with pytest.raises(InvalidStateError, match="publish_source_rebuild"):
+        store.withdraw_automatic_source_records(source.id)
+    with (
+        pytest.raises(InvalidStateError, match="validated publish ceremony"),
+        store.transaction() as connection,
+    ):
+        store._delete_record_for_source_rebuild_tx(
+            connection,
+            record_id,
+            source_id=source.id,
+            actor="test",
+            recompute_integrity=False,
+        )
+    assert store.get_record(record_id).id == record_id
+
+
+def test_valid_publish_binds_rebuild_tombstone_to_session_generation_and_marker(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    first_id = _archive_observation(
         store,
         source.id,
         content="I prefer concise answers.",
         source_reference="message:1",
-        session_key="replacement",
+        session_key="valid-first",
     )
-    replacement = store.get_observation(replacement_observation_id)
+    record_id = store.get_observation(first_id).record_id
+    assert record_id is not None
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key=f"archive:{source.id}:fixture-parser:rebuild:1",
+    )
+    session_id = str(session["session_id"])
+    batch = store.submit_batch(
+        session_id,
+        "valid-rebuild-batch",
+        [
+            CandidateInput(
+                kind="preference",
+                content="I prefer concise answers.",
+                source_id=source.id,
+                source_reference="message:1",
+                source_service="fiction-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fiction-archive"], complete=True),
+        publish=False,
+    )
+    marker = source_rebuild_marker(source.id, source.content_hash, 1)
+    store.update_source_import(
+        source.id,
+        import_status="processing",
+        metadata={
+            "rebuild_generation": 1,
+            "rebuild_in_progress": True,
+            "rebuild_source_marker": marker,
+        },
+        parser_warnings=[],
+    )
+
+    assert store.publish_source_rebuild(source.id, session_id, rebuild_generation=1) == [record_id]
+    replacement = store.get_observation(str(batch["candidate_ids"][0]))
     assert replacement.record_id == record_id
-    assert store.get_record(record_id).content == "I prefer concise answers."
+    with store.connect() as connection:
+        tombstone = connection.execute(
+            "SELECT deletion_origin,deletion_source_id,rebuild_session_id,"
+            "rebuild_generation,rebuild_source_marker FROM deletion_tombstones "
+            "WHERE record_id=?",
+            (record_id,),
+        ).fetchone()
+    # The publish transaction consumed the tombstone while reapplying the
+    # replacement observation, so the stable-ID history is the durable proof.
+    assert tombstone is None
+    assert store.record_history(record_id)
+
+
+def test_manual_approval_override_rekeys_candidate_and_preserves_delete_barrier(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"approval override archive",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    candidate = store.add_candidate(
+        CandidateInput(
+            kind="old-kind",
+            content="Original candidate value",
+            source_id=source.id,
+            source_reference="message:old",
+            source_service="fixture-provider",
+            source_type="provider_archive",
+            entity_key="old-entity",
+            attribute_key="old-attribute",
+        )
+    )
+    approved = store.approve_candidate(
+        candidate.id,
+        ApprovalRequest(
+            kind="final-kind",
+            content="Final approved value",
+            structured_value={"canonical": "final"},
+            entity_key="Final Entity",
+            attribute_key="Final Attribute",
+            source_reference="message:final",
+        ),
+    )
+    with store.connect() as connection:
+        keys = connection.execute(
+            "SELECT c.record_key AS candidate_key,r.record_key AS record_key "
+            "FROM context_candidates c JOIN context_records r ON r.id=c.record_id "
+            "WHERE c.id=?",
+            (candidate.id,),
+        ).fetchone()
+    assert keys is not None
+    assert keys["candidate_key"] == keys["record_key"]
+
+    store.delete_record(approved.id, reason="override deletion barrier")
+    session = store.begin_ingestion(
+        mode=IngestionMode.ARCHIVE,
+        accessible_sources=[source.id],
+        unavailable_sources=[],
+        idempotency_key="override-reimport",
+    )
+    session_id = str(session["session_id"])
+    reimport = store.submit_batch(
+        session_id,
+        "override-reimport-batch",
+        [
+            CandidateInput(
+                kind="final-kind",
+                content="Final approved value",
+                structured_value={"canonical": "final"},
+                entity_key="final entity",
+                attribute_key="final attribute",
+                source_id=source.id,
+                source_reference="message:final",
+                source_service="fixture-provider",
+                source_type="provider_archive",
+                explicit_user_statement=True,
+            )
+        ],
+    )
+    store.finish_ingestion(
+        session_id,
+        CoverageReport(available=["fixture-provider"], complete=True),
+    )
+    observed = store.get_observation(str(reimport["candidate_ids"][0]))
+    assert observed.disposition == ObservationDisposition.IGNORED
+    assert observed.record_id == approved.id
+    assert store.status()["counts"]["active_records"] == 0
 
 
 def test_user_deletion_tombstone_cannot_be_reapplied_by_archive_import(tmp_path: Path) -> None:
@@ -155,7 +312,7 @@ def test_same_source_reference_different_values_do_not_collapse(tmp_path: Path) 
     first = store.get_observation(first_id)
     assert first.record_id is not None
     record_id = first.record_id
-    assert store.withdraw_automatic_source_records(source.id) == [record_id]
+    store.delete_record(record_id, reason="ordinary deletion for collision fixture")
 
     second_id = _archive_observation(
         store,
@@ -283,6 +440,50 @@ def test_truth_projection_bounds_large_supersession_and_evidence_sets(tmp_path: 
         store.add_candidate(CandidateInput(kind="fact", content="Bounded evidence value"))
     evidence = store.get_memory_truth(evidence_record.id).evidence
     assert len(evidence) == 512
+
+
+def test_truth_page_select_count_is_bounded_by_page_not_database_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    for index in range(8):
+        store.approve_candidate(
+            store.add_candidate(CandidateInput(kind="fact", content=f"Page fixture {index}")).id
+        )
+
+    original_connect = store.connect
+
+    def measure_selects(expected_total: int) -> int:
+        statements: list[str] = []
+
+        def traced_connect() -> object:
+            connection = original_connect()
+            connection.set_trace_callback(
+                lambda statement: statements.append(statement)
+                if statement.lstrip().upper().startswith(("SELECT", "WITH"))
+                else None
+            )
+            return connection
+
+        monkeypatch.setattr(store, "connect", traced_connect)
+        try:
+            response = store.list_memory_truth(limit=2, offset=0)
+            assert response.total == expected_total
+            assert len(response.items) == 2
+        finally:
+            monkeypatch.setattr(store, "connect", original_connect)
+        return len(statements)
+
+    small_page_selects = measure_selects(8)
+    for index in range(120):
+        store.approve_candidate(
+            store.add_candidate(
+                CandidateInput(kind="fact", content=f"Larger database fixture {index}")
+            ).id
+        )
+    large_page_selects = measure_selects(128)
+    assert small_page_selects <= 16
+    assert large_page_selects <= small_page_selects + 1
 
 
 def test_truth_projection_exposes_evidence_times_and_content_free_coverage(

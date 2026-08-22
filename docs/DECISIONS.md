@@ -2896,3 +2896,28 @@ Truth list pagination and status coverage use bounded SQL selection/counting.
 Projection arrays use the public limits of 64 superseders, 64 conflict groups,
 and 512 evidence links. This correction is additive and preserves existing
 purge, relay, authorization, and source-restore contracts.
+
+## ADR-108: Bind reopenable rebuild tombstones to one validated ceremony
+
+**Status:** accepted 2026-08-22.
+
+Only the atomic `publish_source_rebuild` transaction may mint a trusted
+source-rebuild tombstone. Its private withdrawal capability requires a binding
+containing the exact finished archive session, rebuild generation, and
+content-hash-derived source marker. The storage checks also require archive
+mode, finished status, client-free and source-accessible session state,
+source-rebuild-in-progress metadata, stable identity, tombstone hash/version,
+and no user edit. The public compatibility withdrawal method fails closed;
+legacy or portable rows without the binding are ordinary deletion barriers.
+Reapply verifies the same source/session/generation and marker relationships in
+the transaction, preserving stable IDs only for a valid untouched lineage.
+
+Manual approval derives the candidate and record keys from the final persisted
+identity-bearing values, including content, source reference, kind, slots, and
+structured value. Truth list projection counts and pages in SQL, avoids
+read-time integrity rebuilding, and uses page-scoped SQL set prefetch with
+per-record limits for superseders, conflict groups, and evidence. Focused
+regressions cover tampered provenance, delete/reimport replacement prevention,
+idempotent approval evidence, and near-constant query count as the database
+grows. This is additive to the existing purge, restore, relay, export, and
+provider contracts.

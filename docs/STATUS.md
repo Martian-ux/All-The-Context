@@ -1524,20 +1524,28 @@ state is already noncurrent and creates no user queue.
 
 ## Memory Truth review-fix amendment (2026-08-22)
 
-- Core migrations 010/011 are restart-safe after an interrupted `ALTER TABLE`,
+- Core migrations 010/011/012 are restart-safe after an interrupted `ALTER TABLE`,
   including statements preceded by SQL comments; the focused probe covers an
-  unrecorded partial application and a second restart.
+  unrecorded partial application and a second restart. Migration 012
+  downgrades legacy/unbound rebuild rows to ordinary deletion barriers.
 - Observation, correction, historical-restore, and portable-restore paths now
   recompute source/value identity keys from their durable identity-bearing
   fields. A V1-to-V2 update therefore cannot bypass an ordinary deletion
   barrier on matching archive reimport.
-- Source-rebuild tombstones are minted only by the validated Core cutover path,
-  are checked against record/source/hash/version invariants before reuse, and
-  imported rebuild markers are downgraded to ordinary barriers. Rebuild
-  compatibility remains additive to the existing purge/relay schemas.
-- Truth list/count projections page and count at SQL level, while superseded
-  IDs, conflict IDs, and evidence remain bounded to their public model limits.
-  Manual approval now creates an idempotent originating-observation evidence
-  link. Focused Memory Truth, storage, migration, export/restore, Core API,
-  provider-rebuild, purge, and relay checks pass locally; full-suite and hosted
-  CI evidence remain outside this lane.
+- Source-rebuild tombstones are minted only by the validated atomic
+  `publish_source_rebuild` ceremony. The public withdrawal compatibility path
+  fails closed; trusted rows bind the exact finished archive session,
+  generation, and content-hash marker, while reapply checks source/session
+  accessibility, in-progress metadata, stable identity, tombstone hash/version,
+  and user-edit absence. Imported or copied markers remain ordinary barriers.
+- Manual approval recomputes the candidate and canonical record key from every
+  final identity-bearing override, including content, slot, source reference,
+  kind, and structured value. Delete/reimport and retry/evidence regressions
+  prove no replacement current record or duplicate link is created.
+- Truth list/count projections page and count at SQL level without rebuilding
+  global integrity state on reads. Page-scoped set queries use SQL row limits
+  for superseded IDs, conflict IDs, and evidence; a query-count regression
+  stays near-constant as the database grows. Focused Memory Truth, storage,
+  migration, export/restore, Core API, provider-rebuild, purge, and relay
+  checks pass locally; full-suite and hosted CI evidence remain outside this
+  lane.

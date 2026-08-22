@@ -46,7 +46,7 @@ from .provider_ingestion import (
     normalize_provider,
     parser_identity_for,
 )
-from .storage import CoreStore, InvalidStateError
+from .storage import CoreStore, InvalidStateError, source_rebuild_marker
 
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
@@ -1779,6 +1779,9 @@ class ArchiveImportService:
                 metadata = dict(source.metadata)
                 metadata["rebuild_generation"] = rebuild_generation
                 metadata["rebuild_in_progress"] = True
+                metadata["rebuild_source_marker"] = source_rebuild_marker(
+                    source.id, source.content_hash, rebuild_generation
+                )
                 self.store.update_source_import(
                     source.id,
                     import_status="processing",
@@ -1934,6 +1937,7 @@ class ArchiveImportService:
                     for marker in (
                         "rebuild_published_generation",
                         "rebuild_published_session_id",
+                        "rebuild_source_marker",
                     ):
                         if marker in source.metadata:
                             metadata[marker] = source.metadata[marker]
@@ -2159,6 +2163,9 @@ class ArchiveImportService:
             if rebuild_generation is not None:
                 metadata["rebuild_generation"] = rebuild_generation
                 metadata["rebuild_in_progress"] = False
+                metadata["rebuild_source_marker"] = source_rebuild_marker(
+                    source.id, source.content_hash, rebuild_generation
+                )
                 metadata["withdrawn_automatic_record_count"] = len(withdrawn_record_ids or [])
                 metadata["rebuild_published_generation"] = rebuild_generation
                 metadata["rebuild_published_session_id"] = str(begin["session_id"])
