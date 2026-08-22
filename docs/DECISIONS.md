@@ -3349,10 +3349,15 @@ client is both allowed and denied.
 `CoreStore.get_memory_truth(principal=...)` is authorization-first for the
 canonical record and now filters linked observation evidence with each
 observation's own allow/deny ACL before applying the bounded evidence limit.
-The principal-less Core/local-admin path intentionally retains the complete
-projection, including linked evidence; no admin-scope bypass is added to the
-principal-scoped path. This is a storage/query repair with no schema or
-provider-contract change, and it uses only synthetic temporary-database tests.
+When a correction transfers a restrictive ACL to a disjoint client set, the
+canonical record's content-bearing projection fields (structured value,
+scopes, tags, source provenance, evidence, confidence, and validity window)
+follow the replacement observation rather than the old target. Stable kind and
+slot identity remain attached to the canonical record. The principal-less
+Core/local-admin path intentionally retains complete linked observation
+history; no admin-scope bypass is added to the principal-scoped path. This is a
+storage/query repair with no schema or provider-contract change, and it uses
+only synthetic temporary-database tests.
 
 ## ADR-125: Complete-but-incomplete sources use the existing rebuild authority
 

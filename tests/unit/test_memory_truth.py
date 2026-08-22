@@ -1322,10 +1322,18 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
         CandidateInput(
             kind="fact",
             content="old disjoint-private value",
+            structured_value={"private": "old structured value"},
             entity_key="user",
             attribute_key="private_fact",
+            scopes=["project:old-private"],
+            tags=["old-private-tag"],
+            source_reference="old-private-reference",
+            source_service="old-private-service",
+            source_type="old-private-type",
             allowed_clients=["old-client"],
             evidence="old disjoint-private evidence",
+            valid_from="2026-01-01T00:00:00+00:00",
+            expires_at="2027-01-01T00:00:00+00:00",
             explicit_user_statement=True,
         )
     )
@@ -1350,6 +1358,16 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
 
     authorized_truth = store.get_memory_truth(original.record_id, principal=new_principal)
     assert authorized_truth.record.content == "new disjoint-private value"
+    assert authorized_truth.record.evidence == "new disjoint-private evidence"
+    assert authorized_truth.record.structured_value is None
+    assert authorized_truth.record.scopes == []
+    assert authorized_truth.record.tags == []
+    assert authorized_truth.record.source_id is None
+    assert authorized_truth.record.source_reference is None
+    assert authorized_truth.record.source_service is None
+    assert authorized_truth.record.source_type is None
+    assert authorized_truth.record.valid_from is None
+    assert authorized_truth.record.expires_at is None
     assert [item.content for item in authorized_truth.evidence] == ["new disjoint-private value"]
     assert [item.evidence for item in authorized_truth.evidence] == [
         "new disjoint-private evidence"

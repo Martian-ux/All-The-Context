@@ -4620,16 +4620,32 @@ class CoreStore:
         version = int(record["version"]) + 1
         now = utc_now()
         is_correction = str(observation["kind"]).casefold() == "correction"
+        current_allowed = set(_loads(record["allowed_clients_json"], []))
+        observed_allowed = set(_loads(observation["allowed_clients_json"], []))
+        disjoint_acl_transfer = bool(
+            is_correction
+            and current_allowed
+            and observed_allowed
+            and current_allowed.isdisjoint(observed_allowed)
+        )
 
         def observed_or_existing(column: str) -> Any:
             return record[column] if is_correction else observation[column]
 
+        def projection_or_existing(column: str) -> Any:
+            # A correction normally preserves the target's projection metadata.
+            # When its restrictive ACL transfers to a disjoint client set, those
+            # content-bearing fields must instead follow the replacement
+            # observation so the newly authorized principal cannot receive old
+            # private evidence, structured data, tags, scopes, or provenance.
+            return observation[column] if disjoint_acl_transfer else observed_or_existing(column)
+
         structured_value = observation["structured_value_json"]
-        if is_correction and structured_value is None:
+        if is_correction and not disjoint_acl_transfer and structured_value is None:
             structured_value = record["structured_value_json"]
         confidence = (
             max(float(record["confidence"]), float(observation["confidence"]))
-            if is_correction
+            if is_correction and not disjoint_acl_transfer
             else observation["confidence"]
         )
         (
@@ -4643,8 +4659,8 @@ class CoreStore:
             availability,
             content_replaced=True,
         )
-        source_id = cast(str | None, observed_or_existing("source_id"))
-        source_reference = cast(str | None, observed_or_existing("source_reference"))
+        source_id = cast(str | None, projection_or_existing("source_id"))
+        source_reference = cast(str | None, projection_or_existing("source_reference"))
         kind = str(observed_or_existing("kind"))
         entity_key = cast(str | None, observed_or_existing("entity_key"))
         attribute_key = cast(str | None, observed_or_existing("attribute_key"))
@@ -4672,18 +4688,18 @@ class CoreStore:
                 structured_value,
                 observed_or_existing("entity_key"),
                 observed_or_existing("attribute_key"),
-                observed_or_existing("scopes_json"),
-                observed_or_existing("tags_json"),
-                observed_or_existing("source_service"),
-                observed_or_existing("source_type"),
-                observed_or_existing("evidence"),
+                projection_or_existing("scopes_json"),
+                projection_or_existing("tags_json"),
+                projection_or_existing("source_service"),
+                projection_or_existing("source_type"),
+                projection_or_existing("evidence"),
                 confidence,
                 effective_sensitivity.value,
                 effective_availability.value,
                 _json(sorted(effective_allowed)),
                 _json(sorted(effective_denied)),
-                observed_or_existing("valid_from"),
-                observed_or_existing("expires_at"),
+                projection_or_existing("valid_from"),
+                projection_or_existing("expires_at"),
                 int(bool(record["explicit_user_statement"]) or is_correction)
                 if is_correction
                 else observation["explicit_user_statement"],

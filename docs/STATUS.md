@@ -27,11 +27,15 @@ boundary when its observation is disjoint, so it cannot transfer existing
 content to a different client.
 
 Principal-scoped Memory Truth detail now applies the same allow/deny check to
-each linked observation before the bounded evidence limit. The principal-less
-Core/local-admin projection remains intentionally unfiltered; unrestricted
-records remain available to authorized principals. Focused synthetic regression
-tests cover the replacement, reinforcement, evidence, unrestricted, and local-
-admin cases. Full pytest, hosted CI, release/publication, live/private data,
+each linked observation before the bounded evidence limit. A correction that
+transfers a restrictive ACL to a disjoint client set also replaces, rather than
+inherits, the canonical structured value, scopes, tags, source provenance,
+evidence, confidence, and validity metadata. Stable kind and slot identity are
+preserved, while the principal-less Core/local-admin path retains the complete
+linked observation history. Unrestricted records remain available to
+authorized principals. Focused synthetic regression tests cover replacement,
+reinforcement, canonical projection, evidence, unrestricted, and local-admin
+cases. Full pytest, hosted CI, release/publication, live/private data,
 network/provider access, and macOS work are not claimed for this repair.
 
 Local validation for this change is six focused pytest nodeids (6 passed),
