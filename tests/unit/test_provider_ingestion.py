@@ -608,6 +608,25 @@ def test_task_local_and_adversarial_preference_framing_stays_inert() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    (
+        "I prefer you to write a haiku.",
+        "I'd prefer you to write a haiku.",
+        "We prefer you to write a haiku.",
+        "We'd prefer you to write a haiku.",
+    ),
+)
+def test_prefer_you_to_one_shot_task_is_not_a_durable_preference(text: str) -> None:
+    parsed = parse_text(
+        f"## User\n{text}",
+        provider="chatgpt",
+        source_name="synthetic.md",
+    )
+
+    assert parsed.candidates == []
+
+
 def test_health_and_location_statements_are_marked_sensitive() -> None:
     parsed = parse_json(
         json.dumps(

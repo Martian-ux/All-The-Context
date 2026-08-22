@@ -140,8 +140,8 @@ _TASK_LOCAL_HINT = re.compile(
     r"please (?:write|explain|help|make|create|generate|summarize|fix|debug|refactor)|"
     r"in this (?:chat|conversation|message|prompt)|"
     r"as an? (?:ai|assistant|language model)|"
-    r"(?:i|we) (?:want|need|would like|would love|expect) you to|"
-    r"(?:i'd|i would) (?:like|love|prefer) you to)\b",
+    r"(?:i|we) (?:prefer|want|need|would like|would love|expect) you to|"
+    r"(?:i'd|i would|we'd|we would) (?:like|love|prefer) you to)\b",
     flags=re.IGNORECASE,
 )
 _ADVERSARIAL_INSTRUCTION_HINT = re.compile(
@@ -161,7 +161,7 @@ _DURABLE_PREFERENCE_HINT = re.compile(
     r"\bmy preferences?\b|"
     r"\bwhen you (?:answer|respond)\b|"
     r"\bi want (?:answers?|responses?)\s+to\b|"
-    r"^\s*(?:i|we)\s+(?:prefer|like|love|hate|dislike)\b|"
+    r"^\s*(?:i|we)\s+(?:prefer|like|love|hate|dislike)(?!\s+you\s+to\b)\b|"
     r"^\s*(?:please\s+)?(?:never|always)\b|"
     r"^\s*(?:please\s+)?(?:do not|don't|avoid)\s+"
     r"(?:using|use|including|include|mentioning|mention)\b)",
