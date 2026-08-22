@@ -119,6 +119,11 @@ personal values enter the repository, tests, logs, or receipts.
 Provider and ZIP results now expose a dimensionally bounded
 `coverage.closed_coverage` map with the item-level keys `recognized`,
 `excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`.
+The public schema rejects unknown keys and non-strict, negative, or
+out-of-bound counts; `complete=true` is rejected when unavailable, duplicate,
+failed, or unparsed counts are nonzero. Oversized ZIP `.txt`/`.md` members close as
+`unavailable`, and malformed manifest-declared text `.dat` attachments close
+as `unparsed` only. ZIP/member diagnostic names are bounded and control-escaped.
 Case-insensitive duplicate ZIP members increment `duplicate`; bounded member
 parser failures increment `failed` and force incomplete coverage. A fatal
 source failure or cancellation never inflates those item counts: the preserved

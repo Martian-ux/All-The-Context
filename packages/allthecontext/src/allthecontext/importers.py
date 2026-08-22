@@ -9,6 +9,7 @@ import json
 import re
 import tempfile
 import time
+import unicodedata
 import zipfile
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -31,6 +32,8 @@ from .import_boundary import (
 from .ingestion import IngestionService, archive_session_request
 from .memory_policy import classify_sensitivity
 from .models import (
+    CLOSED_COVERAGE_KEYS,
+    MAX_CLOSED_COVERAGE_COUNT,
     Availability,
     CandidateInput,
     CoverageReport,
@@ -392,6 +395,11 @@ def _combine(
         stats["generic_unparsed"] = generic_coverage.unparsed
         if generic_coverage.failed or generic_coverage.unparsed:
             complete = False
+    if any(
+        closed.get(key, 0) > 0
+        for key in ("unavailable", "duplicate", "failed", "unparsed")
+    ):
+        complete = False
     stats["closed_coverage"] = dict(closed)
     return ParsedArchive(
         candidates=candidates,
@@ -644,7 +652,7 @@ def _normalize_attachment_reference(value: str) -> str:
 def _safe_attachment_filename(value: str) -> str | None:
     normalized = value.replace("\\", "/")
     name = PurePosixPath(normalized).name
-    cleaned = "".join(char for char in name if ord(char) >= 32 and char != "\x7f")
+    cleaned = _safe_diagnostic_text(name)
     return cleaned[:512] or None
 
 
@@ -1244,7 +1252,10 @@ def parse_zip_bundle(
                                 extraction_status = "text_parse_failed"
                                 _append_warning(warnings, f"{safe_name}: attachment text skipped")
                                 coverage.unparsed += 1
-                    if extraction_status != "text_extracted":
+                    # A malformed declared-text attachment was already
+                    # accounted as unparsed above. Only binary and bounded
+                    # read-limit attachments are unavailable.
+                    if extraction_status in {"unsupported_binary", "text_read_limit"}:
                         unsupported_attachments += 1
                         unsupported_entries += 1
                     links, link_sources = _links_for_member(context, safe_name)
@@ -1289,6 +1300,9 @@ def parse_zip_bundle(
                 if suffix in {".md", ".markdown", ".txt"} and (
                     member.file_size > max_json_item_chars
                 ):
+                    # Retained raw does not mean extracted: close this member
+                    # as unavailable in item-level coverage.
+                    unsupported_entries += 1
                     _append_warning(
                         warnings,
                         f"{safe_name}: text entry exceeds the per-entry parse limit; retained raw",
@@ -1553,7 +1567,7 @@ def _invalid_json_error(error: UnicodeDecodeError | json.JSONDecodeError) -> Inv
 
 def _append_warning(warnings: list[str], warning: str) -> None:
     if len(warnings) < 512:
-        warnings.append(warning[:2_000])
+        warnings.append(_safe_diagnostic_text(warning)[:2_000])
 
 
 def _validate_zip_member_name(filename: str) -> str:
@@ -1576,7 +1590,19 @@ def _safe_zip_name(filename: str) -> str:
     while normalized.startswith("./"):
         normalized = normalized[2:]
     normalized = normalized.lstrip("/")
-    return normalized[-1_000:] or "archive-entry"
+    return _safe_diagnostic_text(normalized)[-1_000:] or "archive-entry"
+
+
+def _safe_diagnostic_text(value: str) -> str:
+    """Keep untrusted names and warning text bounded and single-line safe."""
+    escaped: list[str] = []
+    for char in value:
+        if char.isprintable() and unicodedata.category(char) != "Cc":
+            escaped.append(char)
+            continue
+        codepoint = ord(char)
+        escaped.append(f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}")
+    return "".join(escaped)
 
 
 class ArchiveImportService:
@@ -2257,20 +2283,16 @@ def _mark_terminal_status(metadata: Mapping[str, Any], reason: str) -> dict[str,
     """Preserve terminal status separately from item-level coverage counts."""
 
     updated = dict(metadata)
-    closed = {
-        "recognized": 0,
-        "excluded": 0,
-        "skipped": 0,
-        "unavailable": 0,
-        "duplicate": 0,
-        "failed": 0,
-        "unparsed": 0,
-    }
+    closed = {key: 0 for key in CLOSED_COVERAGE_KEYS}
     existing = metadata.get("closed_coverage")
     if isinstance(existing, Mapping):
         for key in closed:
             value = existing.get(key)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= MAX_CLOSED_COVERAGE_COUNT
+            ):
                 closed[key] = value
     if reason not in {"failed", "cancelled"}:
         raise ValueError("invalid terminal import reason")

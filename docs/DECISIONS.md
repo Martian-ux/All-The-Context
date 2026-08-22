@@ -2856,6 +2856,14 @@ members and bounded per-member parser failures are counted there because they
 refer to source items. A parser failure makes coverage incomplete even when
 other members are retained and imported.
 
+The schema is closed to those seven keys and accepts only strict non-negative
+integer counts up to 2,147,483,647. `complete=true` is inconsistent with any
+unavailable, duplicate, failed, or unparsed count; excluded/skipped material is
+still resolved item accounting. An oversized ZIP text member is unavailable,
+while a malformed manifest-declared text `.dat` attachment is unparsed only,
+never both. Attacker-controlled member names are bounded and escaped before
+they enter warnings, errors, or diagnostics.
+
 Fatal source errors and operator cancellation are lifecycle events, not items.
 They preserve any already-known item counts, set `coverage_complete` false,
 and store `source_terminal_reason=failed|cancelled` in source metadata while

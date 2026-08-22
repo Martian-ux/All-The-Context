@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -291,7 +292,7 @@ class ProviderArchiveBuilder:
 
     def add_warning(self, warning: str) -> None:
         if warning and warning not in self._warnings and len(self._warnings) < 512:
-            self._warnings.append(warning[:2_000])
+            self._warnings.append(_safe_diagnostic_text(warning)[:2_000])
 
     def consume_json(self, source_name: str, value: Any) -> bool:
         """Consume a JSON document, returning whether a provider schema was recognized."""
@@ -554,7 +555,10 @@ class ProviderArchiveBuilder:
                 for warning in warnings
                 for marker in ("invalid json", "could not parse", "exceeds", "truncated")
             )
-            and closed_coverage["failed"] == 0
+            and all(
+                closed_coverage[key] == 0
+                for key in ("unavailable", "duplicate", "failed")
+            )
         )
         # Unparsed material keeps coverage incomplete so it cannot report pure success.
         if closed_coverage["unparsed"] > 0:
@@ -1508,7 +1512,19 @@ def _stable_id(material: str) -> str:
 def _safe_source_name(value: str) -> str:
     normalized = value.replace("\\", "/")
     parts = [part for part in PurePosixPath(normalized).parts if part not in {".", "..", "/"}]
-    return "/".join(parts)[-1_000:] or "import"
+    return _safe_diagnostic_text("/".join(parts))[-1_000:] or "import"
+
+
+def _safe_diagnostic_text(value: str) -> str:
+    """Keep untrusted source names and warnings bounded and single-line safe."""
+    escaped: list[str] = []
+    for char in value:
+        if char.isprintable() and unicodedata.category(char) != "Cc":
+            escaped.append(char)
+            continue
+        codepoint = ord(char)
+        escaped.append(f"\\x{codepoint:02x}" if codepoint <= 0xFF else f"\\u{codepoint:04x}")
+    return "".join(escaped)
 
 
 def _deduplicate_strings(items: Iterable[str]) -> Iterable[str]:

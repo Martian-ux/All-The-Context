@@ -101,6 +101,13 @@ coverage report with explicit limitations. `coverage.closed_coverage` is the
 item-level map with exactly `recognized`, `excluded`, `skipped`, `unavailable`,
 `duplicate`, `failed`, and `unparsed` counts. Alongside that report, `outcomes`
 counts the dispositions present and `record_ids` lists affected current records.
+The map accepts only those seven keys and strict non-negative integer counts up
+to 2,147,483,647. `complete=true` is incompatible with unavailable, duplicate,
+failed, or unparsed counts; classifiable excluded/skipped items remain closed
+accounting rather than unknown material. Oversized ZIP text members are one
+`unavailable` item, while malformed manifest-declared text `.dat` attachments
+are one `unparsed` item only. ZIP/member names in diagnostics are bounded and
+control-character escaped.
 If parsing cannot finish, source metadata instead carries the separate
 `source_terminal_reason` (`failed` or `cancelled`); this lifecycle status is
 not added to item-level coverage totals.

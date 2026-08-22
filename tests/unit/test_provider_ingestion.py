@@ -257,6 +257,8 @@ def test_chatgpt_dat_malformed_supported_text_is_counted_as_supported_but_not_ex
     assert parsed.stats["attachment_text_supported"] == 1
     assert parsed.stats["attachment_text_extracted"] == 0
     assert parsed.stats["attachment_text_parse_failed"] == 1
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.closed_coverage["unavailable"] == 0
 
 
 @pytest.mark.parametrize(
@@ -290,7 +292,7 @@ def test_chatgpt_attachment_slice_is_disabled_for_explicit_other_providers(
 
     assert parsed.attachments == []
     assert parsed.stats["attachment_entries"] == 0
-    assert parsed.complete is True
+    assert parsed.complete is False
 
 
 def test_generic_structurally_confirmed_chatgpt_archive_enables_attachment_slice() -> None:
@@ -335,6 +337,34 @@ def test_streaming_json_reader_rejects_trailing_data_after_any_root() -> None:
 def test_zip_rejects_windows_drive_relative_member_names() -> None:
     with pytest.raises(InvalidStateError, match="unsafe member path"):
         parse_zip_bundle(_zip({"C:evil.dat": b"must not be accepted"}))
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt"])
+def test_oversized_text_member_is_closed_as_unavailable(suffix: str) -> None:
+    parsed = parse_zip_bundle(
+        _zip({f"oversized{suffix}": "Goal: retained raw but not extracted"}),
+        max_json_item_chars=8,
+    )
+
+    assert parsed.closed_coverage["unavailable"] == 1
+    assert parsed.closed_coverage["failed"] == 0
+    assert parsed.closed_coverage["unparsed"] == 0
+    assert parsed.complete is False
+    assert any(f"oversized{suffix}" in warning for warning in parsed.warnings)
+
+
+def test_zip_warning_names_escape_control_characters() -> None:
+    hostile_name = "notes\n\x1b[31m.md"
+    parsed = parse_zip_bundle(
+        _zip({hostile_name: "Goal: retained raw"}),
+        max_json_item_chars=4,
+    )
+
+    assert any("notes\\x0a\\x1b[31m.md" in warning for warning in parsed.warnings)
+    assert all(
+        all(ord(character) >= 32 and ord(character) != 127 for character in warning)
+        for warning in parsed.warnings
+    )
 
 
 def test_safe_zip_name_preserves_leading_dot_attachment_identity() -> None:
