@@ -33,6 +33,9 @@ treated as direct user statements.
 - The accepted source file is stored byte-for-byte as a content-addressed raw
   source in the authoritative local Core.
 - Every recognized conversation and message is counted in a coverage report.
+- Every malformed or unknown entry in a recognized conversation list is counted
+  as unparsed; valid sibling conversations still import, but the source remains
+  incomplete and structural warnings contain no imported entry content.
 - ChatGPT conversation graphs and numbered conversation JSON files are
   supported.
 - Claude `chat_messages` exports and dedicated memory/profile fields are

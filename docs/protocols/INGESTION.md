@@ -71,6 +71,10 @@ conversation counts, user/assistant/other message counts, provider-memory item
 and observation counts, skipped/unsupported material, warnings, and a truthful
 coverage report with explicit limitations. Alongside that report, `outcomes`
 counts the dispositions present and `record_ids` lists affected current records.
+For a recognized provider conversation list, every non-conversation entry is
+counted as `unparsed`; valid siblings still import, but any such residual keeps
+the coverage report incomplete. Structural warnings never include imported
+entry content.
 
 Role and origin establish eligibility:
 

@@ -482,6 +482,100 @@ def test_chatgpt_classifiable_empty_and_attachment_nodes_close_without_unparsed(
     assert parsed.complete is False  # unparsed keeps fail-closed coverage
 
 
+def test_provider_conversation_list_counts_malformed_entries_and_keeps_valid_siblings() -> None:
+    private_marker = "PRIVATE_MALFORMED_CONVERSATION_ALPHA"
+    valid = _chatgpt_export()[0]
+    export = {
+        "conversations": [
+            valid,
+            private_marker,
+            {"title": private_marker, "payload": private_marker},
+            [],
+        ]
+    }
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt", source_name="safe.json")
+
+    assert any(item.content == "My name is Rowan." for item in parsed.candidates)
+    assert parsed.stats["conversations"] == 1
+    assert parsed.closed_coverage["unparsed"] == 3
+    assert parsed.complete is False
+    assert any("malformed or unrecognized" in warning for warning in parsed.warnings)
+    assert private_marker not in json.dumps(
+        {"warnings": parsed.warnings, "stats": parsed.stats, "unavailable": parsed.unavailable}
+    )
+
+
+def test_all_malformed_provider_conversation_list_is_incomplete() -> None:
+    private_marker = "PRIVATE_ALL_MALFORMED_CONVERSATIONS_BETA"
+    export = {
+        "conversations": [
+            private_marker,
+            {"text": private_marker},
+            None,
+        ]
+    }
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt", source_name="safe.json")
+
+    assert parsed.recognized_provider is True
+    assert parsed.provider == "chatgpt"
+    assert parsed.stats["conversations"] == 0
+    assert parsed.closed_coverage["unparsed"] == 3
+    assert parsed.complete is False
+    assert private_marker not in "\n".join(parsed.warnings)
+
+
+def test_nested_provider_wrappers_preserve_malformed_entry_accounting() -> None:
+    private_marker = "PRIVATE_NESTED_MALFORMED_CONVERSATION_GAMMA"
+    export = {
+        "data": {
+            "export": {
+                "account_data": {
+                    "conversations": [_chatgpt_export()[0], {"payload": private_marker}]
+                }
+            }
+        }
+    }
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt", source_name="nested.json")
+
+    assert parsed.stats["conversations"] == 1
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.complete is False
+    assert all(private_marker not in warning for warning in parsed.warnings)
+
+
+def test_root_provider_conversation_list_counts_non_mapping_entries() -> None:
+    private_marker = "PRIVATE_ROOT_MALFORMED_CONVERSATION_DELTA"
+    export = [_chatgpt_export()[0], {"private": private_marker}, private_marker]
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt", source_name="root.json")
+
+    assert parsed.stats["conversations"] == 1
+    assert parsed.closed_coverage["unparsed"] == 2
+    assert parsed.complete is False
+    assert private_marker not in json.dumps(parsed.warnings)
+
+
+def test_streamed_root_provider_conversation_list_counts_non_mapping_entries(
+    tmp_path: Path,
+) -> None:
+    private_marker = "PRIVATE_STREAMED_MALFORMED_CONVERSATION_EPSILON"
+    path = tmp_path / "conversations.json"
+    path.write_text(
+        json.dumps([_chatgpt_export()[0], {"private": private_marker}, private_marker]),
+        encoding="utf-8",
+    )
+
+    parsed = parse_archive_path(path, provider="chatgpt")
+
+    assert parsed.stats["conversations"] == 1
+    assert parsed.closed_coverage["unparsed"] == 2
+    assert parsed.complete is False
+    assert private_marker not in json.dumps(parsed.warnings)
+
+
 def test_user_questions_secrets_and_assistant_text_do_not_become_memory() -> None:
     export = [
         {

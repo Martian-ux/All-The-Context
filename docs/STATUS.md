@@ -1400,6 +1400,17 @@ state is already noncurrent and creates no user queue.
 - The live SQLite vault is not application-encrypted at rest; portable exports
   are passphrase-encrypted.
 
+## Provider conversation-list coverage correction (2026-08-22)
+
+- Recognized provider conversation lists now retain closed accounting for every
+  malformed or unknown entry instead of filtering it out. Valid siblings still
+  import, while malformed non-mapping values and unknown mapping shapes are
+  counted as `unparsed` and keep coverage incomplete.
+- The accounting applies to provider wrappers, nested `data`/`export`/
+  `account_data` wrappers, and root conversation arrays. Structural warnings
+  contain no entry IDs, titles, or imported text; all-malformed provider lists
+  remain recognized but incomplete.
+
 ## Repository security convergence
 
 - Exact-candidate tree scans now read committed blobs at the bound source SHA,

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from .memory_policy import archive_lineage_key, classify_sensitivity
 from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput
@@ -30,6 +30,16 @@ PARSER_IDENTITIES: dict[str, str] = {
     "grok": "grok-archives-v2",
     "generic": "generic-documents-v2",
 }
+
+_CONVERSATION_LIST_KEYS = (
+    "conversations",
+    "grok_conversations",
+    "conversation_history",
+    "chats",
+    "threads",
+    "items",
+)
+_NESTED_CONVERSATION_WRAPPER_KEYS = ("data", "export", "account_data")
 
 CLOSED_COVERAGE_REASONS = (
     "recognized",
@@ -204,6 +214,13 @@ class ProviderExtraction:
     parser_identity: str = PARSER_VERSION
 
 
+@dataclass(frozen=True, slots=True)
+class _ConversationCollection:
+    values: list[Mapping[str, Any]]
+    malformed_count: int = 0
+    key: str | None = None
+
+
 def normalize_provider(value: str | ArchiveProvider | None) -> ArchiveProvider:
     if isinstance(value, ArchiveProvider):
         return value
@@ -274,10 +291,21 @@ class ProviderArchiveBuilder:
         provider = _detect_json_provider(value, safe_name, self.provider_hint)
         recognized = False
 
-        conversations = _conversation_values(value)
+        collection = _conversation_collection(value)
+        conversations = collection.values
         if _looks_like_conversation(value):
             conversations = [value]
-        if conversations:
+            malformed_count = 0
+        else:
+            malformed_count = collection.malformed_count
+        provider_list = (
+            not _looks_like_conversation(value)
+            and _is_provider_conversation_collection(collection, provider, safe_name)
+            and bool(collection.values or collection.malformed_count)
+        )
+        if provider_list and malformed_count:
+            self._note_unparsed_conversation_entries(safe_name, malformed_count)
+        if conversations or provider_list:
             for conversation in conversations:
                 conversation_provider = _detect_json_provider(conversation, safe_name, provider)
                 messages, residual = _normalize_conversation(
@@ -312,6 +340,12 @@ class ProviderArchiveBuilder:
                 if accounted < raw_message_count:
                     self._stats["unparsed_messages"] += raw_message_count - accounted
                 self._consume_messages(messages)
+            if provider_list and not conversations:
+                # A provider-shaped list with no valid siblings is still a
+                # recognized provider surface, but its coverage is incomplete.
+                self._providers.add(provider)
+                self._formats.add("provider_conversations")
+                recognized = True
 
         memory_items = list(_deduplicate_strings(_memory_strings(value)))
         if not memory_items and _looks_like_memory_filename(safe_name):
@@ -339,6 +373,54 @@ class ProviderArchiveBuilder:
         if recognized:
             self._recognized_files.add(safe_name)
         return recognized
+
+    def consume_json_list(self, source_name: str, value: list[Any]) -> bool:
+        """Consume a root provider conversation list without dropping residuals."""
+        safe_name = _safe_source_name(source_name)
+        if not _is_provider_conversation_sequence(value, self.provider_hint, safe_name):
+            return False
+        self.note_file(safe_name)
+        provider = _detect_json_provider(value, safe_name, self.provider_hint)
+        valid = [
+            item
+            for item in value
+            if isinstance(item, dict) and _looks_like_conversation(item)
+        ]
+        malformed_count = len(value) - len(valid)
+        if malformed_count:
+            self._note_unparsed_conversation_entries(safe_name, malformed_count)
+        for conversation in valid:
+            self.consume_json(safe_name, conversation)
+        if not valid:
+            self._stats["documents"] += 1
+            self._providers.add(provider)
+            self._formats.add("provider_conversations")
+            self._recognized_files.add(safe_name)
+        return True
+
+    def _note_unparsed_conversation_entries(self, source_name: str, count: int) -> None:
+        self._stats["unparsed_messages"] += count
+        self.add_warning(
+            f"{source_name}: {count} malformed or unrecognized provider conversation "
+            "list entries were left unparsed"
+        )
+
+    def note_unrecognized_json_value(self, source_name: str) -> bool:
+        """Account for a streamed residual once a provider shape is established."""
+        safe_name = _safe_source_name(source_name)
+        meaningful = any(
+            item not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
+            for item in self._providers
+        )
+        provider_context = (
+            self.provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
+            or _provider_from_filename(safe_name) != ArchiveProvider.AUTO
+            or meaningful
+        )
+        if not provider_context:
+            return False
+        self._note_unparsed_conversation_entries(safe_name, 1)
+        return True
 
     def consume_text(self, source_name: str, text: str) -> bool:
         """Consume a provider memory text file or Markdown conversation transcript."""
@@ -519,6 +601,12 @@ def _detect_json_provider(
     source_name: str,
     hint: ArchiveProvider,
 ) -> ArchiveProvider:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and _looks_like_conversation(item):
+                detected = _detect_json_provider(item, source_name, hint)
+                if detected != ArchiveProvider.AUTO:
+                    return detected
     if isinstance(value, dict):
         if isinstance(value.get("mapping"), dict):
             return ArchiveProvider.CHATGPT
@@ -535,9 +623,11 @@ def _detect_json_provider(
             return ArchiveProvider.CLAUDE
         if "chatgpt" in service_material or "openai" in service_material:
             return ArchiveProvider.CHATGPT
-        nested = _conversation_values(value)
-        if nested:
-            first = next((item for item in nested if isinstance(item, dict)), None)
+        collection = _conversation_collection(value)
+        if collection.key == "grok_conversations":
+            return ArchiveProvider.GROK
+        if collection.values:
+            first = collection.values[0]
             if first is not None and first is not value:
                 detected = _detect_json_provider(first, source_name, ArchiveProvider.AUTO)
                 if detected != ArchiveProvider.AUTO:
@@ -573,27 +663,66 @@ def _provider_from_text_or_filename(text: str, source_name: str) -> ArchiveProvi
     return ArchiveProvider.AUTO
 
 
-def _conversation_values(value: Any) -> list[Mapping[str, Any]]:
+def _conversation_collection(value: Any) -> _ConversationCollection:
     if not isinstance(value, dict):
-        return []
-    for key in (
-        "conversations",
-        "grok_conversations",
-        "conversation_history",
-        "chats",
-        "threads",
-        "items",
-    ):
+        return _ConversationCollection([])
+    for key in _CONVERSATION_LIST_KEYS:
         nested = value.get(key)
         if isinstance(nested, list):
-            return [item for item in nested if isinstance(item, dict)]
-    for key in ("data", "export", "account_data"):
+            values = [
+                cast(Mapping[str, Any], item)
+                for item in nested
+                if isinstance(item, dict) and _looks_like_conversation(item)
+            ]
+            return _ConversationCollection(
+                values=values,
+                malformed_count=len(nested) - len(values),
+                key=key,
+            )
+    for key in _NESTED_CONVERSATION_WRAPPER_KEYS:
         nested = value.get(key)
         if isinstance(nested, dict):
-            conversations = _conversation_values(nested)
-            if conversations:
-                return conversations
-    return []
+            collection = _conversation_collection(nested)
+            if collection.key is not None:
+                return collection
+    return _ConversationCollection([])
+
+
+def _conversation_values(value: Any) -> list[Mapping[str, Any]]:
+    """Return valid conversation mappings without dropping residual accounting."""
+    return _conversation_collection(value).values
+
+
+def _is_provider_conversation_collection(
+    collection: _ConversationCollection,
+    provider: ArchiveProvider,
+    source_name: str,
+) -> bool:
+    if collection.key is None:
+        return False
+    if collection.values:
+        return True
+    # `items` is also a generic-document convention. Treat it as a provider
+    # list only when the provider hint or safe filename establishes that shape.
+    if collection.key == "items":
+        return provider not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or (
+            _provider_from_filename(source_name) != ArchiveProvider.AUTO
+        )
+    return True
+
+
+def _is_provider_conversation_sequence(
+    value: Sequence[Any],
+    provider_hint: ArchiveProvider,
+    source_name: str,
+) -> bool:
+    if not value:
+        return False
+    if any(isinstance(item, dict) and _looks_like_conversation(item) for item in value):
+        return True
+    return provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or (
+        _provider_from_filename(source_name) != ArchiveProvider.AUTO
+    )
 
 
 def _looks_like_conversation(value: Any) -> bool:

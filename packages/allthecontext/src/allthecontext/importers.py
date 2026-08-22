@@ -256,6 +256,8 @@ def _consume_json_value(
     coverage: _GenericCoverage,
 ) -> None:
     if isinstance(value, list):
+        if builder.consume_json_list(source_name, value):
+            return
         if not value:
             builder.note_file(source_name)
             coverage.skipped += 1
@@ -267,7 +269,11 @@ def _consume_json_value(
     candidate_count = len(generic)
     if not recognized:
         _extract_json(value, generic)
-    if not recognized and len(generic) == candidate_count:
+    if (
+        not recognized
+        and len(generic) == candidate_count
+        and not builder.note_unrecognized_json_value(source_name)
+    ):
         coverage.skipped += 1
 
 

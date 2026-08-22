@@ -2686,3 +2686,22 @@ such as `I prefer concise answers`, `I always want concise answers`, and
 `Please never use emoji in responses`. Task-local paraphrases are skipped;
 provider-synthesized memory fields remain tentative by their existing policy.
 No imported text is executed, and parser diagnostics remain content-free.
+
+## ADR-100: Provider conversation-list residuals remain visible
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+A recognized provider conversation list is a coverage boundary. Every entry
+that is not a valid conversation mapping is counted as `unparsed`, including
+non-mapping values and unknown mapping shapes. Valid sibling conversations are
+still normalized and imported. Nested wrappers and root conversation arrays
+use the same accounting, and an all-malformed provider list remains a
+recognized but incomplete provider surface.
+
+Residual warnings contain only the safe source name, count, and structural
+classification; they never interpolate entry IDs, titles, or imported text.
+Unparsed residuals keep `complete` false so provider coverage cannot report
+success after silently dropping malformed material. Known message-level
+attachment and role classifications remain governed by the existing
+excluded/skipped/unavailable rules.
