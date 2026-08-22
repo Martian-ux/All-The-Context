@@ -226,8 +226,7 @@ def test_memory_truth_migrations_recover_after_unrecorded_alter_and_restart(
             str(row["name"]) for row in connection.execute("PRAGMA table_info(context_records)")
         }
         tombstone_columns = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA table_info(deletion_tombstones)")
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(deletion_tombstones)")
         }
         versions = {
             int(row["version"])

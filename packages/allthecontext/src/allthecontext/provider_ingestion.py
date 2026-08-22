@@ -608,17 +608,11 @@ class ProviderArchiveBuilder:
                 f"{closed_coverage['duplicate']} duplicate source entries were skipped with "
                 "their original entry retained"
             )
-        complete = (
-            not any(
-                marker in warning.casefold()
-                for warning in warnings
-                for marker in ("invalid json", "could not parse", "exceeds", "truncated")
-            )
-            and all(
-                closed_coverage[key] == 0
-                for key in ("unavailable", "duplicate", "failed")
-            )
-        )
+        complete = not any(
+            marker in warning.casefold()
+            for warning in warnings
+            for marker in ("invalid json", "could not parse", "exceeds", "truncated")
+        ) and all(closed_coverage[key] == 0 for key in ("unavailable", "duplicate", "failed"))
         # Unparsed material keeps coverage incomplete so it cannot report pure success.
         if closed_coverage["unparsed"] > 0:
             complete = False

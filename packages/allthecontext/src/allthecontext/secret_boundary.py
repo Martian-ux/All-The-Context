@@ -47,9 +47,7 @@ def _credential_scan_text(value: str) -> str:
 
     decomposed = unicodedata.normalize("NFKD", value).casefold()
     return "".join(
-        char
-        for char in decomposed
-        if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
+        char for char in decomposed if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
     )
 
 

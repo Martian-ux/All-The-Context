@@ -1149,9 +1149,9 @@ class EdgeSyncManager:
             reasons.append(reason)
             seen_reasons.add(reason)
         metadata["truncation_reasons"] = reasons
-        metadata["truncated"] = bool(metadata["truncation_reasons"]) or metadata.get(
-            "truncated"
-        ) is True
+        metadata["truncated"] = (
+            bool(metadata["truncation_reasons"]) or metadata.get("truncated") is True
+        )
 
     @staticmethod
     def _bounded_forward_response(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1163,9 +1163,7 @@ class EdgeSyncManager:
             while items and len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 60_000:
                 items.pop()
         if isinstance(items, list) and len(items) != original_item_count:
-            EdgeSyncManager._reconcile_bootstrap_pack_metadata(
-                payload, reason="edge_envelope"
-            )
+            EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="edge_envelope")
         if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 60_000:
             return {"state": "error", "error": "Core response exceeded the safe size limit"}
         return payload

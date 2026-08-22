@@ -15,6 +15,21 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## Draft-PR formatting and CI-trigger reconciliation (2026-08-22)
+
+Draft PR 73 exposed one deterministic source-check failure: 23 changed Python
+files had passed Ruff lint but not the separate repository-wide Ruff formatting
+gate. Those files are now formatted with the pinned project formatter.
+
+The same feature-branch update also launched two identical CI matrices because
+the canonical workflow listened to every `push` as well as `pull_request`.
+Ordinary CI now runs for pull requests and for pushes to `main`; the three
+privileged release workflows remain explicit `workflow_dispatch` ceremonies.
+This preserves pre-merge validation and post-merge default-branch evidence
+without spending a second full matrix on the same feature-branch commit. No CI
+job, supported platform, release gate, or macOS support claim was added or
+removed.
+
 ## Offline product-correctness maintenance (2026-08-22)
 
 A bounded synthetic-data pass closed four integration defects without changing

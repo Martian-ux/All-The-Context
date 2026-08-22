@@ -3293,3 +3293,20 @@ are not treated as sufficient authority across vault rows. Client counts,
 listing, revocation, ordinary authentication, and the import-operation observer
 all use the same authoritative-vault boundary. This decision changes no schema,
 network behavior, provider support, release state, or macOS posture.
+
+## ADR-122: Pull requests and default-branch pushes are distinct CI evidence
+
+**Status:** accepted locally on 2026-08-22 after draft PR 73 exposed duplicate
+feature-branch matrices; hosted revalidation of the follow-up commit is pending.
+
+The canonical CI workflow validates every pull request and every push to
+`main`, but it does not also run the full matrix for an ordinary feature-branch
+push that already has a pull-request event. This keeps pre-merge review evidence
+and post-merge protected-default-branch evidence while avoiding two equivalent
+Windows, Ubuntu, dashboard, security, parity, and desktop matrices for one
+feature commit.
+
+Release candidate construction, beta publication, and channel promotion remain
+separate explicit `workflow_dispatch` ceremonies. This trigger routing removes
+no CI job, platform, or release approval, and it does not add or imply macOS
+support.

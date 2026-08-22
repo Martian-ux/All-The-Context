@@ -34,9 +34,7 @@ CLOSED_COVERAGE_KEYS = (
     "failed",
     "unparsed",
 )
-CLOSED_COVERAGE_INCOMPLETE_KEYS = frozenset(
-    {"unavailable", "duplicate", "failed", "unparsed"}
-)
+CLOSED_COVERAGE_INCOMPLETE_KEYS = frozenset({"unavailable", "duplicate", "failed", "unparsed"})
 
 ClosedCoverageCount = Annotated[
     StrictInt,
@@ -276,9 +274,7 @@ class CoverageReport(StrictModel):
     ) -> dict[str, int]:
         unknown = sorted(set(value).difference(CLOSED_COVERAGE_KEYS))
         if unknown:
-            raise ValueError(
-                "closed_coverage contains unknown reason(s): " + ", ".join(unknown)
-            )
+            raise ValueError("closed_coverage contains unknown reason(s): " + ", ".join(unknown))
         return {key: value.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
 
     @model_validator(mode="after")
@@ -544,13 +540,9 @@ class MemoryTruthRecordOut(StrictModel):
     conflict_group_ids: list[str] = Field(
         default_factory=list, max_length=MAX_TRUTH_CONFLICT_GROUPS
     )
-    superseded_by: list[str] = Field(
-        default_factory=list, max_length=MAX_TRUTH_SUPERSEDED_BY
-    )
+    superseded_by: list[str] = Field(default_factory=list, max_length=MAX_TRUTH_SUPERSEDED_BY)
     source: TruthSourceOut | None = None
-    evidence: list[TruthEvidenceOut] = Field(
-        default_factory=list, max_length=MAX_TRUTH_EVIDENCE
-    )
+    evidence: list[TruthEvidenceOut] = Field(default_factory=list, max_length=MAX_TRUTH_EVIDENCE)
     history_count: int = Field(ge=0)
 
 
@@ -608,17 +600,13 @@ class ContextPackMetadata(StrictModel):
     omitted_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_OMITTED_COUNT)
     budget_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_BUDGET_CHARS)
     used_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_USED_CHARS)
-    provenance_backed_count: StrictInt = Field(
-        ge=0, le=MAX_CONTEXT_PACK_PROVENANCE_COUNT
-    )
+    provenance_backed_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_PROVENANCE_COUNT)
     candidate_pool_truncated: StrictBool = False
     truncated: StrictBool = False
     # Core emits up to three reasons; Edge may add filtering and envelope
     # trimming while preserving those upstream reasons. Every value is an
     # explicit allowlisted literal, and duplicates are rejected.
-    truncation_reasons: Annotated[
-        list[ContextPackTruncationReason], Strict()
-    ] = Field(
+    truncation_reasons: Annotated[list[ContextPackTruncationReason], Strict()] = Field(
         default_factory=list, max_length=MAX_CONTEXT_PACK_TRUNCATION_REASONS
     )
     duplicate_suppressed_count: StrictInt = Field(
@@ -627,9 +615,7 @@ class ContextPackMetadata(StrictModel):
     conflict_suppressed_count: StrictInt = Field(
         default=0, ge=0, le=MAX_CONTEXT_PACK_SUPPRESSED_COUNT
     )
-    selection_policy: Literal["deterministic_usefulness_v1"] = (
-        "deterministic_usefulness_v1"
-    )
+    selection_policy: Literal["deterministic_usefulness_v1"] = "deterministic_usefulness_v1"
 
     @field_validator("truncation_reasons")
     @classmethod

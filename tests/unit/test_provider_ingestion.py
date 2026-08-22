@@ -600,9 +600,7 @@ def test_zip_attachment_member_and_total_limits_cover_opaque_assets() -> None:
     too_large_member = parse_zip_bundle(
         _zip({"file-large.dat": b"12345"}), max_member_uncompressed_bytes=4
     )
-    too_large_total = parse_zip_bundle(
-        _zip({"file-large.dat": b"12345"}), max_uncompressed_bytes=4
-    )
+    too_large_total = parse_zip_bundle(_zip({"file-large.dat": b"12345"}), max_uncompressed_bytes=4)
 
     for parsed, failure in (
         (too_many, "zip_entry_count_limit"),
@@ -801,9 +799,9 @@ def test_path_import_cleans_parser_temporary_directory(tmp_path: Path) -> None:
 def test_json_nesting_limit_is_atomic_and_quote_aware(tmp_path: Path) -> None:
     too_deep = b"[" * 129 + b"0" + b"]" * 129
     under_limit = b"[" * 64 + b"0" + b"]" * 64
-    quoted = json.dumps(
-        {"kind": "goal", "content": "literal brackets " + ("[" * 1_000)}
-    ).encode("utf-8")
+    quoted = json.dumps({"kind": "goal", "content": "literal brackets " + ("[" * 1_000)}).encode(
+        "utf-8"
+    )
 
     under_limit_result = parse_archive("ordinary.json", under_limit)
     assert under_limit_result.closed_coverage["skipped"] == 1
@@ -835,7 +833,7 @@ def test_json_nesting_limit_is_atomic_and_quote_aware(tmp_path: Path) -> None:
 def test_alternate_provider_container_names_are_structural(
     filename: str,
 ) -> None:
-    parsed = parse_zip_bundle(_zip({filename: b"[{\"mapping\": {}}] trailing"}), provider="chatgpt")
+    parsed = parse_zip_bundle(_zip({filename: b'[{"mapping": {}}] trailing'}), provider="chatgpt")
     audit = parsed.stats["archive_member_coverage"]
 
     assert parsed.candidates == []
@@ -956,11 +954,7 @@ def test_empty_object_sibling_with_message_conversation_is_not_skipped(
     empty_first: bool,
 ) -> None:
     message_conversation = _chatgpt_export()[0]
-    payload = (
-        [{}, message_conversation]
-        if empty_first
-        else [message_conversation, {}]
-    )
+    payload = [{}, message_conversation] if empty_first else [message_conversation, {}]
 
     for parsed in _provider_entrypoints(tmp_path, payload):
         assert parsed.stats["conversations"] == 1
@@ -1088,8 +1082,7 @@ def test_auto_provider_array_permutations_are_terminally_deterministic(
                 parsed.closed_coverage,
                 parsed.complete,
                 sorted(
-                    (item.kind, item.content, item.source_reference)
-                    for item in parsed.candidates
+                    (item.kind, item.content, item.source_reference) for item in parsed.candidates
                 ),
                 sorted(parsed.warnings),
             )
@@ -1124,9 +1117,7 @@ def test_auto_neutral_provider_containers_match_explicit_chatgpt_attachment_link
             "export_manifest.json": json.dumps(
                 {"logical_files": {"file-neutral.dat": {"files": ["file-neutral.dat"]}}}
             ),
-            "conversation_asset_file_names.json": json.dumps(
-                {"file-neutral.dat": "notes.png"}
-            ),
+            "conversation_asset_file_names.json": json.dumps({"file-neutral.dat": "notes.png"}),
             filename: json.dumps(conversations),
             "file-neutral.dat": b"neutral attachment bytes",
         }
@@ -1170,9 +1161,12 @@ def test_neutral_prefix_trailing_data_is_generic_and_unparsed_once(
     tmp_path: Path,
     entrypoint: str,
 ) -> None:
-    raw = json.dumps(
-        _chatgpt_attachment_export("neutral-prefix", "neutral-message", "file-neutral")
-    ).encode("utf-8") + b" trailing"
+    raw = (
+        json.dumps(
+            _chatgpt_attachment_export("neutral-prefix", "neutral-message", "file-neutral")
+        ).encode("utf-8")
+        + b" trailing"
+    )
     if entrypoint == "direct":
         parsed = parse_archive("messages.json", raw)
     elif entrypoint == "path":
@@ -1212,9 +1206,7 @@ def test_neutral_valid_prefix_does_not_promote_after_later_stream_failure(
     path = tmp_path / "messages.json"
     path.write_bytes(raw)
     from_path = parse_archive_path(path)
-    from_zip = parse_zip_bundle(
-        _zip({"messages.json": raw, "file-later.dat": b"must remain raw"})
-    )
+    from_zip = parse_zip_bundle(_zip({"messages.json": raw, "file-later.dat": b"must remain raw"}))
 
     for parsed in (direct, from_path, from_zip):
         assert parsed.provider == "generic"
@@ -1264,9 +1256,12 @@ def test_neutral_provider_signature_limits_fail_before_promotion(limit: str) -> 
 def test_malformed_neutral_does_not_poison_valid_named_provider_or_links(
     malformed_first: bool,
 ) -> None:
-    malformed = json.dumps(
-        _chatgpt_attachment_export("neutral-conversation", "neutral-message", "file-neutral")
-    ).encode("utf-8") + b" trailing"
+    malformed = (
+        json.dumps(
+            _chatgpt_attachment_export("neutral-conversation", "neutral-message", "file-neutral")
+        ).encode("utf-8")
+        + b" trailing"
+    )
     valid = json.dumps(
         _chatgpt_attachment_export("named-conversation", "named-message", "file-named")
     )
@@ -1297,9 +1292,7 @@ def test_malformed_neutral_does_not_poison_valid_named_provider_or_links(
 
 
 def test_malformed_provider_container_is_structural_and_logically_unparsed() -> None:
-    parsed = parse_zip_bundle(
-        _zip({"conversations.json": b'[{"mapping": {}}] trailing'})
-    )
+    parsed = parse_zip_bundle(_zip({"conversations.json": b'[{"mapping": {}}] trailing'}))
     audit = parsed.stats["archive_member_coverage"]
 
     assert parsed.candidates == []
@@ -1404,10 +1397,7 @@ def test_mixed_zip_closes_logical_items_without_counting_containers_twice() -> N
     assert audit["directories_excluded"] == 1
     assert audit["structural_members"] == 2  # manifest + provider container
     assert audit["unaccounted_members"] == 0
-    assert (
-        audit["structural_members"] + audit["standalone_members"]
-        == audit["file_members"]
-    )
+    assert audit["structural_members"] + audit["standalone_members"] == audit["file_members"]
     assert sum(audit["terminal_member_buckets"].values()) == audit["standalone_members"]
     assert audit["closed_coverage_total"] == sum(parsed.closed_coverage.values())
     assert parsed.closed_coverage["duplicate"] == 1
@@ -1659,9 +1649,7 @@ def test_unicode_equivalent_zip_member_collisions_are_deterministic() -> None:
         )
     )
 
-    assert [item.content for item in parsed.candidates] == [
-        "Keep the first canonical filename"
-    ]
+    assert [item.content for item in parsed.candidates] == ["Keep the first canonical filename"]
     assert parsed.closed_coverage["duplicate"] == 1
     assert any("Unicode/case-insensitive duplicate" in warning for warning in parsed.warnings)
     assert parsed.complete is False

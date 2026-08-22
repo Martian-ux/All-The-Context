@@ -109,9 +109,7 @@ def _publish_rebuild(
         CoverageReport(available=["fiction-archive"], complete=True),
         publish=False,
     )
-    marker = source_rebuild_marker(
-        source_id, store.get_source(source_id).content_hash, generation
-    )
+    marker = source_rebuild_marker(source_id, store.get_source(source_id).content_hash, generation)
     store.update_source_import(
         source_id,
         import_status="processing",
@@ -384,10 +382,13 @@ def test_user_restore_marker_blocks_later_source_rebuild_without_replacement(
     assert store.get_observation(replacement_observation_id).record_id == record_id
     assert store.get_record(record_id).id == record_id
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_records WHERE source_id=? AND record_key IS NOT NULL",
-            (source.id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_records WHERE source_id=? AND record_key IS NOT NULL",
+                (source.id,),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_user_mutation_marker_survives_restart_export_restore_and_purge(tmp_path: Path) -> None:
@@ -421,39 +422,58 @@ def test_user_mutation_marker_survives_restart_export_restore_and_purge(tmp_path
     restarted = CoreStore(database)
     restarted.initialize_vault()
     with restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 2
+        )
 
     # An older backup has no ledger row and must not be able to clear the
     # destination's already-recorded user mutation.
     restore_export(pre_marker_package, database, "correct horse battery staple")
     with restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 3
-        assert connection.execute(
-            "SELECT 1 FROM context_user_mutations WHERE record_id=? AND mutation_kind='restore'",
-            (record_id,),
-        ).fetchone() is not None
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations "
-            "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
-            (record_id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM context_user_mutations WHERE record_id=? "
+                "AND mutation_kind='restore'",
+                (record_id,),
+            ).fetchone()
+            is not None
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations "
+                "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
+                (record_id,),
+            ).fetchone()[0]
+            == 1
+        )
 
     # Repeating the same older restore must not accumulate inferred rows or
     # create another typed user action.
     restore_export(pre_marker_package, database, "correct horse battery staple")
     with restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 3
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations "
-            "WHERE record_id=? AND mutation_kind IN ('delete','restore')",
-            (record_id,),
-        ).fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations "
+                "WHERE record_id=? AND mutation_kind IN ('delete','restore')",
+                (record_id,),
+            ).fetchone()[0]
+            == 2
+        )
 
     package = tmp_path / "portable-boundary.atcexp"
     create_export(database, package, "correct horse battery staple", include_sources=True)
@@ -462,14 +482,20 @@ def test_user_mutation_marker_survives_restart_export_restore_and_purge(tmp_path
     restored.initialize_vault()
     restore_export(package, destination, "correct horse battery staple")
     with restored.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 3
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations "
-            "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
-            (record_id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations "
+                "WHERE record_id=? AND mutation_kind='legacy_user_edit'",
+                (record_id,),
+            ).fetchone()[0]
+            == 1
+        )
 
     purge = restored.purge(
         "record",
@@ -479,9 +505,12 @@ def test_user_mutation_marker_survives_restart_export_restore_and_purge(tmp_path
     )
     assert purge["target_id"] == record_id
     with restored.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 3
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 3
+        )
 
 
 def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restore(
@@ -540,12 +569,11 @@ def test_user_mutation_ledger_is_append_only_and_legacy_upgrade_backfills_restor
     partial_restarted = CoreStore(partial_database)
     assert partial_restarted.migrate() == 15
     assert partial_restarted.migrate() == 15
-    with partial_restarted.connect() as connection, pytest.raises(
-        sqlite3.IntegrityError, match="append-only"
+    with (
+        partial_restarted.connect() as connection,
+        pytest.raises(sqlite3.IntegrityError, match="append-only"),
     ):
-        connection.execute(
-            "DELETE FROM context_user_mutations WHERE record_id='missing-record'"
-        )
+        connection.execute("DELETE FROM context_user_mutations WHERE record_id='missing-record'")
 
     # Recreate a pre-013 database boundary: the record history remains, but the
     # migration marker and new ledger table are absent when Core restarts.
@@ -643,10 +671,13 @@ def test_migration_014_fresh_and_restart_passes_are_idempotent(tmp_path: Path) -
             for row in connection.execute('PRAGMA table_info("context_record_versions")')
         }
         assert {"user_action_kind", "user_action_key"} <= columns
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' "
-            "AND name='uq_context_record_versions_user_action'"
-        ).fetchone() is not None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='uq_context_record_versions_user_action'"
+            ).fetchone()
+            is not None
+        )
 
 
 @pytest.mark.parametrize(
@@ -679,9 +710,10 @@ def test_migration_014_repairs_missing_typed_action_columns_when_already_applied
     record_id = store.get_observation(observation_id).record_id
     assert record_id is not None
     with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            "SELECT 1 FROM schema_migrations WHERE version=14"
-        ).fetchone() is not None
+        assert (
+            connection.execute("SELECT 1 FROM schema_migrations WHERE version=14").fetchone()
+            is not None
+        )
         connection.execute("DROP INDEX uq_context_record_versions_user_action")
         for column in missing_columns:
             connection.execute(f"ALTER TABLE context_record_versions DROP COLUMN {column}")
@@ -695,10 +727,13 @@ def test_migration_014_repairs_missing_typed_action_columns_when_already_applied
             for row in connection.execute('PRAGMA table_info("context_record_versions")')
         }
         assert {"user_action_kind", "user_action_key"} <= columns
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' "
-            "AND name='uq_context_record_versions_user_action'"
-        ).fetchone() is not None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='uq_context_record_versions_user_action'"
+            ).fetchone()
+            is not None
+        )
 
     restarted.correct_record(record_id, content="Corrected after schema repair.", reason="test")
     with restarted.connect() as connection:
@@ -707,9 +742,7 @@ def test_migration_014_repairs_missing_typed_action_columns_when_already_applied
             "WHERE record_id=? AND user_action_key IS NOT NULL",
             (record_id,),
         ).fetchall()
-    assert [tuple(row) for row in evidence] == [
-        ("correction", f"correction:{record_id}:2")
-    ]
+    assert [tuple(row) for row in evidence] == [("correction", f"correction:{record_id}:2")]
 
 
 def test_migration_014_repairs_missing_index_without_changing_typed_rows(
@@ -756,10 +789,13 @@ def test_migration_014_repairs_missing_index_without_changing_typed_rows(
                 (record_id,),
             ).fetchall()
         ] == before
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' "
-            "AND name='uq_context_record_versions_user_action'"
-        ).fetchone() is not None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='uq_context_record_versions_user_action'"
+            ).fetchone()
+            is not None
+        )
 
     restarted.correct_record(record_id, content="Second correction.", reason="test")
     with restarted.connect() as connection:
@@ -914,10 +950,13 @@ def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(
     restarted = CoreStore(store.database_path)
     assert restarted.migrate() == 15
     with restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT 1 FROM context_user_mutations WHERE record_id=?",
-            (record_id,),
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM context_user_mutations WHERE record_id=?",
+                (record_id,),
+            ).fetchone()
+            is None
+        )
 
 
 def test_manual_approval_override_rekeys_candidate_and_preserves_delete_barrier(
@@ -1179,9 +1218,7 @@ def test_truth_projection_bounds_large_supersession_and_evidence_sets(tmp_path: 
     assert len(truth.superseded_by) == 64
 
     evidence_record = store.approve_candidate(
-        store.add_candidate(
-            CandidateInput(kind="fact", content="Bounded evidence value")
-        ).id
+        store.add_candidate(CandidateInput(kind="fact", content="Bounded evidence value")).id
     )
     for _ in range(512):
         store.add_candidate(CandidateInput(kind="fact", content="Bounded evidence value"))
@@ -1206,9 +1243,11 @@ def test_truth_page_select_count_is_bounded_by_page_not_database_size(
         def traced_connect() -> object:
             connection = original_connect()
             connection.set_trace_callback(
-                lambda statement: statements.append(statement)
-                if statement.lstrip().upper().startswith(("SELECT", "WITH"))
-                else None
+                lambda statement: (
+                    statements.append(statement)
+                    if statement.lstrip().upper().startswith(("SELECT", "WITH"))
+                    else None
+                )
             )
             return connection
 

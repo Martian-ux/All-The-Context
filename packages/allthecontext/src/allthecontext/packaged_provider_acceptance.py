@@ -93,10 +93,7 @@ def _successful_payload(result: dict[str, Any], provider: str) -> dict[str, Any]
         coverage_complete_value = result.get("complete")
     coverage_report = _coverage_report(coverage_value, coverage_complete_value)
     reconciled = reconcile_closed_coverage(
-        {
-            key: coverage_report.closed_coverage.get(key, 0)
-            for key in CLOSED_COVERAGE_KEYS
-        }
+        {key: coverage_report.closed_coverage.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
     )
 
     candidate_ids = result.get("candidate_ids")

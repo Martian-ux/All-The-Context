@@ -163,6 +163,4 @@ def test_context_pack_metadata_round_trips_the_complete_reason_allowlist() -> No
 
     metadata = ContextPackMetadata.model_validate(payload)
 
-    assert metadata.model_dump(mode="json")["truncation_reasons"] == payload[
-        "truncation_reasons"
-    ]
+    assert metadata.model_dump(mode="json")["truncation_reasons"] == payload["truncation_reasons"]

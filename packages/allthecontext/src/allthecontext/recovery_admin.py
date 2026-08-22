@@ -289,8 +289,7 @@ def carry_forward_purge_tombstones(
         mutations = []
         if _table_exists(active, "context_user_mutations"):
             mutation_columns = {
-                str(row[1])
-                for row in active.execute('PRAGMA table_info("context_user_mutations")')
+                str(row[1]) for row in active.execute('PRAGMA table_info("context_user_mutations")')
             }
             base_columns = {
                 "id",
@@ -411,7 +410,7 @@ def carry_forward_purge_tombstones(
             ]
             values.extend(mutation[column] for column in columns[7:])
             inserted = isolated.execute(
-                f'INSERT OR IGNORE INTO context_user_mutations ({quoted}) VALUES ({placeholders})',
+                f"INSERT OR IGNORE INTO context_user_mutations ({quoted}) VALUES ({placeholders})",
                 values,
             )
             if inserted.rowcount == 1:

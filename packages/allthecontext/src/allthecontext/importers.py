@@ -105,9 +105,7 @@ _PROVIDER_CONTAINER_BASENAMES = frozenset(
 _PROVIDER_SIGNATURE_PATH_PARTS = frozenset(
     {"chatgpt", "openai", "claude", "anthropic", "grok", "xai", "x.ai"}
 )
-_DATED_CONVERSATIONS_BASENAME = re.compile(
-    r"conversations-\d{4}(?:-\d{2}(?:-\d{2})?)?\.json$"
-)
+_DATED_CONVERSATIONS_BASENAME = re.compile(r"conversations-\d{4}(?:-\d{2}(?:-\d{2})?)?\.json$")
 
 
 class _JsonNestingLimitError(InvalidStateError):
@@ -391,7 +389,9 @@ def _consume_json_value(
             source_name,
             "unparsed"
             if context is JsonValueContext.ROOT_ARRAY_ITEM
-            else "skipped" if builder.provider_context_established() else "unparsed",
+            else "skipped"
+            if builder.provider_context_established()
+            else "unparsed",
         )
         return
     recognized = builder.consume_json(source_name, value)
@@ -467,10 +467,7 @@ def _combine(
         stats["generic_unparsed"] = generic_coverage.unparsed
         if generic_coverage.failed or generic_coverage.unparsed:
             complete = False
-    if any(
-        closed.get(key, 0) > 0
-        for key in ("unavailable", "duplicate", "failed", "unparsed")
-    ):
+    if any(closed.get(key, 0) > 0 for key in ("unavailable", "duplicate", "failed", "unparsed")):
         complete = False
     stats["closed_coverage"] = dict(closed)
     return ParsedArchive(
@@ -852,9 +849,7 @@ def parse_archive_path(
             parser_identity=result.parser_identity,
             attachments=list(result.attachments),
         )
-    raise InvalidStateError(
-        "supported import types are ZIP, JSON, JSONL, CSV, Markdown, and text"
-    )
+    raise InvalidStateError("supported import types are ZIP, JSON, JSONL, CSV, Markdown, and text")
 
 
 def _parse_jsonl_stream(
@@ -1382,10 +1377,7 @@ def _is_conversation_json_member(
         return True
     if provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
         return True
-    return any(
-        part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS
-        for part in path.parts[:-1]
-    )
+    return any(part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS for part in path.parts[:-1])
 
 
 def _is_neutral_auto_provider_container(
@@ -1401,9 +1393,7 @@ def _is_neutral_auto_provider_container(
         return False
     if basename == "conversations.json" or _DATED_CONVERSATIONS_BASENAME.fullmatch(basename):
         return False
-    return not any(
-        part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS for part in path.parts[:-1]
-    )
+    return not any(part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS for part in path.parts[:-1])
 
 
 def _is_chatgpt_control_member(safe_name: str) -> bool:
@@ -1723,8 +1713,7 @@ def parse_zip_bundle(
                     "recognized_files",
                 )
                 if any(
-                    after_stats.get(key, 0) > before_stats.get(key, 0)
-                    for key in provider_fields
+                    after_stats.get(key, 0) > before_stats.get(key, 0) for key in provider_fields
                 ):
                     mark_structural_member(member_index)
                     return
@@ -2237,9 +2226,7 @@ def _iter_json_documents(
             elif character in "[{":
                 depth += 1
                 if depth > max_depth:
-                    raise _JsonNestingLimitError(
-                        "JSON document exceeds the nesting-depth limit"
-                    )
+                    raise _JsonNestingLimitError("JSON document exceeds the nesting-depth limit")
             elif character in "]}" and depth:
                 depth -= 1
 

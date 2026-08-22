@@ -127,9 +127,7 @@ def _rewrite_with_forged_ledger_row(
     manifest = json.loads(entries["manifest.json"])
     versions_name = "tables/context_record_versions.jsonl"
     version_rows = [
-        json.loads(line)
-        for line in entries[versions_name].decode().splitlines()
-        if line.strip()
+        json.loads(line) for line in entries[versions_name].decode().splitlines() if line.strip()
     ]
     history = next(row for row in version_rows if str(row["record_id"]) == record_id)
     # This is the exact evidence-only forgery: the source ledger is empty, the
@@ -140,8 +138,7 @@ def _rewrite_with_forged_ledger_row(
     history["user_action_key"] = None
     version_bytes = (
         "".join(
-            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
-            for row in version_rows
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in version_rows
         )
     ).encode()
     entries[versions_name] = version_bytes
@@ -292,8 +289,7 @@ def test_genuine_typed_mutations_round_trip_and_block_rebuild(tmp_path: Path) ->
 
     with source_store.connect() as connection:
         source_mutations = connection.execute(
-            "SELECT mutation_kind,evidence_kind FROM context_user_mutations "
-            "ORDER BY created_at,id"
+            "SELECT mutation_kind,evidence_kind FROM context_user_mutations ORDER BY created_at,id"
         ).fetchall()
     assert {str(row["evidence_kind"]) for row in source_mutations} == {"user_action"}
 
@@ -317,9 +313,7 @@ def test_genuine_typed_mutations_round_trip_and_block_rebuild(tmp_path: Path) ->
             "SELECT mutation_kind,evidence_kind FROM context_user_mutations "
             "WHERE evidence_kind='user_action' ORDER BY created_at,id"
         ).fetchall()
-    assert [tuple(row) for row in destination_mutations] == [
-        tuple(row) for row in source_mutations
-    ]
+    assert [tuple(row) for row in destination_mutations] == [tuple(row) for row in source_mutations]
 
     blocked_source_id, blocked_record_id = cases["delete"]
     rebuild_record_id, rebuild_disposition = _publish_rebuild(
@@ -331,10 +325,13 @@ def test_genuine_typed_mutations_round_trip_and_block_rebuild(tmp_path: Path) ->
     assert rebuild_record_id == blocked_record_id
     assert rebuild_disposition == "ignored"
     with destination.connect() as connection:
-        assert connection.execute(
-            "SELECT deleted_at IS NOT NULL FROM context_records WHERE id=?",
-            (blocked_record_id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT deleted_at IS NOT NULL FROM context_records WHERE id=?",
+                (blocked_record_id,),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_isolated_restore_carries_local_barrier_idempotently_and_handles_purge(
@@ -364,17 +361,23 @@ def test_isolated_restore_carries_local_barrier_idempotently_and_handles_purge(
     assert restored["purge_carry_forward"]["carried_user_mutations"] == 1
     isolated_store = CoreStore(isolated / "core.sqlite3")
     with isolated_store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 1
+        )
     repeated_carry = carry_forward_purge_tombstones(
         active / "core.sqlite3", isolated / "core.sqlite3"
     )
     assert repeated_carry["carried_user_mutations"] == 0
     with isolated_store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (record_id,)
+            ).fetchone()[0]
+            == 1
+        )
 
     purged_active = tmp_path / "purged-active"
     purged_store = CoreStore(purged_active / "core.sqlite3")
@@ -409,9 +412,12 @@ def test_isolated_restore_carries_local_barrier_idempotently_and_handles_purge(
     with pytest.raises(NotFoundError):
         purged_restored.get_record(purged_record_id)
     with purged_restored.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (purged_record_id,)
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (purged_record_id,)
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_legacy_inference_is_source_typed_and_excludes_manual_and_rebuild_history(
@@ -444,12 +450,18 @@ def test_legacy_inference_is_source_typed_and_excludes_manual_and_rebuild_histor
     restarted = CoreStore(database)
     restarted.migrate()
     with restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (sourced_id,)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (manual.record_id,)
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (sourced_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?", (manual.record_id,)
+            ).fetchone()[0]
+            == 0
+        )
 
     automatic_database = tmp_path / "automatic-rebuild.sqlite3"
     automatic = CoreStore(automatic_database)
@@ -491,9 +503,7 @@ def test_legacy_inference_is_source_typed_and_excludes_manual_and_rebuild_histor
         CoverageReport(available=["fixture-archive"], complete=True),
         publish=False,
     )
-    marker = source_rebuild_marker(
-        automatic_source.id, automatic_source.content_hash, 1
-    )
+    marker = source_rebuild_marker(automatic_source.id, automatic_source.content_hash, 1)
     automatic.update_source_import(
         automatic_source.id,
         import_status="processing",
@@ -513,10 +523,13 @@ def test_legacy_inference_is_source_typed_and_excludes_manual_and_rebuild_histor
     automatic_restarted = CoreStore(automatic_database)
     automatic_restarted.migrate()
     with automatic_restarted.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?",
-            (automatic_record_id,),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations WHERE record_id=?",
+                (automatic_record_id,),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_restore_source_delete_and_actor_reason_material_is_content_free(
@@ -573,8 +586,7 @@ def test_restore_source_delete_and_actor_reason_material_is_content_free(
     assert marker.encode() not in package.read_bytes()
     assert all(marker not in json.dumps(item, default=str) for item in store.list_audit())
     assert all(
-        marker not in json.dumps(item, default=str)
-        for item in store.record_history(record_id)
+        marker not in json.dumps(item, default=str) for item in store.record_history(record_id)
     )
 
 
@@ -589,11 +601,18 @@ def test_already_current_restore_has_one_stable_barrier_per_intent(tmp_path: Pat
     second = store.restore_record(record.record_id, reason="retry restore intent")
     assert first.version == second.version == 2
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_user_mutations "
-            "WHERE record_id=? AND mutation_kind='restore'",
-            (record.record_id,),
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT COUNT(*) FROM context_record_versions WHERE record_id=?", (record.record_id,)
-        ).fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_user_mutations "
+                "WHERE record_id=? AND mutation_kind='restore'",
+                (record.record_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_record_versions WHERE record_id=?",
+                (record.record_id,),
+            ).fetchone()[0]
+            == 2
+        )

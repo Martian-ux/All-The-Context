@@ -116,9 +116,7 @@ class CaptureTransitionError(CaptureError):
 def _secret_scan_text(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value).casefold()
     return "".join(
-        char
-        for char in decomposed
-        if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
+        char for char in decomposed if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
     )
 
 
@@ -150,9 +148,7 @@ def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) ->
     if depth > MAX_PAYLOAD_DEPTH:
         raise CaptureError("capture_payload_rejected")
     if key is not None:
-        if len(key) > MAX_PAYLOAD_STRING_CHARS or _SENSITIVE_KEY_RE.search(
-            _secret_scan_text(key)
-        ):
+        if len(key) > MAX_PAYLOAD_STRING_CHARS or _SENSITIVE_KEY_RE.search(_secret_scan_text(key)):
             raise CaptureError("capture_payload_rejected")
         _bounded_text(key, maximum=MAX_PAYLOAD_STRING_CHARS, code="capture_payload_rejected")
     if value is None or isinstance(value, bool):
@@ -714,7 +710,11 @@ class CaptureLedger:
                 "UPDATE capture_sources SET lifecycle_state='reconciling',last_run_at=?,updated_at=? WHERE id=?",
                 (now, now, source_id),
             )
-        return CaptureRunHandle._mint(run_id, source_id, lease_token), self.get_source(source_id), attempt
+        return (
+            CaptureRunHandle._mint(run_id, source_id, lease_token),
+            self.get_source(source_id),
+            attempt,
+        )
 
     def renew_run(self, handle: CaptureRunHandle) -> CaptureRunHandle:
         """Extend a bounded foreground lease only while its capability is valid."""
@@ -1228,7 +1228,9 @@ class CaptureCoordinator:
                         raise CaptureError("capture_event_limit_exceeded")
                     self._validate_page_events(source_id, page)
                     for event in page.events:
-                        event_id, already_applied, _attempts = self.ledger.stage_event(handle, event)
+                        event_id, already_applied, _attempts = self.ledger.stage_event(
+                            handle, event
+                        )
                         events += 1
                         if already_applied:
                             duplicates += 1

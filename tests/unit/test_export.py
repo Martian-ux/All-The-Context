@@ -180,8 +180,7 @@ def test_restore_downgrades_tampered_source_rebuild_provenance_to_ordinary_barri
     restored_store = CoreStore(destination_database)
     with restored_store.connect() as connection:
         tombstone = connection.execute(
-            "SELECT deletion_origin,deletion_source_id FROM deletion_tombstones "
-            "WHERE record_id=?",
+            "SELECT deletion_origin,deletion_source_id FROM deletion_tombstones WHERE record_id=?",
             (record_id,),
         ).fetchone()
     assert tombstone is not None

@@ -197,8 +197,9 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         (
             "explicit claim reduced to tentative: principal lacks witness grant"
         ): "explicit_user_statement_witness_required",
-        "remote relay proposals cannot attest direct user statements":
-            "explicit_user_statement_witness_required",
+        (
+            "remote relay proposals cannot attest direct user statements"
+        ): "explicit_user_statement_witness_required",
     }
     if value in exact:
         return exact[value]
@@ -632,8 +633,7 @@ class CoreStore:
         if table is None:
             return
         columns = {
-            str(row[1])
-            for row in connection.execute('PRAGMA table_info("context_user_mutations")')
+            str(row[1]) for row in connection.execute('PRAGMA table_info("context_user_mutations")')
         }
         for column, definition in (
             ("evidence_kind", "TEXT"),
@@ -675,9 +675,9 @@ class CoreStore:
                 for history in history_rows:
                     snapshot = _json_object(str(history["snapshot_json"]))
                     deleted = isinstance(snapshot, dict) and snapshot.get("deleted_at") is not None
-                    if (
-                        row["mutation_kind"] in {"delete", "source_delete"} and deleted
-                    ) or row["mutation_kind"] not in {"delete", "source_delete"}:
+                    if (row["mutation_kind"] in {"delete", "source_delete"} and deleted) or row[
+                        "mutation_kind"
+                    ] not in {"delete", "source_delete"}:
                         selected = history
                 if selected is None and history_rows:
                     selected = history_rows[-1]
@@ -792,8 +792,7 @@ class CoreStore:
         """Repair an interrupted/older 014 schema without advancing its version."""
 
         table = connection.execute(
-            "SELECT 1 FROM sqlite_master "
-            "WHERE type='table' AND name='context_record_versions'"
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_record_versions'"
         ).fetchone()
         if table is None:
             return
@@ -2581,9 +2580,8 @@ class CoreStore:
             # receive trusted reopenable provenance.  It still becomes an
             # ordinary deletion barrier, so a later imported row cannot use it
             # as a resurrection capability.
-            if (
-                row["record_key"] is not None
-                and _stable_record_key_from_row(row) == str(row["record_key"])
+            if row["record_key"] is not None and _stable_record_key_from_row(row) == str(
+                row["record_key"]
             ):
                 self._delete_record_for_source_rebuild_tx(
                     connection,
@@ -2642,9 +2640,7 @@ class CoreStore:
             (binding.session_id,),
         ).fetchone()
         source_metadata = (
-            _json_object(cast(str | None, source["metadata_json"]))
-            if source is not None
-            else None
+            _json_object(cast(str | None, source["metadata_json"])) if source is not None else None
         )
         accessible_sources = _json_string_list(
             session["accessible_sources_json"] if session is not None else None
@@ -2662,8 +2658,7 @@ class CoreStore:
             or source["deleted_at"] is not None
             or str(source["import_status"]) != "processing"
             or str(record["source_id"]) != source_id
-            or str(record["observation_origin"] or "")
-            != ObservationOrigin.ARCHIVE_IMPORT.value
+            or str(record["observation_origin"] or "") != ObservationOrigin.ARCHIVE_IMPORT.value
             or record["record_key"] is None
             or _stable_record_key_from_row(record) != str(record["record_key"])
             or self._record_has_user_edit_tx(connection, record_id)
@@ -2679,9 +2674,7 @@ class CoreStore:
             or source_metadata.get("rebuild_in_progress") is not True
             or source_generation != binding.generation
             or source_metadata.get("rebuild_source_marker") != binding.source_marker
-            or source_rebuild_marker(
-                source_id, str(source["content_hash"]), binding.generation
-            )
+            or source_rebuild_marker(source_id, str(source["content_hash"]), binding.generation)
             != binding.source_marker
         ):
             raise InvalidStateError("record is not a valid automatic source-rebuild target")
@@ -4491,14 +4484,17 @@ class CoreStore:
         source_id = cast(str | None, observation["source_id"])
         if record_key is None or source_id is None:
             return None
-        return cast(sqlite3.Row, connection.execute(
-            "SELECT r.id,t.reason FROM context_records r "
-            "JOIN deletion_tombstones t ON t.record_id=r.id "
-            "WHERE r.vault_id=? AND r.record_key=? AND r.source_id=? "
-            "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
-            "ORDER BY t.deleted_at DESC,r.id LIMIT 1",
-            (observation["vault_id"], record_key, source_id),
-        ).fetchone())
+        return cast(
+            sqlite3.Row,
+            connection.execute(
+                "SELECT r.id,t.reason FROM context_records r "
+                "JOIN deletion_tombstones t ON t.record_id=r.id "
+                "WHERE r.vault_id=? AND r.record_key=? AND r.source_id=? "
+                "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
+                "ORDER BY t.deleted_at DESC,r.id LIMIT 1",
+                (observation["vault_id"], record_key, source_id),
+            ).fetchone(),
+        )
 
     def _create_record_from_observation_tx(
         self,
@@ -4905,11 +4901,7 @@ class CoreStore:
         elif (
             origin == ObservationOrigin.ARCHIVE_IMPORT
             and decision.disposition == ObservationDisposition.APPLIED
-            and (
-                blocked := self._ordinary_deletion_for_observation_tx(
-                    connection, observation
-                )
-            )
+            and (blocked := self._ordinary_deletion_for_observation_tx(connection, observation))
             is not None
         ):
             blocked_id = str(blocked["id"])
@@ -5598,9 +5590,7 @@ class CoreStore:
             "SELECT * FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         assert deleted is not None
-        action_key = (
-            f"{user_mutation}:{record_id}:{version}" if user_mutation is not None else None
-        )
+        action_key = f"{user_mutation}:{record_id}:{version}" if user_mutation is not None else None
         self._insert_version(
             connection,
             deleted,
@@ -5647,9 +5637,7 @@ class CoreStore:
             "record_id": record_id,
             "deleted_version": version,
             "reason": (
-                SECRET_REASON_REDACTION
-                if contains_secret_like_value(reason)
-                else safe_reason
+                SECRET_REASON_REDACTION if contains_secret_like_value(reason) else safe_reason
             ),
             "content_hash": tombstone_hash,
             "deleted_at": now,
@@ -5695,8 +5683,7 @@ class CoreStore:
                 snapshot = loaded
                 if (
                     connection.execute(
-                        "SELECT 1 FROM context_user_mutations "
-                        "WHERE intent_key=? LIMIT 1",
+                        "SELECT 1 FROM context_user_mutations WHERE intent_key=? LIMIT 1",
                         (f"restore-version:{record_id}:{version}",),
                     ).fetchone()
                     is not None
@@ -5709,9 +5696,7 @@ class CoreStore:
             target_availability = Availability(
                 str(snapshot.get("availability", current["availability"]))
             )
-            target_supersedes = cast(
-                str | None, snapshot.get("supersedes", current["supersedes"])
-            )
+            target_supersedes = cast(str | None, snapshot.get("supersedes", current["supersedes"]))
             self._validate_supersedes_tx(
                 connection,
                 record_id=record_id,
@@ -6510,9 +6495,7 @@ class CoreStore:
             [*record_ids, MAX_TRUTH_CONFLICT_GROUPS],
         ).fetchall():
             target = str(row["record_id"])
-            destination = (
-                active_groups if str(row["status"]) == "open" else resolved_groups
-            )
+            destination = active_groups if str(row["status"]) == "open" else resolved_groups
             values = destination.setdefault(target, [])
             values.append(str(row["id"]))
 

@@ -324,12 +324,15 @@ def test_packaged_surface_rejects_chatgpt_zip_with_unavailable_content(
     report = tmp_path / "report.json"
     data_dir = tmp_path / "vault"
 
-    assert run_packaged_provider_acceptance(
-        report_path=report,
-        export_path=export,
-        provider="chatgpt",
-        data_dir=data_dir,
-    ) == 1
+    assert (
+        run_packaged_provider_acceptance(
+            report_path=report,
+            export_path=export,
+            provider="chatgpt",
+            data_dir=data_dir,
+        )
+        == 1
+    )
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
     assert payload["operation_status"] == "failed"

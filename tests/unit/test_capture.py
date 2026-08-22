@@ -166,10 +166,10 @@ def test_migration_015_repair_matches_canonical_schema_and_rejects_malformed_row
             expected = _capture_schema_snapshot(connection)
         with candidate.transaction() as connection:
             kind = "INDEX" if object_name.startswith("ix_") else "TABLE"
-            connection.execute(f"DROP {kind} IF EXISTS \"{object_name}\"")
-            assert connection.execute(
-                "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone()[0] == 15
+            connection.execute(f'DROP {kind} IF EXISTS "{object_name}"')
+            assert (
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 15
+            )
         assert candidate.migrate() == 15
         with candidate.connect() as connection:
             assert _capture_schema_snapshot(connection) == expected
@@ -301,9 +301,7 @@ def test_stale_coordinator_cannot_mutate_after_recovery_and_successful_replaceme
 
 
 @pytest.mark.parametrize("transition", ["pause", "revoke"])
-def test_pause_or_revoke_blocks_later_run_handle_writes(
-    tmp_path: Path, transition: str
-) -> None:
+def test_pause_or_revoke_blocks_later_run_handle_writes(tmp_path: Path, transition: str) -> None:
     clock = _MutableClock()
     store = CoreStore(tmp_path / f"{transition}.sqlite3")
     store.initialize_vault()
@@ -782,9 +780,7 @@ def test_unexpected_capture_failure_closes_run_and_degrades_source(
     _enable(coordinator, source_id)
     coordinator.register_adapter(
         "fake",
-        DeterministicFakeAdapter(
-            [CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]
-        ),
+        DeterministicFakeAdapter([CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]),
     )
 
     def fail_stage(*_args: Any, **_kwargs: Any) -> Any:
@@ -818,9 +814,7 @@ def test_sink_cannot_redirect_first_event_to_noncanonical_lineage(tmp_path: Path
     _enable(coordinator, source_id)
     coordinator.register_adapter(
         "fake",
-        DeterministicFakeAdapter(
-            [CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]
-        ),
+        DeterministicFakeAdapter([CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]),
     )
 
     result = coordinator.run(source_id)

@@ -6,6 +6,17 @@ does not claim hosted CI, release publication, exact artifact/client/provider
 acceptance, or live/private data inspection. Earlier evidence is retained only
 as historical context and does not become evidence for this checkout.
 
+### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Changed Python source satisfies the formatter gate used by hosted CI | `python -m ruff format .`; subsequent local `python -m ruff format --check .` | Implemented locally for the 23 files reported by the initial PR 73 Windows and Ubuntu jobs |
+| Feature-branch validation runs one canonical CI matrix | `.github/workflows/ci.yml` limits `push` to `main` and retains `pull_request`; release workflows remain manual | Implemented locally: pull requests retain the full supported Windows/Ubuntu, dashboard, security, parity, and desktop matrix; merged `main` retains post-merge evidence; no job or gate is weakened |
+
+Hosted revalidation of this exact follow-up commit remains pending. The trigger
+change does not alter the unsupported-macOS posture or the manual release,
+candidate, and beta-channel ceremonies.
+
 ### 2026-08-22 offline product-correctness maintenance
 
 | Requirement | Implementation/evidence | Status |

@@ -555,14 +555,16 @@ def _backfill_legacy_user_mutations(
     """Recover pre-013 user-edit evidence while keeping new writes explicit."""
 
     required_records = {"id", "vault_id", "observation_origin", "updated_at", "created_at"}
-    if not {
-        "context_user_mutations",
-        "context_records",
-        "context_record_versions",
-        "deletion_tombstones",
-    }.issubset(tables) or not required_records.issubset(
-        columns_by_table.get("context_records", set())
-    ) or "deletion_origin" not in columns_by_table.get("deletion_tombstones", set()):
+    if (
+        not {
+            "context_user_mutations",
+            "context_records",
+            "context_record_versions",
+            "deletion_tombstones",
+        }.issubset(tables)
+        or not required_records.issubset(columns_by_table.get("context_records", set()))
+        or "deletion_origin" not in columns_by_table.get("deletion_tombstones", set())
+    ):
         return
     connection.execute(
         "INSERT OR IGNORE INTO context_user_mutations"
@@ -613,14 +615,18 @@ def _validate_imported_user_mutation(
     if not required.issubset(columns) or not required.issubset(row):
         return False
     mutation_kind = str(row.get("mutation_kind"))
-    if mutation_kind not in {
-        "restore",
-        "correction",
-        "availability_change",
-        "delete",
-        "source_delete",
-        "legacy_user_edit",
-    } or str(row.get("mutation_origin")) != "local_user":
+    if (
+        mutation_kind
+        not in {
+            "restore",
+            "correction",
+            "availability_change",
+            "delete",
+            "source_delete",
+            "legacy_user_edit",
+        }
+        or str(row.get("mutation_origin")) != "local_user"
+    ):
         return False
     actor = str(row.get("actor") or "")
     if not actor or actor != _normalize_actor(actor):
@@ -714,9 +720,10 @@ def _validate_imported_user_mutation(
         "delete": "record_deleted",
         "source_delete": "source_deleted",
     }
-    if mutation_kind != "legacy_user_edit" and str(evidence["reason"]) != expected_reasons[
-        mutation_kind
-    ]:
+    if (
+        mutation_kind != "legacy_user_edit"
+        and str(evidence["reason"]) != expected_reasons[mutation_kind]
+    ):
         return False
     if mutation_kind in {"delete", "source_delete"} and not isinstance(
         snapshot.get("deleted_at"), str

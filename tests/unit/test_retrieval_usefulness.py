@@ -232,9 +232,7 @@ def test_empty_query_bootstrap_reports_omitted_bounded_pool(tmp_path: Path) -> N
             )
         )
         store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
-    principal = _principal(
-        {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
-    )
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
     try:
         response = RetrievalEngine(store).bootstrap(
             BootstrapRequest(query="", requested_scopes=[], budget_chars=50_000), principal

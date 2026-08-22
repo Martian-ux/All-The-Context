@@ -182,8 +182,7 @@ def test_integrated_docs_keep_local_and_historical_release_truth_distinct() -> N
     assert "`d6d51acc5a880e611a65a206b90c6eb68118443d`" in current_and_release
     assert "`32536391309`" in current_and_release
     assert (
-        "`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`"
-        in current_and_release
+        "`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`" in current_and_release
     )
     assert "34\nattested assets" in current_and_release
     assert "live unpublished beta.3 identity" not in traceability

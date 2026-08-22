@@ -568,9 +568,7 @@ def _evaluate_case(
                     reasons.append("missing_pack_metadata")
                 expectations = expect.get("pack_metadata_expectations", {})
                 if not isinstance(expectations, dict):
-                    raise UsefulnessError(
-                        f"{case_id}.pack_metadata_expectations must be an object"
-                    )
+                    raise UsefulnessError(f"{case_id}.pack_metadata_expectations must be an object")
                 if expectations:
                     if not isinstance(metadata, dict):
                         reasons.append("missing_pack_metadata")

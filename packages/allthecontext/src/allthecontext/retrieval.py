@@ -133,9 +133,7 @@ def parse_query_intent(value: str) -> QueryIntent:
         focus = raw
     expanded = tuple(
         dict.fromkeys(
-            token
-            for original in focus
-            for token in (original, *_LEXICAL_ALIASES.get(original, ()))
+            token for original in focus for token in (original, *_LEXICAL_ALIASES.get(original, ()))
         )
     )
     return QueryIntent(
@@ -651,9 +649,11 @@ class DeterministicUsefulnessReranker:
             if value is None:
                 continue
             try:
-                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(
-                    UTC
-                ).timestamp()
+                return (
+                    datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    .astimezone(UTC)
+                    .timestamp()
+                )
             except (ValueError, OverflowError, OSError):
                 continue
         return 0.0
@@ -666,8 +666,12 @@ class DeterministicUsefulnessReranker:
                 " ".join(
                     (
                         str(row["kind"]),
-                        " ".join(sorted(_json_set(str(row["tags_json"]))),),
-                        " ".join(sorted(_json_set(str(row["scopes_json"]))),),
+                        " ".join(
+                            sorted(_json_set(str(row["tags_json"]))),
+                        ),
+                        " ".join(
+                            sorted(_json_set(str(row["scopes_json"]))),
+                        ),
                     )
                 )
             )
@@ -1330,11 +1334,7 @@ def _admissibility_inputs(
                 ),
             )
         )
-    specificity = (
-        0.0
-        if len(rows) == 1
-        else _specificity(raw_query_tokens)
-    )
+    specificity = 0.0 if len(rows) == 1 else _specificity(raw_query_tokens)
     return candidates, AdmissibilityContext(
         query_specificity=specificity,
         task_specificity=specificity,
@@ -1690,9 +1690,7 @@ class RetrievalEngine:
                 or relevant_diagnostics.candidate_pool_truncated
             ),
             candidate_pool_count=max(
-                len({
-                    item.id for item in (*mandatory_search.items, *relevant_search.items)
-                }),
+                len({item.id for item in (*mandatory_search.items, *relevant_search.items)}),
                 mandatory_diagnostics.candidate_pool_count,
                 relevant_diagnostics.candidate_pool_count,
             ),

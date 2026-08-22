@@ -133,9 +133,7 @@ def test_import_bytes_records_preflight_progress_and_closed_coverage(tmp_path: P
         "failed",
         "unparsed",
     }
-    assert result["session"]["coverage"]["closed_coverage"] == result["coverage"][
-        "closed_coverage"
-    ]
+    assert result["session"]["coverage"]["closed_coverage"] == result["coverage"]["closed_coverage"]
 
 
 def test_unenumerable_zip_persists_archive_failure_coverage_on_source(tmp_path: Path) -> None:
