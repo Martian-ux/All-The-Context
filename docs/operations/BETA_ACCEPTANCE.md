@@ -44,11 +44,12 @@ AI system.
 On the exact release commit:
 
 1. Ruff formatting/lint, strict mypy, Python tests, and dashboard checks pass.
-2. The exact hosted source-health matrix passes: Python 3.12 on
-   Windows/macOS/Ubuntu, dashboard on Node 20/22, and package regression jobs
-   on Windows, Ubuntu, macOS ARM64, and macOS x86-64. The retained macOS jobs
-   protect cross-platform source from accidental breakage; they do not create a
-   support claim or a macOS release asset.
+2. The exact hosted source-health set passes: six supported-host matrix slots
+   (Python 3.12 and desktop packaging on Windows and Ubuntu, plus dashboard on
+   Node 20/22), `Repository security gates`, and `Dashboard production asset
+   parity`, for eight CI jobs total. Retained Mac source/tests and historical
+   evidence are outside ordinary CI and do not create a support claim or a
+   macOS release asset.
 3. Dashboard production build and dependency audit pass.
 4. Reachable history and artifacts contain no private key, credential, personal
    context, or developer-machine path.

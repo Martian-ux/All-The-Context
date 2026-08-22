@@ -1269,7 +1269,7 @@ state is already noncurrent and creates no user queue.
   live Core data directory, does not change production ranking or MCP behavior,
   and grants no beta-acceptance credit. The checked-in baseline is
   `bench/baselines/retrieval_usefulness_v1.json`.
-- Integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
+- Historical integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
   macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
   measurements rather than cross-platform performance claims.
@@ -1364,10 +1364,12 @@ state is already noncurrent and creates no user queue.
   and null keyring. The live file was not blindly restored while Codex was
   active; its timestamped backups and semantic, secret-free differences were
   recorded for operator review.
-- GitHub private vulnerability reporting was enabled and verified on
-  2026-07-25. Branch, dependency, secret, and code-scanning controls still need
-  their own acceptance.
-- Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
+- The 2026-07-25 status snapshot recorded GitHub private vulnerability reporting
+  as enabled while branch, dependency, secret, and code-scanning controls still
+  awaited their own acceptance. Current `main` protection is strict and requires
+  the eight canonical CI contexts plus three CodeQL contexts; conversations are
+  required and force push/deletion are off.
+- Historical roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
   Windows/macOS/Linux Python, Node 20/22 dashboard, and native-package jobs in
   [hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472).
   This is baseline evidence, not the still-unfrozen beta release candidate.
@@ -1375,7 +1377,7 @@ state is already noncurrent and creates no user queue.
   configuration, migration, storage, encrypted export/restore, importer, and
   CLI tests pass; Ruff, strict mypy across 68 source files, and the full
   662-test suite pass with four host-limited symlink skips. Exact commit
-  `03a266f` passed all nine jobs in both hosted matrices. The final frozen
+  historical exact commit `03a266f` passed all nine jobs in both hosted matrices. The final frozen
   release identity remains pending.
 - The B-105 provider/import implementation plus coordinator lifecycle
   hardening passes Ruff, strict mypy across 72 source files, and 37 focused
@@ -1433,14 +1435,14 @@ state is already noncurrent and creates no user queue.
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
   package also passed its platform trust smoke.
-- Implementation commit `05c7638` passed both its
+- Historical implementation commit `05c7638` passed both its
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29969999250)
   and
   [draft-PR matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29970013608):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
   20 and 22.
-- Retrieval V3 integration commit `67dd11c` passed its
+- Historical Retrieval V3 integration commit `67dd11c` passed its
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29976224653):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node

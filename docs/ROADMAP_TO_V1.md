@@ -117,15 +117,15 @@ Current main is a strong implementation baseline, not a release candidate.
 | Credentials | OS keyring abstraction and scoped client principals | No silent plaintext fallback; failed configuration must not leave a usable orphaned credential |
 | Runtime scope | Edge UI, worker, and deployment workflow removed | Core still constructs Edge managers and exposes callable enrollment/connect/sync/client-management and CLI surfaces |
 | Release | Candidate assets, checksums, SBOM/provenance, beta public key, updater/rollback mechanics | Exact-SHA quality enforcement, locked composition, generated-dashboard parity, key backups, protected publication, and first immutable release |
-| Repository operations | Current exact-source gate has eight required CI jobs on supported Windows/Ubuntu hosts; GitHub private vulnerability reporting enabled | No execution backlog; `main` remains unprotected and several repository security controls are absent at the baseline snapshot |
+| Repository operations | Current exact-source gate has eight required CI jobs on supported Windows/Ubuntu hosts; strict `main` protection currently requires those eight CI contexts plus three CodeQL contexts, with conversations required and force push/deletion off; GitHub private vulnerability reporting enabled | Exact release-SHA evidence and candidate receipts remain open |
 | Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback, version-matched Windows helper and Linux console recovery modes | Exact downloaded-artifact backup/restore/purge receipts on both supported OS families remain open; contributor CLI alone is not the acceptance surface |
 
-Exact `main` commit `1d44fdd` passed all nine hosted jobs in
+Historical exact `main` commit `1d44fdd` passed all nine hosted jobs in
 [CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472):
 Python 3.12 on Windows/macOS/Ubuntu, dashboard on Node 20/22, and package
-regressions on Windows, Ubuntu, macOS ARM, and macOS Intel. The Mac jobs now
-protect source portability only; they do not replace a frozen Windows/Linux
-candidate or operator-owned supported-target acceptance.
+regressions on Windows, Ubuntu, macOS ARM, and macOS Intel. At that historical
+baseline, the Mac jobs were portability checks only; they did not replace a
+frozen Windows/Linux candidate or operator-owned supported-target acceptance.
 
 ## Governing rules
 

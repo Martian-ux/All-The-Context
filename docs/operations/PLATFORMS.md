@@ -1,10 +1,11 @@
 # Cross-platform operations and packaging path
 
-Contributor source development currently targets Python 3.12+ on Windows,
-macOS, and Linux without Docker. That portability work is not an unbounded
-public-beta Python or operating-system compatibility claim: normal beta support
-covers only the frozen release artifacts. Application data is resolved with
-`platformdirs`; operators should not hard-code its location.
+Contributor source development currently targets Python 3.12+ on Windows and
+Linux without Docker. Retained macOS source, tests, and packaging helpers are
+portability code only, not a supported beta operating system. That retained work
+is not an unbounded public-beta Python or operating-system compatibility claim:
+normal beta support covers only the frozen release artifacts. Application data
+is resolved with `platformdirs`; operators should not hard-code its location.
 
 The `0.1.0-beta.6` public support floor is exactly Windows 11 x86-64 and Ubuntu
 24.04 LTS x86-64 with GNOME plus a working Secret Service/GNOME Keyring
@@ -15,10 +16,11 @@ in draft. The complete clean-machine feature matrix and the non-sparse exact-
 2,000,000,000-byte resource/progress/cancel/recovery journeys remain required
 for `certification_v1`, not silently credited by the lean first-run receipts.
 
-macOS implementation, packaging helpers, and hosted regression jobs remain in
-the source tree, but macOS is unsupported for this beta. The release-candidate
-and publication workflows produce and accept no DMG, Mac updater ZIP, Mac
-manifest, or Mac acceptance receipt. The archived Mac acceptance documents are
+macOS implementation, tests, packaging helpers, and historical evidence remain
+in the source tree, but macOS is unsupported for this beta. Ordinary CI no
+longer schedules Mac runners, jobs, or preflight. The release-candidate and
+publication workflows produce and accept no DMG, Mac updater ZIP, Mac manifest,
+or Mac acceptance receipt. The archived Mac acceptance documents are
 engineering history only and must not be run or cited as beta evidence.
 
 ## Desktop installation
@@ -55,8 +57,9 @@ unsigned-build notice, and path-free JSON package report. These human-install
 artifacts are separate from the immutable ZIP used by the OTA updater.
 Every candidate job compares `platform.machine()` with its declared asset
 architecture before building. The official candidate matrix contains only
-`windows:x86_64` and `linux:x86_64`. Retained Mac CI jobs are source-health
-regressions and their outputs are never downloaded into the release directory.
+`windows:x86_64` and `linux:x86_64`. Retained Mac source/tests and historical
+CI evidence are outside ordinary CI, and no Mac output is downloaded into the
+release directory.
 
 The native wizard detects the local timezone, initializes SQLite and
 migrations, configures Codex and Claude Desktop with separate
@@ -171,8 +174,9 @@ explicitly reported local app-data fallback for development and systems without
 a functional keyring; it is not equivalent to an OS-protected credential.
 
 Native-package CI performs a unique random set/get/delete against the real
-Windows Credential Manager and retains a Mac Keychain regression on Mac CI.
-Headless Linux CI exercises and reports the
+Windows Credential Manager. The retained macOS Keychain adapter and source/test
+coverage are not an ordinary-CI or beta-acceptance result. Headless Linux CI
+exercises and reports the
 explicit fallback because it has no logged-in desktop secret service. Every
 platform also performs an isolated fallback round trip and startup
 install/remove check; no token value or host path is printed or uploaded.

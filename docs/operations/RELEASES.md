@@ -41,7 +41,10 @@ when Python lock metadata uses its equivalent `x.y.zbN` spelling.
 
 Before native packaging, the validate job fail-closes unless:
 
-1. the exact nine-job hosted CI matrix is green on that SHA;
+1. the exact eight-job hosted CI set is green on that SHA: six supported-host
+   matrix slots (Python 3.12 and desktop packaging on Windows and Ubuntu, plus
+   dashboard on Node 20/22), `Repository security gates`, and `Dashboard
+   production asset parity`;
 2. local Ruff format/lint, mypy, pytest, and docs checks rerun cleanly;
 3. third-party Actions pins match `release/actions-policy.json`;
 4. content-free tree/history security scans and private-key audit pass;
@@ -55,14 +58,15 @@ Python installs use `scripts/install_locked_python.py` so composition comes from
 the reviewed `uv.lock` rather than independently resolving broad ranges.
 Build backends (`setuptools`, `wheel`) must be present as hashed lock entries and
 installed before `--no-build-isolation`; the installer fails closed if either is
-missing. macOS packaging installs set cryptography's documented
+missing. The retained macOS packaging path, when exercised locally outside
+ordinary CI, sets cryptography's documented
 `OPENSSL_STATIC=1` source-build mode and fail closed if its Rust extension still
 links `libssl.3.dylib` or `libcrypto.3.dylib`. This keeps Intel builds, for which
 cryptography 50 publishes no wheel, from colliding with Python's separately
 bundled same-basename OpenSSL libraries; the install bypasses pip's wheel cache
 so an older dynamically built local wheel cannot evade that policy. Those
-retained Mac checks protect source portability only; they do not add a Mac
-target to the consumer candidate. `ensure_pinned_uv` never
+retained Mac source/tests and historical evidence are not ordinary-CI or release
+receipts and do not add a Mac target to the consumer candidate. `ensure_pinned_uv` never
 network-bootstraps `uv` without digests—the
 reviewed `0.11.32` binary must already be available (for example via the
 SHA-pinned setup-uv action). The Python dependency vulnerability gate audits a
@@ -120,8 +124,9 @@ no occupied draft is retargeted, deleted, reused, or published.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
-it builds or attests anything. Retained Mac source/CI paths are not part of this
-workflow and cannot contribute a DMG, updater ZIP, manifest, or receipt.
+it builds or attests anything. Retained Mac source, tests, and historical CI paths
+are not part of this workflow and cannot contribute a DMG, updater ZIP, manifest,
+or receipt.
 For each target it produces two deliberately different deliverables:
 
 - a direct unsigned native package (`.exe` or `.tar.gz`)
