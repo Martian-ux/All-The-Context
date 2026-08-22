@@ -326,6 +326,88 @@ def test_high_cardinality_overflow_falls_back_when_evidence_is_infeasible() -> N
     assert metadata.used_chars == used
 
 
+def test_high_cardinality_overflow_cost_is_included_in_evidence_gate() -> None:
+    preferences = [
+        _record(
+            f"preference-{index:02d}",
+            "interaction_preference",
+            f"p{index:02d} q{index:02d} r{index:02d} s{index:02d} t{index:02d}.",
+        )
+        for index in range(9)
+    ]
+    primary = _record(
+        "primary",
+        "fact",
+        "primary",
+        source_id="primary-source",
+    )
+    evidence = _record(
+        "supporting-evidence",
+        "evidence",
+        "e" * 200,
+        source_id="primary-source",
+    )
+    budget = 1_007
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [primary, evidence],
+        budget,
+    )
+
+    selected_ids = {item.id for item in selected}
+    assert primary.id in selected_ids
+    assert "preference-08" in selected_ids
+    assert evidence.id not in selected_ids
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= budget
+    assert metadata.used_chars == used
+
+
+def test_high_cardinality_overflow_uses_selected_duplicate_survivor_as_gate() -> None:
+    preferences = [
+        _record(
+            f"preference-{index:02d}",
+            "interaction_preference",
+            f"p{index:02d} q{index:02d} r{index:02d} s{index:02d} t{index:02d}.",
+        )
+        for index in range(9)
+    ]
+    primary_b = _record(
+        "b-ranked-primary",
+        "fact",
+        "The duplicate primary answer is cobalt.",
+        source_id="primary-b-source",
+    )
+    primary_a = _record(
+        "a-excluded-primary",
+        "fact",
+        "The duplicate primary answer is cobalt.",
+        source_id="primary-a-source",
+    )
+    evidence_for_a = _record(
+        "evidence-for-excluded-primary",
+        "evidence",
+        "Evidence for the excluded primary.",
+        source_id="primary-a-source",
+    )
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [primary_b, primary_a, evidence_for_a],
+        _BUDGET,
+    )
+
+    selected_ids = {item.id for item in selected}
+    assert primary_b.id in selected_ids
+    assert primary_a.id not in selected_ids
+    assert evidence_for_a.id not in selected_ids
+    assert "preference-08" in selected_ids
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= _BUDGET
+    assert metadata.used_chars == used
+
+
 def test_low_cardinality_preserves_every_feasible_preference() -> None:
     preferences = [
         _record(

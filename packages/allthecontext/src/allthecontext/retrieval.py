@@ -992,6 +992,7 @@ class ContextCompiler:
         )
         overflow_preference_ids: set[str] = set()
         overflow_support_ids: dict[str, frozenset[str]] = {}
+        deferred_supporting_ids: set[str] = set()
 
         if high_cardinality_preferences:
             # Bootstrap receives ranked input. Preserve that order for every
@@ -1147,47 +1148,18 @@ class ContextCompiler:
                     targets or {target.id for target in primary}
                 )
 
-            fixed_reserve_cost = sum(self._cost(item) for item in fixed_mandatory_items) + sum(
-                self._cost(item) for item in reserve_items
-            )
-            for overflow in overflow_items:
-                evidence_support_ids: set[str] = set()
-                for evidence_id, target_ids in supporting_target_ids.items():
-                    evidence = next(item for item in ordered if item.id == evidence_id)
-                    if not all(
-                        can_coexist(evidence, fixed) for fixed in fixed_mandatory_items
-                    ) or not all(can_coexist(evidence, reserved) for reserved in reserve_items):
-                        continue
-                    for target in compatible_primary:
-                        if (
-                            target.id in target_ids
-                            and can_coexist(evidence, target)
-                            and can_coexist(overflow, evidence)
-                            and fixed_reserve_cost + self._cost(target) + self._cost(evidence)
-                            <= budget_chars
-                        ):
-                            evidence_support_ids.add(evidence.id)
-                            break
-                if evidence_support_ids:
-                    # Selector supports are OR-based. Requiring evidence IDs
-                    # here forms a primary -> evidence -> overflow chain because
-                    # each evidence candidate independently supports its primary.
-                    overflow_support_ids[overflow.id] = frozenset(evidence_support_ids)
-                else:
-                    # No applicable evidence can be selected within the base
-                    # budget, so do not deadlock an otherwise valid fallback.
-                    overflow_support_ids[overflow.id] = frozenset(
-                        target.id for target in compatible_primary if can_coexist(overflow, target)
-                    )
         else:
             primary = [
                 item
                 for item in ordered
                 if item.id not in mandatory_ids and not self._is_supporting(item)
             ]
-        candidates: list[SetSelectionCandidate] = []
-        count = len(ordered)
-        for index, item in enumerate(ordered):
+
+        def make_candidate(
+            item: ContextRecordOut,
+            index: int,
+            count: int,
+        ) -> SetSelectionCandidate:
             mandatory_preference = item.id in mandatory_ids
             supports: set[str] = set()
             optional_preference_fallback = item.id in overflow_preference_ids
@@ -1199,46 +1171,112 @@ class ContextCompiler:
                     or frozenset({"__context_compiler_primary_required__"})
                 )
             elif not mandatory_preference and self._is_supporting(item):
-                supports.update(
-                    target.id
-                    for target in primary
-                    if (item.source_id is not None and item.source_id == target.source_id)
-                    or (
-                        item.entity_key is not None
-                        and item.entity_key == target.entity_key
-                        and item.attribute_key == target.attribute_key
+                if item.id in deferred_supporting_ids:
+                    supports.add("__context_compiler_overflow_evidence_deferred__")
+                else:
+                    supports.update(
+                        target.id
+                        for target in primary
+                        if (item.source_id is not None and item.source_id == target.source_id)
+                        or (
+                            item.entity_key is not None
+                            and item.entity_key == target.entity_key
+                            and item.attribute_key == target.attribute_key
+                        )
                     )
-                )
-                # Preserve the established primary-before-evidence boundary when
-                # imported evidence lacks explicit source/slot relationships.
-                if not supports:
-                    supports.update(target.id for target in primary)
-            candidates.append(
-                SetSelectionCandidate(
-                    key=item.id,
-                    budget_cost=self._cost(item),
-                    base_utility=(
-                        1
-                        if optional_preference_fallback
-                        else self._base_utility(item, index, count)
-                    ),
-                    semantic_facets=(
-                        frozenset() if optional_preference_fallback else self._semantic_facets(item)
-                    ),
-                    diversity_dimensions=(
-                        frozenset()
-                        if optional_preference_fallback
-                        else self._diversity_dimensions(item)
-                    ),
-                    redundancy_groups=redundancy[item.id],
-                    conflict_groups=self._conflict_groups(item),
-                    supports=frozenset(supports),
-                    mandatory_interaction_preference=mandatory_preference,
-                    policy_authorized=True,
-                    temporally_eligible=True,
-                    task_admissible=True,
-                )
+                    # Preserve the established primary-before-evidence boundary when
+                    # imported evidence lacks explicit source/slot relationships.
+                    if not supports:
+                        supports.update(target.id for target in primary)
+            return SetSelectionCandidate(
+                key=item.id,
+                budget_cost=self._cost(item),
+                base_utility=(
+                    1 if optional_preference_fallback else self._base_utility(item, index, count)
+                ),
+                semantic_facets=(
+                    frozenset() if optional_preference_fallback else self._semantic_facets(item)
+                ),
+                diversity_dimensions=(
+                    frozenset()
+                    if optional_preference_fallback
+                    else self._diversity_dimensions(item)
+                ),
+                redundancy_groups=redundancy[item.id],
+                conflict_groups=self._conflict_groups(item),
+                supports=frozenset(supports),
+                mandatory_interaction_preference=mandatory_preference,
+                policy_authorized=True,
+                temporally_eligible=True,
+                task_admissible=True,
             )
+
+        if high_cardinality_preferences:
+            # Selector support is OR-based, so use a compiler-local selection
+            # without overflow to discover which primaries and evidence can
+            # actually precede each fallback candidate.
+            count = len(ordered)
+            prepass_candidates = [
+                make_candidate(item, index, count)
+                for index, item in enumerate(ordered)
+                if item.id not in overflow_preference_ids
+            ]
+            prepass_selection = self.selector.select(
+                prepass_candidates,
+                SetSelectionConstraints(
+                    limit=min(len(prepass_candidates), _MAX_CONTEXT_PACK_ITEMS),
+                    budget=budget_chars,
+                ),
+            )
+            prepass_order = [candidate.key for candidate in prepass_selection.candidates]
+            prepass_positions = {record_id: index for index, record_id in enumerate(prepass_order)}
+            prepass_selected_ids = set(prepass_order)
+            fixed_reserve_cost = sum(self._cost(item) for item in fixed_mandatory_items) + sum(
+                self._cost(item) for item in reserve_items
+            )
+            by_id = {item.id: item for item in ordered}
+            selected_primary = [
+                item for item in compatible_primary if item.id in prepass_selected_ids
+            ]
+            gated_evidence_ids: set[str] = set()
+            for overflow in overflow_items:
+                evidence_support_ids: set[str] = set()
+                for evidence_id, target_ids in supporting_target_ids.items():
+                    if evidence_id not in prepass_selected_ids:
+                        continue
+                    evidence = by_id[evidence_id]
+                    evidence_position = prepass_positions[evidence_id]
+                    for target in selected_primary:
+                        if (
+                            target.id in target_ids
+                            and prepass_positions[target.id] < evidence_position
+                            and can_coexist(evidence, target)
+                            and can_coexist(overflow, evidence)
+                            and fixed_reserve_cost
+                            + self._cost(target)
+                            + self._cost(evidence)
+                            + self._cost(overflow)
+                            <= budget_chars
+                        ):
+                            evidence_support_ids.add(evidence.id)
+                            break
+                if evidence_support_ids:
+                    # Requiring selected evidence IDs forms a primary -> evidence
+                    # -> overflow chain without pretending OR supports encode AND.
+                    overflow_support_ids[overflow.id] = frozenset(evidence_support_ids)
+                    gated_evidence_ids.update(evidence_support_ids)
+                else:
+                    # If no selected evidence can complete this overflow's full
+                    # chain, retain the primary fallback without deadlocking.
+                    overflow_support_ids[overflow.id] = frozenset(
+                        target.id for target in selected_primary if can_coexist(overflow, target)
+                    )
+            # Evidence that cannot complete any overflow chain must not consume
+            # the budget ahead of an otherwise valid primary fallback.
+            deferred_supporting_ids = set(supporting_target_ids) - gated_evidence_ids
+
+        count = len(ordered)
+        candidates = [make_candidate(item, index, count) for index, item in enumerate(ordered)]
         selection = self.selector.select(
             candidates,
             SetSelectionConstraints(
