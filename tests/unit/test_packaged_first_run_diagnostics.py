@@ -424,6 +424,10 @@ def test_source_contract_never_retains_full_work_tree() -> None:
     assert "recover_disposable_admin_token" in text
     assert "scrub_sensitive_work_tree" in text
     assert "remove_work_tree" in text
+    assert "status.is_error" in text
+    assert "status.structured_content" in text
+    assert "status.isError" not in text
+    assert "status.structuredContent" not in text
     assert "raise SystemExit(str(exc))" not in text
     assert "packaged-first-run-diagnostics" in text
     # Must not print raw subprocess streams.

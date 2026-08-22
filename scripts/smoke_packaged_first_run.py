@@ -361,10 +361,10 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
         if not names.issuperset(required):
             raise RuntimeError(f"packaged MCP tools are missing: {sorted(required - names)}")
         status = await session.call_tool("context_status", {})
-        if status.isError is True or not status.structuredContent:
+        if status.is_error is True or not status.structured_content:
             raise RuntimeError(f"packaged MCP status failed: {status}")
-        if status.structuredContent.get("core_online") is not True:
-            raise RuntimeError(f"packaged MCP did not reach Core: {status.structuredContent}")
+        if status.structured_content.get("core_online") is not True:
+            raise RuntimeError(f"packaged MCP did not reach Core: {status.structured_content}")
 
 
 def redact_smoke_diagnostic_text(value: str) -> str:

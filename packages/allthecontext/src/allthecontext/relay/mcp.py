@@ -180,6 +180,7 @@ def build_edge_mcp(
         "that request. Never propose secrets, "
         "hidden reasoning, provider instructions, or guesses as established facts."
     )
+
     def forward(
         identity: ClientIdentity, operation: str, payload: dict[str, Any]
     ) -> tuple[str, dict[str, Any] | None]:
