@@ -7,6 +7,23 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 provider-terminal Import Truth correction
+
+Provider-shaped empty roots, zero-message conversations, and malformed provider
+siblings now close exactly one logical terminal result. Known-provider empty
+roots/conversations are `skipped`; identity-free provider-shaped empties and
+malformed entries are `unparsed` and keep coverage incomplete. Provider
+containers remain structural in raw ZIP accounting and are not double-counted.
+Auto detection seeds provider context from the complete bounded validated root
+before consuming root-array siblings, making malformed-entry coverage and
+completion invariant under permutation across direct, path, and ZIP entrypoints.
+Allowed neutral alternate JSON basenames establish ChatGPT attachment scanning
+only after a valid bounded content signature; malformed neutral alternates stay
+generic and cannot enable provider-specific link inventory. Focused tests cover
+all three terminal cases, adversarial permutations, four alternate names,
+direct/path/ZIP parity, and the negative neutral case. This is synthetic
+engineering evidence only and grants no acceptance credit.
+
 ### 2026-08-22 bounded ordinary-JSON and exact-coverage correction
 
 Direct bytes, filesystem paths, and ordinary ZIP JSON now share a strict

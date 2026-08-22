@@ -47,6 +47,7 @@ from .provider_ingestion import (
     ArchiveProvider,
     ProviderArchiveBuilder,
     ProviderExtraction,
+    is_empty_provider_container,
     normalize_provider,
     parser_identity_for,
 )
@@ -340,17 +341,38 @@ def _consume_json_value(
     coverage: _GenericCoverage,
     *,
     provider_container: bool = False,
+    empty_provider_root: bool = False,
 ) -> None:
     if isinstance(value, list):
         if builder.consume_json_list(source_name, value):
             return
         if not value:
             builder.note_file(source_name)
-            if not provider_container:
+            if provider_container:
+                builder.note_provider_terminal(
+                    source_name,
+                    "skipped"
+                    if empty_provider_root and builder.provider_context_established()
+                    else "unparsed",
+                )
+            else:
                 coverage.skipped += 1
             return
         for item in value:
-            _consume_json_value(builder, source_name, item, generic, coverage)
+            _consume_json_value(
+                builder,
+                source_name,
+                item,
+                generic,
+                coverage,
+                provider_container=provider_container,
+            )
+        return
+    if provider_container and is_empty_provider_container(value):
+        builder.note_provider_terminal(
+            source_name,
+            "skipped" if builder.provider_context_established() else "unparsed",
+        )
         return
     recognized = builder.consume_json(source_name, value)
     candidate_count = len(generic)
@@ -361,7 +383,10 @@ def _consume_json_value(
         and len(generic) == candidate_count
         and not builder.note_unrecognized_json_value(source_name)
     ):
-        coverage.skipped += 1
+        if provider_container:
+            builder.note_provider_terminal(source_name, "unparsed")
+        else:
+            coverage.skipped += 1
 
 
 def _combine(
@@ -574,15 +599,20 @@ def _parse_json_stream_atomic(
     raw-decoded value is bounded and discarded during validation; the second pass
     is the only pass allowed to mutate the builder or generic candidate list.
     """
+    builder = _builder(provider)
+    root_array_state: list[bool] = []
+
     def validate() -> None:
         with open_stream() as stream:
             for _document in _iter_json_documents(
                 stream,
                 max_item_chars=max_item_chars,
                 max_bytes=max_json_bytes,
+                root_array_state=root_array_state,
             ):
                 if progress is not None:
                     progress.check_cancelled()
+                builder.observe_json_provider(source_name, _document)
 
     try:
         validate()
@@ -609,7 +639,6 @@ def _parse_json_stream_atomic(
             reason="unparsed",
         )
 
-    builder = _builder(provider)
     generic: list[CandidateInput] = []
     coverage = _GenericCoverage()
     provider_container = _is_conversation_json_member(source_name, normalize_provider(provider))
@@ -629,6 +658,7 @@ def _parse_json_stream_atomic(
                     generic,
                     coverage,
                     provider_container=provider_container,
+                    empty_provider_root=root_array_state == [True],
                 )
     except UnicodeDecodeError:
         return _generic_failure_result(
@@ -1302,6 +1332,36 @@ def _is_chatgpt_control_member(safe_name: str) -> bool:
     return PurePosixPath(safe_name).name.casefold() in _CHATGPT_CONTROL_BASENAMES
 
 
+def _archive_chatgpt_structure_members(
+    archive: zipfile.ZipFile,
+    members: Sequence[zipfile.ZipInfo],
+    *,
+    max_item_chars: int,
+    progress: ImportProgressTracker | None = None,
+) -> set[str]:
+    detected_members: set[str] = set()
+    for member in members:
+        safe_name = _safe_zip_name(member.filename)
+        basename = PurePosixPath(safe_name).name.casefold()
+        if PurePosixPath(safe_name).suffix.casefold() != ".json" or (
+            basename not in _PROVIDER_CONTAINER_BASENAMES
+            and not _DATED_CONVERSATIONS_BASENAME.fullmatch(basename)
+        ):
+            continue
+        try:
+            with archive.open(member) as stream:
+                for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
+                    if _looks_like_chatgpt_structure(document):
+                        detected_members.add(safe_name)
+                        break
+        except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
+            continue
+        finally:
+            if progress is not None:
+                progress.check_cancelled()
+    return detected_members
+
+
 def _archive_has_chatgpt_structure(
     archive: zipfile.ZipFile,
     members: Sequence[zipfile.ZipInfo],
@@ -1309,21 +1369,15 @@ def _archive_has_chatgpt_structure(
     max_item_chars: int,
     progress: ImportProgressTracker | None = None,
 ) -> bool:
-    for member in members:
-        safe_name = _safe_zip_name(member.filename)
-        if not _is_conversation_json_member(safe_name):
-            continue
-        try:
-            with archive.open(member) as stream:
-                for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
-                    if _looks_like_chatgpt_structure(document):
-                        return True
-        except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
-            continue
-        finally:
-            if progress is not None:
-                progress.check_cancelled()
-    return False
+    """Compatibility predicate backed by the content-signature member scan."""
+    return bool(
+        _archive_chatgpt_structure_members(
+            archive,
+            members,
+            max_item_chars=max_item_chars,
+            progress=progress,
+        )
+    )
 
 
 def _attachment_text_format(original_filename: str | None) -> str | None:
@@ -1511,14 +1565,25 @@ def parse_zip_bundle(
             unique_members = [member for _index, member in unique_entries]
             unique_index_by_identity = {id(member): index for index, member in unique_entries}
 
+            chatgpt_structure_names: set[str] = set()
             attachment_enabled = provider_hint == ArchiveProvider.CHATGPT
             if provider_hint in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
-                attachment_enabled = _archive_has_chatgpt_structure(
+                chatgpt_structure_names = _archive_chatgpt_structure_members(
                     archive,
                     unique_members,
                     max_item_chars=max_json_item_chars,
                     progress=progress,
                 )
+                attachment_enabled = bool(chatgpt_structure_names)
+            elif provider_hint == ArchiveProvider.CHATGPT:
+                chatgpt_structure_names = {
+                    _safe_zip_name(member.filename)
+                    for member in unique_members
+                    if _is_conversation_json_member(
+                        _safe_zip_name(member.filename),
+                        provider_hint,
+                    )
+                }
             context = (
                 _attachment_context(
                     archive,
@@ -1543,6 +1608,7 @@ def parse_zip_bundle(
                     provider_hint,
                 )
             }
+            provider_container_names.update(chatgpt_structure_names)
             if context.invalid_control_members:
                 coverage.unparsed += len(context.invalid_control_members)
                 for invalid_name in sorted(context.invalid_control_members):
@@ -1593,7 +1659,7 @@ def parse_zip_bundle(
 
             for member in unique_members:
                 safe_name = _safe_zip_name(member.filename)
-                if not _is_conversation_json_member(safe_name):
+                if not attachment_enabled or safe_name not in chatgpt_structure_names:
                     continue
                 try:
                     with archive.open(member) as stream:
@@ -1817,6 +1883,7 @@ def parse_zip_bundle(
                 }
                 try:
                     if suffix == ".json":
+                        root_array_state: list[bool] = []
                         with archive.open(member) as stream:
                             # Validate the complete bounded member before
                             # publishing any candidates. Root-array items can
@@ -1824,8 +1891,9 @@ def parse_zip_bundle(
                             for _ in _iter_json_documents(
                                 stream,
                                 max_item_chars=max_json_item_chars,
+                                root_array_state=root_array_state,
                             ):
-                                pass
+                                builder.observe_json_provider(safe_name, _)
                         with archive.open(member) as stream:
                             for document in _iter_json_documents(
                                 stream,
@@ -1838,6 +1906,7 @@ def parse_zip_bundle(
                                     generic,
                                     coverage,
                                     provider_container=is_provider_container,
+                                    empty_provider_root=root_array_state == [True],
                                 )
                     elif suffix == ".jsonl":
                         _consume_zip_jsonl(
@@ -2029,10 +2098,13 @@ def _iter_json_documents(
     chunk_chars: int = 1024 * 1024,
     max_bytes: int | None = None,
     max_depth: int = DEFAULT_MAX_JSON_NESTING_DEPTH,
+    root_array_state: list[bool] | None = None,
 ) -> Iterator[Any]:
     """Yield bounded root JSON values without json.loads or root-array materialization."""
     if max_item_chars < 1 or chunk_chars < 1 or max_depth < 1:
         raise ValueError("JSON limits must be positive")
+    if root_array_state is not None:
+        root_array_state.clear()
     byte_limit = max_bytes if max_bytes is not None else max_item_chars * 4
     if byte_limit < 1:
         raise ValueError("JSON byte limit must be positive")
@@ -2156,6 +2228,8 @@ def _iter_json_documents(
                 # Preserve an empty ordinary root as one logical value. The
                 # caller may classify a provider container as structural and
                 # suppress this generic item accounting explicitly.
+                if root_array_state is not None:
+                    root_array_state.append(True)
                 yield []
                 reject_trailing_data()
                 return
@@ -2176,6 +2250,8 @@ def _iter_json_documents(
                     "JSON document exceeds the nesting-depth limit"
                 ) from error
             position = end
+            if first_item and root_array_state is not None:
+                root_array_state.append(False)
             yield item
             first_item = False
             break

@@ -2966,3 +2966,28 @@ strict bounded non-negative integers. Omitted or partial maps are normalized to
 the exact zero-filled seven-key map for backward-compatible callers; unknown
 keys and invalid counts remain validation errors. The API and serialized model
 therefore never expose a missing or extra coverage key.
+
+## ADR-110: Establish provider context before terminal accounting
+
+**Status:** implemented as a bounded synthetic correction on 2026-08-22. Does
+not retarget, relabel, or grant acceptance credit to any published artifact.
+
+The importer observes provider evidence from every value yielded by the bounded
+JSON validator before the consuming pass mutates candidates or logical counts.
+This two-phase boundary is intentionally context-only: it does not retain the
+root array or publish any imported text. A malformed sibling that precedes a
+valid provider conversation therefore closes as `unparsed` in every permutation
+once the validated root establishes provider context.
+
+Provider containers and conversations have a nonzero logical denominator even
+when they contain no messages. A known empty provider root or zero-message
+conversation closes as one `skipped` item; an identity-free provider-shaped
+empty root and malformed provider entries close as one `unparsed` item. The
+container remains structural in the ZIP-member audit, so it is never counted as
+both a raw member and a logical item.
+
+Auto ZIP attachment discovery uses a bounded content signature over the allowed
+conversation basenames, including neutral `messages.json`, `chats.json`, and
+`history.json`. Only valid ChatGPT-shaped content promotes such a member before
+attachment link scanning. A malformed neutral alternate remains generic and
+does not activate ChatGPT attachment inventory; filename alone is insufficient.

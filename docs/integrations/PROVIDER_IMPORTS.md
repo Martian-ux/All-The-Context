@@ -193,6 +193,16 @@ dated conversation filenames are recognized directly; `chats.json`,
 provider path context, with valid provider-shaped neutral files still
 classified from parser evidence and malformed neutral files left generic.
 
+Provider-shaped empty roots and zero-message conversations still close one
+logical item: known-provider empties are skipped, while identity-free or
+malformed provider entries are unparsed and keep the source incomplete. Auto
+root-array detection establishes provider context during bounded validation
+before sibling terminal accounting, so malformed entries are not order-dependent.
+For ZIPs, a valid ChatGPT content signature in an allowed neutral alternate
+(`messages.json`, `chats.json`, or `history.json`) enables the same attachment
+link inventory as explicit ChatGPT selection; malformed neutral JSON remains
+generic and cannot enable that provider-specific scan.
+
 ## Contributor CLI
 
 After the development bootstrap, the same command shape works in PowerShell,

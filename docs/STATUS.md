@@ -1562,6 +1562,26 @@ state is already noncurrent and creates no user queue.
   alternate provider names, empty roots, and exact API/model coverage maps. No
   live or private export/Core data was inspected.
 
+## Import Truth provider-terminal follow-up (2026-08-22)
+
+- Provider-shaped empty roots and zero-message conversations now close exactly
+  one logical item. A known provider closes an empty root or conversation as
+  `skipped`; an identity-free provider-shaped empty or malformed entry closes
+  as `unparsed` and keeps coverage incomplete. Structural provider containers
+  remain outside the raw-member terminal buckets.
+- Auto provider classification observes every bounded, validated root-array
+  value before consuming any sibling. Malformed entries therefore cannot be
+  classified as generic `skipped` merely because they precede the entry that
+  establishes provider context. Direct bytes, filesystem paths, and ZIP
+  members use the same terminal accounting.
+- Auto ZIP attachment discovery scans the allowed neutral alternate basenames
+  for a bounded ChatGPT content signature before link inventory. Valid
+  `messages.json`, `chats.json`, `history.json`, and `conversations.json`
+  content matches explicit ChatGPT attachment links; malformed neutral content
+  stays generic and cannot enable provider-specific attachment parsing.
+- These are bounded synthetic corrections only. No live/private Core or real
+  export was inspected, and no acceptance credit is claimed.
+
 ## Repository security convergence
 
 - Exact-candidate tree scans now read committed blobs at the bound source SHA,

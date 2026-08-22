@@ -283,6 +283,42 @@ class ProviderArchiveBuilder:
     def note_file(self, source_name: str) -> None:
         self._files_seen.add(_safe_source_name(source_name))
 
+    def note_provider_context(self, provider: str | ArchiveProvider) -> None:
+        """Remember provider evidence without publishing logical items."""
+        normalized = normalize_provider(provider)
+        if normalized not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+            self._providers.add(normalized)
+
+    def observe_json_provider(self, source_name: str, value: Any) -> ArchiveProvider:
+        """Observe one validated JSON value before its siblings are consumed."""
+        detected = _detect_json_provider(value, _safe_source_name(source_name), self.provider_hint)
+        self.note_provider_context(detected)
+        return detected
+
+    def provider_context_established(self) -> bool:
+        return self.provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or any(
+            provider not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
+            for provider in self._providers
+        )
+
+    def note_provider_container(self, source_name: str) -> None:
+        """Record a provider container as structural without counting it twice."""
+        safe_name = _safe_source_name(source_name)
+        self.note_file(safe_name)
+        self._formats.add("provider_conversations")
+        if self.provider_context_established():
+            self._recognized_files.add(safe_name)
+
+    def note_provider_terminal(self, source_name: str, reason: str) -> None:
+        """Close one provider-container logical item without exposing its content."""
+        if reason not in {"skipped", "unparsed"}:
+            raise ValueError("unsupported provider terminal reason")
+        self.note_provider_container(source_name)
+        if reason == "skipped":
+            self._stats["skipped_messages"] += 1
+            return
+        self._note_unparsed_conversation_entries(_safe_source_name(source_name), 1)
+
     def stats_snapshot(self) -> dict[str, int]:
         """Return bounded parser counters for one-member transaction probes."""
         return {
@@ -360,6 +396,10 @@ class ProviderArchiveBuilder:
                 )
                 if accounted < raw_message_count:
                     self._stats["unparsed_messages"] += raw_message_count - accounted
+                if raw_message_count == 0 and not any(residual.values()):
+                    # A recognized empty conversation is still one logical
+                    # provider item; it is not a fabricated memory candidate.
+                    self._stats["skipped_messages"] += 1
                 self._consume_messages(messages)
             if provider_list and not conversations:
                 # A provider-shaped list with no valid siblings is still a
@@ -776,6 +816,19 @@ def _looks_like_conversation(value: Any) -> bool:
                 for key in ("assistant", "response", "answer", "grok")
             )
         )
+    )
+
+
+def is_empty_provider_container(value: Any) -> bool:
+    """Return whether a mapping is an empty provider conversation container."""
+    if isinstance(value, dict) and not value:
+        return True
+    collection = _conversation_collection(value)
+    return (
+        collection.key is not None
+        and not collection.values
+        and collection.malformed_count == 0
+        and not _looks_like_conversation(value)
     )
 
 

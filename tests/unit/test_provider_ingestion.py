@@ -847,6 +847,165 @@ def test_provider_signature_path_classifies_alternate_but_neutral_json_stays_gen
     assert neutral.closed_coverage["skipped"] == 1
 
 
+@pytest.mark.parametrize(
+    ("payload", "provider", "expected_reason", "expected_complete"),
+    [
+        ([], "auto", "unparsed", False),
+        ([], "chatgpt", "skipped", True),
+        ([{"mapping": {}}], "auto", "skipped", True),
+        ([{"mapping": {}}], "chatgpt", "skipped", True),
+        ([[]], "auto", "unparsed", False),
+        ([[]], "chatgpt", "unparsed", False),
+    ],
+)
+def test_provider_empty_and_malformed_terminals_match_direct_path_and_zip(
+    tmp_path: Path,
+    payload: list[Any],
+    provider: str,
+    expected_reason: str,
+    expected_complete: bool,
+) -> None:
+    raw = json.dumps(payload).encode("utf-8")
+    direct = parse_archive("conversations.json", raw, provider=provider)
+    path = tmp_path / "conversations.json"
+    path.write_bytes(raw)
+    from_path = parse_archive_path(path, provider=provider)
+    from_zip = parse_zip_bundle(
+        _zip({"conversations.json": raw}),
+        provider=provider,
+    )
+
+    for parsed in (direct, from_path, from_zip):
+        assert parsed.closed_coverage[expected_reason] == 1
+        assert sum(parsed.closed_coverage.values()) == 1
+        assert parsed.complete is expected_complete
+        assert parsed.stats["conversations"] in {0, 1}
+    assert direct.closed_coverage == from_path.closed_coverage == from_zip.closed_coverage
+    assert direct.provider == from_path.provider == from_zip.provider
+    audit = from_zip.stats["archive_member_coverage"]
+    assert audit["structural_members"] == 1
+    assert audit["standalone_members"] == 0
+    assert sum(audit["terminal_member_buckets"].values()) == 0
+
+
+@pytest.mark.parametrize("payload_order", ["malformed-first", "valid-first"])
+def test_auto_provider_array_permutations_are_terminally_deterministic(
+    tmp_path: Path,
+    payload_order: str,
+) -> None:
+    valid = {
+        "id": "permutation-conversation",
+        "mapping": {
+            "user": {
+                "message": {
+                    "id": "permutation-message",
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Preference: Keep permutation output stable."]},
+                }
+            }
+        },
+    }
+    payload = ["malformed sibling", valid]
+    if payload_order == "valid-first":
+        payload.reverse()
+    raw = json.dumps(payload).encode("utf-8")
+
+    direct = parse_archive("conversations.json", raw)
+    path = tmp_path / "conversations.json"
+    path.write_bytes(raw)
+    from_path = parse_archive_path(path)
+    from_zip = parse_zip_bundle(_zip({"conversations.json": raw}))
+
+    fingerprints = []
+    for parsed in (direct, from_path, from_zip):
+        assert parsed.provider == "chatgpt"
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert parsed.closed_coverage["skipped"] == 0
+        assert parsed.complete is False
+        assert parsed.stats["conversations"] == 1
+        fingerprints.append(
+            (
+                parsed.provider,
+                parsed.closed_coverage,
+                parsed.complete,
+                sorted(
+                    (item.kind, item.content, item.source_reference)
+                    for item in parsed.candidates
+                ),
+                sorted(parsed.warnings),
+            )
+        )
+    assert fingerprints[0] == fingerprints[1] == fingerprints[2]
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["conversations.json", "chats.json", "history.json", "messages.json"],
+)
+def test_auto_neutral_provider_containers_match_explicit_chatgpt_attachment_links(
+    filename: str,
+) -> None:
+    conversations = [
+        {
+            "id": "neutral-container-conversation",
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": "neutral-container-message",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["Preference: Keep neutral containers bounded."]},
+                        "metadata": {"attachments": [{"id": "file-neutral"}]},
+                    }
+                }
+            },
+        }
+    ]
+    archive = _zip(
+        {
+            "export_manifest.json": json.dumps(
+                {"logical_files": {"file-neutral.dat": {"files": ["file-neutral.dat"]}}}
+            ),
+            "conversation_asset_file_names.json": json.dumps(
+                {"file-neutral.dat": "notes.png"}
+            ),
+            filename: json.dumps(conversations),
+            "file-neutral.dat": b"neutral attachment bytes",
+        }
+    )
+
+    auto = parse_zip_bundle(archive, provider="auto")
+    explicit = parse_zip_bundle(archive, provider="chatgpt")
+
+    assert auto.provider == explicit.provider == "chatgpt"
+    assert auto.export_format == explicit.export_format
+    assert auto.attachments == explicit.attachments
+    assert auto.attachments[0].links == (
+        importers_module.AttachmentLink(
+            "neutral-container-conversation", "neutral-container-message"
+        ),
+    )
+    assert auto.stats["attachment_entries"] == explicit.stats["attachment_entries"] == 1
+    assert auto.stats["attachment_link_pairs"] == explicit.stats["attachment_link_pairs"] == 1
+
+
+def test_malformed_neutral_alternate_stays_generic_and_does_not_enable_attachments() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "messages.json": json.dumps([{"mapping": "not-a-chatgpt-conversation"}]),
+                "file-neutral.dat": b"must remain raw",
+            }
+        )
+    )
+
+    audit = parsed.stats["archive_member_coverage"]
+    assert parsed.provider == "generic"
+    assert parsed.attachments == []
+    assert parsed.stats["attachment_entries"] == 0
+    assert audit["structural_members"] == 0
+    assert audit["standalone_members"] == 2
+
+
 def test_malformed_provider_container_is_structural_and_logically_unparsed() -> None:
     parsed = parse_zip_bundle(
         _zip({"conversations.json": b'[{"mapping": {}}] trailing'})
