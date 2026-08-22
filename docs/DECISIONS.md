@@ -3540,3 +3540,31 @@ synthetic only: 77 preferences, 20 relevant records, ten generic queries, a
 4,000-character budget, a no-match query, and negative ACL/temporal/sensitivity
 records. It does not touch private/live data, GitHub, release state, Figma, or
 macOS acceptance.
+
+## ADR-130: Packet D remains a disposable zero-dashboard composition
+
+**Status:** accepted locally on 2026-08-22 as Wave 2 synthetic evidence; this
+is not provider, client, release, or production acceptance.
+
+Packet D composes the existing capture ledger/coordinator and idempotent sink
+with the Wave 1 lifecycle, reconciliation, formation, and dependency contracts.
+Formation writes only through `CoreStore.add_candidate`, where the existing
+Core policy decides whether evidence becomes current context; the harness never
+creates a parallel observation, current-record, cursor, checkpoint, or
+retrieval store. The only non-Core mapping is an in-memory test-sink receipt
+correlation from a provider item to the Core record returned by that same
+application call.
+
+The fixture is sanitized, deterministic, local-only, and inert. A deliberate
+retry after the first capture page proves the persisted cursor boundary, and a
+new coordinator/CoreStore/fake-host instance replays the completed pages without
+new observations or current records. Retrieval V3 is called with an authorized
+Core principal; the L2 host declares every hook, exercises pre-generation,
+direct-user, and restart hooks, and leaves its unsupported consequence hook
+explicitly unsupported. Correction, permission narrowing, expiry, ordinary
+delete, and terminal purge are checked by their existing Core/Retrieval
+boundaries plus the content-free M3 dependency closure.
+
+The receipt is developer evidence only. It does not imply a real connector,
+provider integration, network/OAuth behavior, stable SDK/export contract,
+dashboard independence in production, or acceptance against private/live data.

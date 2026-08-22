@@ -19,6 +19,20 @@ Evidence is limited to deterministic synthetic unit tests and static structural
 checks. Full repository pytest/mypy, hosted CI, provider access, private data,
 release acceptance, and stable SDK/MCP lifecycle claims are not implied.
 
+### 2026-08-22 ZF-006 Wave 2 Packet D zero-dashboard harness
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| One disposable journey composes capture, lifecycle, reconciliation, formation, dependency closure, Core policy, and authorized Retrieval V3 | `experimental_zero_dashboard_harness.py`; `tests/unit/test_zero_dashboard_harness.py`; sanitized `tests/fixtures/zero_dashboard_wave2.json` | Implemented locally as synthetic evidence: the existing deterministic fake adapter/ledger/coordinator and idempotent sink form five source observations through Core, an L2 fake host supplies pre-generation/direct-user/restart hooks, and Retrieval V3 compiles only authorized Core records |
+| First useful context and correction propagation are automatic | `run_zero_dashboard_journey`; `ZeroDashboardScorecard` | Implemented locally: first pre-generation delivery contains the required project facts without a save/review/dashboard action; direct evidence and a direct correction reach Core, and the next eligible compile contains the corrected value without the displaced value |
+| Restart, cursor recovery, replay, authorization, retention, expiry, delete, purge, and zero future influence fail closed | retry/replay journey and scorecard gates; existing Core deletion/purge and Retrieval V3 selector/temporal boundaries | Implemented locally on a temporary SQLite database: a retry resumes from `cursor-1`, a reopened Core/client/fake host replays six capture events with zero new observations/current records, the narrowed private fact is absent for another principal, expired/deleted/purged facts are absent from later context, and M3 closure requires both rebuild and purge erasure declarations |
+| Secret-like and imported material remain safe | formation refusal and Core opaque refusal receipt; inert imported fixture candidate | Implemented locally: secret-like text is refused before candidate persistence, the refusal is content-free, and imported fixture text is retained only as tentative evidence with no current record |
+
+This is Wave 2 developer evidence only. It does not claim a real provider,
+network/OAuth/client SDK integration, scheduler, dashboard production behavior,
+operator-vault access, private/live data, stable export, package/release
+readiness, hosted CI, or full repository pytest/mypy acceptance.
+
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 
 | Requirement | Implementation/evidence | Status |
