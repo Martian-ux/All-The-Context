@@ -96,6 +96,28 @@ CONSEQUENCE_CHECKPOINT_KINDS = (
     "task_outcome_observed",
     "correction_available",
 )
+_HOOK_MINIMUM_LEVELS: dict[LifecycleHook, CapabilityLevel] = {
+    "manual_context_request": "L0",
+    "pre_generation_context_request": "L1",
+    "direct_user_turn": "L1",
+    "tool_observable_result": "L2",
+    "response_emission": "L2",
+    "compaction_task_checkpoint": "L2",
+    "restart_session_transition": "L2",
+    "completion_abandonment": "L2",
+    "consequence_checkpoint": "L3",
+}
+_HOOK_ORDERINGS: dict[LifecycleHook, OrderingGuarantee] = {
+    "manual_context_request": "none",
+    "pre_generation_context_request": "before_generation",
+    "direct_user_turn": "monotonic_sequence",
+    "tool_observable_result": "monotonic_sequence",
+    "response_emission": "monotonic_sequence",
+    "compaction_task_checkpoint": "monotonic_sequence",
+    "restart_session_transition": "monotonic_sequence",
+    "completion_abandonment": "monotonic_sequence",
+    "consequence_checkpoint": "monotonic_sequence",
+}
 
 _LEVEL_ORDER: dict[CapabilityLevel, int] = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+?=&%-]{0,255}$")
@@ -126,7 +148,7 @@ class EvidenceBoundaryError(ClientRuntimeContractError):
 
 
 def _bounded_token(value: str, *, maximum: int, label: str) -> str:
-    if not isinstance(value, str) or not value or len(value) > maximum:
+    if type(value) is not str or not value or len(value) > maximum:
         raise ClientRuntimeContractError(f"{label} is outside its bound")
     if (
         _CONTROL.search(value)
@@ -140,7 +162,7 @@ def _bounded_token(value: str, *, maximum: int, label: str) -> str:
 
 
 def _bounded_diagnostic(value: str) -> str:
-    if not isinstance(value, str) or not value or len(value) > MAX_DIAGNOSTIC_CHARS:
+    if type(value) is not str or not value or len(value) > MAX_DIAGNOSTIC_CHARS:
         raise ClientRuntimeContractError("diagnostic detail is outside its bound")
     if (
         _CONTROL.search(value)
@@ -152,15 +174,20 @@ def _bounded_diagnostic(value: str) -> str:
 
 
 def _bounded_scope(value: str) -> str:
-    if not isinstance(value, str) or not value or len(value) > MAX_SCOPE_CHARS:
+    if type(value) is not str or not value or len(value) > MAX_SCOPE_CHARS:
         raise ClientRuntimeContractError("context scope is outside its bound")
     if _SAFE_SCOPE.fullmatch(value) is None:
         raise ClientRuntimeContractError("context scope has an invalid form")
     return value
 
 
+def _require_literal(value: object, allowed: set[str], *, label: str) -> None:
+    if type(value) is not str or value not in allowed:
+        raise ClientRuntimeContractError(f"{label} is not a supported literal")
+
+
 def _bounded_scopes(values: Sequence[str]) -> tuple[str, ...]:
-    if isinstance(values, (str, bytes)):
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
         raise ClientRuntimeContractError("context scopes must be a sequence of labels")
     if len(values) > MAX_SCOPE_COUNT:
         raise ClientRuntimeContractError("context scopes exceed their bound")
@@ -171,7 +198,7 @@ def _bounded_scopes(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def _bounded_context_refs(values: Sequence[PayloadReference]) -> tuple[PayloadReference, ...]:
-    if isinstance(values, (str, bytes)):
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
         raise ClientRuntimeContractError("context references must be typed references")
     if len(values) == 0 or len(values) > MAX_SCOPE_COUNT:
         raise ClientRuntimeContractError("context delivery references exceed their bound")
@@ -208,8 +235,11 @@ class Diagnostic:
 
     def __post_init__(self) -> None:
         _bounded_token(self.code, maximum=64, label="diagnostic code")
-        if self.severity not in {"info", "warning", "error"}:
-            raise ClientRuntimeContractError("invalid diagnostic severity")
+        _require_literal(
+            self.severity,
+            {"info", "warning", "error"},
+            label="diagnostic severity",
+        )
         if self.detail is not None:
             _bounded_diagnostic(self.detail)
 
@@ -229,23 +259,30 @@ class PayloadReference:
 
     def __post_init__(self) -> None:
         _bounded_token(self.reference, maximum=MAX_REFERENCE_CHARS, label="payload reference")
-        if self.kind not in {
-            "context_pack",
-            "user_turn",
-            "tool_result",
-            "response",
-            "working_checkpoint",
-            "outcome",
-            "attestation",
-            "external_artifact",
-        }:
-            raise ClientRuntimeContractError("invalid payload reference kind")
+        _require_literal(
+            self.kind,
+            {
+                "context_pack",
+                "user_turn",
+                "tool_result",
+                "response",
+                "working_checkpoint",
+                "outcome",
+                "attestation",
+                "external_artifact",
+            },
+            label="payload reference kind",
+        )
         if self.size_bytes is not None and (
             type(self.size_bytes) is not int or not 0 <= self.size_bytes <= MAX_REFERENCE_BYTES
         ):
             raise ClientRuntimeContractError("payload reference size is outside its bound")
-        if self.sha256 is not None and _SHA256.fullmatch(self.sha256) is None:
-            raise ClientRuntimeContractError("payload reference digest is not a lowercase SHA-256")
+        if self.sha256 is not None and (
+            type(self.sha256) is not str or _SHA256.fullmatch(self.sha256) is None
+        ):
+            raise ClientRuntimeContractError(
+                "payload reference digest is not a lowercase SHA-256"
+            )
         if self.untrusted is not True:
             raise EvidenceBoundaryError("payload references must remain untrusted")
 
@@ -270,23 +307,49 @@ class HookCapability:
     supported_consequence_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.hook not in ALL_LIFECYCLE_HOOKS:
-            raise ClientRuntimeContractError("unknown lifecycle hook")
-        if self.status not in {"unsupported", "best_effort", "supported"}:
-            raise ClientRuntimeContractError("invalid capability status")
-        if self.minimum_level not in _LEVEL_ORDER:
-            raise ClientRuntimeContractError("invalid minimum capability level")
-        if self.ordering not in {"none", "monotonic_sequence", "before_generation"}:
-            raise ClientRuntimeContractError("invalid ordering guarantee")
+        _require_literal(self.hook, set(ALL_LIFECYCLE_HOOKS), label="lifecycle hook")
+        _require_literal(
+            self.status,
+            {"unsupported", "best_effort", "supported"},
+            label="capability status",
+        )
+        _require_literal(self.minimum_level, set(_LEVEL_ORDER), label="minimum capability level")
+        _require_literal(
+            self.ordering,
+            {"none", "monotonic_sequence", "before_generation"},
+            label="ordering guarantee",
+        )
+        if self.minimum_level != _HOOK_MINIMUM_LEVELS[self.hook]:
+            raise ClientRuntimeContractError("hook has the wrong minimum capability level")
+        if self.status == "unsupported" and self.ordering != "none":
+            raise ClientRuntimeContractError("unsupported hooks cannot claim ordering guarantees")
+        if self.status != "unsupported" and self.ordering != _HOOK_ORDERINGS[self.hook]:
+            raise ClientRuntimeContractError("hook has the wrong ordering guarantee")
+        if self.status == "best_effort" and self.hook != "manual_context_request":
+            raise ClientRuntimeContractError("only manual context may be best effort")
+        if self.hook == "manual_context_request" and self.status == "supported":
+            raise ClientRuntimeContractError("manual context is best effort, not guaranteed")
         if type(self.supported_consequence_kinds) is not tuple:
             raise ClientRuntimeContractError("consequence kinds must be a tuple")
         if self.hook != "consequence_checkpoint" and self.supported_consequence_kinds:
             raise ClientRuntimeContractError("consequence kinds belong only to consequence hooks")
+        if any(type(kind) is not str for kind in self.supported_consequence_kinds):
+            raise ClientRuntimeContractError("consequence kinds must be string literals")
         if any(
             kind not in CONSEQUENCE_CHECKPOINT_KINDS
             for kind in self.supported_consequence_kinds
         ):
             raise ClientRuntimeContractError("unknown consequence checkpoint kind")
+        if self.status == "unsupported" and self.supported_consequence_kinds:
+            raise ClientRuntimeContractError("unsupported hooks cannot declare consequence kinds")
+        if (
+            self.hook == "consequence_checkpoint"
+            and self.status == "supported"
+            and not self.supported_consequence_kinds
+        ):
+            raise ClientRuntimeContractError(
+                "supported consequence hooks must declare a consequence kind"
+            )
 
     @property
     def available(self) -> bool:
@@ -317,53 +380,47 @@ class ClientRuntimeCapabilities:
     stable_sdk_claim: Literal[False] = False
 
     def __post_init__(self) -> None:
-        if self.level not in _LEVEL_ORDER or self.contract_version != CONTRACT_VERSION:
-            raise ClientRuntimeContractError("invalid client runtime capability declaration")
+        _require_literal(self.level, set(_LEVEL_ORDER), label="capability level")
+        _require_literal(
+            self.contract_version,
+            {CONTRACT_VERSION},
+            label="runtime contract version",
+        )
         if type(self.hooks) is not tuple or any(
             not isinstance(item, HookCapability) for item in self.hooks
         ):
             raise ClientRuntimeContractError("capabilities must be typed hook declarations")
         if tuple(item.hook for item in self.hooks) != ALL_LIFECYCLE_HOOKS:
             raise ClientRuntimeContractError("capabilities must declare every v0 hook exactly once")
+        for capability in self.hooks:
+            if (
+                _LEVEL_ORDER[self.level] < _LEVEL_ORDER[capability.minimum_level]
+                and capability.status != "unsupported"
+            ):
+                raise ClientRuntimeContractError(
+                    "capability declaration overstates support beyond its level"
+                )
         if self.provider_support_claim is not False or self.stable_sdk_claim is not False:
             raise EvidenceBoundaryError("v0 cannot make provider or stable SDK claims")
 
     @classmethod
     def for_level(cls, level: CapabilityLevel) -> ClientRuntimeCapabilities:
-        if level not in _LEVEL_ORDER:
-            raise ClientRuntimeContractError("invalid capability level")
-        minimums: dict[LifecycleHook, CapabilityLevel] = {
-            "manual_context_request": "L0",
-            "pre_generation_context_request": "L1",
-            "direct_user_turn": "L1",
-            "tool_observable_result": "L2",
-            "response_emission": "L2",
-            "compaction_task_checkpoint": "L2",
-            "restart_session_transition": "L2",
-            "completion_abandonment": "L2",
-            "consequence_checkpoint": "L3",
-        }
-        orderings: dict[LifecycleHook, OrderingGuarantee] = {
-            "manual_context_request": "none",
-            "pre_generation_context_request": "before_generation",
-            "direct_user_turn": "monotonic_sequence",
-            "tool_observable_result": "monotonic_sequence",
-            "response_emission": "monotonic_sequence",
-            "compaction_task_checkpoint": "monotonic_sequence",
-            "restart_session_transition": "monotonic_sequence",
-            "completion_abandonment": "monotonic_sequence",
-            "consequence_checkpoint": "monotonic_sequence",
-        }
+        _require_literal(level, set(_LEVEL_ORDER), label="capability level")
         hooks = tuple(
             HookCapability(
                 hook=hook,
                 status=(
                     "best_effort"
                     if hook == "manual_context_request"
-                    else _profile_status(level, minimums[hook])
+                    else _profile_status(level, _HOOK_MINIMUM_LEVELS[hook])
                 ),
-                minimum_level=minimums[hook],
-                ordering=orderings[hook],
+                minimum_level=_HOOK_MINIMUM_LEVELS[hook],
+                ordering=(
+                    _HOOK_ORDERINGS[hook]
+                    if hook == "manual_context_request"
+                    or _LEVEL_ORDER[level] >= _LEVEL_ORDER[_HOOK_MINIMUM_LEVELS[hook]]
+                    else "none"
+                ),
                 supported_consequence_kinds=(
                     CONSEQUENCE_CHECKPOINT_KINDS
                     if hook == "consequence_checkpoint" and _LEVEL_ORDER[level] >= 3
@@ -406,10 +463,18 @@ class UnsupportedHookReport:
 
     def __post_init__(self) -> None:
         _bounded_token(self.reason, maximum=MAX_DIAGNOSTIC_CHARS, label="unsupported hook reason")
-        if self.hook not in ALL_LIFECYCLE_HOOKS:
-            raise ClientRuntimeContractError("unknown unsupported hook")
-        if self.required_level not in _LEVEL_ORDER or self.declared_level not in _LEVEL_ORDER:
-            raise ClientRuntimeContractError("invalid unsupported hook capability level")
+        _require_literal(self.hook, set(ALL_LIFECYCLE_HOOKS), label="unsupported hook")
+        _require_literal(
+            self.required_level,
+            set(_LEVEL_ORDER),
+            label="unsupported hook required level",
+        )
+        _require_literal(
+            self.declared_level,
+            set(_LEVEL_ORDER),
+            label="unsupported hook declared level",
+        )
+        _require_literal(self.status, {"unsupported"}, label="unsupported hook status")
         _validate_diagnostics(self.diagnostics)
 
     def as_dict(self) -> dict[str, object]:
@@ -442,8 +507,11 @@ class ContextRequestPayload:
             or not 0 <= self.budget_chars <= MAX_CONTEXT_BUDGET_CHARS
         ):
             raise ClientRuntimeContractError("context budget is outside its bound")
-        if self.delivery_mode not in {"manual", "pre_generation"}:
-            raise ClientRuntimeContractError("invalid context delivery mode")
+        _require_literal(
+            self.delivery_mode,
+            {"manual", "pre_generation"},
+            label="context delivery mode",
+        )
         if self.delivery_mode == "pre_generation" and self.generation_id is None:
             raise ClientRuntimeContractError("pre-generation context requires a generation ID")
         if self.delivery_mode == "manual" and self.generation_id is not None:
@@ -465,8 +533,13 @@ class DirectUserTurnPayload:
     evidence_role: Literal["direct_user_statement"] = "direct_user_statement"
 
     def __post_init__(self) -> None:
-        if self.evidence_role != "direct_user_statement":
-            raise EvidenceBoundaryError("direct user payload has an invalid evidence role")
+        _require_literal(
+            self.evidence_role,
+            {"direct_user_statement"},
+            label="direct user evidence role",
+        )
+        if not isinstance(self.turn_ref, PayloadReference):
+            raise ClientRuntimeContractError("direct user turn requires a payload reference")
         if self.turn_ref.kind != "user_turn":
             raise EvidenceBoundaryError("direct user evidence requires a user-turn reference")
 
@@ -482,8 +555,13 @@ class ToolObservableResultPayload:
 
     def __post_init__(self) -> None:
         _bounded_token(self.tool_name, maximum=MAX_RUNTIME_ID_CHARS, label="tool name")
-        if self.result_kind not in {"tool_result", "observable_result"}:
-            raise ClientRuntimeContractError("invalid observable result kind")
+        _require_literal(
+            self.result_kind,
+            {"tool_result", "observable_result"},
+            label="observable result kind",
+        )
+        if not isinstance(self.result_ref, PayloadReference):
+            raise ClientRuntimeContractError("observable result requires a payload reference")
         if self.result_ref.kind not in {"tool_result", "external_artifact"}:
             raise ClientRuntimeContractError("tool result requires a result reference")
 
@@ -501,8 +579,13 @@ class ResponseEmissionPayload:
     emission_state: Literal["started", "completed", "abandoned"] = "completed"
 
     def __post_init__(self) -> None:
-        if self.emission_state not in {"started", "completed", "abandoned"}:
-            raise ClientRuntimeContractError("invalid response emission state")
+        _require_literal(
+            self.emission_state,
+            {"started", "completed", "abandoned"},
+            label="response emission state",
+        )
+        if not isinstance(self.response_ref, PayloadReference):
+            raise ClientRuntimeContractError("response emission requires a payload reference")
         if self.response_ref.kind != "response":
             raise ClientRuntimeContractError("response emission requires a response reference")
 
@@ -520,10 +603,18 @@ class CompactionTaskCheckpointPayload:
     checkpoint_state: Literal["created", "completed"] = "completed"
 
     def __post_init__(self) -> None:
-        if self.checkpoint_kind not in {"compaction", "task_checkpoint"}:
-            raise ClientRuntimeContractError("invalid checkpoint kind")
-        if self.checkpoint_state not in {"created", "completed"}:
-            raise ClientRuntimeContractError("invalid checkpoint state")
+        _require_literal(
+            self.checkpoint_kind,
+            {"compaction", "task_checkpoint"},
+            label="checkpoint kind",
+        )
+        _require_literal(
+            self.checkpoint_state,
+            {"created", "completed"},
+            label="checkpoint state",
+        )
+        if not isinstance(self.checkpoint_ref, PayloadReference):
+            raise ClientRuntimeContractError("checkpoint requires a payload reference")
         if self.checkpoint_ref.kind != "working_checkpoint":
             raise ClientRuntimeContractError("checkpoint requires a working-checkpoint reference")
 
@@ -542,15 +633,33 @@ class RestartSessionTransitionPayload:
     next_session_id: str | None = None
 
     def __post_init__(self) -> None:
-        if self.transition not in {
-            "session_start",
-            "session_end",
-            "restart",
-            "session_transition",
-        }:
-            raise ClientRuntimeContractError("invalid session transition")
+        _require_literal(
+            self.transition,
+            {"session_start", "session_end", "restart", "session_transition"},
+            label="session transition",
+        )
         _validate_identifier(self.previous_session_id, label="previous session ID")
         _validate_identifier(self.next_session_id, label="next session ID")
+        if self.transition == "session_start" and (
+            self.previous_session_id is not None or self.next_session_id is None
+        ):
+            raise ClientRuntimeContractError(
+                "session_start requires no previous and a next session"
+            )
+        if self.transition == "session_end" and (
+            self.previous_session_id is None or self.next_session_id is not None
+        ):
+            raise ClientRuntimeContractError(
+                "session_end requires a previous and no next session"
+            )
+        if self.transition in {"restart", "session_transition"} and (
+            self.previous_session_id is None
+            or self.next_session_id is None
+            or self.previous_session_id == self.next_session_id
+        ):
+            raise ClientRuntimeContractError(
+                "session transition requires distinct previous and next sessions"
+            )
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -572,16 +681,16 @@ class CompletionAbandonmentPayload:
     ] = "completed"
 
     def __post_init__(self) -> None:
-        if self.terminal_state not in {"completed", "abandoned"}:
-            raise ClientRuntimeContractError("invalid terminal state")
-        if self.reason_code not in {
-            "completed",
-            "user_abandoned",
-            "host_shutdown",
-            "error",
-            "unknown",
-        }:
-            raise ClientRuntimeContractError("invalid terminal reason")
+        _require_literal(
+            self.terminal_state,
+            {"completed", "abandoned"},
+            label="terminal state",
+        )
+        _require_literal(
+            self.reason_code,
+            {"completed", "user_abandoned", "host_shutdown", "error", "unknown"},
+            label="terminal reason",
+        )
         if self.terminal_state == "completed" and self.reason_code != "completed":
             raise ClientRuntimeContractError("completed task requires completed reason")
         if self.terminal_state == "abandoned" and self.reason_code == "completed":
@@ -604,18 +713,37 @@ class ConsequenceCheckpointPayload:
     evidence_ref: PayloadReference | None = None
 
     def __post_init__(self) -> None:
-        if self.checkpoint_kind not in CONSEQUENCE_CHECKPOINT_KINDS:
-            raise ClientRuntimeContractError("invalid consequence checkpoint kind")
-        if self.status not in {"observed", "not_observed"}:
-            raise ClientRuntimeContractError("invalid consequence checkpoint status")
-        if self.evidence_ref is not None and self.evidence_ref.kind not in {
-            "outcome",
-            "context_pack",
-            "tool_result",
-            "response",
-            "external_artifact",
-        }:
-            raise ClientRuntimeContractError("invalid consequence evidence reference")
+        _require_literal(
+            self.checkpoint_kind,
+            set(CONSEQUENCE_CHECKPOINT_KINDS),
+            label="consequence checkpoint kind",
+        )
+        _require_literal(
+            self.status,
+            {"observed", "not_observed"},
+            label="consequence checkpoint status",
+        )
+        if self.status == "not_observed" and self.evidence_ref is not None:
+            raise ClientRuntimeContractError(
+                "not-observed consequence checkpoints cannot carry evidence"
+            )
+        if self.status == "observed" and not isinstance(self.evidence_ref, PayloadReference):
+            raise ClientRuntimeContractError(
+                "observed consequence checkpoints require evidence"
+            )
+        allowed_kinds: dict[str, set[ReferenceKind]] = {
+            "context_delivered": {"context_pack"},
+            "tool_result_observed": {"tool_result", "external_artifact"},
+            "response_emitted": {"response"},
+            "task_outcome_observed": {"outcome", "external_artifact"},
+            "correction_available": {"user_turn"},
+        }
+        if self.evidence_ref is not None and self.evidence_ref.kind not in allowed_kinds[
+            self.checkpoint_kind
+        ]:
+            raise ClientRuntimeContractError(
+                "consequence evidence reference does not match checkpoint kind"
+            )
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -682,8 +810,7 @@ class ClientLifecycleEnvelope:
             (self.observed_at, "observed time"),
         ):
             _validate_identifier(value, label=label)
-        if self.hook not in ALL_LIFECYCLE_HOOKS:
-            raise ClientRuntimeContractError("unknown lifecycle hook")
+        _require_literal(self.hook, set(ALL_LIFECYCLE_HOOKS), label="lifecycle hook")
         if not isinstance(self.payload, _PAYLOAD_TYPES[self.hook]):
             raise ClientRuntimeContractError("payload type does not match lifecycle hook")
         if self.hook == "manual_context_request" and (
@@ -698,23 +825,35 @@ class ClientLifecycleEnvelope:
             raise ClientRuntimeContractError(
                 "pre-generation context hook requires pre-generation delivery mode"
             )
-        if self.witness not in {
-            "direct_user",
-            "host_observation",
-            "model_provider_self_attestation",
-            "system_observation",
-        }:
-            raise ClientRuntimeContractError("unknown evidence witness")
+        _require_literal(
+            self.witness,
+            {
+                "direct_user",
+                "host_observation",
+                "model_provider_self_attestation",
+                "system_observation",
+            },
+            label="evidence witness",
+        )
         if self.hook == "direct_user_turn" and self.witness != "direct_user":
             raise EvidenceBoundaryError("direct user turns require direct-user witness evidence")
         if self.hook != "direct_user_turn" and self.witness == "direct_user":
             raise EvidenceBoundaryError("direct-user witness is reserved for direct user turns")
-        if self.content_ownership != "external_untrusted":
-            raise EvidenceBoundaryError("lifecycle content must remain external untrusted data")
-        if self.retention_class not in {"ephemeral", "bounded", "checkpoint"}:
-            raise ClientRuntimeContractError("invalid retention class")
-        if self.contract_version != CONTRACT_VERSION:
-            raise ClientRuntimeContractError("unsupported client runtime contract version")
+        _require_literal(
+            self.content_ownership,
+            {"external_untrusted"},
+            label="content ownership",
+        )
+        _require_literal(
+            self.retention_class,
+            {"ephemeral", "bounded", "checkpoint"},
+            label="retention class",
+        )
+        _require_literal(
+            self.contract_version,
+            {CONTRACT_VERSION},
+            label="runtime contract version",
+        )
         _validate_diagnostics(self.diagnostics)
 
     def as_dict(self) -> dict[str, object]:
@@ -750,8 +889,14 @@ class ModelProviderSelfAttestation:
     claimed_turn_ref: PayloadReference | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.attestation_ref, PayloadReference):
+            raise ClientRuntimeContractError("self-attestation requires a payload reference")
         if self.attestation_ref.kind != "attestation":
             raise EvidenceBoundaryError("self-attestation requires an attestation reference")
+        if self.claimed_turn_ref is not None and not isinstance(
+            self.claimed_turn_ref, PayloadReference
+        ):
+            raise ClientRuntimeContractError("claimed user turn requires a payload reference")
         if self.claimed_turn_ref is not None and self.claimed_turn_ref.kind != "user_turn":
             raise EvidenceBoundaryError("claimed user turn requires a user-turn reference")
 
@@ -800,6 +945,8 @@ class GenerationReceipt:
             )
         if self.context_delivery_sequence is not None:
             _validate_sequence(self.context_delivery_sequence, label="context delivery sequence")
+        if type(self.pre_generation_delivery) is not bool:
+            raise ClientRuntimeContractError("pre-generation delivery must be a boolean")
         if self.pre_generation_delivery and (
             self.context_request_event_id is None
             or self.context_delivery_sequence is None
@@ -828,6 +975,11 @@ class HostTraceEntry:
 
     def __post_init__(self) -> None:
         _validate_sequence(self.sequence, label="trace sequence")
+        _require_literal(
+            self.action,
+            {"context_delivered", "generation_started"},
+            label="trace action",
+        )
         _bounded_token(self.reference_id, maximum=MAX_RUNTIME_ID_CHARS, label="trace reference ID")
 
 
@@ -840,6 +992,13 @@ class ClientRuntimeAdapterV0(Protocol):
 
     @property
     def events(self) -> tuple[ClientLifecycleEnvelope, ...]: ...
+
+    def request_manual_context(
+        self,
+        *,
+        requested_scopes: Sequence[str] = (),
+        budget_chars: int = 8_000,
+    ) -> HookResult: ...
 
     def request_pre_generation_context(
         self,
@@ -915,6 +1074,19 @@ class ClientRuntimeAdapterV0(Protocol):
     ) -> HookResult: ...
 
 
+@runtime_checkable
+class ClientRuntimeReferenceHostV0(ClientRuntimeAdapterV0, Protocol):
+    """Optional reference-host proof surface, separate from the adapter seam."""
+
+    def deliver_context(
+        self,
+        request: ClientLifecycleEnvelope,
+        context_refs: Sequence[PayloadReference],
+    ) -> ContextDeliveryReceipt | UnsupportedHookReport: ...
+
+    def begin_generation(self, *, generation_id: str) -> GenerationReceipt: ...
+
+
 class DeterministicFakeClientRuntimeHost:
     """In-repository contract host with deterministic, non-persistent traces."""
 
@@ -925,7 +1097,12 @@ class DeterministicFakeClientRuntimeHost:
         client_id: str = "fake-client-v0",
         session_id: str = "fake-session-v0",
     ) -> None:
-        self._capabilities = capabilities or ClientRuntimeCapabilities.for_level("L3")
+        if capabilities is None:
+            self._capabilities = ClientRuntimeCapabilities.for_level("L3")
+        elif not isinstance(capabilities, ClientRuntimeCapabilities):
+            raise ClientRuntimeContractError("fake host requires typed runtime capabilities")
+        else:
+            self._capabilities = capabilities
         _bounded_token(client_id, maximum=MAX_RUNTIME_ID_CHARS, label="client ID")
         _bounded_token(session_id, maximum=MAX_RUNTIME_ID_CHARS, label="session ID")
         self._client_id = client_id
@@ -958,6 +1135,10 @@ class DeterministicFakeClientRuntimeHost:
     @property
     def events(self) -> tuple[ClientLifecycleEnvelope, ...]:
         return tuple(self._events)
+
+    @property
+    def current_session_id(self) -> str:
+        return self._session_id
 
     @property
     def trace(self) -> tuple[HostTraceEntry, ...]:
@@ -1050,6 +1231,8 @@ class DeterministicFakeClientRuntimeHost:
             return report
         if generation_id in self._started_generations:
             raise OrderingViolation("context request cannot follow generation start")
+        if generation_id in self._pending_context:
+            raise OrderingViolation("generation already has a pending context request")
         payload = ContextRequestPayload(
             request_id=f"context-{self._sequence + 1:06d}",
             generation_id=generation_id,
@@ -1076,6 +1259,8 @@ class DeterministicFakeClientRuntimeHost:
         report = self._unsupported("pre_generation_context_request")
         if report is not None:
             return report
+        if not isinstance(request, ClientLifecycleEnvelope):
+            raise ClientRuntimeContractError("context delivery requires a typed request envelope")
         if request.hook != "pre_generation_context_request" or not isinstance(
             request.payload, ContextRequestPayload
         ):
@@ -1162,7 +1347,8 @@ class DeterministicFakeClientRuntimeHost:
         self,
         attestation: ModelProviderSelfAttestation,
     ) -> UnsupportedHookReport:
-        del attestation
+        if not isinstance(attestation, ModelProviderSelfAttestation):
+            raise ClientRuntimeContractError("self-attestation must use its typed envelope")
         capability = self._capabilities.for_hook("direct_user_turn")
         return UnsupportedHookReport(
             hook="direct_user_turn",
@@ -1237,6 +1423,12 @@ class DeterministicFakeClientRuntimeHost:
         if report is not None:
             return report
         payload = RestartSessionTransitionPayload(transition, previous_session_id, next_session_id)
+        if payload.previous_session_id is not None and (
+            payload.previous_session_id != self._session_id
+        ):
+            raise OrderingViolation(
+                "session transition previous session does not match current state"
+            )
         result = self._emit(
             hook="restart_session_transition",
             payload=payload,
@@ -1315,6 +1507,7 @@ __all__ = [
     "ClientRuntimeAdapterV0",
     "ClientRuntimeCapabilities",
     "ClientRuntimeContractError",
+    "ClientRuntimeReferenceHostV0",
     "CompactionTaskCheckpointPayload",
     "CompletionAbandonmentPayload",
     "ConsequenceCheckpointPayload",

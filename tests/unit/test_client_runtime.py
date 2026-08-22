@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any, cast
+
 import pytest
 from allthecontext.client_runtime import (
     ALL_LIFECYCLE_HOOKS,
@@ -11,6 +15,9 @@ from allthecontext.client_runtime import (
     ClientRuntimeAdapterV0,
     ClientRuntimeCapabilities,
     ClientRuntimeContractError,
+    ClientRuntimeReferenceHostV0,
+    CompactionTaskCheckpointPayload,
+    ConsequenceCheckpointPayload,
     ContextDeliveryReceipt,
     ContextRequestPayload,
     DeterministicFakeClientRuntimeHost,
@@ -21,12 +28,16 @@ from allthecontext.client_runtime import (
     ModelProviderSelfAttestation,
     OrderingViolation,
     PayloadReference,
+    ReferenceKind,
+    ResponseEmissionPayload,
+    RestartSessionTransitionPayload,
+    ToolObservableResultPayload,
     UnsupportedHookReport,
 )
 
 
-def reference(reference: str, kind: str) -> PayloadReference:
-    return PayloadReference(reference=reference, kind=kind)  # type: ignore[arg-type]
+def reference(reference: str, kind: ReferenceKind) -> PayloadReference:
+    return PayloadReference(reference=reference, kind=kind)
 
 
 def test_capability_profiles_are_explicit_and_never_claim_provider_or_sdk_support() -> None:
@@ -80,6 +91,62 @@ def test_capability_profiles_are_explicit_and_never_claim_provider_or_sdk_suppor
         assert capabilities.as_dict()["stable_sdk_claim"] is False
 
 
+def test_capabilities_reject_overstatement_and_non_misleading_metadata() -> None:
+    l1 = ClientRuntimeCapabilities.for_level("L1")
+    l1_hooks = list(l1.hooks)
+    tool_index = next(
+        index
+        for index, capability in enumerate(l1_hooks)
+        if capability.hook == "tool_observable_result"
+    )
+    l1_hooks[tool_index] = replace(
+        l1_hooks[tool_index],
+        status="supported",
+        ordering="monotonic_sequence",
+    )
+    with pytest.raises(ClientRuntimeContractError):
+        ClientRuntimeCapabilities(level="L1", hooks=tuple(l1_hooks))
+
+    l3 = ClientRuntimeCapabilities.for_level("L3")
+    l3_hooks = list(l3.hooks)
+    consequence_index = next(
+        index
+        for index, capability in enumerate(l3_hooks)
+        if capability.hook == "consequence_checkpoint"
+    )
+    l3_hooks[consequence_index] = replace(
+        l3_hooks[consequence_index],
+        status="unsupported",
+        ordering="none",
+        supported_consequence_kinds=(),
+    )
+    under_declared = ClientRuntimeCapabilities(level="L3", hooks=tuple(l3_hooks))
+    assert under_declared.for_hook("consequence_checkpoint").status == "unsupported"
+
+    with pytest.raises(ClientRuntimeContractError):
+        replace(
+            l3.for_hook("pre_generation_context_request"),
+            minimum_level="L0",
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        replace(
+            l3.for_hook("direct_user_turn"),
+            ordering="before_generation",
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        replace(
+            l3.for_hook("consequence_checkpoint"),
+            status="unsupported",
+            ordering="none",
+            supported_consequence_kinds=("task_outcome_observed",),
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        replace(
+            l3.for_hook("manual_context_request"),
+            status="supported",
+        )
+
+
 def test_l1_context_delivery_is_proven_to_precede_generation() -> None:
     host = DeterministicFakeClientRuntimeHost.for_level("L1")
     request = host.request_pre_generation_context(
@@ -113,6 +180,57 @@ def test_l1_context_delivery_is_proven_to_precede_generation() -> None:
         "context_delivered",
         "generation_started",
     ]
+
+
+def test_fake_host_rejects_duplicate_pending_context_requests() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L1")
+    first = host.request_pre_generation_context(generation_id="generation-1")
+    assert isinstance(first, ClientLifecycleEnvelope)
+
+    with pytest.raises(OrderingViolation):
+        host.request_pre_generation_context(
+            generation_id="generation-1",
+            requested_scopes=("project/other",),
+        )
+    assert host.events == (first,)
+
+
+def test_session_transition_requires_valid_combinations_and_current_predecessor() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L2")
+    current = host.current_session_id
+
+    with pytest.raises(ClientRuntimeContractError):
+        host.record_session_transition(transition="restart", next_session_id="session-2")
+    with pytest.raises(ClientRuntimeContractError):
+        host.record_session_transition(
+            transition="session_start",
+            previous_session_id=current,
+            next_session_id="session-2",
+        )
+    with pytest.raises(OrderingViolation):
+        host.record_session_transition(
+            transition="restart",
+            previous_session_id="wrong-session",
+            next_session_id="session-2",
+        )
+    assert host.current_session_id == current
+    assert host.events == ()
+
+    result = host.record_session_transition(
+        transition="restart",
+        previous_session_id=current,
+        next_session_id="session-2",
+    )
+    assert isinstance(result, ClientLifecycleEnvelope)
+    assert host.current_session_id == "session-2"
+
+    with pytest.raises(OrderingViolation):
+        host.record_session_transition(
+            transition="restart",
+            previous_session_id=current,
+            next_session_id="session-3",
+        )
+    assert host.current_session_id == "session-2"
 
 
 def test_unsupported_hooks_are_reported_without_inference_or_event_creation() -> None:
@@ -154,9 +272,120 @@ def test_direct_user_witness_is_not_substituted_by_model_provider_self_attestati
     assert len(host.events) == 1
 
 
+@pytest.mark.parametrize(
+    ("constructor",),
+    [
+        (lambda: DirectUserTurnPayload(cast(Any, object())),),
+        (lambda: ToolObservableResultPayload("tool", cast(Any, object())),),
+        (lambda: ResponseEmissionPayload(cast(Any, object())),),
+        (
+            lambda: CompactionTaskCheckpointPayload(
+                cast(Any, object()),
+                "task_checkpoint",
+            ),
+        ),
+        (
+            lambda: ConsequenceCheckpointPayload(
+                "task_outcome_observed",
+                "observed",
+                cast(Any, object()),
+            ),
+        ),
+        (lambda: ModelProviderSelfAttestation(cast(Any, object())),),
+        (
+            lambda: ModelProviderSelfAttestation(
+                reference("attestation-1", "attestation"),
+                cast(Any, object()),
+            ),
+        ),
+        (lambda: RestartSessionTransitionPayload("restart"),),
+    ],
+)
+def test_public_payloads_reject_malformed_nested_objects_with_contract_errors(
+    constructor: Callable[[], object],
+) -> None:
+    with pytest.raises(ClientRuntimeContractError):
+        constructor()
+
+
+def test_literal_fields_reject_string_lookalikes_and_malformed_host_inputs() -> None:
+    class Lookalike(str):
+        pass
+
+    with pytest.raises(ClientRuntimeContractError):
+        PayloadReference(reference="turn-1", kind=cast(Any, Lookalike("user_turn")))
+    with pytest.raises(ClientRuntimeContractError):
+        ResponseEmissionPayload(
+            reference("response-1", "response"),
+            emission_state=cast(Any, Lookalike("completed")),
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        ClientRuntimeCapabilities.for_level(cast(Any, Lookalike("L1")))
+    with pytest.raises(ClientRuntimeContractError):
+        DeterministicFakeClientRuntimeHost(capabilities=cast(Any, object()))
+    with pytest.raises(ClientRuntimeContractError):
+        ClientLifecycleEnvelope(
+            event_id="event-1",
+            sequence=1,
+            hook="manual_context_request",
+            session_id="session-1",
+            client_id="client-1",
+            payload=cast(Any, object()),
+        )
+
+    host = DeterministicFakeClientRuntimeHost.for_level("L1")
+    with pytest.raises(ClientRuntimeContractError):
+        host.request_pre_generation_context(
+            generation_id="generation-1",
+            requested_scopes=cast(Any, object()),
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        host.deliver_context(
+            cast(Any, object()),
+            (reference("context-pack-1", "context_pack"),),
+        )
+    request = host.request_pre_generation_context(generation_id="generation-2")
+    assert isinstance(request, ClientLifecycleEnvelope)
+    with pytest.raises(ClientRuntimeContractError):
+        host.deliver_context(request, cast(Any, object()))
+    with pytest.raises(ClientRuntimeContractError):
+        host.observe_user_turn_attestation(cast(Any, object()))
+
+
+def test_consequence_checkpoints_require_correlated_affirmative_evidence() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L3")
+
+    with pytest.raises(ClientRuntimeContractError):
+        host.record_consequence_checkpoint(
+            checkpoint_kind="task_outcome_observed",
+            status="not_observed",
+            evidence_ref=reference("outcome-1", "outcome"),
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        host.record_consequence_checkpoint(
+            checkpoint_kind="task_outcome_observed",
+            status="observed",
+        )
+    with pytest.raises(ClientRuntimeContractError):
+        host.record_consequence_checkpoint(
+            checkpoint_kind="context_delivered",
+            status="observed",
+            evidence_ref=reference("outcome-1", "outcome"),
+        )
+    assert host.events == ()
+
+    result = host.record_consequence_checkpoint(
+        checkpoint_kind="task_outcome_observed",
+        status="observed",
+        evidence_ref=reference("outcome-1", "outcome"),
+    )
+    assert isinstance(result, ClientLifecycleEnvelope)
+
+
 def test_l3_fake_host_exercises_every_required_hook_with_bounded_untrusted_refs() -> None:
     host = DeterministicFakeClientRuntimeHost.for_level("L3")
     assert isinstance(host, ClientRuntimeAdapterV0)
+    assert isinstance(host, ClientRuntimeReferenceHostV0)
     context_request = host.request_pre_generation_context(generation_id="generation-1")
     assert isinstance(context_request, ClientLifecycleEnvelope)
     assert isinstance(
@@ -191,7 +420,11 @@ def test_l3_fake_host_exercises_every_required_hook_with_bounded_untrusted_refs(
         ClientLifecycleEnvelope,
     )
     assert isinstance(
-        host.record_session_transition(transition="restart", next_session_id="session-2"),
+        host.record_session_transition(
+            transition="restart",
+            previous_session_id=host.current_session_id,
+            next_session_id="session-2",
+        ),
         ClientLifecycleEnvelope,
     )
     assert isinstance(
