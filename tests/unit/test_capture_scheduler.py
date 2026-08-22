@@ -408,3 +408,32 @@ def test_per_connector_concurrency_and_resource_bounds_defer_due_work(
     assert len(report.deferred) == 1
     assert all(entry.resource_units == 2 for entry in report.dispatched)
     assert len(calls) == 2
+
+
+def test_source_rotation_reaches_long_tail_and_health_reports_truncation(
+    tmp_path: Path,
+) -> None:
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=IdempotentFakeSink())
+    source_ids = [_source(coordinator) for _ in range(3)]
+    for source_id in source_ids:
+        _enable(coordinator, source_id)
+    coordinator.register_adapter("fake", DeterministicFakeAdapter((_page(),)))
+    scheduler = CaptureScheduler(
+        coordinator,
+        config=SchedulerConfig(
+            enabled=True,
+            max_sources_per_cycle=1,
+            max_source_pages_per_cycle=1,
+            max_health_pages=1,
+        ),
+    )
+
+    dispatched = [scheduler.run_once().dispatched[0].source_id for _ in range(3)]
+
+    assert set(dispatched) == set(source_ids)
+    health = scheduler.health()
+    assert health.source_total == 3
+    assert health.inspected_source_count == 1
+    assert health.truncated is True
+    assert health.state == "degraded"
+    assert health.reason_codes == ("capture_health_truncated",)

@@ -77,6 +77,8 @@ class SchedulerConfig:
     poll_interval_seconds: int = 60
     incremental_interval_seconds: int = 300
     max_sources_per_cycle: int = 500
+    max_source_pages_per_cycle: int = 1
+    max_health_pages: int = 4
     max_workers: int = 4
     default_connector_limits: ConnectorLimits = field(default_factory=ConnectorLimits)
 
@@ -86,10 +88,14 @@ class SchedulerConfig:
             or type(self.poll_interval_seconds) is not int
             or type(self.incremental_interval_seconds) is not int
             or type(self.max_sources_per_cycle) is not int
+            or type(self.max_source_pages_per_cycle) is not int
+            or type(self.max_health_pages) is not int
             or type(self.max_workers) is not int
             or self.poll_interval_seconds < 1
             or self.incremental_interval_seconds < 1
             or not 1 <= self.max_sources_per_cycle <= 500
+            or not 1 <= self.max_source_pages_per_cycle <= 64
+            or not 1 <= self.max_health_pages <= 64
             or not 1 <= self.max_workers <= 32
             or not isinstance(self.default_connector_limits, ConnectorLimits)
         ):
@@ -108,6 +114,13 @@ class ScheduleEntry:
 class SchedulePlan:
     enabled: bool
     entries: tuple[ScheduleEntry, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceBatch:
+    sources: tuple[CaptureSource, ...]
+    total: int
+    truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +156,10 @@ class HealthSnapshot:
     connectors: tuple[ConnectorHealth, ...] = ()
     reauthorization_required: tuple[ReauthorizationState, ...] = ()
     actions: tuple[HealthAction, ...] = ()
+    source_total: int = 0
+    inspected_source_count: int = 0
+    truncated: bool = False
+    reason_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +204,10 @@ class CaptureScheduler:
         self.connector_limits = dict(connector_limits or {})
         self.resource_cost = resource_cost
         self._enabled = self.config.enabled
+        # This is an ephemeral selection rotation only.  It is never written
+        # to Core and cannot affect capture replay, cursor, or checkpoint
+        # authority.
+        self._source_rotation_offset = 0
         self._announced_reauthorization: set[str] = set()
 
     @property
@@ -206,11 +227,45 @@ class CaptureScheduler:
     def _limits_for(self, provider: str) -> ConnectorLimits:
         return self.connector_limits.get(provider, self.config.default_connector_limits)
 
-    def _sources(self) -> tuple[CaptureSource, ...]:
-        sources, _total = self.coordinator.list_sources(
-            limit=self.config.max_sources_per_cycle,
+    def _sources(self, *, full_scan: bool = False) -> _SourceBatch:
+        """Read bounded source pages, rotating selection but not Core state."""
+
+        page_size = self.config.max_sources_per_cycle
+        page_limit = (
+            self.config.max_health_pages if full_scan else self.config.max_source_pages_per_cycle
         )
-        return tuple(sources)
+        if full_scan:
+            first_page, total = self.coordinator.list_sources(limit=page_size, offset=0)
+            start_offset = 0
+        else:
+            _probe, total = self.coordinator.list_sources(limit=1, offset=0)
+            if total == 0:
+                return _SourceBatch((), 0, False)
+            start_offset = self._source_rotation_offset % total
+            first_page, _ignored_total = self.coordinator.list_sources(
+                limit=page_size,
+                offset=start_offset,
+            )
+
+        pages_read = 1
+        seen: dict[str, CaptureSource] = {source.id: source for source in first_page}
+        while first_page and len(seen) < total and pages_read < page_limit:
+            offset = (start_offset + pages_read * page_size) % total
+            first_page, _ignored_total = self.coordinator.list_sources(
+                limit=page_size,
+                offset=offset,
+            )
+            pages_read += 1
+            for source in first_page:
+                seen.setdefault(source.id, source)
+
+        if not full_scan and total:
+            self._source_rotation_offset = (start_offset + pages_read * page_size) % total
+        return _SourceBatch(
+            sources=tuple(seen.values()),
+            total=total,
+            truncated=len(seen) < total,
+        )
 
     @staticmethod
     def _last_run_completed(status: Mapping[str, object]) -> bool:
@@ -282,7 +337,7 @@ class CaptureScheduler:
             return SchedulePlan(enabled=False)
         now = _parse_time(self.clock())
         entries: list[ScheduleEntry] = []
-        for source in self._sources():
+        for source in self._sources().sources:
             if source.lifecycle_state not in {"enabled", "degraded"}:
                 continue
             try:
@@ -360,6 +415,8 @@ class CaptureScheduler:
         self,
         sources: tuple[CaptureSource, ...],
         *,
+        source_total: int,
+        truncated: bool,
         emit_actions: bool = True,
     ) -> HealthSnapshot:
         grouped: dict[
@@ -392,7 +449,10 @@ class CaptureScheduler:
                     reasons.add(capability_error)
                     state = _merge_health(state, "unavailable")
                     continue
-                assert manifest is not None
+                if manifest is None:
+                    reasons.add("capture_capability_invalid")
+                    state = _merge_health(state, "unavailable")
+                    continue
                 if manifest.authorization == "reauthorization_required":
                     reauth_source_ids.append(source.id)
                     reasons.add("capture_reauthorization_required")
@@ -450,26 +510,45 @@ class CaptureScheduler:
             overall = "degraded"
         if any(connector.state == "unavailable" for connector in connectors):
             overall = "unavailable"
+        reason_codes: tuple[str, ...] = ()
+        if truncated:
+            overall = _merge_health(overall, "degraded")
+            reason_codes = ("capture_health_truncated",)
         return HealthSnapshot(
             state=overall,
             connectors=tuple(connectors),
             reauthorization_required=tuple(reauthorization),
             actions=tuple(new_actions),
+            source_total=source_total,
+            inspected_source_count=len(sources),
+            truncated=truncated,
+            reason_codes=reason_codes,
         )
 
     def health(self) -> HealthSnapshot:
         """Aggregate content-free health and deduplicate reauthorization action."""
 
-        return self._health_from_sources(self._sources())
+        batch = self._sources(full_scan=True)
+        return self._health_from_sources(
+            batch.sources,
+            source_total=batch.total,
+            truncated=batch.truncated,
+        )
 
     def run_once(self) -> SchedulerRunReport:
         """Dispatch one bounded cycle; no real-time waiting occurs here."""
 
         plan = self.plan()
         if not plan.enabled:
+            batch = self._sources(full_scan=True)
             return SchedulerRunReport(
                 plan=plan,
-                health=self._health_from_sources(self._sources(), emit_actions=False),
+                health=self._health_from_sources(
+                    batch.sources,
+                    source_total=batch.total,
+                    truncated=batch.truncated,
+                    emit_actions=False,
+                ),
             )
         selected, deferred = self._select(plan.entries)
         results: list[CaptureRunResult] = []
