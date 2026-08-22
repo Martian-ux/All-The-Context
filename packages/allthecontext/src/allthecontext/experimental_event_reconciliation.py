@@ -217,19 +217,19 @@ def _size(value: object) -> int | None:
 def _retention(value: object) -> RetentionPolicy:
     if type(value) is not RetentionPolicy:
         _fail(ReconciliationErrorCode.INVALID_RETENTION)
-    policy = cast(RetentionPolicy, value)
+    policy = value
     if type(policy.retention_class) is not RetentionClass:
         _fail(ReconciliationErrorCode.INVALID_RETENTION)
     expires = _timestamp(policy.expires_at)
     if policy.retention_class is RetentionClass.EXPLICIT_EXPIRY and expires is None:
         _fail(ReconciliationErrorCode.INVALID_RETENTION)
-    return cast(Any, RetentionPolicy)(policy.retention_class, expires)
+    return RetentionPolicy(policy.retention_class, expires)
 
 
 def _authorization(value: object) -> AuthorizationApplicability:
     if type(value) is not AuthorizationApplicability:
         _fail(ReconciliationErrorCode.INVALID_FIELD)
-    auth = cast(AuthorizationApplicability, value)
+    auth = value
     labels = (
         auth.allowed_principals,
         auth.allowed_scopes,
@@ -250,7 +250,7 @@ def _authorization(value: object) -> AuthorizationApplicability:
         allowed_scopes and allowed_scopes & denied_scopes
     ):
         _fail(ReconciliationErrorCode.INVALID_FIELD)
-    return cast(Any, AuthorizationApplicability)(*labels)
+    return AuthorizationApplicability(*labels)
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,7 +565,7 @@ _PAYLOAD_TYPES = {
 def _payload_reference(value: object, expected: set[str]) -> PayloadReference:
     if type(value) is not PayloadReference:
         _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
-    reference = cast(PayloadReference, value)
+    reference = value
     try:
         _reference(reference.reference)
         if (
@@ -608,7 +608,7 @@ def _validate_lifecycle(
 ) -> tuple[ClientLifecycleEnvelope, datetime | None, PayloadReference | None]:
     if type(value) is not ClientLifecycleEnvelope:
         _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    envelope = cast(ClientLifecycleEnvelope, value)
+    envelope = value
     if type(envelope.hook) is not str or envelope.hook not in ALL_LIFECYCLE_HOOKS:
         _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
     if type(envelope.payload) is not _PAYLOAD_TYPES[envelope.hook]:
@@ -648,7 +648,7 @@ def _validate_lifecycle(
 def _capture_metadata(value: object) -> tuple[CaptureEvent, str, str, int]:
     if type(value) is not CaptureEvent:
         _fail(ReconciliationErrorCode.INVALID_CAPTURE_EVENT)
-    capture = cast(CaptureEvent, value)
+    capture = value
     for item in (capture.provider_event_id, capture.provider_item_id, capture.order_key):
         _reference(item)
     if type(capture.operation) is not str or capture.operation not in {"upsert", "delete"}:
