@@ -2,11 +2,11 @@
 
 ## Current milestone
 
-As of 2026-08-22 UTC, this document describes the local integration baseline
-only: Import, Memory Truth, Retrieval, and the Context UI are composed on the
-local `codex/truth-foundations-overnight` checkout. It does not assert release
-publication, hosted CI results, exact artifact/client/provider acceptance, or
-inspection of live/private data.
+As of 2026-08-22 UTC, protected main contains the merged Import Truth, Memory
+Truth, Retrieval, Context UI, and provider-neutral Continuous Capture
+foundations. The separately published immutable `0.1.0-beta.6` remains the
+current downloadable release. Development evidence after that release does not
+become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
 The supported posture is Windows and supported Linux source/package work; the
@@ -251,6 +251,20 @@ alters it. Its exact release identity is ID `374723649`, source
 attested assets. Occupied beta.1 through beta.5 draft/candidate identities
 remain historical and are not rebound or reused.
 
+## Zero-friction execution frontier (2026-08-22)
+
+The accepted post-V1 plan now starts from the merged capture ledger instead of
+proposing a parallel connector or event substrate. The next evidence sequence is
+contract reconciliation, a disposable zero-dashboard harness, then one
+explicit-root local Git/workspace connector plus a controlled lifecycle-aware
+reference host. Stable project identity and deterministic Project Context
+Capsules precede graph shadow evaluation.
+
+This is planning state only. It adds no provider, scheduler, background capture,
+client lifecycle support, graph, stable SDK, or release claim. Implementation
+packets use sanitized synthetic fixtures and disposable Core state; private data
+and publication actions remain outside their boundary.
+
 ### 2026-08-22 Memory Truth foundation
 
 Core now has an additive canonical Memory Truth projection for authorized
@@ -400,8 +414,9 @@ capability-qualified integration model. It preserves Core authority, treats
 connected content as inert data, reuses the existing observation/current-record
 and Retrieval V3 boundaries, and requires correction, retention, deletion, and
 purge closure across derived state. This direction does not expand
-`0.1.0-beta.6`, grant acceptance credit, or permit `ZF-*` implementation issues
-before beta publication and tracker reconciliation.
+`0.1.0-beta.6` or grant acceptance credit. Beta publication and tracker
+reconciliation are now complete, so `ZF-*` work may begin under its own review
+and evidence boundaries.
 
 V1 was simplified on 2026-07-22: Core is the only user-facing service. Hosted
 Edge, third-party runtime deployment, offline mobile replicas, and provider
