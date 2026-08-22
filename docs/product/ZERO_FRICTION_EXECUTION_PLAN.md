@@ -125,6 +125,8 @@ post-V1 product claims into the release.
   claim;
 - PR #73 merged the Import Truth, Memory Truth, Retrieval, Context UI, and
   provider-neutral Continuous Capture foundations;
+- PR #76 moved ordinary MCP transport to SDK v2 and first-party HTTP transport
+  to HTTPX2 without changing MCP's L0 lifecycle-capability classification;
 - migration 015 owns capture sources, checkpoints, staged events, source-item
   lineage, foreground runs, leases, retry, and idempotent replay; and
 - successor-beta migration, updater, recovery, compatibility, and release work
