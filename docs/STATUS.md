@@ -15,6 +15,28 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## Offline product-correctness maintenance (2026-08-22)
+
+A bounded synthetic-data pass closed four integration defects without changing
+release state or provider availability:
+
+- ZIP import now treats Unicode compatibility-equivalent, case-insensitive
+  member names as one logical path. The first member remains deterministic and
+  later equivalents close as duplicates instead of being imported twice.
+- Continuous Capture accepts only signed-64-bit generation, page-order, and
+  payload integers. Unexpected local runtime/storage failures now close the
+  durable run as `failed`, degrade the source with the content-free
+  `capture_failed` code, and do not leave a running job behind.
+- Context-search `limit` and `offset` require strict bounded integers; JSON
+  booleans are no longer coerced into pagination values.
+- Direct record/truth lookup and registered-client authentication/management
+  are scoped to Core's authoritative vault. Synthetic rows assigned to another
+  vault are not returned or granted authority.
+
+Focused regressions use temporary databases and in-memory ZIP fixtures only.
+No network/provider access, private data, full pytest matrix, hosted checks,
+release action, publication, or macOS work is included or claimed.
+
 ## Adversarial boundary sweep (2026-08-22)
 
 A focused post-integration sweep reproduced and closed four boundary defects:

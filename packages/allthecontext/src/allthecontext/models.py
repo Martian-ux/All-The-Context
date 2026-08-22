@@ -384,8 +384,8 @@ class SearchRequest(StrictModel):
     source_ids: list[str] = Field(default_factory=list, max_length=64)
     as_of: str | None = Field(default=None, max_length=100)
     current_project: str | None = Field(default=None, max_length=512)
-    limit: int = Field(default=20, ge=1, le=100)
-    offset: int = Field(default=0, ge=0, le=100_000)
+    limit: StrictInt = Field(default=20, ge=1, le=100)
+    offset: StrictInt = Field(default=0, ge=0, le=100_000)
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
     @field_validator("as_of")

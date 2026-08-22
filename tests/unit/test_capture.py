@@ -754,6 +754,56 @@ def test_capture_contract_rejects_implicit_identifier_and_integer_coercions() ->
         BackoffPolicy(base_seconds=True)  # type: ignore[arg-type]
 
 
+def test_capture_contract_rejects_out_of_range_integers_before_sqlite_state() -> None:
+    with pytest.raises(CaptureError, match="capture_page_malformed"):
+        CapturePage(generation=1 << 63)
+    with pytest.raises(CaptureError, match="capture_page_malformed"):
+        CaptureEvent(
+            provider_event_id="event",
+            provider_item_id="item",
+            order_key="1",
+            generation=1 << 63,
+        )
+    oversized_payload = CaptureEvent(
+        provider_event_id="event",
+        provider_item_id="item",
+        order_key="1",
+        payload={"count": 1 << 63},
+    )
+    with pytest.raises(CaptureError, match="capture_payload_rejected"):
+        oversized_payload.normalized()
+
+
+def test_unexpected_capture_failure_closes_run_and_degrades_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    coordinator.register_adapter(
+        "fake",
+        DeterministicFakeAdapter(
+            [CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]
+        ),
+    )
+
+    def fail_stage(*_args: Any, **_kwargs: Any) -> Any:
+        raise OverflowError("synthetic SQLite integer overflow")
+
+    monkeypatch.setattr(coordinator.ledger, "stage_event", fail_stage)
+    result = coordinator.run(source_id)
+
+    assert result.status == "failed"
+    assert result.error_code == "capture_failed"
+    assert coordinator.get_source(source_id).lifecycle_state == "degraded"
+    with coordinator.ledger.store.connect() as connection:
+        run = connection.execute(
+            "SELECT state,error_code FROM capture_runs WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert run is not None and tuple(run) == ("failed", "capture_failed")
+
+
 def test_sink_cannot_redirect_first_event_to_noncanonical_lineage(tmp_path: Path) -> None:
     class MisdirectedSink:
         def apply(self, event: Any, **kwargs: Any) -> CaptureApplicationReceipt:

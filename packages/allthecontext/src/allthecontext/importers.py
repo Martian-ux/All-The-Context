@@ -1605,7 +1605,11 @@ def parse_zip_bundle(
                     )
                     continue
                 builder.note_file(safe_name)
-                folded = safe_name.casefold()
+                # ZIP member names are logical identifiers even though members
+                # are never extracted. Collapse compatibility-equivalent Unicode
+                # spellings as well as case so one cross-platform logical path
+                # cannot be interpreted twice with conflicting payloads.
+                folded = unicodedata.normalize("NFKC", safe_name).casefold()
                 duplicate = folded in seen_names
                 if member.file_size > max_member_uncompressed_bytes:
                     unsupported_entries += 1
@@ -1639,7 +1643,7 @@ def parse_zip_bundle(
                     close_archive_member(member_index, "duplicate")
                     _append_warning(
                         warnings,
-                        f"{safe_name}: case-insensitive duplicate entry skipped",
+                        f"{safe_name}: Unicode/case-insensitive duplicate entry skipped",
                     )
                     continue
                 seen_names.add(folded)

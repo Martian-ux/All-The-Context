@@ -111,6 +111,50 @@ def test_coverage_report_complete_rejects_incomplete_item_counts(reason: str) ->
     assert sum(partial.closed_coverage.values()) == 2
 
 
+def test_record_lookup_is_scoped_to_the_authoritative_vault(core: CoreService) -> None:
+    candidate = core.store.add_candidate(
+        CandidateInput(kind="fact", content="Synthetic foreign-vault record")
+    )
+    record = core.store.approve_candidate(candidate.id)
+    with core.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vaults(id,name,display_timezone,created_at) VALUES(?,?,?,?)",
+            ("foreign-vault", "Foreign", "UTC", "9999-01-01T00:00:00Z"),
+        )
+        connection.execute(
+            "UPDATE context_records SET vault_id=? WHERE id=?",
+            ("foreign-vault", record.id),
+        )
+
+    assert core.retrieval.get(record.id) is None
+    with pytest.raises(NotFoundError, match="context record not found"):
+        core.store.get_memory_truth(record.id)
+
+
+def test_registered_client_lookup_is_scoped_to_the_authoritative_vault(
+    core: CoreService,
+) -> None:
+    principal, token = core.store.create_client(
+        ClientCreate(name="synthetic-foreign-reader", scopes=["context:read"])
+    )
+    with core.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vaults(id,name,display_timezone,created_at) VALUES(?,?,?,?)",
+            ("foreign-vault", "Foreign", "UTC", "9999-01-01T00:00:00Z"),
+        )
+        connection.execute(
+            "UPDATE client_registrations SET vault_id=? WHERE id=?",
+            ("foreign-vault", principal.id),
+        )
+
+    assert core.store.authenticate(token) is None
+    assert core.store.authenticate_import_operation_observer(token, "missing") is None
+    assert core.store.client_count() == 0
+    assert core.store.list_clients() == []
+    with pytest.raises(NotFoundError, match="client not found"):
+        core.store.revoke_client(principal.id)
+
+
 def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> None:
     candidate = core.ingestion.propose(
         CandidateInput(

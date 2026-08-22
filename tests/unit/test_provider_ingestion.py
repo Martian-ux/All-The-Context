@@ -1649,6 +1649,24 @@ def test_case_insensitive_zip_member_collisions_are_deterministic() -> None:
     assert parsed.complete is False
 
 
+def test_unicode_equivalent_zip_member_collisions_are_deterministic() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "caf\u00e9.txt": "Goal: Keep the first canonical filename",
+                "cafe\u0301.txt": "Goal: Do not import the equivalent filename twice",
+            }
+        )
+    )
+
+    assert [item.content for item in parsed.candidates] == [
+        "Keep the first canonical filename"
+    ]
+    assert parsed.closed_coverage["duplicate"] == 1
+    assert any("Unicode/case-insensitive duplicate" in warning for warning in parsed.warnings)
+    assert parsed.complete is False
+
+
 def test_overlong_zip_names_fail_closed_instead_of_colliding_after_truncation() -> None:
     shared_suffix = "x" * 990 + ".txt"
     parsed = parse_zip_bundle(

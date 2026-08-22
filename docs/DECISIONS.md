@@ -3267,3 +3267,29 @@ Experimental retrieval diagnostics accept only finite bounded primitives, and
 malformed/nonfinite upstream lexical scores become a neutral score before local
 usefulness reranking. These rules do not add a provider connector, change Core
 authority, inspect private data, publish a release, or add macOS support.
+
+## ADR-121: Cross-platform identities and local authority fail closed
+
+**Status:** accepted locally on 2026-08-22 through focused synthetic
+regressions; this is not release or provider acceptance.
+
+ZIP member identity is normalized with Unicode NFKC plus case folding before
+duplicate selection. Members are still read in archive order and never
+extracted, so the first logical path is deterministic and a compatibility-
+equivalent later path closes as a duplicate. Raw-source preservation and
+bounded diagnostic names are unchanged.
+
+Continuous Capture counters and metadata integers are limited to SQLite's
+signed-64-bit range before durable writes. If an unexpected local runtime or
+storage exception still occurs after a run begins, the coordinator records a
+content-free `capture_failed` terminal result through the ordinary retry path;
+lease loss remains governed by the existing stale-result behavior. Context
+pagination similarly uses strict bounded integer fields so booleans cannot
+become offsets or page sizes through model coercion.
+
+Core's existing single-authoritative-vault selection now participates in direct
+record/truth lookup and registered-client lookup. Record IDs and client tokens
+are not treated as sufficient authority across vault rows. Client counts,
+listing, revocation, ordinary authentication, and the import-operation observer
+all use the same authoritative-vault boundary. This decision changes no schema,
+network behavior, provider support, release state, or macOS posture.

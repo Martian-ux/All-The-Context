@@ -60,6 +60,7 @@ MAX_RUN_PAGES = 100
 MAX_RUN_EVENTS = 10_000
 MAX_ERROR_CHARS = 96
 LEASE_SECONDS = 60
+MAX_CAPTURE_INTEGER = (1 << 63) - 1
 
 CAPTURE_ERROR_CODES = frozenset(
     {
@@ -156,7 +157,9 @@ def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) ->
         _bounded_text(key, maximum=MAX_PAYLOAD_STRING_CHARS, code="capture_payload_rejected")
     if value is None or isinstance(value, bool):
         return value
-    if isinstance(value, int):
+    if type(value) is int:
+        if not -MAX_CAPTURE_INTEGER <= value <= MAX_CAPTURE_INTEGER:
+            raise CaptureError("capture_payload_rejected")
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -257,7 +260,7 @@ class CaptureEvent:
             not isinstance(self.operation, str)
             or self.operation not in {"upsert", "delete"}
             or type(self.generation) is not int
-            or self.generation < 0
+            or not 0 <= self.generation <= MAX_CAPTURE_INTEGER
         ):
             raise CaptureError("capture_page_malformed")
         if not isinstance(self.payload, Mapping):
@@ -283,8 +286,8 @@ class CapturePage:
         if (
             type(self.generation) is not int
             or type(self.page_order) is not int
-            or self.generation < 0
-            or self.page_order < 0
+            or not 0 <= self.generation <= MAX_CAPTURE_INTEGER
+            or not 0 <= self.page_order <= MAX_CAPTURE_INTEGER
         ):
             raise CaptureError("capture_page_malformed")
         if len(self.events) > MAX_PAGE_EVENTS:
@@ -1279,6 +1282,34 @@ class CaptureCoordinator:
                         handle=handle,
                         status="failed",
                         error_code=last_error,
+                        pages=pages,
+                        events=events,
+                        applied_events=applied,
+                        duplicate_events=duplicates,
+                        failures=failures,
+                        attempts=attempt,
+                        backoff=self.backoff,
+                    )
+                except CaptureError as ownership_error:
+                    if ownership_error.code != "capture_lease_expired":
+                        raise
+                    return self.ledger.stale_result(
+                        handle,
+                        pages=pages,
+                        events=events,
+                        applied_events=applied,
+                        duplicate_events=duplicates,
+                        failures=failures,
+                    )
+            except Exception:
+                # Keep an unexpected local storage/runtime failure content-free
+                # while closing the durable run instead of leaving it running.
+                failures += 1
+                try:
+                    return self.ledger.finish_run(
+                        handle=handle,
+                        status="failed",
+                        error_code="capture_failed",
                         pages=pages,
                         events=events,
                         applied_events=applied,

@@ -2982,9 +2982,13 @@ class CoreStore:
         ), token
 
     def client_count(self) -> int:
+        vault_id = self.vault_id()
         with self.connect() as connection:
             return int(
-                connection.execute("SELECT COUNT(*) FROM client_registrations").fetchone()[0]
+                connection.execute(
+                    "SELECT COUNT(*) FROM client_registrations WHERE vault_id=?",
+                    (vault_id,),
+                ).fetchone()[0]
             )
 
     def ensure_local_development_principal(self) -> ClientPrincipal:
@@ -3022,10 +3026,12 @@ class CoreStore:
             )
 
     def list_clients(self) -> list[dict[str, Any]]:
+        vault_id = self.vault_id()
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT id,name,scopes_json,auto_approve,revoked_at,created_at,last_used_at "
-                "FROM client_registrations ORDER BY created_at"
+                "FROM client_registrations WHERE vault_id=? ORDER BY created_at",
+                (vault_id,),
             ).fetchall()
         return [
             {
@@ -3128,9 +3134,11 @@ class CoreStore:
         ]
 
     def authenticate(self, token: str) -> ClientPrincipal | None:
+        vault_id = self.vault_id()
         with self.transaction() as connection:
             rows = connection.execute(
-                "SELECT * FROM client_registrations WHERE revoked_at IS NULL"
+                "SELECT * FROM client_registrations WHERE vault_id=? AND revoked_at IS NULL",
+                (vault_id,),
             ).fetchall()
             for row in rows:
                 if verify_token(token, str(row["token_hash"])):
@@ -3181,7 +3189,9 @@ class CoreStore:
             if cached is not None:
                 del self._operation_observer_local.credential
             rows = connection.execute(
-                "SELECT * FROM client_registrations WHERE revoked_at IS NULL"
+                "SELECT * FROM client_registrations "
+                "WHERE vault_id=(SELECT id FROM vaults ORDER BY created_at LIMIT 1) "
+                "AND revoked_at IS NULL"
             ).fetchall()
             registration = next(
                 (row for row in rows if verify_token(token, str(row["token_hash"]))),
@@ -3206,6 +3216,7 @@ class CoreStore:
                 "FROM client_registrations AS registration "
                 "LEFT JOIN import_operations AS operation ON operation.id=? "
                 "WHERE registration.id=? AND registration.token_hash=? "
+                "AND registration.vault_id=(SELECT id FROM vaults ORDER BY created_at LIMIT 1) "
                 "AND registration.revoked_at IS NULL",
                 (operation_id, cached[1], cached[2]),
             ).fetchone()
@@ -3268,10 +3279,12 @@ class CoreStore:
             return
 
     def revoke_client(self, client_id: str) -> None:
+        vault_id = self.vault_id()
         with self.transaction() as connection:
             result = connection.execute(
-                "UPDATE client_registrations SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
-                (utc_now(), client_id),
+                "UPDATE client_registrations SET revoked_at=? "
+                "WHERE id=? AND vault_id=? AND revoked_at IS NULL",
+                (utc_now(), client_id, vault_id),
             )
             if result.rowcount != 1:
                 raise NotFoundError("client not found or already revoked")
@@ -5318,11 +5331,12 @@ class CoreStore:
             return self._candidate_out(updated)
 
     def get_record(self, record_id: str, *, include_deleted: bool = False) -> ContextRecordOut:
-        query = "SELECT * FROM context_records WHERE id=?"
+        vault_id = self.vault_id()
+        query = "SELECT * FROM context_records WHERE id=? AND vault_id=?"
         if not include_deleted:
             query += " AND deleted_at IS NULL"
         with self.connect() as connection:
-            row = connection.execute(query, (record_id,)).fetchone()
+            row = connection.execute(query, (record_id, vault_id)).fetchone()
         if row is None:
             raise NotFoundError("context record not found")
         return self._record_out(row)
@@ -6674,9 +6688,11 @@ class CoreStore:
         include_deleted: bool = True,
         principal: ClientPrincipal | None = None,
     ) -> MemoryTruthRecordOut:
+        vault_id = self.vault_id()
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM context_records WHERE id=?", (record_id,)
+                "SELECT * FROM context_records WHERE id=? AND vault_id=?",
+                (record_id, vault_id),
             ).fetchone()
             if row is None or (not include_deleted and row["deleted_at"] is not None):
                 raise NotFoundError("context record not found")

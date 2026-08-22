@@ -6,6 +6,19 @@ does not claim hosted CI, release publication, exact artifact/client/provider
 acceptance, or live/private data inspection. Earlier evidence is retained only
 as historical context and does not become evidence for this checkout.
 
+### 2026-08-22 offline product-correctness maintenance
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Unicode-equivalent ZIP paths resolve to one logical member | NFKC/casefold identity in `parse_zip_bundle`; `test_unicode_equivalent_zip_member_collisions_are_deterministic` | Implemented locally: archive order selects the first member and later compatibility-equivalent names close as duplicates with bounded diagnostics |
+| Capture integers fit durable storage and begun runs terminate on local failure | `MAX_CAPTURE_INTEGER`; `CaptureCoordinator.run`; focused capture range/recovery regressions | Implemented locally: generation, page order, and payload integers are signed-64-bit bounded before storage, and an unexpected local exception produces a content-free failed run instead of a nonterminal job |
+| Pagination integers are strict | `SearchRequest.limit`; `SearchRequest.offset`; Core API cursor regression | Implemented locally: bounded integers remain accepted and JSON booleans receive HTTP 422 instead of becoming `1` or `0` |
+| Direct record and registered-client lookup remain vault-local | `CoreStore.get_record`; `get_memory_truth`; client authentication/observer/list/count/revoke queries; focused temporary-database regressions | Implemented locally: synthetic rows assigned to a second vault are absent from authoritative record reads and cannot authenticate or appear in registered-client administration |
+
+Evidence is limited to synthetic in-memory archives and temporary local
+databases. No network/provider access, private data, full pytest matrix, hosted
+checks, release action, publication, or macOS work is claimed.
+
 ### 2026-08-22 adversarial boundary sweep
 
 | Requirement | Implementation/evidence | Status |
