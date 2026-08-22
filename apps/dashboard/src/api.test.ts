@@ -75,6 +75,39 @@ describe("desktop browser session", () => {
     await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345, observations: 8, current_context: 3 });
   });
 
+  it("preserves the record provenance contract without relabeling source fields", async () => {
+    window.sessionStorage.setItem("atc.browserSession", "browser-session");
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      total: 1,
+      items: [{
+        id: "record-1",
+        kind: "preference",
+        content: "Keep explanations concise",
+        scopes: ["personal"],
+        source_id: "source-archive-1",
+        source_reference: "conversation/42/message/7",
+        source_service: "archive",
+        evidence: "The user asked for concise explanations.",
+        confidence: 0.94,
+        sensitivity: "normal",
+        availability: "core_available",
+        allowed_clients: [],
+        version: 2,
+        content_hash: "hash",
+        created_at: "2026-07-21T00:00:00Z",
+        updated_at: "2026-07-22T00:00:00Z",
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.searchContext("")).resolves.toMatchObject({
+      items: [{
+        source_id: "source-archive-1",
+        source_reference: "conversation/42/message/7",
+        evidence: "The user asked for concise explanations.",
+      }],
+    });
+  });
+
   it("uses the correction, soft-delete, and historical restore contracts", async () => {
     window.sessionStorage.setItem("atc.browserSession", "browser-session");
     const record = {

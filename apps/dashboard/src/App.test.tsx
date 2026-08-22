@@ -21,6 +21,8 @@ function contextRecord(id = "record-1", content = "Prefers concise technical exp
     scopes: ["personal"],
     source_service: "archive",
     source_id: "source-1",
+    source_reference: "conversation/42",
+    evidence: "The user prefers concise technical explanations.",
     confidence: 0.94,
     sensitivity: "normal",
     availability: "core_available",
@@ -168,6 +170,46 @@ describe("dashboard", () => {
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
   });
 
+  it("shows stored provenance fields with accurate labels and safe text rendering", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    expect(await screen.findByText("Source ID")).toBeInTheDocument();
+    expect(screen.getByText("source-1")).toBeInTheDocument();
+    expect(screen.getByText("Source reference")).toBeInTheDocument();
+    expect(screen.getByText("conversation/42")).toBeInTheDocument();
+    expect(screen.getByText("Stored evidence")).toBeInTheDocument();
+    expect(screen.getByText("The user prefers concise technical explanations.")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty inspector compact on mobile until a record is selected", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(true)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    expect(document.querySelector(".record-detail--empty")).not.toBeNull();
+    expect(document.querySelector(".record-detail--selected")).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    expect(document.querySelector(".record-detail--selected")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: /Prefers concise technical explanations/i })).toBeInTheDocument();
+  });
+
   it("shows the API total and loads additional context pages", async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
@@ -229,27 +271,55 @@ describe("dashboard", () => {
   });
 
   it.each([
-    { label: "kind", control: "Filter by kind", bodyKey: "kinds", value: "goal" },
-    { label: "availability", control: "Filter by availability", bodyKey: "availability", value: "core_available" },
-    { label: "sensitivity", control: "Filter by sensitivity", bodyKey: "sensitivity", value: "sensitive" },
-    { label: "minimum confidence", control: "High confidence", bodyKey: "min_confidence", value: undefined },
-  ])("starts pagination over when the $label filter changes", async ({ label, control, bodyKey, value }) => {
+    { label: "kind", control: "Filter by kind", value: "goal", bodyKey: "kinds" },
+    { label: "availability", control: "Filter by availability", value: "core_available", bodyKey: "availability" },
+    { label: "sensitivity", control: "Filter by sensitivity", value: "sensitive", bodyKey: "sensitivity" },
+    { label: "high confidence", control: "High confidence", value: undefined, bodyKey: "min_confidence" },
+  ])("keeps the $label edit pending until Search is submitted", async ({ control, value, bodyKey }) => {
     const searchBodies: Array<Record<string, unknown>> = [];
-    const filterMatches = (body: Record<string, unknown>): boolean => {
-      if (bodyKey === "min_confidence") return body.min_confidence === 0.85;
-      const values = body[bodyKey];
-      return Array.isArray(values) && values.includes(value);
-    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        searchBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ total: 0, items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Search context" });
+    const field = screen.getByLabelText(control);
+    if (value === undefined) fireEvent.click(field);
+    else fireEvent.change(field, { target: { value } });
+
+    expect(searchBodies).toHaveLength(1);
+    expect(screen.getByText("Search criteria not applied")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    await waitFor(() => {
+      expect(searchBodies.some((body) => bodyKey === "min_confidence"
+        ? body.min_confidence === 0.85
+        : Array.isArray(body[bodyKey]) && body[bodyKey].includes(value))).toBe(true);
+    });
+    expect(screen.getAllByText("Search applied").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Search criteria not applied")).not.toBeInTheDocument();
+  });
+
+  it("keeps an applied continuation cursor through dirty edits and restores it when edits revert", async () => {
+    const searchBodies: Array<Record<string, unknown>> = [];
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json(status());
       if (url.endsWith("/context/search")) {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         searchBodies.push(body);
-        if (body.cursor === "old-cursor") return json({ total: 99, next_cursor: null, items: [contextRecord("mixed", "Mixed stale page")] });
-        if (filterMatches(body) && body.cursor === undefined) return json({ total: 2, next_cursor: "new-cursor", items: [contextRecord("filtered-1", `${label} filtered first page`)] });
-        if (filterMatches(body) && body.cursor === "new-cursor") return json({ total: 3, next_cursor: null, items: [contextRecord("filtered-2", `${label} filtered second page`)] });
-        return json({ total: 2, next_cursor: "old-cursor", items: [contextRecord("base-1", "Base first page")] });
+        if (body.cursor === "base-cursor") return json({ total: 2, next_cursor: null, items: [contextRecord("base-2", "Reverted second page")] });
+        if (body.query === "applied") return json({ total: 2, next_cursor: "applied-cursor", items: [contextRecord("applied-1", "Applied first page")] });
+        return json({ total: 2, next_cursor: "base-cursor", items: [contextRecord("base-1", "Base first page")] });
       }
       return json({ items: [] });
     });
@@ -257,15 +327,136 @@ describe("dashboard", () => {
 
     render(<App />);
     expect(await screen.findByText("Base first page")).toBeInTheDocument();
-    if (value === undefined) fireEvent.click(screen.getByLabelText(control));
-    else fireEvent.change(screen.getByLabelText(control), { target: { value } });
+    const input = screen.getByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "applied" } });
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
-    expect(await screen.findByText(`${label} filtered first page`)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByText(`${label} filtered second page`)).toBeInTheDocument();
-    expect(searchBodies.some((body) => body.cursor === "old-cursor")).toBe(false);
-    expect(searchBodies.find((body) => body.cursor === "new-cursor")).toMatchObject({ cursor: "new-cursor" });
+    expect(await screen.findByText("Reverted second page")).toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "base-cursor")).toBe(true);
+    expect(searchBodies.some((body) => body.cursor === "applied-cursor")).toBe(false);
+  });
+
+  it("refreshes the applied filtered window after an availability mutation", async () => {
+    let availability: "core_available" | "local_only" = "core_available";
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        const coreFilter = Array.isArray(body.availability) && body.availability.includes("core_available");
+        if (coreFilter && availability === "local_only") return json({ total: 0, next_cursor: null, items: [] });
+        return json({ total: 1, next_cursor: null, items: [{ ...contextRecord(), availability }] });
+      }
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        availability = "local_only";
+        return json({ ...contextRecord(), availability });
+      }
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const filter = await screen.findByLabelText("Filter by availability");
+    fireEvent.change(filter, { target: { value: "core_available" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    fireEvent.change(screen.getByLabelText("Availability"), { target: { value: "local_only" } });
+
+    expect(await screen.findByText("0 current memories")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /preference memory/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Evidence & provenance")).not.toBeInTheDocument();
+    expect(searchBodies.filter((body) => Array.isArray(body.availability) && body.availability.includes("core_available"))).toHaveLength(2);
+  });
+
+  it("refreshes the applied query window after a history restore that no longer matches", async () => {
+    let restored = false;
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.query === "concise" && restored) return json({ total: 0, next_cursor: null, items: [] });
+        if (body.query === "concise") return json({ total: 1, next_cursor: null, items: [contextRecord("record-1", "Prefers concise technical explanations.", 2)] });
+        return json({ total: 0, next_cursor: null, items: [] });
+      }
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [
+        { version_id: "v1", record_id: "record-1", version: 1, snapshot: contextRecord(), reason: "Memory created", created_at: "2026-07-21T00:00:00Z" },
+      ] });
+      if (url.endsWith("/admin/records/record-1/restore")) {
+        restored = true;
+        return json({ ...contextRecord(), content: "Uses a different phrase now", version: 2 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const input = await screen.findByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "concise" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore version 1" }));
+
+    expect(await screen.findByText("0 current memories")).toBeInTheDocument();
+    expect(screen.queryByText("Uses a different phrase now")).not.toBeInTheDocument();
+    expect(searchBodies.filter((body) => body.query === "concise")).toHaveLength(2);
+  });
+
+  it("distinguishes history loading failure from an empty history response", async () => {
+    let historyAttempt = 0;
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) {
+        historyAttempt += 1;
+        if (historyAttempt === 1) return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+        return json({ items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    expect(await screen.findByText("History unavailable. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("0 versions")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("History unavailable. Try again.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("No versions")).toBeInTheDocument();
+    expect(await screen.findByText("No version history is available for this record.")).toBeInTheDocument();
+    expect(screen.queryByText("No version history was returned")).not.toBeInTheDocument();
+  });
+
+  it("gives the selected inspector a keyboard-focusable scroll region on desktop", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(false)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(inspector).toHaveAttribute("tabindex", "0");
+    expect(inspector).toHaveTextContent("Availability");
+    expect(inspector).toHaveTextContent("Correct");
+    expect(inspector).toHaveTextContent("Remove");
+    expect(inspector).toHaveTextContent("History");
   });
 
   it("navigates to source import", async () => {
@@ -751,14 +942,19 @@ describe("dashboard", () => {
   });
 
   it("removes a memory from current context through the soft-delete contract", async () => {
+    let deleted = false;
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json(status());
-      if (url.endsWith("/context/search")) return json({ total: 2, items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")] });
+      if (url.endsWith("/context/search")) return deleted
+        ? json({ total: 1, items: [contextRecord("record-2", "Works in Eastern time.")] })
+        : json({ total: 2, items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")] });
       if (url.endsWith("/admin/records/record-1/delete") && init?.method === "POST") {
+        deleted = true;
         return json({ record_id: "record-1", deleted_version: 2, reason: "Removed by user", content_hash: "deleted-hash", deleted_at: "2026-07-23T00:00:00Z" });
       }
       if (url.endsWith("/admin/records/record-1/restore") && init?.method === "POST") {
+        deleted = false;
         return json(contextRecord("record-1", "Prefers concise technical explanations.", 3));
       }
       return json({ items: [] });

@@ -22,7 +22,7 @@ import type {
 const API_ROOT = (import.meta.env.VITE_ATC_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/v1";
 const BROWSER_SESSION_KEY = "atc.browserSession";
 
-interface RecordWire extends Omit<ContextRecord, "scope" | "source_record_id" | "valid_until"> {
+interface RecordWire extends Omit<ContextRecord, "scope" | "valid_until"> {
   scopes: string[];
   source_id?: string | null;
   expires_at?: string | null;
@@ -69,7 +69,6 @@ function recordFromWire(item: RecordWire): ContextRecord {
   return {
     ...item,
     scope: item.scopes.join(", ") || "general",
-    source_record_id: item.source_id,
     valid_until: item.expires_at,
   };
 }
