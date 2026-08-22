@@ -52,11 +52,14 @@ class IngestionService:
         self,
         request: FinishIngestionRequest,
         principal: ClientPrincipal | None = None,
+        *,
+        publish: bool = True,
     ) -> dict[str, Any]:
         return self.store.finish_ingestion(
             request.session_id,
             request.coverage,
             client=principal,
+            publish=publish,
         )
 
     def propose(

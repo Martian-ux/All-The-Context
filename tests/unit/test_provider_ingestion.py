@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from allthecontext import importers as importers_module
 from allthecontext.core.service import CoreService
+from allthecontext.import_boundary import ImportCancelledError, ImportCancelRegistry
 from allthecontext.importers import (
     ArchiveImportService,
     parse_archive_path,
@@ -15,7 +17,7 @@ from allthecontext.importers import (
     parse_text,
     parse_zip_bundle,
 )
-from allthecontext.models import SubmitBatchRequest
+from allthecontext.models import Availability, CandidateInput, SubmitBatchRequest
 from allthecontext.storage import InvalidStateError, NotFoundError
 
 
@@ -763,15 +765,139 @@ def test_complete_source_rebuild_is_non_destructive(tmp_path: Path) -> None:
         content="Corrected fictional preference for local context.",
         reason="Corrected by user",
     )
+    local_only_record = store.add_candidate(
+        CandidateInput(
+            kind="local_annotation",
+            content="Keep this local annotation outside archive rebuild replacement.",
+            source_id=source_id,
+            source_service="local-core",
+            source_type="local_annotation",
+            explicit_user_statement=True,
+        )
+    )
+    assert local_only_record.record_id is not None
+    privacy_record = next(record_id for record_id in applied_ids if record_id != kept)
+    privacy_content = store.get_record(privacy_record).content
+    store.change_availability(privacy_record, Availability.LOCAL)
 
     rebuilt = service.reprocess_source(source_id, rebuild=True)
 
     assert rebuilt["rebuild"] is True
     assert rebuilt["withdrawn_record_ids"]
     assert kept not in rebuilt["withdrawn_record_ids"]
+    assert local_only_record.record_id not in rebuilt["withdrawn_record_ids"]
+    assert privacy_record not in rebuilt["withdrawn_record_ids"]
     assert store.get_source_content(source_id) == raw
     assert store.get_record(kept).content == "Corrected fictional preference for local context."
+    assert store.get_record(local_only_record.record_id).content == local_only_record.content
+    assert store.get_record(privacy_record).content == privacy_content
     for withdrawn_id in rebuilt["withdrawn_record_ids"]:
         with pytest.raises(NotFoundError):
             store.get_record(withdrawn_id)
         assert store.record_history(withdrawn_id)
+
+
+def test_rebuild_parse_failure_keeps_prior_current_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = CoreService.in_directory(tmp_path).store
+    service = ArchiveImportService(store)
+    first = service.import_bytes(
+        "chatgpt.zip", _zip({"conversations.json": json.dumps(_chatgpt_export())})
+    )
+    source_id = str(first["source"]["id"])
+    prior = {record_id: store.get_record(record_id).content for record_id in first["record_ids"]}
+    raw = store.get_source_content(source_id)
+
+    def fail_parse(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise InvalidStateError("synthetic rebuild parse failure")
+
+    monkeypatch.setattr(importers_module, "parse_archive_path", fail_parse)
+    with pytest.raises(InvalidStateError, match="synthetic rebuild parse failure"):
+        service.reprocess_source(source_id, rebuild=True)
+
+    assert store.get_source_content(source_id) == raw
+    assert all(
+        store.get_record(record_id).content == content
+        for record_id, content in prior.items()
+    )
+    sources, _ = store.list_sources()
+    assert sources[0]["import_status"] == "failed"
+    assert sources[0]["metadata"]["rebuild_in_progress"] is True
+
+
+def test_rebuild_ingestion_failure_rolls_back_withdrawal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = CoreService.in_directory(tmp_path).store
+    service = ArchiveImportService(store)
+    first = service.import_bytes(
+        "chatgpt.zip", _zip({"conversations.json": json.dumps(_chatgpt_export())})
+    )
+    source_id = str(first["source"]["id"])
+    prior_content = {
+        record_id: store.get_record(record_id).content for record_id in first["record_ids"]
+    }
+    prior_history = {
+        record_id: store.record_history(record_id) for record_id in first["record_ids"]
+    }
+
+    original_evaluate = store._evaluate_observation_tx
+    evaluations = 0
+
+    def fail_second_evaluation(connection: Any, observation_id: str, **kwargs: Any) -> Any:
+        nonlocal evaluations
+        evaluations += 1
+        if evaluations == 2:
+            raise RuntimeError("synthetic rebuild ingestion failure")
+        return original_evaluate(connection, observation_id, **kwargs)
+
+    monkeypatch.setattr(store, "_evaluate_observation_tx", fail_second_evaluation)
+    with pytest.raises(RuntimeError, match="synthetic rebuild ingestion failure"):
+        service.reprocess_source(source_id, rebuild=True)
+
+    assert evaluations == 2
+    for record_id, history in prior_history.items():
+        assert store.get_record(record_id).content == prior_content[record_id]
+        assert store.record_history(record_id) == history
+    sources, _ = store.list_sources()
+    assert sources[0]["import_status"] == "failed"
+    candidates, _ = store.list_candidates(status=None, source_id=source_id)
+    assert any(item.disposition.value == "staged" for item in candidates)
+
+    monkeypatch.setattr(store, "_evaluate_observation_tx", original_evaluate)
+    resumed = ArchiveImportService(store).reprocess_source(source_id)
+    assert resumed["rebuild"] is True
+    assert resumed["source"]["import_status"] == "complete"
+    assert set(resumed["withdrawn_record_ids"]) == set(first["record_ids"])
+
+
+def test_rebuild_cancellation_keeps_prior_current_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = ImportCancelRegistry()
+    store = CoreService.in_directory(tmp_path).store
+    service = ArchiveImportService(store, cancel_registry=registry)
+    first = service.import_bytes(
+        "chatgpt.zip", _zip({"conversations.json": json.dumps(_chatgpt_export())})
+    )
+    source_id = str(first["source"]["id"])
+    prior = {record_id: store.get_record(record_id).content for record_id in first["record_ids"]}
+    original_submit = service.ingestion.submit
+
+    def submit_then_cancel(request: SubmitBatchRequest) -> dict[str, Any]:
+        result = original_submit(request)
+        registry.request_cancel(source_id)
+        return result
+
+    monkeypatch.setattr(service.ingestion, "submit", submit_then_cancel)
+    with pytest.raises(ImportCancelledError):
+        service.reprocess_source(source_id, rebuild=True)
+
+    assert all(
+        store.get_record(record_id).content == content
+        for record_id, content in prior.items()
+    )
+    sources, _ = store.list_sources()
+    assert sources[0]["import_status"] == "cancelled"

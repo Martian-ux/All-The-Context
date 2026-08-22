@@ -2705,3 +2705,27 @@ Unparsed residuals keep `complete` false so provider coverage cannot report
 success after silently dropping malformed material. Known message-level
 attachment and role classifications remain governed by the existing
 excluded/skipped/unavailable rules.
+
+## ADR-101: Source rebuilds publish through a staged atomic cutover
+
+**Status:** accepted 2026-08-22.
+
+Complete-source rebuild is a replacement operation over the preserved raw blob,
+not a destructive pre-step. A rebuild first marks the source as resumably in
+progress, parses the Core-preserved bytes, and submits a parser-versioned
+archive session whose candidates remain staged after coverage is recorded. Only
+then does Core run one write transaction that withdraws eligible prior records
+and evaluates the staged replacement. A parser error, batch/ingestion error,
+cancellation, process interruption, or policy failure therefore leaves the
+prior current context unchanged; SQLite rollback covers a failure after the
+cutover transaction begins, and a committed staged session can be resumed
+idempotently if source-finalization is interrupted.
+
+The replacement set is deliberately narrow: current approved records must have
+Core origin `archive_import` and must not have a correction, user edit,
+availability/privacy change, or deletion. Direct/local-admin records that happen
+to retain the source ID are not automatic rebuild targets. Raw source bytes,
+candidate/session history, record versions, independently deleted records, and
+local-only policy outcomes remain preserved. This supersedes ADR-097's rebuild
+wording only; it does not change archive extraction eligibility or conflict
+resolution.

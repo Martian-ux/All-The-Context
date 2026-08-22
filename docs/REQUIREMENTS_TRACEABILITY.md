@@ -7,6 +7,19 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 source-rebuild atomicity correction
+
+The idempotent/resumable ingestion and full provider-history requirements now
+include staged complete-source rebuilds. A rebuild leaves prior current context
+untouched while parsing and submitting replacement candidates, then performs
+old-record eligibility checks and new policy publication in one Core/SQLite
+transaction. Focused synthetic regressions cover parser failure, injected
+ingestion/policy rollback, cancellation, corrected records, and local-authored
+records. Full Ruff and mypy checks pass, and the full Python suite passes 1,064
+tests with 4 host-limited symlink skips. The existing exact-candidate
+interruption and provider-export receipts remain separate release evidence
+requirements.
+
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
 | Frozen Python dependency audit | `pyproject.toml`; `uv.lock`; `scripts/dependency_audit.py`; ADR-091 | The dev-and-packaging export fails closed on newly published advisories. The 2026-08-21 response to PYSEC-2026-3721 / CVE-2026-13346 requires fixed `pip>=26.2,<27` while keeping pip outside runtime dependencies. Both hosted PR 66 matrices and CodeQL passed before merge at `088485d`; this source repair grants no beta acceptance credit |

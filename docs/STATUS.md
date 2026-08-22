@@ -79,6 +79,23 @@ publication record. GitHub release attestation verification passes for all 34
 assets. No occupied historical draft was retargeted, deleted, reused, signed,
 or published.
 
+### 2026-08-22 source-rebuild safety correction
+
+Complete-source rebuild now stages its parser-versioned candidates while the
+prior current context remains visible. Core publishes the replacement and
+withdraws eligible old records in one SQLite transaction; parser, ingestion,
+cancellation, interruption, and policy-evaluation failures leave the old
+current records and their history intact. Rebuilds resume through the existing
+idempotent session when source finalization is interrupted.
+
+Only current approved records with Core origin `archive_import` and no detected
+correction, user edit, availability/privacy change, or deletion are replacement
+targets. Direct/local-admin records that retain the source ID remain in place.
+Synthetic focused coverage passes for parse failure, injected policy-ingestion
+rollback, cancellation, corrected records, and local-authored records. Full
+Ruff passes; mypy reports no issues across 81 source files; and pytest passes
+1,064 tests with 4 Windows symlink-capability skips and 3 dependency warnings.
+
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
 `080d90669dd5936206c088ae0f4fe4cca24d327e`. PR 64 then landed the ADR-088

@@ -2014,25 +2014,117 @@ class CoreStore:
         """
 
         with self.transaction() as connection:
-            rows = connection.execute(
-                "SELECT id FROM context_records "
-                "WHERE source_id=? AND deleted_at IS NULL AND approval_status='approved' "
-                "ORDER BY id",
-                (source_id,),
-            ).fetchall()
-            withdrawn: list[str] = []
-            for row in rows:
-                record_id = str(row["id"])
-                if self._record_has_user_edit_tx(connection, record_id):
-                    continue
-                self._delete_record_tx(
+            withdrawn = self._withdraw_automatic_source_records_tx(
+                connection,
+                source_id,
+                reason=reason,
+                actor=actor,
+            )
+            if withdrawn:
+                self._recompute_integrity(connection)
+                self._audit(
                     connection,
-                    record_id,
-                    reason=reason,
-                    actor=actor,
-                    recompute_integrity=False,
+                    actor,
+                    "source_rebuild_withdrew_automatic_records",
+                    [source_id],
+                    metadata={"withdrawn_record_count": len(withdrawn)},
                 )
-                withdrawn.append(record_id)
+            return withdrawn
+
+    def _withdraw_automatic_source_records_tx(
+        self,
+        connection: sqlite3.Connection,
+        source_id: str,
+        *,
+        reason: str,
+        actor: str,
+    ) -> list[str]:
+        """Withdraw only current records produced by the archive importer.
+
+        The origin check is intentional: a direct/local-admin record can retain
+        an imported source reference, but it is not an automatic rebuild target.
+        User edits and privacy changes are checked again inside the same write
+        transaction so eligibility cannot go stale between staging and publish.
+        """
+
+        rows = connection.execute(
+            "SELECT id FROM context_records "
+            "WHERE source_id=? AND deleted_at IS NULL AND approval_status='approved' "
+            "AND observation_origin=? ORDER BY id",
+            (source_id, ObservationOrigin.ARCHIVE_IMPORT.value),
+        ).fetchall()
+        withdrawn: list[str] = []
+        for row in rows:
+            record_id = str(row["id"])
+            if self._record_has_user_edit_tx(connection, record_id):
+                continue
+            self._delete_record_tx(
+                connection,
+                record_id,
+                reason=reason,
+                actor=actor,
+                recompute_integrity=False,
+            )
+            withdrawn.append(record_id)
+        return withdrawn
+
+    def publish_source_rebuild(
+        self,
+        source_id: str,
+        session_id: str,
+        *,
+        actor: str = "local-core",
+    ) -> list[str]:
+        """Atomically replace one source's automatic archive records.
+
+        Candidates must already be in a finished archive session, but remain
+        staged until this transaction. If withdrawal or any policy evaluation
+        fails, SQLite rolls back both the old-record withdrawals and all new
+        decisions, leaving the prior current context intact.
+        """
+
+        with self.transaction() as connection:
+            session = connection.execute(
+                "SELECT * FROM ingestion_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if session is None:
+                raise NotFoundError("ingestion session not found")
+            if str(session["mode"]) != IngestionMode.ARCHIVE.value:
+                raise InvalidStateError("source rebuild requires an archive session")
+            if session["client_id"] is not None:
+                raise InvalidStateError("source rebuild cannot publish a client session")
+            if str(session["status"]) != "finished":
+                raise InvalidStateError("source rebuild session is not finished")
+            accessible_sources = _loads(session["accessible_sources_json"], [])
+            if source_id not in accessible_sources:
+                raise InvalidStateError("source rebuild session does not cover the source")
+            source = connection.execute(
+                "SELECT id FROM source_records "
+                "WHERE id=? AND deleted_at IS NULL AND import_status IS NOT NULL",
+                (source_id,),
+            ).fetchone()
+            if source is None:
+                raise NotFoundError("source not found")
+
+            withdrawn = self._withdraw_automatic_source_records_tx(
+                connection,
+                source_id,
+                reason="replaced by source rebuild",
+                actor=actor,
+            )
+            staged = connection.execute(
+                "SELECT id FROM context_candidates "
+                "WHERE session_id=? AND disposition='staged' ORDER BY created_at,id",
+                (session_id,),
+            ).fetchall()
+            for item in staged:
+                self._evaluate_observation_tx(
+                    connection,
+                    str(item["id"]),
+                    origin=ObservationOrigin.ARCHIVE_IMPORT,
+                    actor=actor,
+                    principal=None,
+                )
             if withdrawn:
                 self._recompute_integrity(connection)
                 self._audit(
@@ -2058,7 +2150,8 @@ class CoreStore:
             (record_id,),
         ).fetchall()
         return any(
-            "by user" in str(row["reason"] or "").casefold()
+            "availability changed" in str(row["reason"] or "").casefold()
+            or "by user" in str(row["reason"] or "").casefold()
             or "explicit user correction" in str(row["reason"] or "").casefold()
             for row in versions
         )
@@ -2889,6 +2982,7 @@ class CoreStore:
         coverage: CoverageReport,
         *,
         client: ClientPrincipal | None = None,
+        publish: bool = True,
     ) -> dict[str, Any]:
         finished_at = utc_now()
         replayed = False
@@ -2914,28 +3008,29 @@ class CoreStore:
                     "WHERE id=?",
                     (coverage_json, finished_at, session_id),
                 )
-            origin = (
-                ObservationOrigin.ARCHIVE_IMPORT
-                if str(session["mode"]) == IngestionMode.ARCHIVE.value
-                else ObservationOrigin.ONGOING_CLIENT
-            )
-            staged = connection.execute(
-                "SELECT id FROM context_candidates WHERE session_id=? AND disposition='staged' "
-                "ORDER BY created_at,id",
-                (session_id,),
-            ).fetchall()
-            actor = cast(str | None, session["client_id"]) or "local-core"
-            # Re-bind from durable registrations; never trust caller-supplied scopes
-            # for witness / archive explicitness (principal-shape hardening).
-            policy_principal = self._policy_principal_tx(connection, client)
-            for item in staged:
-                self._evaluate_observation_tx(
-                    connection,
-                    str(item["id"]),
-                    origin=origin,
-                    actor=actor,
-                    principal=policy_principal,
+            if publish:
+                origin = (
+                    ObservationOrigin.ARCHIVE_IMPORT
+                    if str(session["mode"]) == IngestionMode.ARCHIVE.value
+                    else ObservationOrigin.ONGOING_CLIENT
                 )
+                staged = connection.execute(
+                    "SELECT id FROM context_candidates WHERE session_id=? "
+                    "AND disposition='staged' ORDER BY created_at,id",
+                    (session_id,),
+                ).fetchall()
+                actor = cast(str | None, session["client_id"]) or "local-core"
+                # Re-bind from durable registrations; never trust caller-supplied scopes
+                # for witness / archive explicitness (principal-shape hardening).
+                policy_principal = self._policy_principal_tx(connection, client)
+                for item in staged:
+                    self._evaluate_observation_tx(
+                        connection,
+                        str(item["id"]),
+                        origin=origin,
+                        actor=actor,
+                        principal=policy_principal,
+                    )
         result = self.get_session(session_id)
         result["replayed"] = replayed
         return result

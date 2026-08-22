@@ -970,9 +970,9 @@ class ArchiveImportService:
         """Resume or rebuild extraction from the preserved raw blob.
 
         Failed and cancelled sources retry the existing parser session.
-        ``rebuild=True`` on a complete source re-extracts with the current
-        parser, reversibly withdraws uncorrected automatic records from that
-        source, and publishes a new observation set. The raw blob and
+        ``rebuild=True`` on a complete source stages a new parser-versioned
+        observation set, then atomically replaces eligible automatic records
+        only after parsing and staging succeed. The raw blob and
         user-corrected records are not destroyed.
         """
         source = self.store.get_source(source_id, duplicate=True)
@@ -980,10 +980,13 @@ class ArchiveImportService:
         rebuild_generation: int | None = None
         withdrawn_record_ids: list[str] = []
         if rebuild or resume_rebuild:
-            if source.import_status not in {"complete", "failed", "cancelled"}:
+            resumable_rebuild = resume_rebuild and source.import_status == "processing"
+            if (
+                source.import_status not in {"complete", "failed", "cancelled"}
+                and not resumable_rebuild
+            ):
                 raise InvalidStateError("rebuild requires a terminal source")
             if source.import_status == "complete":
-                withdrawn_record_ids = self.store.withdraw_automatic_source_records(source.id)
                 rebuild_generation = int(source.metadata.get("rebuild_generation") or 0) + 1
                 metadata = dict(source.metadata)
                 metadata["rebuild_generation"] = rebuild_generation
@@ -1127,6 +1130,9 @@ class ArchiveImportService:
             else:
                 metadata = _source_metadata(parsed)
                 metadata = merge_progress_metadata(metadata, tracker.snapshot())
+                if rebuild_generation is not None:
+                    metadata["rebuild_generation"] = rebuild_generation
+                    metadata["rebuild_in_progress"] = True
                 self.store.update_source_import(
                     source.id,
                     import_status="processing",
@@ -1333,8 +1339,14 @@ class ArchiveImportService:
                 FinishIngestionRequest(
                     session_id=str(begin["session_id"]),
                     coverage_report=coverage,
-                )
+                ),
+                publish=rebuild_generation is None,
             )
+            if rebuild_generation is not None:
+                withdrawn_record_ids = self.store.publish_source_rebuild(
+                    source.id,
+                    str(begin["session_id"]),
+                )
             metadata = _source_metadata(parsed)
             # Preserve preflight and any earlier durable progress fields.
             if isinstance(source.metadata.get("preflight"), dict):

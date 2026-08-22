@@ -120,6 +120,17 @@ Failed or cancelled sources retry the existing parser session from the
 preserved raw blob. A complete source may be rebuilt with the current parser
 (`POST /v1/admin/sources/{id}/reprocess?rebuild=true` or
 `atc reprocess-source --rebuild`). Rebuild reversibly withdraws uncorrected
-automatic records from that source, publishes a new parser-versioned
-observation set, and leaves the raw blob, history, and user corrections in
-place.
+automatic records from that source only in the same Core transaction that
+publishes a successfully staged parser-versioned observation set. Parsing,
+batch submission, cancellation, interruption, or policy-evaluation failure
+leaves the prior current records in place; the staged session remains resumable
+from the preserved blob. Rebuild eligibility is limited to current approved
+records whose Core origin is `archive_import`; independently deleted records,
+direct/local user-authored records, user corrections, and user
+privacy/availability changes are excluded. The raw blob and all history remain
+in place.
+
+For this rebuild path, `finish_ingestion` stores coverage while leaving the new
+candidates staged. Core's rebuild-publish transaction then withdraws eligible
+old records and evaluates the staged candidates together. SQLite rollback
+covers both sides if any part of that replacement fails.
