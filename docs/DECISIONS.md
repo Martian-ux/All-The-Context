@@ -2895,3 +2895,40 @@ unknown keys, booleans/floats/strings, negative or overflowing counts, and
 `complete=true` when unavailable, duplicate, failed, or unparsed items exist.
 Synthetic acceptance fixtures with unavailable content remain incomplete and
 cannot produce a complete packaged report.
+
+## ADR-108: Close terminal import partitions at both archive dimensions
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The importer keeps two deliberately separate contracts. `closed_coverage` is
+the logical item map; `stats.archive_member_coverage` is the content-free raw
+ZIP-member audit. Provider containers and controls remain structural in the
+raw audit even when bounded parsing finds malformed content. Their applicable
+logical `unparsed` or `failed` result is assigned exactly once, and the raw
+member is never also placed in a terminal ordinary-member bucket.
+
+Provider-memory/profile values rejected before candidate construction by
+secret-like, inert, highly-sensitive, or size policy close as logical
+`skipped` items. Accepted and rejected values therefore cannot produce a
+nonempty provider-memory surface with an all-zero logical denominator, and
+rejected text is not copied into warnings or receipts. Sensitivity that is
+allowed by the configured local-only policy remains a candidate with its
+declared sensitivity; parser coverage is not confused with later policy
+dispositions.
+
+Standalone text, JSON, and CSV decoding is strict UTF-8. Invalid bytes are one
+atomic `unparsed` item, never replacement-decoded. CSV is a supported generic
+logical item through both public archive entrypoints, with malformed CSV
+closing atomically as `unparsed`. Ordinary JSON roots use a bounded two-pass
+validate-then-consume strategy, preserving trailing-data atomicity without an
+unbounded document list or a retained raw temporary artifact.
+
+When ZIP metadata can be enumerated, entry-count, declared-size, compression,
+encryption, and path/depth safety failures return a content-free member audit.
+Every rejected file member is placed in exactly one `unavailable` bucket, the
+raw denominator closes, and no rejected payload is opened. If enumeration
+fails, the result uses `archive_level_failure=zip_enumeration_failed` and
+`member_coverage_available=false`; it deliberately has no invented member
+closure. These are parser results and coverage contracts, not fresh acceptance
+evidence.

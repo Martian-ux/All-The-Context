@@ -1519,6 +1519,20 @@ state is already noncurrent and creates no user queue.
   records its raw-member denominator without adding containers to item counts.
 - Malformed JSON/text is one `unparsed` logical item; malformed CSV follows
   the same rule, while JSONL remains line-oriented.
+- Provider container/control members remain structural in the raw-member audit
+  when malformed, while their logical `unparsed`/`failed` outcome is counted
+  exactly once in `closed_coverage`. Rejected provider-memory/profile values
+  close as logical `skipped` items, including content-policy, inert,
+  highly-sensitive, and over-limit rejection, without exposing their text.
+- Standalone text, JSON, and CSV decoding is strict UTF-8; invalid bytes never
+  become replacement-decoded candidates. CSV is supported atomically through
+  both public archive entrypoints.
+- Ordinary JSON roots now use bounded two-pass validation and consumption, so
+  no unbounded document list or raw temporary artifact is retained. Enumerated
+  ZIP safety failures return content-free member closure with each rejected
+  file member in exactly one `unavailable` bucket and no rejected payload read;
+  an unenumerable ZIP returns `zip_enumeration_failed` without fabricated
+  member closure.
 - Packaged-provider acceptance now validates its dict-level coverage through
   `CoverageReport`, preserving the closed seven-key schema, strict bounded
   integer counts, and fail-closed completion semantics for unavailable,

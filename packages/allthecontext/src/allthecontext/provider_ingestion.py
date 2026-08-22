@@ -19,7 +19,7 @@ from pathlib import PurePosixPath
 from typing import Any, cast
 
 from .memory_policy import archive_lineage_key, classify_sensitivity
-from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput
+from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput, Sensitivity
 
 PARSER_VERSION = "provider-archives-v2"
 
@@ -86,6 +86,7 @@ def _closed_coverage_counts(
     duplicate = int(stats.get("duplicate_entries", 0))
     failed = int(stats.get("failed_items", 0))
     unparsed = int(stats.get("unparsed_messages", 0))
+    skipped += int(stats.get("skipped_memory_items", 0))
     return {
         "recognized": recognized,
         "excluded": excluded,
@@ -270,6 +271,7 @@ class ProviderArchiveBuilder:
             "assistant_messages": 0,
             "other_messages": 0,
             "memory_items": 0,
+            "skipped_memory_items": 0,
             "skipped_messages": 0,
             "unparsed_messages": 0,
             "unsupported_entries": 0,
@@ -379,6 +381,7 @@ class ProviderArchiveBuilder:
             self._formats.add("provider_memory_json")
             recognized = True
             for index, memory in enumerate(memory_items):
+                self._stats["memory_items"] += 1
                 candidate = _memory_candidate(
                     memory,
                     provider=memory_provider,
@@ -386,8 +389,9 @@ class ProviderArchiveBuilder:
                 )
                 if candidate is not None:
                     self._candidates.append(candidate)
-                    self._stats["memory_items"] += 1
                     self._stats["recognized_items"] += 1
+                else:
+                    self._stats["skipped_memory_items"] += 1
 
         if recognized:
             self._recognized_files.add(safe_name)
@@ -484,6 +488,7 @@ class ProviderArchiveBuilder:
             self._formats.add("provider_memory_text")
             self._recognized_files.add(safe_name)
             for index, item in enumerate(items):
+                self._stats["memory_items"] += 1
                 candidate = _memory_candidate(
                     item,
                     provider=provider,
@@ -491,8 +496,9 @@ class ProviderArchiveBuilder:
                 )
                 if candidate is not None:
                     self._candidates.append(candidate)
-                    self._stats["memory_items"] += 1
                     self._stats["recognized_items"] += 1
+                else:
+                    self._stats["skipped_memory_items"] += 1
             return True
         return False
 
@@ -551,6 +557,11 @@ class ProviderArchiveBuilder:
             warnings.append(
                 f"{closed_coverage['excluded']} assistant/system/tool/attachment items were "
                 "excluded from context publication"
+            )
+        if self._stats["skipped_memory_items"]:
+            warnings.append(
+                f"{self._stats['skipped_memory_items']} provider memory/profile items were "
+                "skipped by content policy"
             )
         if closed_coverage["duplicate"]:
             warnings.append(
@@ -1355,6 +1366,7 @@ def _memory_candidate(
         or len(cleaned) > 4_000
         or _SECRET_HINT.search(cleaned)
         or _is_inert_instruction(cleaned)
+        or classify_sensitivity(cleaned) == Sensitivity.HIGHLY_SENSITIVE
     ):
         return None
     classified = _classify_statement(cleaned)

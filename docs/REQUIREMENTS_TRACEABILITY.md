@@ -7,6 +7,21 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 final import terminal-partition correction
+
+The import boundary now keeps malformed provider containers structural in the
+raw ZIP audit while assigning their logical failure exactly once to the closed
+seven-key map. Provider-memory/profile values rejected by bounded content
+policy close as `skipped` logical items rather than leaving an all-zero
+denominator. Standalone decoding is strict UTF-8, standalone CSV is supported
+atomically through both public archive entrypoints, and ordinary JSON roots use
+bounded two-pass validation/consumption without raw temporary artifacts.
+Enumerated ZIP count, size, ratio, encryption, and path/depth rejections return
+content-free member closure without reading rejected payloads; an unenumerable
+ZIP returns a distinct archive-level failure with no fabricated member closure.
+Focused synthetic regressions cover these equations and terminal contracts.
+This change grants no acceptance credit and does not inspect live/private data.
+
 ### 2026-08-22 final import-truth contract correction
 
 Declared JSON `.dat` members are validated atomically before candidate

@@ -138,20 +138,23 @@ def test_import_bytes_records_preflight_progress_and_closed_coverage(tmp_path: P
     ]
 
 
-def test_fatal_parse_failure_persists_failed_coverage_on_source(tmp_path: Path) -> None:
+def test_unenumerable_zip_persists_archive_failure_coverage_on_source(tmp_path: Path) -> None:
     core = CoreService.in_directory(tmp_path)
     service = ArchiveImportService(core.store, skip_disk_preflight=True)
 
-    with pytest.raises(InvalidStateError, match="invalid ZIP"):
-        service.import_bytes("broken.zip", b"not-a-zip")
+    result = service.import_bytes("broken.zip", b"not-a-zip")
 
     sources, total = core.store.list_sources()
     assert total == 1
-    failed = core.store.get_source(sources[0]["id"], duplicate=True)
-    assert failed.import_status == "failed"
-    assert failed.metadata["coverage_complete"] is False
-    assert sum(failed.metadata["closed_coverage"].values()) == 0
-    assert failed.metadata["source_terminal_reason"] == "failed"
+    completed = core.store.get_source(sources[0]["id"], duplicate=True)
+    assert result["session"]["status"] == "finished"
+    assert completed.import_status == "complete"
+    assert completed.metadata["coverage_complete"] is False
+    assert sum(completed.metadata["closed_coverage"].values()) == 0
+    assert result["coverage"]["unavailable"] == [
+        "ZIP archive could not be enumerated; member coverage is unavailable"
+    ]
+    assert result["coverage"]["complete"] is False
 
 
 def test_partial_member_malformed_text_stays_in_item_coverage(tmp_path: Path) -> None:

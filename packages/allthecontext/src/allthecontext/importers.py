@@ -13,7 +13,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
@@ -56,6 +56,7 @@ DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
 DEFAULT_MAX_ZIP_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_TEXT_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_LINK_PAIRS = 10_000
+DEFAULT_MAX_ZIP_PATH_DEPTH = 64
 MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH = 64
 MAX_CHATGPT_ATTACHMENT_SCAN_NODES = 10_000
 _OPERATION_COOPERATIVE_YIELD_SECONDS = 0.001
@@ -428,6 +429,96 @@ def _combine(
     )
 
 
+def _generic_failure_result(
+    provider: str | ArchiveProvider,
+    warning: str,
+    *,
+    reason: str,
+) -> ParsedArchive:
+    """Return one content-free terminal result for a standalone member failure."""
+    if reason not in {"unavailable", "failed", "unparsed"}:
+        raise ValueError("unsupported generic failure reason")
+    coverage = _GenericCoverage()
+    setattr(coverage, reason, 1)
+    return _combine(
+        _builder(provider).finish(),
+        (),
+        [warning],
+        coverage,
+    )
+
+
+def _archive_preflight_result(
+    provider: ArchiveProvider,
+    warning: str,
+    *,
+    archive_level_failure: str,
+    file_members: int,
+    directories_excluded: int,
+    terminal_reason: str | None = None,
+    total_uncompressed: int = 0,
+    member_coverage_available: bool = True,
+) -> ParsedArchive:
+    """Return content-free ZIP safety accounting without opening rejected payloads."""
+    buckets = {
+        "recognized": 0,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 0,
+    }
+    if terminal_reason is not None:
+        buckets[terminal_reason] = file_members
+    result = _combine(_builder(provider).finish(), (), [warning])
+    stats = dict(result.stats)
+    stats["archive_member_coverage"] = {
+        "file_members": file_members,
+        "directories_excluded": directories_excluded,
+        "structural_members": 0,
+        "standalone_members": sum(buckets.values()),
+        "unaccounted_members": file_members - sum(buckets.values()),
+        "terminal_member_buckets": buckets,
+        "denominator": (
+            "enumerated non-directory ZIP members; payloads were not read after a ZIP "
+            "pre-read safety rejection"
+            if member_coverage_available
+            else "no member denominator exists because the ZIP could not be enumerated"
+        ),
+        "archive_level_failure": archive_level_failure,
+        "member_coverage_available": member_coverage_available,
+        "closed_coverage_total": sum(result.closed_coverage.values()),
+    }
+    stats["zip_total_uncompressed_bytes"] = total_uncompressed
+    return replace(
+        result,
+        complete=False,
+        unavailable=[warning],
+        stats=stats,
+    )
+
+
+def _parse_csv_document(
+    text: str,
+    *,
+    provider: str | ArchiveProvider,
+    source_name: str,
+    max_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
+) -> ParsedArchive:
+    try:
+        normalized = _csv_text(text, max_chars=max_chars)
+    except InvalidStateError as error:
+        message = str(error).casefold()
+        reason = "unparsed" if "not well formed" in message else "unavailable"
+        return _generic_failure_result(
+            provider,
+            "CSV input was rejected by the bounded parser",
+            reason=reason,
+        )
+    return parse_text(normalized, provider=provider, source_name=source_name)
+
+
 def _deduplicate(items: Iterable[CandidateInput]) -> list[CandidateInput]:
     result: list[CandidateInput] = []
     seen: set[tuple[str, str]] = set()
@@ -462,21 +553,27 @@ def parse_archive(
         return parse_zip_bundle(content, provider=provider)
     try:
         text = content.decode("utf-8-sig")
-        decode_warnings: list[str] = []
     except UnicodeDecodeError:
-        text = content.decode("utf-8-sig", errors="replace")
-        decode_warnings = ["invalid UTF-8 sequences were replaced"]
+        return _generic_failure_result(
+            provider,
+            "standalone input is not valid UTF-8",
+            reason="unparsed",
+        )
     if suffix == ".json":
         result = parse_json(text, provider=provider, source_name=safe_name)
     elif suffix == ".jsonl":
         result = parse_jsonl(text, provider=provider, source_name=safe_name)
+    elif suffix == ".csv":
+        result = _parse_csv_document(text, provider=provider, source_name=safe_name)
     elif suffix in {".md", ".markdown", ".txt", ""}:
         result = parse_text(text, provider=provider, source_name=safe_name)
     else:
-        raise InvalidStateError("supported import types are ZIP, JSON, JSONL, Markdown, and text")
+        raise InvalidStateError(
+            "supported import types are ZIP, JSON, JSONL, CSV, Markdown, and text"
+        )
     return ParsedArchive(
         candidates=result.candidates,
-        warnings=[*decode_warnings, *result.warnings],
+        warnings=result.warnings,
         provider=result.provider,
         export_format=result.export_format,
         stats=result.stats,
@@ -487,6 +584,7 @@ def parse_archive(
         recognized_provider=result.recognized_provider,
         closed_coverage=dict(result.closed_coverage),
         parser_identity=result.parser_identity,
+        attachments=list(result.attachments),
     )
 
 
@@ -513,33 +611,48 @@ def parse_archive_path(
         coverage = _GenericCoverage()
         try:
             with path.open("rb") as stream:
-                # A bounded JSON source is atomic: do not publish root-array
-                # items until trailing data has also been validated.
-                documents = list(_iter_json_documents(stream))
-                for document in documents:
+                # Validate first, then reopen and consume. This keeps root-array
+                # imports atomic without retaining every parsed document.
+                for _ in _iter_json_documents(stream):
+                    if progress is not None:
+                        progress.check_cancelled()
+            with path.open("rb") as stream:
+                for document in _iter_json_documents(stream):
                     if progress is not None:
                         progress.check_cancelled()
                     _consume_json_value(builder, safe_name, document, generic, coverage)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        except UnicodeDecodeError:
+            return _generic_failure_result(
+                provider,
+                "standalone input is not valid UTF-8",
+                reason="unparsed",
+            )
+        except json.JSONDecodeError as error:
             raise _invalid_json_error(error) from error
         return _combine(builder.finish(), generic, generic_coverage=coverage)
     if suffix == ".jsonl":
         return _parse_jsonl_stream(path, safe_name, provider, progress=progress)
-    if suffix in {".md", ".markdown", ".txt", ""}:
+    if suffix in {".csv", ".md", ".markdown", ".txt", ""}:
         if progress is not None:
             progress.check_cancelled()
         try:
             text = path.read_text(encoding="utf-8-sig")
-            warnings: list[str] = []
         except UnicodeDecodeError:
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
-            warnings = ["invalid UTF-8 sequences were replaced"]
-        result = parse_text(text, provider=provider, source_name=safe_name)
+            return _generic_failure_result(
+                provider,
+                "standalone input is not valid UTF-8",
+                reason="unparsed",
+            )
+        result = (
+            _parse_csv_document(text, provider=provider, source_name=safe_name)
+            if suffix == ".csv"
+            else parse_text(text, provider=provider, source_name=safe_name)
+        )
         if progress is not None:
             progress.check_cancelled()
         return ParsedArchive(
             candidates=result.candidates,
-            warnings=[*warnings, *result.warnings],
+            warnings=result.warnings,
             provider=result.provider,
             export_format=result.export_format,
             stats=result.stats,
@@ -550,8 +663,11 @@ def parse_archive_path(
             recognized_provider=result.recognized_provider,
             closed_coverage=dict(result.closed_coverage),
             parser_identity=result.parser_identity,
+            attachments=list(result.attachments),
         )
-    raise InvalidStateError("supported import types are ZIP, JSON, JSONL, Markdown, and text")
+    raise InvalidStateError(
+        "supported import types are ZIP, JSON, JSONL, CSV, Markdown, and text"
+    )
 
 
 def _parse_jsonl_stream(
@@ -1103,13 +1219,19 @@ def parse_zip_bundle(
     max_uncompressed_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
     max_member_uncompressed_bytes: int = DEFAULT_MAX_ZIP_MEMBER_BYTES,
     max_compression_ratio: int = 500,
+    max_path_depth: int = DEFAULT_MAX_ZIP_PATH_DEPTH,
     max_json_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
     max_attachment_text_bytes: int = DEFAULT_MAX_ATTACHMENT_TEXT_BYTES,
     max_attachment_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS,
     progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
     """Parse bounded ZIP members in place; archive paths are never extracted."""
-    if max_entries < 1 or max_uncompressed_bytes < 1 or max_member_uncompressed_bytes < 1:
+    if (
+        max_entries < 1
+        or max_uncompressed_bytes < 1
+        or max_member_uncompressed_bytes < 1
+        or max_path_depth < 1
+    ):
         raise ValueError("ZIP limits must be positive")
     if (
         max_compression_ratio < 1
@@ -1130,8 +1252,17 @@ def parse_zip_bundle(
     try:
         with zipfile.ZipFile(source) as archive:
             members = archive.infolist()
+            file_members = sum(not item.is_dir() for item in members)
+            directories_excluded = sum(item.is_dir() for item in members)
             if len(members) > max_entries:
-                raise InvalidStateError("ZIP bundle contains too many entries")
+                return _archive_preflight_result(
+                    provider_hint,
+                    "ZIP archive rejected by the entry-count safety limit",
+                    archive_level_failure="zip_entry_count_limit",
+                    file_members=file_members,
+                    directories_excluded=directories_excluded,
+                    terminal_reason="unavailable",
+                )
             seen_names: set[str] = set()
             unique_entries: list[tuple[int, zipfile.ZipInfo]] = []
             archive_member_states: dict[int, str] = {}
@@ -1168,26 +1299,64 @@ def parse_zip_bundle(
 
             total_uncompressed = sum(item.file_size for item in members if not item.is_dir())
             if total_uncompressed > max_uncompressed_bytes:
-                raise InvalidStateError("ZIP bundle exceeds the total uncompressed-size limit")
+                return _archive_preflight_result(
+                    provider_hint,
+                    "ZIP archive rejected by the total uncompressed-size safety limit",
+                    archive_level_failure="zip_total_size_limit",
+                    file_members=file_members,
+                    directories_excluded=directories_excluded,
+                    terminal_reason="unavailable",
+                    total_uncompressed=total_uncompressed,
+                )
             supported_members: list[zipfile.ZipInfo] = []
             for member_index, member in enumerate(members):
                 if member.is_dir():
                     archive_directories_excluded += 1
                     continue
                 archive_file_members += 1
-                safe_name = _validate_zip_member_name(member.filename)
+                try:
+                    safe_name = _validate_zip_member_name(
+                        member.filename,
+                        max_depth=max_path_depth,
+                    )
+                except InvalidStateError:
+                    unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
+                    _append_warning(
+                        warnings,
+                        "one ZIP member was rejected by the path safety limit",
+                    )
+                    continue
                 builder.note_file(safe_name)
                 folded = safe_name.casefold()
                 duplicate = folded in seen_names
                 if member.file_size > max_member_uncompressed_bytes:
-                    raise InvalidStateError("ZIP member exceeds the per-member size limit")
+                    unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
+                    _append_warning(
+                        warnings,
+                        "one ZIP member was rejected by the per-member size limit",
+                    )
+                    continue
                 if member.flag_bits & 0x1:
-                    raise InvalidStateError("encrypted ZIP entries are not supported")
+                    unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
+                    _append_warning(
+                        warnings,
+                        "one encrypted ZIP member was rejected before payload reads",
+                    )
+                    continue
                 if member.file_size and (
                     member.compress_size == 0
                     or member.file_size / member.compress_size > max_compression_ratio
                 ):
-                    raise InvalidStateError("ZIP bundle exceeds the compression-ratio limit")
+                    unsupported_entries += 1
+                    close_archive_member(member_index, "unavailable")
+                    _append_warning(
+                        warnings,
+                        "one ZIP member was rejected by the compression-ratio safety limit",
+                    )
+                    continue
                 if duplicate:
                     builder.note_duplicate_entries()
                     close_archive_member(member_index, "duplicate")
@@ -1225,6 +1394,11 @@ def parse_zip_bundle(
                 for member in unique_members
                 if _is_chatgpt_control_member(_safe_zip_name(member.filename))
                 or _safe_zip_name(member.filename) in context.control_members
+            }
+            provider_container_names = {
+                _safe_zip_name(member.filename)
+                for member in unique_members
+                if _is_conversation_json_member(_safe_zip_name(member.filename))
             }
             if context.invalid_control_members:
                 coverage.unparsed += len(context.invalid_control_members)
@@ -1340,13 +1514,15 @@ def parse_zip_bundle(
                                     # Validate the whole bounded member before publishing any
                                     # candidates. The streaming reader may yield valid array
                                     # items before discovering malformed trailing bytes.
-                                    documents = list(
-                                        _iter_json_documents(
-                                            io.BytesIO(raw_text),
-                                            max_item_chars=max_json_item_chars,
-                                        )
-                                    )
-                                    for document in documents:
+                                    for _ in _iter_json_documents(
+                                        io.BytesIO(raw_text),
+                                        max_item_chars=max_json_item_chars,
+                                    ):
+                                        pass
+                                    for document in _iter_json_documents(
+                                        io.BytesIO(raw_text),
+                                        max_item_chars=max_json_item_chars,
+                                    ):
                                         if attachment_enabled and _is_conversation_json_member(
                                             safe_name
                                         ):
@@ -1487,6 +1663,7 @@ def parse_zip_bundle(
                 member_index = unique_index_by_identity[id(member)]
                 safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
+                is_provider_container = safe_name in provider_container_names
                 before_stats = builder.stats_snapshot()
                 before_generic = len(generic)
                 before_coverage = {
@@ -1501,13 +1678,16 @@ def parse_zip_bundle(
                             # Validate the complete bounded member before
                             # publishing any candidates. Root-array items can
                             # be yielded before trailing garbage is found.
-                            documents = list(
-                                _iter_json_documents(
-                                    stream,
-                                    max_item_chars=max_json_item_chars,
-                                )
-                            )
-                            for document in documents:
+                            for _ in _iter_json_documents(
+                                stream,
+                                max_item_chars=max_json_item_chars,
+                            ):
+                                pass
+                        with archive.open(member) as stream:
+                            for document in _iter_json_documents(
+                                stream,
+                                max_item_chars=max_json_item_chars,
+                            ):
                                 _consume_json_value(
                                     builder,
                                     safe_name,
@@ -1530,14 +1710,7 @@ def parse_zip_bundle(
                         raw_text = _read_zip_member_bytes(
                             archive, member, max_bytes=max_json_item_chars
                         )
-                        try:
-                            text = raw_text.decode("utf-8-sig")
-                        except UnicodeDecodeError:
-                            text = raw_text.decode("utf-8-sig", errors="replace")
-                            _append_warning(
-                                warnings,
-                                f"{safe_name}: invalid UTF-8 sequences were replaced",
-                            )
+                        text = raw_text.decode("utf-8-sig")
                         if suffix == ".csv":
                             text = _csv_text(text, max_chars=max_json_item_chars)
                         before_generic = len(generic)
@@ -1549,9 +1722,13 @@ def parse_zip_bundle(
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
                     coverage.unparsed += 1
                     _append_warning(warnings, f"{safe_name}: {_invalid_json_error(error)}")
-                    close_archive_member(member_index, "unparsed")
+                    if is_provider_container:
+                        mark_structural_member(member_index)
+                    else:
+                        close_archive_member(member_index, "unparsed")
                 except InvalidStateError as error:
-                    if suffix == ".csv" and "not well formed" in str(error).casefold():
+                    malformed_csv = suffix == ".csv" and "not well formed" in str(error).casefold()
+                    if malformed_csv:
                         # Malformed text is one unparsed logical item. Keep
                         # `failed` for bounded parser/runtime failures that
                         # are not malformed source data.
@@ -1561,9 +1738,12 @@ def parse_zip_bundle(
                         # item, not an invisible warning. The raw ZIP remains
                         # preserved for retry with a later parser.
                         builder.note_failed_items()
-                        close_archive_member(member_index, "failed")
-                    if suffix == ".csv" and "not well formed" in str(error).casefold():
+                    if is_provider_container:
+                        mark_structural_member(member_index)
+                    elif malformed_csv:
                         close_archive_member(member_index, "unparsed")
+                    else:
+                        close_archive_member(member_index, "failed")
                     _append_warning(warnings, f"{safe_name}: {error}")
                 else:
                     close_parsed_member(
@@ -1572,8 +1752,15 @@ def parse_zip_bundle(
                         before_generic,
                         before_coverage,
                     )
-    except zipfile.BadZipFile as error:
-        raise InvalidStateError("invalid ZIP bundle") from error
+    except zipfile.BadZipFile:
+        return _archive_preflight_result(
+            provider_hint,
+            "ZIP archive could not be enumerated; member coverage is unavailable",
+            archive_level_failure="zip_enumeration_failed",
+            file_members=0,
+            directories_excluded=0,
+            member_coverage_available=False,
+        )
     builder.note_unsupported_entries(unsupported_entries)
     if unsupported_entries:
         _append_warning(
@@ -1797,12 +1984,18 @@ def _append_warning(warnings: list[str], warning: str) -> None:
         warnings.append(_safe_diagnostic_text(warning)[:2_000])
 
 
-def _validate_zip_member_name(filename: str) -> str:
+def _validate_zip_member_name(
+    filename: str,
+    *,
+    max_depth: int = DEFAULT_MAX_ZIP_PATH_DEPTH,
+) -> str:
     normalized = filename.replace("\\", "/")
     path = PurePosixPath(normalized)
     first = path.parts[0] if path.parts else ""
     if (
-        path.is_absolute()
+        max_depth < 1
+        or len(path.parts) > max_depth
+        or path.is_absolute()
         or ".." in path.parts
         or first.endswith(":")
         or re.match(r"^[A-Za-z]:", first) is not None

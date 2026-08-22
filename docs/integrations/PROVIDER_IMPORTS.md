@@ -56,6 +56,15 @@ treated as direct user statements.
   counted, but are ignored for context maintenance in this slice.
 - Malformed JSON or text is one `unparsed` logical item and cannot publish a
   valid prefix; line-oriented JSONL retains its per-line behavior.
+- Standalone text, JSON, and CSV use strict UTF-8 decoding; invalid bytes are
+  one `unparsed` item and are never replacement-decoded. CSV is supported by
+  both public archive entrypoints and is parsed atomically, so malformed CSV
+  closes as one `unparsed` item.
+- Provider container/control members remain structural in the raw ZIP audit
+  when malformed. Their applicable logical failure is counted exactly once in
+  `closed_coverage`, never also as a raw-member `unparsed` bucket. Provider
+  memory/profile values rejected by secret, inert, highly-sensitive, or size
+  policy close as logical `skipped` items without exposing their text.
 - The import does not change current context until the extraction session
   finishes successfully. A failed or interrupted session retains recoverable source
   state without partially publishing decisions.
@@ -86,10 +95,18 @@ parser version to reprocess the source.
 ## Safety, scale, and recovery
 
 - Core reads ZIP members in place and never extracts archive paths.
-- Absolute/traversal paths, encrypted text entries, case-insensitive duplicate
-  names, excessive entry counts, compression bombs, and excessive expanded
-  text are rejected or explicitly skipped.
-- JSON conversation arrays are decoded one conversation at a time. The HTTP
+- Absolute/traversal paths, paths deeper than 64 components, encrypted text
+  entries, case-insensitive duplicate names, excessive entry counts,
+  compression bombs, and excessive expanded text are rejected or explicitly
+  skipped.
+- Enumerated ZIP safety failures return a content-free raw-member audit: each
+  rejected file member is in exactly one terminal `unavailable` bucket, and no
+  rejected payload is read. If ZIP enumeration fails, the separate
+  `zip_enumeration_failed` archive-level result has no invented member closure.
+- JSON conversation arrays are decoded one conversation at a time. Ordinary
+  JSON roots use bounded two-pass validation/consumption rather than an
+  unbounded document list, preserving atomic trailing-data rejection without
+  raw temporary artifacts. The HTTP
   upload and Core source write use bounded chunks rather than loading the
   complete archive into memory.
 - The current implementation default and maximum raw-source limit is
