@@ -139,7 +139,32 @@ _TASK_LOCAL_HINT = re.compile(
     r"\b(?:can you|could you|would you|will you|"
     r"please (?:write|explain|help|make|create|generate|summarize|fix|debug|refactor)|"
     r"in this (?:chat|conversation|message|prompt)|"
-    r"as an? (?:ai|assistant|language model))\b",
+    r"as an? (?:ai|assistant|language model)|"
+    r"(?:i|we) (?:want|need|would like|would love|expect) you to|"
+    r"(?:i'd|i would) (?:like|love|prefer) you to)\b",
+    flags=re.IGNORECASE,
+)
+_ADVERSARIAL_INSTRUCTION_HINT = re.compile(
+    r"(?:\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+)?"
+    r"(?:of\s+)?(?:the\s+)?(?:previous|earlier|above|prior|system|developer)?\s*"
+    r"instructions?\b|"
+    r"\b(?:follow|obey|execute)\s+(?:these|the following|my|all)\s+"
+    r"(?:instructions?|commands?)\b|"
+    r"\b(?:system|developer)\s+(?:prompt|message|instructions?)\b|"
+    r"\b(?:do not|don't|never)\s+follow\s+"
+    r"(?:previous|earlier|above|these)\s+instructions?\b)",
+    flags=re.IGNORECASE,
+)
+_DURABLE_PREFERENCE_HINT = re.compile(
+    r"(?:^\s*(?:i|we)\s+(?:always|never|usually|generally|normally|typically)\b|"
+    r"\b(?:in general|as a general rule|by default|from now on)\b|"
+    r"\bmy preferences?\b|"
+    r"\bwhen you (?:answer|respond)\b|"
+    r"\bi want (?:answers?|responses?)\s+to\b|"
+    r"^\s*(?:i|we)\s+(?:prefer|like|love|hate|dislike)\b|"
+    r"^\s*(?:please\s+)?(?:never|always)\b|"
+    r"^\s*(?:please\s+)?(?:do not|don't|avoid)\s+"
+    r"(?:using|use|including|include|mentioning|mention)\b)",
     flags=re.IGNORECASE,
 )
 _EPHEMERAL_STANCE = re.compile(
@@ -1008,7 +1033,7 @@ def _candidate_from_statement(
     cleaned = _clean_statement(segment)
     if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
         return None
-    if cleaned.endswith("?") or _TASK_LOCAL_HINT.search(cleaned) or _EPHEMERAL_STANCE.search(
+    if cleaned.endswith("?") or _is_inert_instruction(cleaned) or _EPHEMERAL_STANCE.search(
         cleaned
     ):
         return None
@@ -1083,6 +1108,8 @@ def _classify_statement(
     statement: str,
 ) -> tuple[str, float, str | None, str | None] | None:
     lowered = statement.casefold()
+    if _is_inert_instruction(statement):
+        return None
     label = _LABEL.match(statement)
     if label:
         return (_LABEL_KINDS[label.group(1).casefold()], 1.0, None, None)
@@ -1107,6 +1134,8 @@ def _classify_statement(
         return ("personal_detail", 0.92, "user", "timezone")
     if re.search(
         r"\b(?:i prefer|i like|i don't like|i do not like|i dislike|i hate|i love|"
+        r"i (?:always|usually|generally|normally|typically)\s+"
+        r"(?:want|prefer|like|love|hate|dislike)|"
         r"my preference is|"
         r"please always|please never|when you (?:answer|respond)|"
         r"i want (?:you|answers|responses) to)\b",
@@ -1172,7 +1201,12 @@ def _memory_candidate(
     reference: str,
 ) -> CandidateInput | None:
     cleaned = _clean_statement(content)
-    if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
+    if (
+        not cleaned
+        or len(cleaned) > 4_000
+        or _SECRET_HINT.search(cleaned)
+        or _is_inert_instruction(cleaned)
+    ):
         return None
     classified = _classify_statement(cleaned)
     kind = classified[0] if classified is not None else "provider_memory"
@@ -1191,6 +1225,20 @@ def _memory_candidate(
         sensitivity=classify_sensitivity(candidate_content),
         availability=Availability.CORE,
         explicit_user_statement=False,
+    )
+
+
+def _is_inert_instruction(statement: str) -> bool:
+    """Reject task-local or adversarial imported prose before kind extraction.
+
+    Imported text is data, not an instruction channel. Durable preference
+    markers can authorize ordinary response-style preferences, but explicit
+    prompt-injection language always wins and remains inert.
+    """
+    if _ADVERSARIAL_INSTRUCTION_HINT.search(statement):
+        return True
+    return bool(_TASK_LOCAL_HINT.search(statement)) and not bool(
+        _DURABLE_PREFERENCE_HINT.search(statement)
     )
 
 

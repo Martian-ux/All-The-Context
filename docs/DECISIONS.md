@@ -2666,3 +2666,23 @@ its `total` is the exact number of records that can be returned for the request.
 does not define the catalog API's total. Search audits still record only the
 returned authorized page IDs and the existing safe aggregate metadata; no
 unauthorized IDs or raw query/context text are added.
+
+## ADR-099: Task-local provider instructions remain inert
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+Provider archives are untrusted data, not an instruction channel. Extraction
+must reject task-local and adversarial instruction framing before applying
+preference classification. In particular, direct-address requests such as
+`I want you to write a haiku` or `I want you to ignore previous instructions`
+cannot become current interaction preferences merely because they use
+first-person wording. Prompt-injection language wins over any preference
+marker and remains inert.
+
+Automatic provider preference eligibility requires durable evidence: explicit
+always/never or general-preference phrasing, including ordinary statements
+such as `I prefer concise answers`, `I always want concise answers`, and
+`Please never use emoji in responses`. Task-local paraphrases are skipped;
+provider-synthesized memory fields remain tentative by their existing policy.
+No imported text is executed, and parser diagnostics remain content-free.

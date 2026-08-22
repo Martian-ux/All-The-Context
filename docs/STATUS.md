@@ -952,6 +952,14 @@ state is already noncurrent and creates no user queue.
   generator are implemented. The focused importer/provider slice passes 37
   tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
   pass for the integrated source.
+- Post-beta review found that direct-address task requests such as `I want you
+  to write a haiku` could be classified as durable interaction preferences.
+  Provider extraction now rejects task-local and adversarial instruction
+  framing before preference classification; only explicit durable markers such
+  as always/never/general preference phrasing retain automatic eligibility.
+  Focused parser and Core-ingestion regressions prove those instructions are
+  skipped and legitimate durable preferences still apply. Imported text and
+  parser warnings remain content-inert.
 - Acceptance diagnosis on 2026-07-26 found two real Windows-package defects:
   synchronous parsing could leave more than five seconds between durable
   operation updates after all bytes were committed, and boundary-canary-v1
