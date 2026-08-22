@@ -19,7 +19,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "filelock" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "keyring" },
     { name = "mcp" },
     { name = "platformdirs" },
@@ -31,6 +31,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "build" },
+    { name = "httpx" },
     { name = "hypothesis" },
     { name = "mypy" },
     { name = "pip" },
@@ -52,7 +53,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50,<51" },
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "filelock", specifier = ">=3.18,<4" },
-    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2.12,<3" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.135,<7" },
     { name = "keyring", specifier = ">=25.6,<26" },
     { name = "mcp", specifier = ">=2,<3" },
