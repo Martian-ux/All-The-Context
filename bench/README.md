@@ -197,6 +197,31 @@ latency evidence. The warm p95 gate remains fail-closed in this command at the
 unchanged 150 ms boundary; claim latency acceptance only from the 1k/10k CLI
 run on comparable hardware.
 
+## Synthetic retrieval usefulness
+
+This developer-facing harness measures whether production search, bootstrap, and
+get packaging return useful current context for a provider. It is not a ranking
+quality, latency, Memory Lab, or beta-acceptance gate. The corpus is synthetic
+and sanitized. The runner builds a throwaway vault through public observation,
+delete, and forget APIs, then scores the production `RetrievalEngine` facade.
+
+```text
+python -m bench.retrieval_usefulness --output tmp/retrieval-usefulness.json --markdown tmp/retrieval-usefulness.md
+```
+
+The command creates an isolated vault under a temporary directory, or under
+`--work-dir` when supplied. It refuses the live Core data directory and any
+folder that already contains `core.sqlite3`. It never opens operator context.
+
+The compact scorecard covers current-fact recall, stale/conflict exclusion,
+withdrawn exclusion, sensitivity respect, provenance completeness, budget
+compliance, and provider-facing packaging. Hard gates require every case to
+pass, zero forbidden leaks, zero budget or packaging violations, and repeat
+determinism. The checked-in baseline is
+[`baselines/retrieval_usefulness_v1.json`](baselines/retrieval_usefulness_v1.json).
+A nonzero exit means a gate failed. This result is not implementation
+acceptance and grants no beta credit.
+
 ## Retrieval V1/V2 benchmark
 
 This directory freezes the Retrieval V1 evaluation corpus and measurements used

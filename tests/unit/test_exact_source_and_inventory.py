@@ -63,9 +63,10 @@ def _matrix_payload(
 
 
 def test_required_ci_jobs_cover_matrix_and_security_parity() -> None:
-    assert len(REQUIRED_CI_MATRIX_JOBS) == 9
+    assert len(REQUIRED_CI_MATRIX_JOBS) == 6
     assert len(REQUIRED_SECURITY_PARITY_JOBS) == 2
-    assert len(REQUIRED_CI_JOBS) == 11
+    assert len(REQUIRED_CI_JOBS) == 8
+    assert not any("macos" in name.casefold() for name in REQUIRED_CI_JOBS)
     assert "Repository security gates" in REQUIRED_SECURITY_PARITY_JOBS
     assert "Dashboard production asset parity" in REQUIRED_SECURITY_PARITY_JOBS
 
@@ -102,7 +103,7 @@ def test_select_successful_ci_run_and_jobs() -> None:
     payload = evidence.as_dict()
     assert payload["ok"] is True
     assert payload["workflow_path"] == CANONICAL_CI_WORKFLOW_PATH
-    assert len(payload["job_records"]) == 11
+    assert len(payload["job_records"]) == 8
 
 
 def test_evil_suffix_workflow_path_never_satisfies() -> None:
@@ -257,7 +258,7 @@ def test_forged_matrix_evidence_ok_and_name_only_jobs_fail() -> None:
             source_commit=SOURCE,
         )
     payload = _matrix_payload()
-    payload["job_records"] = payload["job_records"][:9]
+    payload["job_records"] = payload["job_records"][:-1]
     with pytest.raises(ManifestError, match=r"count|omit|incomplete"):
         validate_matrix_evidence(payload, source_commit=SOURCE)
     payload = _matrix_payload()

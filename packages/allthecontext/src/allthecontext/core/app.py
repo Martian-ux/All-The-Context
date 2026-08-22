@@ -1,9 +1,14 @@
 """FastAPI transport for the local authoritative Core."""
 
 import asyncio
+import base64
+import binascii
+import hashlib
+import hmac
 import html
 import json
 import os
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -32,7 +37,7 @@ from fastapi import (
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -87,6 +92,7 @@ from ..models import (
     PurgeRequest,
     RejectRequest,
     RestoreRequest,
+    SearchCursor,
     SearchRequest,
     SubmitBatchRequest,
 )
@@ -109,6 +115,110 @@ DashboardPage = Literal[
     "backup",
     "updates",
 ]
+
+_SEARCH_CURSOR_VERSION = "atc-search-v1"
+_SEARCH_CURSOR_PART_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+class _InvalidSearchCursor(ValueError):
+    pass
+
+
+def _search_request_fingerprint(request: SearchRequest) -> str:
+    criteria = request.model_dump(mode="json", exclude={"cursor", "offset"})
+    canonical = json.dumps(
+        criteria,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _urlsafe_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _urlsafe_decode(value: str) -> bytes:
+    if not value or not _SEARCH_CURSOR_PART_RE.fullmatch(value):
+        raise _InvalidSearchCursor
+    padding = "=" * (-len(value) % 4)
+    try:
+        decoded = base64.b64decode(
+            value + padding,
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, ValueError) as error:
+        raise _InvalidSearchCursor from error
+    if _urlsafe_encode(decoded) != value:
+        raise _InvalidSearchCursor
+    return decoded
+
+
+def _search_cursor_message(
+    encoded_payload: str,
+    principal: ClientPrincipal,
+) -> bytes:
+    return f"{_SEARCH_CURSOR_VERSION}.{encoded_payload}\0{principal.id}".encode()
+
+
+def _encode_search_cursor(
+    request: SearchRequest,
+    principal: ClientPrincipal,
+    instance_secret: str,
+    offset: int,
+) -> str:
+    payload = SearchCursor(
+        version=1,
+        offset=offset,
+        request_fingerprint=_search_request_fingerprint(request),
+    ).model_dump(mode="json")
+    encoded_payload = _urlsafe_encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    signature = hmac.new(
+        instance_secret.encode("utf-8"),
+        _search_cursor_message(encoded_payload, principal),
+        hashlib.sha256,
+    ).digest()
+    return f"{_SEARCH_CURSOR_VERSION}.{encoded_payload}.{_urlsafe_encode(signature)}"
+
+
+def _decode_search_cursor(
+    value: str,
+    request: SearchRequest,
+    principal: ClientPrincipal,
+    instance_secret: str,
+) -> int:
+    try:
+        version, encoded_payload, encoded_signature = value.split(".")
+        if version != _SEARCH_CURSOR_VERSION:
+            raise _InvalidSearchCursor
+        supplied_signature = _urlsafe_decode(encoded_signature)
+        expected_signature = hmac.new(
+            instance_secret.encode("utf-8"),
+            _search_cursor_message(encoded_payload, principal),
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise _InvalidSearchCursor
+        payload = json.loads(_urlsafe_decode(encoded_payload).decode("utf-8"))
+        cursor = SearchCursor.model_validate(payload)
+        if not hmac.compare_digest(
+            cursor.request_fingerprint,
+            _search_request_fingerprint(request),
+        ):
+            raise _InvalidSearchCursor
+        return cursor.offset
+    except (
+        UnicodeDecodeError,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+        ValidationError,
+    ) as error:
+        raise _InvalidSearchCursor from error
 
 
 class EdgeForgetRequest(BaseModel):
@@ -462,15 +572,32 @@ def create_app(
         require(principal, "context:read")
         if request.cursor is not None:
             try:
-                request = request.model_copy(update={"offset": int(request.cursor)})
-            except ValueError as error:
+                offset = _decode_search_cursor(
+                    request.cursor,
+                    request,
+                    principal,
+                    instance_secret,
+                )
+                request = SearchRequest.model_validate(
+                    {
+                        **request.model_dump(mode="json"),
+                        "offset": offset,
+                        "cursor": None,
+                    }
+                )
+            except (TypeError, ValueError, ValidationError) as error:
                 raise HTTPException(
-                    status_code=422, detail="cursor must be an integer offset"
+                    status_code=422,
+                    detail="invalid or request-mismatched search cursor",
                 ) from error
         response = core.retrieval.search(request, principal)
         result = response.model_dump(mode="json")
         next_offset = request.offset + len(response.items)
-        result["next_cursor"] = str(next_offset) if next_offset < response.total else None
+        result["next_cursor"] = (
+            _encode_search_cursor(request, principal, instance_secret, next_offset)
+            if response.items and next_offset <= 100_000 and next_offset < response.total
+            else None
+        )
         return result
 
     @app.post("/v1/context/bootstrap")
@@ -759,9 +886,15 @@ def create_app(
         return {"items": items, "total": total}
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
-    async def reprocess_source(source_id: str, principal: Principal) -> dict[str, Any]:
+    async def reprocess_source(
+        source_id: str,
+        principal: Principal,
+        rebuild: bool = False,
+    ) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(core.imports.reprocess_source, source_id)
+        return await run_in_threadpool(
+            partial(core.imports.reprocess_source, source_id, rebuild=rebuild)
+        )
 
     @app.get("/v1/admin/sources/{source_id}/import-progress")
     def import_progress(source_id: str, principal: Principal) -> dict[str, Any]:

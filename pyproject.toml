@@ -63,6 +63,7 @@ allthecontext = ["migrations/**/*.sql", "web/**/*", "update_keys.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["packages/allthecontext/src"]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]

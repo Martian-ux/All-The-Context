@@ -46,7 +46,7 @@ coordinator verified these **GitHub product controls** on 2026-07-26:
 | Dependabot alerts | Enabled | Complements hosted audit gates |
 | Dependabot security updates | Enabled | PRs remain review-gated; no auto-merge claim |
 | Code scanning | CodeQL default setup enabled | Initial findings are fixed and rescanned, never dismissed to clear a gate |
-| Branch protection on `main` | Strict PR plus 14 required CI/CodeQL contexts; conversations required; force push/deletion off | Administrator bypass is the recorded sole-maintainer recovery residual |
+| Branch protection on `main` | Strict PR plus 11 required CI/CodeQL contexts (eight canonical CI and three CodeQL); conversations required; force push/deletion off | Administrator bypass is the recorded sole-maintainer recovery residual |
 | Actions SHA pinning enforcement | `sha_pinning_required=true` | Repository policy and workflow pin verifier both apply |
 | `release-promotion` environment | Sole maintainer required; administrator bypass off; protected branches only | Self-review is available and must be recorded truthfully |
 | `github-pages` environment | Sole maintainer required; administrator bypass off; custom `main` policy | No auto-promote |
@@ -73,8 +73,9 @@ python scripts/verify_dashboard_parity.py
 python scripts/build_component_inventory.py --version 0.1.0-beta.6 --output-dir dist/inventory
 ```
 
-Candidate creation also requires the exact nine-job hosted matrix and local
-quality gates:
+Candidate creation also requires the exact eight-job hosted CI set—six supported-
+host matrix slots plus `Repository security gates` and `Dashboard production
+asset parity`—and local quality gates:
 
 ```text
 python scripts/exact_source_gate.py hosted-matrix --repository OWNER/REPOSITORY --source-commit <40-char-sha>

@@ -36,8 +36,9 @@ and is no longer the live release identity. The unpublished `0.1.0-beta.2`
 Windows/Linux-only identity remains an occupied historical draft; its
 evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
 from the product support table and consumer release composition while retaining
-the existing Mac source and CI code as unsupported portability work. No Mac
-execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
+the existing Mac source and historical evidence as unsupported portability
+work. Ordinary CI no longer schedules Mac hosted runners, jobs, or preflight;
+no Mac execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
 The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
@@ -78,6 +79,52 @@ the offline-signed Windows OTA manifest, the lean acceptance bundle, and the
 publication record. GitHub release attestation verification passes for all 34
 assets. No occupied historical draft was retargeted, deleted, reused, signed,
 or published.
+
+### 2026-08-22 source-rebuild safety correction
+
+Complete-source rebuild now stages its parser-versioned candidates while the
+prior current context remains visible. Core publishes the replacement and
+withdraws eligible old records in one SQLite transaction; parser, ingestion,
+cancellation, interruption, and policy-evaluation failures leave the old
+current records and their history intact. Rebuilds resume through the existing
+idempotent session when source finalization is interrupted; a generation/session
+publish marker written in the cutover transaction prevents a retry from
+withdrawing the replacement a second time.
+
+Only current approved records with Core origin `archive_import` and no detected
+correction, user edit, availability/privacy change, or deletion are replacement
+targets. Direct/local-admin records that retain the source ID remain in place.
+Synthetic focused coverage passes for parse failure, injected policy-ingestion
+rollback, cancellation, corrected records, and local-authored records. Full
+Ruff passes; mypy reports no issues across 81 source files; and pytest passes
+1,065 tests with 4 Windows symlink-capability skips and 3 dependency warnings.
+
+### 2026-08-22 bounded ChatGPT attachment ingestion slice
+
+The provider importer now inventories every ChatGPT `.dat` ZIP member without
+extracting it to disk: each member is bounded, streamed, SHA-256 hashed, and
+stored in source metadata with archive identity, manifest/filename/MIME
+provenance, and attachment-ID conversation/message linkage where the export
+metadata establishes it. Text extraction is intentionally limited to
+manifest-proven `.txt`, `.json`, `.jsonl`, `.csv`, `.md`, and `.markdown` assets.
+Images/audio and office/document/web/script formats remain retained raw and
+explicitly unsupported; the importer does not claim that all `.dat` contents
+are searchable. Synthetic tests cover identity, linkage, supported text,
+unsupported binaries, traversal, member/total expansion, and text read bounds.
+Real-export structural inspection was content-free; no real export bytes or
+personal values enter the repository, tests, logs, or receipts.
+
+### 2026-08-22 attachment review-boundary corrections
+
+The ChatGPT `.dat` inventory and bounded text slice now run only for explicit
+ChatGPT imports or auto/generic archives with a structurally confirmed ChatGPT
+mapping graph. Explicit Claude/Grok and unconfirmed archives leave those
+members raw, so malformed ChatGPT control files cannot fail unrelated provider
+imports. Inventory IDs preserve unique archive-member names, links persist as
+exact conversation/message pairs, and colliding stems do not produce inferred
+links. MIME conflicts are explicit `ambiguous` status with no selected type or
+fake provenance source. Link accumulation is capped at 10,000 pairs and
+per-document scanning is bounded; truncation is reported as incomplete.
 
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
@@ -385,7 +432,7 @@ credentials with the null keyring backend **and** explicit
 real OS credential acceptance. Real Windows Credential Manager and supported
 Linux Secret Service round-trips remain the separate
 `--packaged-credential-acceptance` / `smoke_platform_acceptance.py` gates. The
-retained macOS Keychain adapter is unsupported source/CI code and is not a
+retained macOS Keychain adapter is unsupported source code and is not a
 `0.1.0-beta.2` receipt. Headless setup writes a redacted failure
 report when setup exits non-zero. On smoke failure the disposable work tree
 (credentials, vault, configs, binaries) is always deleted; only a content-free
@@ -511,15 +558,19 @@ parts of B-101, B-102, and B-104:
   assignment path for normalized provider user-authored archive evidence;
   generic imports and provider synthesis stay tentative; Relay claims cannot
   attest direct user statements;
-- B-102 minimum chronological conflict safety: unkeyed archive-import
-  preferences/goals/projects/decisions/workflows/constraints share one
-  current lineage per kind ordered by explicitness then `observed_at`, with
-  synthetic fixture `tests/fixtures/b102_chronological_conflicts.json` and
-  reverse-order coverage; direct unkeyed client goals remain independent
-  current records; decision reason/time/policy version remain inspectable
-  without persisting credentials; residual truth is an explicit local trust
-  grant, not cryptographic authorship proof—an authorized malicious witness
-  client can lie.
+- B-102 chronological conflict safety: unkeyed archive-import
+  preferences/goals/projects/decisions/workflows/constraints share a lineage
+  only when a derived subject-only key matches (bounded preference values
+  such as answer style and dark/light, plus a literal choice-before-`for`
+  placeholder, are excluded from that key), ordered by explicitness then
+  `observed_at`, with synthetic fixture
+  `tests/fixtures/b102_chronological_conflicts.json` and reverse-order
+  coverage. Unrelated same-kind archive statements remain independent current
+  records. Direct unkeyed client goals remain independent. Kind-only collapse
+  is not used. Decision reason/time/policy version remain inspectable without
+  persisting credentials; residual truth is an explicit local trust grant, not
+  cryptographic authorship proof—an authorized malicious witness client can
+  lie.
 
 Historical external backups and device remanence are not called repaired.
 Real OS credential services, the secret boundary, and exact Codex/Claude
@@ -828,6 +879,14 @@ identity, while broader certification-profile browser evidence remains open:
   `staged` until session completion. Secret-like and highly sensitive content
   is ignored, sensitive applied context is forced to `local_only`, and
   non-explicit/inferred context requires corroboration.
+- The deterministic sensitivity classifier now covers personally framed
+  partner/residence, health (including HIV), and mortgage/loan statements while
+  leaving unframed technical/general examples at `normal`. Unit, Core policy,
+  and Core-forwarding regressions prove that detected sensitivity remains
+  `local_only` and cannot cross the forwarding boundary. This phrase-based
+  detector is conservative but not exhaustive; explicit first-person fictional
+  text may still be localized, and unrecognized personal wording is not a
+  guarantee of privacy classification.
 - Direct observations are evaluated in the same Core transaction. Exact matches
   reinforce current context; explicitness and `observed_at` resolve same-slot
   replacement, and explicit targeted corrections apply automatically while
@@ -846,6 +905,26 @@ identity, while broader certification-profile browser evidence remains open:
 - Finished ingestion sessions evaluate staged observations atomically.
   Unfinished sessions remain noncurrent, and startup reevaluates eligible
   staged legacy/finished-session observations idempotently.
+- Provider extraction `provider-archives-v2` keeps specific durable kinds
+  (name, preference, goal, project, decision, workflow, constraint) as
+  current memory, retains broad first-person fragments as tentative
+  observations when they are long enough, and skips questions, task-local
+  prompts, and short utterances. Sensitivity classification conservatively
+  marks health, relationship, location, financial, and identifier language.
+  Complete sources can be rebuilt from the preserved raw blob; uncorrected
+  automatic records from that source are reversibly withdrawn and history is
+  kept.
+- Context catalog search returns the exact post-policy `total` with cursor
+  pagination, including pages beyond the 100-record bounded evidence pool,
+  with signed, request-bound cursors and optional kind, sensitivity,
+  confidence, and source-id filters.
+  Cursors bind the normalized query/filter/page-size criteria and authenticated
+  principal; malformed, negative, oversized, or mismatched cursors fail with a
+  safe 422. Direct bounded `offset` requests remain available to MCP/CLI, and
+  no next cursor is issued past the inclusive 100,000 offset bound. The
+  dashboard shows that total, loads further pages, and opens without
+  auto-selecting a record. `bootstrap_context` retains the separate bounded
+  evidence path used for context compilation.
 - Import results expose `outcomes`, a count by actual observation disposition,
   plus deduplicated affected `record_ids`. The dashboard shows total
   observations, truthful coverage, and per-disposition outcome counts.
@@ -933,6 +1012,14 @@ state is already noncurrent and creates no user queue.
   generator are implemented. The focused importer/provider slice passes 37
   tests on Windows Python 3.14.3; Ruff and strict mypy across 72 source files
   pass for the integrated source.
+- Post-beta review found that direct-address task requests such as `I want you
+  to write a haiku` could be classified as durable interaction preferences.
+  Provider extraction now rejects task-local and adversarial instruction
+  framing before preference classification; only explicit durable markers such
+  as always/never/general preference phrasing retain automatic eligibility.
+  Focused parser and Core-ingestion regressions prove those instructions are
+  skipped and legitimate durable preferences still apply. Imported text and
+  parser warnings remain content-inert.
 - Acceptance diagnosis on 2026-07-26 found two real Windows-package defects:
   synchronous parsing could leave more than five seconds between durable
   operation updates after all bytes were committed, and boundary-canary-v1
@@ -1187,7 +1274,14 @@ state is already noncurrent and creates no user queue.
   token MaxSim reduces measured redundancy from `0.083334` to zero; the final
   256-source warm p95 is `18.9572 ms`. Neural late interaction remains
   unexercised and there is no runtime integration.
-- Integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
+- A synthetic retrieval-usefulness harness now scores current-fact recall,
+  stale/conflict exclusion, withdrawn exclusion, sensitivity, provenance,
+  budget compliance, and provider-facing packaging through public
+  observation/search/bootstrap/get APIs on an isolated vault. It refuses the
+  live Core data directory, does not change production ranking or MCP behavior,
+  and grants no beta-acceptance credit. The checked-in baseline is
+  `bench/baselines/retrieval_usefulness_v1.json`.
+- Historical integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
   macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
   measurements rather than cross-platform performance claims.
@@ -1282,10 +1376,12 @@ state is already noncurrent and creates no user queue.
   and null keyring. The live file was not blindly restored while Codex was
   active; its timestamped backups and semantic, secret-free differences were
   recorded for operator review.
-- GitHub private vulnerability reporting was enabled and verified on
-  2026-07-25. Branch, dependency, secret, and code-scanning controls still need
-  their own acceptance.
-- Roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
+- The 2026-07-25 status snapshot recorded GitHub private vulnerability reporting
+  as enabled while branch, dependency, secret, and code-scanning controls still
+  awaited their own acceptance. Current `main` protection is strict and requires
+  the eight canonical CI contexts plus three CodeQL contexts; conversations are
+  required and force push/deletion are off.
+- Historical roadmap baseline `1d44fdd80a3dcb32c580434924bb03c1e5291ae1` passed all nine
   Windows/macOS/Linux Python, Node 20/22 dashboard, and native-package jobs in
   [hosted CI run 30177362472](https://github.com/Martian-ux/All-The-Context/actions/runs/30177362472).
   This is baseline evidence, not the still-unfrozen beta release candidate.
@@ -1293,7 +1389,7 @@ state is already noncurrent and creates no user queue.
   configuration, migration, storage, encrypted export/restore, importer, and
   CLI tests pass; Ruff, strict mypy across 68 source files, and the full
   662-test suite pass with four host-limited symlink skips. Exact commit
-  `03a266f` passed all nine jobs in both hosted matrices. The final frozen
+  historical exact commit `03a266f` passed all nine jobs in both hosted matrices. The final frozen
   release identity remains pending.
 - The B-105 provider/import implementation plus coordinator lifecycle
   hardening passes Ruff, strict mypy across 72 source files, and 37 focused
@@ -1351,14 +1447,14 @@ state is already noncurrent and creates no user queue.
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
   package also passed its platform trust smoke.
-- Implementation commit `05c7638` passed both its
+- Historical implementation commit `05c7638` passed both its
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29969999250)
   and
   [draft-PR matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29970013608):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
   20 and 22.
-- Retrieval V3 integration commit `67dd11c` passed its
+- Historical Retrieval V3 integration commit `67dd11c` passed its
   [push matrix](https://github.com/Martian-ux/All-The-Context/actions/runs/29976224653):
   Python 3.12 on Windows, Ubuntu, and macOS; native desktop/package acceptance
   on Windows, Ubuntu, macOS ARM, and macOS Intel; and dashboard checks on Node
@@ -1372,6 +1468,17 @@ state is already noncurrent and creates no user queue.
 - No paid/native Windows publisher signing is planned for the community beta.
 - The live SQLite vault is not application-encrypted at rest; portable exports
   are passphrase-encrypted.
+
+## Provider conversation-list coverage correction (2026-08-22)
+
+- Recognized provider conversation lists now retain closed accounting for every
+  malformed or unknown entry instead of filtering it out. Valid siblings still
+  import, while malformed non-mapping values and unknown mapping shapes are
+  counted as `unparsed` and keep coverage incomplete.
+- The accounting applies to provider wrappers, nested `data`/`export`/
+  `account_data` wrappers, and root conversation arrays. Structural warnings
+  contain no entry IDs, titles, or imported text; all-malformed provider lists
+  remain recognized but incomplete.
 
 ## Repository security convergence
 

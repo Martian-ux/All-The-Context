@@ -6,6 +6,7 @@ import type {
   ContextDeletion,
   ContextRecord,
   ContextRecordVersion,
+  ContextSearchOptions,
   CoreStatus,
   ImportOperation,
   ImportResult,
@@ -289,8 +290,8 @@ export const api = {
       window.clearInterval(poll);
     }
   },
-  reprocessSource: async (sourceId: string): Promise<ImportResult> =>
-    importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess`, { method: "POST" })),
+  reprocessSource: async (sourceId: string, options?: { rebuild?: boolean }): Promise<ImportResult> =>
+    importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess${options?.rebuild ? "?rebuild=true" : ""}`, { method: "POST" })),
   deleteSource: (sourceId: string, reason: string): Promise<SourceDeletion> =>
     request<SourceDeletion>(`/admin/sources/${encodeURIComponent(sourceId)}/delete`, {
       method: "POST",
@@ -306,10 +307,19 @@ export const api = {
     );
     return { ...result, source: sourceFromWire(result.source) };
   },
-  searchContext: async (query: string, availability?: Availability): Promise<Page<ContextRecord>> => {
+  searchContext: async (query: string, options: ContextSearchOptions = {}): Promise<Page<ContextRecord>> => {
+    const payload: Record<string, unknown> = {
+      query,
+      availability: options.availability ? [options.availability] : [],
+      kinds: options.kinds ?? [],
+      sensitivity: options.sensitivity ?? [],
+      limit: options.limit ?? 50,
+    };
+    if (options.minConfidence !== undefined) payload.min_confidence = options.minConfidence;
+    if (options.cursor) payload.cursor = options.cursor;
     const result = await request<Page<RecordWire>>("/context/search", {
       method: "POST",
-      body: JSON.stringify({ query, availability: availability ? [availability] : [], limit: 100 }),
+      body: JSON.stringify(payload),
     });
     return { ...result, items: result.items.map(recordFromWire) };
   },

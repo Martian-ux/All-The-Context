@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import io
 import json
 import re
@@ -9,7 +11,7 @@ import tempfile
 import time
 import zipfile
 from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
@@ -27,6 +29,7 @@ from .import_boundary import (
     refuse_if_over_boundary,
 )
 from .ingestion import IngestionService, archive_session_request
+from .memory_policy import classify_sensitivity
 from .models import (
     Availability,
     CandidateInput,
@@ -47,6 +50,11 @@ from .storage import CoreStore, InvalidStateError
 
 DEFAULT_MAX_EXPANDED_TEXT_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_JSON_ITEM_CHARS = 128 * 1024 * 1024
+DEFAULT_MAX_ZIP_MEMBER_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_ATTACHMENT_TEXT_BYTES = 8 * 1024 * 1024
+DEFAULT_MAX_ATTACHMENT_LINK_PAIRS = 10_000
+MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH = 64
+MAX_CHATGPT_ATTACHMENT_SCAN_NODES = 10_000
 _OPERATION_COOPERATIVE_YIELD_SECONDS = 0.001
 
 _KIND_MAP = {
@@ -76,7 +84,57 @@ _SECRET_HINT = re.compile(
     r"refresh[_ -]?token|client[_ -]?secret|secret)\s*[:=]",
     flags=re.IGNORECASE,
 )
-_SUPPORTED_TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".markdown", ".txt"}
+_SUPPORTED_TEXT_SUFFIXES = {".csv", ".json", ".jsonl", ".md", ".markdown", ".txt"}
+_SUPPORTED_ATTACHMENT_SUFFIXES = frozenset(_SUPPORTED_TEXT_SUFFIXES)
+_CHATGPT_CONTROL_BASENAMES = frozenset(
+    {"conversation_asset_file_names.json", "export_manifest.json", "library_files.json"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentLink:
+    conversation_id: str
+    message_id: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "conversation_id": self.conversation_id,
+            "message_id": self.message_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentInventory:
+    """Content-free metadata for one ChatGPT export attachment member."""
+
+    asset_id: str
+    archive_name: str
+    content_sha256: str
+    byte_size: int
+    original_filename: str | None
+    mime_type: str | None
+    mime_type_source: str | None
+    mime_type_status: str
+    links: tuple[AttachmentLink, ...]
+    extraction_status: str
+    extracted_format: str | None
+    provenance: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "asset_id": self.asset_id,
+            "archive_name": self.archive_name,
+            "content_sha256": self.content_sha256,
+            "byte_size": self.byte_size,
+            "original_filename": self.original_filename,
+            "mime_type": self.mime_type,
+            "mime_type_source": self.mime_type_source,
+            "mime_type_status": self.mime_type_status,
+            "links": [item.as_dict() for item in self.links],
+            "extraction_status": self.extraction_status,
+            "extracted_format": self.extracted_format,
+            "provenance": list(self.provenance),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +151,7 @@ class ParsedArchive:
     recognized_provider: bool = False
     closed_coverage: dict[str, int] = field(default_factory=dict)
     parser_identity: str = PARSER_VERSION
+    attachments: list[AttachmentInventory] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -114,6 +173,7 @@ def _candidate(kind: str, content: str, *, evidence: str | None = None) -> Candi
         content=normalized,
         evidence=(evidence or content)[:16_000],
         confidence=1.0,
+        sensitivity=classify_sensitivity(normalized),
         source_type="archive",
         availability=Availability.CORE,
         explicit_user_statement=True,
@@ -254,6 +314,8 @@ def _consume_json_value(
     coverage: _GenericCoverage,
 ) -> None:
     if isinstance(value, list):
+        if builder.consume_json_list(source_name, value):
+            return
         if not value:
             builder.note_file(source_name)
             coverage.skipped += 1
@@ -265,7 +327,11 @@ def _consume_json_value(
     candidate_count = len(generic)
     if not recognized:
         _extract_json(value, generic)
-    if not recognized and len(generic) == candidate_count:
+    if (
+        not recognized
+        and len(generic) == candidate_count
+        and not builder.note_unrecognized_json_value(source_name)
+    ):
         coverage.skipped += 1
 
 
@@ -274,6 +340,7 @@ def _combine(
     generic: Iterable[CandidateInput],
     warnings: Sequence[str] = (),
     generic_coverage: _GenericCoverage | None = None,
+    attachments: Sequence[AttachmentInventory] = (),
 ) -> ParsedArchive:
     combined_warnings = _deduplicate_strings([*warnings, *provider_result.warnings])[:512]
     generic_list = list(generic)
@@ -336,6 +403,7 @@ def _combine(
         closed_coverage=closed,
         parser_identity=provider_result.parser_identity
         or parser_identity_for(provider_result.provider),
+        attachments=list(attachments),
     )
 
 
@@ -502,22 +570,520 @@ def _parse_jsonl_stream(
     return _combine(builder.finish(), generic, warnings, coverage)
 
 
+@dataclass(slots=True)
+class _ChatGPTAttachmentContext:
+    original_filenames: dict[str, str] = field(default_factory=dict)
+    manifest_members: set[str] = field(default_factory=set)
+    mime_types: dict[str, tuple[str | None, str]] = field(default_factory=dict)
+    mime_types_by_filename: dict[str, str | None] = field(default_factory=dict)
+    ambiguous_mime_filenames: set[str] = field(default_factory=set)
+    mime_types_by_member: dict[str, tuple[str | None, str]] = field(default_factory=dict)
+    links: dict[str, set[AttachmentLink]] = field(default_factory=dict)
+    link_sources: dict[str, set[str]] = field(default_factory=dict)
+    member_names_by_reference: dict[str, set[str]] = field(default_factory=dict)
+    control_members: set[str] = field(default_factory=set)
+    max_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS
+    link_pairs: int = 0
+    links_truncated: bool = False
+    scan_nodes: int = 0
+    scan_truncated: bool = False
+
+    def add_link(self, reference: str, link: AttachmentLink) -> bool:
+        existing = self.links.get(reference)
+        if existing is None:
+            if self.link_pairs >= self.max_link_pairs:
+                self.links_truncated = True
+                return False
+            existing = set()
+            self.links[reference] = existing
+        if link in existing:
+            return True
+        if self.link_pairs >= self.max_link_pairs:
+            self.links_truncated = True
+            return False
+        existing.add(link)
+        self.link_pairs += 1
+        return True
+
+    def note_scan_node(self, depth: int) -> bool:
+        if depth > MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH:
+            self.scan_truncated = True
+            return False
+        if self.scan_nodes >= MAX_CHATGPT_ATTACHMENT_SCAN_NODES:
+            self.scan_truncated = True
+            return False
+        self.scan_nodes += 1
+        return True
+
+    def begin_scan(self) -> None:
+        self.scan_nodes = 0
+
+
+def _normalize_attachment_member_name(value: str) -> str:
+    return _safe_zip_name(value)
+
+
+def _attachment_id_from_member_name(safe_name: str) -> str:
+    """Return the archive member identity, not a collision-prone filename stem."""
+    return safe_name
+
+
+def _attachment_reference_from_member_name(safe_name: str) -> str:
+    """Return the provider attachment reference used to resolve a member link."""
+    return PurePosixPath(safe_name).stem.casefold()
+
+
+def _normalize_attachment_reference(value: str) -> str:
+    return value.strip().casefold()[:512]
+
+
+def _safe_attachment_filename(value: str) -> str | None:
+    normalized = value.replace("\\", "/")
+    name = PurePosixPath(normalized).name
+    cleaned = "".join(char for char in name if ord(char) >= 32 and char != "\x7f")
+    return cleaned[:512] or None
+
+
+def _first_mapping_string(value: Mapping[str, Any], keys: Sequence[str]) -> str | None:
+    for key in keys:
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()[:512]
+    return None
+
+
+def _merge_mime_declaration(
+    current: tuple[str | None, str] | None,
+    incoming: tuple[str | None, str],
+) -> tuple[str | None, str]:
+    if current is None:
+        return incoming
+    if current[0] is None or incoming[0] is None:
+        return (None, "ambiguous")
+    if current[0].casefold() != incoming[0].casefold():
+        return (None, "ambiguous")
+    return current
+
+
+def _declare_mime(
+    context: _ChatGPTAttachmentContext,
+    reference: str,
+    mime_type: str,
+    source: str,
+) -> None:
+    normalized = mime_type.strip()[:256]
+    if not normalized:
+        return
+    key = _normalize_attachment_reference(reference)
+    if not key:
+        return
+    context.mime_types[key] = _merge_mime_declaration(
+        context.mime_types.get(key), (normalized, source)
+    )
+
+
+def _declare_member_mime(
+    context: _ChatGPTAttachmentContext,
+    member_name: str,
+    declaration: tuple[str | None, str],
+) -> None:
+    context.mime_types_by_member[member_name] = _merge_mime_declaration(
+        context.mime_types_by_member.get(member_name), declaration
+    )
+
+
+def _collect_chatgpt_attachment_links(
+    value: Any,
+    context: _ChatGPTAttachmentContext,
+    *,
+    source_name: str | None = None,
+) -> None:
+    context.begin_scan()
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if not context.note_scan_node(depth):
+            continue
+        if isinstance(current, list):
+            pending.extend((item, depth + 1) for item in reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        mapping = current.get("mapping")
+        if isinstance(mapping, dict):
+            conversation_id = _first_mapping_string(
+                current, ("conversation_id", "id", "uuid", "chat_id")
+            )
+            if conversation_id is None:
+                continue
+            for node_id, node in mapping.items():
+                if not context.note_scan_node(depth + 1):
+                    break
+                if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+                    continue
+                message = node["message"]
+                message_id = _first_mapping_string(message, ("id", "uuid", "message_id"))
+                if message_id is None:
+                    message_id = str(node_id)[:512]
+                metadata = message.get("metadata")
+                if not isinstance(metadata, dict):
+                    continue
+                attachments = metadata.get("attachments")
+                if not isinstance(attachments, list):
+                    continue
+                for attachment in attachments:
+                    if not context.note_scan_node(depth + 2):
+                        break
+                    if not isinstance(attachment, dict):
+                        continue
+                    asset_id = _first_mapping_string(attachment, ("id", "asset_id"))
+                    if asset_id is None:
+                        continue
+                    reference = _normalize_attachment_reference(asset_id)
+                    link = AttachmentLink(conversation_id, message_id)
+                    if context.add_link(reference, link) and source_name is not None:
+                        context.link_sources.setdefault(reference, set()).add(source_name)
+                    mime_type = attachment.get("mime_type")
+                    if isinstance(mime_type, str) and mime_type.strip():
+                        _declare_mime(
+                            context,
+                            reference,
+                            mime_type,
+                            "conversation_attachment",
+                        )
+            continue
+        for key in ("conversations", "conversation_history", "items", "data", "export"):
+            nested = current.get(key)
+            if isinstance(nested, (dict, list)):
+                pending.append((nested, depth + 1))
+
+
+def _collect_library_mime_types(value: Any, context: _ChatGPTAttachmentContext) -> None:
+    if not isinstance(value, list):
+        return
+    by_filename: dict[str, set[str]] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        filename = item.get("file_name")
+        mime_type = item.get("mime_type")
+        if not isinstance(filename, str) or not isinstance(mime_type, str):
+            continue
+        safe_filename = _safe_attachment_filename(filename)
+        if safe_filename is None or not mime_type.strip():
+            continue
+        by_filename.setdefault(safe_filename, set()).add(mime_type.strip()[:256])
+    # A repeated filename with conflicting declarations is not safe to resolve.
+    context.mime_types_by_filename = {
+        filename: next(iter(values)) if len(values) == 1 else None
+        for filename, values in by_filename.items()
+    }
+    context.ambiguous_mime_filenames = {
+        filename for filename, values in by_filename.items() if len(values) > 1
+    }
+
+
+def _read_zip_member_bytes(
+    archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bytes:
+    if member.file_size > max_bytes:
+        raise InvalidStateError("ZIP member exceeds the read limit")
+    chunks: list[bytes] = []
+    total = 0
+    with archive.open(member) as stream:
+        while True:
+            remaining = member.file_size - total
+            chunk = stream.read(min(1024 * 1024, max(remaining, 1)))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes or total > member.file_size:
+                raise InvalidStateError("ZIP member exceeded its bounded read")
+            chunks.append(chunk)
+    if total != member.file_size:
+        raise InvalidStateError("ZIP member ended before its declared size")
+    return b"".join(chunks)
+
+
+def _hash_zip_member(
+    archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    *,
+    max_text_bytes: int,
+    progress: ImportProgressTracker | None = None,
+) -> tuple[str, bytes | None]:
+    digest = hashlib.sha256()
+    text_chunks: list[bytes] = []
+    total = 0
+    retain_text = member.file_size <= max_text_bytes
+    with archive.open(member) as stream:
+        while True:
+            if progress is not None:
+                progress.check_cancelled()
+            remaining = member.file_size - total
+            chunk = stream.read(min(1024 * 1024, max(remaining, 1)))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > member.file_size:
+                raise InvalidStateError("ZIP member exceeded its declared size")
+            digest.update(chunk)
+            if retain_text:
+                text_chunks.append(chunk)
+    if total != member.file_size:
+        raise InvalidStateError("ZIP member ended before its declared size")
+    return digest.hexdigest(), b"".join(text_chunks) if retain_text else None
+
+
+def _load_zip_json_member(
+    archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    *,
+    max_item_chars: int,
+) -> Any:
+    raw = _read_zip_member_bytes(archive, member, max_bytes=max_item_chars)
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InvalidStateError("attachment metadata JSON is invalid") from error
+
+
+def _attachment_context(
+    archive: zipfile.ZipFile,
+    members: Sequence[zipfile.ZipInfo],
+    *,
+    max_item_chars: int,
+    max_link_pairs: int,
+) -> _ChatGPTAttachmentContext:
+    context = _ChatGPTAttachmentContext(max_link_pairs=max_link_pairs)
+    by_basename: dict[str, zipfile.ZipInfo] = {}
+    for member in members:
+        safe_name = _safe_zip_name(member.filename)
+        by_basename.setdefault(PurePosixPath(safe_name).name.casefold(), member)
+        if PurePosixPath(safe_name).suffix.casefold() == ".dat":
+            reference = _attachment_reference_from_member_name(safe_name)
+            if reference:
+                context.member_names_by_reference.setdefault(reference, set()).add(safe_name)
+
+    asset_member = by_basename.get("conversation_asset_file_names.json")
+    if asset_member is not None:
+        context.control_members.add(_safe_zip_name(asset_member.filename))
+        value = _load_zip_json_member(archive, asset_member, max_item_chars=max_item_chars)
+        if isinstance(value, dict):
+            for member_name, original_filename in value.items():
+                if not isinstance(member_name, str) or not isinstance(original_filename, str):
+                    continue
+                safe_member = _normalize_attachment_member_name(member_name)
+                if PurePosixPath(safe_member).suffix.casefold() == ".dat":
+                    filename = _safe_attachment_filename(original_filename)
+                    if filename is not None:
+                        context.original_filenames[safe_member] = filename
+
+    manifest_member = by_basename.get("export_manifest.json")
+    if manifest_member is not None:
+        context.control_members.add(_safe_zip_name(manifest_member.filename))
+        value = _load_zip_json_member(archive, manifest_member, max_item_chars=max_item_chars)
+        if isinstance(value, dict):
+            logical_files = value.get("logical_files")
+            if isinstance(logical_files, dict):
+                for logical_name, logical_info in logical_files.items():
+                    if not isinstance(logical_name, str):
+                        continue
+                    safe_logical = _normalize_attachment_member_name(logical_name)
+                    if PurePosixPath(safe_logical).suffix.casefold() != ".dat":
+                        continue
+                    context.manifest_members.add(safe_logical)
+                    if isinstance(logical_info, dict):
+                        files = logical_info.get("files")
+                        if isinstance(files, list):
+                            context.manifest_members.update(
+                                _normalize_attachment_member_name(item)
+                                for item in files
+                                if isinstance(item, str)
+                                and PurePosixPath(item).suffix.casefold() == ".dat"
+                            )
+            export_files = value.get("export_files")
+            if isinstance(export_files, list):
+                context.manifest_members.update(
+                    _normalize_attachment_member_name(item)
+                    for item in export_files
+                    if isinstance(item, str) and PurePosixPath(item).suffix.casefold() == ".dat"
+                )
+
+    library_member = by_basename.get("library_files.json")
+    if library_member is not None:
+        context.control_members.add(_safe_zip_name(library_member.filename))
+        _collect_library_mime_types(
+            _load_zip_json_member(archive, library_member, max_item_chars=max_item_chars),
+            context,
+        )
+        for safe_name, original_filename in context.original_filenames.items():
+            if original_filename in context.ambiguous_mime_filenames:
+                _declare_member_mime(context, safe_name, (None, "ambiguous"))
+                continue
+            mime_type = context.mime_types_by_filename.get(original_filename)
+            if mime_type is not None:
+                _declare_member_mime(context, safe_name, (mime_type, "library_files"))
+
+    return context
+
+
+def _mime_for_member(
+    context: _ChatGPTAttachmentContext,
+    safe_name: str,
+) -> tuple[str | None, str | None, str]:
+    declarations: list[tuple[str | None, str]] = []
+    member_declaration = context.mime_types_by_member.get(safe_name)
+    if member_declaration is not None:
+        declarations.append(member_declaration)
+    reference = _attachment_reference_from_member_name(safe_name)
+    reference_declaration = context.mime_types.get(reference)
+    if reference_declaration is not None:
+        matching_members = context.member_names_by_reference.get(reference, set())
+        if len(matching_members) == 1:
+            declarations.append(reference_declaration)
+        else:
+            declarations.append((None, "ambiguous"))
+    if not declarations:
+        return None, None, "unknown"
+    merged = declarations[0]
+    for declaration in declarations[1:]:
+        merged = _merge_mime_declaration(merged, declaration)
+    if merged[0] is None:
+        return None, None, "ambiguous"
+    return merged[0], merged[1], "known"
+
+
+def _links_for_member(
+    context: _ChatGPTAttachmentContext,
+    safe_name: str,
+) -> tuple[list[AttachmentLink], list[str]]:
+    reference = _attachment_reference_from_member_name(safe_name)
+    if len(context.member_names_by_reference.get(reference, set())) != 1:
+        return [], []
+    links = sorted(
+        context.links.get(reference, set()),
+        key=lambda item: (item.conversation_id, item.message_id),
+    )
+    sources = sorted(context.link_sources.get(reference, set())) if links else []
+    return links, sources
+
+
+def _looks_like_chatgpt_structure(value: Any) -> bool:
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    nodes = 0
+    while pending:
+        current, depth = pending.pop()
+        if depth > MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH or nodes >= MAX_CHATGPT_ATTACHMENT_SCAN_NODES:
+            return False
+        nodes += 1
+        if isinstance(current, list):
+            pending.extend((item, depth + 1) for item in reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        if isinstance(current.get("mapping"), dict):
+            return True
+        pending.extend(
+            (current[key], depth + 1)
+            for key in ("conversations", "conversation_history", "items", "data", "export")
+            if isinstance(current.get(key), (dict, list))
+        )
+    return False
+
+
+def _is_conversation_json_member(safe_name: str) -> bool:
+    path = PurePosixPath(safe_name)
+    return path.suffix.casefold() == ".json" and "conversation" in path.stem.casefold()
+
+
+def _is_chatgpt_control_member(safe_name: str) -> bool:
+    return PurePosixPath(safe_name).name.casefold() in _CHATGPT_CONTROL_BASENAMES
+
+
+def _archive_has_chatgpt_structure(
+    archive: zipfile.ZipFile,
+    members: Sequence[zipfile.ZipInfo],
+    *,
+    max_item_chars: int,
+    progress: ImportProgressTracker | None = None,
+) -> bool:
+    for member in members:
+        safe_name = _safe_zip_name(member.filename)
+        if not _is_conversation_json_member(safe_name):
+            continue
+        try:
+            with archive.open(member) as stream:
+                for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
+                    if _looks_like_chatgpt_structure(document):
+                        return True
+        except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
+            continue
+        finally:
+            if progress is not None:
+                progress.check_cancelled()
+    return False
+
+
+def _attachment_text_format(original_filename: str | None) -> str | None:
+    if original_filename is None:
+        return None
+    suffix = PurePosixPath(original_filename).suffix.casefold()
+    return suffix.lstrip(".") if suffix in _SUPPORTED_ATTACHMENT_SUFFIXES else None
+
+
+def _csv_text(raw_text: str, *, max_chars: int) -> str:
+    rows: list[str] = []
+    total = 0
+    try:
+        reader = csv.reader(io.StringIO(raw_text, newline=""), strict=True)
+        for row in reader:
+            line = "\t".join(row).strip()
+            if not line:
+                continue
+            total += len(line) + 1
+            if total > max_chars:
+                raise InvalidStateError("CSV attachment exceeds the text extraction limit")
+            rows.append(line)
+    except csv.Error as error:
+        raise InvalidStateError("CSV attachment is not well formed") from error
+    return "\n".join(rows)
+
+
 def parse_zip_bundle(
     content: bytes | Path,
     *,
     provider: str | ArchiveProvider = ArchiveProvider.AUTO,
     max_entries: int = 10_000,
     max_uncompressed_bytes: int = DEFAULT_MAX_EXPANDED_TEXT_BYTES,
+    max_member_uncompressed_bytes: int = DEFAULT_MAX_ZIP_MEMBER_BYTES,
     max_compression_ratio: int = 500,
     max_json_item_chars: int = DEFAULT_MAX_JSON_ITEM_CHARS,
+    max_attachment_text_bytes: int = DEFAULT_MAX_ATTACHMENT_TEXT_BYTES,
+    max_attachment_link_pairs: int = DEFAULT_MAX_ATTACHMENT_LINK_PAIRS,
     progress: ImportProgressTracker | None = None,
 ) -> ParsedArchive:
-    """Parse supported ZIP members in place; archive paths are never extracted."""
-    builder = _builder(provider)
+    """Parse bounded ZIP members in place; archive paths are never extracted."""
+    if max_entries < 1 or max_uncompressed_bytes < 1 or max_member_uncompressed_bytes < 1:
+        raise ValueError("ZIP limits must be positive")
+    if (
+        max_compression_ratio < 1
+        or max_json_item_chars < 1
+        or max_attachment_text_bytes < 1
+        or max_attachment_link_pairs < 1
+    ):
+        raise ValueError("ZIP read limits must be positive")
+    provider_hint = normalize_provider(provider)
+    builder = _builder(provider_hint)
     generic: list[CandidateInput] = []
     warnings: list[str] = []
     coverage = _GenericCoverage()
     unsupported_entries = 0
+    unsupported_attachments = 0
+    attachments: list[AttachmentInventory] = []
     source: io.BytesIO | Path = io.BytesIO(content) if isinstance(content, bytes) else content
     try:
         with zipfile.ZipFile(source) as archive:
@@ -525,7 +1091,10 @@ def parse_zip_bundle(
             if len(members) > max_entries:
                 raise InvalidStateError("ZIP bundle contains too many entries")
             seen_names: set[str] = set()
-            supported_size = 0
+            unique_members: list[zipfile.ZipInfo] = []
+            total_uncompressed = sum(item.file_size for item in members if not item.is_dir())
+            if total_uncompressed > max_uncompressed_bytes:
+                raise InvalidStateError("ZIP bundle exceeds the total uncompressed-size limit")
             supported_members: list[zipfile.ZipInfo] = []
             for member in members:
                 if member.is_dir():
@@ -533,29 +1102,185 @@ def parse_zip_bundle(
                 safe_name = _validate_zip_member_name(member.filename)
                 builder.note_file(safe_name)
                 folded = safe_name.casefold()
-                if folded in seen_names:
+                duplicate = folded in seen_names
+                if member.file_size > max_member_uncompressed_bytes:
+                    raise InvalidStateError("ZIP member exceeds the per-member size limit")
+                if member.flag_bits & 0x1:
+                    raise InvalidStateError("encrypted ZIP entries are not supported")
+                if member.file_size and (
+                    member.compress_size == 0
+                    or member.file_size / member.compress_size > max_compression_ratio
+                ):
+                    raise InvalidStateError("ZIP bundle exceeds the compression-ratio limit")
+                if duplicate:
                     _append_warning(
                         warnings,
                         f"{safe_name}: case-insensitive duplicate entry skipped",
                     )
                     continue
                 seen_names.add(folded)
+                unique_members.append(member)
+
+            attachment_enabled = provider_hint == ArchiveProvider.CHATGPT
+            if provider_hint in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+                attachment_enabled = _archive_has_chatgpt_structure(
+                    archive,
+                    unique_members,
+                    max_item_chars=max_json_item_chars,
+                    progress=progress,
+                )
+            context = (
+                _attachment_context(
+                    archive,
+                    unique_members,
+                    max_item_chars=max_json_item_chars,
+                    max_link_pairs=max_attachment_link_pairs,
+                )
+                if attachment_enabled
+                else _ChatGPTAttachmentContext(max_link_pairs=max_attachment_link_pairs)
+            )
+            for member in unique_members:
+                safe_name = _safe_zip_name(member.filename)
+                if not _is_conversation_json_member(safe_name):
+                    continue
+                try:
+                    with archive.open(member) as stream:
+                        for document in _iter_json_documents(
+                            stream, max_item_chars=max_json_item_chars
+                        ):
+                            if attachment_enabled:
+                                _collect_chatgpt_attachment_links(
+                                    document,
+                                    context,
+                                    source_name=safe_name,
+                                )
+                except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
+                    continue
+
+            for member in unique_members:
+                safe_name = _safe_zip_name(member.filename)
                 suffix = PurePosixPath(safe_name).suffix.casefold()
+                if suffix == ".dat" and attachment_enabled:
+                    if progress is not None:
+                        progress.check_cancelled()
+                    asset_id = _attachment_id_from_member_name(safe_name)
+                    content_sha256, raw_text = _hash_zip_member(
+                        archive,
+                        member,
+                        max_text_bytes=max_attachment_text_bytes,
+                        progress=progress,
+                    )
+                    original_filename = context.original_filenames.get(safe_name)
+                    mime_type, mime_source, mime_status = _mime_for_member(context, safe_name)
+                    text_format = (
+                        _attachment_text_format(original_filename)
+                        if safe_name in context.manifest_members
+                        else None
+                    )
+                    extraction_status = "unsupported_binary"
+                    extracted_format: str | None = None
+                    if text_format is not None:
+                        if raw_text is None:
+                            extraction_status = "text_read_limit"
+                        else:
+                            try:
+                                text = raw_text.decode("utf-8-sig")
+                                source_name = f"attachment/{safe_name}"
+                                if text_format == "json":
+                                    for document in _iter_json_documents(
+                                        io.BytesIO(raw_text), max_item_chars=max_json_item_chars
+                                    ):
+                                        if attachment_enabled and _is_conversation_json_member(
+                                            safe_name
+                                        ):
+                                            _collect_chatgpt_attachment_links(
+                                                document,
+                                                context,
+                                                source_name=safe_name,
+                                            )
+                                        _consume_json_value(
+                                            builder,
+                                            source_name,
+                                            document,
+                                            generic,
+                                            coverage,
+                                        )
+                                elif text_format == "jsonl":
+                                    for line_number, line in enumerate(text.splitlines(), 1):
+                                        if not line.strip():
+                                            continue
+                                        try:
+                                            document = json.loads(line)
+                                        except json.JSONDecodeError:
+                                            coverage.unparsed += 1
+                                            _append_warning(
+                                                warnings,
+                                                f"{safe_name}: line {line_number}: "
+                                                "invalid JSON skipped",
+                                            )
+                                            continue
+                                        _consume_json_value(
+                                            builder,
+                                            source_name,
+                                            document,
+                                            generic,
+                                            coverage,
+                                        )
+                                elif text_format == "csv":
+                                    builder.consume_text(
+                                        source_name,
+                                        _csv_text(text, max_chars=max_attachment_text_bytes),
+                                    )
+                                else:
+                                    builder.consume_text(source_name, text)
+                                extraction_status = "text_extracted"
+                                extracted_format = text_format
+                            except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
+                                extraction_status = "text_parse_failed"
+                                _append_warning(warnings, f"{safe_name}: attachment text skipped")
+                                coverage.unparsed += 1
+                    if extraction_status != "text_extracted":
+                        unsupported_attachments += 1
+                        unsupported_entries += 1
+                    links, link_sources = _links_for_member(context, safe_name)
+                    provenance = (
+                        ["export_manifest.json"] if safe_name in context.manifest_members else []
+                    )
+                    if original_filename is not None:
+                        provenance.append("conversation_asset_file_names.json")
+                    if mime_source is not None and mime_status == "known":
+                        provenance.append(mime_source)
+                    if links:
+                        provenance.extend(
+                            f"{source}:message.metadata.attachments" for source in link_sources
+                        )
+                    attachments.append(
+                        AttachmentInventory(
+                            asset_id=asset_id,
+                            archive_name=safe_name,
+                            content_sha256=content_sha256,
+                            byte_size=member.file_size,
+                            original_filename=original_filename,
+                            mime_type=mime_type,
+                            mime_type_source=mime_source,
+                            mime_type_status=mime_status,
+                            links=tuple(links),
+                            extraction_status=extraction_status,
+                            extracted_format=extracted_format,
+                            provenance=tuple(provenance),
+                        )
+                    )
+                    continue
+                if suffix == ".dat":
+                    unsupported_entries += 1
+                    continue
+                if suffix == ".json" and _is_chatgpt_control_member(safe_name):
+                    continue
                 if suffix not in _SUPPORTED_TEXT_SUFFIXES:
                     unsupported_entries += 1
                     continue
-                if member.flag_bits & 0x1:
-                    raise InvalidStateError("encrypted ZIP text entries are not supported")
-                if member.file_size and (
-                    member.compress_size == 0
-                    or member.file_size / member.compress_size > max_compression_ratio
-                ):
-                    raise InvalidStateError("ZIP bundle exceeds the compression-ratio limit")
-                supported_size += member.file_size
-                if supported_size > max_uncompressed_bytes:
-                    raise InvalidStateError(
-                        "ZIP bundle exceeds the uncompressed-size limit for text entries"
-                    )
+                if safe_name in context.control_members:
+                    continue
                 if suffix in {".md", ".markdown", ".txt"} and (
                     member.file_size > max_json_item_chars
                 ):
@@ -596,8 +1321,9 @@ def parse_zip_bundle(
                             progress=progress,
                         )
                     else:
-                        with archive.open(member) as stream:
-                            raw_text = stream.read()
+                        raw_text = _read_zip_member_bytes(
+                            archive, member, max_bytes=max_json_item_chars
+                        )
                         try:
                             text = raw_text.decode("utf-8-sig")
                         except UnicodeDecodeError:
@@ -606,6 +1332,8 @@ def parse_zip_bundle(
                                 warnings,
                                 f"{safe_name}: invalid UTF-8 sequences were replaced",
                             )
+                        if suffix == ".csv":
+                            text = _csv_text(text, max_chars=max_json_item_chars)
                         recognized = builder.consume_text(safe_name, text)
                         if not recognized:
                             generic.extend(_labeled_text_candidates(text))
@@ -620,10 +1348,54 @@ def parse_zip_bundle(
     if unsupported_entries:
         _append_warning(
             warnings,
-            f"{unsupported_entries} non-text archive entries were retained raw and skipped "
-            "during memory extraction",
+            f"{unsupported_entries} non-text or unsupported archive entries were retained raw "
+            "and skipped during memory extraction",
         )
-    return _combine(builder.finish(), generic, warnings, coverage)
+    if unsupported_attachments:
+        _append_warning(
+            warnings,
+            f"{unsupported_attachments} binary or over-limit attachments were retained raw "
+            "but were not text-extracted",
+        )
+    if context.links_truncated:
+        _append_warning(
+            warnings,
+            "attachment conversation/message link accumulation was truncated at the configured "
+            f"limit of {context.max_link_pairs} pairs",
+        )
+    if context.scan_truncated:
+        _append_warning(
+            warnings,
+            "attachment link scanning was truncated at the configured depth/node bound",
+        )
+    result = _combine(builder.finish(), generic, warnings, coverage, attachments)
+    result.stats.update(
+        {
+            "attachment_entries": len(attachments),
+            "attachment_hashed": len(attachments),
+            "attachment_linked": sum(bool(item.links) for item in attachments),
+            "attachment_link_pairs": sum(len(item.links) for item in attachments),
+            "attachment_link_limit": max_attachment_link_pairs,
+            "attachment_links_truncated": context.links_truncated,
+            "attachment_link_scan_truncated": context.scan_truncated,
+            "attachment_text_supported": sum(
+                item.extraction_status in {"text_extracted", "text_read_limit", "text_parse_failed"}
+                for item in attachments
+            ),
+            "attachment_text_extracted": sum(
+                item.extraction_status == "text_extracted" for item in attachments
+            ),
+            "attachment_text_over_limit": sum(
+                item.extraction_status == "text_read_limit" for item in attachments
+            ),
+            "attachment_text_parse_failed": sum(
+                item.extraction_status == "text_parse_failed" for item in attachments
+            ),
+            "unsupported_attachments": unsupported_attachments,
+            "zip_total_uncompressed_bytes": total_uncompressed,
+        }
+    )
+    return result
 
 
 def _consume_zip_jsonl(
@@ -686,6 +1458,16 @@ def _iter_json_documents(
         eof = True
         return False
 
+    def reject_trailing_data() -> None:
+        nonlocal position
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position < len(buffer):
+                raise json.JSONDecodeError("extra data after JSON document", buffer, position)
+            if not fill():
+                return
+
     while True:
         if not buffer and not fill():
             raise json.JSONDecodeError("empty JSON document", "", 0)
@@ -719,6 +1501,8 @@ def _iter_json_documents(
                 raise json.JSONDecodeError("unterminated JSON array", buffer, position)
         if buffer[position] == "]":
             if first_item:
+                position += 1
+                reject_trailing_data()
                 return
             raise json.JSONDecodeError("trailing comma in JSON array", buffer, position)
         while True:
@@ -744,6 +1528,8 @@ def _iter_json_documents(
             if not fill():
                 raise json.JSONDecodeError("unterminated JSON array", buffer, position)
         if buffer[position] == "]":
+            position += 1
+            reject_trailing_data()
             return
         if buffer[position] != ",":
             raise json.JSONDecodeError("expected ',' or ']'", buffer, position)
@@ -769,6 +1555,7 @@ def _validate_zip_member_name(filename: str) -> str:
         path.is_absolute()
         or ".." in path.parts
         or first.endswith(":")
+        or re.match(r"^[A-Za-z]:", first) is not None
         or normalized.startswith("//")
     ):
         raise InvalidStateError("ZIP bundle contains an unsafe member path")
@@ -776,7 +1563,11 @@ def _validate_zip_member_name(filename: str) -> str:
 
 
 def _safe_zip_name(filename: str) -> str:
-    return filename.replace("\\", "/").lstrip("./")[-1_000:] or "archive-entry"
+    normalized = filename.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    return normalized[-1_000:] or "archive-entry"
 
 
 class ArchiveImportService:
@@ -957,9 +1748,56 @@ class ArchiveImportService:
         source_id: str,
         *,
         progress_tracker: ImportProgressTracker | None = None,
+        rebuild: bool = False,
     ) -> dict[str, Any]:
-        """Resume extraction from the preserved raw blob after interruption or failure."""
+        """Resume or rebuild extraction from the preserved raw blob.
+
+        Failed and cancelled sources retry the existing parser session.
+        ``rebuild=True`` on a complete source stages a new parser-versioned
+        observation set, then atomically replaces eligible automatic records
+        only after parsing and staging succeed. The raw blob and
+        user-corrected records are not destroyed.
+        """
         source = self.store.get_source(source_id, duplicate=True)
+        resume_rebuild = bool(source.metadata.get("rebuild_in_progress"))
+        resume_published_rebuild = resume_rebuild and (
+            source.metadata.get("rebuild_published_generation") is not None
+            and str(source.metadata.get("rebuild_published_generation"))
+            == str(source.metadata.get("rebuild_generation"))
+        )
+        rebuild_generation: int | None = None
+        withdrawn_record_ids: list[str] = []
+        if rebuild or resume_rebuild:
+            resumable_rebuild = resume_rebuild and source.import_status == "processing"
+            if (
+                source.import_status not in {"complete", "failed", "cancelled"}
+                and not resumable_rebuild
+            ):
+                raise InvalidStateError("rebuild requires a terminal source")
+            if source.import_status == "complete" and not resume_published_rebuild:
+                rebuild_generation = int(source.metadata.get("rebuild_generation") or 0) + 1
+                metadata = dict(source.metadata)
+                metadata["rebuild_generation"] = rebuild_generation
+                metadata["rebuild_in_progress"] = True
+                self.store.update_source_import(
+                    source.id,
+                    import_status="processing",
+                    metadata=metadata,
+                    parser_warnings=source.parser_warnings,
+                )
+                source = self.store.get_source(source.id, duplicate=True)
+            elif resume_rebuild:
+                rebuild_generation = int(source.metadata.get("rebuild_generation") or 1)
+                if resume_published_rebuild and source.import_status == "complete":
+                    metadata = dict(source.metadata)
+                    metadata["rebuild_in_progress"] = True
+                    self.store.update_source_import(
+                        source.id,
+                        import_status="processing",
+                        metadata=metadata,
+                        parser_warnings=source.parser_warnings,
+                    )
+                    source = self.store.get_source(source.id, duplicate=True)
         if source.import_status == "complete":
             candidate_ids = self.store.candidate_ids_for_source(source.id)
             observations = [self.store.get_candidate(item) for item in candidate_ids]
@@ -1090,6 +1928,15 @@ class ArchiveImportService:
             else:
                 metadata = _source_metadata(parsed)
                 metadata = merge_progress_metadata(metadata, tracker.snapshot())
+                if rebuild_generation is not None:
+                    metadata["rebuild_generation"] = rebuild_generation
+                    metadata["rebuild_in_progress"] = True
+                    for marker in (
+                        "rebuild_published_generation",
+                        "rebuild_published_session_id",
+                    ):
+                        if marker in source.metadata:
+                            metadata[marker] = source.metadata[marker]
                 self.store.update_source_import(
                     source.id,
                     import_status="processing",
@@ -1103,7 +1950,14 @@ class ArchiveImportService:
         except Exception as error:
             self._mark_failed(source.id, tracker, error)
             raise
-        return self._ingest(processing, parsed, actual_service, tracker=tracker)
+        return self._ingest(
+            processing,
+            parsed,
+            actual_service,
+            tracker=tracker,
+            rebuild_generation=rebuild_generation,
+            withdrawn_record_ids=withdrawn_record_ids,
+        )
 
     def cancel_import(self, source_id: str) -> dict[str, Any]:
         """Request cancellation of an in-flight import; acknowledged by the worker."""
@@ -1198,6 +2052,8 @@ class ArchiveImportService:
         source_service: str,
         *,
         tracker: ImportProgressTracker | None = None,
+        rebuild_generation: int | None = None,
+        withdrawn_record_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         progress = tracker or ImportProgressTracker(
             bytes_total=max(source.byte_size, 1),
@@ -1242,7 +2098,11 @@ class ArchiveImportService:
             progress.set_phase("ingesting", message="submitting observation batches")
             progress.check_cancelled()
             begin = self.ingestion.begin(
-                archive_session_request(source.id, parser_version=PARSER_VERSION)
+                archive_session_request(
+                    source.id,
+                    parser_version=PARSER_VERSION,
+                    rebuild_generation=rebuild_generation,
+                )
             )
             candidate_ids: list[str] = []
             batches = list(_chunks(candidates, 200)) or []
@@ -1252,10 +2112,13 @@ class ArchiveImportService:
                 pass
             for index, batch in enumerate(batches):
                 progress.check_cancelled()
+                batch_key = f"{source.content_hash}:{PARSER_VERSION}:{index}"
+                if rebuild_generation is not None:
+                    batch_key = f"{batch_key}:rebuild:{rebuild_generation}"
                 submitted = self.ingestion.submit(
                     SubmitBatchRequest(
                         session_id=str(begin["session_id"]),
-                        idempotency_key=(f"{source.content_hash}:{PARSER_VERSION}:{index}"),
+                        idempotency_key=batch_key,
                         candidates=batch,
                     )
                 )
@@ -1280,12 +2143,25 @@ class ArchiveImportService:
                 FinishIngestionRequest(
                     session_id=str(begin["session_id"]),
                     coverage_report=coverage,
-                )
+                ),
+                publish=rebuild_generation is None,
             )
+            if rebuild_generation is not None:
+                withdrawn_record_ids = self.store.publish_source_rebuild(
+                    source.id,
+                    str(begin["session_id"]),
+                    rebuild_generation=rebuild_generation,
+                )
             metadata = _source_metadata(parsed)
             # Preserve preflight and any earlier durable progress fields.
             if isinstance(source.metadata.get("preflight"), dict):
                 metadata["preflight"] = source.metadata["preflight"]
+            if rebuild_generation is not None:
+                metadata["rebuild_generation"] = rebuild_generation
+                metadata["rebuild_in_progress"] = False
+                metadata["withdrawn_automatic_record_count"] = len(withdrawn_record_ids or [])
+                metadata["rebuild_published_generation"] = rebuild_generation
+                metadata["rebuild_published_session_id"] = str(begin["session_id"])
             progress.complete(message="import complete")
             metadata = merge_progress_metadata(metadata, progress.snapshot())
             self.store.update_source_import(
@@ -1302,6 +2178,10 @@ class ArchiveImportService:
                 parsed,
                 duplicate=source.duplicate,
             )
+            if rebuild_generation is not None:
+                result["rebuild"] = True
+                result["rebuild_generation"] = rebuild_generation
+                result["withdrawn_record_ids"] = list(withdrawn_record_ids or [])
             progress.close()
             return result
         except ImportCancelledError:
@@ -1352,6 +2232,7 @@ def _source_metadata(
         "parser_version": PARSER_VERSION,
         "parser_identity": parsed.parser_identity or parser_identity_for(parsed.provider),
         "stats": parsed.stats,
+        "attachments": [item.as_dict() for item in parsed.attachments],
         "coverage_complete": parsed.complete,
         "closed_coverage": dict(parsed.closed_coverage),
     }

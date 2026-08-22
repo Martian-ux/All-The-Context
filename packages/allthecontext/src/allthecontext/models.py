@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
@@ -254,16 +254,31 @@ class SearchRequest(StrictModel):
     scopes: list[str] = Field(default_factory=list, max_length=64)
     kinds: list[str] = Field(default_factory=list, max_length=64)
     availability: list[Availability] = Field(default_factory=list, max_length=3)
+    sensitivity: list[Sensitivity] = Field(default_factory=list, max_length=3)
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_ids: list[str] = Field(default_factory=list, max_length=64)
     as_of: str | None = Field(default=None, max_length=100)
     current_project: str | None = Field(default=None, max_length=512)
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0, le=100_000)
-    cursor: str | None = None
+    cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
     @field_validator("as_of")
     @classmethod
     def normalize_as_of(cls, value: str | None) -> str | None:
         return _normalized_timestamp(value)
+
+
+class SearchCursor(StrictModel):
+    """The signed, request-bound payload carried by a context-search cursor."""
+
+    version: Literal[1]
+    offset: StrictInt = Field(ge=0, le=100_000)
+    request_fingerprint: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
 
 class BootstrapRequest(StrictModel):

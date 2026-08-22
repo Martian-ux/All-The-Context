@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from allthecontext.models import CandidateInput, SearchRequest
+from allthecontext.models import CandidateInput, ClientCreate, SearchRequest
 from allthecontext.retrieval import RetrievalEngine, _temporal_sidecar_path
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
@@ -118,3 +118,94 @@ def test_production_admissibility_uses_project_quality_kind_and_conflict_factors
     assert "Production deployment rollback" not in rendered
     assert false_one not in rendered
     assert false_two not in rendered
+
+
+def test_catalog_search_counts_and_pages_all_authorized_matches_without_unbounding_bootstrap(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "catalog-pagination.sqlite3")
+    store.migrate()
+    store.initialize_vault("Catalog pagination", "UTC")
+    reader, _reader_token = store.create_client(
+        ClientCreate(name="Catalog reader", scopes=["context:read"])
+    )
+    other, _other_token = store.create_client(
+        ClientCreate(name="Other reader", scopes=["context:read"])
+    )
+
+    for index in range(123):
+        store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"catalog page marker visible {index}",
+                scopes=["project:atlas"],
+                allowed_clients=[reader.id],
+                confidence=1.0,
+                explicit_user_statement=True,
+            )
+        )
+    for index in range(11):
+        store.add_candidate(
+            CandidateInput(
+                kind="note",
+                content=f"catalog page marker filtered {index}",
+                scopes=["project:atlas"],
+                allowed_clients=[reader.id],
+                confidence=1.0,
+                explicit_user_statement=True,
+            )
+        )
+    for index in range(9):
+        store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"catalog page marker other-scope {index}",
+                scopes=["project:neptune"],
+                allowed_clients=[reader.id],
+                confidence=1.0,
+                explicit_user_statement=True,
+            )
+        )
+    for index in range(7):
+        store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"catalog page marker unauthorized {index}",
+                scopes=["project:atlas"],
+                allowed_clients=[other.id],
+                confidence=1.0,
+                explicit_user_statement=True,
+            )
+        )
+
+    engine = RetrievalEngine(store)
+    first = engine.search(SearchRequest(query="catalog page marker", limit=100, offset=0), reader)
+    second = engine.search(
+        SearchRequest(query="catalog page marker", limit=100, offset=100), reader
+    )
+
+    assert first.total == 143
+    assert len(first.items) == 100
+    assert second.total == first.total
+    assert len(second.items) == 43
+    assert {item.id for item in first.items}.isdisjoint(item.id for item in second.items)
+    assert len({item.id for item in (*first.items, *second.items)}) == 143
+    assert all("unauthorized" not in item.content for item in (*first.items, *second.items))
+
+    filtered = engine.search(
+        SearchRequest(
+            query="catalog page marker",
+            scopes=["project:atlas"],
+            kinds=["fact"],
+            limit=100,
+        ),
+        reader,
+    )
+    assert filtered.total == 123
+    assert len(filtered.items) == 100
+    assert all(item.kind == "fact" and "project:atlas" in item.scopes for item in filtered.items)
+    assert all("unauthorized" not in item.content for item in filtered.items)
+
+    bounded = engine._bounded_search(SearchRequest(query="catalog page marker", limit=100), reader)
+    assert bounded.total == 100
+    assert len(bounded.items) == 100

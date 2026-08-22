@@ -118,6 +118,35 @@ def test_secret_is_refused_before_write_and_sensitive_context_stays_local(tmp_pa
     assert store.get_record(sensitive.record_id).availability == Availability.LOCAL
 
 
+@pytest.mark.parametrize(
+    "content",
+    (
+        "My partner lives in Seattle.",
+        "I reside in Boston.",
+        "I have HIV.",
+        "My mortgage is with a bank.",
+    ),
+)
+def test_personal_sensitivity_classifier_forces_local_only(tmp_path: Path, content: str) -> None:
+    store = _store(tmp_path)
+
+    observation = store.add_candidate(
+        CandidateInput(
+            kind="personal_context",
+            content=content,
+            availability=Availability.CORE,
+            explicit_user_statement=True,
+        )
+    )
+
+    assert observation.sensitivity == Sensitivity.SENSITIVE
+    assert observation.record_id is not None
+    record = store.get_record(observation.record_id)
+    assert record.sensitivity == Sensitivity.SENSITIVE
+    assert record.availability == Availability.LOCAL
+    assert store.pending_replication_events() == []
+
+
 def test_automatic_observation_cannot_opt_into_relay_availability(tmp_path: Path) -> None:
     store = _store(tmp_path)
 

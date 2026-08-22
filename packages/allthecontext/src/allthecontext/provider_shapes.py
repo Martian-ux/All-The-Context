@@ -17,10 +17,10 @@ from .provider_ingestion import PARSER_VERSION, ArchiveProvider
 # Per-provider parser claim identities. Aggregate PARSER_VERSION remains the
 # session/idempotency material; these identities version each claim surface.
 PARSER_IDENTITIES: dict[str, str] = {
-    ArchiveProvider.CHATGPT.value: "chatgpt-archives-v1",
-    ArchiveProvider.CLAUDE.value: "claude-archives-v1",
-    ArchiveProvider.GROK.value: "grok-archives-v1",
-    ArchiveProvider.GENERIC.value: "generic-documents-v1",
+    ArchiveProvider.CHATGPT.value: "chatgpt-archives-v2",
+    ArchiveProvider.CLAUDE.value: "claude-archives-v2",
+    ArchiveProvider.GROK.value: "grok-archives-v2",
+    ArchiveProvider.GENERIC.value: "generic-documents-v2",
 }
 
 CLOSED_COVERAGE_REASONS = (

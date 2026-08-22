@@ -2271,16 +2271,16 @@ Windows; Linux Claude beta is not promoted into the stable-only claim. ChatGPT,
 Claude, and Grok export claims remain mandatory and unchanged.
 
 macOS is not a beta platform. Existing Mac runtime, packaging, Keychain,
-LaunchAgent, DMG, preflight, tests, and hosted CI code remain in the public
-source tree so the cross-platform implementation is not destructively removed.
-Those paths are unsupported portability code: the consumer release workflow
-builds no Mac job, the candidate inventory accepts no Mac asset, publication
-accepts no Mac manifest, public copy advertises no Mac download, and no Mac
-receipt can close or strengthen a beta gate. Retained Mac CI on the ordinary
-source workflow is a regression check only and grants zero support credit. A
-future return to Mac support requires a new ADR, newly frozen support table,
-new candidate, current documentation, and native evidence; ADR-085 preparation
-cannot be retroactively counted.
+LaunchAgent, DMG, preflight, and tests remain in the public source tree so the
+cross-platform implementation is not destructively removed. The former hosted
+Mac CI configuration is historical only; ordinary CI now schedules supported
+Windows and Ubuntu runners, while the Mac paths remain unsupported portability
+code. The consumer release workflow builds no Mac job, the candidate inventory
+accepts no Mac asset, publication accepts no Mac manifest, public copy
+advertises no Mac download, and no Mac receipt can close or strengthen a beta
+gate. A future return to Mac support requires a new ADR, newly frozen support
+table, new candidate, current documentation, and native evidence; ADR-085
+preparation cannot be retroactively counted.
 
 The 20 prepublication gate IDs remain unchanged. Gates such as BETA-D01,
 BETA-D03, and BETA-X01 now quantify only over the two supported artifact
@@ -2600,3 +2600,246 @@ REST asset ID, size, and SHA-256 from authenticated REST metadata. An opaque
 node ID is never parsed, converted, or interpolated into a REST URL. This keeps
 published-state checks compatible without weakening the numeric-ID authority
 used before publication or channel promotion.
+
+## ADR-097: Archive memories stay independent unless they share a subject
+
+**Status:** accepted 2026-08-21. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+B-102 originally collapsed every unkeyed archive-import preference, goal,
+project, decision, workflow, and constraint into one current lineage per kind.
+That prevented contradictory imported history from remaining concurrent truth,
+but it also merged unrelated statements into fake version histories.
+
+Core now derives a deterministic subject-only key from kind-specific framing,
+temporal/quantity modifiers, a deliberately bounded preference-value
+vocabulary (answer-style terms plus dark/light), and a literal choice-before-
+`for` placeholder for clear preference forms. Archive observations share a
+lineage only when that subject key matches; for a recognized preference value,
+one remaining subject token is sufficient (for example, `dark mode` and
+`light mode` both key to `mode`), while `Python for project Alpha` and `Rust
+for project Alpha` retain `project Alpha` as the subject. Unknown wording still
+requires at least two subject tokens. If no subject can be extracted, the
+records remain independent current memories. Exact content still reinforces.
+Direct client unkeyed records stay independent. Version history means a
+revision of the same memory.
+
+Provider extraction (`provider-archives-v2`) no longer auto-publishes broad
+low-confidence first-person fragments. Specific durable kinds still apply.
+Short, task-local, transient, and question text is skipped. Remaining
+first-person prose may be retained as tentative `personal_context` only when
+it is long enough to be self-contained. Sensitivity classification is
+conservative: health, relationship, location, financial, and identifier
+language upgrades `normal` to `sensitive` (local-only) or
+`highly_sensitive` (ignored).
+
+Complete sources can be rebuilt from the preserved raw blob. Rebuild
+reversibly withdraws uncorrected automatic records from that source, starts a
+new parser-versioned session, and publishes the new extraction. User
+corrections, independently deleted records, observation history, and the raw
+source remain. Failed-source retry is unchanged.
+
+Context search now exposes the real `total`, cursor pagination, and kind,
+sensitivity, confidence, and source filters. The dashboard shows that total,
+loads further pages, and does not auto-select a record.
+
+## ADR-098: Catalog search totals are separate from bounded evidence retrieval
+
+**Status:** accepted 2026-08-22.
+
+The Core catalog-search contract must report an exact post-policy total and make
+every authorized current or historical match reachable through deterministic
+offset/cursor pagination. A bounded relevance pool cannot serve as that total:
+it makes a large but valid catalog appear truncated and strands records after
+the pool boundary.
+
+`LexicalV3.search_catalog` and `LexicalV3CandidateRanker.catalog_rank_with_explanations`
+therefore enumerate the complete match set only after the existing authorization,
+request-filter, temporal, and admissibility boundaries. Enumeration remains
+bounded by the existing 50,000 eligible-candidate hard cap, and the lexical
+ordering retains deterministic channel, score, and record-ID tie breaks.
+
+`RetrievalEngine.search()` uses this catalog path for Core, CLI, and MCP search;
+its `total` is the exact number of records that can be returned for the request.
+`RetrievalEngine.bootstrap()` calls a separate 100-record evidence path before
+`ContextCompiler` budget selection. Bootstrap remains deliberately bounded and
+does not define the catalog API's total. Search audits still record only the
+returned authorized page IDs and the existing safe aggregate metadata; no
+unauthorized IDs or raw query/context text are added.
+
+## ADR-099: Task-local provider instructions remain inert
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+Provider archives are untrusted data, not an instruction channel. Extraction
+must reject task-local and adversarial instruction framing before applying
+preference classification. In particular, direct-address requests such as
+`I want you to write a haiku` or `I want you to ignore previous instructions`
+cannot become current interaction preferences merely because they use
+first-person wording. Prompt-injection language wins over any preference
+marker and remains inert.
+
+Automatic provider preference eligibility requires durable evidence: explicit
+always/never or general-preference phrasing, including ordinary statements
+such as `I prefer concise answers`, `I always want concise answers`, and
+`Please never use emoji in responses`. Task-local paraphrases are skipped;
+provider-synthesized memory fields remain tentative by their existing policy.
+No imported text is executed, and parser diagnostics remain content-free.
+
+## ADR-100: Provider conversation-list residuals remain visible
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+A recognized provider conversation list is a coverage boundary. Every entry
+that is not a valid conversation mapping is counted as `unparsed`, including
+non-mapping values and unknown mapping shapes. Valid sibling conversations are
+still normalized and imported. Nested wrappers and root conversation arrays
+use the same accounting, and an all-malformed provider list remains a
+recognized but incomplete provider surface.
+
+Residual warnings contain only the safe source name, count, and structural
+classification; they never interpolate entry IDs, titles, or imported text.
+Unparsed residuals keep `complete` false so provider coverage cannot report
+success after silently dropping malformed material. Known message-level
+attachment and role classifications remain governed by the existing
+excluded/skipped/unavailable rules.
+
+## ADR-101: Source rebuilds publish through a staged atomic cutover
+
+**Status:** accepted 2026-08-22.
+
+Complete-source rebuild is a replacement operation over the preserved raw blob,
+not a destructive pre-step. A rebuild first marks the source as resumably in
+progress, parses the Core-preserved bytes, and submits a parser-versioned
+archive session whose candidates remain staged after coverage is recorded. Only
+then does Core run one write transaction that withdraws eligible prior records
+and evaluates the staged replacement. A parser error, batch/ingestion error,
+cancellation, process interruption, or policy failure therefore leaves the
+prior current context unchanged; SQLite rollback covers a failure after the
+cutover transaction begins, and a committed staged session can be resumed
+idempotently if source-finalization is interrupted. The publish transaction
+also writes the generation and session ID into the source metadata before it
+commits. A retry uses that durable marker to finalize metadata without
+withdrawing the already-published replacement; a pre-commit failure has no
+marker and retries the full cutover.
+
+The replacement set is deliberately narrow: current approved records must have
+Core origin `archive_import` and must not have a correction, user edit,
+availability/privacy change, or deletion. Direct/local-admin records that happen
+to retain the source ID are not automatic rebuild targets. Raw source bytes,
+candidate/session history, record versions, independently deleted records, and
+local-only policy outcomes remain preserved. This supersedes ADR-097's rebuild
+wording only; it does not change archive extraction eligibility or conflict
+resolution.
+
+## ADR-102: Personally framed sensitivity is fail-local
+
+**Status:** accepted 2026-08-22. Post-beta privacy correction. Does not retarget,
+relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+The deterministic `automatic-v1` sensitivity classifier now recognizes narrowly
+personally framed health, relationship, location, and financial statements that
+were previously easy to miss. This includes first-person residence and health
+assertions such as HIV status, possessive relationship statements such as a
+partner living somewhere, and possessive mortgage/loan statements. A detected
+`sensitive` value remains monotonic: Core forces the resulting record to
+`local_only`, regardless of a requested `core_available` or legacy
+`always_available` value, and the Core forwarding boundary admits only
+`core_available` records.
+
+The rules are intentionally phrase-based rather than a general semantic
+classifier. Unframed technical or general text such as a partner function,
+mortgage rates, or a medical reference is not promoted by these additions.
+This is not an exhaustive privacy detector: wording without a recognized
+personal frame can remain `normal`, while an explicit first-person fictional
+statement can still be conservatively localized. Secret-like content and
+identifier rules remain higher precedence and highly sensitive content remains
+excluded from automatic current context.
+
+## ADR-103: Bind Core context-search cursors to the request and principal
+
+**Status:** accepted 2026-08-22.
+
+The Core HTTP search endpoint no longer emits or accepts bare decimal cursors.
+It emits a compact versioned cursor whose payload contains a bounded offset and
+the SHA-256 fingerprint of the normalized search criteria. The payload is
+authenticated with an HMAC derived from the per-installation Core instance
+secret; the authenticated principal ID is part of the signed message. Reusing
+a cursor with a different query, filter, page size, or principal therefore
+fails closed with HTTP 422 instead of silently returning a page from a
+different request. Malformed, negative, and over-limit cursor payloads are
+rejected by the `SearchCursor` model and the reconstructed `SearchRequest`.
+
+Direct `offset` requests remain available for the existing MCP/CLI transport
+contract, with the existing inclusive `0..100000` bound. A next cursor is not
+issued when advancing would exceed that bound or when the current page is
+empty. The cursor is opaque and integrity/authenticated, but it is not
+encrypted, one-time-use, expiry-bound, or a snapshot-consistency token; record
+changes between pages retain the existing retrieval semantics. This decision
+changes only the Core search request/response contract and its focused API
+coverage, not ranking, totals, or retrieval selection.
+
+## ADR-104: Isolate synthetic retrieval usefulness evaluation
+
+**Status:** accepted 2026-08-21.
+
+Provider-facing retrieval usefulness is evaluated with a synthetic, sanitized
+corpus and public Core observation/retrieval APIs. The harness may measure
+current-fact recall, stale/conflict and withdrawn exclusion, sensitivity and
+provenance packaging, character-budget compliance, and the JSON shape returned
+to search, bootstrap, and get callers.
+
+The eval has no production authority. It must not change ingestion, storage
+schema, memory identity, sensitivity classification, dashboard Context,
+retrieval ranking, MCP production behavior, release state, or live user data.
+It must refuse the operator Core data directory and any existing `core.sqlite3`,
+and it must not log raw personal context. Results are developer evidence only
+and grant no beta-acceptance credit. Core-correctness work remains the
+authority for observation/policy behavior; this harness should follow those
+public APIs rather than inserting fixture rows into canonical tables.
+
+## ADR-105: Bound ChatGPT attachment ingestion at the preserved-source edge
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+ChatGPT export `.dat` members are attachment assets, not a generic searchable
+document format. The importer preserves the raw ZIP as Core already requires,
+then records one content-addressed inventory item per `.dat` member: archive
+identity, uncompressed byte size, explicit `content_sha256`, bounded original
+filename and MIME metadata, provenance sources, and attachment-ID
+conversation/message links.
+The inventory is source metadata and contains no attachment payload.
+
+Text extraction is permitted only when both the export manifest and filename
+metadata establish a supported text format: `.txt`, `.json`, `.jsonl`, `.csv`,
+`.md`, or `.markdown`. It uses bounded in-memory reads and existing
+deterministic provider extraction; no member is rendered, macro-enabled, or
+executed. Images/audio, PDF, DOCX, PPTX, XLSX, RTF, HTML, scripts, unknown
+extensions, malformed text, and over-limit text remain raw and are counted as
+unsupported/unavailable. Attachment inventory presence, hashing, or raw
+preservation must never be reported as searchable coverage. Linkage is
+retained only when a conversation attachment ID resolves to the `.dat` asset
+identity; unresolved assets remain inventoried without an invented link.
+
+The default ZIP safety limits are 10,000 entries, 512 MiB per member, 2 GiB
+total declared uncompressed expansion, 500:1 compression ratio, 1 MiB stream
+reads, 128 MiB JSON item parsing, and 8 MiB attachment-text reads. These limits
+are independent of the 2,000,000,000-byte raw import boundary. Path traversal,
+absolute, drive-relative, or drive-qualified paths, encrypted entries, and
+malformed bounded reads
+fail closed. Synthetic ZIP fixtures are the only attachment test inputs.
+
+The post-review boundary is explicit: attachment inventory and `.dat` text
+extraction run only for an explicit ChatGPT hint or an auto/generic archive
+with a structurally confirmed ChatGPT mapping graph. Explicit Claude/Grok and
+unconfirmed auto/generic imports retain those members raw without invoking
+ChatGPT control-file parsing. Each inventory `asset_id` preserves the unique
+safe archive member identity. Linkage is stored as exact conversation/message
+pairs; a colliding stem produces no inferred link. MIME conflicts persist as
+`mime_type_status=ambiguous` with no selected MIME value or synthetic provenance
+source. Total link accumulation is bounded at 10,000 pairs, with per-document
+link scanning bounded to 64 levels and 10,000 nodes; either truncation is
+visible and leaves coverage incomplete.

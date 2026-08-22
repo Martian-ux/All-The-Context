@@ -56,6 +56,34 @@ flexible Grok conversation envelopes, provider memory/profile fields, and
 Grok-style Markdown transcripts have explicit adapters. Imported text is
 untrusted data and imported instructions remain inert.
 
+The ChatGPT attachment slice is deliberately narrower than the raw-source
+boundary. For an explicit ChatGPT import, or an auto/generic archive with a
+structurally confirmed ChatGPT conversation graph, every `.dat` member is
+retained in the preserved ZIP, streamed and SHA-256 hashed as `content_sha256`,
+and recorded in source metadata with its unique archive-member identity,
+bounded filename/MIME provenance, and exact conversation/message link pairs
+found in the actual `conversations*.json` member. Explicit Claude/Grok imports
+and unconfirmed auto/generic archives retain `.dat` bytes raw without entering
+the ChatGPT attachment inventory. `conversation_asset_file_names.json` and
+`export_manifest.json` are required before a `.dat` filename can authorize text
+extraction. Only manifest-proven `.txt`, `.json`, `.jsonl`, `.csv`, `.md`, or
+`.markdown` assets are decoded; CSV uses the Python standard-library parser.
+Binary assets and formats such as images/audio, PDF, DOCX, PPTX, XLSX, RTF,
+HTML, and scripts remain raw and unavailable to text extraction. No archive
+member is extracted to disk, rendered, macro-enabled, or executed, and the
+implementation does not claim that all `.dat` contents are searchable.
+
+ZIP parsing enforces 10,000 entries, 512 MiB per member, 2 GiB total declared
+uncompressed expansion by default, a 500:1 compression-ratio ceiling, bounded
+1 MiB streaming reads, 128 MiB JSON item parsing, an 8 MiB attachment-text
+read limit, and a 10,000-pair total attachment-link cap. Link scanning is
+bounded to 64 nesting levels and 10,000 nodes per JSON document; truncation is
+reported as incomplete coverage. These are parser limits in addition to the
+2,000,000,000-byte raw import boundary. Path traversal, absolute/drive-relative
+names, encrypted entries, duplicate case-insensitive names, and over-limit
+members fail closed or remain explicitly unavailable; raw source preservation
+is not treated as searchable extraction.
+
 Provider imports use a versioned archive session keyed by source ID and parser
 version. Batches use the source hash, parser version, and stable batch ordinal
 as idempotency material. Replaying an interrupted batch returns the original
@@ -71,12 +99,17 @@ conversation counts, user/assistant/other message counts, provider-memory item
 and observation counts, skipped/unsupported material, warnings, and a truthful
 coverage report with explicit limitations. Alongside that report, `outcomes`
 counts the dispositions present and `record_ids` lists affected current records.
+For a recognized provider conversation list, every non-conversation entry is
+counted as `unparsed`; valid siblings still import, but any such residual keeps
+the coverage report incomplete. Structural warnings never include imported
+entry content.
 
 Role and origin establish eligibility:
 
 - explicit durable user-authored statements from a normalized
   `provider_archive` message may be applied automatically only after the source
-  session finishes successfully;
+  session finishes successfully, and only when they classify as a specific
+  durable kind rather than a broad first-person fragment;
 - generic JSON/JSONL/Markdown/text document observations remain tentative
   untrusted evidence even when their prose resembles a user assertion;
 - dedicated provider memory/profile summaries are provider-synthesized and
@@ -85,7 +118,11 @@ Role and origin establish eligibility:
   evidence; and
 - assistant, system, tool, and attachment roles are excluded by provider
   adapters; generic or instruction-bearing imports remain tentative;
-  secret-like material is ignored. All retained source text remains inert data.
+  short, task-local, transient, and question text is skipped; remaining
+  first-person fragments may be retained as tentative observations;
+  secret-like material is ignored; health, relationship, location, financial,
+  and identifier language is classified sensitive or highly sensitive.
+  All retained source text remains inert data.
 
 User-authored observations retain conversation/message source references.
 Policy decisions retain the parser and policy versions, origin class, bounded
@@ -101,5 +138,30 @@ An exact current value is reinforced. A material conflict is resolved
 deterministically: an explicit targeted correction wins, then explicit user
 evidence wins over inference, then `observed_at` and stable tie breakers decide.
 The losing value and evidence remain in history. Slot keys are advisory
-metadata, not permission to overwrite context. Unusual duplicate or conflict
-groups remain optional integrity diagnostics, never a user approval queue.
+metadata, not permission to overwrite context. Unkeyed archive statements of
+preference, goal, project, decision, workflow, or constraint kinds share a
+lineage only when a derived subject key matches; kind-only collapse is not
+used. Unusual duplicate or conflict groups remain optional integrity
+diagnostics, never a user approval queue.
+
+Failed or cancelled sources retry the existing parser session from the
+preserved raw blob. A complete source may be rebuilt with the current parser
+(`POST /v1/admin/sources/{id}/reprocess?rebuild=true` or
+`atc reprocess-source --rebuild`). Rebuild reversibly withdraws uncorrected
+automatic records from that source only in the same Core transaction that
+publishes a successfully staged parser-versioned observation set. Parsing,
+batch submission, cancellation, interruption, or policy-evaluation failure
+leaves the prior current records in place; the staged session remains resumable
+from the preserved blob. Rebuild eligibility is limited to current approved
+records whose Core origin is `archive_import`; independently deleted records,
+direct/local user-authored records, user corrections, and user
+privacy/availability changes are excluded. The raw blob and all history remain
+in place.
+
+For this rebuild path, `finish_ingestion` stores coverage while leaving the new
+candidates staged. Core's rebuild-publish transaction then withdraws eligible
+old records and evaluates the staged candidates together. SQLite rollback
+covers both sides if any part of that replacement fails. The same transaction
+records the published rebuild generation and session ID in source metadata, so
+a retry after source-finalization failure recognizes the committed cutover and
+only finalizes source state; a failed transaction leaves no publish marker.

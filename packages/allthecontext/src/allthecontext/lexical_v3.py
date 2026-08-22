@@ -266,6 +266,32 @@ class LexicalV3:
         candidates = self._bounded_candidates(eligible_candidate_ids)
         if not 1 <= limit <= MAX_RESULTS:
             raise ValueError(f"limit must be between 1 and {MAX_RESULTS}")
+        return self._search(connection, candidates, query, limit=limit)
+
+    def search_catalog(
+        self,
+        connection: sqlite3.Connection,
+        eligible_candidate_ids: Sequence[str],
+        query: str,
+    ) -> LexicalSearchResult:
+        """Rank every match for the user-facing catalog search.
+
+        Catalog search is intentionally a separate contract from bounded
+        evidence retrieval.  It still accepts only caller-authorized IDs and
+        remains bounded by ``MAX_ELIGIBLE_CANDIDATES``; unlike ``search``, it
+        does not truncate matching channels or the final ordered match set.
+        """
+        candidates = self._bounded_candidates(eligible_candidate_ids)
+        return self._search(connection, candidates, query, limit=None)
+
+    def _search(
+        self,
+        connection: sqlite3.Connection,
+        candidates: Sequence[str],
+        query: str,
+        *,
+        limit: int | None,
+    ) -> LexicalSearchResult:
         prepared = _prepare_query(query)
         if not candidates:
             return LexicalSearchResult(
@@ -297,7 +323,11 @@ class LexicalV3:
                 token for token in prepared.tokens if len(token) >= MIN_PREFIX_TOKEN_CHARS
             )[:MAX_PREFIX_TOKENS]
             reasons: list[DiagnosticReason] = []
-            threshold = min(limit, self.prefix_fallback_min_results)
+            threshold = (
+                self.prefix_fallback_min_results
+                if limit is None
+                else min(limit, self.prefix_fallback_min_results)
+            )
             active_channels: list[tuple[str, str]] = []
             if len(prepared.tokens) > 1:
                 phrase = _phrase_query(prepared.tokens)
@@ -328,7 +358,13 @@ class LexicalV3:
                         reasons.append(DiagnosticReason.PREFIX_UNAVAILABLE)
             indexed_count = self._populate_candidate_fts(connection)
             for channel, fts_query in active_channels:
-                self._collect_channel(connection, states, channel, fts_query)
+                self._collect_channel(
+                    connection,
+                    states,
+                    channel,
+                    fts_query,
+                    limit=None if limit is None else CHANNEL_RESULT_CAP,
+                )
             if not states:
                 reasons.append(DiagnosticReason.NO_MATCHES)
             hits = self._rank(states, limit)
@@ -425,15 +461,21 @@ class LexicalV3:
         states: dict[str, _HitState],
         channel: str,
         fts_query: str,
+        *,
+        limit: int | None,
     ) -> int:
         target = _quoted_identifier(_CANDIDATE_FTS_TABLE)
         weights = ", ".join(str(weight) for weight in BM25_COLUMN_WEIGHTS)
-        rows = connection.execute(
+        sql = (
             f"SELECT record_id, bm25({_CANDIDATE_FTS_TABLE}, {weights}) AS lexical_score "
             f"FROM temp.{target} WHERE {_CANDIDATE_FTS_TABLE} MATCH ? "
-            "ORDER BY lexical_score ASC, record_id ASC LIMIT ?",
-            (fts_query, CHANNEL_RESULT_CAP),
-        ).fetchall()
+            "ORDER BY lexical_score ASC, record_id ASC"
+        )
+        parameters: tuple[object, ...] = (fts_query,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            parameters += (limit,)
+        rows = connection.execute(sql, parameters).fetchall()
         for row in rows:
             record_id = str(row[0])
             state = states.setdefault(record_id, _HitState(record_id))
@@ -442,7 +484,7 @@ class LexicalV3:
         return len(rows)
 
     @staticmethod
-    def _rank(states: dict[str, _HitState], limit: int) -> tuple[LexicalHit, ...]:
+    def _rank(states: dict[str, _HitState], limit: int | None) -> tuple[LexicalHit, ...]:
         def ranking_key(state: _HitState) -> tuple[int, int, float, str]:
             best_priority = max(_CHANNEL_PRIORITY[channel] for channel in state.channel_scores)
             return (
@@ -452,7 +494,8 @@ class LexicalV3:
                 state.record_id,
             )
 
-        ordered = sorted(states.values(), key=ranking_key)[:limit]
+        ordered_states = sorted(states.values(), key=ranking_key)
+        ordered = ordered_states if limit is None else ordered_states[:limit]
         hits: list[LexicalHit] = []
         for state in ordered:
             channels = tuple(

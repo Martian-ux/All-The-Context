@@ -15,20 +15,31 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
-from .models import Availability, CandidateInput, Sensitivity
+from .memory_policy import archive_lineage_key, classify_sensitivity
+from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput
 
-PARSER_VERSION = "provider-archives-v1"
+PARSER_VERSION = "provider-archives-v2"
 
 # Per-provider claim identities. Session idempotency still uses PARSER_VERSION;
 # these values version each mandatory provider surface independently.
 PARSER_IDENTITIES: dict[str, str] = {
-    "chatgpt": "chatgpt-archives-v1",
-    "claude": "claude-archives-v1",
-    "grok": "grok-archives-v1",
-    "generic": "generic-documents-v1",
+    "chatgpt": "chatgpt-archives-v2",
+    "claude": "claude-archives-v2",
+    "grok": "grok-archives-v2",
+    "generic": "generic-documents-v2",
 }
+
+_CONVERSATION_LIST_KEYS = (
+    "conversations",
+    "grok_conversations",
+    "conversation_history",
+    "chats",
+    "threads",
+    "items",
+)
+_NESTED_CONVERSATION_WRAPPER_KEYS = ("data", "export", "account_data")
 
 CLOSED_COVERAGE_REASONS = (
     "recognized",
@@ -87,11 +98,6 @@ _SECRET_HINT = re.compile(
     r"refresh[_ -]?token|client[_ -]?secret|secret)\s*[:=]",
     flags=re.IGNORECASE,
 )
-_SENSITIVE_HINT = re.compile(
-    r"(?:\b(?:social security|ssn|passport|driver'?s license|date of birth|dob)\b|"
-    r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|\b(?:phone|mobile) number\b)",
-    flags=re.IGNORECASE,
-)
 _FENCED_CODE = re.compile(r"```.*?```|~~~.*?~~~", flags=re.DOTALL)
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])|\n+")
 _MARKDOWN_PREFIX = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)")
@@ -139,6 +145,45 @@ _TRANSIENT_HINT = re.compile(
     r"\b(?:today|tonight|tomorrow|yesterday|right now|this chat|this conversation)\b",
     flags=re.IGNORECASE,
 )
+_TASK_LOCAL_HINT = re.compile(
+    r"\b(?:can you|could you|would you|will you|"
+    r"please (?:write|explain|help|make|create|generate|summarize|fix|debug|refactor)|"
+    r"in this (?:chat|conversation|message|prompt)|"
+    r"as an? (?:ai|assistant|language model)|"
+    r"(?:i|we) (?:prefer|want|need|would like|would love|expect) you to|"
+    r"(?:i'd|i would|we'd|we would) (?:like|love|prefer) you to)\b",
+    flags=re.IGNORECASE,
+)
+_ADVERSARIAL_INSTRUCTION_HINT = re.compile(
+    r"(?:\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+)?"
+    r"(?:of\s+)?(?:the\s+)?(?:previous|earlier|above|prior|system|developer)?\s*"
+    r"instructions?\b|"
+    r"\b(?:follow|obey|execute)\s+(?:these|the following|my|all)\s+"
+    r"(?:instructions?|commands?)\b|"
+    r"\b(?:system|developer)\s+(?:prompt|message|instructions?)\b|"
+    r"\b(?:do not|don't|never)\s+follow\s+"
+    r"(?:previous|earlier|above|these)\s+instructions?\b)",
+    flags=re.IGNORECASE,
+)
+_DURABLE_PREFERENCE_HINT = re.compile(
+    r"(?:^\s*(?:i|we)\s+(?:always|never|usually|generally|normally|typically)\b|"
+    r"\b(?:in general|as a general rule|by default|from now on)\b|"
+    r"\bmy preferences?\b|"
+    r"\bwhen you (?:answer|respond)\b|"
+    r"\bi want (?:answers?|responses?)\s+to\b|"
+    r"^\s*(?:i|we)\s+(?:prefer|like|love|hate|dislike)(?!\s+you\s+to\b)\b|"
+    r"^\s*(?:please\s+)?(?:never|always)\b|"
+    r"^\s*(?:please\s+)?(?:do not|don't|avoid)\s+"
+    r"(?:using|use|including|include|mentioning|mention)\b)",
+    flags=re.IGNORECASE,
+)
+_EPHEMERAL_STANCE = re.compile(
+    r"\b(?:i think|i guess|i feel(?: like)?|i'm trying|i am trying|"
+    r"i'm looking|i was wondering|just curious|for this (?:task|one))\b",
+    flags=re.IGNORECASE,
+)
+_FALLBACK_MIN_CHARS = 48
+_SPECIFIC_MIN_CHARS = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +212,13 @@ class ProviderExtraction:
     recognized: bool
     closed_coverage: dict[str, int] = field(default_factory=dict)
     parser_identity: str = PARSER_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class _ConversationCollection:
+    values: list[Mapping[str, Any]]
+    malformed_count: int = 0
+    key: str | None = None
 
 
 def normalize_provider(value: str | ArchiveProvider | None) -> ArchiveProvider:
@@ -239,10 +291,21 @@ class ProviderArchiveBuilder:
         provider = _detect_json_provider(value, safe_name, self.provider_hint)
         recognized = False
 
-        conversations = _conversation_values(value)
+        collection = _conversation_collection(value)
+        conversations = collection.values
         if _looks_like_conversation(value):
             conversations = [value]
-        if conversations:
+            malformed_count = 0
+        else:
+            malformed_count = collection.malformed_count
+        provider_list = (
+            not _looks_like_conversation(value)
+            and _is_provider_conversation_collection(collection, provider, safe_name)
+            and bool(collection.values or collection.malformed_count)
+        )
+        if provider_list and malformed_count:
+            self._note_unparsed_conversation_entries(safe_name, malformed_count)
+        if conversations or provider_list:
             for conversation in conversations:
                 conversation_provider = _detect_json_provider(conversation, safe_name, provider)
                 messages, residual = _normalize_conversation(
@@ -277,6 +340,12 @@ class ProviderArchiveBuilder:
                 if accounted < raw_message_count:
                     self._stats["unparsed_messages"] += raw_message_count - accounted
                 self._consume_messages(messages)
+            if provider_list and not conversations:
+                # A provider-shaped list with no valid siblings is still a
+                # recognized provider surface, but its coverage is incomplete.
+                self._providers.add(provider)
+                self._formats.add("provider_conversations")
+                recognized = True
 
         memory_items = list(_deduplicate_strings(_memory_strings(value)))
         if not memory_items and _looks_like_memory_filename(safe_name):
@@ -304,6 +373,51 @@ class ProviderArchiveBuilder:
         if recognized:
             self._recognized_files.add(safe_name)
         return recognized
+
+    def consume_json_list(self, source_name: str, value: list[Any]) -> bool:
+        """Consume a root provider conversation list without dropping residuals."""
+        safe_name = _safe_source_name(source_name)
+        if not _is_provider_conversation_sequence(value, self.provider_hint, safe_name):
+            return False
+        self.note_file(safe_name)
+        provider = _detect_json_provider(value, safe_name, self.provider_hint)
+        valid = [
+            item for item in value if isinstance(item, dict) and _looks_like_conversation(item)
+        ]
+        malformed_count = len(value) - len(valid)
+        if malformed_count:
+            self._note_unparsed_conversation_entries(safe_name, malformed_count)
+        for conversation in valid:
+            self.consume_json(safe_name, conversation)
+        if not valid:
+            self._stats["documents"] += 1
+            self._providers.add(provider)
+            self._formats.add("provider_conversations")
+            self._recognized_files.add(safe_name)
+        return True
+
+    def _note_unparsed_conversation_entries(self, source_name: str, count: int) -> None:
+        self._stats["unparsed_messages"] += count
+        self.add_warning(
+            f"{source_name}: {count} malformed or unrecognized provider conversation "
+            "list entries were left unparsed"
+        )
+
+    def note_unrecognized_json_value(self, source_name: str) -> bool:
+        """Account for a streamed residual once a provider shape is established."""
+        safe_name = _safe_source_name(source_name)
+        meaningful = any(
+            item not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} for item in self._providers
+        )
+        provider_context = (
+            self.provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
+            or _provider_from_filename(safe_name) != ArchiveProvider.AUTO
+            or meaningful
+        )
+        if not provider_context:
+            return False
+        self._note_unparsed_conversation_entries(safe_name, 1)
+        return True
 
     def consume_text(self, source_name: str, text: str) -> bool:
         """Consume a provider memory text file or Markdown conversation transcript."""
@@ -484,6 +598,12 @@ def _detect_json_provider(
     source_name: str,
     hint: ArchiveProvider,
 ) -> ArchiveProvider:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and _looks_like_conversation(item):
+                detected = _detect_json_provider(item, source_name, hint)
+                if detected != ArchiveProvider.AUTO:
+                    return detected
     if isinstance(value, dict):
         if isinstance(value.get("mapping"), dict):
             return ArchiveProvider.CHATGPT
@@ -500,9 +620,11 @@ def _detect_json_provider(
             return ArchiveProvider.CLAUDE
         if "chatgpt" in service_material or "openai" in service_material:
             return ArchiveProvider.CHATGPT
-        nested = _conversation_values(value)
-        if nested:
-            first = next((item for item in nested if isinstance(item, dict)), None)
+        collection = _conversation_collection(value)
+        if collection.key == "grok_conversations":
+            return ArchiveProvider.GROK
+        if collection.values:
+            first = collection.values[0]
             if first is not None and first is not value:
                 detected = _detect_json_provider(first, source_name, ArchiveProvider.AUTO)
                 if detected != ArchiveProvider.AUTO:
@@ -538,27 +660,66 @@ def _provider_from_text_or_filename(text: str, source_name: str) -> ArchiveProvi
     return ArchiveProvider.AUTO
 
 
-def _conversation_values(value: Any) -> list[Mapping[str, Any]]:
+def _conversation_collection(value: Any) -> _ConversationCollection:
     if not isinstance(value, dict):
-        return []
-    for key in (
-        "conversations",
-        "grok_conversations",
-        "conversation_history",
-        "chats",
-        "threads",
-        "items",
-    ):
+        return _ConversationCollection([])
+    for key in _CONVERSATION_LIST_KEYS:
         nested = value.get(key)
         if isinstance(nested, list):
-            return [item for item in nested if isinstance(item, dict)]
-    for key in ("data", "export", "account_data"):
+            values = [
+                cast(Mapping[str, Any], item)
+                for item in nested
+                if isinstance(item, dict) and _looks_like_conversation(item)
+            ]
+            return _ConversationCollection(
+                values=values,
+                malformed_count=len(nested) - len(values),
+                key=key,
+            )
+    for key in _NESTED_CONVERSATION_WRAPPER_KEYS:
         nested = value.get(key)
         if isinstance(nested, dict):
-            conversations = _conversation_values(nested)
-            if conversations:
-                return conversations
-    return []
+            collection = _conversation_collection(nested)
+            if collection.key is not None:
+                return collection
+    return _ConversationCollection([])
+
+
+def _conversation_values(value: Any) -> list[Mapping[str, Any]]:
+    """Return valid conversation mappings without dropping residual accounting."""
+    return _conversation_collection(value).values
+
+
+def _is_provider_conversation_collection(
+    collection: _ConversationCollection,
+    provider: ArchiveProvider,
+    source_name: str,
+) -> bool:
+    if collection.key is None:
+        return False
+    if collection.values:
+        return True
+    # `items` is also a generic-document convention. Treat it as a provider
+    # list only when the provider hint or safe filename establishes that shape.
+    if collection.key == "items":
+        return provider not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or (
+            _provider_from_filename(source_name) != ArchiveProvider.AUTO
+        )
+    return True
+
+
+def _is_provider_conversation_sequence(
+    value: Sequence[Any],
+    provider_hint: ArchiveProvider,
+    source_name: str,
+) -> bool:
+    if not value:
+        return False
+    if any(isinstance(item, dict) and _looks_like_conversation(item) for item in value):
+        return True
+    return provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} or (
+        _provider_from_filename(source_name) != ArchiveProvider.AUTO
+    )
 
 
 def _looks_like_conversation(value: Any) -> bool:
@@ -962,45 +1123,82 @@ def _assistant_provider(messages: Sequence[NormalizedMessage]) -> ArchiveProvide
 
 def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
     text = _FENCED_CODE.sub(" ", message.text)
+    result: list[CandidateInput] = []
+    paragraphs = re.split(r"\n\s*\n", text) or [text]
+    for paragraph in paragraphs:
+        sentences = [
+            _clean_statement(part)
+            for part in _SENTENCE_BREAK.split(paragraph)
+            if _clean_statement(part)
+        ]
+        if not sentences:
+            continue
+        specific = [
+            candidate
+            for segment in sentences
+            if (candidate := _candidate_from_statement(segment, message, require_specific=True))
+            is not None
+        ]
+        if specific:
+            result.extend(specific)
+            continue
+        fallback = _candidate_from_statement(" ".join(sentences), message, require_specific=False)
+        if fallback is not None:
+            result.append(fallback)
+    return _deduplicate_candidates(result)
+
+
+def _candidate_from_statement(
+    segment: str,
+    message: NormalizedMessage,
+    *,
+    require_specific: bool,
+) -> CandidateInput | None:
+    cleaned = _clean_statement(segment)
+    if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
+        return None
+    if cleaned.endswith("?") or _is_inert_instruction(cleaned) or _EPHEMERAL_STANCE.search(cleaned):
+        return None
+    classified = _classify_statement(cleaned)
+    if classified is None:
+        return None
+    kind, confidence, entity_key, attribute_key = classified
+    if require_specific and confidence < 0.5:
+        return None
+    if confidence < 0.5:
+        if len(cleaned) < _FALLBACK_MIN_CHARS or _TRANSIENT_HINT.search(cleaned):
+            return None
+    elif len(cleaned) < _SPECIFIC_MIN_CHARS and _LABEL.match(cleaned) is None:
+        return None
+    label = _LABEL.match(cleaned)
+    candidate_content = label.group(2).strip() if label else cleaned
+    if not candidate_content:
+        return None
+    if entity_key is None and attribute_key is None:
+        slot = archive_lineage_key(kind, candidate_content)
+        if slot:
+            entity_key = "archive_slot"
+            attribute_key = slot[:MAX_SLOT_KEY_CHARS]
     reference = (
         f"{message.source_name}#conversation={message.conversation_id}&message={message.message_id}"
     )
-    result: list[CandidateInput] = []
-    for raw_segment in _SENTENCE_BREAK.split(text):
-        segment = _clean_statement(raw_segment)
-        if not segment or len(segment) > 4_000 or _SECRET_HINT.search(segment):
-            continue
-        classified = _classify_statement(segment)
-        if classified is None:
-            continue
-        kind, confidence, entity_key, attribute_key = classified
-        label = _LABEL.match(segment)
-        candidate_content = label.group(2).strip() if label else segment
-        sensitivity = (
-            Sensitivity.SENSITIVE
-            if _SENSITIVE_HINT.search(candidate_content)
-            else Sensitivity.NORMAL
-        )
-        result.append(
-            CandidateInput(
-                kind=kind,
-                content=candidate_content,
-                entity_key=entity_key,
-                attribute_key=attribute_key,
-                scopes=["personal"],
-                tags=[f"provider:{message.provider.value}", "archive_import"],
-                source_reference=reference,
-                source_service=message.provider.value,
-                source_type="provider_archive",
-                evidence=segment[:16_000],
-                confidence=confidence,
-                sensitivity=sensitivity,
-                availability=Availability.CORE,
-                observed_at=_provider_observed_at(message.created_at),
-                explicit_user_statement=True,
-            )
-        )
-    return _deduplicate_candidates(result)
+    return CandidateInput(
+        kind=kind,
+        content=candidate_content,
+        entity_key=entity_key,
+        attribute_key=attribute_key,
+        scopes=["personal"],
+        tags=[f"provider:{message.provider.value}", "archive_import"],
+        source_reference=reference,
+        source_service=message.provider.value,
+        source_type="provider_archive",
+        evidence=cleaned[:16_000],
+        confidence=confidence,
+        sensitivity=classify_sensitivity(candidate_content),
+        availability=Availability.CORE,
+        observed_at=_provider_observed_at(message.created_at),
+        explicit_user_statement=True,
+    )
 
 
 def _provider_observed_at(value: str | None) -> str | None:
@@ -1032,6 +1230,8 @@ def _classify_statement(
     statement: str,
 ) -> tuple[str, float, str | None, str | None] | None:
     lowered = statement.casefold()
+    if _is_inert_instruction(statement):
+        return None
     label = _LABEL.match(statement)
     if label:
         return (_LABEL_KINDS[label.group(1).casefold()], 1.0, None, None)
@@ -1056,6 +1256,8 @@ def _classify_statement(
         return ("personal_detail", 0.92, "user", "timezone")
     if re.search(
         r"\b(?:i prefer|i like|i don't like|i do not like|i dislike|i hate|i love|"
+        r"i (?:always|usually|generally|normally|typically)\s+"
+        r"(?:want|prefer|like|love|hate|dislike)|"
         r"my preference is|"
         r"please always|please never|when you (?:answer|respond)|"
         r"i want (?:you|answers|responses) to)\b",
@@ -1108,7 +1310,9 @@ def _classify_statement(
         r"we are|we're|we have|we've|our [a-z][a-z -]{1,30} (?:is|are))\b",
         lowered,
     ):
-        return ("personal_context", 0.7, None, None)
+        # Broad first-person prose is retained as a noncurrent observation.
+        # It is not durable current memory on its own.
+        return ("personal_context", 0.4, None, None)
     return None
 
 
@@ -1119,15 +1323,17 @@ def _memory_candidate(
     reference: str,
 ) -> CandidateInput | None:
     cleaned = _clean_statement(content)
-    if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
+    if (
+        not cleaned
+        or len(cleaned) > 4_000
+        or _SECRET_HINT.search(cleaned)
+        or _is_inert_instruction(cleaned)
+    ):
         return None
     classified = _classify_statement(cleaned)
     kind = classified[0] if classified is not None else "provider_memory"
     label = _LABEL.match(cleaned)
     candidate_content = label.group(2).strip() if label else cleaned
-    sensitivity = (
-        Sensitivity.SENSITIVE if _SENSITIVE_HINT.search(candidate_content) else Sensitivity.NORMAL
-    )
     return CandidateInput(
         kind=kind,
         content=candidate_content,
@@ -1138,9 +1344,23 @@ def _memory_candidate(
         source_type="provider_memory",
         evidence=cleaned[:16_000],
         confidence=0.76,
-        sensitivity=sensitivity,
+        sensitivity=classify_sensitivity(candidate_content),
         availability=Availability.CORE,
         explicit_user_statement=False,
+    )
+
+
+def _is_inert_instruction(statement: str) -> bool:
+    """Reject task-local or adversarial imported prose before kind extraction.
+
+    Imported text is data, not an instruction channel. Durable preference
+    markers can authorize ordinary response-style preferences, but explicit
+    prompt-injection language always wins and remains inert.
+    """
+    if _ADVERSARIAL_INSTRUCTION_HINT.search(statement):
+        return True
+    return bool(_TASK_LOCAL_HINT.search(statement)) and not bool(
+        _DURABLE_PREFERENCE_HINT.search(statement)
     )
 
 

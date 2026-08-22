@@ -28,16 +28,13 @@ NON_SUCCESS_CONCLUSIONS = frozenset(
     }
 )
 
-# Exact nine-job CI matrix names from .github/workflows/ci.yml
+# Exact six-job CI matrix names from .github/workflows/ci.yml
 REQUIRED_CI_MATRIX_JOBS = (
     "Python 3.12 - windows-latest",
-    "Python 3.12 - macos-latest",
     "Python 3.12 - ubuntu-latest",
     "Dashboard - Node 20",
     "Dashboard - Node 22",
     "Desktop artifact - windows-latest",
-    "Desktop artifact - macos-26",
-    "Desktop artifact - macos-26-intel",
     "Desktop artifact - ubuntu-latest",
 )
 

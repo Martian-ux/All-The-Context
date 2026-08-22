@@ -159,12 +159,113 @@ describe("dashboard", () => {
 
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Context" })).toBeInTheDocument();
-    expect(await screen.findAllByText("Prefers concise technical explanations.")).toHaveLength(2);
-    expect(screen.getByText("1 current memories")).toBeInTheDocument();
+    expect(await screen.findByText("Prefers concise technical explanations.")).toBeInTheDocument();
+    expect(screen.getByText("1 current memory")).toBeInTheDocument();
+    expect(screen.getByText(/Select a memory to see its full text/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Audit" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
+  });
+
+  it("shows the API total and loads additional context pages", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = init?.body ? JSON.parse(String(init.body)) as { cursor?: string } : {};
+        if (body.cursor) {
+          return json({ total: 3, next_cursor: null, items: [contextRecord("record-3", "Uses fiction-shell Beta.")] });
+        }
+        return json({
+          total: 3,
+          next_cursor: "50",
+          items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")],
+        });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    expect(await screen.findByText("Showing 2 of 3 current memories")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("3 current memories")).toBeInTheDocument();
+    expect(screen.getByText("Uses fiction-shell Beta.")).toBeInTheDocument();
+    const searchBodies = fetch.mock.calls
+      .filter(([request]) => String(request).endsWith("/context/search"))
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(searchBodies[0]).toMatchObject({ limit: 50 });
+    expect(searchBodies.some((body) => body.cursor === "50")).toBe(true);
+  });
+
+  it("does not offer an old page after typing a new query without submitting it", async () => {
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.query === "A") return json({ total: 2, next_cursor: "a-cursor", items: [contextRecord("a-1", "A result")] });
+        if (body.query === "B") return json({ total: 1, next_cursor: null, items: [contextRecord("b-1", "B result")] });
+        return json({ total: 0, next_cursor: null, items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const input = await screen.findByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("A result")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "B" } });
+
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "a-cursor")).toBe(false);
+  });
+
+  it.each([
+    { label: "kind", control: "Filter by kind", bodyKey: "kinds", value: "goal" },
+    { label: "availability", control: "Filter by availability", bodyKey: "availability", value: "core_available" },
+    { label: "sensitivity", control: "Filter by sensitivity", bodyKey: "sensitivity", value: "sensitive" },
+    { label: "minimum confidence", control: "High confidence", bodyKey: "min_confidence", value: undefined },
+  ])("starts pagination over when the $label filter changes", async ({ label, control, bodyKey, value }) => {
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const filterMatches = (body: Record<string, unknown>): boolean => {
+      if (bodyKey === "min_confidence") return body.min_confidence === 0.85;
+      const values = body[bodyKey];
+      return Array.isArray(values) && values.includes(value);
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.cursor === "old-cursor") return json({ total: 99, next_cursor: null, items: [contextRecord("mixed", "Mixed stale page")] });
+        if (filterMatches(body) && body.cursor === undefined) return json({ total: 2, next_cursor: "new-cursor", items: [contextRecord("filtered-1", `${label} filtered first page`)] });
+        if (filterMatches(body) && body.cursor === "new-cursor") return json({ total: 3, next_cursor: null, items: [contextRecord("filtered-2", `${label} filtered second page`)] });
+        return json({ total: 2, next_cursor: "old-cursor", items: [contextRecord("base-1", "Base first page")] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    expect(await screen.findByText("Base first page")).toBeInTheDocument();
+    if (value === undefined) fireEvent.click(screen.getByLabelText(control));
+    else fireEvent.change(screen.getByLabelText(control), { target: { value } });
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(await screen.findByText(`${label} filtered first page`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByText(`${label} filtered second page`)).toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "old-cursor")).toBe(false);
+    expect(searchBodies.find((body) => body.cursor === "new-cursor")).toMatchObject({ cursor: "new-cursor" });
   });
 
   it("navigates to source import", async () => {
@@ -309,6 +410,48 @@ describe("dashboard", () => {
     expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request, init]) => String(request).endsWith("/admin/sources/source-failed/reprocess") && init?.method === "POST")).toBe(true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
+  });
+
+  it("rebuilds a complete source from the preserved archive", async () => {
+    let rebuilt = false;
+    const source = {
+      id: "source-complete",
+      filename: "chatgpt-export.zip",
+      media_type: "application/zip",
+      source_service: "chatgpt",
+      byte_size: 2048,
+      content_hash: "hash",
+      candidate_count: rebuilt ? 2 : 4,
+      import_status: "complete",
+      metadata: { provider: "chatgpt", stats: { conversations: 1 } },
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.includes("/admin/sources/source-complete/reprocess") && url.includes("rebuild=true")) {
+        rebuilt = true;
+        return json({
+          source: { id: "source-complete", duplicate: false },
+          candidate_ids: ["candidate-1", "candidate-2"],
+          provider: "chatgpt",
+          export_format: "chatgpt_conversation_graph",
+          stats: { conversations: 1, user_messages: 1, candidates: 2 },
+          warnings: [],
+          coverage: { available: ["1 conversation"], unavailable: [], limitations: [], warnings: [], complete: true },
+        });
+      }
+      if (url.endsWith("/admin/sources")) return json({ total: 1, items: [{ ...source, candidate_count: rebuilt ? 2 : 4 }] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rebuild chatgpt-export.zip from archive" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rebuild now" }));
+    expect(await screen.findByText(/rebuilt from the preserved archive/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, init]) => String(request).includes("rebuild=true") && init?.method === "POST")).toBe(true);
   });
 
   it("removes an imported source and restores it through Undo", async () => {
@@ -586,6 +729,7 @@ describe("dashboard", () => {
     vi.stubGlobal("fetch", fetch);
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Correct" }));
     fireEvent.change(screen.getByLabelText("Corrected memory"), { target: { value: "Prefers detailed examples." } });
     fireEvent.change(screen.getByLabelText("Note for history (optional)"), { target: { value: "Preference changed" } });
@@ -622,13 +766,14 @@ describe("dashboard", () => {
     vi.stubGlobal("fetch", fetch);
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Prefers concise technical explanations/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     expect(screen.getByRole("region", { name: "Remove memory" })).toHaveTextContent(/deletion marker/i);
     fireEvent.click(screen.getByRole("button", { name: "Remove memory" }));
 
     expect(await screen.findByText("Memory removed from current context.")).toBeInTheDocument();
     expect(screen.queryByText("Prefers concise technical explanations.")).not.toBeInTheDocument();
-    expect(await screen.findAllByText("Works in Eastern time.")).toHaveLength(2);
+    expect(await screen.findAllByText("Works in Eastern time.")).toHaveLength(1);
     const call = fetch.mock.calls.find(([request]) => String(request).endsWith("/admin/records/record-1/delete"));
     expect(call?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ reason: "Removed by user" }) });
 

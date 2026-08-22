@@ -44,6 +44,22 @@ import type {
 
 type PageKey = "sources" | "context" | "connections" | "activity" | "backup" | "updates";
 
+const CONTEXT_PAGE_SIZE = 50;
+const CONTEXT_KIND_FILTERS = [
+  "",
+  "goal",
+  "project",
+  "project_decision",
+  "interaction_preference",
+  "constraint",
+  "workflow",
+  "personal_detail",
+  "personal_context",
+  "fact",
+  "open_task",
+  "provider_memory",
+];
+
 const navigation: Array<{ key: PageKey; label: string; icon: typeof Archive }> = [
   { key: "context", label: "Context", icon: BookOpenText },
   { key: "sources", label: "Sources", icon: Archive },
@@ -259,6 +275,7 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [lastImport, setLastImport] = useState<ImportResult | null>(null);
   const [retryingSource, setRetryingSource] = useState<string | null>(null);
   const [confirmingSource, setConfirmingSource] = useState<SourceRecord | null>(null);
+  const [confirmingRebuild, setConfirmingRebuild] = useState<SourceRecord | null>(null);
   const [workingSource, setWorkingSource] = useState<string | null>(null);
   const [removedSource, setRemovedSource] = useState<{
     source: SourceRecord;
@@ -319,6 +336,17 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       setLastImport(result);
       setNotice(`${providerDisplayName(result.provider)} extraction resumed; ${result.observation_count} observations processed automatically.`);
       await load();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setRetryingSource(null); }
+  }
+
+  async function rebuild(source: SourceRecord) {
+    setRetryingSource(source.id); setNotice(null); setLastImport(null); setError(null); setConfirmingRebuild(null);
+    try {
+      const result = await api.reprocessSource(source.id, { rebuild: true });
+      setLastImport(result);
+      setNotice(`${providerDisplayName(result.provider)} rebuilt from the preserved archive; ${result.observation_count} observations processed. Previous automatic memories from this source were reversibly replaced.`);
+      await Promise.all([load(), onChanged()]);
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setRetryingSource(null); }
   }
@@ -421,6 +449,7 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       </label>
       {removedSource ? <Notice kind="success"><span>Source and its derived current memories were removed.</span><button className="notice-action" disabled={workingSource !== null} onClick={() => void undoSourceRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
       {confirmingSource ? <Notice kind="info">Remove {confirmingSource.filename ?? "this source"} and current memories derived from it? You can undo immediately.</Notice> : null}
+      {confirmingRebuild ? <Notice kind="info"><span>Rebuild {confirmingRebuild.filename ?? "this source"} from the preserved archive? Uncorrected automatic memories from this source are reversibly replaced. User corrections and the raw archive stay.</span><button className="notice-action" disabled={retryingSource !== null} onClick={() => void rebuild(confirmingRebuild)}>Rebuild now</button><button className="notice-action" disabled={retryingSource !== null} onClick={() => setConfirmingRebuild(null)}>Cancel</button></Notice> : null}
       {error ? <Notice kind="error">{error}</Notice> : null}
       {lastImport ? (
         <section className="import-receipt" aria-label="Import coverage">
@@ -452,7 +481,10 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
                       <button className="quiet-button danger-text" disabled={workingSource !== null} onClick={() => void removeSource(source)}>{workingSource === source.id ? "Removing…" : "Remove"}</button>
                     </>
                   ) : (
-                    <button className="quiet-button danger-text" disabled={workingSource !== null} aria-label={`Remove ${source.filename ?? "source"}`} onClick={() => { setConfirmingSource(source); setRemovedSource(null); setNotice(null); }}><Trash2 size={13} /> Remove</button>
+                    <>
+                      {source.import_status === "complete" ? <button className="quiet-button" disabled={retryingSource !== null || workingSource !== null} aria-label={`Rebuild ${source.filename ?? "source"} from archive`} onClick={() => { setConfirmingRebuild(source); setConfirmingSource(null); setNotice(null); }}><RefreshCw size={13} /> Rebuild</button> : null}
+                      <button className="quiet-button danger-text" disabled={workingSource !== null} aria-label={`Remove ${source.filename ?? "source"}`} onClick={() => { setConfirmingSource(source); setConfirmingRebuild(null); setRemovedSource(null); setNotice(null); }}><Trash2 size={13} /> Remove</button>
+                    </>
                   )}
                 </div>
               </div>
@@ -483,10 +515,41 @@ function providerDisplayName(value?: string | null): string {
   return value;
 }
 
+function memoryCountLabel(shown: number, total: number): string {
+  if (total <= 0) return "0 current memories";
+  if (shown >= total) return `${total} current ${total === 1 ? "memory" : "memories"}`;
+  return `Showing ${shown} of ${total} current memories`;
+}
+
+function rowAccessibleName(record: ContextRecord): string {
+  const preview = record.content.length > 80 ? `${record.content.slice(0, 80)}…` : record.content;
+  return `${record.kind.replaceAll("_", " ")} memory, ${record.availability}, updated ${formatDate(record.updated_at)}: ${preview}`;
+}
+
+type ContextSearchCriteria = {
+  query: string;
+  availability: Availability | "";
+  kind: string;
+  sensitivity: string;
+  highConfidence: boolean;
+};
+
 function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability | "">("");
+  const [kind, setKind] = useState("");
+  const [sensitivity, setSensitivity] = useState("");
+  const [highConfidence, setHighConfidence] = useState(false);
+  const [appliedCriteria, setAppliedCriteria] = useState<ContextSearchCriteria>({
+    query: "",
+    availability: "",
+    kind: "",
+    sensitivity: "",
+    highConfidence: false,
+  });
   const [records, setRecords] = useState<ContextRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<ContextRecord | null>(null);
   const [history, setHistory] = useState<ContextRecordVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -498,20 +561,56 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   const [removedMemory, setRemovedMemory] = useState<{ record: ContextRecord; index: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const searchSequence = useRef(0);
 
-  const search = useCallback(async () => {
+  const search = useCallback(async (criteria: ContextSearchCriteria, append = false, cursor?: string | null) => {
+    const sequence = ++searchSequence.current;
     setLoading(true);
     try {
-      const items = (await api.searchContext(query, availability || undefined)).items;
-      setRecords(items); setSelected((current) => items.find(({ id }) => id === current?.id) ?? items[0] ?? null); setError(null);
-    } catch (caught) { setError(errorMessage(caught)); }
-    finally { setLoading(false); }
-  }, [availability, query]);
+      const result = await api.searchContext(criteria.query, {
+        availability: criteria.availability || undefined,
+        kinds: criteria.kind ? [criteria.kind] : [],
+        sensitivity: criteria.sensitivity ? [criteria.sensitivity] : [],
+        minConfidence: criteria.highConfidence ? 0.85 : undefined,
+        limit: CONTEXT_PAGE_SIZE,
+        cursor: append ? cursor ?? undefined : undefined,
+      });
+      if (sequence !== searchSequence.current) return;
+      setRecords((current) => {
+        const merged = append ? [...current, ...result.items] : result.items;
+        setSelected((selectedRecord) => (
+          selectedRecord && merged.some((item) => item.id === selectedRecord.id)
+            ? merged.find((item) => item.id === selectedRecord.id) ?? null
+            : null
+        ));
+        return merged;
+      });
+      setTotal(result.total ?? result.items.length);
+      setNextCursor(result.next_cursor ?? null);
+      setError(null);
+    } catch (caught) {
+      if (sequence === searchSequence.current) setError(errorMessage(caught));
+    }
+    finally {
+      if (sequence === searchSequence.current) setLoading(false);
+    }
+  }, []);
   const loadHistory = useCallback(async (recordId: string) => {
     try { setHistory((await api.contextHistory(recordId)).items); }
     catch { setHistory([]); }
   }, []);
-  useEffect(() => { void search(); }, []); // initial catalogue; explicit submit handles later searches
+  useEffect(() => {
+    const criteria: ContextSearchCriteria = {
+      query: appliedCriteria.query,
+      availability,
+      kind,
+      sensitivity,
+      highConfidence,
+    };
+    setAppliedCriteria(criteria);
+    setNextCursor(null);
+    void search(criteria);
+  }, [availability, highConfidence, kind, search, sensitivity]);
   useEffect(() => {
     if (!selected) { setHistory([]); return; }
     void loadHistory(selected.id);
@@ -581,7 +680,8 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
       const remaining = records.filter((record) => record.id !== removedId);
       setRemovedMemory({ record: removedRecord, index: records.findIndex((record) => record.id === removedId) });
       setRecords(remaining);
-      setSelected(remaining[0] ?? null);
+      setTotal((value) => Math.max(0, value - 1));
+      setSelected(null);
       setEditing(false);
       setConfirmingRemoval(false);
       await onChanged();
@@ -604,6 +704,7 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         return next;
       });
       setSelected(restored);
+      setTotal((value) => value + 1);
       setRemovedMemory(null);
       setNotice("Memory restored to current context.");
       await Promise.all([loadHistory(restored.id), onChanged()]);
@@ -630,28 +731,46 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
     finally { setWorking(false); }
   }
 
+  const paginationMatchesCriteria = query === appliedCriteria.query
+    && availability === appliedCriteria.availability
+    && kind === appliedCriteria.kind
+    && sensitivity === appliedCriteria.sensitivity
+    && highConfidence === appliedCriteria.highConfidence;
+
   return (
     <div className="context-layout">
       <section className="context-results">
-        <form className="search-row" onSubmit={(event) => { event.preventDefault(); void search(); }}>
-          <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search decisions, preferences, people…" /></label>
-          <select aria-label="Filter by availability" value={availability} onChange={(event) => setAvailability(event.target.value as Availability | "")}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
+        <form className="search-row" onSubmit={(event) => {
+          event.preventDefault();
+          const criteria: ContextSearchCriteria = { query, availability, kind, sensitivity, highConfidence };
+          setAppliedCriteria(criteria);
+          setNextCursor(null);
+          void search(criteria);
+        }}>
+          <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => { setQuery(event.target.value); setNextCursor(null); }} placeholder="Search decisions, preferences, people…" /></label>
           <button className="primary-button" type="submit">Search</button>
         </form>
+        <div className="search-filters">
+          <select aria-label="Filter by kind" value={kind} onChange={(event) => { setKind(event.target.value); setNextCursor(null); }}><option value="">All kinds</option>{CONTEXT_KIND_FILTERS.filter(Boolean).map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select>
+          <select aria-label="Filter by availability" value={availability} onChange={(event) => { setAvailability(event.target.value as Availability | ""); setNextCursor(null); }}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
+          <select aria-label="Filter by sensitivity" value={sensitivity} onChange={(event) => { setSensitivity(event.target.value); setNextCursor(null); }}><option value="">All sensitivity</option><option value="normal">Normal</option><option value="sensitive">Sensitive</option><option value="highly_sensitive">Highly sensitive</option></select>
+          <label className="confidence-filter"><input type="checkbox" checked={highConfidence} onChange={(event) => { setHighConfidence(event.target.checked); setNextCursor(null); }} /> High confidence</label>
+        </div>
         {removedMemory ? <Notice kind="success"><span>Memory removed from current context.</span><button className="notice-action" disabled={working} onClick={() => void undoRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
         {error ? <Notice kind="error">{error}</Notice> : null}
-        <div className="result-count">{records.length} current memories</div>
-        {loading ? <LoadingRows /> : records.length ? records.map((record) => (
-          <button className={`context-row ${selected?.id === record.id ? "context-row--selected" : ""}`} key={record.id} onClick={() => choose(record)}>
-            <span><KindLabel value={record.kind} /><AvailabilityLabel value={record.availability} /></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}</small>
+        <div className="result-count">{memoryCountLabel(records.length, total)}</div>
+        {loading && records.length === 0 ? <LoadingRows /> : records.length ? records.map((record) => (
+          <button className={`context-row ${selected?.id === record.id ? "context-row--selected" : ""}`} key={record.id} aria-label={rowAccessibleName(record)} onClick={() => choose(record)}>
+            <span><KindLabel value={record.kind} /><AvailabilityLabel value={record.availability} /></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}{record.sensitivity !== "normal" ? ` · ${record.sensitivity.replaceAll("_", " ")}` : ""}</small>
           </button>
         )) : <EmptyState icon={<Search />} title="No matching context" body="Try a broader phrase or import another source." />}
+        {nextCursor && !loading && paginationMatchesCriteria ? <button className="secondary-button load-more" onClick={() => void search(appliedCriteria, true, nextCursor)}>Load more</button> : null}
       </section>
       <aside className="record-detail">
         {selected ? (
           <div className="inspector-inner" key={selected.id}>
             <span className="eyebrow">Current memory</span><h2>{selected.content}</h2>
-            <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Source</dt><dd>{selected.source_service ?? "Unknown"}</dd></div></dl>
+            <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Source</dt><dd>{selected.source_service ?? "Unknown"}</dd></div><div><dt>Sensitivity</dt><dd>{selected.sensitivity.replaceAll("_", " ")}</dd></div><div><dt>Confidence</dt><dd>{selected.confidence.toFixed(2)}</dd></div></dl>
             <label className="field-label">Availability<select value={selected.availability} disabled={working} onChange={(event) => void changeAvailability(event.target.value as Availability)}>{selected.availability === "always_available" ? <option value="always_available">Legacy availability — change to Core online</option> : null}<option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
 
             {editing ? (
@@ -677,7 +796,7 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
             <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p>{version.version !== selected.version ? <button className="history-restore" disabled={working} onClick={() => void restoreVersion(version)} aria-label={`Restore version ${version.version}`}><RotateCcw size={11} /> Restore</button> : <span className="history-current">Current</span>}{version.change_reason ? <small>{version.change_reason}</small> : null}<time>{formatDate(version.updated_at)}</time></div>)}</section>
             <p className="hash">SHA-256 · {selected.content_hash}</p>
           </div>
-        ) : <div className="inspector-empty"><BookOpenText size={24} /><p>Select a record to see details and history.</p></div>}
+        ) : <div className="inspector-empty"><BookOpenText size={24} /><p>Select a memory to see its full text, provenance, and history.</p></div>}
       </aside>
     </div>
   );

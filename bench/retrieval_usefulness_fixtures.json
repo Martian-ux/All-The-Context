@@ -1,0 +1,488 @@
+{
+  "schema": "atc.retrieval-usefulness.fixture.v1",
+  "schema_version": 1,
+  "title": "Synthetic retrieval usefulness corpus",
+  "description": "Sanitized fictional operator facts for provider-facing retrieval usefulness. No live vault, personal context, credentials, or production ranking changes.",
+  "vault": {
+    "name": "Synthetic retrieval usefulness vault",
+    "display_timezone": "UTC"
+  },
+  "principals": {
+    "reader": {
+      "id": "usefulness-reader",
+      "name": "Synthetic usefulness reader",
+      "scopes": ["context:read"]
+    },
+    "trusted": {
+      "id": "trusted-provider",
+      "name": "Trusted synthetic provider",
+      "scopes": ["context:read"]
+    },
+    "denied": {
+      "id": "denied-provider",
+      "name": "Denied synthetic provider",
+      "scopes": ["context:read"]
+    }
+  },
+  "observations": [
+    {
+      "alias": "stale_home_city",
+      "kind": "personal_detail",
+      "content": "The Helios operator home city is Boston.",
+      "entity_key": "helios-operator",
+      "attribute_key": "home_city",
+      "scopes": ["project:helios"],
+      "tags": ["location"],
+      "source_reference": "synthetic-helios-setup-2026-01",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator stated Boston during the January Helios setup drill.",
+      "observed_at": "2026-01-15T12:00:00+00:00",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "current_home_city",
+      "kind": "personal_detail",
+      "content": "The Helios operator home city is Philadelphia.",
+      "entity_key": "helios-operator",
+      "attribute_key": "home_city",
+      "scopes": ["project:helios"],
+      "tags": ["location"],
+      "source_reference": "synthetic-helios-setup-2026-07",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator stated Philadelphia during the July Helios setup drill.",
+      "observed_at": "2026-07-15T12:00:00+00:00",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "expired_retention",
+      "kind": "workflow",
+      "content": "Orion archive retention is 30 days.",
+      "scopes": ["project:orion"],
+      "tags": ["retention"],
+      "valid_from": "2024-01-01T00:00:00+00:00",
+      "expires_at": "2025-06-01T00:00:00+00:00",
+      "observed_at": "2024-01-01T00:00:00+00:00",
+      "source_reference": "synthetic-orion-retention-2024",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Orion retention was 30 days during 2024.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "current_retention",
+      "kind": "workflow",
+      "content": "Orion archive retention is 90 days.",
+      "scopes": ["project:orion"],
+      "tags": ["retention"],
+      "source_reference": "synthetic-orion-retention-current",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Orion retention is currently 90 days.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "legacy_runbook",
+      "kind": "workflow",
+      "content": "Helios production rollback uses the legacy runbook.",
+      "scopes": ["project:helios"],
+      "tags": ["runbook"],
+      "source_reference": "synthetic-helios-runbook-legacy",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Helios previously used the legacy rollback runbook.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "current_runbook",
+      "kind": "correction",
+      "content": "Helios production rollback uses the approved runbook.",
+      "supersedes": "@legacy_runbook",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "withdrawn_constraint",
+      "kind": "constraint",
+      "content": "Helios never deploys on Friday.",
+      "scopes": ["project:helios"],
+      "tags": ["schedule"],
+      "source_reference": "synthetic-helios-friday-constraint",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator later withdrew the Friday deploy constraint.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "forgotten_goal",
+      "kind": "goal",
+      "content": "Helios should archive every chat transcript.",
+      "scopes": ["project:helios"],
+      "tags": ["archive"],
+      "source_reference": "synthetic-helios-archive-goal",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator later asked to forget the archive-every-chat goal.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "inferred_compiler",
+      "kind": "workflow",
+      "content": "Helios uses an inferred experimental compiler toolchain.",
+      "scopes": ["project:helios"],
+      "explicit_user_statement": false,
+      "confidence": 0.9,
+      "expected_disposition": "tentative"
+    },
+    {
+      "alias": "highly_private_nickname",
+      "kind": "personal_detail",
+      "content": "The Helios household nickname is only for family use.",
+      "sensitivity": "highly_sensitive",
+      "explicit_user_statement": true,
+      "expected_disposition": "ignored"
+    },
+    {
+      "alias": "sensitive_calendar",
+      "kind": "personal_context",
+      "content": "The Helios operator medical reminder uses the local calendar only.",
+      "sensitivity": "sensitive",
+      "scopes": ["project:helios"],
+      "tags": ["calendar"],
+      "allowed_clients": ["trusted-provider"],
+      "denied_clients": ["denied-provider"],
+      "source_reference": "synthetic-helios-calendar-reminder",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator kept the medical reminder on the local calendar.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "training_rollback_note",
+      "kind": "historical_note",
+      "content": "Helios production rollback appears in a training example.",
+      "scopes": ["training"],
+      "tags": ["example"],
+      "entity_key": "training:helios-rollback",
+      "attribute_key": "authority",
+      "structured_value": {"authority": false},
+      "confidence": 1.0,
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "helios_preference",
+      "kind": "interaction_preference",
+      "content": "Answer Helios operator questions in short numbered steps.",
+      "scopes": ["project:helios"],
+      "tags": ["style"],
+      "source_reference": "synthetic-helios-answer-style",
+      "source_service": "synthetic-lab",
+      "source_type": "explicit_setting",
+      "evidence": "Operator asked for short numbered Helios answers.",
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "helios_filler_alpha",
+      "kind": "workflow",
+      "content": "Helios operator questions about filler alpha cover the long rehearsal checklist, spare badge printers, visitor wifi, and the unused west-lab seating chart so a tight character budget cannot keep this secondary note.",
+      "scopes": ["project:helios"],
+      "tags": ["filler"],
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    },
+    {
+      "alias": "helios_filler_beta",
+      "kind": "workflow",
+      "content": "Helios operator questions about filler beta cover the spare projector remote, overflow coat rack, after-hours lighting, and the unused east-lab seating chart so a tight character budget cannot keep this secondary note.",
+      "scopes": ["project:helios"],
+      "tags": ["filler"],
+      "explicit_user_statement": true,
+      "expected_disposition": "applied"
+    }
+  ],
+  "mutations": [
+    {
+      "action": "delete",
+      "alias": "withdrawn_constraint",
+      "reason": "operator withdrew the obsolete Friday deploy constraint"
+    },
+    {
+      "action": "forget",
+      "alias": "forgotten_goal",
+      "content": "Operator asked to forget the Helios archive-every-chat goal.",
+      "reason": "operator asked to forget the archive-every-chat goal"
+    }
+  ],
+  "cases": [
+    {
+      "id": "current_home_city_search",
+      "dimensions": ["current_facts", "stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios operator home city",
+        "limit": 10
+      },
+      "expect": {
+        "required_aliases": ["current_home_city"],
+        "required_content_aliases": ["current_home_city"],
+        "forbidden_content_aliases": ["stale_home_city"]
+      }
+    },
+    {
+      "id": "orion_retention_current",
+      "dimensions": ["current_facts", "stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Orion archive retention",
+        "limit": 10
+      },
+      "expect": {
+        "required_aliases": ["current_retention"],
+        "required_content_aliases": ["current_retention"],
+        "forbidden_aliases": ["expired_retention"],
+        "forbidden_content_aliases": ["expired_retention"]
+      }
+    },
+    {
+      "id": "orion_retention_as_of",
+      "dimensions": ["current_facts"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Orion archive retention",
+        "as_of": "2025-03-15T00:00:00+00:00",
+        "limit": 10
+      },
+      "expect": {
+        "required_aliases": ["expired_retention"],
+        "required_content_aliases": ["expired_retention"],
+        "forbidden_content_aliases": ["current_retention"]
+      }
+    },
+    {
+      "id": "helios_runbook_correction",
+      "dimensions": ["current_facts", "stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios production rollback runbook",
+        "current_project": "helios",
+        "limit": 10
+      },
+      "expect": {
+        "required_aliases": ["legacy_runbook"],
+        "required_content_aliases": ["current_runbook"],
+        "forbidden_content_aliases": ["legacy_runbook", "training_rollback_note"]
+      }
+    },
+    {
+      "id": "training_conflict_excluded",
+      "dimensions": ["stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios production rollback",
+        "current_project": "helios",
+        "limit": 10
+      },
+      "expect": {
+        "required_content_aliases": ["current_runbook"],
+        "forbidden_aliases": ["training_rollback_note"],
+        "forbidden_content_aliases": ["training_rollback_note"]
+      }
+    },
+    {
+      "id": "withdrawn_constraint_excluded",
+      "dimensions": ["withdrawn_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios never deploys on Friday",
+        "limit": 10
+      },
+      "expect": {
+        "forbidden_aliases": ["withdrawn_constraint"],
+        "forbidden_content_aliases": ["withdrawn_constraint"]
+      }
+    },
+    {
+      "id": "forgotten_goal_excluded",
+      "dimensions": ["withdrawn_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios archive every chat transcript",
+        "limit": 10
+      },
+      "expect": {
+        "forbidden_aliases": ["forgotten_goal"],
+        "forbidden_content_aliases": ["forgotten_goal"]
+      }
+    },
+    {
+      "id": "tentative_inference_excluded",
+      "dimensions": ["stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios inferred experimental compiler toolchain",
+        "limit": 10
+      },
+      "expect": {
+        "forbidden_content_aliases": ["inferred_compiler"]
+      }
+    },
+    {
+      "id": "highly_sensitive_not_current",
+      "dimensions": ["sensitivity"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios household nickname family use",
+        "limit": 10
+      },
+      "expect": {
+        "forbidden_content_aliases": ["highly_private_nickname"]
+      }
+    },
+    {
+      "id": "sensitive_calendar_trusted",
+      "dimensions": ["sensitivity", "provenance", "packaging"],
+      "surface": "get",
+      "principal": "trusted",
+      "request": {
+        "alias": "sensitive_calendar"
+      },
+      "expect": {
+        "required_aliases": ["sensitive_calendar"],
+        "required_content_aliases": ["sensitive_calendar"],
+        "expected_sensitivity": "sensitive",
+        "required_provenance_fields": [
+          "source_reference",
+          "source_service",
+          "source_type",
+          "evidence",
+          "observation_origin",
+          "policy_version"
+        ],
+        "require_provider_packaging": true
+      }
+    },
+    {
+      "id": "sensitive_calendar_denied",
+      "dimensions": ["sensitivity"],
+      "surface": "get",
+      "principal": "denied",
+      "request": {
+        "alias": "sensitive_calendar"
+      },
+      "expect": {
+        "forbidden_aliases": ["sensitive_calendar"],
+        "forbidden_content_aliases": ["sensitive_calendar"]
+      }
+    },
+    {
+      "id": "sensitive_calendar_reader_search",
+      "dimensions": ["sensitivity"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios operator medical reminder local calendar",
+        "limit": 10
+      },
+      "expect": {
+        "forbidden_aliases": ["sensitive_calendar"],
+        "forbidden_content_aliases": ["sensitive_calendar"]
+      }
+    },
+    {
+      "id": "bootstrap_budget_and_preference",
+      "dimensions": ["budget", "packaging", "current_facts"],
+      "surface": "bootstrap",
+      "principal": "reader",
+      "request": {
+        "query": "Helios operator questions",
+        "requested_scopes": ["project:helios"],
+        "budget_chars": 256,
+        "current_project": "helios"
+      },
+      "expect": {
+        "required_aliases": ["helios_preference"],
+        "required_content_aliases": ["helios_preference"],
+        "forbidden_content_aliases": [
+          "helios_filler_alpha",
+          "helios_filler_beta",
+          "stale_home_city",
+          "legacy_runbook",
+          "withdrawn_constraint",
+          "forgotten_goal"
+        ],
+        "require_provider_packaging": true
+      }
+    },
+    {
+      "id": "bootstrap_current_helios_facts",
+      "dimensions": ["current_facts", "packaging", "provenance", "budget"],
+      "surface": "bootstrap",
+      "principal": "reader",
+      "request": {
+        "query": "Helios operator home city rollback runbook",
+        "requested_scopes": ["project:helios"],
+        "budget_chars": 4000,
+        "current_project": "helios"
+      },
+      "expect": {
+        "required_aliases": ["helios_preference", "current_home_city", "legacy_runbook"],
+        "required_content_aliases": ["current_home_city", "current_runbook"],
+        "forbidden_content_aliases": [
+          "stale_home_city",
+          "legacy_runbook",
+          "training_rollback_note",
+          "withdrawn_constraint",
+          "forgotten_goal"
+        ],
+        "required_provenance_fields": [
+          "source_reference",
+          "evidence",
+          "observation_origin",
+          "policy_version"
+        ],
+        "require_provider_packaging": true
+      }
+    },
+    {
+      "id": "search_provider_packaging",
+      "dimensions": ["packaging", "provenance"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "Helios operator home city",
+        "limit": 5
+      },
+      "expect": {
+        "required_aliases": ["current_home_city"],
+        "required_provenance_fields": [
+          "source_reference",
+          "source_service",
+          "evidence",
+          "observation_origin",
+          "policy_version"
+        ],
+        "require_provider_packaging": true
+      }
+    }
+  ]
+}

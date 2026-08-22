@@ -1,0 +1,33 @@
+{
+  "case_count": 15,
+  "fixture_sha256": "dd84421d23573cd96f1fd310cbf4975efbafa0a32df881f086c73723232edfad",
+  "gates": {
+    "all_cases_passed": true,
+    "isolated_synthetic_vault": true,
+    "repeat_deterministic": true,
+    "zero_budget_violations": true,
+    "zero_forbidden_results": true,
+    "zero_packaging_violations": true,
+    "zero_sensitivity_mismatches": true
+  },
+  "metrics": {
+    "budget_compliance": 1.0,
+    "budget_violation_count": 0,
+    "current_fact_recall": 1.0,
+    "failed_case_count": 0,
+    "forbidden_exclusion_rate": 1.0,
+    "forbidden_result_count": 0,
+    "packaging_usefulness": 1.0,
+    "packaging_violation_count": 0,
+    "provenance_completeness": 1.0,
+    "repeat_determinism": true,
+    "required_hit_rate": 1.0,
+    "sensitivity_mismatch_count": 0,
+    "sensitivity_respect": 1.0,
+    "stale_conflict_exclusion": 1.0,
+    "withdrawn_exclusion": 1.0
+  },
+  "passed": true,
+  "report_kind": "synthetic_retrieval_usefulness",
+  "schema": "atc.retrieval-usefulness.scorecard.v1"
+}

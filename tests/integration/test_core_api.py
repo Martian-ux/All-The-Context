@@ -24,8 +24,20 @@ from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.export import restore_export
+from allthecontext.models import CandidateInput
 from allthecontext.updater import PreparedArtifact, UpdatePhase
 from fastapi.testclient import TestClient
+
+
+def _seed_search_records(service: CoreService, count: int = 3) -> None:
+    for index in range(count):
+        candidate = service.store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"Cursor pagination fixture {index}",
+            )
+        )
+        service.store.approve_candidate(candidate.id)
 
 
 def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
@@ -72,6 +84,105 @@ def test_core_http_ingestion_review_and_retrieval(tmp_path: Path) -> None:
         if wal_path.exists():
             expected_size += wal_path.stat().st_size
         assert status["database_size_bytes"] == expected_size
+
+
+def test_context_search_cursor_validation_and_request_binding(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with CoreService(config) as service:
+        _seed_search_records(service)
+        with TestClient(create_app(config, service=service)) as client:
+            first = client.post(
+                "/v1/context/search",
+                json={"query": "", "kinds": ["fact"], "limit": 1},
+            )
+            assert first.status_code == 200
+            cursor = first.json()["next_cursor"]
+            assert isinstance(cursor, str)
+            assert cursor.startswith("atc-search-v1.")
+
+            second = client.post(
+                "/v1/context/search",
+                json={"query": "", "kinds": ["fact"], "limit": 1, "cursor": cursor},
+            )
+            assert second.status_code == 200
+            assert second.json()["items"]
+            assert second.json()["items"][0]["id"] != first.json()["items"][0]["id"]
+
+            for invalid_cursor in ("not-a-cursor", "0", "-1", "100001"):
+                invalid = client.post(
+                    "/v1/context/search",
+                    json={
+                        "query": "",
+                        "kinds": ["fact"],
+                        "limit": 1,
+                        "cursor": invalid_cursor,
+                    },
+                )
+                assert invalid.status_code == 422
+                assert invalid.json()["detail"] == ("invalid or request-mismatched search cursor")
+
+            changed_query = client.post(
+                "/v1/context/search",
+                json={"query": "fixture", "kinds": ["fact"], "limit": 1, "cursor": cursor},
+            )
+            changed_filter = client.post(
+                "/v1/context/search",
+                json={"query": "", "kinds": ["preference"], "limit": 1, "cursor": cursor},
+            )
+            changed_limit = client.post(
+                "/v1/context/search",
+                json={"query": "", "kinds": ["fact"], "limit": 2, "cursor": cursor},
+            )
+            assert changed_query.status_code == 422
+            assert changed_filter.status_code == 422
+            assert changed_limit.status_code == 422
+
+            boundary = client.post(
+                "/v1/context/search",
+                json={"query": "", "kinds": ["fact"], "offset": 100_000, "limit": 1},
+            )
+            assert boundary.status_code == 200
+            assert boundary.json()["items"] == []
+            assert boundary.json()["next_cursor"] is None
+
+            overflow = client.post(
+                "/v1/context/search",
+                json={"query": "", "offset": 100_001, "limit": 1},
+            )
+            assert overflow.status_code == 422
+
+
+def test_context_search_cursor_is_principal_bound(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with CoreService(config) as service:
+        _seed_search_records(service)
+        with TestClient(create_app(config, service=service)) as client:
+            setup = client.post("/v1/setup", json={"name": "Owner", "scopes": []})
+            assert setup.status_code == 200
+            owner_headers = {"Authorization": f"Bearer {setup.json()['token']}"}
+            reader = client.post(
+                "/v1/admin/clients",
+                headers=owner_headers,
+                json={"name": "Reader", "scopes": ["context:read"]},
+            )
+            assert reader.status_code == 200
+            reader_headers = {"Authorization": f"Bearer {reader.json()['token']}"}
+
+            first = client.post(
+                "/v1/context/search",
+                headers=reader_headers,
+                json={"query": "", "limit": 1},
+            )
+            assert first.status_code == 200
+            cursor = first.json()["next_cursor"]
+            assert cursor is not None
+
+            reused_by_owner = client.post(
+                "/v1/context/search",
+                headers=owner_headers,
+                json={"query": "", "limit": 1, "cursor": cursor},
+            )
+            assert reused_by_owner.status_code == 422
 
 
 def test_active_edge_operation_routes_are_absent_from_core(
