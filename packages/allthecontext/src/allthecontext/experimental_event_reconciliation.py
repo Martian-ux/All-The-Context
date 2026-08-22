@@ -1,10 +1,11 @@
-"""Pure Wave 1 capture/lifecycle metadata reconciliation.
+"""Pure Wave 1 reconciliation of bounded capture/lifecycle metadata.
 
-The boundary accepts existing contracts and retains only bounded identifiers,
-commitments, and payload references; it never writes, replays, checkpoints, or
-mints observation/current identifiers or copies source text.
+Exactly one existing event is accepted at a time. This seam retains bounded
+identifiers, ordering material, timestamps, commitments, and references only;
+it never retains source text or mutates source, cursor, observation, or Core.
 """
 
+# ruff: noqa: E501
 from __future__ import annotations
 
 import re
@@ -12,7 +13,7 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 from .capture import MAX_CAPTURE_INTEGER, MAX_CURSOR_CHARS, CaptureEvent
 from .client_runtime import (
@@ -44,43 +45,25 @@ MAX_PRODUCER_VERSION_CHARS = 128
 MAX_PAYLOAD_BYTES = 64 * 1024
 CAPTURE_CONTRACT_VERSION = "capture-event-v0"
 RECONCILIATION_SCHEMA_VERSION = "event-reconciliation-v0"
-
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SECRET = re.compile(
-    r"(?i)(bearer\s+|basic\s+|\bsk-[a-z0-9]|\bgh[pousr]_[a-z0-9]|"
-    r"\bAIza[a-z0-9]|(?:api[_ -]?key|access[_ -]?token|password|"
-    r"credential|secret|token)\s*[:=])"
+    r"(?i)(bearer\s+|basic\s+|\bsk-[a-z0-9]|\bgh[pousr]_[a-z0-9]|\bAIza[a-z0-9]|"
+    r"(?:api[_ -]?key|access[_ -]?token|password|credential|secret|token)\s*[:=])"
 )
 
 
 class ReconciliationErrorCode(StrEnum):
-    """Content-free failure vocabulary."""
-
     INVALID_FIELD, EMPTY_INPUT = "invalid_field", "empty_input"
-    INVALID_CAPTURE_EVENT, INVALID_CAPTURE_OPERATION = (
-        "invalid_capture_event",
-        "invalid_capture_operation",
-    )
-    INVALID_CAPTURE_GENERATION, CAPTURE_NORMALIZATION_REJECTED = (
-        "invalid_capture_generation",
-        "capture_normalization_rejected",
-    )
-    INVALID_LIFECYCLE_ENVELOPE, INVALID_LIFECYCLE_PAYLOAD = (
-        "invalid_lifecycle_envelope",
-        "invalid_lifecycle_payload",
-    )
+    INVALID_CAPTURE_EVENT, INVALID_CAPTURE_OPERATION = "invalid_capture_event", "invalid_capture_operation"
+    INVALID_CAPTURE_GENERATION, CAPTURE_NORMALIZATION_REJECTED = "invalid_capture_generation", "capture_normalization_rejected"
+    INVALID_LIFECYCLE_ENVELOPE, INVALID_LIFECYCLE_PAYLOAD = "invalid_lifecycle_envelope", "invalid_lifecycle_payload"
     INVALID_LINEAGE, INVALID_TIMESTAMP = "invalid_lineage", "invalid_timestamp"
     INVALID_RETENTION, INVALID_SENSITIVITY = "invalid_retention", "invalid_sensitivity"
     SECRET_LIKE_METADATA, INVALID_WITHDRAWAL = "secret_like_metadata", "invalid_withdrawal"
-    PURGE_REQUIRES_ERASE, DELETE_WITHDRAWAL_REQUIRED = (
-        "purge_requires_erase",
-        "delete_withdrawal_required",
-    )
-    DELETE_WITHDRAWAL_MISMATCH, DUPLICATE_REFERENCE = (
-        "delete_withdrawal_mismatch",
-        "duplicate_reference",
-    )
+    PURGE_REQUIRES_ERASE, DELETE_WITHDRAWAL_REQUIRED = "purge_requires_erase", "delete_withdrawal_required"
+    DELETE_WITHDRAWAL_MISMATCH, DUPLICATE_REFERENCE = "delete_withdrawal_mismatch", "duplicate_reference"
+    UNLINKED_COMPOSITION = "unlinked_composition"
 
 
 class ReconciliationViolation(ValueError):
@@ -94,7 +77,6 @@ class ReconciliationViolation(ValueError):
 class EventOrigin(StrEnum):
     CAPTURE = "capture"
     CLIENT_LIFECYCLE = "client_lifecycle"
-    CAPTURE_AND_CLIENT_LIFECYCLE = "capture_and_client_lifecycle"
 
 
 class SensitivityClass(StrEnum):
@@ -103,18 +85,17 @@ class SensitivityClass(StrEnum):
     RESTRICTED = "restricted"
 
 
-def _scan_secret(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value).casefold()
-    return "".join(
-        char for char in normalized if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
-    )
+def _fail(code: ReconciliationErrorCode) -> NoReturn:
+    raise ReconciliationViolation(code)
 
 
 def _reference(value: object, *, maximum: int = MAX_GENERIC_REFERENCE_CHARS) -> str:
-    if type(value) is not str or not value.strip() or len(value) > maximum:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
-    if _CONTROL.search(value) or _SECRET.search(_scan_secret(value)):
-        raise ReconciliationViolation(ReconciliationErrorCode.SECRET_LIKE_METADATA)
+    if type(value) is not str or not value or len(value) > maximum or value != value.strip() or _CONTROL.search(value):
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    normalized = unicodedata.normalize("NFKD", value).casefold()
+    normalized = "".join(c for c in normalized if unicodedata.category(c) not in {"Cf", "Mn", "Mc", "Me"})
+    if _SECRET.search(normalized):
+        _fail(ReconciliationErrorCode.SECRET_LIKE_METADATA)
     return value
 
 
@@ -131,73 +112,127 @@ def _timestamp(value: object) -> datetime | None:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_TIMESTAMP) from None
+            _fail(ReconciliationErrorCode.INVALID_TIMESTAMP)
     else:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_TIMESTAMP)
+        _fail(ReconciliationErrorCode.INVALID_TIMESTAMP)
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_TIMESTAMP)
+        _fail(ReconciliationErrorCode.INVALID_TIMESTAMP)
     return parsed.astimezone(UTC)
 
 
+def _required_times(event_time: object, observed_time: object) -> tuple[datetime, datetime]:
+    event, observed = _timestamp(event_time), _timestamp(observed_time)
+    if event is None or observed is None:
+        _fail(ReconciliationErrorCode.INVALID_TIMESTAMP)
+    return event, observed
+
+
 def _sequence(value: object, *, allow_zero: bool = False) -> int | None:
+    minimum = 0 if allow_zero else 1
     if value is None:
         return None
-    minimum = 0 if allow_zero else 1
     if type(value) is not int or not minimum <= value <= MAX_CAPTURE_INTEGER:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
     return value
 
 
-def _artifact_refs(value: object) -> tuple[str, ...]:
+def _refs(value: object) -> tuple[str, ...]:
     if type(value) is not tuple or len(value) > MAX_ARTIFACT_REFERENCES:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
     refs = tuple(_reference(item) for item in value)
     if len(refs) != len(set(refs)):
-        raise ReconciliationViolation(ReconciliationErrorCode.DUPLICATE_REFERENCE)
+        _fail(ReconciliationErrorCode.DUPLICATE_REFERENCE)
     return refs
+
+
+def _sha(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or _SHA256.fullmatch(value) is None:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    return value
+
+
+def _size(value: object) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or not 0 <= value <= MAX_PAYLOAD_BYTES:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    return value
+
+
+def _retention(value: object) -> RetentionPolicy:
+    if type(value) is not RetentionPolicy:
+        _fail(ReconciliationErrorCode.INVALID_RETENTION)
+    policy = cast(RetentionPolicy, value)
+    if type(policy.retention_class) is not RetentionClass:
+        _fail(ReconciliationErrorCode.INVALID_RETENTION)
+    expires = _timestamp(policy.expires_at)
+    if policy.retention_class is RetentionClass.EXPLICIT_EXPIRY and expires is None:
+        _fail(ReconciliationErrorCode.INVALID_RETENTION)
+    return cast(Any, RetentionPolicy)(policy.retention_class, expires)
+
+
+def _authorization(value: object) -> AuthorizationApplicability:
+    if type(value) is not AuthorizationApplicability:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    auth = cast(AuthorizationApplicability, value)
+    labels = (auth.allowed_principals, auth.allowed_scopes, auth.denied_principals, auth.denied_scopes)
+    if any(value is not None and (type(value) is not frozenset or len(value) > 64) for value in labels):
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    for values in labels:
+        if values is not None:
+            for item in values:
+                _reference(item, maximum=128)
+    allowed_principals, allowed_scopes, denied_principals, denied_scopes = labels
+    if denied_principals is None or denied_scopes is None:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    if allowed_principals is not None and allowed_principals & denied_principals:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    if allowed_scopes is not None and allowed_scopes & denied_scopes:
+        _fail(ReconciliationErrorCode.INVALID_FIELD)
+    return cast(Any, AuthorizationApplicability)(
+        allowed_principals, allowed_scopes, denied_principals, denied_scopes
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class DependencyWithdrawal:
-    """One authorized correction/deletion/expiry/purge dependency withdrawal."""
+    """One bounded, authorized correction/deletion/expiry/purge withdrawal."""
 
     dependency_ref: str
     cause: InvalidationCause
+    authorization_ref: str
     action: InvalidationAction = InvalidationAction.WITHDRAW_AND_REBUILD
-    authorized: bool = True
     provider_item_id: str | None = None
 
     def __post_init__(self) -> None:
         _reference(self.dependency_ref)
+        _reference(self.authorization_ref)
         if type(self.cause) is not InvalidationCause or self.cause not in {
-            InvalidationCause.CORRECTION,
-            InvalidationCause.ORDINARY_DELETE,
-            InvalidationCause.RETENTION_EXPIRY,
-            InvalidationCause.TERMINAL_PURGE,
-        }:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
-        if type(self.action) is not InvalidationAction:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
-        if type(self.authorized) is not bool:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
-        if self.provider_item_id is not None:
-            _reference(self.provider_item_id)
-        if self.cause is InvalidationCause.TERMINAL_PURGE:
-            if self.action is not InvalidationAction.ERASE:
-                raise ReconciliationViolation(ReconciliationErrorCode.PURGE_REQUIRES_ERASE)
-        elif self.action is InvalidationAction.ERASE:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
+            InvalidationCause.CORRECTION, InvalidationCause.ORDINARY_DELETE,
+            InvalidationCause.RETENTION_EXPIRY, InvalidationCause.TERMINAL_PURGE,
+        } or type(self.action) is not InvalidationAction:
+            _fail(ReconciliationErrorCode.INVALID_WITHDRAWAL)
+        _optional_reference(self.provider_item_id)
+        if self.cause is InvalidationCause.TERMINAL_PURGE and self.action is not InvalidationAction.ERASE:
+            _fail(ReconciliationErrorCode.PURGE_REQUIRES_ERASE)
+        if self.cause is not InvalidationCause.TERMINAL_PURGE and self.action is InvalidationAction.ERASE:
+            _fail(ReconciliationErrorCode.INVALID_WITHDRAWAL)
 
 
 def _withdrawals(value: object) -> tuple[DependencyWithdrawal, ...]:
     if type(value) is not tuple or len(value) > MAX_DEPENDENCY_WITHDRAWALS:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
-    if any(type(item) is not DependencyWithdrawal for item in value):
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_WITHDRAWAL)
-    refs = tuple(item.dependency_ref for item in value)
+        _fail(ReconciliationErrorCode.INVALID_WITHDRAWAL)
+    items = tuple(value)
+    if any(type(item) is not DependencyWithdrawal for item in items):
+        _fail(ReconciliationErrorCode.INVALID_WITHDRAWAL)
+    for item in items:
+        item.__post_init__()
+    refs = tuple(item.dependency_ref for item in items)
     if len(refs) != len(set(refs)):
-        raise ReconciliationViolation(ReconciliationErrorCode.DUPLICATE_REFERENCE)
-    return value
+        _fail(ReconciliationErrorCode.DUPLICATE_REFERENCE)
+    return items
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,8 +252,11 @@ class EventReconciliationInput:
     source_order_key: str | None = None
     source_cursor: str | None = None
     idempotency_key: str | None = None
+    idempotency_material: tuple[str | int, ...] = ()
+    payload_reference: str | None = None
+    payload_reference_kind: str | None = None
     payload_commitment: str | None = None
-    payload_size_bytes: int = 0
+    payload_size_bytes: int | None = None
     account_ref: str | None = None
     client_ref: str | None = None
     conversation_ref: str | None = None
@@ -228,10 +266,7 @@ class EventReconciliationInput:
     artifact_refs: tuple[str, ...] = ()
     event_time: datetime | None = None
     observed_time: datetime | None = None
-    retention: RetentionPolicy = field(
-        default_factory=lambda: RetentionPolicy(RetentionClass.SOURCE_LIFETIME)
-    )
-    retention_class: str = RetentionClass.SOURCE_LIFETIME.value
+    retention: RetentionPolicy = field(default_factory=lambda: RetentionPolicy(RetentionClass.SOURCE_LIFETIME))
     sensitivity: SensitivityClass = SensitivityClass.ORDINARY
     authorization: AuthorizationApplicability = field(default_factory=AuthorizationApplicability)
     content_ownership: str = "external_untrusted"
@@ -244,356 +279,313 @@ class EventReconciliationInput:
     def __post_init__(self) -> None:
         _reference(self.event_id)
         if type(self.origin) is not EventOrigin or type(self.witness_class) is not WitnessClass:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
-        artifact_refs = _artifact_refs(self.artifact_refs)
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        for value in (self.source_id, self.source_event_id, self.provider_item_id, self.lifecycle_event_id,
+                      self.account_ref, self.client_ref, self.conversation_ref, self.task_ref,
+                      self.workspace_ref, self.project_ref):
+            _optional_reference(value)
+        _optional_reference(self.source_order_key)
+        _optional_reference(self.source_cursor, maximum=MAX_CURSOR_CHARS)
+        _sequence(self.source_generation, allow_zero=True)
+        _sequence(self.sequence)
+        _sequence(self.source_sequence)
+        if self.origin is EventOrigin.CAPTURE and self.sequence != self.source_sequence:
+            _fail(ReconciliationErrorCode.INVALID_LINEAGE)
+        _optional_reference(self.idempotency_key)
+        if type(self.idempotency_material) is not tuple or len(self.idempotency_material) != 3:
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        for item in self.idempotency_material:
+            if type(item) is str:
+                _reference(item)
+            elif type(item) is int:
+                _sequence(item)
+            else:
+                _fail(ReconciliationErrorCode.INVALID_FIELD)
+        _optional_reference(self.payload_reference)
+        kinds = {"context_pack", "user_turn", "tool_result", "response", "working_checkpoint",
+                 "outcome", "attestation", "external_artifact"}
+        if self.payload_reference is None and self.payload_reference_kind is not None:
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        if self.payload_reference is not None and (
+            type(self.payload_reference_kind) is not str or self.payload_reference_kind not in kinds
+        ):
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        _sha(self.payload_commitment)
+        _size(self.payload_size_bytes)
+        artifacts = _refs(self.artifact_refs)
+        event_time, observed_time = _required_times(self.event_time, self.observed_time)
+        object.__setattr__(self, "event_time", event_time)
+        object.__setattr__(self, "observed_time", observed_time)
+        object.__setattr__(self, "retention", _retention(self.retention))
+        if type(self.sensitivity) is not SensitivityClass:
+            _fail(ReconciliationErrorCode.INVALID_SENSITIVITY)
+        object.__setattr__(self, "authorization", _authorization(self.authorization))
+        if type(self.content_ownership) is not str or self.content_ownership != "external_untrusted":
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        if self.schema_version != RECONCILIATION_SCHEMA_VERSION:
+            _fail(ReconciliationErrorCode.INVALID_FIELD)
+        _reference(self.schema_version, maximum=MAX_PRODUCER_VERSION_CHARS)
+        _reference(self.producer_version, maximum=MAX_PRODUCER_VERSION_CHARS)
+        for version in (self.capture_contract_version, self.lifecycle_contract_version):
+            _optional_reference(version, maximum=MAX_PRODUCER_VERSION_CHARS)
         withdrawals = _withdrawals(self.dependency_withdrawals)
-        object.__setattr__(self, "artifact_refs", artifact_refs)
+        object.__setattr__(self, "artifact_refs", artifacts)
         object.__setattr__(self, "dependency_withdrawals", withdrawals)
+        source_fields = (self.source_id, self.source_event_id, self.source_generation, self.provider_item_id,
+                         self.source_sequence, self.source_order_key, self.source_cursor, self.idempotency_key)
+        valid: tuple[bool, ...]
+        if self.origin is EventOrigin.CAPTURE:
+            valid = (all(item is not None for item in (self.source_id, self.source_event_id,
+                    self.source_generation, self.provider_item_id, self.source_order_key, self.idempotency_key)),
+                     self.capture_contract_version == CAPTURE_CONTRACT_VERSION,
+                     self.lifecycle_event_id is None and self.lifecycle_contract_version is None,
+                     self.payload_reference is None and self.payload_reference_kind is None,
+                     self.event_id == self.source_event_id, self.provider_item_id in artifacts,
+                     self.idempotency_material == (self.idempotency_key, self.source_event_id, self.source_order_key))
+        else:
+            valid = (self.lifecycle_event_id is not None and self.client_ref is not None and self.sequence is not None,
+                     self.lifecycle_contract_version == CONTRACT_VERSION and self.capture_contract_version is None,
+                     not any(item is not None for item in source_fields), self.event_id == self.lifecycle_event_id,
+                     self.payload_reference is None or self.payload_reference in artifacts,
+                     self.idempotency_material == (self.client_ref, self.lifecycle_event_id, self.sequence))
+        if not all(valid):
+            _fail(ReconciliationErrorCode.INVALID_LINEAGE)
 
     def as_dict(self) -> dict[str, object]:
-        """Return metadata only; neither raw capture nor lifecycle content appears."""
-
         data = asdict(self)
-        data.pop("retention")
         data["artifact_refs"] = list(self.artifact_refs)
-        data["event_time"] = self.event_time.isoformat() if self.event_time else None
-        data["observed_time"] = self.observed_time.isoformat() if self.observed_time else None
-        data["authorization"] = {
-            "allowed_principals": sorted(self.authorization.allowed_principals or ()),
-            "allowed_scopes": sorted(self.authorization.allowed_scopes or ()),
-        }
-        data["dependency_withdrawals"] = [
-            (item.dependency_ref, item.cause.value, item.action.value, item.provider_item_id)
-            for item in self.dependency_withdrawals
-        ]
+        data["event_time"] = cast(datetime, self.event_time).isoformat()
+        data["observed_time"] = cast(datetime, self.observed_time).isoformat()
+        data["retention"] = {"retention_class": self.retention.retention_class.value,
+                              "expires_at": self.retention.expires_at.isoformat() if self.retention.expires_at else None}
+        data["authorization"] = {"allowed_principals": sorted(self.authorization.allowed_principals or ()),
+                                  "allowed_scopes": sorted(self.authorization.allowed_scopes or ()),
+                                  "denied_principals": sorted(self.authorization.denied_principals),
+                                  "denied_scopes": sorted(self.authorization.denied_scopes)}
+        data["dependency_withdrawals"] = [{"dependency_ref": item.dependency_ref, "cause": item.cause.value,
+                                            "action": item.action.value, "authorization_ref": item.authorization_ref,
+                                            "provider_item_id": item.provider_item_id} for item in self.dependency_withdrawals]
+        data["idempotency_material"] = list(self.idempotency_material)
         return data
 
 
-_PAYLOAD_TYPES: tuple[type[object], ...] = (
-    ContextRequestPayload,
-    ContextRequestPayload,
-    DirectUserTurnPayload,
-    ToolObservableResultPayload,
-    ResponseEmissionPayload,
-    CompactionTaskCheckpointPayload,
-    RestartSessionTransitionPayload,
-    CompletionAbandonmentPayload,
-    ConsequenceCheckpointPayload,
-)
+_PAYLOAD_TYPES = {
+    "manual_context_request": ContextRequestPayload, "pre_generation_context_request": ContextRequestPayload,
+    "direct_user_turn": DirectUserTurnPayload, "tool_observable_result": ToolObservableResultPayload,
+    "response_emission": ResponseEmissionPayload, "compaction_task_checkpoint": CompactionTaskCheckpointPayload,
+    "restart_session_transition": RestartSessionTransitionPayload,
+    "completion_abandonment": CompletionAbandonmentPayload,
+    "consequence_checkpoint": ConsequenceCheckpointPayload,
+}
 
 
-def _validate_lifecycle(envelope: object) -> ClientLifecycleEnvelope:
-    if type(envelope) is not ClientLifecycleEnvelope:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    value = cast(ClientLifecycleEnvelope, envelope)
-    if type(value.hook) is not str or value.hook not in ALL_LIFECYCLE_HOOKS:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    expected = _PAYLOAD_TYPES[ALL_LIFECYCLE_HOOKS.index(value.hook)]
-    if type(value.payload) is not expected:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
-    if type(value.contract_version) is not str or value.contract_version != CONTRACT_VERSION:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    if type(value.content_ownership) is not str or value.content_ownership != "external_untrusted":
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    if type(value.retention_class) is not str or value.retention_class not in {
-        "ephemeral",
-        "bounded",
-        "checkpoint",
-    }:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    if value.hook == "direct_user_turn" and value.witness != "direct_user":
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    if value.hook != "direct_user_turn" and value.witness == "direct_user":
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    return value
-
-
-def _payload_reference(value: object) -> PayloadReference:
+def _payload_reference(value: object, expected: set[str]) -> PayloadReference:
     if type(value) is not PayloadReference:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
     reference = cast(PayloadReference, value)
-    if reference.untrusted is not True:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
     _reference(reference.reference)
-    if type(reference.kind) is not str or not reference.kind:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+    if type(reference.kind) is not str or reference.kind not in expected or reference.untrusted is not True:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+    _size(reference.size_bytes)
+    _sha(reference.sha256)
     return reference
 
 
-def _lifecycle_artifacts(envelope: ClientLifecycleEnvelope) -> tuple[str, ...]:
-    attribute = {
-        "direct_user_turn": "turn_ref",
-        "tool_observable_result": "result_ref",
-        "response_emission": "response_ref",
-        "compaction_task_checkpoint": "checkpoint_ref",
-        "consequence_checkpoint": "evidence_ref",
-    }.get(envelope.hook)
-    if attribute is None:
-        return ()
-    reference = getattr(envelope.payload, attribute)
-    return () if reference is None else (_payload_reference(reference).reference,)
+def _validate_lifecycle(value: object) -> tuple[ClientLifecycleEnvelope, datetime | None, PayloadReference | None]:
+    if type(value) is not ClientLifecycleEnvelope:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    envelope = cast(ClientLifecycleEnvelope, value)
+    for item in (envelope.event_id, envelope.session_id, envelope.client_id):
+        _reference(item)
+    for item in (envelope.conversation_id, envelope.task_id, envelope.workspace_id, envelope.project_id):
+        _optional_reference(item)
+    if _sequence(envelope.sequence) is None or type(envelope.hook) is not str or envelope.hook not in ALL_LIFECYCLE_HOOKS:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    if type(envelope.payload) is not _PAYLOAD_TYPES[envelope.hook]:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+    if envelope.hook in {"manual_context_request", "pre_generation_context_request"}:
+        mode = "manual" if envelope.hook == "manual_context_request" else "pre_generation"
+        if cast(ContextRequestPayload, envelope.payload).delivery_mode != mode:
+            _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+    if envelope.contract_version != CONTRACT_VERSION or (
+        type(envelope.content_ownership) is not str
+        or envelope.content_ownership != "external_untrusted"
+    ):
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    if type(envelope.witness) is not str or envelope.witness not in {
+        "direct_user", "host_observation", "model_provider_self_attestation", "system_observation"
+    }:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    if (envelope.hook == "direct_user_turn") != (envelope.witness == "direct_user"):
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    if type(envelope.retention_class) is not str or envelope.retention_class not in {
+        "ephemeral", "bounded", "checkpoint"
+    }:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    if envelope.observed_at is not None and type(envelope.observed_at) is not str:
+        _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
+    observed = None if envelope.observed_at is None else _timestamp(envelope.observed_at)
+    fields = {"direct_user_turn": ("turn_ref", {"user_turn"}),
+              "tool_observable_result": ("result_ref", {"tool_result", "external_artifact"}),
+              "response_emission": ("response_ref", {"response"}),
+              "compaction_task_checkpoint": ("checkpoint_ref", {"working_checkpoint"})}
+    reference = None
+    if envelope.hook in fields:
+        attribute, expected = fields[envelope.hook]
+        reference = _payload_reference(getattr(envelope.payload, attribute), expected)
+    elif envelope.hook == "consequence_checkpoint":
+        payload = cast(ConsequenceCheckpointPayload, envelope.payload)
+        if payload.status == "observed":
+            reference = _payload_reference(payload.evidence_ref, {"context_pack", "tool_result", "response", "outcome", "external_artifact"})
+        elif payload.status != "not_observed" or payload.evidence_ref is not None:
+            _fail(ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD)
+    return envelope, observed, reference
 
 
-def _capture_metadata(
-    event: object,
-) -> tuple[CaptureEvent, str, str, int]:
-    if type(event) is not CaptureEvent:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_CAPTURE_EVENT)
-    capture = cast(CaptureEvent, event)
+def _capture_metadata(value: object) -> tuple[CaptureEvent, str, str, int]:
+    if type(value) is not CaptureEvent:
+        _fail(ReconciliationErrorCode.INVALID_CAPTURE_EVENT)
+    capture = cast(CaptureEvent, value)
+    for item in (capture.provider_event_id, capture.provider_item_id, capture.order_key):
+        _reference(item)
     if type(capture.operation) is not str or capture.operation not in {"upsert", "delete"}:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_CAPTURE_OPERATION)
+        _fail(ReconciliationErrorCode.INVALID_CAPTURE_OPERATION)
     if type(capture.generation) is not int or not 0 <= capture.generation <= MAX_CAPTURE_INTEGER:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_CAPTURE_GENERATION)
+        _fail(ReconciliationErrorCode.INVALID_CAPTURE_GENERATION)
     normalizer = getattr(capture, "normalized", None)
     if not callable(normalizer):
-        raise ReconciliationViolation(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
+        _fail(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
     try:
         normalized = normalizer()
     except Exception:
-        raise ReconciliationViolation(
-            ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED
-        ) from None
-    if (
-        type(normalized) is not tuple
-        or len(normalized) != 2
-        or type(normalized[0]) is not str
-        or type(normalized[1]) is not str
-        or _SHA256.fullmatch(normalized[1]) is None
-    ):
-        raise ReconciliationViolation(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
-    payload_size = len(normalized[0].encode("utf-8"))
-    if payload_size > MAX_PAYLOAD_BYTES:
-        raise ReconciliationViolation(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
-    return capture, capture.provider_event_id, normalized[1], payload_size
+        _fail(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
+    if (type(normalized) is not tuple or len(normalized) != 2 or type(normalized[0]) is not str
+            or type(normalized[1]) is not str or _SHA256.fullmatch(normalized[1]) is None):
+        _fail(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
+    size = len(normalized[0].encode("utf-8"))
+    if size > MAX_PAYLOAD_BYTES:
+        _fail(ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED)
+    return capture, capture.provider_event_id, normalized[1], size
 
 
 def _lifecycle_retention(value: str) -> RetentionPolicy:
-    mapping = {
-        "ephemeral": RetentionClass.SESSION,
-        "bounded": RetentionClass.SOURCE_LIFETIME,
-        "checkpoint": RetentionClass.USER_CONTROLLED,
-    }
     try:
-        return RetentionPolicy(mapping[value])
+        return RetentionPolicy({"ephemeral": RetentionClass.SESSION, "bounded": RetentionClass.SOURCE_LIFETIME,
+                                "checkpoint": RetentionClass.USER_CONTROLLED}[value])
     except (KeyError, TypeError):
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_RETENTION) from None
+        _fail(ReconciliationErrorCode.INVALID_RETENTION)
 
 
-def _merge_context_ref(current: str | None, incoming: str | None) -> str | None:
+def _merge(current: str | None, incoming: str | None) -> str | None:
     if current is not None and incoming is not None and current != incoming:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LINEAGE)
+        _fail(ReconciliationErrorCode.INVALID_LINEAGE)
     return current if current is not None else incoming
 
 
-def reconcile_event(
-    *,
-    capture_event: CaptureEvent | None = None,
-    lifecycle_envelope: ClientLifecycleEnvelope | None = None,
-    source_id: str | None = None,
-    source_cursor: str | None = None,
-    source_sequence: int | None = None,
-    idempotency_key: str | None = None,
-    account_ref: str | None = None,
-    client_ref: str | None = None,
-    conversation_ref: str | None = None,
-    task_ref: str | None = None,
-    workspace_ref: str | None = None,
-    project_ref: str | None = None,
-    artifact_refs: tuple[str, ...] = (),
-    event_time: datetime | str | None = None,
-    observed_time: datetime | str | None = None,
-    retention: RetentionPolicy | None = None,
-    sensitivity: SensitivityClass = SensitivityClass.ORDINARY,
-    authorization: AuthorizationApplicability | None = None,
-    producer_version: str | None = None,
-    dependency_withdrawals: tuple[DependencyWithdrawal, ...] = (),
-) -> EventReconciliationInput:
-    """Normalize one existing capture event, lifecycle event, or composed pair."""
-
+def reconcile_event(*, capture_event: CaptureEvent | None = None,
+                    lifecycle_envelope: ClientLifecycleEnvelope | None = None,
+                    source_id: str | None = None, source_cursor: str | None = None,
+                    source_sequence: int | None = None, idempotency_key: str | None = None,
+                    account_ref: str | None = None, client_ref: str | None = None,
+                    conversation_ref: str | None = None, task_ref: str | None = None,
+                    workspace_ref: str | None = None, project_ref: str | None = None,
+                    artifact_refs: tuple[str, ...] = (), event_time: datetime | str | None = None,
+                    observed_time: datetime | str | None = None, retention: RetentionPolicy | None = None,
+                    sensitivity: SensitivityClass = SensitivityClass.ORDINARY,
+                    authorization: AuthorizationApplicability | None = None,
+                    producer_version: str | None = None,
+                    dependency_withdrawals: tuple[DependencyWithdrawal, ...] = ()) -> EventReconciliationInput:
+    """Normalize one existing capture event or lifecycle envelope."""
     if capture_event is None and lifecycle_envelope is None:
-        raise ReconciliationViolation(ReconciliationErrorCode.EMPTY_INPUT)
-    if capture_event is not None and type(capture_event) is not CaptureEvent:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_CAPTURE_EVENT)
-    if lifecycle_envelope is not None and type(lifecycle_envelope) is not ClientLifecycleEnvelope:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LIFECYCLE_ENVELOPE)
-    if type(artifact_refs) is not tuple:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
-    withdrawals = _withdrawals(dependency_withdrawals)
-    normalized_capture: tuple[CaptureEvent, str, str, int] | None = None
+        _fail(ReconciliationErrorCode.EMPTY_INPUT)
+    if capture_event is not None and lifecycle_envelope is not None:
+        _fail(ReconciliationErrorCode.UNLINKED_COMPOSITION)
+    refs, withdrawals = _refs(artifact_refs), _withdrawals(dependency_withdrawals)
+    common: dict[str, object] = {
+        "account_ref": _optional_reference(account_ref), "client_ref": _optional_reference(client_ref),
+        "conversation_ref": _optional_reference(conversation_ref), "task_ref": _optional_reference(task_ref),
+        "workspace_ref": _optional_reference(workspace_ref), "project_ref": _optional_reference(project_ref),
+        "artifact_refs": refs, "sensitivity": sensitivity,
+        "authorization": AuthorizationApplicability() if authorization is None else _authorization(authorization),
+        "dependency_withdrawals": withdrawals,
+    }
+    if type(sensitivity) is not SensitivityClass:
+        _fail(ReconciliationErrorCode.INVALID_SENSITIVITY)
     if capture_event is not None:
-        normalized_capture = _capture_metadata(capture_event)
-    normalized_lifecycle = (
-        _validate_lifecycle(lifecycle_envelope) if lifecycle_envelope is not None else None
-    )
-
-    bounded_source_id = _optional_reference(source_id)
-    bounded_account = _optional_reference(account_ref)
-    bounded_client = _optional_reference(client_ref)
-    bounded_conversation = _optional_reference(conversation_ref)
-    bounded_task = _optional_reference(task_ref)
-    bounded_workspace = _optional_reference(workspace_ref)
-    bounded_project = _optional_reference(project_ref)
-    if normalized_capture is not None:
-        capture, source_event_id, commitment, payload_size = normalized_capture
-        bounded_source_event_id = _reference(source_event_id)
-        bounded_item = _reference(capture.provider_item_id)
-        bounded_source_id = _reference(bounded_source_id)
-        if source_cursor is not None:
-            source_cursor = _reference(source_cursor, maximum=MAX_CURSOR_CHARS)
-        _sequence(source_sequence)
-        idempotency_key = _reference(idempotency_key)
-        if capture.operation == "delete":
-            matches = tuple(
-                item
-                for item in withdrawals
-                if item.cause is InvalidationCause.ORDINARY_DELETE
-                and (
-                    item.provider_item_id == bounded_item
-                    or (item.provider_item_id is None and item.dependency_ref == bounded_item)
-                )
-                and item.authorized
-            )
-            if not matches:
-                raise ReconciliationViolation(ReconciliationErrorCode.DELETE_WITHDRAWAL_REQUIRED)
-        if any(
-            item.cause is InvalidationCause.ORDINARY_DELETE
-            and item.provider_item_id is not None
-            and item.provider_item_id != bounded_item
+        capture, source_event, commitment, size = _capture_metadata(capture_event)
+        source = _reference(source_id)
+        item, order = _reference(capture.provider_item_id), _reference(capture.order_key)
+        cursor, source_seq = _optional_reference(source_cursor, maximum=MAX_CURSOR_CHARS), _sequence(source_sequence)
+        idem = _reference(idempotency_key)
+        times = _required_times(event_time, observed_time)
+        if capture.operation == "delete" and not any(
+            item.cause is InvalidationCause.ORDINARY_DELETE and item.provider_item_id == capture.provider_item_id
             for item in withdrawals
         ):
-            raise ReconciliationViolation(ReconciliationErrorCode.DELETE_WITHDRAWAL_MISMATCH)
+            _fail(ReconciliationErrorCode.DELETE_WITHDRAWAL_REQUIRED)
+        if any(item.cause is InvalidationCause.ORDINARY_DELETE and item.provider_item_id not in {None, capture.provider_item_id}
+               for item in withdrawals):
+            _fail(ReconciliationErrorCode.DELETE_WITHDRAWAL_MISMATCH)
+        if item in refs:
+            _fail(ReconciliationErrorCode.DUPLICATE_REFERENCE)
+        retention_value = _retention(retention) if retention is not None else RetentionPolicy(RetentionClass.SOURCE_LIFETIME)
+        common.update(event_id=source_event, origin=EventOrigin.CAPTURE, witness_class=WitnessClass.AUTHORITATIVE_SOURCE,
+                      source_id=source, source_event_id=source_event, source_generation=capture.generation,
+                      provider_item_id=item, sequence=source_seq, source_sequence=source_seq, source_order_key=order,
+                      source_cursor=cursor, idempotency_key=idem, idempotency_material=(idem, source_event, order),
+                      payload_commitment=commitment, payload_size_bytes=size, artifact_refs=(*refs, item),
+                      event_time=times[0], observed_time=times[1], retention=retention_value,
+                      producer_version=producer_version or CAPTURE_CONTRACT_VERSION,
+                      capture_contract_version=CAPTURE_CONTRACT_VERSION)
     else:
-        bounded_source_event_id = None
-        bounded_item = None
-        commitment = None
-        payload_size = 0
-        if source_id is not None or source_cursor is not None or source_sequence is not None:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LINEAGE)
-        if idempotency_key is not None:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_LINEAGE)
-
-    lifecycle = normalized_lifecycle
-    retention_label: str
-    if lifecycle is not None:
-        bounded_lifecycle_event = _reference(lifecycle.event_id)
-        bounded_client = _merge_context_ref(bounded_client, lifecycle.client_id)
-        bounded_conversation = _merge_context_ref(bounded_conversation, lifecycle.conversation_id)
-        bounded_task = _merge_context_ref(bounded_task, lifecycle.task_id)
-        bounded_workspace = _merge_context_ref(bounded_workspace, lifecycle.workspace_id)
-        bounded_project = _merge_context_ref(bounded_project, lifecycle.project_id)
-        lifecycle_refs = _lifecycle_artifacts(lifecycle)
-        lifecycle_observed = lifecycle.observed_at
-        if observed_time is None and lifecycle_observed is not None:
-            observed_time = lifecycle_observed
-    else:
-        bounded_lifecycle_event = None
-        lifecycle_refs = ()
-
-    provided_refs = _artifact_refs(artifact_refs)
-    combined_refs = list(provided_refs)
-    refs_to_add = lifecycle_refs + ((bounded_item,) if bounded_item is not None else ())
-    for ref in refs_to_add:
-        if ref in combined_refs:
-            raise ReconciliationViolation(ReconciliationErrorCode.DUPLICATE_REFERENCE)
-        combined_refs.append(ref)
-    if len(combined_refs) > MAX_ARTIFACT_REFERENCES:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
-
-    if sensitivity is None or type(sensitivity) is not SensitivityClass:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_SENSITIVITY)
-    if authorization is None:
-        authorization = AuthorizationApplicability()
-    elif type(authorization) is not AuthorizationApplicability:
-        raise ReconciliationViolation(ReconciliationErrorCode.INVALID_FIELD)
-    if retention is None:
-        retention = (
-            _lifecycle_retention(lifecycle.retention_class)
-            if lifecycle is not None
-            else RetentionPolicy(RetentionClass.SOURCE_LIFETIME)
-        )
-    else:
-        if type(retention) is not RetentionPolicy:
-            raise ReconciliationViolation(ReconciliationErrorCode.INVALID_RETENTION)
-    if lifecycle is not None:
-        retention_label = lifecycle.retention_class
-    else:
-        retention_label = retention.retention_class.value
-
-    event_id = bounded_source_event_id or bounded_lifecycle_event
-    if event_id is None:
-        raise ReconciliationViolation(ReconciliationErrorCode.EMPTY_INPUT)
-    origin = (
-        EventOrigin.CAPTURE_AND_CLIENT_LIFECYCLE
-        if normalized_capture is not None and lifecycle is not None
-        else EventOrigin.CAPTURE
-        if normalized_capture is not None
-        else EventOrigin.CLIENT_LIFECYCLE
-    )
-    witness = (
-        WitnessClass.AUTHORITATIVE_SOURCE
-        if normalized_capture is not None and lifecycle is None
-        else WitnessClass.DIRECT_USER
-        if lifecycle is not None and lifecycle.witness == "direct_user"
-        else WitnessClass.HOST_ARTIFACT
-    )
-    sequence = lifecycle.sequence if lifecycle is not None else source_sequence
-    capture_version = CAPTURE_CONTRACT_VERSION if normalized_capture is not None else None
-    lifecycle_version = lifecycle.contract_version if lifecycle is not None else None
-    producer = producer_version or (
-        "capture-client-runtime-v0"
-        if normalized_capture is not None and lifecycle is not None
-        else capture_version or lifecycle_version or RECONCILIATION_SCHEMA_VERSION
-    )
-    _reference(producer, maximum=MAX_PRODUCER_VERSION_CHARS)
-    return EventReconciliationInput(
-        event_id=event_id,
-        origin=origin,
-        witness_class=witness,
-        source_id=bounded_source_id,
-        source_event_id=bounded_source_event_id,
-        source_generation=(normalized_capture[0].generation if normalized_capture else None),
-        provider_item_id=bounded_item,
-        lifecycle_event_id=bounded_lifecycle_event,
-        sequence=sequence,
-        source_sequence=source_sequence,
-        source_order_key=normalized_capture[0].order_key if normalized_capture else None,
-        source_cursor=source_cursor,
-        idempotency_key=idempotency_key,
-        payload_commitment=commitment,
-        payload_size_bytes=payload_size,
-        account_ref=bounded_account,
-        client_ref=bounded_client,
-        conversation_ref=bounded_conversation,
-        task_ref=bounded_task,
-        workspace_ref=bounded_workspace,
-        project_ref=bounded_project,
-        artifact_refs=tuple(combined_refs),
-        event_time=_timestamp(event_time),
-        observed_time=_timestamp(observed_time),
-        retention=retention,
-        retention_class=retention_label,
-        sensitivity=sensitivity,
-        authorization=authorization,
-        content_ownership="external_untrusted",
-        schema_version=RECONCILIATION_SCHEMA_VERSION,
-        producer_version=producer,
-        capture_contract_version=capture_version,
-        lifecycle_contract_version=lifecycle_version,
-        dependency_withdrawals=withdrawals,
-    )
+        if any(value is not None for value in (source_id, source_cursor, source_sequence, idempotency_key)):
+            _fail(ReconciliationErrorCode.INVALID_LINEAGE)
+        envelope, envelope_time, reference = _validate_lifecycle(lifecycle_envelope)
+        client = _merge(cast(str | None, common["client_ref"]), _reference(envelope.client_id))
+        context = {
+            name: _merge(cast(str | None, common[name]), _optional_reference(getattr(envelope, name[:-4] + "_id")))
+            for name in ("conversation_ref", "task_ref", "workspace_ref", "project_ref")
+        }
+        if envelope_time is None:
+            times = _required_times(event_time, observed_time)
+        else:
+            supplied = (_timestamp(event_time), _timestamp(observed_time))
+            if any(value is not None and value != envelope_time for value in supplied):
+                _fail(ReconciliationErrorCode.INVALID_TIMESTAMP)
+            times = (envelope_time, envelope_time)
+        payload_ref = None if reference is None else reference.reference
+        if payload_ref in refs:
+            _fail(ReconciliationErrorCode.DUPLICATE_REFERENCE)
+        lifecycle_refs = refs if payload_ref is None else (*refs, payload_ref)
+        derived = _lifecycle_retention(envelope.retention_class)
+        retained = derived if retention is None else _retention(retention)
+        if retained.retention_class is not derived.retention_class or retained.expires_at is not None:
+            _fail(ReconciliationErrorCode.INVALID_RETENTION)
+        common.update(event_id=_reference(envelope.event_id), origin=EventOrigin.CLIENT_LIFECYCLE,
+                      witness_class={"direct_user": WitnessClass.DIRECT_USER,
+                                     "host_observation": WitnessClass.HOST_ARTIFACT,
+                                     "model_provider_self_attestation": WitnessClass.UNTRUSTED_IMPORTED_TEXT,
+                                     "system_observation": WitnessClass.SYSTEM_DERIVATION}[envelope.witness],
+                      client_ref=client,
+                      conversation_ref=context["conversation_ref"], task_ref=context["task_ref"],
+                      workspace_ref=context["workspace_ref"], project_ref=context["project_ref"],
+                      lifecycle_event_id=envelope.event_id, sequence=envelope.sequence,
+                      idempotency_material=(envelope.client_id, envelope.event_id, envelope.sequence),
+                      payload_reference=payload_ref,
+                      payload_reference_kind=None if reference is None else reference.kind,
+                      payload_commitment=None if reference is None else reference.sha256,
+                      payload_size_bytes=None if reference is None else reference.size_bytes,
+                      artifact_refs=lifecycle_refs, event_time=times[0], observed_time=times[1], retention=retained,
+                      producer_version=producer_version or CONTRACT_VERSION, lifecycle_contract_version=CONTRACT_VERSION)
+    _reference(cast(str, common["producer_version"]), maximum=MAX_PRODUCER_VERSION_CHARS)
+    return EventReconciliationInput(**cast(Any, common))
 
 
-def normalize_capture_event(
-    event: CaptureEvent,
-    **kwargs: Any,
-) -> EventReconciliationInput:
+def normalize_capture_event(event: CaptureEvent, **kwargs: Any) -> EventReconciliationInput:
     return reconcile_event(capture_event=event, **kwargs)
 
 
-def normalize_lifecycle_event(
-    envelope: ClientLifecycleEnvelope,
-    **kwargs: Any,
-) -> EventReconciliationInput:
+def normalize_lifecycle_event(envelope: ClientLifecycleEnvelope, **kwargs: Any) -> EventReconciliationInput:
     return reconcile_event(lifecycle_envelope=envelope, **kwargs)
 
 

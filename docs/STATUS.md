@@ -25,13 +25,18 @@ payload commitment/size, lifecycle references, timestamps, retention,
 sensitivity, authorization, version, ownership, and dependency withdrawal
 metadata without copying raw payload content.
 
-The boundary fails closed for malformed operation/generation/normalization,
-lookalike lifecycle envelopes, secret-like direct metadata, wrong nested
-withdrawal types, unmatched capture deletes, and non-`ERASE` terminal purges.
-It does not persist, advance a cursor/checkpoint, replay, mint an observation or
-current ID, import storage/network/provider SDKs, or claim provider support,
-stable SDK, or MCP lifecycle capability. Wave 2 harness integration remains
-separate.
+The boundary normalizes capture and lifecycle inputs independently; because the
+existing lifecycle envelope declares no linkage to a capture event, supplying
+both is rejected. It fails closed for malformed operation/generation/
+normalization, lookalike or mutated lifecycle envelopes, secret-like direct
+metadata, wrong nested withdrawal types, unmatched capture deletes, and
+non-`ERASE` terminal purges. It preserves lifecycle payload-reference
+commitment/size and lifecycle idempotency material, while retaining both
+allow/deny authorization and retention expiry metadata. It does not persist,
+advance a cursor/checkpoint, replay, mint an observation or current ID, or
+mutate an input. The module has no direct storage, network, or provider-SDK
+imports and makes no provider support, stable SDK, or MCP lifecycle claim.
+Wave 2 harness integration remains separate.
 
 ## MCP v2 and HTTPX2 compatibility lane (2026-08-22)
 

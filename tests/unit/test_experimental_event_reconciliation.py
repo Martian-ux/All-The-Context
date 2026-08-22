@@ -16,10 +16,15 @@ from allthecontext.client_runtime import (
     DeterministicFakeClientRuntimeHost,
     PayloadReference,
 )
-from allthecontext.experimental_event_observation import AuthorizationApplicability
+from allthecontext.experimental_event_observation import (
+    AuthorizationApplicability,
+    RetentionClass,
+    RetentionPolicy,
+)
 from allthecontext.experimental_event_reconciliation import (
     DependencyWithdrawal,
     EventOrigin,
+    EventReconciliationInput,
     ReconciliationErrorCode,
     ReconciliationViolation,
     SensitivityClass,
@@ -53,6 +58,7 @@ def _withdrawal(
     return DependencyWithdrawal(
         dependency_ref="provider-item-1",
         cause=cause,
+        authorization_ref="authorization-1",
         action=action,
         provider_item_id="provider-item-1",
     )
@@ -90,13 +96,25 @@ def test_capture_normalizes_existing_identity_without_copying_payload() -> None:
 
 def test_lifecycle_requires_exact_envelope_and_preserves_reference_truth() -> None:
     host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
-    envelope = host.observe_direct_user_turn(PayloadReference("turn-1", "user_turn"))
+    envelope = host.observe_direct_user_turn(
+        PayloadReference("turn-1", "user_turn", size_bytes=17, sha256="a" * 64)
+    )
     assert isinstance(envelope, ClientLifecycleEnvelope)
-    result = normalize_lifecycle_event(envelope, conversation_ref="conversation-1")
+    result = normalize_lifecycle_event(
+        envelope,
+        conversation_ref="conversation-1",
+        event_time=T0,
+        observed_time=T0,
+    )
     assert result.witness_class.value == "direct_user"
     assert result.client_ref == "client-1"
     assert result.conversation_ref == "conversation-1"
     assert result.artifact_refs == ("turn-1",)
+    assert result.payload_reference == "turn-1"
+    assert result.payload_reference_kind == "user_turn"
+    assert result.payload_commitment == "a" * 64
+    assert result.payload_size_bytes == 17
+    assert result.idempotency_material == ("client-1", envelope.event_id, envelope.sequence)
 
 
 def test_lifecycle_normalization_uses_exact_existing_envelope() -> None:
@@ -136,23 +154,13 @@ def test_lifecycle_normalization_uses_exact_existing_envelope() -> None:
     assert pairing.value.code is ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD
 
 
-def test_composed_input_reuses_both_ids_and_client_artifact_reference() -> None:
+def test_unlinked_capture_and_lifecycle_inputs_are_rejected() -> None:
     host = DeterministicFakeClientRuntimeHost.for_level("L1")
     lifecycle = host.observe_direct_user_turn(PayloadReference("turn-1", "user_turn"))
     assert isinstance(lifecycle, ClientLifecycleEnvelope)
-    result = reconcile_event(
-        capture_event=_capture(),
-        lifecycle_envelope=lifecycle,
-        source_id="source-1",
-        source_cursor="cursor-1",
-        source_sequence=7,
-        idempotency_key="idempotency-1",
-    )
-    assert result.origin is EventOrigin.CAPTURE_AND_CLIENT_LIFECYCLE
-    assert result.event_id == "provider-event-1"
-    assert result.lifecycle_event_id == lifecycle.event_id
-    assert result.witness_class.value == "direct_user"
-    assert set(result.artifact_refs) == {"provider-item-1", "turn-1"}
+    with pytest.raises(ReconciliationViolation) as failure:
+        reconcile_event(capture_event=_capture(), lifecycle_envelope=lifecycle)
+    assert failure.value.code is ReconciliationErrorCode.UNLINKED_COMPOSITION
 
 
 def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> None:
@@ -161,6 +169,8 @@ def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> No
             _capture(operation="delete"),
             source_id="source-1",
             idempotency_key="idempotency-1",
+            event_time=T0,
+            observed_time=T0,
         )
     assert missing.value.code is ReconciliationErrorCode.DELETE_WITHDRAWAL_REQUIRED
 
@@ -173,9 +183,12 @@ def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> No
                 DependencyWithdrawal(
                     "other-item",
                     InvalidationCause.ORDINARY_DELETE,
+                    "authorization-1",
                     provider_item_id="other-item",
                 ),
             ),
+            event_time=T0,
+            observed_time=T0,
         )
     assert mismatch.value.code is ReconciliationErrorCode.DELETE_WITHDRAWAL_REQUIRED
 
@@ -184,6 +197,8 @@ def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> No
         source_id="source-1",
         idempotency_key="idempotency-1",
         dependency_withdrawals=(_withdrawal(),),
+        event_time=T0,
+        observed_time=T0,
     )
     assert result.payload_size_bytes == 2
 
@@ -196,6 +211,7 @@ def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> No
         DependencyWithdrawal(
             "provider-item-1",
             InvalidationCause.TERMINAL_PURGE,
+            "authorization-1",
             InvalidationAction.WITHDRAW_ONLY,
         )
     assert bad_purge.value.code is ReconciliationErrorCode.PURGE_REQUIRES_ERASE
@@ -204,7 +220,7 @@ def test_delete_requires_matching_authorized_withdrawal_and_purge_erases() -> No
 @pytest.mark.parametrize(
     "value",
     [
-        [DependencyWithdrawal("x", InvalidationCause.CORRECTION)],
+        [DependencyWithdrawal("x", InvalidationCause.CORRECTION, "authorization-1")],
         ("not-a-withdrawal",),
     ],
 )
@@ -221,7 +237,9 @@ def test_withdrawals_are_actual_tuples_and_nested_types_fail_without_typeerror(
     assert failure.value.code is ReconciliationErrorCode.INVALID_WITHDRAWAL
 
     with pytest.raises(ReconciliationViolation) as nested:
-        DependencyWithdrawal("x", cast(Any, "correction"), cast(Any, "erase"))
+        DependencyWithdrawal(
+            "x", cast(Any, "correction"), "authorization-1", cast(Any, "erase")
+        )
     assert nested.value.code is ReconciliationErrorCode.INVALID_WITHDRAWAL
 
 
@@ -236,6 +254,16 @@ def test_cursor_bound_secret_metadata_and_capture_normalizer_are_content_free(
             idempotency_key="idempotency-1",
         )
     assert cursor.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+    accepted = normalize_capture_event(
+        _capture(),
+        source_id="source-1",
+        source_cursor="c" * 1024,
+        idempotency_key="idempotency-1",
+        event_time=T0,
+        observed_time=T0,
+    )
+    assert accepted.source_cursor == "c" * 1024
 
     with pytest.raises(ReconciliationViolation) as secret:
         normalize_capture_event(
@@ -279,6 +307,102 @@ def test_cursor_bound_secret_metadata_and_capture_normalizer_are_content_free(
             idempotency_key="idempotency-1",
         )
     assert normalizer.value.code is ReconciliationErrorCode.CAPTURE_NORMALIZATION_REJECTED
+
+
+def test_denied_authorization_and_expiry_are_serialized_without_content() -> None:
+    result = normalize_capture_event(
+        _capture(),
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        event_time=T0,
+        observed_time=T0,
+        retention=RetentionPolicy(RetentionClass.EXPLICIT_EXPIRY, T0),
+        authorization=AuthorizationApplicability(
+            allowed_principals=frozenset({"alice"}),
+            allowed_scopes=frozenset({"read"}),
+            denied_principals=frozenset({"bob"}),
+            denied_scopes=frozenset({"admin"}),
+        ),
+    )
+    data = result.as_dict()
+    assert data["retention"] == {
+        "retention_class": "explicit_expiry",
+        "expires_at": T0.isoformat(),
+    }
+    assert data["authorization"] == {
+        "allowed_principals": ["alice"],
+        "allowed_scopes": ["read"],
+        "denied_principals": ["bob"],
+        "denied_scopes": ["admin"],
+    }
+
+
+def test_direct_constructor_revalidates_all_required_boundary_fields() -> None:
+    with pytest.raises(ReconciliationViolation) as timestamp:
+        EventReconciliationInput(
+            event_id="event-1",
+            origin=EventOrigin.CAPTURE,
+            witness_class=cast(Any, "authoritative_source"),
+        )
+    assert timestamp.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+    with pytest.raises(ReconciliationViolation) as whitespace:
+        EventReconciliationInput(
+            event_id="event-1",
+            origin=EventOrigin.CAPTURE,
+            witness_class=cast(Any, "authoritative_source"),
+            source_id=" source-1",
+        )
+    assert whitespace.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+
+def test_mutated_lifecycle_reference_commitment_and_time_are_revalidated() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
+    envelope = host.observe_direct_user_turn(PayloadReference("turn-1", "user_turn"))
+    assert isinstance(envelope, ClientLifecycleEnvelope)
+    object.__setattr__(envelope.payload.turn_ref, "sha256", "not-a-sha")
+    with pytest.raises(ReconciliationViolation) as commitment:
+        normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
+    assert commitment.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+    envelope = host.observe_direct_user_turn(PayloadReference("turn-size", "user_turn"))
+    assert isinstance(envelope, ClientLifecycleEnvelope)
+    object.__setattr__(envelope.payload.turn_ref, "size_bytes", -1)
+    with pytest.raises(ReconciliationViolation) as size:
+        normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
+    assert size.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+    envelope = host.observe_direct_user_turn(PayloadReference("turn-2", "user_turn"))
+    assert isinstance(envelope, ClientLifecycleEnvelope)
+    object.__setattr__(envelope, "observed_at", "not-a-time")
+    with pytest.raises(ReconciliationViolation) as observed:
+        normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
+    assert observed.value.code is ReconciliationErrorCode.INVALID_TIMESTAMP
+
+
+def test_direct_constructor_rejects_whitespace_in_mutated_reference() -> None:
+    result = normalize_capture_event(
+        _capture(),
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        event_time=T0,
+        observed_time=T0,
+    )
+    object.__setattr__(result, "source_order_key", " 7")
+    with pytest.raises(ReconciliationViolation) as failure:
+        result.__post_init__()
+    assert failure.value.code is ReconciliationErrorCode.INVALID_FIELD
+
+
+def test_withdrawal_requires_authorization_reference() -> None:
+    with pytest.raises(ReconciliationViolation) as failure:
+        DependencyWithdrawal(
+            "provider-item-1",
+            InvalidationCause.ORDINARY_DELETE,
+            "",
+            provider_item_id="provider-item-1",
+        )
+    assert failure.value.code is ReconciliationErrorCode.INVALID_FIELD
 
 
 def test_module_is_reference_only_and_has_no_second_authority_or_persistence_surface() -> None:
