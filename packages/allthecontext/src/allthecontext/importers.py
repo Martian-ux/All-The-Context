@@ -1200,9 +1200,16 @@ def parse_zip_bundle(
                                 text = raw_text.decode("utf-8-sig")
                                 source_name = f"attachment/{safe_name}"
                                 if text_format == "json":
-                                    for document in _iter_json_documents(
-                                        io.BytesIO(raw_text), max_item_chars=max_json_item_chars
-                                    ):
+                                    # Validate the whole bounded member before publishing any
+                                    # candidates. The streaming reader may yield valid array
+                                    # items before discovering malformed trailing bytes.
+                                    documents = list(
+                                        _iter_json_documents(
+                                            io.BytesIO(raw_text),
+                                            max_item_chars=max_json_item_chars,
+                                        )
+                                    )
+                                    for document in documents:
                                         if attachment_enabled and _is_conversation_json_member(
                                             safe_name
                                         ):

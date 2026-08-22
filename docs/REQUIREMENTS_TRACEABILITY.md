@@ -7,6 +7,18 @@ not satisfy automatic-policy rows. The path from this integrated baseline to
 the first usable public beta is governed by
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md).
 
+### 2026-08-22 final import-truth contract correction
+
+Declared JSON `.dat` members are validated atomically before candidate
+publication, so malformed trailing bytes cannot leave partial candidates while
+also incrementing `unparsed`. Packaged-provider acceptance uses the shared
+`CoverageReport` validator for closed keys, strict bounded counts, and
+completion consistency. Synthetic focused tests cover the malformed trailing
+JSON regression, valid JSON/JSONL attachment paths, reconciler coercion,
+unknown/bounded counts, and unavailable/duplicate/failed/unparsed completion
+cases. This correction changes no memory, retrieval, dashboard, capture,
+platform, workflow, release, or GitHub behavior.
+
 ### 2026-08-22 source-rebuild atomicity correction
 
 The idempotent/resumable ingestion and full provider-history requirements now

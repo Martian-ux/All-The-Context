@@ -216,6 +216,46 @@ def test_chatgpt_dat_attachments_are_hashed_linked_and_text_bounded() -> None:
     assert any(item.kind == "goal" for item in parsed.candidates)
 
 
+def test_chatgpt_dat_valid_json_and_jsonl_text_are_extracted() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": json.dumps(
+                    {
+                        "logical_files": {
+                            "file-json.dat": {"files": ["file-json.dat"]},
+                            "file-jsonl.dat": {"files": ["file-jsonl.dat"]},
+                        }
+                    }
+                ),
+                "conversation_asset_file_names.json": json.dumps(
+                    {"file-json.dat": "data.json", "file-jsonl.dat": "data.jsonl"}
+                ),
+                "file-json.dat": b'[{"kind":"goal","content":"bounded json"}]',
+                "file-jsonl.dat": (
+                    b'{"kind":"fact","content":"bounded jsonl one"}\n'
+                    b'{"kind":"constraint","content":"bounded jsonl two"}\n'
+                ),
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    by_id = {item.asset_id: item for item in parsed.attachments}
+    assert by_id["file-json.dat"].extraction_status == "text_extracted"
+    assert by_id["file-json.dat"].extracted_format == "json"
+    assert by_id["file-jsonl.dat"].extraction_status == "text_extracted"
+    assert by_id["file-jsonl.dat"].extracted_format == "jsonl"
+    assert {item.content for item in parsed.candidates} == {
+        "bounded json",
+        "bounded jsonl one",
+        "bounded jsonl two",
+    }
+    assert parsed.closed_coverage["recognized"] == 3
+    assert parsed.closed_coverage["unparsed"] == 0
+    assert parsed.complete is True
+
+
 def test_chatgpt_dat_attachment_text_read_limit_retains_binary_raw() -> None:
     parsed = parse_zip_bundle(
         _zip(
@@ -309,7 +349,7 @@ def test_generic_structurally_confirmed_chatgpt_archive_enables_attachment_slice
     assert [item.asset_id for item in parsed.attachments] == ["file-generic.dat"]
 
 
-def test_attachment_json_trailing_data_is_parse_failed_unparsed_and_incomplete() -> None:
+def test_attachment_json_trailing_data_is_atomic_unparsed_and_incomplete() -> None:
     parsed = parse_zip_bundle(
         _zip(
             {
@@ -324,7 +364,10 @@ def test_attachment_json_trailing_data_is_parse_failed_unparsed_and_incomplete()
     )
 
     assert parsed.attachments[0].extraction_status == "text_parse_failed"
-    assert parsed.closed_coverage["unparsed"] >= 1
+    assert parsed.candidates == []
+    assert parsed.closed_coverage["recognized"] == 0
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert sum(parsed.closed_coverage.values()) == 1
     assert parsed.complete is False
 
 

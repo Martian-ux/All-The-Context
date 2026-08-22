@@ -1504,6 +1504,21 @@ state is already noncurrent and creates no user queue.
   contain no entry IDs, titles, or imported text; all-malformed provider lists
   remain recognized but incomplete.
 
+## Final import-truth contract hardening (2026-08-22)
+
+- Manifest-declared JSON `.dat` attachments now validate the complete bounded
+  member before publishing candidates. A valid JSON array followed by trailing
+  malformed bytes is therefore one `unparsed` item with zero recognized items
+  and no partial candidate; valid JSON and line-oriented JSONL attachment
+  extraction remain supported.
+- Packaged-provider acceptance now validates its dict-level coverage through
+  `CoverageReport`, preserving the closed seven-key schema, strict bounded
+  integer counts, and fail-closed completion semantics for unavailable,
+  duplicate, failed, or unparsed items.
+- Focused synthetic regressions cover the atomic malformed-JSON attachment,
+  valid attachment behavior, reconciler coercion/unknown/bounds cases, and
+  completion consistency. No live or private export/Core data was inspected.
+
 ## Repository security convergence
 
 - Exact-candidate tree scans now read committed blobs at the bound source SHA,

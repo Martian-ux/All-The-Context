@@ -2876,3 +2876,21 @@ The contract remains content-free: warnings and durable error messages use
 bounded status codes/classes, while the raw source stays local and untrusted.
 The dashboard may render the two dimensions together but must label them
 separately.
+
+## ADR-107: Packaged acceptance must validate the same import coverage contract
+
+**Status:** accepted 2026-08-22. Post-review import-truth correction. Does not
+retarget, relabel, or grant acceptance credit to any published artifact.
+
+Declared-text JSON `.dat` members are bounded source items. The importer first
+validates the complete member, including trailing-data rejection, and only then
+publishes its parsed items. A malformed member cannot publish early array items
+and also be counted as `unparsed`; JSONL remains line-oriented with its existing
+per-line behavior.
+
+The packaged-provider acceptance boundary constructs the shared
+`CoverageReport` model for its dict-level coverage map. It therefore rejects
+unknown keys, booleans/floats/strings, negative or overflowing counts, and
+`complete=true` when unavailable, duplicate, failed, or unparsed items exist.
+Synthetic acceptance fixtures with unavailable content remain incomplete and
+cannot produce a complete packaged report.
