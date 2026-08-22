@@ -198,6 +198,47 @@ def test_manifest_rejects_contradictory_capability_claims() -> None:
     with pytest.raises(CaptureError, match="capture_capability_invalid"):
         CaptureCapabilityManifest(provider="synthetic-provider", connection=[])  # type: ignore[arg-type]
     with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(provider="synthetic-provider", network_access="unknown")
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(
+            provider="synthetic-provider",
+            network_access="unknown",
+            data_egress=("synthetic-provider-api",),
+        )
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(
+            provider="synthetic-provider", network_access="denied", data_egress=None
+        )
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(
+            provider="synthetic-provider", network_access="allowed", data_egress=None
+        )
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(
+            provider="synthetic-provider",
+            availability="complete",
+            network_access="unknown",
+            data_egress=None,
+        )
+    explicit_unknown = CaptureCapabilityManifest(
+        provider="synthetic-provider",
+        availability="partial",
+        coverage="partial",
+        coverage_reason="network_posture_unknown_fixture",
+        network_access="unknown",
+        data_egress=None,
+        health="degraded",
+    )
+    assert explicit_unknown.conformance().valid is True
+    assert explicit_unknown.conformance().warnings[-2:] == (
+        "network_posture_unknown",
+        "data_egress_unknown",
+    )
+    allowed_without_egress = CaptureCapabilityManifest(
+        provider="synthetic-provider", network_access="allowed", data_egress=()
+    )
+    assert allowed_without_egress.conformance().valid is True
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
         CaptureCapabilityConformance(valid=1)  # type: ignore[arg-type]
 
 
@@ -331,6 +372,18 @@ def test_fetch_only_adapter_uses_narrow_legacy_compatibility_default(tmp_path: P
                 provider="fake",
                 availability="partial",
                 coverage="partial",
+                coverage_reason="network_unknown_fixture",
+                network_access="unknown",
+                data_egress=None,
+                health="degraded",
+            ),
+            "capture_capability_invalid",
+        ),
+        (
+            CaptureCapabilityManifest(
+                provider="fake",
+                availability="partial",
+                coverage="partial",
                 coverage_reason="disconnect_fixture",
                 connection="disconnected",
                 health="degraded",
@@ -356,6 +409,7 @@ def test_coordinator_fails_closed_without_adapter_calls(
     assert result.error_code == expected_code
     assert adapter.calls == []
     with coordinator.ledger.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_runs").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 0
 
 

@@ -722,10 +722,18 @@ class CaptureCapabilityManifest:
         ):
             errors.append("data_egress")
         elif self.data_egress is not None:
+            # Allowed network access may declare an empty or bounded known
+            # egress tuple; denied access requires the known-empty tuple, and
+            # unknown access pairs only with None so unknown is not mistaken
+            # for zero egress.
+            if self.network_access == "unknown":
+                errors.append("network_egress_truth")
             if self.network_access == "denied" and self.data_egress:
                 errors.append("data_egress")
             if any(not safe_id(destination, MAX_PROVIDER_CHARS) for destination in self.data_egress):
                 errors.append("data_egress")
+        elif self.network_access != "unknown":
+            errors.append("network_egress_truth")
         if not choice(self.health, {"healthy", "degraded", "unavailable"}):
             errors.append("health")
         if (
@@ -769,6 +777,8 @@ class CaptureCapabilityManifest:
             or self.authorization != "authorized"
             or self.connection != "connected"
             or self.health != "healthy"
+            or self.network_access == "unknown"
+            or self.data_egress is None
         ):
             errors.append("complete_truth")
         if self.availability == "unavailable" and (
@@ -1766,6 +1776,12 @@ class CaptureCoordinator:
         if manifest.availability == "unavailable" or manifest.health == "unavailable":
             self._mark_unavailable(source_id)
             return self.ledger.skipped_result(source_id, "capture_adapter_unavailable")
+        if not manifest.legacy_compatibility and (
+            manifest.network_access == "unknown" or manifest.data_egress is None
+        ):
+            # Explicit unknown posture is observable for reconciliation, but it
+            # is not executable because its privacy boundary is unproven.
+            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
         if not manifest.legacy_compatibility and manifest.authorization == "unknown":
             return self.ledger.skipped_result(source_id, "capture_capability_invalid")
         if manifest.authorization == "reauthorization_required":
