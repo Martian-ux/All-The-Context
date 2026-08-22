@@ -663,6 +663,23 @@ duplicate, conflict, compatibility, and supporting-evidence constraints. The
 selector's diagnostics remain closed aggregate codes. Raw content, query text,
 unauthorized identifiers, and arbitrary metadata are not diagnostic fields.
 
+The high-cardinality compiler reserve is also a compiler-only policy. It first
+uses the selector locally to identify feasible fixed-mandatory survivors, then
+reserves at most eight interaction preferences. An overflow preference is
+gated by an actually selected applicable evidence item when one follows a
+selected compatible primary; the final selector's exact budget may therefore
+retain evidence while omitting overflow. If no such evidence is selected,
+overflow falls back to an actually selected compatible primary. This keeps
+evidence ahead of optional preference fallback without changing the selector
+contract or pretending its OR-based `supports` field expresses an AND chain.
+Fixed mandatory candidates use original ordered base utilities and
+context-independent semantic/diversity signals in both compiler passes, so
+reserved preference facets cannot change the authoritative fixed survivor.
+Bootstrap metadata counts the exact union of the complete bounded
+policy/temporal-eligible candidate ID sets when available, while legacy or
+injected diagnostics retain the bounded count fallback; those internal IDs
+never enter public metadata.
+
 Dense retrieval is not a production dependency. The checked-in 384-dimensional
 CPU experiment is disabled by default, rebuild-only, nonpersistent, and outside
 application package discovery. Its deterministic synthetic runtime can measure
@@ -3433,3 +3450,45 @@ recompute those reason-specific counts. Edge therefore preserves only bounded
 claims about candidates still omitted and never presents ACL or envelope
 removals as duplicate/conflict suppression. No Core authority, transport,
 provider support, release state, or macOS posture changes.
+
+## ADR-129: High-cardinality interaction preferences use a compiler-local reserve
+
+**Status:** accepted locally on 2026-08-22 after focused sanitized retrieval and
+set-selection regressions; this is not release or provider acceptance.
+
+`ContextCompiler` preserves the existing mandatory-preference behavior through
+eight eligible interaction preferences. Above that threshold, it uses the
+existing deterministic selector and the same opaque semantic, diversity,
+redundancy, and conflict metadata to choose a compiler-local reserve of at most
+eight. The reserve is bounded against the exact character budget so a cheapest
+compatible primary relevant record remains feasible whenever a preference-plus-
+primary combination fits. Only the reserve is marked mandatory; overflow
+preferences are optional fallback candidates gated behind a compatible primary,
+so they cannot starve query-relevant records or supporting evidence. No-match
+queries still return the reserve, and impossible tight-budget combinations fail
+closed deterministically.
+
+The follow-up correction keeps caller retrieval order for non-preference primary,
+supporting, and fixed-mandatory candidates, while canonicalizing only preference
+reserve and overflow tiers for preference-input permutation stability. Reserve
+eligibility excludes every duplicate/conflict group occupied by a fixed mandatory
+record. Each overflow preference supports the intersection of all compatible
+primary IDs, rather than one preselected anchor, so a different selected primary
+can unlock it while no-match overflow remains dormant.
+
+Because selector support is an OR relationship, the compiler does not pretend
+that one support set can require both a primary and evidence. When applicable
+evidence is feasible within the fixed-plus-reserve-plus-primary budget, overflow
+supports only that evidence's IDs; each evidence candidate independently supports
+its compatible primary, forming the required chain. If no applicable evidence can
+fit, overflow retains the compatible-primary fallback so the optional tier does
+not deadlock under absent or infeasible evidence.
+
+This is deliberately not a selector, storage, retrieval-pool, ACL, temporal,
+sensitivity, API, or metadata-schema change. Core still reports exact used
+characters, selected/omitted counts, duplicate/conflict aggregates, and
+provenance using the existing pack contract. The regression is sanitized and
+synthetic only: 77 preferences, 20 relevant records, ten generic queries, a
+4,000-character budget, a no-match query, and negative ACL/temporal/sensitivity
+records. It does not touch private/live data, GitHub, release state, Figma, or
+macOS acceptance.
