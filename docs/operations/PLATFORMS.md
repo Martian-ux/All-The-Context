@@ -177,8 +177,8 @@ Native-package CI performs a unique random set/get/delete against the real
 Windows Credential Manager. The retained macOS Keychain adapter and source/test
 coverage are not an ordinary-CI or beta-acceptance result. Headless Linux CI
 exercises and reports the
-explicit fallback because it has no logged-in desktop secret service. Every
-platform also performs an isolated fallback round trip and startup
+explicit fallback because it has no logged-in desktop secret service. Both
+supported platforms also perform an isolated fallback round trip and startup
 install/remove check; no token value or host path is printed or uploaded.
 
 ## Linux AppImage spike decision

@@ -60,7 +60,7 @@ Build backends (`setuptools`, `wheel`) must be present as hashed lock entries an
 installed before `--no-build-isolation`; the installer fails closed if either is
 missing. The retained macOS packaging path, when exercised locally outside
 ordinary CI, sets cryptography's documented
-`OPENSSL_STATIC=1` source-build mode and fail closed if its Rust extension still
+`OPENSSL_STATIC=1` source-build mode and fails closed if its Rust extension still
 links `libssl.3.dylib` or `libcrypto.3.dylib`. This keeps Intel builds, for which
 cryptography 50 publishes no wheel, from colliding with Python's separately
 bundled same-basename OpenSSL libraries; the install bypasses pip's wheel cache
@@ -124,9 +124,9 @@ no occupied draft is retargeted, deleted, reused, or published.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before
-it builds or attests anything. Retained Mac source, tests, and historical CI paths
-are not part of this workflow and cannot contribute a DMG, updater ZIP, manifest,
-or receipt.
+it builds or attests anything. Retained Mac source, tests, and packaging paths
+are not part of this workflow and cannot contribute a DMG, updater ZIP,
+manifest, or receipt.
 For each target it produces two deliberately different deliverables:
 
 - a direct unsigned native package (`.exe` or `.tar.gz`)
