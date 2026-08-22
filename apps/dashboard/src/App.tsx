@@ -103,6 +103,11 @@ function formatBytes(value?: number): string {
   return `${size < 10 && index > 0 ? size.toFixed(1) : Math.round(size)} ${units[index]}`;
 }
 
+function shortHash(value?: string | null): string {
+  if (!value) return "Not provided";
+  return value.length > 20 ? `${value.slice(0, 20)}…` : value;
+}
+
 function formatImportOutcomes(outcomes: ImportResult["outcomes"]): string {
   const labels: Array<[keyof ImportResult["outcomes"], string]> = [
     ["applied", "applied"],
@@ -228,7 +233,7 @@ function App() {
         <div className="workspace-body" key={page}>
           {statusError && !status ? <DisconnectedView error={statusError} onRetry={refreshStatus} /> : <>
             {page === "sources" && <SourcesView onChanged={refreshStatus} />}
-            {page === "context" && <ContextView onChanged={refreshStatus} />}
+            {page === "context" && <ContextView status={status} onChanged={refreshStatus} />}
             {page === "connections" && <ConnectionsView />}
             {page === "activity" && <ActivityView />}
             {page === "backup" && <BackupView status={status} />}
@@ -526,6 +531,111 @@ function rowAccessibleName(record: ContextRecord): string {
   return `${record.kind.replaceAll("_", " ")} memory, ${record.availability}, updated ${formatDate(record.updated_at)}: ${preview}`;
 }
 
+function contextCriteriaSummary(criteria: ContextSearchCriteria): string {
+  const filters = [
+    criteria.kind ? criteria.kind.replaceAll("_", " ") : null,
+    criteria.availability ? criteria.availability.replaceAll("_", " ") : null,
+    criteria.sensitivity ? criteria.sensitivity.replaceAll("_", " ") : null,
+    criteria.highConfidence ? "high confidence" : null,
+  ].filter(Boolean);
+  if (criteria.query && filters.length) return `“${criteria.query}” · ${filters.join(" · ")}`;
+  if (criteria.query) return `“${criteria.query}”`;
+  if (filters.length) return filters.join(" · ");
+  return "All current memories";
+}
+
+function ContextAccounting({
+  status,
+  total,
+  totalKnown,
+  recordsShown,
+  appliedCriteria,
+  queryPending,
+}: {
+  status: CoreStatus | null;
+  total: number;
+  totalKnown: boolean;
+  recordsShown: number;
+  appliedCriteria: ContextSearchCriteria;
+  queryPending: boolean;
+}) {
+  return (
+    <section className="context-accounting" aria-labelledby="context-accounting-heading">
+      <div className="context-accounting-heading">
+        <div>
+          <span className="eyebrow">Context accounting</span>
+          <h2 id="context-accounting-heading">The current memory surface</h2>
+          <p>Search results are current records returned by Core. Counts below separate this result window from whole-Core totals.</p>
+        </div>
+        <div className={`query-state ${queryPending ? "query-state--pending" : ""}`} role="status" aria-live="polite">
+          <span className="query-state-dot" />
+          {queryPending ? "Search text pending" : "Search applied"}
+        </div>
+      </div>
+      <dl className="context-metrics">
+        <div>
+          <dt>Search matches</dt>
+          <dd>{totalKnown ? total : "—"}</dd>
+          <small>{totalKnown ? "Current records in this query" : "Core did not return a total"}</small>
+        </div>
+        <div>
+          <dt>Showing now</dt>
+          <dd>{recordsShown}</dd>
+          <small>Records in this page window</small>
+        </div>
+        <div>
+          <dt>Core current</dt>
+          <dd>{status?.current_context ?? "—"}</dd>
+          <small>Active records across Core</small>
+        </div>
+        <div>
+          <dt>Observations</dt>
+          <dd>{status?.observations ?? "—"}</dd>
+          <small>Submitted to Core</small>
+        </div>
+        <div>
+          <dt>Sources</dt>
+          <dd>{status?.sources ?? "—"}</dd>
+          <small>Registered sources</small>
+        </div>
+      </dl>
+      <div className="context-accounting-foot">
+        <span>Scope</span>
+        <strong>{contextCriteriaSummary(appliedCriteria)}</strong>
+        <span className="context-accounting-note">Current search excludes deleted records.</span>
+      </div>
+    </section>
+  );
+}
+
+function ContextStateKey() {
+  const states = [
+    { label: "Current", availability: "Rendered on rows", detail: "Returned by the current-context search." },
+    { label: "Tentative", availability: "Activity only", detail: "Shown in Activity dispositions, not on a current record." },
+    { label: "Conflicted", availability: "Not exposed", detail: "No conflict field is exposed by this record contract." },
+    { label: "Superseded", availability: "Field-dependent", detail: "A current record may expose a supersedes id; old records are not listed here." },
+    { label: "Deleted", availability: "Omitted", detail: "Soft-deleted records are omitted from current search." },
+    { label: "Unsupported", availability: "Source coverage", detail: "Only source coverage warnings expose unsupported material." },
+  ];
+  return (
+    <section className="context-state-key" aria-labelledby="context-state-key-heading">
+      <div className="section-heading compact">
+        <h3 id="context-state-key-heading">State vocabulary</h3>
+        <span>What this API can account for</span>
+      </div>
+      <p className="context-state-key-intro">These are API-boundary notes, not a second status system. Only <strong>Current</strong> is rendered as a record state in this list.</p>
+      <div className="context-state-grid">
+        {states.map((state) => (
+          <div className="context-state" key={state.label}>
+            <div className="context-state-title"><strong>{state.label}</strong><span>{state.availability}</span></div>
+            <p>{state.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 type ContextSearchCriteria = {
   query: string;
   availability: Availability | "";
@@ -534,7 +644,7 @@ type ContextSearchCriteria = {
   highConfidence: boolean;
 };
 
-function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
+function ContextView({ status, onChanged }: { status: CoreStatus | null; onChanged: () => Promise<boolean> }) {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability | "">("");
   const [kind, setKind] = useState("");
@@ -549,6 +659,7 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
   });
   const [records, setRecords] = useState<ContextRecord[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalKnown, setTotalKnown] = useState(true);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<ContextRecord | null>(null);
   const [history, setHistory] = useState<ContextRecordVersion[]>([]);
@@ -585,7 +696,8 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         ));
         return merged;
       });
-      setTotal(result.total ?? result.items.length);
+      setTotal(typeof result.total === "number" ? result.total : result.items.length);
+      setTotalKnown(typeof result.total === "number");
       setNextCursor(result.next_cursor ?? null);
       setError(null);
     } catch (caught) {
@@ -736,10 +848,26 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
     && kind === appliedCriteria.kind
     && sensitivity === appliedCriteria.sensitivity
     && highConfidence === appliedCriteria.highConfidence;
+  const editableCriteria: ContextSearchCriteria = { query, availability, kind, sensitivity, highConfidence };
+  const queryPending = editableCriteria.query !== appliedCriteria.query
+    || editableCriteria.availability !== appliedCriteria.availability
+    || editableCriteria.kind !== appliedCriteria.kind
+    || editableCriteria.sensitivity !== appliedCriteria.sensitivity
+    || editableCriteria.highConfidence !== appliedCriteria.highConfidence;
+  const hasAppliedCriteria = Boolean(appliedCriteria.query || appliedCriteria.availability || appliedCriteria.kind || appliedCriteria.sensitivity || appliedCriteria.highConfidence);
+  const incompleteWindow = totalKnown && total > records.length && !nextCursor && !loading;
 
   return (
     <div className="context-layout">
       <section className="context-results">
+        <ContextAccounting
+          status={status}
+          total={total}
+          totalKnown={totalKnown}
+          recordsShown={records.length}
+          appliedCriteria={appliedCriteria}
+          queryPending={queryPending}
+        />
         <form className="search-row" onSubmit={(event) => {
           event.preventDefault();
           const criteria: ContextSearchCriteria = { query, availability, kind, sensitivity, highConfidence };
@@ -750,6 +878,10 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
           <label className="search-input"><Search size={17} /><span className="sr-only">Search context</span><input value={query} onChange={(event) => { setQuery(event.target.value); setNextCursor(null); }} placeholder="Search decisions, preferences, people…" /></label>
           <button className="primary-button" type="submit">Search</button>
         </form>
+        <div className="search-state" aria-live="polite">
+          <span className={`search-state-label ${queryPending ? "search-state-label--pending" : ""}`}>{queryPending ? "Search text not applied" : "Search applied"}</span>
+          <span>{queryPending ? "Press Search to refresh the result window." : contextCriteriaSummary(appliedCriteria)}</span>
+        </div>
         <div className="search-filters">
           <select aria-label="Filter by kind" value={kind} onChange={(event) => { setKind(event.target.value); setNextCursor(null); }}><option value="">All kinds</option>{CONTEXT_KIND_FILTERS.filter(Boolean).map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select>
           <select aria-label="Filter by availability" value={availability} onChange={(event) => { setAvailability(event.target.value as Availability | ""); setNextCursor(null); }}><option value="">All availability</option><option value="core_available">Core online</option><option value="local_only">This device only</option></select>
@@ -758,19 +890,43 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         </div>
         {removedMemory ? <Notice kind="success"><span>Memory removed from current context.</span><button className="notice-action" disabled={working} onClick={() => void undoRemoval()}><RotateCcw size={12} /> Undo</button></Notice> : notice ? <Notice kind="success">{notice}</Notice> : null}
         {error ? <Notice kind="error">{error}</Notice> : null}
-        <div className="result-count">{memoryCountLabel(records.length, total)}</div>
+        <div className="result-count">
+          <span>{memoryCountLabel(records.length, total)}</span>
+          {loading && records.length > 0 ? <span className="result-count-status">Updating…</span> : null}
+          {!totalKnown ? <span className="result-count-status">Page total unavailable</span> : null}
+        </div>
         {loading && records.length === 0 ? <LoadingRows /> : records.length ? records.map((record) => (
           <button className={`context-row ${selected?.id === record.id ? "context-row--selected" : ""}`} key={record.id} aria-label={rowAccessibleName(record)} onClick={() => choose(record)}>
-            <span><KindLabel value={record.kind} /><AvailabilityLabel value={record.availability} /></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}{record.sensitivity !== "normal" ? ` · ${record.sensitivity.replaceAll("_", " ")}` : ""}</small>
+            <span><KindLabel value={record.kind} /><span className="context-row-state"><span className="state-token state-token--current">Current</span><AvailabilityLabel value={record.availability} /></span></span><strong>{record.content}</strong><small>Updated {formatDate(record.updated_at)} · v{record.version}{record.sensitivity !== "normal" ? ` · ${record.sensitivity.replaceAll("_", " ")}` : ""}</small>
           </button>
-        )) : <EmptyState icon={<Search />} title="No matching context" body="Try a broader phrase or import another source." />}
-        {nextCursor && !loading && paginationMatchesCriteria ? <button className="secondary-button load-more" onClick={() => void search(appliedCriteria, true, nextCursor)}>Load more</button> : null}
+        )) : <EmptyState icon={<Search />} title={hasAppliedCriteria ? "No current memories match" : "No current memories yet"} body={hasAppliedCriteria ? "Try a broader phrase or remove a filter. Deleted records are not included in this search." : "Import a source or connect a client to start building current context."} />}
+        {incompleteWindow ? <Notice kind="info"><strong>Partial result window.</strong> Core reported more matches than it returned, but no continuation cursor was provided.</Notice> : null}
+        {nextCursor && paginationMatchesCriteria ? <button className="secondary-button load-more" disabled={loading} onClick={() => void search(appliedCriteria, true, nextCursor)}>{loading ? "Loading more…" : "Load more"}</button> : null}
+        <ContextStateKey />
       </section>
       <aside className="record-detail">
         {selected ? (
           <div className="inspector-inner" key={selected.id}>
-            <span className="eyebrow">Current memory</span><h2>{selected.content}</h2>
-            <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Source</dt><dd>{selected.source_service ?? "Unknown"}</dd></div><div><dt>Sensitivity</dt><dd>{selected.sensitivity.replaceAll("_", " ")}</dd></div><div><dt>Confidence</dt><dd>{selected.confidence.toFixed(2)}</dd></div></dl>
+            <span className="eyebrow">Current memory · returned by Core</span><h2>{selected.content}</h2>
+            <div className="inspector-state-line"><span className="state-token state-token--current">Current</span><span>{selected.supersedes ? `Supersedes ${selected.supersedes}` : "No superseded record indicated"}</span></div>
+            <section className="inspector-section" aria-labelledby="memory-facts-heading">
+              <div className="section-heading compact"><h3 id="memory-facts-heading">Record facts</h3><span>Stored on this record</span></div>
+              <dl className="facts"><div><dt>Kind</dt><dd>{selected.kind}</dd></div><div><dt>Scope</dt><dd>{selected.scope}</dd></div><div><dt>Version</dt><dd>{selected.version}</dd></div><div><dt>Sensitivity</dt><dd>{selected.sensitivity.replaceAll("_", " ")}</dd></div><div><dt>Confidence</dt><dd>{typeof selected.confidence === "number" ? selected.confidence.toFixed(2) : "Not provided"}</dd></div><div><dt>Availability</dt><dd>{selected.availability.replaceAll("_", " ")}</dd></div></dl>
+            </section>
+            <section className="inspector-section provenance-section" aria-labelledby="provenance-heading">
+              <div className="section-heading compact"><h3 id="provenance-heading">Evidence & provenance</h3><span>Available fields</span></div>
+              <dl className="provenance-grid">
+                <div><dt>Source service</dt><dd>{selected.source_service ?? "Not provided"}</dd></div>
+                <div><dt>Source record</dt><dd>{selected.source_record_id ?? "Not provided"}</dd></div>
+                <div><dt>Created</dt><dd>{formatDate(selected.created_at)}</dd></div>
+                <div><dt>Updated</dt><dd>{formatDate(selected.updated_at)}</dd></div>
+                <div><dt>Valid from</dt><dd>{formatDate(selected.valid_from)}</dd></div>
+                <div><dt>Valid until</dt><dd>{formatDate(selected.valid_until)}</dd></div>
+                <div><dt>Allowed clients</dt><dd>{selected.allowed_clients?.length ? selected.allowed_clients.join(", ") : "None specified"}</dd></div>
+                <div><dt>Content hash</dt><dd className="provenance-hash" title={selected.content_hash ?? undefined} aria-label={selected.content_hash ? `SHA-256 ${selected.content_hash}` : "SHA-256 not provided"}>{shortHash(selected.content_hash)}</dd></div>
+              </dl>
+              <p className="evidence-note">Core provides the stored memory, source identifiers, timestamps, confidence, sensitivity, and hash here. The original observation, raw source excerpt, and decision rationale are not returned by the current record API.</p>
+            </section>
             <label className="field-label">Availability<select value={selected.availability} disabled={working} onChange={(event) => void changeAvailability(event.target.value as Availability)}>{selected.availability === "always_available" ? <option value="always_available">Legacy availability — change to Core online</option> : null}<option value="local_only">Only on this device</option><option value="core_available">Available while Core is online</option></select></label>
 
             {editing ? (
@@ -793,8 +949,7 @@ function ContextView({ onChanged }: { onChanged: () => Promise<boolean> }) {
               </div>
             )}
 
-            <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p>{version.version !== selected.version ? <button className="history-restore" disabled={working} onClick={() => void restoreVersion(version)} aria-label={`Restore version ${version.version}`}><RotateCcw size={11} /> Restore</button> : <span className="history-current">Current</span>}{version.change_reason ? <small>{version.change_reason}</small> : null}<time>{formatDate(version.updated_at)}</time></div>)}</section>
-            <p className="hash">SHA-256 · {selected.content_hash}</p>
+            <section className="history-block"><div className="section-heading compact"><h3><History size={15} /> History</h3><span>{history.length} versions</span></div>{history.length ? history.map((version) => <div className="history-row" key={`${version.id}-${version.version}`}><span>v{version.version}</span><p>{version.content}</p>{version.version !== selected.version ? <button className="history-restore" disabled={working} onClick={() => void restoreVersion(version)} aria-label={`Restore version ${version.version}`}><RotateCcw size={11} /> Restore</button> : <span className="history-current">Current</span>}{version.change_reason ? <small>{version.change_reason}</small> : null}<time>{formatDate(version.updated_at)}</time></div>) : <p className="history-empty">No version history was returned for this record.</p>}</section>
           </div>
         ) : <div className="inspector-empty"><BookOpenText size={24} /><p>Select a memory to see its full text, provenance, and history.</p></div>}
       </aside>

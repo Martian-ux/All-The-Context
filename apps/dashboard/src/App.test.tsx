@@ -229,6 +229,39 @@ describe("dashboard", () => {
   });
 
   it.each([
+    { label: "kind", control: "Filter by kind", value: "goal", bodyKey: "kinds" },
+    { label: "availability", control: "Filter by availability", value: "core_available", bodyKey: "availability" },
+    { label: "sensitivity", control: "Filter by sensitivity", value: "sensitive", bodyKey: "sensitivity" },
+    { label: "high confidence", control: "High confidence", value: undefined, bodyKey: "min_confidence" },
+  ])("keeps the visible criteria state applied after the $label filter changes", async ({ control, value, bodyKey }) => {
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        searchBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ total: 0, items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Search context" });
+    const field = screen.getByLabelText(control);
+    if (value === undefined) fireEvent.click(field);
+    else fireEvent.change(field, { target: { value } });
+
+    await waitFor(() => {
+      expect(searchBodies.some((body) => bodyKey === "min_confidence"
+        ? body.min_confidence === 0.85
+        : Array.isArray(body[bodyKey]) && body[bodyKey].includes(value))).toBe(true);
+    });
+    expect(screen.getAllByText("Search applied").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Search text not applied")).not.toBeInTheDocument();
+  });
+
+  it.each([
     { label: "kind", control: "Filter by kind", bodyKey: "kinds", value: "goal" },
     { label: "availability", control: "Filter by availability", bodyKey: "availability", value: "core_available" },
     { label: "sensitivity", control: "Filter by sensitivity", bodyKey: "sensitivity", value: "sensitive" },
