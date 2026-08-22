@@ -114,6 +114,25 @@ unsupported binaries, traversal, member/total expansion, and text read bounds.
 Real-export structural inspection was content-free; no real export bytes or
 personal values enter the repository, tests, logs, or receipts.
 
+### 2026-08-22 Import Truth accounting closure
+
+Provider and ZIP results now expose a dimensionally bounded
+`coverage.closed_coverage` map with the item-level keys `recognized`,
+`excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`.
+Case-insensitive duplicate ZIP members increment `duplicate`; bounded member
+parser failures increment `failed` and force incomplete coverage. A fatal
+source failure or cancellation never inflates those item counts: the preserved
+source keeps known counts, sets `coverage_complete=false`, and records the
+separate source-level `source_terminal_reason` (`failed` or `cancelled`) in
+source metadata; durable import operations retain their terminal status too.
+The same closed map is carried in the public ingestion coverage report and
+CLI/API import result. Synthetic regressions cover duplicate members,
+malformed CSV, pre-parse failure, partial member failure, and cancellation.
+
+UI handoff contract: render `coverage.closed_coverage` as item accounting and
+render `source.metadata.source_terminal_reason` or the operation `status` as a
+source-level terminal state. These dimensions must not be added together.
+
 ### 2026-08-22 attachment review-boundary corrections
 
 The ChatGPT `.dat` inventory and bounded text slice now run only for explicit

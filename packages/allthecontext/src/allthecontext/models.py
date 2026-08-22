@@ -182,6 +182,10 @@ class CoverageReport(StrictModel):
     unavailable: list[str] = Field(default_factory=list, max_length=512)
     limitations: list[str] = Field(default_factory=list, max_length=512)
     warnings: list[str] = Field(default_factory=list, max_length=512)
+    closed_coverage: dict[str, Annotated[StrictInt, Field(ge=0)]] = Field(
+        default_factory=dict,
+        max_length=16,
+    )
     complete: bool = True
 
 

@@ -97,8 +97,13 @@ operations into a deterministic failed state with bounded staging cleanup.
 Every provider import result includes detected provider/format, file and
 conversation counts, user/assistant/other message counts, provider-memory item
 and observation counts, skipped/unsupported material, warnings, and a truthful
-coverage report with explicit limitations. Alongside that report, `outcomes`
+coverage report with explicit limitations. `coverage.closed_coverage` is the
+item-level map with exactly `recognized`, `excluded`, `skipped`, `unavailable`,
+`duplicate`, `failed`, and `unparsed` counts. Alongside that report, `outcomes`
 counts the dispositions present and `record_ids` lists affected current records.
+If parsing cannot finish, source metadata instead carries the separate
+`source_terminal_reason` (`failed` or `cancelled`); this lifecycle status is
+not added to item-level coverage totals.
 For a recognized provider conversation list, every non-conversation entry is
 counted as `unparsed`; valid siblings still import, but any such residual keeps
 the coverage report incomplete. Structural warnings never include imported

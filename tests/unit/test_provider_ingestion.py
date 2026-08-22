@@ -534,6 +534,8 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
 
     duplicate = parse_zip_bundle(_zip_with_duplicate_names(), provider="chatgpt")
     assert len(duplicate.attachments) == 1
+    assert duplicate.stats["duplicate_entries"] == 1
+    assert duplicate.closed_coverage["duplicate"] == 1
     assert any("duplicate entry skipped" in warning for warning in duplicate.warnings)
 
     with pytest.raises(InvalidStateError, match="compression-ratio"):
@@ -549,6 +551,15 @@ def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metad
             ),
             provider="chatgpt",
         )
+
+
+def test_malformed_generic_csv_member_is_failed_and_incomplete() -> None:
+    parsed = parse_zip_bundle(_zip({"malformed.csv": 'header,"unterminated'}))
+
+    assert parsed.stats["failed_items"] == 1
+    assert parsed.closed_coverage["failed"] == 1
+    assert parsed.complete is False
+    assert parsed.warnings
 
 
 def test_attachment_inventory_is_persisted_in_source_metadata(tmp_path: Path) -> None:

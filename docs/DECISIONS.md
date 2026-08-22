@@ -2843,3 +2843,28 @@ pairs; a colliding stem produces no inferred link. MIME conflicts persist as
 source. Total link accumulation is bounded at 10,000 pairs, with per-document
 link scanning bounded to 64 levels and 10,000 nodes; either truncation is
 visible and leaves coverage incomplete.
+
+## ADR-106: Keep item coverage separate from source terminal state
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The public import contract carries a closed item-level map in
+`CoverageReport.closed_coverage`. Its keys are `recognized`, `excluded`,
+`skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`. Duplicate ZIP
+members and bounded per-member parser failures are counted there because they
+refer to source items. A parser failure makes coverage incomplete even when
+other members are retained and imported.
+
+Fatal source errors and operator cancellation are lifecycle events, not items.
+They preserve any already-known item counts, set `coverage_complete` false,
+and store `source_terminal_reason=failed|cancelled` in source metadata while
+the durable import-operation row exposes its corresponding terminal status.
+They must never be added to `closed_coverage` or summed with its item counts.
+The preserved raw source remains the retry authority. This keeps pre-parse
+failure, partial member failure, and cancellation dimensionally honest.
+
+The contract remains content-free: warnings and durable error messages use
+bounded status codes/classes, while the raw source stays local and untrusted.
+The dashboard may render the two dimensions together but must label them
+separately.

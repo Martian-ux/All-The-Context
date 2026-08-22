@@ -46,6 +46,7 @@ CLOSED_COVERAGE_REASONS = (
     "excluded",
     "skipped",
     "unavailable",
+    "duplicate",
     "failed",
     "unparsed",
 )
@@ -81,6 +82,7 @@ def _closed_coverage_counts(
     excluded = int(stats.get("assistant_messages", 0)) + int(stats.get("other_messages", 0))
     skipped = int(stats.get("skipped_messages", 0))
     unavailable = int(stats.get("unsupported_entries", 0))
+    duplicate = int(stats.get("duplicate_entries", 0))
     failed = int(stats.get("failed_items", 0))
     unparsed = int(stats.get("unparsed_messages", 0))
     return {
@@ -88,6 +90,7 @@ def _closed_coverage_counts(
         "excluded": excluded,
         "skipped": skipped,
         "unavailable": unavailable,
+        "duplicate": duplicate,
         "failed": failed,
         "unparsed": unparsed,
     }
@@ -269,6 +272,7 @@ class ProviderArchiveBuilder:
             "skipped_messages": 0,
             "unparsed_messages": 0,
             "unsupported_entries": 0,
+            "duplicate_entries": 0,
             "failed_items": 0,
             "recognized_items": 0,
         }
@@ -278,6 +282,12 @@ class ProviderArchiveBuilder:
 
     def note_unsupported_entries(self, count: int) -> None:
         self._stats["unsupported_entries"] += max(count, 0)
+
+    def note_duplicate_entries(self, count: int = 1) -> None:
+        self._stats["duplicate_entries"] += max(count, 0)
+
+    def note_failed_items(self, count: int = 1) -> None:
+        self._stats["failed_items"] += max(count, 0)
 
     def add_warning(self, warning: str) -> None:
         if warning and warning not in self._warnings and len(self._warnings) < 512:
@@ -532,6 +542,11 @@ class ProviderArchiveBuilder:
             warnings.append(
                 f"{closed_coverage['excluded']} assistant/system/tool/attachment items were "
                 "excluded from context publication"
+            )
+        if closed_coverage["duplicate"]:
+            warnings.append(
+                f"{closed_coverage['duplicate']} duplicate source entries were skipped with "
+                "their original entry retained"
             )
         complete = (
             not any(

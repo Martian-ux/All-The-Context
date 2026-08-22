@@ -159,6 +159,7 @@ class _GenericCoverage:
     """Closed accounting for generic JSON values outside provider schemas."""
 
     skipped: int = 0
+    failed: int = 0
     unparsed: int = 0
 
 
@@ -374,6 +375,7 @@ def _combine(
             "excluded": 0,
             "skipped": 0,
             "unavailable": 0,
+            "duplicate": 0,
             "failed": 0,
             "unparsed": 0,
         }
@@ -383,10 +385,12 @@ def _combine(
         closed["recognized"] = max(closed["recognized"], len(candidates))
     if generic_coverage is not None:
         closed["skipped"] = int(closed.get("skipped", 0)) + generic_coverage.skipped
+        closed["failed"] = int(closed.get("failed", 0)) + generic_coverage.failed
         closed["unparsed"] = int(closed.get("unparsed", 0)) + generic_coverage.unparsed
         stats["generic_skipped"] = generic_coverage.skipped
+        stats["generic_failed"] = generic_coverage.failed
         stats["generic_unparsed"] = generic_coverage.unparsed
-        if generic_coverage.unparsed:
+        if generic_coverage.failed or generic_coverage.unparsed:
             complete = False
     stats["closed_coverage"] = dict(closed)
     return ParsedArchive(
@@ -1113,6 +1117,7 @@ def parse_zip_bundle(
                 ):
                     raise InvalidStateError("ZIP bundle exceeds the compression-ratio limit")
                 if duplicate:
+                    builder.note_duplicate_entries()
                     _append_warning(
                         warnings,
                         f"{safe_name}: case-insensitive duplicate entry skipped",
@@ -1341,6 +1346,10 @@ def parse_zip_bundle(
                     coverage.unparsed += 1
                     _append_warning(warnings, f"{safe_name}: {_invalid_json_error(error)}")
                 except InvalidStateError as error:
+                    # A bounded member parser failure is a durable failed
+                    # item, not an invisible warning. The raw ZIP remains
+                    # preserved for retry with a later parser.
+                    builder.note_failed_items()
                     _append_warning(warnings, f"{safe_name}: {error}")
     except zipfile.BadZipFile as error:
         raise InvalidStateError("invalid ZIP bundle") from error
@@ -2012,7 +2021,8 @@ class ArchiveImportService:
         tracker.set_phase("cancelled", message="import cancelled")
         try:
             source = self.store.get_source(source_id, duplicate=True)
-            metadata = merge_progress_metadata(source.metadata, tracker.snapshot())
+            metadata = _mark_terminal_status(source.metadata, "cancelled")
+            metadata = merge_progress_metadata(metadata, tracker.snapshot())
             metadata["cancel_requested"] = True
             self.store.update_source_import(
                 source_id,
@@ -2033,7 +2043,8 @@ class ArchiveImportService:
         tracker.fail(message=durable_import_error_code(error))
         try:
             source = self.store.get_source(source_id, duplicate=True)
-            metadata = merge_progress_metadata(source.metadata, tracker.snapshot())
+            metadata = _mark_terminal_status(source.metadata, "failed")
+            metadata = merge_progress_metadata(metadata, tracker.snapshot())
             self.store.update_source_import(
                 source_id,
                 import_status="failed",
@@ -2135,6 +2146,7 @@ class ArchiveImportService:
                 unavailable=parsed.unavailable,
                 warnings=parsed.warnings,
                 limitations=parsed.limitations,
+                closed_coverage=parsed.closed_coverage,
                 complete=parsed.complete,
             )
             progress.set_phase("publishing", message="atomic policy publication")
@@ -2241,6 +2253,33 @@ def _source_metadata(
     return metadata
 
 
+def _mark_terminal_status(metadata: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    """Preserve terminal status separately from item-level coverage counts."""
+
+    updated = dict(metadata)
+    closed = {
+        "recognized": 0,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 0,
+    }
+    existing = metadata.get("closed_coverage")
+    if isinstance(existing, Mapping):
+        for key in closed:
+            value = existing.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                closed[key] = value
+    if reason not in {"failed", "cancelled"}:
+        raise ValueError("invalid terminal import reason")
+    updated["closed_coverage"] = closed
+    updated["coverage_complete"] = False
+    updated["source_terminal_reason"] = reason
+    return updated
+
+
 def _processing_source_metadata(
     provider: ArchiveProvider,
     *,
@@ -2257,6 +2296,7 @@ def _processing_source_metadata(
             "excluded": 0,
             "skipped": 0,
             "unavailable": 0,
+            "duplicate": 0,
             "failed": 0,
             "unparsed": 0,
         },
