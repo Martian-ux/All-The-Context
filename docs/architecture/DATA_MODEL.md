@@ -48,6 +48,13 @@ availability, allow/deny clients, validity, version, replacement/supersession,
 timestamps, content hash, and schema version. Only current applied records are
 retrieval-eligible.
 
+`context_user_mutations` is an append-only typed authority ledger. Each new
+row stores a closed mutation kind/origin, a bounded normalized actor, a typed
+record-version evidence ID/version/digest, and a deterministic intent key. It
+does not store caller reason text; version, source-deletion, and tombstone
+reason fields are canonical content-free codes. Purge may remove the referenced
+record and history while retaining the opaque barrier row.
+
 ## Memory Truth semantics
 
 The Core truth projection distinguishes `current`, `tentative`, `superseded`,
@@ -68,12 +75,17 @@ archive evidence from creating any replacement current record until an
 authorized restore. Every public/local restore, correction, availability
 change, and explicit deletion path writes a typed `local_user` row to
 `context_user_mutations`; source rebuild checks that ledger rather than
-interpreting free-form version reasons. The ledger has no record foreign key so
-purge can remove record content while retaining the opaque mutation barrier.
-Legacy databases and pre-ledger exports infer at most one
-`legacy_user_edit` row from durable historical evidence, with a unique
-per-record boundary. Distinct values that reuse one source reference remain
-distinct records.
+interpreting free-form version reasons. Portable restore does not generically
+insert ledger rows: it accepts only rows whose evidence ID, version, digest,
+vault, record, source relationship, canonical reason, and intent key all match
+same-package durable evidence; malformed or forged rows are ignored. Isolated
+recovery carries verified destination-local mutation rows transactionally with
+purge tombstones before package import. A restore of an already-current record
+still creates one version-backed barrier and exact retry is idempotent. Legacy
+databases and pre-ledger exports infer at most one `legacy_user_edit` row from
+typed source-lineage evidence, excluding source-free manual records and
+validated automatic reapplications. Distinct values that reuse one source
+reference remain distinct records.
 
 ## Slots, conflicts, and reinforcement
 

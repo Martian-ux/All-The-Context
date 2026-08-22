@@ -59,11 +59,11 @@ from .models import (
 from .replication import MAX_REPLICATION_PAYLOAD_BYTES
 from .secret_boundary import (
     SECRET_DETECTOR_VERSION,
+    SECRET_REASON_REDACTION,
     SECRET_REFUSAL_REASON,
     contains_direct_secret,
     contains_secret_like_value,
     opaque_operation_id,
-    redact_secret_reason,
 )
 from .security import (
     ClientPrincipal,
@@ -101,6 +101,7 @@ UserMutationKind = Literal[
     "source_delete",
     "legacy_user_edit",
 ]
+MutationEvidenceKind = Literal["record_version", "current_record", "purge_barrier"]
 # Import-operation liveness must never sit on the full 10s busy budget: qualified
 # Linux gaps clustered near that ceiling when BEGIN IMMEDIATE waited out a lock.
 # Fail-fast and let the heartbeat scheduler retry within the public 5s allowance.
@@ -137,6 +138,96 @@ def _json(value: Any) -> str:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+_CANONICAL_ACTORS = {
+    "local-user": "local-user",
+    "local-administrator": "local-administrator",
+    "packaged-recovery-admin": "packaged-recovery-admin",
+    "local-core": "local-core",
+    "local-import": "local-import",
+    "automatic-migration": "automatic-migration",
+    "migration-013": "migration-013",
+}
+
+
+def _normalize_actor(actor: str | None) -> str:
+    """Persist only a closed actor class or a short opaque identifier."""
+
+    normalized = unicodedata.normalize("NFKC", str(actor or "")).strip().casefold()
+    if normalized in _CANONICAL_ACTORS:
+        return _CANONICAL_ACTORS[normalized]
+    if not normalized:
+        return "unknown"
+    return f"external-{_hash_text(normalized)[:16]}"
+
+
+def _canonical_reason(reason: str | None, default: str = "record_state_changed") -> str:
+    """Convert caller/provider reason text to a bounded durable reason code."""
+
+    value = str(reason or "").strip().casefold()
+    exact = {
+        "replaced by source rebuild": "source_rebuild",
+        "source_rebuild": "source_rebuild",
+        "availability changed": "availability_changed",
+        "availability_changed": "availability_changed",
+        "candidate approved": "candidate_approved",
+        "candidate_approved": "candidate_approved",
+        "candidate rejected": "candidate_rejected",
+        "candidate_rejected": "candidate_rejected",
+        "record restored": "record_restored",
+        "record_restored": "record_restored",
+        "record deleted": "record_deleted",
+        "record_deleted": "record_deleted",
+        "source_deleted": "source_deleted",
+        "source_restored": "source_restored",
+        "record_corrected": "record_corrected",
+        "explicit user forget request": "record_deleted",
+        (
+            "matching archive evidence was blocked by an explicit deletion; "
+            "restore the deleted record before it can become current"
+        ): "matching archive evidence was blocked by an explicit deletion",
+        "observation reinforced matching current context": "observation_reinforced",
+        "observation helped corroborate current context": "observation_corroborated",
+        (
+            "explicit claim reduced to tentative: principal lacks witness grant"
+        ): "explicit_user_statement_witness_required",
+    }
+    if value in exact:
+        return exact[value]
+    if value.startswith("source deleted:"):
+        return "source_deleted"
+    if value.startswith("source restored:"):
+        return "source_restored"
+    return default
+
+
+def _mutation_evidence_hash(
+    *,
+    mutation_kind: str,
+    evidence_kind: str,
+    vault_id: str,
+    record_id: str,
+    evidence_id: str,
+    evidence_version: int,
+    snapshot_json: str,
+) -> str:
+    """Hash only typed evidence coordinates and canonical snapshot bytes."""
+
+    return _hash_text(
+        _json(
+            [
+                "context-user-mutation-evidence-v1",
+                mutation_kind,
+                evidence_kind,
+                vault_id,
+                record_id,
+                evidence_id,
+                evidence_version,
+                snapshot_json,
+            ]
+        )
+    )
 
 
 def source_rebuild_marker(source_id: str, content_hash: str, generation: int) -> str:
@@ -464,6 +555,163 @@ class CoreStore:
             else:
                 connection.commit()
 
+    @staticmethod
+    def _ensure_user_mutation_boundary_tx(connection: sqlite3.Connection) -> None:
+        """Repair an interrupted/older 013 schema without advancing its version."""
+
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_user_mutations'"
+        ).fetchone()
+        if table is None:
+            return
+        columns = {
+            str(row[1])
+            for row in connection.execute('PRAGMA table_info("context_user_mutations")')
+        }
+        for column, definition in (
+            ("evidence_kind", "TEXT"),
+            ("evidence_id", "TEXT"),
+            ("evidence_version", "INTEGER"),
+            ("evidence_hash", "TEXT"),
+            ("intent_key", "TEXT"),
+        ):
+            if column not in columns:
+                connection.execute(
+                    f'ALTER TABLE context_user_mutations ADD COLUMN "{column}" {definition}'
+                )
+
+        # The append-only triggers protect normal writes.  Migration repair is
+        # the one bounded exception needed to replace legacy raw actor/reason
+        # material with canonical representations.
+        connection.execute("DROP TRIGGER IF EXISTS reject_context_user_mutations_update")
+        rows = connection.execute(
+            "SELECT id,vault_id,record_id,mutation_kind,actor,created_at,"
+            "evidence_kind,evidence_id,evidence_version,evidence_hash,intent_key "
+            "FROM context_user_mutations ORDER BY created_at,id"
+        ).fetchall()
+        for row in rows:
+            record = connection.execute(
+                "SELECT vault_id,version FROM context_records WHERE id=?", (row["record_id"],)
+            ).fetchone()
+            evidence_kind = row["evidence_kind"]
+            evidence_id = row["evidence_id"]
+            evidence_version = row["evidence_version"]
+            evidence_hash = row["evidence_hash"]
+            if record is not None and evidence_id is None:
+                history_rows = connection.execute(
+                    "SELECT id,version,snapshot_json FROM context_record_versions "
+                    "WHERE record_id=? ORDER BY version",
+                    (row["record_id"],),
+                ).fetchall()
+                selected = None
+                for history in history_rows:
+                    snapshot = _json_object(str(history["snapshot_json"]))
+                    deleted = isinstance(snapshot, dict) and snapshot.get("deleted_at") is not None
+                    if (
+                        row["mutation_kind"] in {"delete", "source_delete"} and deleted
+                    ) or row["mutation_kind"] not in {"delete", "source_delete"}:
+                        selected = history
+                if selected is None and history_rows:
+                    selected = history_rows[-1]
+                if selected is not None:
+                    evidence_kind = "record_version"
+                    evidence_id = str(selected["id"])
+                    evidence_version = int(selected["version"])
+                    evidence_hash = _mutation_evidence_hash(
+                        mutation_kind=str(row["mutation_kind"]),
+                        evidence_kind=evidence_kind,
+                        vault_id=str(record["vault_id"]),
+                        record_id=str(row["record_id"]),
+                        evidence_id=evidence_id,
+                        evidence_version=evidence_version,
+                        snapshot_json=str(selected["snapshot_json"]),
+                    )
+            intent_key = row["intent_key"] or f"legacy-row:{row['id']}"
+            connection.execute(
+                "UPDATE context_user_mutations SET actor=?,evidence_kind=?,evidence_id=?,"
+                "evidence_version=?,evidence_hash=?,intent_key=? WHERE id=?",
+                (
+                    _normalize_actor(str(row["actor"])),
+                    evidence_kind,
+                    evidence_id,
+                    evidence_version,
+                    evidence_hash,
+                    intent_key,
+                    row["id"],
+                ),
+            )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_context_user_mutations_intent "
+            "ON context_user_mutations(intent_key) WHERE intent_key IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE TRIGGER IF NOT EXISTS reject_context_user_mutations_update "
+            "BEFORE UPDATE ON context_user_mutations BEGIN "
+            "SELECT RAISE(ABORT, 'context user mutation ledger is append-only'); END"
+        )
+
+        # Reasons and actor fields are compatibility inputs, never authority.
+        # Normalize old rows as part of the same restart-safe boundary.
+        connection.execute(
+            "UPDATE context_record_versions SET reason=CASE "
+            "WHEN lower(reason) LIKE 'source deleted:%' THEN 'source_deleted' "
+            "WHEN lower(reason) LIKE 'source restored:%' THEN 'source_restored' "
+            "WHEN lower(reason) IN "
+            "('replaced by source rebuild','source_rebuild') THEN 'source_rebuild' "
+            "WHEN lower(reason) IN "
+            "('availability changed','availability_changed') THEN 'availability_changed' "
+            "WHEN lower(reason) IN ('record restored','record_restored') THEN 'record_restored' "
+            "WHEN lower(reason) IN ('record deleted','record_deleted') THEN 'record_deleted' "
+            "WHEN lower(reason)='record_corrected' THEN 'record_corrected' "
+            "ELSE 'record_state_changed' END"
+        )
+        connection.execute(
+            "UPDATE deletion_tombstones SET reason=CASE "
+            "WHEN deletion_origin='source_rebuild' THEN 'source_rebuild' "
+            "ELSE 'record_deleted' END"
+        )
+        source_rows = connection.execute(
+            "SELECT id,deleted_reason,deleted_by FROM source_records"
+        ).fetchall()
+        for source in source_rows:
+            connection.execute(
+                "UPDATE source_records SET deleted_reason=?,deleted_by=? WHERE id=?",
+                (
+                    "source_deleted" if source["deleted_reason"] is not None else None,
+                    _normalize_actor(str(source["deleted_by"]))
+                    if source["deleted_by"] is not None
+                    else None,
+                    source["id"],
+                ),
+            )
+        candidate_rows = connection.execute(
+            "SELECT id,reviewed_by FROM context_candidates WHERE reviewed_by IS NOT NULL"
+        ).fetchall()
+        for candidate in candidate_rows:
+            connection.execute(
+                "UPDATE context_candidates SET reviewed_by=? WHERE id=?",
+                (_normalize_actor(str(candidate["reviewed_by"])), candidate["id"]),
+            )
+        connection.execute(
+            "UPDATE context_candidates SET review_reason=CASE "
+            "WHEN review_reason IS NULL THEN NULL "
+            "WHEN lower(review_reason) IN ('candidate_approved','candidate_rejected') "
+            "THEN lower(review_reason) ELSE 'candidate_review' END, "
+            "decision_reason=CASE WHEN decision_reason IS NULL THEN NULL "
+            "WHEN lower(decision_reason) IN "
+            "('explicit_user_statement_witness_required','observation_reinforced',"
+            "'observation_corroborated','candidate_approved','candidate_rejected') "
+            "THEN lower(decision_reason) ELSE 'observation_decision' END"
+        )
+        audit_rows = connection.execute(
+            "SELECT id,client_id FROM audit_events WHERE client_id IS NOT NULL"
+        ).fetchall()
+        for audit in audit_rows:
+            connection.execute(
+                "UPDATE audit_events SET client_id=? WHERE id=?",
+                (_normalize_actor(str(audit["client_id"])), audit["id"]),
+            )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -503,6 +751,14 @@ class CoreStore:
                 else:
                     connection.commit()
                     applied.add(version)
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._ensure_user_mutation_boundary_tx(connection)
+            except BaseException:
+                connection.rollback()
+                raise
+            else:
+                connection.commit()
         return len(migrations)
 
     def initialize_vault(self, name: str = "My Context", display_timezone: str = "UTC") -> str:
@@ -2016,14 +2272,14 @@ class CoreStore:
                 return {
                     "source_id": source_id,
                     "deleted_at": str(source["deleted_at"]),
-                    "reason": str(source["deleted_reason"] or reason),
+                    "reason": "source_deleted",
                     "deleted_record_ids": [str(row["record_id"]) for row in member_rows],
                 }
 
             now = utc_now()
             connection.execute(
                 "UPDATE source_records SET deleted_at=?,deleted_reason=?,deleted_by=? WHERE id=?",
-                (now, reason, actor, source_id),
+                (now, "source_deleted", _normalize_actor(actor), source_id),
             )
             record_ids = [
                 str(row["id"])
@@ -2058,7 +2314,7 @@ class CoreStore:
             return {
                 "source_id": source_id,
                 "deleted_at": now,
-                "reason": reason,
+                "reason": "source_deleted",
                 "deleted_record_ids": record_ids,
             }
 
@@ -2523,24 +2779,51 @@ class CoreStore:
         *,
         mutation_kind: UserMutationKind,
         actor: str,
+        evidence_version: int | None = None,
+        intent_key: str | None = None,
     ) -> None:
         record = connection.execute(
-            "SELECT vault_id FROM context_records WHERE id=?", (record_id,)
+            "SELECT vault_id,version FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         if record is None:
             raise NotFoundError("context record not found")
+        version = int(evidence_version or record["version"])
+        evidence = connection.execute(
+            "SELECT id,version,snapshot_json FROM context_record_versions "
+            "WHERE record_id=? AND version=?",
+            (record_id, version),
+        ).fetchone()
+        if evidence is None:
+            raise InvalidStateError("local mutation has no durable version evidence")
+        evidence_id = str(evidence["id"])
+        evidence_hash = _mutation_evidence_hash(
+            mutation_kind=mutation_kind,
+            evidence_kind="record_version",
+            vault_id=str(record["vault_id"]),
+            record_id=record_id,
+            evidence_id=evidence_id,
+            evidence_version=version,
+            snapshot_json=str(evidence["snapshot_json"]),
+        )
+        stable_intent = intent_key or f"{mutation_kind}:{record_id}:{evidence_id}"
         connection.execute(
             "INSERT INTO context_user_mutations"
-            "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
+            "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at,"
+            "evidence_kind,evidence_id,evidence_version,evidence_hash,intent_key) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 new_id(),
                 record["vault_id"],
                 record_id,
                 mutation_kind,
                 "local_user",
-                actor,
+                _normalize_actor(actor),
                 utc_now(),
+                "record_version",
+                evidence_id,
+                version,
+                evidence_hash,
+                stable_intent,
             ),
         )
 
@@ -3833,6 +4116,7 @@ class CoreStore:
             ObservationDisposition.TENTATIVE: ApprovalStatus.PENDING,
             ObservationDisposition.STAGED: ApprovalStatus.PENDING,
         }[disposition]
+        safe_reason = _canonical_reason(reason, "observation_decision")
         connection.execute(
             "UPDATE context_candidates SET approval_status=?,disposition=?,record_id=?,"
             "decision_reason=?,decided_at=?,policy_version=?,observation_origin=?,"
@@ -3841,13 +4125,13 @@ class CoreStore:
                 approval_status.value,
                 disposition.value,
                 record_id,
-                reason,
+                safe_reason,
                 decided_at,
                 policy_version,
                 origin.value,
                 decided_at,
-                actor,
-                reason,
+                _normalize_actor(actor),
+                safe_reason,
                 observation_id,
             ),
         )
@@ -3917,7 +4201,7 @@ class CoreStore:
             "AND t.deletion_origin='source_rebuild' AND t.deletion_source_id=? "
             "AND t.rebuild_session_id=? AND rs.id=? "
             "AND r.candidate_id IS NOT NULL AND r.candidate_id<>? "
-            "AND t.reason=? ORDER BY r.version DESC,r.id LIMIT 1",
+            "AND t.reason IN (?, 'source_rebuild') ORDER BY r.version DESC,r.id LIMIT 1",
             (
                 observation["vault_id"],
                 record_key,
@@ -4829,10 +5113,10 @@ class CoreStore:
                 (
                     ApprovalStatus.APPROVED.value,
                     now,
-                    actor,
-                    request.reason,
+                    _normalize_actor(actor),
+                    _canonical_reason(request.reason, "candidate_approved"),
                     record_id,
-                    request.reason or "manually applied through compatibility endpoint",
+                    _canonical_reason(request.reason, "candidate_approved"),
                     now,
                     AUTOMATIC_POLICY_VERSION,
                     ObservationOrigin.LOCAL_ADMIN.value,
@@ -4844,7 +5128,12 @@ class CoreStore:
             ).fetchone()
             assert record is not None
             self._link_observation_tx(connection, candidate_id, record_id, "applied")
-            self._insert_version(connection, record, request.reason or "candidate approved")
+            self._insert_version(
+                connection,
+                record,
+                request.reason or "candidate approved",
+                reason_code="candidate_approved",
+            )
             self._replace_fts(connection, record)
             supersedes = cast(str | None, row["supersedes"])
             if supersedes:
@@ -4863,7 +5152,7 @@ class CoreStore:
         self, candidate_id: str, *, reason: str | None = None, actor: str = "local-user"
     ) -> CandidateOut:
         now = utc_now()
-        safe_reason = None if reason is None else redact_secret_reason(reason)
+        safe_reason = None if reason is None else _canonical_reason(reason, "candidate_rejected")
         with self.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM context_candidates WHERE id=?", (candidate_id,)
@@ -4879,7 +5168,7 @@ class CoreStore:
                 (
                     ApprovalStatus.REJECTED.value,
                     now,
-                    actor,
+                    _normalize_actor(actor),
                     safe_reason,
                     safe_reason or "manually ignored through compatibility endpoint",
                     now,
@@ -5022,12 +5311,13 @@ class CoreStore:
                 "SELECT * FROM context_records WHERE id=?", (record_id,)
             ).fetchone()
             assert updated is not None
-            self._insert_version(connection, updated, reason)
+            self._insert_version(connection, updated, reason, reason_code="record_corrected")
             self._record_user_mutation_tx(
                 connection,
                 record_id,
                 mutation_kind="correction",
                 actor=actor,
+                intent_key=f"correction:{record_id}:{int(updated['version'])}",
             )
             self._replace_fts(connection, updated)
             if str(updated["availability"]) == Availability.ALWAYS.value:
@@ -5073,12 +5363,15 @@ class CoreStore:
                 "SELECT * FROM context_records WHERE id=?", (record_id,)
             ).fetchone()
             assert updated is not None
-            self._insert_version(connection, updated, "availability changed")
+            self._insert_version(
+                connection, updated, "availability changed", reason_code="availability_changed"
+            )
             self._record_user_mutation_tx(
                 connection,
                 record_id,
                 mutation_kind="availability_change",
                 actor=actor,
+                intent_key=f"availability_change:{record_id}:{int(updated['version'])}",
             )
             if availability == Availability.ALWAYS:
                 self._emit_event(
@@ -5121,14 +5414,10 @@ class CoreStore:
             if existing is not None:
                 return dict(existing)
             raise NotFoundError("context record not found")
-        safe_reason = redact_secret_reason(reason)
-        if user_mutation is not None:
-            self._record_user_mutation_tx(
-                connection,
-                record_id,
-                mutation_kind=user_mutation,
-                actor=actor,
-            )
+        safe_reason = _canonical_reason(
+            reason,
+            "source_deleted" if user_mutation == "source_delete" else "record_deleted",
+        )
         now = utc_now()
         version = int(record["version"]) + 1
         tombstone_hash = _hash_text(f"{record_id}:{version}:{now}")
@@ -5140,7 +5429,7 @@ class CoreStore:
             "SELECT * FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         assert deleted is not None
-        self._insert_version(connection, deleted, safe_reason)
+        self._insert_version(connection, deleted, safe_reason, reason_code=safe_reason)
         connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
         connection.execute(
             "INSERT INTO deletion_tombstones"
@@ -5157,6 +5446,15 @@ class CoreStore:
                 None,
             ),
         )
+        if user_mutation is not None:
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind=user_mutation,
+                actor=actor,
+                evidence_version=version,
+                intent_key=f"{user_mutation}:{record_id}:{version}",
+            )
         self._emit_event(
             connection,
             record,
@@ -5169,7 +5467,11 @@ class CoreStore:
         return {
             "record_id": record_id,
             "deleted_version": version,
-            "reason": safe_reason,
+            "reason": (
+                SECRET_REASON_REDACTION
+                if contains_secret_like_value(reason)
+                else safe_reason
+            ),
             "content_hash": tombstone_hash,
             "deleted_at": now,
         }
@@ -5198,6 +5500,7 @@ class CoreStore:
                     reason=reason,
                     actor=actor,
                     user_mutation=True,
+                    intent_key=f"restore:{record_id}:{int(current['version'])}",
                 )
             else:
                 historical = connection.execute(
@@ -5211,6 +5514,15 @@ class CoreStore:
                 if not isinstance(loaded, dict):
                     raise InvalidStateError("stored context version is invalid")
                 snapshot = loaded
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM context_user_mutations "
+                        "WHERE intent_key=? LIMIT 1",
+                        (f"restore-version:{record_id}:{version}",),
+                    ).fetchone()
+                    is not None
+                ):
+                    return self._record_out(current)
 
             now = utc_now()
             next_version = int(current["version"]) + 1
@@ -5292,12 +5604,13 @@ class CoreStore:
                 "SELECT * FROM context_records WHERE id=?", (record_id,)
             ).fetchone()
             assert restored is not None
-            self._insert_version(connection, restored, reason)
+            self._insert_version(connection, restored, reason, reason_code="record_restored")
             self._record_user_mutation_tx(
                 connection,
                 record_id,
                 mutation_kind="restore",
                 actor=actor,
+                intent_key=f"restore-version:{record_id}:{version}",
             )
             self._replace_fts(connection, restored)
             if target_availability == Availability.ALWAYS:
@@ -5325,9 +5638,45 @@ class CoreStore:
         actor: str,
         recompute_integrity: bool = True,
         user_mutation: bool = False,
+        intent_key: str | None = None,
     ) -> ContextRecordOut:
         if current["deleted_at"] is None:
-            return self._record_out(current)
+            if not user_mutation:
+                return self._record_out(current)
+            # An explicit restore of an already-current record is still a
+            # durable typed intent.  Repeating the same visible-state intent
+            # returns the existing barrier instead of growing history forever.
+            existing = connection.execute(
+                "SELECT 1 FROM context_user_mutations WHERE record_id=? "
+                "AND mutation_kind='restore' AND evidence_version=? LIMIT 1",
+                (current["id"], current["version"]),
+            ).fetchone()
+            if existing is not None:
+                return self._record_out(current)
+            record_id = str(current["id"])
+            now = utc_now()
+            next_version = int(current["version"]) + 1
+            connection.execute(
+                "UPDATE context_records SET version=?,updated_at=?,policy_version=? WHERE id=?",
+                (next_version, now, AUTOMATIC_POLICY_VERSION, record_id),
+            )
+            restored = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()
+            assert restored is not None
+            self._insert_version(
+                connection, restored, reason, reason_code="record_restored"
+            )
+            self._record_user_mutation_tx(
+                connection,
+                record_id,
+                mutation_kind="restore",
+                actor=actor,
+                evidence_version=next_version,
+                intent_key=intent_key or f"restore:{record_id}:{int(current['version'])}",
+            )
+            self._audit(connection, actor, "record_restored", [record_id])
+            return self._record_out(restored)
         record_id = str(current["id"])
         now = utc_now()
         next_version = int(current["version"]) + 1
@@ -5342,13 +5691,15 @@ class CoreStore:
             "SELECT * FROM context_records WHERE id=?", (record_id,)
         ).fetchone()
         assert restored is not None
-        self._insert_version(connection, restored, reason)
+        self._insert_version(connection, restored, reason, reason_code="record_restored")
         if user_mutation:
             self._record_user_mutation_tx(
                 connection,
                 record_id,
                 mutation_kind="restore",
                 actor=actor,
+                evidence_version=next_version,
+                intent_key=intent_key or f"restore:{record_id}:{next_version}",
             )
         self._replace_fts(connection, restored)
         if availability == Availability.ALWAYS:
@@ -6202,13 +6553,25 @@ class CoreStore:
         )
 
     def _insert_version(
-        self, connection: sqlite3.Connection, row: sqlite3.Row, reason: str
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        reason: str,
+        *,
+        reason_code: str | None = None,
     ) -> None:
         snapshot = self._record_out(row).model_dump(mode="json")
         connection.execute(
             "INSERT INTO context_record_versions"
             "(id,record_id,version,snapshot_json,reason,created_at) VALUES(?,?,?,?,?,?)",
-            (new_id(), row["id"], row["version"], _json(snapshot), reason, utc_now()),
+            (
+                new_id(),
+                row["id"],
+                row["version"],
+                _json(snapshot),
+                reason_code or _canonical_reason(reason),
+                utc_now(),
+            ),
         )
 
     def _replace_fts(self, connection: sqlite3.Connection, row: sqlite3.Row) -> None:
@@ -6411,7 +6774,7 @@ class CoreStore:
             (
                 audit_id,
                 self.vault_id(),
-                client_id,
+                _normalize_actor(client_id),
                 action,
                 trace_id or new_id(),
                 _json(list(record_ids)),

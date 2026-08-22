@@ -18,7 +18,13 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
-from .storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore, _stable_record_key_from_row
+from .storage import (
+    SOURCE_BLOB_CHUNK_BYTES,
+    CoreStore,
+    _mutation_evidence_hash,
+    _normalize_actor,
+    _stable_record_key_from_row,
+)
 
 MAGIC = b"ATCEXP1\x00"
 SALT_SIZE = 16
@@ -104,6 +110,10 @@ def _repair_secret_boundary(database_path: Path) -> None:
     if not _has_secret_boundary(database_path):
         return
     store = CoreStore(database_path)
+    # Export is also a restart boundary for databases that already recorded
+    # migration 013 before evidence columns existed.  Repair those rows before
+    # they become portable material.
+    store.migrate()
     store.repair_preledger_secrets()
 
 
@@ -558,19 +568,155 @@ def _backfill_legacy_user_mutations(
         "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,created_at) "
         "SELECT 'legacy-013:' || r.id,r.vault_id,r.id,'legacy_user_edit',"
         "'local_user','migration-013',COALESCE(r.updated_at,r.created_at) "
-        "FROM context_records r WHERE r.observation_origin='archive_import' "
-        "AND NOT EXISTS (SELECT 1 FROM deletion_tombstones t "
-        "WHERE t.record_id=r.id AND t.deletion_origin='source_rebuild') AND ("
-        "EXISTS (SELECT 1 FROM context_candidates c "
-        "WHERE c.supersedes=r.id AND lower(c.kind)='correction') OR "
-        "EXISTS (SELECT 1 FROM context_record_versions v WHERE v.record_id=r.id AND ("
-        "lower(v.reason) LIKE '%availability changed%' OR "
-        "lower(v.reason) LIKE '%by user%' OR "
-        "lower(v.reason) LIKE '%explicit user correction%' OR "
-        "CASE WHEN json_valid(v.snapshot_json) THEN "
-        "json_type(v.snapshot_json,'$.deleted_at') END='text'))"
-        ")"
+        "FROM context_records r JOIN source_records s ON s.id=r.source_id "
+        "AND s.vault_id=r.vault_id WHERE r.source_id IS NOT NULL AND ("
+        "r.observation_origin='local_admin' OR "
+        "EXISTS (SELECT 1 FROM context_candidates c WHERE c.supersedes=r.id "
+        "AND lower(c.kind)='correction' AND c.source_id IS NOT NULL "
+        "AND c.observation_origin='local_admin') OR "
+        "EXISTS (SELECT 1 FROM context_record_versions v WHERE v.record_id=r.id "
+        "AND json_valid(v.snapshot_json) AND json_type(v.snapshot_json,'$.source_id')='text' "
+        "AND (json_type(v.snapshot_json,'$.deleted_at')='text' OR "
+        "json_extract(v.snapshot_json,'$.observation_origin')='local_admin' OR "
+        "lower(v.reason) IN ('availability changed','availability_changed'))) OR "
+        "EXISTS (SELECT 1 FROM source_deletion_members m WHERE m.source_id=r.source_id "
+        "AND m.record_id=r.id)) AND NOT EXISTS (SELECT 1 FROM deletion_tombstones t "
+        "WHERE t.record_id=r.id AND t.deletion_origin='source_rebuild') AND NOT EXISTS ("
+        "SELECT 1 FROM context_observation_links l WHERE l.record_id=r.id "
+        "AND l.observation_id=r.candidate_id AND l.relationship='reapplied')"
     )
+
+
+def _validate_imported_user_mutation(
+    connection: sqlite3.Connection,
+    row: dict[str, Any],
+    columns: set[str],
+) -> bool:
+    """Accept a portable ledger row only with exact same-package evidence."""
+
+    required = {
+        "id",
+        "vault_id",
+        "record_id",
+        "mutation_kind",
+        "mutation_origin",
+        "actor",
+        "created_at",
+        "evidence_kind",
+        "evidence_id",
+        "evidence_version",
+        "evidence_hash",
+        "intent_key",
+    }
+    if not required.issubset(columns) or not required.issubset(row):
+        return False
+    mutation_kind = str(row.get("mutation_kind"))
+    if mutation_kind not in {
+        "restore",
+        "correction",
+        "availability_change",
+        "delete",
+        "source_delete",
+        "legacy_user_edit",
+    } or str(row.get("mutation_origin")) != "local_user":
+        return False
+    actor = str(row.get("actor") or "")
+    if not actor or actor != _normalize_actor(actor):
+        return False
+    vault_id = str(row.get("vault_id"))
+    record_id = str(row.get("record_id"))
+    vault = connection.execute("SELECT id FROM vaults WHERE id=?", (vault_id,)).fetchone()
+    record = connection.execute(
+        "SELECT id,vault_id FROM context_records WHERE id=?", (record_id,)
+    ).fetchone()
+    if vault is None or record is None or str(record["vault_id"]) != vault_id:
+        return False
+    if str(row.get("evidence_kind")) != "record_version":
+        return False
+    evidence_id = str(row.get("evidence_id") or "")
+    try:
+        evidence_version = int(str(row.get("evidence_version")))
+    except (TypeError, ValueError):
+        return False
+    if evidence_version < 1 or not evidence_id:
+        return False
+    evidence = connection.execute(
+        "SELECT id,record_id,version,snapshot_json,reason FROM context_record_versions "
+        "WHERE id=? AND record_id=? AND version=?",
+        (evidence_id, record_id, evidence_version),
+    ).fetchone()
+    if evidence is None:
+        return False
+    expected_hash = _mutation_evidence_hash(
+        mutation_kind=mutation_kind,
+        evidence_kind="record_version",
+        vault_id=vault_id,
+        record_id=record_id,
+        evidence_id=evidence_id,
+        evidence_version=evidence_version,
+        snapshot_json=str(evidence["snapshot_json"]),
+    )
+    if str(row.get("evidence_hash")) != expected_hash:
+        return False
+    intent = str(row.get("intent_key") or "")
+    if intent == f"legacy-row:{row['id']}":
+        pass
+    elif mutation_kind in {"correction", "availability_change", "delete", "source_delete"}:
+        if intent != f"{mutation_kind}:{record_id}:{evidence_version}":
+            return False
+    elif mutation_kind == "restore":
+        if intent == f"restore-version:{record_id}:{evidence_version}":
+            pass
+        elif intent.startswith(f"restore:{record_id}:"):
+            try:
+                prior_version = int(intent.rsplit(":", 1)[1])
+            except ValueError:
+                return False
+            if prior_version not in {evidence_version, evidence_version - 1}:
+                return False
+        else:
+            return False
+    elif intent != f"{mutation_kind}:{record_id}:{evidence_id}":
+        return False
+
+    try:
+        snapshot = json.loads(str(evidence["snapshot_json"]))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(snapshot, dict) or str(snapshot.get("id")) != record_id:
+        return False
+    source_id = snapshot.get("source_id")
+    if source_id is not None:
+        source = connection.execute(
+            "SELECT id,vault_id FROM source_records WHERE id=?", (str(source_id),)
+        ).fetchone()
+        if source is None or str(source["vault_id"]) != vault_id:
+            return False
+    expected_reasons = {
+        "restore": "record_restored",
+        "correction": "record_corrected",
+        "availability_change": "availability_changed",
+        "delete": "record_deleted",
+        "source_delete": "source_deleted",
+    }
+    if mutation_kind != "legacy_user_edit" and str(evidence["reason"]) != expected_reasons[
+        mutation_kind
+    ]:
+        return False
+    if mutation_kind in {"delete", "source_delete"} and not isinstance(
+        snapshot.get("deleted_at"), str
+    ):
+        return False
+    if mutation_kind == "source_delete" and source_id is None:
+        return False
+    if mutation_kind == "legacy_user_edit":
+        if source_id is None:
+            return False
+        local_origin = snapshot.get("observation_origin") == "local_admin"
+        deleted_snapshot = isinstance(snapshot.get("deleted_at"), str)
+        if not (local_origin or deleted_snapshot):
+            return False
+    return True
 
 
 def _recompute_record_keys(
@@ -751,6 +897,9 @@ def restore_export(
                 include_sources = bool(manifest.get("include_sources", False))
                 blocked_records: set[str] = set()
                 blocked_sources: set[str] = set()
+                imported_user_mutations: list[dict[str, Any]] = []
+                accepted_user_mutations = 0
+                ignored_user_mutations = 0
                 if "purge_tombstones" in existing:
                     for stable_id, target_type in connection.execute(
                         "SELECT stable_id,target_type FROM purge_tombstones"
@@ -813,6 +962,13 @@ def restore_export(
                         name = f"tables/{table}.jsonl"
                         with archive.open(name) as stream:
                             for row in _iter_jsonl(stream):
+                                if table == "context_user_mutations":
+                                    # Ledger rows are not ordinary portable
+                                    # data.  Hold them until every referenced
+                                    # record/version has been restored and
+                                    # validate the typed evidence below.
+                                    imported_user_mutations.append(row)
+                                    continue
                                 if table == "context_records" and (
                                     str(row.get("id")) in blocked_records
                                     or str(row.get("source_id")) in blocked_sources
@@ -908,6 +1064,39 @@ def restore_export(
                         all_tables,
                     )
                     _post_restore_upgrade(connection, all_tables, columns_by_table)
+                    if "context_user_mutations" in all_tables:
+                        # The post-restore legacy inference may have created
+                        # rows.  Repair evidence and canonical actor fields
+                        # before considering package rows.
+                        CoreStore._ensure_user_mutation_boundary_tx(connection)
+                        mutation_columns = columns_by_table["context_user_mutations"]
+                        for row in imported_user_mutations:
+                            if not _validate_imported_user_mutation(
+                                connection, row, mutation_columns
+                            ):
+                                ignored_user_mutations += 1
+                                continue
+                            connection.execute(
+                                "INSERT OR IGNORE INTO context_user_mutations"
+                                "(id,vault_id,record_id,mutation_kind,mutation_origin,actor,"
+                                "created_at,evidence_kind,evidence_id,evidence_version,"
+                                "evidence_hash,intent_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                                (
+                                    str(row["id"]),
+                                    str(row["vault_id"]),
+                                    str(row["record_id"]),
+                                    str(row["mutation_kind"]),
+                                    "local_user",
+                                    str(row["actor"]),
+                                    str(row["created_at"]),
+                                    "record_version",
+                                    str(row["evidence_id"]),
+                                    int(row["evidence_version"]),
+                                    str(row["evidence_hash"]),
+                                    str(row["intent_key"]),
+                                ),
+                            )
+                            accepted_user_mutations += 1
                     _validate_source_blob_storage(
                         connection,
                         all_tables,
@@ -921,4 +1110,12 @@ def restore_export(
             finally:
                 connection.close()
     _repair_secret_boundary(database_path)
-    return {"valid": True, "dry_run": False, "manifest": manifest}
+    return {
+        "valid": True,
+        "dry_run": False,
+        "manifest": manifest,
+        "user_mutations": {
+            "accepted": accepted_user_mutations,
+            "ignored": ignored_user_mutations,
+        },
+    }

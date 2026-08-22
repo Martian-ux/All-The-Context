@@ -3,8 +3,11 @@
 Exports are application-level packages, not copies of a live SQLite file. They
 include a manifest, schema version, content hashes, current-context history,
 observations, automatic dispositions and policy versions, evidence links,
-source metadata and blobs, permissions, tombstones, and the typed local user
-mutation ledger that guards source-rebuild reapplication.
+source metadata and blobs, permissions, tombstones, and typed local user
+mutation evidence that guards source-rebuild reapplication. Ledger rows are
+not ordinary portable data at restore: only rows whose typed evidence and
+exact vault/record/source relationships validate against the same package are
+accepted. Forged, incomplete, or reason/actor-shaped rows are ignored.
 
 The dashboard **Backup** page creates and downloads a complete encrypted export
 in one operation. It includes source material and audit events. The passphrase
@@ -52,10 +55,16 @@ purge it predates. Existing backups remain external copies outside Core's purge
 boundary and must be expired or destroyed under the operator's backup policy.
 
 `context_user_mutations` is append-only. Restoring an older package never
-deletes destination-local mutation rows; a pre-013 package may cause Core to
-infer one deterministic `legacy_user_edit` barrier from a prior deleted
-snapshot, but repeated restores do not add another inferred row. Imported
-source-rebuild provenance is still downgraded to an ordinary deletion barrier.
+deletes destination-local mutation rows. Isolated recovery first carries
+verified active destination-local mutation barriers and purge tombstones into
+the new database in one idempotent transaction, including barriers for records
+that have already been purged; it does not copy raw context for that step. A
+pre-013 package may cause Core to infer one deterministic `legacy_user_edit`
+barrier from typed source-lineage evidence, but repeated restores do not add
+another inferred row. Restore, source-delete, tombstone, and actor surfaces
+persist only canonical reason codes and bounded actor classes/opaque
+identifiers. Imported source-rebuild provenance is still downgraded to an
+ordinary deletion barrier.
 
 A one-click dashboard restore is not a beta requirement. The required packaged
 helper may remain a documented CLI/native mode, but it must implement the safe

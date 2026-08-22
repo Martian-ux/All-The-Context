@@ -1570,3 +1570,21 @@ state is already noncurrent and creates no user queue.
   tamper barriers, legacy/partial migration, and stable-ID rebuild behavior.
   This is an isolated review candidate; final acceptance, full-suite, hosted
   CI, live Core, and private-export inspection remain outside this lane.
+
+## Memory Truth ledger-authority closure (2026-08-22)
+
+- The 013 ledger now carries typed version evidence, bounded normalized actor
+  material, canonical reason codes, and deterministic intent keys. Export
+  restore validates those fields against same-package record history and exact
+  vault/record/source relationships; a syntactically valid forged row is
+  ignored and cannot block a valid source rebuild.
+- Isolated recovery carries verified active destination-local mutation barriers
+  transactionally with purge tombstones before import, idempotently covering
+  ordinary, missing-record, and purged-record cases. An explicit restore of an
+  already-current record creates one stable version-backed barrier per retry
+  contract.
+- Legacy inference uses source-backed typed state/version relationships and
+  excludes source-free manual records and validated automatic reapplications.
+  Version/source/tombstone reasons and persisted actor fields are content-free;
+  focused adversarial probes cover secret-marker absence in SQLite, exports,
+  and returned durable structures. Fresh reviewer acceptance remains pending.

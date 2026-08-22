@@ -281,7 +281,7 @@ def test_delete_history_is_contiguous_and_historical_restore_recovers_provenance
     history = store.record_history(record_id)
     assert deletion["deleted_version"] == 3
     assert [item["version"] for item in history] == [1, 2, 3]
-    assert history[2]["reason"] == "temporary deletion"
+    assert history[2]["reason"] == "record_deleted"
 
     restored = store.restore_record(record_id, version=1, reason="restore original provenance")
     assert restored.version == 4

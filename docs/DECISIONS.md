@@ -2942,5 +2942,13 @@ source-rebuild tombstones remain ordinary barriers. A pre-013 database or
 export is upgraded by a deterministic, unique-per-record `legacy_user_edit`
 row derived from durable correction or deleted-snapshot evidence; this one
 compatibility fact is distinct from typed explicit actions and repeated legacy
-restores are idempotent. SQLite checks and append-only triggers fail closed on
-invalid, copied, or tampered ledger mutations.
+restores are idempotent. New rows bind a canonical actor, version evidence
+coordinates/digest, and deterministic intent key. Portable restore stages and
+validates ledger rows only after same-package records, versions, tombstones,
+and source relationships exist; forged or incomplete rows are ignored.
+Recovery carries verified destination-local barriers and purge tombstones into
+an isolated restore transaction, including no-record/purged targets. All
+version/source/tombstone reasons are canonical codes, and restore of an already
+current record is one version-backed, exact-retry-idempotent barrier. SQLite
+checks and append-only triggers fail closed on invalid, copied, or tampered
+ledger mutations.
