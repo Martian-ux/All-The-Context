@@ -1494,9 +1494,13 @@ state is already noncurrent and creates no user queue.
   mandatory tier: above eight eligible preferences, a deterministic selector-
   chosen reserve of at most eight leaves room for the cheapest feasible primary
   result, while overflow preferences remain optional fallback candidates. The
-  focused sanitized regression covers 77 preferences, 20 relevant records, ten
-  generic queries at a 4,000-character budget, no-match behavior, ACL/temporal/
-  sensitivity exclusion, exact accounting, and reordered-input determinism.
+  compiler preserves caller ranking for non-preference records, excludes fixed
+  mandatory duplicate/conflict slots from the reserve, and unlocks each overflow
+  preference after any compatible selected primary. The focused sanitized
+  regression covers 77 preferences, 20 relevant records, ten generic queries at
+  a 4,000-character budget, no-match behavior, ACL/temporal/sensitivity
+  exclusion, exact accounting, caller-rank preservation, fixed-slot conflicts,
+  alternate-primary evidence ordering, and preference-input determinism.
 - Edge forwarding now reconciles context-pack metadata to the final returned
   items after scope filtering or envelope trimming: selected, omitted, used,
   and provenance counts are recomputed; duplicate/conflict aggregates are

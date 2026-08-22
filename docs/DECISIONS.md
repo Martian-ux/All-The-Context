@@ -3451,6 +3451,14 @@ so they cannot starve query-relevant records or supporting evidence. No-match
 queries still return the reserve, and impossible tight-budget combinations fail
 closed deterministically.
 
+The follow-up correction keeps caller retrieval order for non-preference primary,
+supporting, and fixed-mandatory candidates, while canonicalizing only preference
+reserve and overflow tiers for preference-input permutation stability. Reserve
+eligibility excludes every duplicate/conflict group occupied by a fixed mandatory
+record. Each overflow preference supports the intersection of all compatible
+primary IDs, rather than one preselected anchor, so a different selected primary
+can unlock it while no-match overflow remains dormant.
+
 This is deliberately not a selector, storage, retrieval-pool, ACL, temporal,
 sensitivity, API, or metadata-schema change. Core still reports exact used
 characters, selected/omitted counts, duplicate/conflict aggregates, and

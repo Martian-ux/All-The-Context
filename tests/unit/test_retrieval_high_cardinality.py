@@ -131,12 +131,122 @@ def test_high_cardinality_compiler_is_stable_when_input_is_reordered() -> None:
     forward = compiler.compile_with_diagnostics(preferences, relevant, _BUDGET)
     reverse = compiler.compile_with_diagnostics(
         list(reversed(preferences)),
-        list(reversed(relevant)),
+        relevant,
         _BUDGET,
     )
 
-    assert {item.id for item in forward[0]} == {item.id for item in reverse[0]}
+    assert [item.id for item in forward[0]] == [item.id for item in reverse[0]]
     assert forward[1:] == reverse[1:]
+
+
+def test_high_cardinality_preserves_caller_rank_for_duplicate_relevant_records() -> None:
+    higher_ranked = _record(
+        "z-ranked-answer",
+        "fact",
+        "The ranked answer is cobalt for launch planning.",
+        source_reference="synthetic-ranked-source",
+    )
+    lower_ranked_duplicate = _record(
+        "a-lower-ranked-duplicate",
+        "fact",
+        "The ranked answer is cobalt for launch planning.",
+        source_reference="synthetic-duplicate-source",
+    )
+
+    selected, _used, _metadata = ContextCompiler().compile_with_diagnostics(
+        _synthetic_preferences(),
+        [higher_ranked, lower_ranked_duplicate],
+        _BUDGET,
+    )
+
+    selected_ids = {item.id for item in selected}
+    assert higher_ranked.id in selected_ids
+    assert lower_ranked_duplicate.id not in selected_ids
+
+
+def test_high_cardinality_reserve_cannot_displace_fixed_mandatory_conflict() -> None:
+    fixed = _record(
+        "fixed-authoritative-slot",
+        "fact",
+        "The authoritative launch color is blue.",
+        entity_key="project:synthetic",
+        attribute_key="launch-color",
+        explicit_user_statement=True,
+    )
+    conflicting_preference = _record(
+        "preference-conflicting-slot",
+        "interaction_preference",
+        "Prefer green launch colors for synthetic projects.",
+        entity_key="project:synthetic",
+        attribute_key="launch-color",
+    )
+    preferences = [conflicting_preference, *_synthetic_preferences()[1:]]
+    answer = _record("answer", "fact", "The feasible synthetic answer is cobalt.")
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        [*preferences, fixed],
+        [answer],
+        _BUDGET,
+    )
+
+    selected_ids = {item.id for item in selected}
+    selected_slots = [
+        item
+        for item in selected
+        if item.entity_key == fixed.entity_key and item.attribute_key == fixed.attribute_key
+    ]
+    assert fixed.id in selected_ids
+    assert conflicting_preference.id not in selected_ids
+    assert selected_slots == [fixed]
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert metadata.used_chars == used
+
+
+def test_high_cardinality_overflow_supports_any_selected_compatible_primary() -> None:
+    preferences = _synthetic_preferences()
+    higher_ranked = _record(
+        "z-ranked-primary",
+        "fact",
+        "The ranked answer is cobalt for launch planning.",
+        source_id="ranked-source",
+        source_reference="synthetic-ranked-source",
+    )
+    evidence = _record(
+        "supporting-evidence",
+        "evidence",
+        "Review transcript record confirms the launch decision.",
+        source_id="ranked-source",
+        source_reference="synthetic-evidence-source",
+    )
+    cheapest_anchor = _record(
+        "a-cheapest-anchor",
+        "fact",
+        "The ranked answer is cobalt for launch planning.",
+        source_reference="synthetic-anchor-source",
+    )
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [higher_ranked, evidence, cheapest_anchor],
+        _BUDGET,
+    )
+
+    selected_ids = {item.id for item in selected}
+    selected_overflow = [
+        item
+        for item in selected
+        if item.kind == "interaction_preference"
+        and item.id not in {candidate.id for candidate in preferences[:8]}
+    ]
+    selected_order = [item.id for item in selected]
+    assert higher_ranked.id in selected_ids
+    assert cheapest_anchor.id not in selected_ids
+    assert evidence.id in selected_ids
+    assert selected_overflow
+    assert selected_order.index(evidence.id) < selected_order.index(selected_overflow[0].id)
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= _BUDGET
+    assert metadata.used_chars == used
 
 
 def test_low_cardinality_preserves_every_feasible_preference() -> None:

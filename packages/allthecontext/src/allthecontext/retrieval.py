@@ -991,20 +991,12 @@ class ContextCompiler:
             len(mandatory_preferences) > _MAX_MANDATORY_PREFERENCE_RESERVE
         )
         overflow_preference_ids: set[str] = set()
-        fallback_anchor_id: str | None = None
+        overflow_support_ids: dict[str, frozenset[str]] = {}
 
         if high_cardinality_preferences:
-            # Bootstrap receives ranked input, but reserve membership must not
-            # depend on the caller's order. Canonicalizing this compiler-local
-            # high-cardinality path preserves the existing ranked path for small
-            # preference sets while making the reserve and its accounting stable.
-            ordered = sorted(ordered, key=lambda item: item.id)
-            redundancy = self._redundancy_groups(ordered)
-            mandatory_preferences = [
-                item
-                for item in ordered
-                if item.id in mandatory_ids and self._is_interaction_preference(item)
-            ]
+            # Bootstrap receives ranked input. Preserve that order for every
+            # non-preference candidate while canonicalizing only preference
+            # tiers, so preference permutations cannot change reserve membership.
             preference_ids = {item.id for item in ordered if self._is_interaction_preference(item)}
             primary = [
                 item
@@ -1033,13 +1025,21 @@ class ContextCompiler:
                 for item in ordered
                 if item.id in mandatory_ids and not self._is_interaction_preference(item)
             ]
-            anchor_id: str | None = None
 
             def can_coexist(left: ContextRecordOut, right: ContextRecordOut) -> bool:
                 return not (
                     redundancy[left.id] & redundancy[right.id]
                     or self._conflict_groups(left) & self._conflict_groups(right)
                 )
+
+            # Fixed mandatory records remain authoritative. A preference that
+            # duplicates or conflicts with any of them cannot enter the reserve,
+            # even when it is compatible with the primary anchor.
+            reserve_source = [
+                preference
+                for preference in reserve_source
+                if all(can_coexist(preference, fixed) for fixed in fixed_mandatory_items)
+            ]
 
             feasible_primary = [
                 item
@@ -1059,7 +1059,6 @@ class ContextCompiler:
                 # reserve. A reserve may still be smaller than eight under a
                 # tight budget, which is deliberate fail-closed behavior.
                 anchor = feasible_primary[0]
-                anchor_id = anchor.id
                 reserve_source = [
                     preference for preference in reserve_source if can_coexist(anchor, preference)
                 ]
@@ -1094,7 +1093,7 @@ class ContextCompiler:
                 ),
             )
             reserve_ids = {candidate.key for candidate in reserve_selection.candidates}
-            reserve_items = [item for item in ordered if item.id in reserve_ids]
+            reserve_items = [item for item in reserve_source if item.id in reserve_ids]
             overflow_preference_ids = {
                 item.id
                 for item in ordered
@@ -1107,10 +1106,15 @@ class ContextCompiler:
             non_preference_items = [
                 item for item in ordered if not self._is_interaction_preference(item)
             ]
+            overflow_items = [
+                item
+                for item in sorted(ordered, key=lambda candidate: candidate.id)
+                if item.id in overflow_preference_ids
+            ]
             ordered = [
                 *reserve_items,
                 *non_preference_items,
-                *[item for item in ordered if item.id in overflow_preference_ids],
+                *overflow_items,
             ]
             mandatory_ids = {
                 item.id for item in mandatory if not self._is_interaction_preference(item)
@@ -1118,16 +1122,15 @@ class ContextCompiler:
             compatible_primary = [
                 item
                 for item in primary
-                if all(
-                    not (
-                        redundancy[item.id] & redundancy[reserved.id]
-                        or self._conflict_groups(item) & self._conflict_groups(reserved)
-                    )
-                    for reserved in reserve_items
-                )
+                if all(can_coexist(item, reserved) for reserved in reserve_items)
+                and all(can_coexist(item, fixed) for fixed in fixed_mandatory_items)
             ]
-            if compatible_primary:
-                fallback_anchor_id = anchor_id or compatible_primary[0].id
+            overflow_support_ids = {
+                item.id: frozenset(
+                    target.id for target in compatible_primary if can_coexist(item, target)
+                )
+                for item in overflow_items
+            }
         else:
             primary = [
                 item
@@ -1142,8 +1145,11 @@ class ContextCompiler:
             optional_preference_fallback = item.id in overflow_preference_ids
             if optional_preference_fallback:
                 # Overflow is dormant for no-match queries and becomes feasible
-                # only after a compatible primary relevant record is selected.
-                supports.add(fallback_anchor_id or "__context_compiler_primary_required__")
+                # only after any compatible primary relevant record is selected.
+                supports.update(
+                    overflow_support_ids.get(item.id, frozenset())
+                    or frozenset({"__context_compiler_primary_required__"})
+                )
             elif not mandatory_preference and self._is_supporting(item):
                 supports.update(
                     target.id
