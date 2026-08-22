@@ -21,6 +21,7 @@ from allthecontext.models import (
 from allthecontext.storage import (
     SOURCE_BLOB_CHUNK_BYTES,
     ConflictError,
+    CoreStore,
     InvalidStateError,
     NotFoundError,
 )
@@ -30,6 +31,21 @@ from pydantic import ValidationError
 @pytest.fixture
 def core(tmp_path: Path) -> CoreService:
     return CoreService.in_directory(tmp_path)
+
+
+def test_new_vault_schema_version_matches_applied_migrations(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    vault_id = store.initialize_vault("Current schema")
+    with store.connect() as connection:
+        vault_version = int(
+            connection.execute(
+                "SELECT schema_version FROM vaults WHERE id=?", (vault_id,)
+            ).fetchone()[0]
+        )
+        latest_migration = int(
+            connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        )
+    assert vault_version == latest_migration
 
 
 def test_ingestion_is_resumable_and_batches_are_idempotent(core: CoreService) -> None:

@@ -30,6 +30,26 @@ without spending a second full matrix on the same feature-branch commit. No CI
 job, supported platform, release gate, or macOS support claim was added or
 removed.
 
+## Hosted full-suite reconciliation (2026-08-22)
+
+The first formatted PR 73 matrix reached the full Python suite and exposed two
+previously unexercised integration mismatches:
+
+- A newly created vault applied every migration before inserting its `vaults`
+  row, so the row retained schema version 1 until a later migration/verification
+  pass advanced it to 15. New vault insertion now records the latest applied
+  migration immediately. The recovery cutover/crash fingerprints therefore do
+  not change merely because export verification opens the active vault.
+- The frozen B01 expectation still recorded the pre-integration
+  `atc-retrieval-v3` confirmatory score of 1/7. The accepted deterministic
+  retrieval changes now score 3/7; the fixture identity, zero-network/zero-model
+  boundary, external-operation accounting, and final `KILL_MECHANISM` decision
+  remain unchanged.
+
+The new schema-version regression, the B01 twenty-repeat assertion, and the
+complete recovery-admin file pass together (24 tests). Exact hosted
+revalidation of the follow-up commit remains pending.
+
 ## Offline product-correctness maintenance (2026-08-22)
 
 A bounded synthetic-data pass closed four integration defects without changing

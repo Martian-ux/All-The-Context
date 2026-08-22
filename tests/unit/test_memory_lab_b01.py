@@ -258,7 +258,7 @@ def test_b01_twenty_repeat_result_is_deterministic_identifier_safe_and_bounded(
         "no-memory": 0.285714,
         "stable-observation-current-state": 0.428571,
         "bounded-programmatic-structured-log": 0.857143,
-        "atc-retrieval-v3": 0.142857,
+        "atc-retrieval-v3": 0.428571,
         "frozen-programmatic-atc-combination": 1.0,
     }
     for condition_id, expected_caos in expected_confirmatory_caos.items():

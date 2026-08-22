@@ -17,6 +17,17 @@ Hosted revalidation of this exact follow-up commit remains pending. The trigger
 change does not alter the unsupported-macOS posture or the manual release,
 candidate, and beta-channel ceremonies.
 
+### 2026-08-22 hosted full-suite reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| A newly initialized vault reports the migration generation it actually applied | `CoreStore.initialize_vault`; `test_new_vault_schema_version_matches_applied_migrations`; complete recovery-admin file | Implemented locally: the insert binds `vaults.schema_version` to the latest applied migration, so later export/integrity verification does not mutate logical vault identity merely by reopening it |
+| Frozen B01 expectations describe the accepted deterministic retrieval implementation | `test_b01_twenty_repeat_result_is_deterministic_identifier_safe_and_bounded` | Reconciled locally: `atc-retrieval-v3` confirmatory CAOS is 3/7 after the accepted query/ranking changes; fixture/config hashes, twenty-repeat determinism, zero external/model use, and the final kill decision remain unchanged |
+
+The combined focused reconciliation is 24/24 green. The hosted full matrix for
+the exact follow-up commit remains pending; no release or platform acceptance is
+claimed from the local rerun.
+
 ### 2026-08-22 offline product-correctness maintenance
 
 | Requirement | Implementation/evidence | Status |

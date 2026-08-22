@@ -3310,3 +3310,21 @@ Release candidate construction, beta publication, and channel promotion remain
 separate explicit `workflow_dispatch` ceremonies. This trigger routing removes
 no CI job, platform, or release approval, and it does not add or imply macOS
 support.
+
+## ADR-123: New vault identity starts at the applied migration generation
+
+**Status:** accepted locally on 2026-08-22 after the PR 73 full suite exposed a
+recovery fingerprint mismatch; hosted revalidation is pending.
+
+`CoreStore.initialize_vault()` applies migrations before creating the first
+vault row. The new row must therefore be inserted with the latest applied
+migration generation rather than the table's historical version-1 default.
+Otherwise a later integrity/export pass changes schema identity simply by
+reopening an otherwise unchanged vault, which invalidates recovery's logical
+old-or-new fingerprint invariant.
+
+The accepted deterministic retrieval integration also changes the frozen B01
+`atc-retrieval-v3` confirmatory result from 1/7 to 3/7. That expected result is
+updated without changing the frozen fixture/config identities, boundary flags,
+operation accounting, or final `KILL_MECHANISM` decision. Neither reconciliation
+changes provider availability, release state, or the unsupported-macOS posture.

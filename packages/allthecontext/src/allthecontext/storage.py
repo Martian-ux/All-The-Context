@@ -869,7 +869,7 @@ class CoreStore:
         return len(migrations)
 
     def initialize_vault(self, name: str = "My Context", display_timezone: str = "UTC") -> str:
-        self.migrate()
+        latest_schema_version = self.migrate()
         with self.transaction() as connection:
             existing = connection.execute(
                 "SELECT id FROM vaults ORDER BY created_at LIMIT 1"
@@ -878,8 +878,9 @@ class CoreStore:
                 return str(existing["id"])
             vault_id = new_id()
             connection.execute(
-                "INSERT INTO vaults(id,name,display_timezone,created_at) VALUES(?,?,?,?)",
-                (vault_id, name, display_timezone, utc_now()),
+                "INSERT INTO vaults(id,name,display_timezone,created_at,schema_version) "
+                "VALUES(?,?,?,?,?)",
+                (vault_id, name, display_timezone, utc_now(), latest_schema_version),
             )
             now = utc_now()
             connection.execute(
