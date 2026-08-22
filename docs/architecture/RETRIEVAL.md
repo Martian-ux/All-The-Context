@@ -14,9 +14,11 @@ The production pipeline has six ordered boundaries:
    authoritative current-record rows and purge tombstones. It resolves `current` or an offset-aware
    `as_of` instant over the already-authorized ID set.
 3. `LexicalV3CandidateRanker` runs weighted BM25 over an ephemeral FTS5 corpus
-   containing only temporally eligible IDs. Phrase/all-term channels precede a
-   bounded exact-OR fallback; prefix fallback is limited to four tokens of at
-   least four characters. The production evidence-pool threshold is two hits.
+   containing only temporally eligible IDs. The bounded evidence path used by
+   context compilation uses a 100-record result pool; phrase/all-term channels
+   precede a bounded exact-OR fallback, and prefix fallback is limited to four
+   tokens of at least four characters. The production evidence-pool threshold
+   is two hits.
 4. `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
    scope/project fit, requested-kind compatibility, confidence/explicitness,
    and conflict state. Sparse or underspecified evidence fails open. An optional
@@ -63,6 +65,21 @@ search across revisions.
 `SearchRequest.as_of`, MCP `search_context(as_of=...)`, and CLI `atc search
 --as-of ...` require an offset-aware ISO 8601 timestamp. `current_project` is an
 optional admissibility hint, not an authorization grant.
+
+## Catalog search versus bounded evidence
+
+The user-facing `RetrievalEngine.search()` and Core `/v1/context/search`
+endpoint are catalog searches. After authorization, request filters, temporal
+selection, and admissibility, they enumerate the complete deterministic match
+set and report that exact post-policy count. Offset/cursor pages therefore do
+not stop at the evidence-pool boundary. Catalog enumeration remains bounded by
+the lexical candidate hard cap of 50,000 authorized IDs and never evaluates
+untrusted or unauthorized corpus rows.
+
+`RetrievalEngine.bootstrap()` uses the separate bounded evidence path and keeps
+its 100-record retrieval pool before `ContextCompiler` performs budgeted set
+selection. This preserves bounded MCP context compilation; it is not the source
+of the catalog API's `total`.
 
 ## Reproducible V1 baseline
 

@@ -22,7 +22,7 @@ from .admissibility import (
     DeterministicAdmissibilityGate,
 )
 from .ids import new_id, utc_now
-from .lexical_v3 import LexicalV3, VocabularyDiagnostics
+from .lexical_v3 import LexicalSearchResult, LexicalV3, VocabularyDiagnostics
 from .models import (
     BootstrapRequest,
     BootstrapResponse,
@@ -442,8 +442,8 @@ class LexicalV3CandidateRanker:
 
     def __init__(self, lexical: LexicalV3 | None = None) -> None:
         # Production asks for a small evidence pool before declaring the
-        # high-precision channel sufficient. This preserves semantic facets
-        # for set-level compilation while every fallback remains hard bounded.
+        # high-precision channel sufficient. Catalog search has a separate
+        # complete-match method; context compilation remains hard bounded.
         self.lexical = lexical or LexicalV3(prefix_fallback_min_results=2)
         self.explanations: Sequence[RankingExplanation] = ()
         self.diagnostics: VocabularyDiagnostics | None = None
@@ -470,23 +470,51 @@ class LexicalV3CandidateRanker:
         limit: int,
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         if not query:
-            ordered = sorted(
-                candidates,
-                key=lambda row: (str(row["updated_at"]), str(row["id"])),
-                reverse=True,
-            )
-            explanations = tuple(
-                RankingExplanation(str(row["id"]), 0.0, {}, {"recency_tiebreak": 1.0})
-                for row in ordered
-            )
-            return ordered, explanations, None
-        candidate_ids = tuple(str(row["id"]) for row in candidates)
+            return self._empty_query_result(candidates)
         result = self.lexical.search(
             connection,
-            candidate_ids,
+            tuple(str(row["id"]) for row in candidates),
             query,
             limit=limit,
         )
+        return self._adapt_result(connection, result)
+
+    def catalog_rank_with_explanations(
+        self,
+        connection: sqlite3.Connection,
+        candidates: Sequence[sqlite3.Row],
+        query: str,
+    ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
+        """Return the complete deterministic match set for catalog pagination."""
+        if not query:
+            return self._empty_query_result(candidates)
+        result = self.lexical.search_catalog(
+            connection,
+            tuple(str(row["id"]) for row in candidates),
+            query,
+        )
+        return self._adapt_result(connection, result)
+
+    @staticmethod
+    def _empty_query_result(
+        candidates: Sequence[sqlite3.Row],
+    ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
+        ordered = sorted(
+            candidates,
+            key=lambda row: (str(row["updated_at"]), str(row["id"])),
+            reverse=True,
+        )
+        explanations = tuple(
+            RankingExplanation(str(row["id"]), 0.0, {}, {"recency_tiebreak": 1.0})
+            for row in ordered
+        )
+        return ordered, explanations, None
+
+    @staticmethod
+    def _adapt_result(
+        connection: sqlite3.Connection, result: LexicalSearchResult
+    ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
+        """Hydrate lexical hits while preserving the lexical result order."""
         hit_ids = tuple(hit.record_id for hit in result.hits)
         if hit_ids:
             placeholders = ",".join("?" for _ in hit_ids)
@@ -1049,13 +1077,19 @@ class RetrievalEngine:
         connection: sqlite3.Connection,
         candidates: Sequence[sqlite3.Row],
         request: SearchRequest,
+        *,
+        bounded: bool,
     ) -> tuple[list[sqlite3.Row], Sequence[RankingExplanation], VocabularyDiagnostics | None]:
         if isinstance(self.ranker, LexicalV3CandidateRanker):
-            return self.ranker.rank_with_explanations(
-                connection,
-                candidates,
-                request.query,
-                limit=100,
+            if bounded:
+                return self.ranker.rank_with_explanations(
+                    connection,
+                    candidates,
+                    request.query,
+                    limit=100,
+                )
+            return self.ranker.catalog_rank_with_explanations(
+                connection, candidates, request.query
             )
         if isinstance(self.ranker, V2LexicalRanker):
             ranked, explanations = self.ranker.rank_with_explanations(
@@ -1070,6 +1104,8 @@ class RetrievalEngine:
         connection: sqlite3.Connection,
         request: SearchRequest,
         principal: ClientPrincipal | None,
+        *,
+        bounded: bool,
     ) -> tuple[
         list[sqlite3.Row],
         Sequence[RankingExplanation],
@@ -1112,7 +1148,9 @@ class RetrievalEngine:
         selected_ids = set(resolution.selected_record_ids) | set(trivial_ids)
         by_id = {str(row["id"]): row for row in authorized}
         temporally_eligible = [row for record_id, row in by_id.items() if record_id in selected_ids]
-        ranked, explanations, lexical = self._rank(connection, temporally_eligible, request)
+        ranked, explanations, lexical = self._rank(
+            connection, temporally_eligible, request, bounded=bounded
+        )
         ranked = _hydrate_ranked_rows(connection, ranked)
         conflicts = _conflict_states(connection, (str(row["id"]) for row in ranked))
         gate_inputs, gate_context = _admissibility_inputs(ranked, request, conflicts)
@@ -1134,7 +1172,11 @@ class RetrievalEngine:
         )
 
     def _search(
-        self, request: SearchRequest, principal: ClientPrincipal | None
+        self,
+        request: SearchRequest,
+        principal: ClientPrincipal | None,
+        *,
+        bounded: bool = False,
     ) -> tuple[SearchResponse, Sequence[RankingExplanation], _PipelineDiagnostics]:
         with self.store.connect() as connection:
             explanations: Sequence[RankingExplanation]
@@ -1143,11 +1185,13 @@ class RetrievalEngine:
                     connection, request, principal, self.store.vault_id()
                 )
                 ranked = self.ranker.rank(connection, authorized, request.query)
+                if bounded:
+                    ranked = ranked[:100]
                 explanations = tuple(getattr(self.ranker, "explanations", ()))
                 diagnostics = _PipelineDiagnostics()
             else:
                 ranked, explanations, denied, diagnostics = self._v3_rows(
-                    connection, request, principal
+                    connection, request, principal, bounded=bounded
                 )
         page = ranked[request.offset : request.offset + request.limit]
         items = [self.store._record_out(row) for row in page]
@@ -1175,6 +1219,15 @@ class RetrievalEngine:
         self, request: SearchRequest, principal: ClientPrincipal | None = None
     ) -> SearchResponse:
         response, _explanations, _diagnostics = self._search(request, principal)
+        return response
+
+    def _bounded_search(
+        self, request: SearchRequest, principal: ClientPrincipal | None = None
+    ) -> SearchResponse:
+        """Retrieve the bounded evidence pool used by context compilation."""
+        response, _explanations, _diagnostics = self._search(
+            request, principal, bounded=True
+        )
         return response
 
     def diagnose_search(
@@ -1237,10 +1290,10 @@ class RetrievalEngine:
         query_parts = [request.query]
         if request.current_project:
             query_parts.append(request.current_project)
-        mandatory_search = self.search(
+        mandatory_search = self._bounded_search(
             SearchRequest(query="", kinds=["interaction_preference"], limit=100), principal
         )
-        relevant_search = self.search(
+        relevant_search = self._bounded_search(
             SearchRequest(
                 query=" ".join(part for part in query_parts if part),
                 scopes=request.requested_scopes,

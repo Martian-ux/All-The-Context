@@ -2642,3 +2642,27 @@ source remain. Failed-source retry is unchanged.
 Context search now exposes the real `total`, cursor pagination, and kind,
 sensitivity, confidence, and source filters. The dashboard shows that total,
 loads further pages, and does not auto-select a record.
+
+## ADR-098: Catalog search totals are separate from bounded evidence retrieval
+
+**Status:** accepted 2026-08-22.
+
+The Core catalog-search contract must report an exact post-policy total and make
+every authorized current or historical match reachable through deterministic
+offset/cursor pagination. A bounded relevance pool cannot serve as that total:
+it makes a large but valid catalog appear truncated and strands records after
+the pool boundary.
+
+`LexicalV3.search_catalog` and `LexicalV3CandidateRanker.catalog_rank_with_explanations`
+therefore enumerate the complete match set only after the existing authorization,
+request-filter, temporal, and admissibility boundaries. Enumeration remains
+bounded by the existing 50,000 eligible-candidate hard cap, and the lexical
+ordering retains deterministic channel, score, and record-ID tie breaks.
+
+`RetrievalEngine.search()` uses this catalog path for Core, CLI, and MCP search;
+its `total` is the exact number of records that can be returned for the request.
+`RetrievalEngine.bootstrap()` calls a separate 100-record evidence path before
+`ContextCompiler` budget selection. Bootstrap remains deliberately bounded and
+does not define the catalog API's total. Search audits still record only the
+returned authorized page IDs and the existing safe aggregate metadata; no
+unauthorized IDs or raw query/context text are added.

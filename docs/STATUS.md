@@ -859,9 +859,12 @@ identity, while broader certification-profile browser evidence remains open:
   Complete sources can be rebuilt from the preserved raw blob; uncorrected
   automatic records from that source are reversibly withdrawn and history is
   kept.
-- Context search returns the real `total` with cursor pagination and optional
-  kind, sensitivity, confidence, and source-id filters. The dashboard shows
-  that total, loads further pages, and opens without auto-selecting a record.
+- Context catalog search returns the exact post-policy `total` with cursor
+  pagination and optional kind, sensitivity, confidence, and source-id
+  filters, including pages beyond the 100-record bounded evidence pool. The
+  dashboard shows that total, loads further pages, and opens without
+  auto-selecting a record. `bootstrap_context` retains the separate bounded
+  evidence path used for context compilation.
 - Import results expose `outcomes`, a count by actual observation disposition,
   plus deduplicated affected `record_ids`. The dashboard shows total
   observations, truthful coverage, and per-disposition outcome counts.
