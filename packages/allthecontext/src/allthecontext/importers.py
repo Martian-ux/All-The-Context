@@ -27,6 +27,7 @@ from .import_boundary import (
     refuse_if_over_boundary,
 )
 from .ingestion import IngestionService, archive_session_request
+from .memory_policy import classify_sensitivity
 from .models import (
     Availability,
     CandidateInput,
@@ -114,6 +115,7 @@ def _candidate(kind: str, content: str, *, evidence: str | None = None) -> Candi
         content=normalized,
         evidence=(evidence or content)[:16_000],
         confidence=1.0,
+        sensitivity=classify_sensitivity(normalized),
         source_type="archive",
         availability=Availability.CORE,
         explicit_user_statement=True,
@@ -957,9 +959,38 @@ class ArchiveImportService:
         source_id: str,
         *,
         progress_tracker: ImportProgressTracker | None = None,
+        rebuild: bool = False,
     ) -> dict[str, Any]:
-        """Resume extraction from the preserved raw blob after interruption or failure."""
+        """Resume or rebuild extraction from the preserved raw blob.
+
+        Failed and cancelled sources retry the existing parser session.
+        ``rebuild=True`` on a complete source re-extracts with the current
+        parser, reversibly withdraws uncorrected automatic records from that
+        source, and publishes a new observation set. The raw blob and
+        user-corrected records are not destroyed.
+        """
         source = self.store.get_source(source_id, duplicate=True)
+        resume_rebuild = bool(source.metadata.get("rebuild_in_progress"))
+        rebuild_generation: int | None = None
+        withdrawn_record_ids: list[str] = []
+        if rebuild or resume_rebuild:
+            if source.import_status not in {"complete", "failed", "cancelled"}:
+                raise InvalidStateError("rebuild requires a terminal source")
+            if source.import_status == "complete":
+                withdrawn_record_ids = self.store.withdraw_automatic_source_records(source.id)
+                rebuild_generation = int(source.metadata.get("rebuild_generation") or 0) + 1
+                metadata = dict(source.metadata)
+                metadata["rebuild_generation"] = rebuild_generation
+                metadata["rebuild_in_progress"] = True
+                self.store.update_source_import(
+                    source.id,
+                    import_status="processing",
+                    metadata=metadata,
+                    parser_warnings=source.parser_warnings,
+                )
+                source = self.store.get_source(source.id, duplicate=True)
+            elif resume_rebuild:
+                rebuild_generation = int(source.metadata.get("rebuild_generation") or 1)
         if source.import_status == "complete":
             candidate_ids = self.store.candidate_ids_for_source(source.id)
             observations = [self.store.get_candidate(item) for item in candidate_ids]
@@ -1103,7 +1134,14 @@ class ArchiveImportService:
         except Exception as error:
             self._mark_failed(source.id, tracker, error)
             raise
-        return self._ingest(processing, parsed, actual_service, tracker=tracker)
+        return self._ingest(
+            processing,
+            parsed,
+            actual_service,
+            tracker=tracker,
+            rebuild_generation=rebuild_generation,
+            withdrawn_record_ids=withdrawn_record_ids,
+        )
 
     def cancel_import(self, source_id: str) -> dict[str, Any]:
         """Request cancellation of an in-flight import; acknowledged by the worker."""
@@ -1198,6 +1236,8 @@ class ArchiveImportService:
         source_service: str,
         *,
         tracker: ImportProgressTracker | None = None,
+        rebuild_generation: int | None = None,
+        withdrawn_record_ids: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         progress = tracker or ImportProgressTracker(
             bytes_total=max(source.byte_size, 1),
@@ -1242,7 +1282,11 @@ class ArchiveImportService:
             progress.set_phase("ingesting", message="submitting observation batches")
             progress.check_cancelled()
             begin = self.ingestion.begin(
-                archive_session_request(source.id, parser_version=PARSER_VERSION)
+                archive_session_request(
+                    source.id,
+                    parser_version=PARSER_VERSION,
+                    rebuild_generation=rebuild_generation,
+                )
             )
             candidate_ids: list[str] = []
             batches = list(_chunks(candidates, 200)) or []
@@ -1252,10 +1296,13 @@ class ArchiveImportService:
                 pass
             for index, batch in enumerate(batches):
                 progress.check_cancelled()
+                batch_key = f"{source.content_hash}:{PARSER_VERSION}:{index}"
+                if rebuild_generation is not None:
+                    batch_key = f"{batch_key}:rebuild:{rebuild_generation}"
                 submitted = self.ingestion.submit(
                     SubmitBatchRequest(
                         session_id=str(begin["session_id"]),
-                        idempotency_key=(f"{source.content_hash}:{PARSER_VERSION}:{index}"),
+                        idempotency_key=batch_key,
                         candidates=batch,
                     )
                 )
@@ -1286,6 +1333,10 @@ class ArchiveImportService:
             # Preserve preflight and any earlier durable progress fields.
             if isinstance(source.metadata.get("preflight"), dict):
                 metadata["preflight"] = source.metadata["preflight"]
+            if rebuild_generation is not None:
+                metadata["rebuild_generation"] = rebuild_generation
+                metadata["rebuild_in_progress"] = False
+                metadata["withdrawn_automatic_record_count"] = len(withdrawn_record_ids or [])
             progress.complete(message="import complete")
             metadata = merge_progress_metadata(metadata, progress.snapshot())
             self.store.update_source_import(
@@ -1302,6 +1353,10 @@ class ArchiveImportService:
                 parsed,
                 duplicate=source.duplicate,
             )
+            if rebuild_generation is not None:
+                result["rebuild"] = True
+                result["rebuild_generation"] = rebuild_generation
+                result["withdrawn_record_ids"] = list(withdrawn_record_ids or [])
             progress.close()
             return result
         except ImportCancelledError:

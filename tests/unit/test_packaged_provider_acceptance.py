@@ -122,7 +122,7 @@ def _complete_operation() -> dict[str, object]:
         "status": "complete",
         "result": {
             "provider": "chatgpt",
-            "parser_identity": "chatgpt-archives-v1",
+            "parser_identity": "chatgpt-archives-v2",
             "export_format": "chatgpt_conversation_graph",
             "coverage": {
                 "complete": True,
@@ -358,7 +358,7 @@ def test_packaged_surface_splits_operation_and_reconcile_failure_stages(
                 "status": "complete",
                 "result": {
                     "provider": "chatgpt",
-                    "parser_identity": "chatgpt-archives-v1",
+                    "parser_identity": "chatgpt-archives-v2",
                     "export_format": "chatgpt_conversation_graph",
                     "coverage": {
                         "complete": False,

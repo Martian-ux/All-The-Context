@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from allthecontext.memory_policy import archive_lineage_key, classify_sensitivity
 from allthecontext.models import (
     CandidateInput,
     ClientCreate,
     CoverageReport,
     IngestionMode,
     ObservationDisposition,
+    Sensitivity,
 )
 from allthecontext.storage import CoreStore
 
@@ -281,6 +283,83 @@ def test_reverse_chronological_archive_import_keeps_newer_current(tmp_path: Path
     assert (
         store.get_record(newer_obs.record_id).content
         == "Prefer detailed answers for fiction reverse chrono."
+    )
+
+
+def test_unrelated_archive_goals_remain_independent_current_records(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    observations = _import_archive_statements(
+        store,
+        kind="goal",
+        statements=[
+            {
+                "content": "My goal is fiction project Alpha shipping.",
+                "observed_at": "2024-01-01T00:00:00+00:00",
+            },
+            {
+                "content": "My goal is fiction language study of Spanish.",
+                "observed_at": "2024-06-01T00:00:00+00:00",
+            },
+        ],
+        scenario_id="unrelated-goals",
+    )
+    applied = [
+        item for item in observations if item.disposition == ObservationDisposition.APPLIED
+    ]
+    assert len(applied) == 2
+    assert applied[0].record_id is not None
+    assert applied[1].record_id is not None
+    assert applied[0].record_id != applied[1].record_id
+    assert store.get_record(applied[0].record_id).version == 1
+    assert store.get_record(applied[1].record_id).version == 1
+    assert store.status()["counts"]["active_records"] == 2
+
+
+def test_archive_lineage_key_collapses_same_subject_not_kind() -> None:
+    assert archive_lineage_key(
+        "interaction_preference",
+        "Prefer short answers for fiction scenario Alpha.",
+    ) == archive_lineage_key(
+        "interaction_preference",
+        "Prefer detailed answers for fiction scenario Alpha.",
+    )
+    assert archive_lineage_key(
+        "goal",
+        "My goal is to ship fiction project Orion by March.",
+    ) == archive_lineage_key(
+        "goal",
+        "My goal is to ship fiction project Orion by September.",
+    )
+    assert archive_lineage_key(
+        "project",
+        "I am working on fiction project Nebula.",
+    ) != archive_lineage_key(
+        "project",
+        "I am working on fiction project Quasar.",
+    )
+    assert archive_lineage_key("note", "Unrelated kind has no archive slot.") is None
+
+
+def test_classify_sensitivity_is_conservative_for_health_and_location() -> None:
+    assert classify_sensitivity("I prefer concise technical answers.") == Sensitivity.NORMAL
+    assert (
+        classify_sensitivity("I was diagnosed with asthma and use an inhaler.")
+        == Sensitivity.SENSITIVE
+    )
+    assert (
+        classify_sensitivity("I live in Seattle for the fiction scenario.")
+        == Sensitivity.SENSITIVE
+    )
+    assert (
+        classify_sensitivity("My wife works remotely in the fiction lab.")
+        == Sensitivity.SENSITIVE
+    )
+    assert (
+        classify_sensitivity("My salary is listed with a bank account.")
+        == Sensitivity.SENSITIVE
+    )
+    assert classify_sensitivity("My social security number is 123-45-6789.") == (
+        Sensitivity.HIGHLY_SENSITIVE
     )
 
 

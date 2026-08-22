@@ -511,15 +511,17 @@ parts of B-101, B-102, and B-104:
   assignment path for normalized provider user-authored archive evidence;
   generic imports and provider synthesis stay tentative; Relay claims cannot
   attest direct user statements;
-- B-102 minimum chronological conflict safety: unkeyed archive-import
-  preferences/goals/projects/decisions/workflows/constraints share one
-  current lineage per kind ordered by explicitness then `observed_at`, with
-  synthetic fixture `tests/fixtures/b102_chronological_conflicts.json` and
-  reverse-order coverage; direct unkeyed client goals remain independent
-  current records; decision reason/time/policy version remain inspectable
-  without persisting credentials; residual truth is an explicit local trust
-  grant, not cryptographic authorship proof—an authorized malicious witness
-  client can lie.
+- B-102 chronological conflict safety: unkeyed archive-import
+  preferences/goals/projects/decisions/workflows/constraints share a lineage
+  only when a derived subject key matches, ordered by explicitness then
+  `observed_at`, with synthetic fixture
+  `tests/fixtures/b102_chronological_conflicts.json` and reverse-order
+  coverage. Unrelated same-kind archive statements remain independent current
+  records. Direct unkeyed client goals remain independent. Kind-only collapse
+  is not used. Decision reason/time/policy version remain inspectable without
+  persisting credentials; residual truth is an explicit local trust grant, not
+  cryptographic authorship proof—an authorized malicious witness client can
+  lie.
 
 Historical external backups and device remanence are not called repaired.
 Real OS credential services, the secret boundary, and exact Codex/Claude
@@ -846,6 +848,18 @@ identity, while broader certification-profile browser evidence remains open:
 - Finished ingestion sessions evaluate staged observations atomically.
   Unfinished sessions remain noncurrent, and startup reevaluates eligible
   staged legacy/finished-session observations idempotently.
+- Provider extraction `provider-archives-v2` keeps specific durable kinds
+  (name, preference, goal, project, decision, workflow, constraint) as
+  current memory, retains broad first-person fragments as tentative
+  observations when they are long enough, and skips questions, task-local
+  prompts, and short utterances. Sensitivity classification conservatively
+  marks health, relationship, location, financial, and identifier language.
+  Complete sources can be rebuilt from the preserved raw blob; uncorrected
+  automatic records from that source are reversibly withdrawn and history is
+  kept.
+- Context search returns the real `total` with cursor pagination and optional
+  kind, sensitivity, confidence, and source-id filters. The dashboard shows
+  that total, loads further pages, and opens without auto-selecting a record.
 - Import results expose `outcomes`, a count by actual observation disposition,
   plus deduplicated affected `record_ids`. The dashboard shows total
   observations, truthful coverage, and per-disposition outcome counts.

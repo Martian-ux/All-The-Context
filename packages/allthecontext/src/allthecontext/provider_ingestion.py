@@ -17,17 +17,18 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any
 
-from .models import Availability, CandidateInput, Sensitivity
+from .memory_policy import archive_lineage_key, classify_sensitivity
+from .models import MAX_SLOT_KEY_CHARS, Availability, CandidateInput
 
-PARSER_VERSION = "provider-archives-v1"
+PARSER_VERSION = "provider-archives-v2"
 
 # Per-provider claim identities. Session idempotency still uses PARSER_VERSION;
 # these values version each mandatory provider surface independently.
 PARSER_IDENTITIES: dict[str, str] = {
-    "chatgpt": "chatgpt-archives-v1",
-    "claude": "claude-archives-v1",
-    "grok": "grok-archives-v1",
-    "generic": "generic-documents-v1",
+    "chatgpt": "chatgpt-archives-v2",
+    "claude": "claude-archives-v2",
+    "grok": "grok-archives-v2",
+    "generic": "generic-documents-v2",
 }
 
 CLOSED_COVERAGE_REASONS = (
@@ -87,11 +88,6 @@ _SECRET_HINT = re.compile(
     r"refresh[_ -]?token|client[_ -]?secret|secret)\s*[:=]",
     flags=re.IGNORECASE,
 )
-_SENSITIVE_HINT = re.compile(
-    r"(?:\b(?:social security|ssn|passport|driver'?s license|date of birth|dob)\b|"
-    r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|\b(?:phone|mobile) number\b)",
-    flags=re.IGNORECASE,
-)
 _FENCED_CODE = re.compile(r"```.*?```|~~~.*?~~~", flags=re.DOTALL)
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])|\n+")
 _MARKDOWN_PREFIX = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)")
@@ -139,6 +135,20 @@ _TRANSIENT_HINT = re.compile(
     r"\b(?:today|tonight|tomorrow|yesterday|right now|this chat|this conversation)\b",
     flags=re.IGNORECASE,
 )
+_TASK_LOCAL_HINT = re.compile(
+    r"\b(?:can you|could you|would you|will you|"
+    r"please (?:write|explain|help|make|create|generate|summarize|fix|debug|refactor)|"
+    r"in this (?:chat|conversation|message|prompt)|"
+    r"as an? (?:ai|assistant|language model))\b",
+    flags=re.IGNORECASE,
+)
+_EPHEMERAL_STANCE = re.compile(
+    r"\b(?:i think|i guess|i feel(?: like)?|i'm trying|i am trying|"
+    r"i'm looking|i was wondering|just curious|for this (?:task|one))\b",
+    flags=re.IGNORECASE,
+)
+_FALLBACK_MIN_CHARS = 48
+_SPECIFIC_MIN_CHARS = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -962,45 +972,86 @@ def _assistant_provider(messages: Sequence[NormalizedMessage]) -> ArchiveProvide
 
 def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
     text = _FENCED_CODE.sub(" ", message.text)
+    result: list[CandidateInput] = []
+    paragraphs = re.split(r"\n\s*\n", text) or [text]
+    for paragraph in paragraphs:
+        sentences = [
+            _clean_statement(part)
+            for part in _SENTENCE_BREAK.split(paragraph)
+            if _clean_statement(part)
+        ]
+        if not sentences:
+            continue
+        specific = [
+            candidate
+            for segment in sentences
+            if (candidate := _candidate_from_statement(segment, message, require_specific=True))
+            is not None
+        ]
+        if specific:
+            result.extend(specific)
+            continue
+        fallback = _candidate_from_statement(
+            " ".join(sentences), message, require_specific=False
+        )
+        if fallback is not None:
+            result.append(fallback)
+    return _deduplicate_candidates(result)
+
+
+def _candidate_from_statement(
+    segment: str,
+    message: NormalizedMessage,
+    *,
+    require_specific: bool,
+) -> CandidateInput | None:
+    cleaned = _clean_statement(segment)
+    if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
+        return None
+    if cleaned.endswith("?") or _TASK_LOCAL_HINT.search(cleaned) or _EPHEMERAL_STANCE.search(
+        cleaned
+    ):
+        return None
+    classified = _classify_statement(cleaned)
+    if classified is None:
+        return None
+    kind, confidence, entity_key, attribute_key = classified
+    if require_specific and confidence < 0.5:
+        return None
+    if confidence < 0.5:
+        if len(cleaned) < _FALLBACK_MIN_CHARS or _TRANSIENT_HINT.search(cleaned):
+            return None
+    elif len(cleaned) < _SPECIFIC_MIN_CHARS and _LABEL.match(cleaned) is None:
+        return None
+    label = _LABEL.match(cleaned)
+    candidate_content = label.group(2).strip() if label else cleaned
+    if not candidate_content:
+        return None
+    if entity_key is None and attribute_key is None:
+        slot = archive_lineage_key(kind, candidate_content)
+        if slot:
+            entity_key = "archive_slot"
+            attribute_key = slot[:MAX_SLOT_KEY_CHARS]
     reference = (
         f"{message.source_name}#conversation={message.conversation_id}&message={message.message_id}"
     )
-    result: list[CandidateInput] = []
-    for raw_segment in _SENTENCE_BREAK.split(text):
-        segment = _clean_statement(raw_segment)
-        if not segment or len(segment) > 4_000 or _SECRET_HINT.search(segment):
-            continue
-        classified = _classify_statement(segment)
-        if classified is None:
-            continue
-        kind, confidence, entity_key, attribute_key = classified
-        label = _LABEL.match(segment)
-        candidate_content = label.group(2).strip() if label else segment
-        sensitivity = (
-            Sensitivity.SENSITIVE
-            if _SENSITIVE_HINT.search(candidate_content)
-            else Sensitivity.NORMAL
-        )
-        result.append(
-            CandidateInput(
-                kind=kind,
-                content=candidate_content,
-                entity_key=entity_key,
-                attribute_key=attribute_key,
-                scopes=["personal"],
-                tags=[f"provider:{message.provider.value}", "archive_import"],
-                source_reference=reference,
-                source_service=message.provider.value,
-                source_type="provider_archive",
-                evidence=segment[:16_000],
-                confidence=confidence,
-                sensitivity=sensitivity,
-                availability=Availability.CORE,
-                observed_at=_provider_observed_at(message.created_at),
-                explicit_user_statement=True,
-            )
-        )
-    return _deduplicate_candidates(result)
+    return CandidateInput(
+        kind=kind,
+        content=candidate_content,
+        entity_key=entity_key,
+        attribute_key=attribute_key,
+        scopes=["personal"],
+        tags=[f"provider:{message.provider.value}", "archive_import"],
+        source_reference=reference,
+        source_service=message.provider.value,
+        source_type="provider_archive",
+        evidence=cleaned[:16_000],
+        confidence=confidence,
+        sensitivity=classify_sensitivity(candidate_content),
+        availability=Availability.CORE,
+        observed_at=_provider_observed_at(message.created_at),
+        explicit_user_statement=True,
+    )
 
 
 def _provider_observed_at(value: str | None) -> str | None:
@@ -1108,7 +1159,9 @@ def _classify_statement(
         r"we are|we're|we have|we've|our [a-z][a-z -]{1,30} (?:is|are))\b",
         lowered,
     ):
-        return ("personal_context", 0.7, None, None)
+        # Broad first-person prose is retained as a noncurrent observation.
+        # It is not durable current memory on its own.
+        return ("personal_context", 0.4, None, None)
     return None
 
 
@@ -1125,9 +1178,6 @@ def _memory_candidate(
     kind = classified[0] if classified is not None else "provider_memory"
     label = _LABEL.match(cleaned)
     candidate_content = label.group(2).strip() if label else cleaned
-    sensitivity = (
-        Sensitivity.SENSITIVE if _SENSITIVE_HINT.search(candidate_content) else Sensitivity.NORMAL
-    )
     return CandidateInput(
         kind=kind,
         content=candidate_content,
@@ -1138,7 +1188,7 @@ def _memory_candidate(
         source_type="provider_memory",
         evidence=cleaned[:16_000],
         confidence=0.76,
-        sensitivity=sensitivity,
+        sensitivity=classify_sensitivity(candidate_content),
         availability=Availability.CORE,
         explicit_user_statement=False,
     )

@@ -135,15 +135,7 @@ class EligibleRecordSelector:
             "WHERE newer.supersedes IS NOT NULL AND newer.deleted_at IS NULL)",
         ]
         parameters: list[Any] = [vault_id, now, now]
-        if request.kinds:
-            placeholders = ",".join("?" for _ in request.kinds)
-            conditions.append(f"r.kind IN ({placeholders})")
-            parameters.extend(request.kinds)
-        if request.availability:
-            placeholders = ",".join("?" for _ in request.availability)
-            conditions.append(f"r.availability IN ({placeholders})")
-            parameters.extend(item.value for item in request.availability)
-
+        self._apply_request_filters(request, conditions, parameters)
         if request.scopes:
             placeholders = ",".join("?" for _ in request.scopes)
             conditions.append(
@@ -187,14 +179,7 @@ class EligibleRecordSelector:
 
         conditions = ["r.vault_id=?", "r.approval_status='approved'"]
         parameters: list[Any] = [vault_id]
-        if request.kinds:
-            placeholders = ",".join("?" for _ in request.kinds)
-            conditions.append(f"r.kind IN ({placeholders})")
-            parameters.extend(request.kinds)
-        if request.availability:
-            placeholders = ",".join("?" for _ in request.availability)
-            conditions.append(f"r.availability IN ({placeholders})")
-            parameters.extend(item.value for item in request.availability)
+        self._apply_request_filters(request, conditions, parameters)
         if request.scopes:
             placeholders = ",".join("?" for _ in request.scopes)
             conditions.append(
@@ -219,6 +204,32 @@ class EligibleRecordSelector:
             parameters,
         ).fetchall()
         return list(rows), []
+
+    @staticmethod
+    def _apply_request_filters(
+        request: SearchRequest,
+        conditions: list[str],
+        parameters: list[Any],
+    ) -> None:
+        if request.kinds:
+            placeholders = ",".join("?" for _ in request.kinds)
+            conditions.append(f"r.kind IN ({placeholders})")
+            parameters.extend(request.kinds)
+        if request.availability:
+            placeholders = ",".join("?" for _ in request.availability)
+            conditions.append(f"r.availability IN ({placeholders})")
+            parameters.extend(item.value for item in request.availability)
+        if request.sensitivity:
+            placeholders = ",".join("?" for _ in request.sensitivity)
+            conditions.append(f"r.sensitivity IN ({placeholders})")
+            parameters.extend(item.value for item in request.sensitivity)
+        if request.min_confidence is not None:
+            conditions.append("r.confidence>=?")
+            parameters.append(request.min_confidence)
+        if request.source_ids:
+            placeholders = ",".join("?" for _ in request.source_ids)
+            conditions.append(f"r.source_id IN ({placeholders})")
+            parameters.extend(request.source_ids)
 
 
 class V1CandidateRanker:

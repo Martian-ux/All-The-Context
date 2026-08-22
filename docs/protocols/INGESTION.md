@@ -76,7 +76,8 @@ Role and origin establish eligibility:
 
 - explicit durable user-authored statements from a normalized
   `provider_archive` message may be applied automatically only after the source
-  session finishes successfully;
+  session finishes successfully, and only when they classify as a specific
+  durable kind rather than a broad first-person fragment;
 - generic JSON/JSONL/Markdown/text document observations remain tentative
   untrusted evidence even when their prose resembles a user assertion;
 - dedicated provider memory/profile summaries are provider-synthesized and
@@ -85,7 +86,11 @@ Role and origin establish eligibility:
   evidence; and
 - assistant, system, tool, and attachment roles are excluded by provider
   adapters; generic or instruction-bearing imports remain tentative;
-  secret-like material is ignored. All retained source text remains inert data.
+  short, task-local, transient, and question text is skipped; remaining
+  first-person fragments may be retained as tentative observations;
+  secret-like material is ignored; health, relationship, location, financial,
+  and identifier language is classified sensitive or highly sensitive.
+  All retained source text remains inert data.
 
 User-authored observations retain conversation/message source references.
 Policy decisions retain the parser and policy versions, origin class, bounded
@@ -101,5 +106,16 @@ An exact current value is reinforced. A material conflict is resolved
 deterministically: an explicit targeted correction wins, then explicit user
 evidence wins over inference, then `observed_at` and stable tie breakers decide.
 The losing value and evidence remain in history. Slot keys are advisory
-metadata, not permission to overwrite context. Unusual duplicate or conflict
-groups remain optional integrity diagnostics, never a user approval queue.
+metadata, not permission to overwrite context. Unkeyed archive statements of
+preference, goal, project, decision, workflow, or constraint kinds share a
+lineage only when a derived subject key matches; kind-only collapse is not
+used. Unusual duplicate or conflict groups remain optional integrity
+diagnostics, never a user approval queue.
+
+Failed or cancelled sources retry the existing parser session from the
+preserved raw blob. A complete source may be rebuilt with the current parser
+(`POST /v1/admin/sources/{id}/reprocess?rebuild=true` or
+`atc reprocess-source --rebuild`). Rebuild reversibly withdraws uncorrected
+automatic records from that source, publishes a new parser-versioned
+observation set, and leaves the raw blob, history, and user corrections in
+place.

@@ -172,6 +172,15 @@ export interface Page<T> {
   total?: number;
 }
 
+export interface ContextSearchOptions {
+  availability?: Availability;
+  kinds?: string[];
+  sensitivity?: string[];
+  minConfidence?: number;
+  limit?: number;
+  cursor?: string | null;
+}
+
 export interface ImportResult {
   source_id: string;
   observation_count: number;

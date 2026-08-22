@@ -15,6 +15,7 @@ from allthecontext.models import (
     FinishIngestionRequest,
     IngestionMode,
     SearchRequest,
+    Sensitivity,
     SubmitBatchRequest,
 )
 from allthecontext.storage import (
@@ -378,3 +379,44 @@ def test_record_scopes_are_query_categories_and_client_lists_enforce_access(
     )
     core.store.approve_candidate(denied.id)
     assert core.retrieval.search(SearchRequest(query="Neptune"), principal).total == 0
+
+
+def test_search_reports_total_and_supports_review_filters(core: CoreService) -> None:
+    core.store.add_candidate(
+        CandidateInput(
+            kind="goal",
+            content="My goal is fiction Alpha shipping.",
+            explicit_user_statement=True,
+        )
+    )
+    core.store.add_candidate(
+        CandidateInput(
+            kind="constraint",
+            content="We must keep fiction data local.",
+            explicit_user_statement=True,
+            idempotency_key="constraint-local",
+        )
+    )
+    sensitive = core.store.add_candidate(
+        CandidateInput(
+            kind="personal_detail",
+            content="I live in Seattle for the fiction scenario.",
+            explicit_user_statement=True,
+            idempotency_key="location-seattle",
+        )
+    )
+    assert sensitive.disposition.value == "applied"
+    page = core.retrieval.search(SearchRequest(query="", limit=2, offset=0))
+    assert page.total == 3
+    assert len(page.items) == 2
+    rest = core.retrieval.search(SearchRequest(query="", limit=2, offset=2))
+    assert rest.total == 3
+    assert len(rest.items) == 1
+    goals = core.retrieval.search(SearchRequest(query="", kinds=["goal"]))
+    assert goals.total == 1
+    located = core.retrieval.search(
+        SearchRequest(query="", sensitivity=[Sensitivity.SENSITIVE])
+    )
+    assert located.total == 1
+    assert "Seattle" in located.items[0].content
+    assert located.items[0].availability == Availability.LOCAL

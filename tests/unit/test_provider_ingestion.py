@@ -16,7 +16,7 @@ from allthecontext.importers import (
     parse_zip_bundle,
 )
 from allthecontext.models import SubmitBatchRequest
-from allthecontext.storage import InvalidStateError
+from allthecontext.storage import InvalidStateError, NotFoundError
 
 
 def _zip(entries: dict[str, bytes | str]) -> bytes:
@@ -491,3 +491,96 @@ def test_project_constraints_and_named_decisions_are_extracted() -> None:
         ("interaction_preference", "Don't use emojis."),
         ("goal", "I want to build a portable personal memory system."),
     ]
+
+
+def test_broad_first_person_fragments_are_not_auto_current_memory() -> None:
+    parsed = parse_json(
+        json.dumps(
+            [
+                {
+                    "id": "fragment-chat",
+                    "mapping": {
+                        "u": {
+                            "message": {
+                                "author": {"role": "user"},
+                                "content": {
+                                    "parts": [
+                                        "I am tired. I have a meeting. Can you write a haiku? "
+                                        "I think we should wait. "
+                                        "I prefer concise technical answers."
+                                    ]
+                                },
+                            }
+                        }
+                    },
+                }
+            ]
+        )
+    )
+
+    kinds = [item.kind for item in parsed.candidates]
+    contents = [item.content for item in parsed.candidates]
+    assert "interaction_preference" in kinds
+    assert any("prefer concise technical answers" in item.casefold() for item in contents)
+    assert not any(item.casefold() in {"i am tired.", "i have a meeting."} for item in contents)
+    assert all("haiku" not in item.casefold() for item in contents)
+    assert all(
+        item.confidence >= 0.5 or item.kind == "personal_context"
+        for item in parsed.candidates
+    )
+
+
+def test_health_and_location_statements_are_marked_sensitive() -> None:
+    parsed = parse_json(
+        json.dumps(
+            [
+                {
+                    "id": "sensitive-chat",
+                    "mapping": {
+                        "u": {
+                            "message": {
+                                "author": {"role": "user"},
+                                "content": {
+                                    "parts": [
+                                        "I live in Seattle. I was diagnosed with asthma last year."
+                                    ]
+                                },
+                            }
+                        }
+                    },
+                }
+            ]
+        )
+    )
+
+    assert parsed.candidates
+    assert all(item.sensitivity == "sensitive" for item in parsed.candidates)
+
+
+def test_complete_source_rebuild_is_non_destructive(tmp_path: Path) -> None:
+    store = CoreService.in_directory(tmp_path).store
+    service = ArchiveImportService(store)
+    archive = _zip({"conversations.json": json.dumps(_chatgpt_export())})
+    first = service.import_bytes("chatgpt.zip", archive)
+    source_id = str(first["source"]["id"])
+    raw = store.get_source_content(source_id)
+    applied_ids = list(first["record_ids"])
+    assert applied_ids
+    kept = applied_ids[0]
+    store.correct_record(
+        kept,
+        content="Corrected fictional preference for local context.",
+        reason="Corrected by user",
+    )
+
+    rebuilt = service.reprocess_source(source_id, rebuild=True)
+
+    assert rebuilt["rebuild"] is True
+    assert rebuilt["withdrawn_record_ids"]
+    assert kept not in rebuilt["withdrawn_record_ids"]
+    assert store.get_source_content(source_id) == raw
+    assert store.get_record(kept).content == "Corrected fictional preference for local context."
+    for withdrawn_id in rebuilt["withdrawn_record_ids"]:
+        with pytest.raises(NotFoundError):
+            store.get_record(withdrawn_id)
+        assert store.record_history(withdrawn_id)

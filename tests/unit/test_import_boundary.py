@@ -374,7 +374,7 @@ def test_frozen_provider_shapes_have_closed_coverage_and_identities() -> None:
     for shape in shapes:
         closed = reconcile_closed_coverage(shape.expected_counts)
         assert closed["counts"]["recognized"] >= 1
-        assert shape.parser_identity.endswith("-v1")
+        assert shape.parser_identity.endswith("-v2")
         if shape.filename.endswith(".md"):
             assert "offline-only" in grok_markdown_canary_text()
         else:
@@ -388,7 +388,7 @@ def test_provider_shape_import_excludes_assistant_and_reports_coverage(tmp_path:
     chatgpt = frozen_shape_by_id("chatgpt-conversation-graph-v1")
     parsed = parse_json(chatgpt.payload_bytes().decode("utf-8"))
     assert parsed.provider == "chatgpt"
-    assert parsed.parser_identity == "chatgpt-archives-v1"
+    assert parsed.parser_identity == "chatgpt-archives-v2"
     assert all("fabricated" not in item.content for item in parsed.candidates)
     assert parsed.closed_coverage["excluded"] >= 1
     assert parsed.closed_coverage["recognized"] >= 1
@@ -410,5 +410,5 @@ def test_provider_shape_import_excludes_assistant_and_reports_coverage(tmp_path:
     service = ArchiveImportService(CoreService.in_directory(tmp_path).store)
     result = service.import_bytes(chatgpt.filename, chatgpt.payload_bytes())
     assert result["provider"] == "chatgpt"
-    assert result["parser_identity"] == "chatgpt-archives-v1"
+    assert result["parser_identity"] == "chatgpt-archives-v2"
     assert result["coverage"]["closed_coverage"]["excluded"] >= 1

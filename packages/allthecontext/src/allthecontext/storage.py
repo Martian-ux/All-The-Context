@@ -25,6 +25,7 @@ from .memory_policy import (
     AutomaticMemoryPolicy,
     MemoryPolicy,
     ObservationOrigin,
+    archive_lineage_key,
     normalized_observation_text,
 )
 from .models import (
@@ -1999,6 +2000,69 @@ class CoreStore:
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
+    def withdraw_automatic_source_records(
+        self,
+        source_id: str,
+        *,
+        reason: str = "replaced by source rebuild",
+        actor: str = "local-core",
+    ) -> list[str]:
+        """Reversibly hide current auto-applied records from one source.
+
+        User-corrected records, independently deleted records, history, and
+        the preserved raw blob are left unchanged.
+        """
+
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT id FROM context_records "
+                "WHERE source_id=? AND deleted_at IS NULL AND approval_status='approved' "
+                "ORDER BY id",
+                (source_id,),
+            ).fetchall()
+            withdrawn: list[str] = []
+            for row in rows:
+                record_id = str(row["id"])
+                if self._record_has_user_edit_tx(connection, record_id):
+                    continue
+                self._delete_record_tx(
+                    connection,
+                    record_id,
+                    reason=reason,
+                    actor=actor,
+                    recompute_integrity=False,
+                )
+                withdrawn.append(record_id)
+            if withdrawn:
+                self._recompute_integrity(connection)
+                self._audit(
+                    connection,
+                    actor,
+                    "source_rebuild_withdrew_automatic_records",
+                    [source_id],
+                    metadata={"withdrawn_record_count": len(withdrawn)},
+                )
+            return withdrawn
+
+    @staticmethod
+    def _record_has_user_edit_tx(connection: sqlite3.Connection, record_id: str) -> bool:
+        correction = connection.execute(
+            "SELECT 1 FROM context_candidates WHERE supersedes=? "
+            "AND lower(kind)='correction' LIMIT 1",
+            (record_id,),
+        ).fetchone()
+        if correction is not None:
+            return True
+        versions = connection.execute(
+            "SELECT reason FROM context_record_versions WHERE record_id=?",
+            (record_id,),
+        ).fetchall()
+        return any(
+            "by user" in str(row["reason"] or "").casefold()
+            or "explicit user correction" in str(row["reason"] or "").casefold()
+            for row in versions
+        )
+
     def create_client(self, request: ClientCreate) -> tuple[ClientPrincipal, str]:
         token = generate_token()
         client_id = new_id()
@@ -3127,20 +3191,22 @@ class CoreStore:
                 (record for record in rows if self._record_is_allowed(record, principal)),
                 None,
             )
-        # Beta minimum (B-102): unkeyed lineage collapse applies only to
-        # archive-import material so contradictory imported history cannot all
-        # stay current. Direct configured-client / local-admin unkeyed goals,
-        # projects, and workflows remain independent current records.
+        # Unkeyed archive statements share a lineage only when they have the
+        # same extracted subject. Kind-only collapse is not a slot: unrelated
+        # goals, preferences, and projects remain independent current records.
+        # Direct configured-client / local-admin unkeyed records stay independent.
         if origin != ObservationOrigin.ARCHIVE_IMPORT:
             return None
         kind = str(observation["kind"]).casefold()
         if kind not in UNKEYED_CONFLICT_KINDS:
             return None
+        slot = archive_lineage_key(kind, str(observation["content"]))
+        if slot is None:
+            return None
         rows = cast(
             list[sqlite3.Row],
             connection.execute(
                 "SELECT * FROM context_records WHERE vault_id=? AND lower(kind)=? "
-                "AND entity_key IS NULL AND attribute_key IS NULL "
                 "AND approval_status='approved' AND deleted_at IS NULL "
                 "AND observation_origin=? "
                 "ORDER BY observed_at DESC,updated_at DESC,id",
@@ -3148,7 +3214,12 @@ class CoreStore:
             ).fetchall(),
         )
         return next(
-            (record for record in rows if self._record_is_allowed(record, principal)),
+            (
+                record
+                for record in rows
+                if self._record_is_allowed(record, principal)
+                and archive_lineage_key(str(record["kind"]), str(record["content"])) == slot
+            ),
             None,
         )
 
@@ -3605,6 +3676,15 @@ class CoreStore:
             origin=origin,
             principal=principal,
         )
+        if str(observation["sensitivity"]) != decision.sensitivity.value:
+            connection.execute(
+                "UPDATE context_candidates SET sensitivity=? WHERE id=?",
+                (decision.sensitivity.value, observation_id),
+            )
+            observation = connection.execute(
+                "SELECT * FROM context_candidates WHERE id=?", (observation_id,)
+            ).fetchone()
+            assert observation is not None
         if str(observation["kind"]).casefold() == "context_forget":
             target = self._target_record_tx(connection, observation, principal, origin=origin)
             if decision.disposition != ObservationDisposition.APPLIED or target is None:

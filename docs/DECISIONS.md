@@ -2600,3 +2600,39 @@ REST asset ID, size, and SHA-256 from authenticated REST metadata. An opaque
 node ID is never parsed, converted, or interpolated into a REST URL. This keeps
 published-state checks compatible without weakening the numeric-ID authority
 used before publication or channel promotion.
+
+## ADR-097: Archive memories stay independent unless they share a subject
+
+**Status:** accepted 2026-08-21. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+B-102 originally collapsed every unkeyed archive-import preference, goal,
+project, decision, workflow, and constraint into one current lineage per kind.
+That prevented contradictory imported history from remaining concurrent truth,
+but it also merged unrelated statements into fake version histories.
+
+Core now derives a deterministic subject key from kind-specific framing,
+temporal/quantity modifiers, and preference intensity. Archive observations
+share a lineage only when that key matches. If no subject can be extracted,
+the records remain independent current memories. Exact content still
+reinforces. Direct client unkeyed records stay independent. Version history
+means a revision of the same memory.
+
+Provider extraction (`provider-archives-v2`) no longer auto-publishes broad
+low-confidence first-person fragments. Specific durable kinds still apply.
+Short, task-local, transient, and question text is skipped. Remaining
+first-person prose may be retained as tentative `personal_context` only when
+it is long enough to be self-contained. Sensitivity classification is
+conservative: health, relationship, location, financial, and identifier
+language upgrades `normal` to `sensitive` (local-only) or
+`highly_sensitive` (ignored).
+
+Complete sources can be rebuilt from the preserved raw blob. Rebuild
+reversibly withdraws uncorrected automatic records from that source, starts a
+new parser-versioned session, and publishes the new extraction. User
+corrections, independently deleted records, observation history, and the raw
+source remain. Failed-source retry is unchanged.
+
+Context search now exposes the real `total`, cursor pagination, and kind,
+sensitivity, confidence, and source filters. The dashboard shows that total,
+loads further pages, and does not auto-select a record.

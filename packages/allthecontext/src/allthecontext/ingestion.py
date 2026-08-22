@@ -146,12 +146,16 @@ def archive_session_request(
     source_id: str,
     *,
     parser_version: str | None = None,
+    rebuild_generation: int | None = None,
 ) -> BeginIngestionRequest:
+    idempotency_key: str | None = None
+    if parser_version is not None:
+        idempotency_key = f"archive:{source_id}:{parser_version}"
+        if rebuild_generation is not None:
+            idempotency_key = f"{idempotency_key}:rebuild:{rebuild_generation}"
     return BeginIngestionRequest(
         mode=IngestionMode.ARCHIVE,
         accessible_sources=[source_id],
         unavailable_sources=[],
-        idempotency_key=(
-            f"archive:{source_id}:{parser_version}" if parser_version is not None else None
-        ),
+        idempotency_key=idempotency_key,
     )

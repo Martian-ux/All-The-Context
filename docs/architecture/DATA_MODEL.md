@@ -58,8 +58,10 @@ without creating duplicate current context. Materially different values in the
 same slot invoke deterministic conflict policy: explicit user evidence outranks
 inference, then observation time and stable tie breakers decide otherwise equal
 evidence. The policy preserves the prior version and the reason for the selected
-current value. Integrity groups remain optional diagnostics for unusual or
-legacy states, not an approval queue.
+current value. Unkeyed archive-import statements share a lineage only when a
+derived subject key matches; unrelated same-kind archive memories stay
+independent current records. Integrity groups remain optional diagnostics for
+unusual or legacy states, not an approval queue.
 
 ## Deletion and purge
 

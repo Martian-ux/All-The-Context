@@ -140,9 +140,9 @@ parser version to reprocess the source.
 - Raw source text and credentials are never logged.
 
 ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each
-provider claim has a parser identity (`chatgpt-archives-v1`,
-`claude-archives-v1`, `grok-archives-v1`) under the aggregate
-`provider-archives-v1` session version. Frozen fictional shapes live in the
+provider claim has a parser identity (`chatgpt-archives-v2`,
+`claude-archives-v2`, `grok-archives-v2`) under the aggregate
+`provider-archives-v2` session version. Frozen fictional shapes live in the
 runtime claim manifest. Each import reports closed coverage counts
 (recognized, excluded, skipped, unavailable, failed, unparsed). Unknown or
 unparsed material is a visible coverage warning and keeps coverage incomplete

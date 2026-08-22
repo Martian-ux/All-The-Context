@@ -314,7 +314,7 @@ def _cmd_reprocess_source(args: argparse.Namespace) -> None:
         operations.get_operation(identifier)
     except NotFoundError:
         service = ArchiveImportService(_store(args), max_bytes=args.max_bytes)
-        _dump(service.reprocess_source(identifier))
+        _dump(service.reprocess_source(identifier, rebuild=bool(args.rebuild)))
         return
     _dump(operations.retry_operation(identifier))
 
@@ -802,6 +802,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-bytes",
         type=_import_byte_limit,
         default=DEFAULT_MAX_IMPORT_BYTES,
+    )
+    reprocess.add_argument(
+        "--rebuild",
+        action="store_true",
+        help=(
+            "Re-extract a complete preserved source with the current parser. "
+            "Uncorrected automatic memories from that source are reversibly "
+            "replaced; the raw blob and user corrections are kept."
+        ),
     )
     reprocess.set_defaults(handler=_cmd_reprocess_source)
 

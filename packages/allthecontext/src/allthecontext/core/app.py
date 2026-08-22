@@ -759,9 +759,15 @@ def create_app(
         return {"items": items, "total": total}
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
-    async def reprocess_source(source_id: str, principal: Principal) -> dict[str, Any]:
+    async def reprocess_source(
+        source_id: str,
+        principal: Principal,
+        rebuild: bool = False,
+    ) -> dict[str, Any]:
         require(principal, "admin")
-        return await run_in_threadpool(core.imports.reprocess_source, source_id)
+        return await run_in_threadpool(
+            partial(core.imports.reprocess_source, source_id, rebuild=rebuild)
+        )
 
     @app.get("/v1/admin/sources/{source_id}/import-progress")
     def import_progress(source_id: str, principal: Principal) -> dict[str, Any]:
