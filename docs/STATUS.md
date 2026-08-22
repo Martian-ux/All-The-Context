@@ -15,6 +15,26 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## MCP v2 and HTTPX2 compatibility lane (2026-08-22)
+
+The bounded MCP lane now uses the stable official Python SDK v2 line
+(`mcp>=2,<3`, locked at `2.0.0`) with the MCP-required Pydantic and AnyIO
+floors. The local adapter uses `MCPServer`, the SDK's public descriptor-isolated
+STDIO runner, and app-level Streamable HTTP options; the Edge adapter keeps
+OAuth/bearer settings and Core authority intact while moving transport settings
+to the v2 app builder. Hosted Edge MCP requests are limited to 256 KiB by both
+the ATC middleware and SDK session manager. First-party production HTTP clients
+now use `httpx2>=2.12,<3` (locked at `2.12.0`) and its OS trust-store path;
+legacy `httpx` remains only in the development extra for Starlette's in-process
+`TestClient`. The packaged first-run smoke streams responses under a 1 MiB cap
+and reports a fixed content-free error when that cap is exceeded.
+
+Focused MCP contract, legacy 2025-era Streamable HTTP, managed STDIO/restart,
+PKCE refresh/revocation, bearer/content-boundary, direct HTTP client, sync,
+replication, and packaged-smoke tests pass locally (74 tests). This remains
+ordinary L0 MCP integration; no lifecycle-aware L1-L3 hooks are supplied or
+claimed. Full pytest and hosted CI remain outside this local validation note.
+
 ## Privacy ACL boundary repair (2026-08-22)
 
 The canonical observation merge now treats a restrictive allowlist as content-
@@ -1505,6 +1525,29 @@ state is already noncurrent and creates no user queue.
   exact character budgets. Its standalone benchmark passes all 11 gates with
   semantic coverage `1.0`, zero set violations, and deterministic input-order
   behavior.
+- The compiler now bounds only the high-cardinality interaction-preference
+  mandatory tier: above eight eligible preferences, a deterministic selector-
+  chosen reserve of at most eight leaves room for the cheapest feasible primary
+  result, while overflow preferences remain optional fallback candidates. The
+  compiler preserves caller ranking for non-preference records, excludes fixed
+  mandatory duplicate/conflict slots from the reserve, and unlocks each overflow
+  preference after any compatible selected primary. The overflow-free compiler
+  prepass gates overflow through an actually selected applicable evidence item;
+  the final exact budget may retain that evidence while omitting overflow, and
+  absent, infeasible, or excluded-primary evidence keeps the primary fallback.
+  Fixed mandatory conflicts are reduced to deterministic selector survivors
+  before reserve budgeting, with original-order base utility and
+  context-independent fixed semantic/diversity signals shared by both passes
+  so the final selector cannot change that survivor. Bounded bootstrap metadata
+  uses the exact union of
+  complete policy/temporal candidate-pool IDs, with a count fallback only for
+  legacy/injected diagnostics. The focused sanitized regression covers 77
+  preferences, 20 relevant records, ten generic queries at a 4,000-character
+  budget, no-match behavior, ACL/temporal/sensitivity exclusion, exact
+  accounting, caller-rank preservation, fixed-slot conflicts and duplicate
+  survivors, alternate-primary evidence ordering, large-evidence ordering,
+  1007/905 evidence-over-overflow boundaries, infeasible-evidence fallback,
+  exact disjoint/overlapping pool unions, and preference-input determinism.
 - Edge forwarding now reconciles context-pack metadata to the final returned
   items after scope filtering or envelope trimming: selected, omitted, used,
   and provenance counts are recomputed; duplicate/conflict aggregates are

@@ -9,7 +9,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import anyio
-import httpx
+import httpx2 as httpx
 import uvicorn
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
@@ -47,11 +47,11 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
             "attribute_key",
             "supersedes",
             "observed_at",
-        } <= propose_tool.inputSchema["properties"].keys()
+        } <= propose_tool.input_schema["properties"].keys()
         result = await session.call_tool("context_status", {})
-        assert result.isError is not True
-        assert result.structuredContent is not None
-        assert result.structuredContent["core_online"] is True
+        assert result.is_error is not True
+        assert result.structured_content is not None
+        assert result.structured_content["core_online"] is True
         proposed = await session.call_tool(
             "propose_memory",
             {
@@ -65,22 +65,22 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
                 "explicit_user_statement": True,
             },
         )
-        assert proposed.isError is not True
-        assert proposed.structuredContent is not None
-        assert proposed.structuredContent["disposition"] == "applied"
-        assert proposed.structuredContent["record_id"]
+        assert proposed.is_error is not True
+        assert proposed.structured_content is not None
+        assert proposed.structured_content["disposition"] == "applied"
+        assert proposed.structured_content["record_id"]
         forgotten = await session.call_tool(
             "forget_context",
             {
-                "record_id": proposed.structuredContent["record_id"],
+                "record_id": proposed.structured_content["record_id"],
                 "reason": "The integration-test user explicitly requested deletion.",
             },
         )
-        assert forgotten.isError is not True
-        assert forgotten.structuredContent is not None
-        assert forgotten.structuredContent["disposition"] == "applied"
-        assert forgotten.structuredContent["record_id"] == proposed.structuredContent["record_id"]
-        assert forgotten.structuredContent["deleted_at"]
+        assert forgotten.is_error is not True
+        assert forgotten.structured_content is not None
+        assert forgotten.structured_content["disposition"] == "applied"
+        assert forgotten.structured_content["record_id"] == proposed.structured_content["record_id"]
+        assert forgotten.structured_content["deleted_at"]
 
 
 def _request_shutdown(base_url: str, admin_token: str) -> None:
@@ -104,9 +104,9 @@ async def _exercise_crash_recovery(
     ):
         await session.initialize()
         first = await session.call_tool("context_status", {})
-        assert first.isError is not True
-        assert first.structuredContent is not None
-        assert first.structuredContent["core_online"] is True
+        assert first.is_error is not True
+        assert first.structured_content is not None
+        assert first.structured_content["core_online"] is True
 
         await anyio.to_thread.run_sync(_request_shutdown, base_url, admin_token)
         for _ in range(100):
@@ -116,9 +116,9 @@ async def _exercise_crash_recovery(
         assert probe_core(config) is CoreProbe.UNREACHABLE
 
         second = await session.call_tool("context_status", {})
-        assert second.isError is not True
-        assert second.structuredContent is not None
-        assert second.structuredContent["core_online"] is True
+        assert second.is_error is not True
+        assert second.structured_content is not None
+        assert second.structured_content["core_online"] is True
 
 
 def test_real_stdio_mcp_handshake_and_tool_call(tmp_path: Path) -> None:

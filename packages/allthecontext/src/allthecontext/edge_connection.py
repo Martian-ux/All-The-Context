@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 from filelock import FileLock
 
 from .config import CoreConfig

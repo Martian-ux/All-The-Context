@@ -326,7 +326,7 @@ class HttpRelayTransport:
         if parsed_url.scheme != "https" and not (parsed_url.scheme == "http" and loopback):
             raise ValueError("Relay transport requires HTTPS except on loopback")
         if client is None:
-            import httpx
+            import httpx2 as httpx
 
             client = httpx.Client(timeout=timeout_seconds)
             self._owns_client = True

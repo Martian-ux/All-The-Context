@@ -41,10 +41,31 @@ The production pipeline has seven ordered boundaries:
    `DeterministicSetSelector` then maximizes exact rational marginal utility per
    character while prioritizing mandatory preferences and enforcing transitive
    duplicate groups, same-slot conflict exclusion, supporting-evidence
-   relationships, a 32-record pack cap, and the exact budget. Bootstrap returns
-   optional content-free `pack_metadata` accounting for candidate-pool caps,
-   omissions, provenance-backed items, and truthful truncation reasons. It
-   cannot weaken an upstream gate.
+   relationships, a 32-record pack cap, and the exact budget. When more than
+   eight interaction preferences are eligible, the compiler uses that same
+   selector and opaque signals to choose a deterministic reserve of at most
+   eight; overflow preferences become optional fallback candidates after a
+   compatible primary result. Each overflow preference may follow any selected
+   compatible primary, while applicable supporting evidence remains ahead of
+   that fallback tier. The compiler expresses primary-plus-evidence as a chain:
+   evidence supports the primary, and an actually selected applicable evidence
+   item gates overflow. The final exact budget may keep that evidence and omit
+   overflow; when no applicable evidence is selected (absent, infeasible, or
+   tied to an excluded primary), overflow falls back to primary support rather
+   than deadlocking. Fixed mandatory records are first reduced to their
+   deterministic feasible selector survivors, whose duplicate/conflict groups
+   exclude preferences from the reserve. Fixed candidates use their original
+   ordered base utility and context-independent semantic/diversity signals in
+   both compiler passes, so the authoritative survivor cannot change after
+   reserve facets are selected. Caller-ranked non-preference candidates retain
+   their order; only preference reserve/overflow tiers are canonicalized for
+   input-order determinism. The reserve budget leaves room for the cheapest
+   feasible primary result when such a pair fits. At eight or
+   fewer preferences, the existing mandatory behavior is unchanged. Bootstrap
+   returns optional content-free `pack_metadata` accounting for the exact union
+   of complete bounded policy/temporal candidate pools, omissions,
+   provenance-backed items, and truthful truncation reasons. It cannot weaken an
+   upstream gate.
 7. Administrator-only diagnostics expose authorized returned record IDs plus
    numeric values, aggregate counts, and closed reason codes. They never include
    raw query/context text, denied IDs, or unauthorized-derived vocabulary.
@@ -97,7 +118,19 @@ its 100-record retrieval pool before `ContextCompiler` performs budgeted set
 selection. This preserves bounded MCP context compilation; it is not the source
 of the catalog API's `total`. Its optional `pack_metadata` envelope is
 provider-facing accounting, not ranking diagnostics, and does not expose query
-text or record IDs beyond the selected items already returned.
+text or record IDs beyond the selected items already returned. The candidate
+count is the exact union of the two complete bounded policy/temporal-eligible
+pools when those internal IDs are available; legacy/injected diagnostics use
+their bounded count fallback.
+
+The high-cardinality repair is local to compilation: authorization, temporal
+eligibility, sensitivity, admissibility, retrieval-pool limits, selector
+contracts, storage, and public response schemas are unchanged. With more than
+eight preferences, no-match queries still receive the reserve; matching queries
+can select primary records and supporting evidence before optional preference
+overflow. Tight budgets remain deterministic and fail closed. The sanitized
+regression uses 77 preferences, 20 relevant records, ten generic queries, a
+4,000-character budget, and a no-match query.
 
 Pack accounting is reconciled at each forwarding boundary: `selected_count`
 equals the returned item count, `omitted_count` equals

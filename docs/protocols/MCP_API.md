@@ -1,8 +1,13 @@
 # MCP API
 
 All The Context uses the [official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk).
-The stable SDK line at the implementation date supports STDIO and Streamable
-HTTP; the adapter is pinned below the pending v2 major release.
+The stable SDK v2 line supports STDIO and Streamable HTTP; ATC constrains it to
+`mcp>=2,<3` and uses the public `MCPServer` APIs. The same Streamable HTTP app
+serves current and legacy 2025-era clients. Ordinary MCP remains an L0
+integration and does not provide lifecycle-aware L1-L3 hooks. Hosted Edge MCP
+requests are bounded at 256 KiB by both ATC's outer request guard and the SDK
+app's `max_request_body_size`; oversized requests receive a fixed error without
+their body contents.
 
 ## Retrieval tools
 
