@@ -1350,9 +1350,7 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
 
     authorized_truth = store.get_memory_truth(original.record_id, principal=new_principal)
     assert authorized_truth.record.content == "new disjoint-private value"
-    assert [item.content for item in authorized_truth.evidence] == [
-        "new disjoint-private value"
-    ]
+    assert [item.content for item in authorized_truth.evidence] == ["new disjoint-private value"]
     assert [item.evidence for item in authorized_truth.evidence] == [
         "new disjoint-private evidence"
     ]
