@@ -86,6 +86,9 @@ _SENSITIVE_SETUP_PRESENCE_KEYS = (
     "diagnostics_path",
 )
 _MAX_REDACTED_ERROR_CHARS = 500
+_MAX_SMOKE_RESPONSE_BYTES = 1_048_576
+_SMOKE_RESPONSE_CHUNK_BYTES = 64 * 1024
+_SMOKE_RESPONSE_LIMIT_ERROR = "smoke response exceeded maximum size"
 _CLOSED_DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -130,7 +133,14 @@ def _read_http_response(
         client.stream(method, url, headers=headers) as response,
     ):
         response.raise_for_status()
-        return response.status_code, response.read()
+        content = bytearray()
+        received = 0
+        for chunk in response.iter_bytes(chunk_size=_SMOKE_RESPONSE_CHUNK_BYTES):
+            received += len(chunk)
+            if received > _MAX_SMOKE_RESPONSE_BYTES:
+                raise RuntimeError(_SMOKE_RESPONSE_LIMIT_ERROR)
+            content.extend(chunk)
+        return response.status_code, bytes(content)
 
 
 def api_request(url: str, token: str, *, method: str = "GET") -> dict[str, Any]:

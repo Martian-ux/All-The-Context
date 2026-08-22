@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx2 as httpx
 import pytest
+import truststore
 from allthecontext.core.service import CoreService
 from allthecontext.models import ApprovalStatus
 from allthecontext.sync import CoreRelaySync
@@ -29,7 +30,7 @@ def test_httpx2_default_tls_context_uses_the_os_trust_store(
 
     context = httpx.create_ssl_context()
 
-    assert type(context).__module__ == "truststore._api"
+    assert isinstance(context, truststore.SSLContext)
 
 
 def test_sync_rejects_cleartext_non_loopback_relay(tmp_path: Path) -> None:
