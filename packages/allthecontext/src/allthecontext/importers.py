@@ -194,6 +194,7 @@ class _GenericCoverage:
 
     excluded: int = 0
     skipped: int = 0
+    unavailable: int = 0
     failed: int = 0
     unparsed: int = 0
 
@@ -459,10 +460,12 @@ def _combine(
     if generic_coverage is not None:
         closed["excluded"] = int(closed.get("excluded", 0)) + generic_coverage.excluded
         closed["skipped"] = int(closed.get("skipped", 0)) + generic_coverage.skipped
+        closed["unavailable"] = int(closed.get("unavailable", 0)) + generic_coverage.unavailable
         closed["failed"] = int(closed.get("failed", 0)) + generic_coverage.failed
         closed["unparsed"] = int(closed.get("unparsed", 0)) + generic_coverage.unparsed
         stats["generic_excluded"] = generic_coverage.excluded
         stats["generic_skipped"] = generic_coverage.skipped
+        stats["generic_unavailable"] = generic_coverage.unavailable
         stats["generic_failed"] = generic_coverage.failed
         stats["generic_unparsed"] = generic_coverage.unparsed
         if generic_coverage.failed or generic_coverage.unparsed:
@@ -498,7 +501,13 @@ def _generic_failure_result(
     if reason not in {"unavailable", "failed", "unparsed"}:
         raise ValueError("unsupported generic failure reason")
     coverage = _GenericCoverage()
-    setattr(coverage, reason, 1)
+    match reason:
+        case "unavailable":
+            coverage.unavailable = 1
+        case "failed":
+            coverage.failed = 1
+        case "unparsed":
+            coverage.unparsed = 1
     return _combine(
         _builder(provider).finish(),
         (),

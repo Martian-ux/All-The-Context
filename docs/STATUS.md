@@ -57,6 +57,22 @@ request. Full pytest and hosted revalidation remain outside this lane; the
 dashboard dependency install, check, full test suite (55 tests), and production
 build pass in this fresh worktree.
 
+## Generic bounded-failure coverage correction (2026-08-22)
+
+A focused PR 73 review reproduced a slotted-counter defect in the standalone
+CSV boundary: an oversized CSV selected the valid `unavailable` terminal reason,
+but the generic coverage object had no such slot and raised `AttributeError`.
+Generic coverage now declares and merges `unavailable`, and bounded failure
+reasons use explicit assignments for `unavailable`, `failed`, and `unparsed`.
+The oversized CSV therefore returns one honest closed terminal item with no
+candidate, no exception, and incomplete coverage; malformed CSV remains one
+`unparsed` item.
+
+Focused importer regressions cover the synthetic bounded CSV and all three
+generic failure reasons with exact seven-key accounting. This is local source
+evidence only: no full pytest matrix, hosted checks, provider access, private
+data, release action, publication, or macOS execution is claimed.
+
 ## Draft-PR formatting and CI-trigger reconciliation (2026-08-22)
 
 Draft PR 73 exposed one deterministic source-check failure: 23 changed Python

@@ -3389,3 +3389,22 @@ pause/revoke state authoritative, while the caller still receives the bounded
 `capture_adapter_unavailable` result. If no live run exists, the existing
 degradation and retry behavior remains unchanged. Run-owned renewal and finish
 continue to require the exact handle, lease, and `reconciling` state.
+
+## ADR-127: Generic bounded failures map to declared closed-coverage counters
+
+**Status:** accepted locally on 2026-08-22 after focused PR 73 review
+reproduction and importer regressions; this is not release or provider
+acceptance.
+
+Generic standalone parsing has three bounded terminal reasons: `unavailable`,
+`failed`, and `unparsed`. The generic coverage accumulator declares a counter
+for each reason, `_generic_failure_result()` assigns them through an explicit
+bounded match, and `_combine()` merges every counter into the exact seven-key
+`closed_coverage` map and generic stats. This prevents a slotted-dataclass
+`AttributeError` and prevents a successful return with an unreported terminal
+item.
+
+An oversized standalone CSV is one `unavailable` item; malformed CSV remains
+one `unparsed` item. The focused synthetic tests assert no exception, one
+closed item, exact bucket identity, and incomplete coverage. No provider,
+network, private data, release state, or unsupported-macOS posture changes.

@@ -29,6 +29,17 @@ check, full test suite (55 tests), and production build pass locally. Full
 pytest, hosted CI, release/publication, live/private data, and macOS execution
 are not claimed here.
 
+### 2026-08-22 generic bounded-failure coverage correction
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Standalone bounded CSV failures return truthful closed coverage without raising | `_parse_csv_document`; `_GenericCoverage`; `test_oversized_standalone_csv_is_unavailable_and_closed` | Implemented locally: an oversized synthetic CSV closes exactly one `unavailable` item, exposes the matching generic stat, returns no candidate, and remains incomplete |
+| Every generic terminal failure reason maps to one declared counter | `_generic_failure_result`; `_combine`; `test_generic_failure_reasons_map_to_one_closed_counter` | Implemented locally for `unavailable`, `failed`, and `unparsed`; each result has exact seven-key accounting with a sum of one and no dynamic slotted-attribute assignment |
+
+This correction is focused synthetic importer evidence only. Full pytest,
+hosted checks, provider access, private data, release action, publication, and
+macOS execution remain outside scope.
+
 ### 2026-08-22 hosted full-suite reconciliation
 
 | Requirement | Implementation/evidence | Status |

@@ -1362,6 +1362,53 @@ def test_standalone_csv_is_supported_atomically_through_public_entrypoints(tmp_p
     assert malformed.complete is False
 
 
+def test_oversized_standalone_csv_is_unavailable_and_closed() -> None:
+    parsed = importers_module._parse_csv_document(
+        "kind,content\nGoal,bounded CSV support",
+        provider="generic",
+        source_name="synthetic.csv",
+        max_chars=1,
+    )
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage == {
+        "recognized": 0,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 1,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 0,
+    }
+    assert parsed.stats["generic_unavailable"] == 1
+    assert sum(parsed.closed_coverage.values()) == 1
+    assert parsed.complete is False
+
+
+@pytest.mark.parametrize("reason", ["unavailable", "failed", "unparsed"])
+def test_generic_failure_reasons_map_to_one_closed_counter(reason: str) -> None:
+    parsed = importers_module._generic_failure_result(
+        "generic",
+        "synthetic generic failure",
+        reason=reason,
+    )
+
+    expected = {
+        "recognized": 0,
+        "excluded": 0,
+        "skipped": 0,
+        "unavailable": 0,
+        "duplicate": 0,
+        "failed": 0,
+        "unparsed": 0,
+    }
+    expected[reason] = 1
+    assert parsed.closed_coverage == expected
+    assert parsed.stats[f"generic_{reason}"] == 1
+    assert sum(parsed.closed_coverage.values()) == 1
+    assert parsed.complete is False
+
+
 def test_unenumerable_zip_has_archive_failure_without_invented_member_closure() -> None:
     parsed = parse_zip_bundle(b"not a ZIP archive")
     audit = parsed.stats["archive_member_coverage"]
