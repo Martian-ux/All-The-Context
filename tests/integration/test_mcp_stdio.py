@@ -9,7 +9,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import anyio
-import httpx
+import httpx2 as httpx
 import uvicorn
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app

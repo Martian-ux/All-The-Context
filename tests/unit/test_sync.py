@@ -4,11 +4,32 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import pytest
 from allthecontext.core.service import CoreService
 from allthecontext.models import ApprovalStatus
 from allthecontext.sync import CoreRelaySync
+
+
+def test_httpx2_status_error_keeps_http_error_type_and_response() -> None:
+    request = httpx.Request("PATCH", "https://edge.example.test/proposal")
+    response = httpx.Response(503, request=request)
+    error = httpx.HTTPStatusError("failed", request=request, response=response)
+
+    assert isinstance(error, httpx.HTTPError)
+    assert error.request is request
+    assert error.response is response
+
+
+def test_httpx2_default_tls_context_uses_the_os_trust_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+
+    context = httpx.create_ssl_context()
+
+    assert type(context).__module__ == "truststore._api"
 
 
 def test_sync_rejects_cleartext_non_loopback_relay(tmp_path: Path) -> None:

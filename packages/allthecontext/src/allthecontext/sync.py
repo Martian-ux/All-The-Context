@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
-import httpx
+import httpx2 as httpx
 from pydantic import ValidationError
 
 from allthecontext.models import CandidateInput, CandidateOut, Sensitivity
