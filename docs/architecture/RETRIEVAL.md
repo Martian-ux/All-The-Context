@@ -41,10 +41,16 @@ The production pipeline has seven ordered boundaries:
    `DeterministicSetSelector` then maximizes exact rational marginal utility per
    character while prioritizing mandatory preferences and enforcing transitive
    duplicate groups, same-slot conflict exclusion, supporting-evidence
-   relationships, a 32-record pack cap, and the exact budget. Bootstrap returns
-   optional content-free `pack_metadata` accounting for candidate-pool caps,
-   omissions, provenance-backed items, and truthful truncation reasons. It
-   cannot weaken an upstream gate.
+   relationships, a 32-record pack cap, and the exact budget. When more than
+   eight interaction preferences are eligible, the compiler uses that same
+   selector and opaque signals to choose a deterministic reserve of at most
+   eight; overflow preferences become optional fallback candidates after a
+   compatible primary result. The reserve budget leaves room for the cheapest
+   feasible primary result when such a pair fits. At eight or fewer preferences,
+   the existing mandatory behavior is unchanged. Bootstrap returns optional
+   content-free `pack_metadata` accounting for candidate-pool caps, omissions,
+   provenance-backed items, and truthful truncation reasons. It cannot weaken an
+   upstream gate.
 7. Administrator-only diagnostics expose authorized returned record IDs plus
    numeric values, aggregate counts, and closed reason codes. They never include
    raw query/context text, denied IDs, or unauthorized-derived vocabulary.
@@ -98,6 +104,15 @@ selection. This preserves bounded MCP context compilation; it is not the source
 of the catalog API's `total`. Its optional `pack_metadata` envelope is
 provider-facing accounting, not ranking diagnostics, and does not expose query
 text or record IDs beyond the selected items already returned.
+
+The high-cardinality repair is local to compilation: authorization, temporal
+eligibility, sensitivity, admissibility, retrieval-pool limits, selector
+contracts, storage, and public response schemas are unchanged. With more than
+eight preferences, no-match queries still receive the reserve; matching queries
+can select primary records and supporting evidence before optional preference
+overflow. Tight budgets remain deterministic and fail closed. The sanitized
+regression uses 77 preferences, 20 relevant records, ten generic queries, a
+4,000-character budget, and a no-match query.
 
 Pack accounting is reconciled at each forwarding boundary: `selected_count`
 equals the returned item count, `omitted_count` equals

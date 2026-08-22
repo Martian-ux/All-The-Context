@@ -3433,3 +3433,29 @@ recompute those reason-specific counts. Edge therefore preserves only bounded
 claims about candidates still omitted and never presents ACL or envelope
 removals as duplicate/conflict suppression. No Core authority, transport,
 provider support, release state, or macOS posture changes.
+
+## ADR-129: High-cardinality interaction preferences use a compiler-local reserve
+
+**Status:** accepted locally on 2026-08-22 after focused sanitized retrieval and
+set-selection regressions; this is not release or provider acceptance.
+
+`ContextCompiler` preserves the existing mandatory-preference behavior through
+eight eligible interaction preferences. Above that threshold, it uses the
+existing deterministic selector and the same opaque semantic, diversity,
+redundancy, and conflict metadata to choose a compiler-local reserve of at most
+eight. The reserve is bounded against the exact character budget so a cheapest
+compatible primary relevant record remains feasible whenever a preference-plus-
+primary combination fits. Only the reserve is marked mandatory; overflow
+preferences are optional fallback candidates gated behind a compatible primary,
+so they cannot starve query-relevant records or supporting evidence. No-match
+queries still return the reserve, and impossible tight-budget combinations fail
+closed deterministically.
+
+This is deliberately not a selector, storage, retrieval-pool, ACL, temporal,
+sensitivity, API, or metadata-schema change. Core still reports exact used
+characters, selected/omitted counts, duplicate/conflict aggregates, and
+provenance using the existing pack contract. The regression is sanitized and
+synthetic only: 77 preferences, 20 relevant records, ten generic queries, a
+4,000-character budget, a no-match query, and negative ACL/temporal/sensitivity
+records. It does not touch private/live data, GitHub, release state, Figma, or
+macOS acceptance.

@@ -56,6 +56,7 @@ from .temporal import (
 _MAX_QUERY_TOKENS = 32
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
+_MAX_MANDATORY_PREFERENCE_RESERVE = 8
 _LEXICAL_ALIASES: dict[str, tuple[str, ...]] = {
     # Deliberately small, inspectable lexical equivalences. These are not learned
     # from vault content and cannot create a canonical record or authority.
@@ -857,6 +858,10 @@ class ContextCompiler:
         )
 
     @staticmethod
+    def _is_interaction_preference(item: ContextRecordOut) -> bool:
+        return item.kind.casefold() == "interaction_preference"
+
+    @staticmethod
     def _duplicate(item: ContextRecordOut, selected: Sequence[ContextRecordOut]) -> bool:
         normalized = _normalized_text(item.content)
         tokens = _dedupe_tokens(item.content)
@@ -977,17 +982,169 @@ class ContextCompiler:
                 ordered.append(item)
 
         redundancy = self._redundancy_groups(ordered)
-        primary = [
+        mandatory_preferences = [
             item
             for item in ordered
-            if item.id not in mandatory_ids and not self._is_supporting(item)
+            if item.id in mandatory_ids and self._is_interaction_preference(item)
         ]
+        high_cardinality_preferences = (
+            len(mandatory_preferences) > _MAX_MANDATORY_PREFERENCE_RESERVE
+        )
+        overflow_preference_ids: set[str] = set()
+        fallback_anchor_id: str | None = None
+
+        if high_cardinality_preferences:
+            # Bootstrap receives ranked input, but reserve membership must not
+            # depend on the caller's order. Canonicalizing this compiler-local
+            # high-cardinality path preserves the existing ranked path for small
+            # preference sets while making the reserve and its accounting stable.
+            ordered = sorted(ordered, key=lambda item: item.id)
+            redundancy = self._redundancy_groups(ordered)
+            mandatory_preferences = [
+                item
+                for item in ordered
+                if item.id in mandatory_ids and self._is_interaction_preference(item)
+            ]
+            preference_ids = {item.id for item in ordered if self._is_interaction_preference(item)}
+            primary = [
+                item
+                for item in ordered
+                if (
+                    item.id not in preference_ids
+                    and item.id not in mandatory_ids
+                    and not self._is_supporting(item)
+                )
+            ]
+
+            # Reserve selection uses the same opaque facets, diversity dimensions,
+            # redundancy groups, and conflict groups as the final selector. The
+            # stable ID order only supplies a deterministic tie/rank input for
+            # this compiler-local preselection; the selector itself is unchanged.
+            reserve_source = sorted(mandatory_preferences, key=lambda item: item.id)
+
+            fixed_mandatory_cost = sum(
+                self._cost(item)
+                for item in ordered
+                if item.id in mandatory_ids and not self._is_interaction_preference(item)
+            )
+            reserve_budget = max(0, budget_chars - fixed_mandatory_cost)
+            fixed_mandatory_items = [
+                item
+                for item in ordered
+                if item.id in mandatory_ids and not self._is_interaction_preference(item)
+            ]
+            anchor_id: str | None = None
+
+            def can_coexist(left: ContextRecordOut, right: ContextRecordOut) -> bool:
+                return not (
+                    redundancy[left.id] & redundancy[right.id]
+                    or self._conflict_groups(left) & self._conflict_groups(right)
+                )
+
+            feasible_primary = [
+                item
+                for item in sorted(
+                    primary, key=lambda candidate: (self._cost(candidate), candidate.id)
+                )
+                if all(can_coexist(item, fixed) for fixed in fixed_mandatory_items)
+                and any(
+                    can_coexist(item, preference)
+                    and fixed_mandatory_cost + self._cost(preference) + self._cost(item)
+                    <= budget_chars
+                    for preference in reserve_source
+                )
+            ]
+            if feasible_primary:
+                # Keep the cheapest feasible primary record possible after the
+                # reserve. A reserve may still be smaller than eight under a
+                # tight budget, which is deliberate fail-closed behavior.
+                anchor = feasible_primary[0]
+                anchor_id = anchor.id
+                reserve_source = [
+                    preference for preference in reserve_source if can_coexist(anchor, preference)
+                ]
+                reserve_budget = max(
+                    0,
+                    budget_chars - fixed_mandatory_cost - self._cost(anchor),
+                )
+
+            reserve_count = len(reserve_source)
+            reserve_candidates = [
+                SetSelectionCandidate(
+                    key=item.id,
+                    budget_cost=self._cost(item),
+                    base_utility=self._base_utility(item, index, reserve_count),
+                    semantic_facets=self._semantic_facets(item),
+                    diversity_dimensions=self._diversity_dimensions(item),
+                    redundancy_groups=redundancy[item.id],
+                    conflict_groups=self._conflict_groups(item),
+                    mandatory_interaction_preference=True,
+                    policy_authorized=True,
+                    temporally_eligible=True,
+                    task_admissible=True,
+                )
+                for index, item in enumerate(reserve_source)
+            ]
+
+            reserve_selection = self.selector.select(
+                reserve_candidates,
+                SetSelectionConstraints(
+                    limit=min(len(reserve_candidates), _MAX_MANDATORY_PREFERENCE_RESERVE),
+                    budget=reserve_budget,
+                ),
+            )
+            reserve_ids = {candidate.key for candidate in reserve_selection.candidates}
+            reserve_items = [item for item in ordered if item.id in reserve_ids]
+            overflow_preference_ids = {
+                item.id
+                for item in ordered
+                if self._is_interaction_preference(item) and item.id not in reserve_ids
+            }
+
+            # Put query-relevant non-preferences ahead of optional preference
+            # overflow. This makes overflow a fallback tier without changing the
+            # selector's public contract or its hard set invariants.
+            non_preference_items = [
+                item for item in ordered if not self._is_interaction_preference(item)
+            ]
+            ordered = [
+                *reserve_items,
+                *non_preference_items,
+                *[item for item in ordered if item.id in overflow_preference_ids],
+            ]
+            mandatory_ids = {
+                item.id for item in mandatory if not self._is_interaction_preference(item)
+            } | reserve_ids
+            compatible_primary = [
+                item
+                for item in primary
+                if all(
+                    not (
+                        redundancy[item.id] & redundancy[reserved.id]
+                        or self._conflict_groups(item) & self._conflict_groups(reserved)
+                    )
+                    for reserved in reserve_items
+                )
+            ]
+            if compatible_primary:
+                fallback_anchor_id = anchor_id or compatible_primary[0].id
+        else:
+            primary = [
+                item
+                for item in ordered
+                if item.id not in mandatory_ids and not self._is_supporting(item)
+            ]
         candidates: list[SetSelectionCandidate] = []
         count = len(ordered)
         for index, item in enumerate(ordered):
             mandatory_preference = item.id in mandatory_ids
             supports: set[str] = set()
-            if not mandatory_preference and self._is_supporting(item):
+            optional_preference_fallback = item.id in overflow_preference_ids
+            if optional_preference_fallback:
+                # Overflow is dormant for no-match queries and becomes feasible
+                # only after a compatible primary relevant record is selected.
+                supports.add(fallback_anchor_id or "__context_compiler_primary_required__")
+            elif not mandatory_preference and self._is_supporting(item):
                 supports.update(
                     target.id
                     for target in primary
@@ -1006,9 +1163,19 @@ class ContextCompiler:
                 SetSelectionCandidate(
                     key=item.id,
                     budget_cost=self._cost(item),
-                    base_utility=self._base_utility(item, index, count),
-                    semantic_facets=self._semantic_facets(item),
-                    diversity_dimensions=self._diversity_dimensions(item),
+                    base_utility=(
+                        1
+                        if optional_preference_fallback
+                        else self._base_utility(item, index, count)
+                    ),
+                    semantic_facets=(
+                        frozenset() if optional_preference_fallback else self._semantic_facets(item)
+                    ),
+                    diversity_dimensions=(
+                        frozenset()
+                        if optional_preference_fallback
+                        else self._diversity_dimensions(item)
+                    ),
                     redundancy_groups=redundancy[item.id],
                     conflict_groups=self._conflict_groups(item),
                     supports=frozenset(supports),
