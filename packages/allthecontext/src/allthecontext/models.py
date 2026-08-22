@@ -14,6 +14,9 @@ MAX_EVIDENCE_CHARS = 16_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
+MAX_TRUTH_CONFLICT_GROUPS = 64
+MAX_TRUTH_SUPERSEDED_BY = 64
+MAX_TRUTH_EVIDENCE = 512
 
 RecordListItem = Annotated[
     str,
@@ -434,10 +437,16 @@ class MemoryTruthRecordOut(StrictModel):
     status: MemoryTruthStatus
     status_reason: str
     conflict_state: TruthConflictState = TruthConflictState.NONE
-    conflict_group_ids: list[str] = Field(default_factory=list, max_length=64)
-    superseded_by: list[str] = Field(default_factory=list, max_length=64)
+    conflict_group_ids: list[str] = Field(
+        default_factory=list, max_length=MAX_TRUTH_CONFLICT_GROUPS
+    )
+    superseded_by: list[str] = Field(
+        default_factory=list, max_length=MAX_TRUTH_SUPERSEDED_BY
+    )
     source: TruthSourceOut | None = None
-    evidence: list[TruthEvidenceOut] = Field(default_factory=list, max_length=512)
+    evidence: list[TruthEvidenceOut] = Field(
+        default_factory=list, max_length=MAX_TRUTH_EVIDENCE
+    )
     history_count: int = Field(ge=0)
 
 

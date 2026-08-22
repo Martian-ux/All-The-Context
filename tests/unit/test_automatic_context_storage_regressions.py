@@ -192,6 +192,55 @@ def test_migration_005_recovers_after_partial_application_and_restart(
         ]
 
 
+def test_memory_truth_migrations_recover_after_unrecorded_alter_and_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "partial-memory-truth.sqlite3"
+    _create_v4_database(database)
+    migrations = _migration_directory()
+    with sqlite3.connect(database) as connection:
+        for version, filename in (
+            (5, "005_automatic_context_policy.sql"),
+            (6, "006_reversible_source_deletion.sql"),
+            (7, "007_chunked_source_blobs.sql"),
+            (8, "008_preledger_secret_boundary.sql"),
+            (9, "009_import_operations.sql"),
+        ):
+            connection.executescript((migrations / filename).read_text(encoding="utf-8"))
+            connection.execute(
+                "INSERT INTO schema_migrations VALUES(?,?,?)",
+                (version, filename, "2026-01-01T00:00:00+00:00"),
+            )
+        # Simulate a process dying after the first ALTER in migration 010,
+        # before its schema_migrations row was recorded.
+        connection.execute("ALTER TABLE context_candidates ADD COLUMN record_key TEXT")
+
+    restarted = CoreStore(database)
+    assert restarted.migrate() == 11
+    assert restarted.migrate() == 11
+    with restarted.connect() as connection:
+        candidate_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
+        }
+        record_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(context_records)")
+        }
+        tombstone_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(deletion_tombstones)")
+        }
+        versions = {
+            int(row["version"])
+            for row in connection.execute(
+                "SELECT version FROM schema_migrations WHERE version IN (10,11)"
+            )
+        }
+        assert "record_key" in candidate_columns
+        assert "record_key" in record_columns
+        assert {"deletion_origin", "deletion_source_id"} <= tombstone_columns
+        assert versions == {10, 11}
+
+
 def test_delete_history_is_contiguous_and_historical_restore_recovers_provenance(
     tmp_path: Path,
 ) -> None:

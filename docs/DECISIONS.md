@@ -2872,3 +2872,27 @@ An authorized restore is required before that lineage can become current again.
 This slice does not add a replayable append-only decision event stream,
 tentative expiration/decay, provider extraction changes, retrieval/ranking
 changes, dashboard wiring, or source-content history/purge presentation.
+
+## ADR-107: Memory Truth review corrections fail closed at storage boundaries
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth identity is derived from the current durable source address, kind,
+slot keys, and value. Every path that changes those fields recomputes the
+identity key before recording the next version, so an ordinary deletion remains
+a barrier after an observation update or restore. Manual approval links its
+originating observation through the same unique durable link used by automatic
+application; retries update no duplicate row.
+
+Migration 010/011 statement inspection strips leading SQL comments before
+idempotent `ALTER TABLE` recovery. Rebuild deletion provenance is constrained
+to a Core-internal validated cutover helper, with SQLite provenance checks and
+record/source/version/hash invariants before reuse. Portable restore treats all
+rebuild markers as untrusted input and imports them as ordinary deletion
+barriers; a valid rebuild marker is never sufficient authority merely because
+it appears in an authenticated export.
+
+Truth list pagination and status coverage use bounded SQL selection/counting.
+Projection arrays use the public limits of 64 superseders, 64 conflict groups,
+and 512 evidence links. This correction is additive and preserves existing
+purge, relay, authorization, and source-restore contracts.

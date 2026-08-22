@@ -1521,3 +1521,23 @@ state is already noncurrent and creates no user queue.
   `v1-engineering-1b894dd` Windows engineering set also scans clean. It is not
   built from this scanner commit or the still-unfrozen exact candidate; Linux
   tar.gz and macOS DMG contents are not claimed as inspected by this scanner.
+
+## Memory Truth review-fix amendment (2026-08-22)
+
+- Core migrations 010/011 are restart-safe after an interrupted `ALTER TABLE`,
+  including statements preceded by SQL comments; the focused probe covers an
+  unrecorded partial application and a second restart.
+- Observation, correction, historical-restore, and portable-restore paths now
+  recompute source/value identity keys from their durable identity-bearing
+  fields. A V1-to-V2 update therefore cannot bypass an ordinary deletion
+  barrier on matching archive reimport.
+- Source-rebuild tombstones are minted only by the validated Core cutover path,
+  are checked against record/source/hash/version invariants before reuse, and
+  imported rebuild markers are downgraded to ordinary barriers. Rebuild
+  compatibility remains additive to the existing purge/relay schemas.
+- Truth list/count projections page and count at SQL level, while superseded
+  IDs, conflict IDs, and evidence remain bounded to their public model limits.
+  Manual approval now creates an idempotent originating-observation evidence
+  link. Focused Memory Truth, storage, migration, export/restore, Core API,
+  provider-rebuild, purge, and relay checks pass locally; full-suite and hosted
+  CI evidence remain outside this lane.

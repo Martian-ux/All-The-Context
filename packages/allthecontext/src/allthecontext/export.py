@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .config import MAX_IMPORT_BYTES
-from .storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore
+from .storage import SOURCE_BLOB_CHUNK_BYTES, CoreStore, _stable_record_key_from_row
 
 MAGIC = b"ATCEXP1\x00"
 SALT_SIZE = 16
@@ -515,6 +515,39 @@ def _normalize_record_row(
     row.setdefault("policy_version", "legacy-review-v1")
 
 
+def _normalize_deletion_tombstone_row(row: dict[str, Any]) -> None:
+    """Never import source-rebuild authority from an untrusted archive.
+
+    A portable export authenticates the archive as a whole, but its JSONL rows
+    are still input data at restore time.  Rebuild provenance is an internal
+    Core capability, so an imported marker is deliberately downgraded to the
+    ordinary, non-resurrecting barrier.  This preserves restore compatibility
+    while making row tampering fail closed.
+    """
+
+    if str(row.get("deletion_origin", "ordinary")) != "ordinary":
+        row["deletion_origin"] = "ordinary"
+    row["deletion_source_id"] = None
+
+
+def _recompute_record_keys(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    columns_by_table: dict[str, set[str]],
+) -> None:
+    """Recompute identity keys from imported fields instead of trusting JSON."""
+
+    for table in ("context_candidates", "context_records"):
+        if table not in tables or "record_key" not in columns_by_table.get(table, set()):
+            continue
+        rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
+        for row in rows:
+            connection.execute(
+                f'UPDATE "{table}" SET record_key=? WHERE id=?',
+                (_stable_record_key_from_row(row), row["id"]),
+            )
+
+
 def _rebuild_context_fts(connection: sqlite3.Connection, tables: set[str]) -> None:
     if "context_fts" not in tables or "context_records" not in tables:
         return
@@ -586,6 +619,8 @@ def _post_restore_upgrade(
         if assignments:
             connection.execute(f"UPDATE context_records SET {','.join(assignments)}")
 
+    _recompute_record_keys(connection, tables, columns_by_table)
+
     if "vaults" in tables and destination_schema:
         connection.execute(
             "UPDATE vaults SET schema_version=? WHERE schema_version<?",
@@ -646,6 +681,7 @@ def restore_export(
             if dry_run:
                 return {"valid": True, "dry_run": True, "manifest": manifest}
             connection = sqlite3.connect(database_path)
+            connection.row_factory = sqlite3.Row
             try:
                 all_tables = {
                     str(row[0])
@@ -791,6 +827,8 @@ def restore_export(
                                     row["request_hash"] = secrets.token_hex(16)
                                 if not include_sources:
                                     row = _without_source_reference(table, row)
+                                if table == "deletion_tombstones":
+                                    _normalize_deletion_tombstone_row(row)
                                 if table == "context_candidates":
                                     _normalize_candidate_row(
                                         row,

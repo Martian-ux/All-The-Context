@@ -28,6 +28,8 @@ def _archive_observation(
     content: str,
     source_reference: str,
     session_key: str,
+    entity_key: str | None = None,
+    attribute_key: str | None = None,
 ) -> str:
     session = store.begin_ingestion(
         mode=IngestionMode.ARCHIVE,
@@ -47,6 +49,8 @@ def _archive_observation(
                 source_service="fiction-provider",
                 source_type="provider_archive",
                 explicit_user_statement=True,
+                entity_key=entity_key,
+                attribute_key=attribute_key,
             )
         ],
     )
@@ -164,6 +168,121 @@ def test_same_source_reference_different_values_do_not_collapse(tmp_path: Path) 
     assert second.record_id is not None
     assert second.record_id != record_id
     assert store.get_memory_truth(record_id).status == MemoryTruthStatus.DELETED
+
+
+def test_updated_identity_key_keeps_deletion_barrier_on_matching_reimport(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    first_id = _archive_observation(
+        store,
+        source.id,
+        content="V1 preference",
+        source_reference="message:identity-update",
+        session_key="v1",
+        entity_key="synthetic-user",
+        attribute_key="preference",
+    )
+    first = store.get_observation(first_id)
+    assert first.record_id is not None
+    record_id = first.record_id
+
+    second_id = _archive_observation(
+        store,
+        source.id,
+        content="V2 preference",
+        source_reference="message:identity-update",
+        session_key="v2",
+        entity_key="synthetic-user",
+        attribute_key="preference",
+    )
+    second = store.get_observation(second_id)
+    assert second.record_id == record_id
+    with store.connect() as connection:
+        key = connection.execute(
+            "SELECT record_key FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()[0]
+    assert key is not None
+
+    store.delete_record(record_id, reason="user removed the V2 memory")
+    reimport_id = _archive_observation(
+        store,
+        source.id,
+        content="V2 preference",
+        source_reference="message:identity-update",
+        session_key="v2-reimport",
+        entity_key="synthetic-user",
+        attribute_key="preference",
+    )
+    reimport = store.get_observation(reimport_id)
+    assert reimport.disposition == ObservationDisposition.IGNORED
+    assert reimport.record_id == record_id
+    assert store.status()["counts"]["active_records"] == 0
+
+
+def test_manual_approval_links_originating_evidence_once_on_retry(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    candidate = store.add_candidate(
+        CandidateInput(kind="fact", content="Manual approval evidence fixture")
+    )
+    record = store.approve_candidate(candidate.id)
+    store.approve_candidate(candidate.id)
+    with store.connect() as connection:
+        links = connection.execute(
+            "SELECT relationship FROM context_observation_links "
+            "WHERE observation_id=? AND record_id=?",
+            (candidate.id, record.id),
+        ).fetchall()
+    assert [str(row[0]) for row in links] == ["applied"]
+    assert [item.observation_id for item in store.get_memory_truth(record.id).evidence] == [
+        candidate.id
+    ]
+
+
+def test_truth_projection_bounds_large_supersession_and_evidence_sets(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    base = store.approve_candidate(
+        store.add_candidate(CandidateInput(kind="fact", content="Bounded truth base")).id
+    )
+
+    session = store.begin_ingestion(
+        mode=IngestionMode.BOOTSTRAP,
+        accessible_sources=[],
+        unavailable_sources=[],
+        idempotency_key="bounded-superseders",
+    )
+    superseders = store.submit_batch(
+        str(session["session_id"]),
+        "bounded-superseders-batch",
+        [
+            CandidateInput(
+                kind="fact",
+                content=f"Superseding value {index}",
+                supersedes=base.id,
+            )
+            for index in range(70)
+        ],
+    )
+    for candidate_id in superseders["candidate_ids"]:
+        store.approve_candidate(str(candidate_id))
+    truth = store.get_memory_truth(base.id)
+    assert truth.status == MemoryTruthStatus.SUPERSEDED
+    assert len(truth.superseded_by) == 64
+
+    evidence_record = store.approve_candidate(
+        store.add_candidate(
+            CandidateInput(kind="fact", content="Bounded evidence value")
+        ).id
+    )
+    for _ in range(512):
+        store.add_candidate(CandidateInput(kind="fact", content="Bounded evidence value"))
+    evidence = store.get_memory_truth(evidence_record.id).evidence
+    assert len(evidence) == 512
 
 
 def test_truth_projection_exposes_evidence_times_and_content_free_coverage(
