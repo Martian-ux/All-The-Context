@@ -2970,8 +2970,11 @@ authorize a typed action.
 
 Migration repair drops and recreates both append-only ledger triggers on every
 restart-safe repair pass, including when migration 013 is already marked
-applied. Duplicate-safe restore and isolated carry-forward counters increment
-only when SQLite actually inserts a row. The encrypted export passphrase is
+applied. The same pass probes the schema-014 history table, adds any missing
+typed-action columns, and recreates the typed-action unique index idempotently
+when migration 014 is already marked applied. Duplicate-safe restore and
+isolated carry-forward counters increment only when SQLite actually inserts a
+row. The encrypted export passphrase is
 not an external author signature: a holder who rewrites and re-encrypts every
 package member can rewrite both canonical history and ledger data. This
 decision closes row-only forgery without claiming provenance that the package

@@ -9,6 +9,7 @@ from allthecontext.core.app import create_app
 from allthecontext.export import create_export, restore_export
 from allthecontext.models import (
     ApprovalRequest,
+    Availability,
     CandidateInput,
     CoverageReport,
     IngestionMode,
@@ -522,6 +523,249 @@ def test_migration_013_repairs_each_append_only_trigger_when_already_applied(
             connection.execute(
                 "DELETE FROM context_user_mutations WHERE id='trigger-repair-marker'"
             )
+
+
+def test_migration_014_fresh_and_restart_passes_are_idempotent(tmp_path: Path) -> None:
+    database = tmp_path / "fresh-014.sqlite3"
+    store = CoreStore(database)
+    assert store.migrate() == 14
+    assert store.migrate() == 14
+
+    restarted = CoreStore(database)
+    assert restarted.migrate() == 14
+    assert restarted.migrate() == 14
+    with restarted.connect() as connection:
+        columns = {
+            str(row["name"])
+            for row in connection.execute('PRAGMA table_info("context_record_versions")')
+        }
+        assert {"user_action_kind", "user_action_key"} <= columns
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='uq_context_record_versions_user_action'"
+        ).fetchone() is not None
+
+
+@pytest.mark.parametrize(
+    "missing_columns",
+    [
+        ("user_action_kind",),
+        ("user_action_key",),
+        ("user_action_kind", "user_action_key"),
+    ],
+    ids=["kind", "key", "both"],
+)
+def test_migration_014_repairs_missing_typed_action_columns_when_already_applied(
+    tmp_path: Path, missing_columns: tuple[str, ...]
+) -> None:
+    database = tmp_path / ("typed-action-columns-" + "-".join(missing_columns) + ".sqlite3")
+    store = CoreStore(database)
+    store.initialize_vault()
+    source = store.add_source(
+        b"typed action column repair",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="A typed action repair fixture.",
+        source_reference="message:typed-action-columns",
+        session_key="typed-action-columns",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version=14"
+        ).fetchone() is not None
+        connection.execute("DROP INDEX uq_context_record_versions_user_action")
+        for column in missing_columns:
+            connection.execute(f"ALTER TABLE context_record_versions DROP COLUMN {column}")
+
+    restarted = CoreStore(database)
+    assert restarted.migrate() == 14
+    assert restarted.migrate() == 14
+    with restarted.connect() as connection:
+        columns = {
+            str(row["name"])
+            for row in connection.execute('PRAGMA table_info("context_record_versions")')
+        }
+        assert {"user_action_kind", "user_action_key"} <= columns
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='uq_context_record_versions_user_action'"
+        ).fetchone() is not None
+
+    restarted.correct_record(record_id, content="Corrected after schema repair.", reason="test")
+    with restarted.connect() as connection:
+        evidence = connection.execute(
+            "SELECT user_action_kind,user_action_key FROM context_record_versions "
+            "WHERE record_id=? AND user_action_key IS NOT NULL",
+            (record_id,),
+        ).fetchall()
+    assert [tuple(row) for row in evidence] == [
+        ("correction", f"correction:{record_id}:2")
+    ]
+
+
+def test_migration_014_repairs_missing_index_without_changing_typed_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "typed-action-index.sqlite3"
+    store = CoreStore(database)
+    store.initialize_vault()
+    source = store.add_source(
+        b"typed action index repair",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="An existing typed action.",
+        source_reference="message:typed-action-index",
+        session_key="typed-action-index",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+    store.correct_record(record_id, content="Existing correction.", reason="test")
+    with sqlite3.connect(database) as connection:
+        before = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT user_action_kind,user_action_key FROM context_record_versions "
+                "WHERE record_id=? AND user_action_key IS NOT NULL",
+                (record_id,),
+            ).fetchall()
+        ]
+        connection.execute("DROP INDEX uq_context_record_versions_user_action")
+
+    restarted = CoreStore(database)
+    assert restarted.migrate() == 14
+    assert restarted.migrate() == 14
+    with restarted.connect() as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT user_action_kind,user_action_key FROM context_record_versions "
+                "WHERE record_id=? AND user_action_key IS NOT NULL",
+                (record_id,),
+            ).fetchall()
+        ] == before
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='uq_context_record_versions_user_action'"
+        ).fetchone() is not None
+
+    restarted.correct_record(record_id, content="Second correction.", reason="test")
+    with restarted.connect() as connection:
+        keys = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT user_action_key FROM context_record_versions "
+                "WHERE record_id=? AND user_action_key IS NOT NULL ORDER BY version",
+                (record_id,),
+            ).fetchall()
+        ]
+    assert keys == [f"correction:{record_id}:2", f"correction:{record_id}:3"]
+    assert len(keys) == len(set(keys))
+
+
+def test_migration_014_repair_keeps_all_typed_local_action_paths_operational(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "typed-action-paths.sqlite3"
+    store = CoreStore(database)
+    store.initialize_vault()
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX uq_context_record_versions_user_action")
+        connection.execute("ALTER TABLE context_record_versions DROP COLUMN user_action_kind")
+        connection.execute("ALTER TABLE context_record_versions DROP COLUMN user_action_key")
+
+    repaired = CoreStore(database)
+    assert repaired.migrate() == 14
+    assert repaired.migrate() == 14
+
+    correction_source = repaired.add_source(
+        b"correction action",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    correction_observation = _archive_observation(
+        repaired,
+        correction_source.id,
+        content="Correction action fixture.",
+        source_reference="message:correction-action",
+        session_key="correction-action",
+    )
+    correction_record_id = repaired.get_observation(correction_observation).record_id
+    assert correction_record_id is not None
+    repaired.correct_record(correction_record_id, content="Corrected.", reason="test")
+
+    availability_source = repaired.add_source(
+        b"availability action",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    availability_observation = _archive_observation(
+        repaired,
+        availability_source.id,
+        content="Availability action fixture.",
+        source_reference="message:availability-action",
+        session_key="availability-action",
+    )
+    availability_record_id = repaired.get_observation(availability_observation).record_id
+    assert availability_record_id is not None
+    repaired.change_availability(availability_record_id, Availability.LOCAL)
+
+    restore_source = repaired.add_source(
+        b"restore action",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    restore_observation = _archive_observation(
+        repaired,
+        restore_source.id,
+        content="Restore action fixture.",
+        source_reference="message:restore-action",
+        session_key="restore-action",
+    )
+    restore_record_id = repaired.get_observation(restore_observation).record_id
+    assert restore_record_id is not None
+    repaired.delete_record(restore_record_id, reason="test")
+    repaired.restore_record(restore_record_id, reason="test")
+
+    source_delete_source = repaired.add_source(
+        b"source delete action",
+        source_service="fixture-provider",
+        source_type="provider_archive",
+    )
+    source_delete_observation = _archive_observation(
+        repaired,
+        source_delete_source.id,
+        content="Source delete action fixture.",
+        source_reference="message:source-delete-action",
+        session_key="source-delete-action",
+    )
+    source_delete_record_id = repaired.get_observation(source_delete_observation).record_id
+    assert source_delete_record_id is not None
+    repaired.delete_source(source_delete_source.id, reason="test")
+
+    with repaired.connect() as connection:
+        rows = connection.execute(
+            "SELECT user_action_kind,user_action_key FROM context_record_versions "
+            "WHERE user_action_key IS NOT NULL"
+        ).fetchall()
+    assert {str(row["user_action_kind"]) for row in rows} == {
+        "correction",
+        "availability_change",
+        "delete",
+        "restore",
+        "source_delete",
+    }
+    keys = [str(row["user_action_key"]) for row in rows]
+    assert len(keys) == len(set(keys))
 
 
 def test_legacy_upgrade_keeps_trusted_rebuild_tombstone_automatic(

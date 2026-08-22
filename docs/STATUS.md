@@ -1598,11 +1598,14 @@ state is already noncurrent and creates no user queue.
   `legacy_user_edit` facts, and old packages are handled explicitly rather than
   treated as typed action proof.
 - Migration repair recreates both append-only mutation triggers on every pass,
-  including databases where migration 013 is already marked applied. Restore
-  and isolated recovery counters now report only actual inserts, so repeated
-  imports are ignored rather than reported accepted.
+  including databases where migration 013 is already marked applied. The same
+  restart/migrate pass repairs any missing schema-014 typed-action columns and
+  recreates its partial unique index idempotently when migration 014 is already
+  marked applied. Restore and isolated recovery counters now report only actual
+  inserts, so repeated imports are ignored rather than reported accepted.
 - Focused adversarial coverage includes zero-source-ledger evidence-only
   forgery with stable-ID rebuild reuse, genuine typed mutation round-trip and
-  rebuild blocking, trigger loss/restart/idempotence, and duplicate import
-  counts. This remains local review evidence only; encrypted package possession
-  is not an external signature over a fully rewritten and re-encrypted archive.
+  rebuild blocking, trigger loss/restart/idempotence, schema-014 partial-column
+  and index repair, all typed local action paths, and duplicate import counts.
+  This remains local review evidence only; encrypted package possession is not
+  an external signature over a fully rewritten and re-encrypted archive.

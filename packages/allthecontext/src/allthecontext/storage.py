@@ -753,6 +753,31 @@ class CoreStore:
                 (_normalize_actor(str(audit["client_id"])), audit["id"]),
             )
 
+    @staticmethod
+    def _ensure_typed_user_action_evidence_tx(connection: sqlite3.Connection) -> None:
+        """Repair an interrupted/older 014 schema without advancing its version."""
+
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='context_record_versions'"
+        ).fetchone()
+        if table is None:
+            return
+        columns = {
+            str(row[1])
+            for row in connection.execute('PRAGMA table_info("context_record_versions")')
+        }
+        for column in ("user_action_kind", "user_action_key"):
+            if column not in columns:
+                connection.execute(
+                    f'ALTER TABLE context_record_versions ADD COLUMN "{column}" TEXT'
+                )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_context_record_versions_user_action "
+            "ON context_record_versions(record_id, user_action_key) "
+            "WHERE user_action_key IS NOT NULL"
+        )
+
     def migrate(self) -> int:
         migration_dir = Path(__file__).parent / "migrations" / "core"
         migrations = sorted(migration_dir.glob("[0-9][0-9][0-9]_*.sql"))
@@ -795,6 +820,7 @@ class CoreStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 self._ensure_user_mutation_boundary_tx(connection)
+                self._ensure_typed_user_action_evidence_tx(connection)
             except BaseException:
                 connection.rollback()
                 raise
