@@ -2028,16 +2028,19 @@ or papered over in this integration.
 - `experimental_zero_dashboard_harness.py` and its focused fixture/test
   compose the existing deterministic capture adapter, capture
   ledger/coordinator, idempotent sink boundary, exact L2 fake lifecycle host,
-  event reconciliation, formation/dependency contracts, Core observation
-  policy, and authorized Retrieval V3 bootstrap path over one temporary local
-  Core database.
+  event reconciliation, formation contracts, Core observation policy, and
+  authorized Retrieval V3 bootstrap path over one temporary local Core
+  database. A separate content-free projection-contract check is component
+  evidence only; it is not Memory Lab M3/Core/Retrieval integration.
 - The disposable journey passes the non-compensable synthetic scorecard for
-  initial useful context, direct evidence, correction propagation, permission
-  narrowing, retention/expiry, ordinary deletion, terminal purge, restart and
-  cursor recovery, replay idempotency, duplicate absence, capability truth,
-  zero routine dashboard actions, and bounded compile latency. Secret-like
-  content is refused before a candidate is retained; imported fixture text is
-  inert and remains tentative.
+  phase-aware context safety across first/corrected/pre-purge/final/viewer
+  packs, direct evidence, correction propagation, permission narrowing,
+  retention/expiry, ordinary deletion, terminal purge, genuine restart/cursor
+  recovery, replay idempotency, duplicate absence, capability truth, a bounded
+  scripted action guard, and bounded compile plus post-restart time-to-first
+  context. Secret-like content is resolved through a direct-user reference and
+  refused before a candidate is retained; imported fixture text is inert and
+  remains tentative.
 - This is Wave 2 developer evidence only. It adds no scheduler, provider or
   network connector, OAuth/client SDK claim, dashboard dependency, operator
   vault access, stable export, migration, package, release, or production

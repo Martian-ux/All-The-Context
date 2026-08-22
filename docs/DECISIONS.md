@@ -3551,19 +3551,22 @@ with the Wave 1 lifecycle, reconciliation, formation, and dependency contracts.
 Formation writes only through `CoreStore.add_candidate`, where the existing
 Core policy decides whether evidence becomes current context; the harness never
 creates a parallel observation, current-record, cursor, checkpoint, or
-retrieval store. The only non-Core mapping is an in-memory test-sink receipt
-correlation from a provider item to the Core record returned by that same
-application call.
+retrieval store. A delete after restart resolves its observation/record
+correlation through durable public Core candidate APIs; no in-memory item map is
+carried across restart.
 
 The fixture is sanitized, deterministic, local-only, and inert. A deliberate
-retry after the first capture page proves the persisted cursor boundary, and a
-new coordinator/CoreStore/fake-host instance replays the completed pages without
-new observations or current records. Retrieval V3 is called with an authorized
-Core principal; the L2 host declares every hook, exercises pre-generation,
-direct-user, and restart hooks, and leaves its unsupported consequence hook
-explicitly unsupported. Correction, permission narrowing, expiry, ordinary
-delete, and terminal purge are checked by their existing Core/Retrieval
-boundaries plus the content-free M3 dependency closure.
+retry after the first capture page closes the first CoreStore, then a fresh
+coordinator/sink/cursor-semantic adapter resumes from persisted `cursor-1` and
+applies the correct page. A later fresh completed replay is compared directly
+before/after for Core counts and creates no new capture events, observations, or
+current records. Retrieval V3 is called with an authorized Core principal; the
+L2 host declares every hook, exercises pre-generation, direct-user, and restart
+hooks, and leaves its unsupported consequence hook explicitly unsupported.
+Correction, permission narrowing, expiry, ordinary delete, and terminal purge
+are checked by their existing Core/Retrieval boundaries. The bounded projection
+closure result is separate content-free component evidence, not M3/Core/Retrieval
+production integration; scripted host trace checks are not operator telemetry.
 
 The receipt is developer evidence only. It does not imply a real connector,
 provider integration, network/OAuth behavior, stable SDK/export contract,
