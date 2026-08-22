@@ -15,6 +15,31 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## Privacy ACL boundary repair (2026-08-22)
+
+The canonical observation merge now treats a restrictive allowlist as content-
+scoped. When a winning replacement carries a disjoint restrictive allowlist,
+the canonical record adopts that new boundary instead of retaining the old
+client set and exposing the replacement content to the old client. Overlapping
+allowlists remain intersected, and an omitted observation allowlist still
+cannot loosen an existing restriction. Reinforcement keeps the current
+boundary when its observation is disjoint, so it cannot transfer existing
+content to a different client.
+
+Principal-scoped Memory Truth detail now applies the same allow/deny check to
+each linked observation before the bounded evidence limit. The principal-less
+Core/local-admin projection remains intentionally unfiltered; unrestricted
+records remain available to authorized principals. Focused synthetic regression
+tests cover the replacement, reinforcement, evidence, unrestricted, and local-
+admin cases. Full pytest, hosted CI, release/publication, live/private data,
+network/provider access, and macOS work are not claimed for this repair.
+
+Local validation for this change is six focused pytest nodeids (6 passed),
+`python -m ruff check .` (passed), `python -m mypy packages/allthecontext/src`
+(82 source files, passed), and `git diff --check` (passed). A FastAPI/httpx
+deprecation warning remains in the focused test environment; it is unrelated
+to this repair.
+
 ## Draft-PR formatting and CI-trigger reconciliation (2026-08-22)
 
 Draft PR 73 exposed one deterministic source-check failure: 23 changed Python

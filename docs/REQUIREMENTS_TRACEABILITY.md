@@ -186,6 +186,20 @@ extraction, retrieval/ranking, dashboard behavior, MCP tools, or release state.
 | Content-free source/observation accounting | `TruthCoverageOut`; `CoreStore.memory_truth_coverage`; `GET /v1/context/coverage`; status projection; focused coverage regression | Implemented locally for source, observation disposition, record status, conflict-group, ingestion completion, and unavailable-source counts. It intentionally does not claim that raw source bytes or provider extraction are complete |
 | Stable reprocessing identity without deletion resurrection | migrations `010_memory_truth.sql` and `011_rebuild_tombstone_provenance.sql`; source-rebuild cutover; deletion-barrier regressions | Implemented locally: matching internal source-rebuild tombstones can reapply an untouched automatic archive record under the same ID; ordinary user tombstones block matching archive evidence from becoming current under any new ID; source-reference collisions with different values remain distinct |
 
+### 2026-08-22 privacy ACL boundary repair
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| A winning replacement cannot expose new disjoint-private content through the old client ACL | `storage.py::_monotonic_security`; `tests/unit/test_automatic_context_policy.py::test_disjoint_replacement_and_reinforcement_keep_acl_boundaries`; focused temporary-database regression | Implemented locally: overlapping restrictions intersect, disjoint replacement restrictions follow the replacement content, omitted restrictions retain the existing boundary, and disjoint reinforcement retains the current boundary |
+| Principal-scoped Memory Truth cannot expose linked observation evidence outside its ACL | `storage.py::_truth_evidence_acl_filter`; `CoreStore.get_memory_truth`; `tests/unit/test_memory_truth.py::test_truth_detail_filters_disjoint_canonical_and_evidence_acl` | Implemented locally: canonical authorization is checked first and evidence is ACL-filtered before the bounded evidence limit. Principal-less Core/local-admin truth remains intentionally complete; unrestricted records retain their existing behavior |
+
+This repair was validated only with six focused pytest nodeids (6 passed),
+`python -m ruff check .`, `python -m mypy packages/allthecontext/src`, and
+`git diff --check`. Full pytest, hosted CI, release or publication checks,
+network/provider access, live/private data, and macOS work remain outside the
+evidence boundary. The focused test environment still emits one unrelated
+FastAPI/httpx deprecation warning.
+
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
 | Frozen Python dependency audit | `pyproject.toml`; `uv.lock`; `scripts/dependency_audit.py`; ADR-091 | The local lock/audit contract remains documented. This integration did not run hosted CI or make release/security acceptance claims. |

@@ -3329,3 +3329,27 @@ The accepted deterministic retrieval integration also changes the frozen B01
 updated without changing the frozen fixture/config identities, boundary flags,
 operation accounting, or final `KILL_MECHANISM` decision. Neither reconciliation
 changes provider availability, release state, or the unsupported-macOS posture.
+
+## ADR-124: ACLs follow replacement content and evidence follows observation ACLs
+
+**Status:** accepted locally on 2026-08-22 after focused synthetic privacy
+regressions; this is not release acceptance.
+
+Persisted empty `allowed_clients` means unrestricted, but an observation with
+that omitted/empty allowlist must not loosen a currently restrictive canonical
+record. When both the current record and observation are restrictive, an
+overlap is intersected. If the restrictions are disjoint, a content-replacing
+observation adopts its own allowlist because the canonical payload has changed;
+retaining the old set would authorize the old client to read new private
+content. A reinforcement does not replace content, so a disjoint observation
+retains the current allowlist and cannot transfer existing content to the new
+client. Deny sets continue to union, preserving the fail-closed result when a
+client is both allowed and denied.
+
+`CoreStore.get_memory_truth(principal=...)` is authorization-first for the
+canonical record and now filters linked observation evidence with each
+observation's own allow/deny ACL before applying the bounded evidence limit.
+The principal-less Core/local-admin path intentionally retains the complete
+projection, including linked evidence; no admin-scope bypass is added to the
+principal-scoped path. This is a storage/query repair with no schema or
+provider-contract change, and it uses only synthetic temporary-database tests.

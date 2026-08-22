@@ -18,10 +18,12 @@ from allthecontext.models import (
     SearchRequest,
 )
 from allthecontext.retrieval import RetrievalEngine
+from allthecontext.security import ClientPrincipal
 from allthecontext.storage import (
     SOURCE_REBUILD_REASON,
     CoreStore,
     InvalidStateError,
+    NotFoundError,
     source_rebuild_marker,
 )
 from fastapi.testclient import TestClient
@@ -1312,6 +1314,74 @@ def test_truth_projection_exposes_evidence_times_and_content_free_coverage(
         admin_truth = client.get("/v1/admin/memory-truth")
         assert admin_truth.status_code == 200, admin_truth.text
         assert admin_truth.json()["items"][0]["record"]["id"] == record_id
+
+
+def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    original = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="old disjoint-private value",
+            entity_key="user",
+            attribute_key="private_fact",
+            allowed_clients=["old-client"],
+            evidence="old disjoint-private evidence",
+            explicit_user_statement=True,
+        )
+    )
+    assert original.record_id is not None
+    correction = store.add_candidate(
+        CandidateInput(
+            kind="correction",
+            content="new disjoint-private value",
+            supersedes=original.record_id,
+            allowed_clients=["new-client"],
+            evidence="new disjoint-private evidence",
+            explicit_user_statement=True,
+        )
+    )
+    assert correction.disposition == ObservationDisposition.APPLIED
+    assert store.get_record(original.record_id).allowed_clients == ["new-client"]
+
+    old_principal = ClientPrincipal("old-client", "Old client", frozenset())
+    new_principal = ClientPrincipal("new-client", "New client", frozenset())
+    with pytest.raises(NotFoundError):
+        store.get_memory_truth(original.record_id, principal=old_principal)
+
+    authorized_truth = store.get_memory_truth(original.record_id, principal=new_principal)
+    assert authorized_truth.record.content == "new disjoint-private value"
+    assert [item.content for item in authorized_truth.evidence] == [
+        "new disjoint-private value"
+    ]
+    assert [item.evidence for item in authorized_truth.evidence] == [
+        "new disjoint-private evidence"
+    ]
+
+    # The principal-less local-admin/Core path intentionally retains the full
+    # canonical projection and all linked evidence.
+    local_truth = store.get_memory_truth(original.record_id)
+    assert [item.content for item in local_truth.evidence] == [
+        "old disjoint-private value",
+        "new disjoint-private value",
+    ]
+
+    unrestricted = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="unrestricted local value",
+            evidence="unrestricted local evidence",
+            explicit_user_statement=True,
+        )
+    )
+    assert unrestricted.record_id is not None
+    unrestricted_truth = store.get_memory_truth(
+        unrestricted.record_id,
+        principal=old_principal,
+    )
+    assert unrestricted_truth.record.content == "unrestricted local value"
+    assert [item.evidence for item in unrestricted_truth.evidence] == [
+        "unrestricted local evidence"
+    ]
 
 
 def test_truth_status_distinguishes_conflict_supersession_and_deletion(

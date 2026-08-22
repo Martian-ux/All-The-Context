@@ -394,6 +394,8 @@ def _monotonic_security(
     record: sqlite3.Row,
     observation: sqlite3.Row,
     requested_availability: Availability,
+    *,
+    content_replaced: bool,
 ) -> tuple[Sensitivity, Availability, set[str], set[str]]:
     sensitivity_order = {
         Sensitivity.NORMAL: 0,
@@ -421,10 +423,13 @@ def _monotonic_security(
     current_allowed = set(_loads(record["allowed_clients_json"], []))
     observed_allowed = set(_loads(observation["allowed_clients_json"], []))
     if current_allowed and observed_allowed:
-        # Empty means unrestricted in the persisted ACL model. If two
-        # restrictive allowlists are disjoint, retain the existing boundary
-        # rather than accidentally serializing an unrestricted empty list.
-        allowed = (current_allowed & observed_allowed) or current_allowed
+        # Empty means unrestricted in the persisted ACL model. Overlapping
+        # restrictions remain intersected. A replacement's disjoint
+        # restriction describes the new content and must replace the old
+        # boundary; a reinforcement never transfers existing content to the
+        # disjoint observer.
+        overlap = current_allowed & observed_allowed
+        allowed = overlap or (observed_allowed if content_replaced else current_allowed)
     else:
         allowed = current_allowed or observed_allowed
     denied = set(_loads(record["denied_clients_json"], [])) | set(
@@ -4636,6 +4641,7 @@ class CoreStore:
             record,
             observation,
             availability,
+            content_replaced=True,
         )
         source_id = cast(str | None, observed_or_existing("source_id"))
         source_reference = cast(str | None, observed_or_existing("source_reference"))
@@ -4739,6 +4745,7 @@ class CoreStore:
             record,
             observation,
             availability,
+            content_replaced=False,
         )
         current_allowed = set(_loads(record["allowed_clients_json"], []))
         current_denied = set(_loads(record["denied_clients_json"], []))
@@ -6431,25 +6438,52 @@ class CoreStore:
             content_hash=str(row["content_hash"]),
         )
 
+    @staticmethod
+    def _truth_evidence_acl_filter(
+        principal: ClientPrincipal | None,
+    ) -> tuple[str, list[str]]:
+        if principal is None:
+            return "", []
+        return (
+            " AND (json_array_length(c.allowed_clients_json)=0 OR EXISTS ("
+            "SELECT 1 FROM json_each(c.allowed_clients_json) allowed "
+            "WHERE allowed.value=?)) "
+            "AND NOT EXISTS (SELECT 1 FROM json_each(c.denied_clients_json) denied "
+            "WHERE denied.value=?)",
+            [principal.id, principal.id],
+        )
+
     def _truth_evidence_tx(
-        self, connection: sqlite3.Connection, record_id: str
+        self,
+        connection: sqlite3.Connection,
+        record_id: str,
+        principal: ClientPrincipal | None = None,
     ) -> list[TruthEvidenceOut]:
+        acl_filter, acl_parameters = self._truth_evidence_acl_filter(principal)
         rows = connection.execute(
             "SELECT l.relationship,l.created_at AS link_created_at,c.* "
             "FROM context_observation_links l "
             "JOIN context_candidates c ON c.id=l.observation_id "
-            "WHERE l.record_id=? ORDER BY c.observed_at,c.created_at,c.id LIMIT ?",
-            (record_id, MAX_TRUTH_EVIDENCE),
+            "WHERE l.record_id=?"
+            + acl_filter
+            + " ORDER BY c.observed_at,c.created_at,c.id LIMIT ?",
+            [record_id, *acl_parameters, MAX_TRUTH_EVIDENCE],
         ).fetchall()
         return [self._truth_evidence_out(row, record_id) for row in rows]
 
     def _truth_record_tx(
-        self, connection: sqlite3.Connection, record: sqlite3.Row
+        self,
+        connection: sqlite3.Connection,
+        record: sqlite3.Row,
+        principal: ClientPrincipal | None = None,
     ) -> MemoryTruthRecordOut:
-        return self._truth_records_tx(connection, [record])[0]
+        return self._truth_records_tx(connection, [record], principal=principal)[0]
 
     def _truth_records_tx(
-        self, connection: sqlite3.Connection, records: Sequence[sqlite3.Row]
+        self,
+        connection: sqlite3.Connection,
+        records: Sequence[sqlite3.Row],
+        principal: ClientPrincipal | None = None,
     ) -> list[MemoryTruthRecordOut]:
         """Project a page using bounded set queries instead of row-by-row reads."""
 
@@ -6517,6 +6551,7 @@ class CoreStore:
             sources = {str(row["id"]): self._truth_source_out(row) for row in source_rows}
 
         evidence: dict[str, list[TruthEvidenceOut]] = {}
+        acl_filter, acl_parameters = self._truth_evidence_acl_filter(principal)
         for row in connection.execute(
             "WITH ranked AS ("
             "SELECT l.record_id,l.relationship,l.created_at AS link_created_at,c.*,"
@@ -6524,10 +6559,10 @@ class CoreStore:
             "(PARTITION BY l.record_id ORDER BY c.observed_at,c.created_at,c.id) AS row_number "
             "FROM context_observation_links l "
             "JOIN context_candidates c ON c.id=l.observation_id "
-            f"WHERE l.record_id IN ({placeholders})) "
+            f"WHERE l.record_id IN ({placeholders}){acl_filter}) "
             "SELECT * FROM ranked WHERE row_number<=? "
             "ORDER BY record_id,observed_at,created_at,id",
-            [*record_ids, MAX_TRUTH_EVIDENCE],
+            [*record_ids, *acl_parameters, MAX_TRUTH_EVIDENCE],
         ).fetchall():
             target = str(row["record_id"])
             evidence_values = evidence.setdefault(target, [])
@@ -6682,7 +6717,7 @@ class CoreStore:
                 raise NotFoundError("context record not found")
             if principal is not None and not self._record_is_allowed(row, principal):
                 raise NotFoundError("context record not found")
-            return self._truth_record_tx(connection, row)
+            return self._truth_record_tx(connection, row, principal=principal)
 
     def list_memory_truth(
         self,
