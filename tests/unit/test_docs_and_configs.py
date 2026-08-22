@@ -175,7 +175,7 @@ def test_active_release_docs_keep_published_and_historical_identities_distinct()
     assert "align active acceptance work with beta.3" not in execution
     assert "ADR-095: Candidate identities stay external" in decisions
     assert "ADR-096: Opaque GitHub CLI asset IDs" in decisions
-    assert "ADR-097: Isolate synthetic retrieval usefulness evaluation" in decisions
+    assert "ADR-104: Isolate synthetic retrieval usefulness evaluation" in decisions
 
 
 def test_v1_has_no_hosted_runtime_publication_or_provider_template() -> None:
