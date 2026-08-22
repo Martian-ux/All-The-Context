@@ -2,10 +2,10 @@
 
 ## Current milestone
 
-As of 2026-08-21, the immediate target is an unsigned
-`0.1.0-beta.6` community release for Windows 11 x86-64 and Ubuntu 24.04 LTS
-x86-64. This first usable public beta is the active V1 target; stable `1.0.0`
-is post-V1. No beta release has been published. The
+As of 2026-08-22 UTC, the unsigned `0.1.0-beta.6` community release is a public,
+immutable GitHub prerelease for Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64.
+Stable `1.0.0` is post-V1. Direct downloads are live; the protected Windows
+beta-channel promotion remains pending. The
 dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
 work packages are in
 [`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-b` private
@@ -21,7 +21,9 @@ The initial public beta uses `lean_public_beta_v1`: exact Windows 11 and Ubuntu
 maintainer to acknowledge the incomplete certification matrix, unsupported
 macOS, unsigned community packages, and reviewed known issues. The 20-gate
 ledger remains truthful certification evidence and is not relabeled, waived,
-or treated as lean approval. No receipt bundle or approval exists yet.
+or treated as lean approval. The exact six-receipt lean bundle and the required
+maintainer acknowledgements authorized beta.6 signing and publication; they do
+not claim completion of the 20-gate certification profile.
 
 The live unpublished `0.1.0-beta.1` four-platform identity is draft ID
 `367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
@@ -67,11 +69,15 @@ the active product plan to beta.3. Those statements are contradictory current
 release state, so beta.5 remains occupied historical evidence and receives no
 rebound receipts.
 
-`0.1.0-beta.6` is the active source version. Its post-build numeric release ID,
-workflow run, candidate digest, and receipts belong in the external exact
-prepublication ledger because a source commit cannot truthfully self-record a
-candidate created after that commit. No occupied draft is retargeted, deleted,
-reused, signed, or published.
+`0.1.0-beta.6` is published as immutable prerelease ID `374723649` from exact
+source `d6d51acc5a880e611a65a206b90c6eb68118443d`, release-candidate run
+`32536391309`, and candidate digest
+`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`.
+The release contains 34 attested assets: Windows/Linux packages and evidence,
+the offline-signed Windows OTA manifest, the lean acceptance bundle, and the
+publication record. GitHub release attestation verification passes for all 34
+assets. No occupied historical draft was retargeted, deleted, reused, signed,
+or published.
 
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
@@ -92,8 +98,9 @@ alleging compromise, marks `release-2026-a` revoked, activates
 `0.1.0-beta.4`. ADR-094 records the custody documentation correction and
 advanced the replacement candidate to `0.1.0-beta.5`. ADR-095 records the
 remaining stale active-state statements, retains beta.5 as occupied history,
-and advances the active source version to `0.1.0-beta.6`. Its exact candidate
-evidence and human release gates remain external and fail closed.
+and advances the active source version to `0.1.0-beta.6`. Its exact candidate,
+approval, signing, and publication evidence remains in the external ledger.
+ADR-096 records the post-publication GitHub CLI asset-ID compatibility repair.
 
 PR 66 was squash-merged after both hosted CI matrices and CodeQL passed at
 protected main `088485d268d11e3167e7aad2e09a22c42659607f`. It records the
@@ -809,8 +816,8 @@ accepted.
 ## Automatic context maintenance baseline
 
 The following implementation is integrated on current main. Its local and
-hosted source/package matrices are green; the final packaged fresh-user browser
-receipt and frozen release identity remain open:
+hosted source/package matrices are green; beta.6 has a frozen published release
+identity, while broader certification-profile browser evidence remains open:
 
 - Core migration `005_automatic_context_policy.sql` adds per-vault
   `automatic-v1` policy, observation origin/time/disposition/decision fields,
@@ -1229,79 +1236,20 @@ state is already noncurrent and creates no user queue.
   fail-closed protected-credential setup. Exact platform/client/package
   receipts remain required; documentation truth is not execution evidence.
 
-## Remaining beta gates
+## Remaining beta work
 
-- Materialize candidate-bound L01/L02 receipts from the completed supported
-  Windows/Ubuntu journeys. The broader fresh-user browser/client/provider/
-  scale/recovery matrix remains open certification work and receives no lean
-  credit.
-- Bind the completed human custody prerequisite to the replacement candidate.
-  On 2026-08-21 the custodian restore-tested one recoverable encrypted backup
-  kept separate from the primary under
-  [`operations/RELEASE_KEY_CUSTODY_FORM.md`](operations/RELEASE_KEY_CUSTODY_FORM.md).
-  Emit exactly one `BETA-R02` source receipt only after the beta.4 source commit
-  and candidate digest exist. Offline
-  Windows x86-64 signing, publication, and channel promotion wait until all six
-  lean pass receipts exist, every lean acknowledgement is true, and the
-  maintainer records an explicit `approve` with
-  `independent_human_review_claimed=false`. The private
-  key, password, and backup location never enter the repository, Actions, an
-  AI system, a shell argument, or an environment variable.
-- Preserve and reverify the live branch, environment, secret, dependency,
-  immutable-Action, and CodeQL controls on the final candidate SHA. CodeQL
-  findings must close through an integrated rescan rather than dismissal; the
-  documented administrator bypass and sole-maintainer self-review remain
-  explicit residuals. No live channel or public release exists yet.
-- GitHub private vulnerability reporting is enabled. Keep detailed credential,
-  secret-boundary, and client-witness findings there and verify that public
-  security guidance routes reporters to it.
-- Repeat the implemented B-101 pre-ledger refusal, repair/compaction, and
-  byte-level SQLite/WAL/freelist/FTS/export/restore proofs on the exact frozen
-  candidate; retire or replace historical external backups according to the
-  runbook rather than claiming they were rewritten.
-- Implement the accepted trust grant for explicitly authorized, ATC-configured
-  same-device Codex/Claude clients and prevent contradictory unkeyed imported
-  history from simultaneously becoming confident current truth.
-- Repeat B-103 negative route/CLI/package proofs on the exact frozen candidate
-  package artifacts; the Core product surface isolation is implemented and
-  unit/integration-tested.
-- Complete privacy-safe acceptance against current real ChatGPT, Claude, and
-  Grok exports acquired after parser freeze and within 30 days of acceptance.
-  Each must be nonempty, exercise the frozen fictional shape set, and reconcile
-  every input to a closed recognized/excluded/skipped/unavailable/failed
-  outcome. All three are mandatory; missing evidence leaves the release in
-  draft.
-- Repeat B-104 against real Windows Credential Manager and supported Linux
-  Secret Service from exact packages, including unavailable/locked
-  backend and partial-write rollback receipts. The retained macOS Keychain
-  adapter is not a `0.1.0-beta.6` acceptance cell.
-- Freeze the exact Windows build, the exact current stable Codex versions on
-  Windows and Linux, and the exact current stable Windows Claude Desktop
-  version and config path for the mandatory Windows 11 x86-64 and Ubuntu
-  24.04 LTS x86-64 GNOME/Secret-Service floor. Linux Claude beta is excluded
-  by the frozen stable-only support wording unless a stable supported client
-  is deliberately added before candidate freeze. Before measuring candidates,
-  use the frozen 4-core/8-GiB/SSD/16-GiB-free profile, 1-GiB RSS cap,
-  four-times-source-plus-1-GiB storage cap, 5-second progress/cancel budgets,
-  30-second safe quiescence, and 60-minute import/export/restore ceilings.
-  Prove the inclusive `2,000,000,000`-byte boundary with an allocated
-  non-sparse, nonempty canary on Windows x86-64 and Linux x86-64.
-- Prove the already-shipped version-matched packaged recovery/admin helper
-  (Windows console helper) and Linux console main-binary recovery modes
-  on exact downloaded candidate artifacts for both supported OS families; source packaging
-  and fail-closed built-byte recovery smokes are integrated, but
-  downloaded-artifact export/restore/purge acceptance receipts remain open.
-- Freeze the final release commit after review and repeat the exact nine-job
-  hosted matrix on that identity: Python Windows/macOS/Ubuntu, dashboard Node
-  20/22, and package regressions on Windows, Ubuntu, macOS ARM64, and macOS
-  x86-64. The Mac jobs are source-health only; the release candidate contains
-  Windows and Linux jobs/assets only.
-- Publish `0.1.0-beta.6` only after the applicable gates above. Exercise a real
-  signed first-beta-to-successor Windows update and rollback as a successor
-  gate; the first public beta instead repeats the existing same-version
-  transactional interruption and rollback smoke on the exact candidate.
-- Keep mobile and remote-computer copy out of V1 beta. Core remains
-  `127.0.0.1` by default.
+- Merge the ADR-096 compatibility repair so published-state validation accepts
+  opaque `gh release view` GraphQL asset IDs without ever treating them as the
+  numeric REST IDs used for mutation endpoints.
+- Run the separately protected Windows beta-channel promotion, then execute the
+  exact public download/channel smoke required for `BETA-R05`. Direct GitHub
+  downloads are already live; channel promotion controls OTA discovery only.
+- `BETA-O01` launch-watch evidence and the certification profile's remaining
+  client, provider, browser, privacy, 2 GB, and recovery cells remain open.
+  They are post-beta hardening work and are not relabeled by lean publication.
+- A real signed first-published-beta-to-successor Windows update and rollback
+  remains a successor gate. Keep mobile and remote-computer copy out of this
+  beta; Core remains bound to `127.0.0.1` by default.
 
 ## Current evidence
 
@@ -1395,10 +1343,10 @@ state is already noncurrent and creates no user queue.
   artifact re-proof remains open. The active beta claim continues to exclude
   mobile and remote-computer use entirely.
 - GitHub release immutability is enabled, and GitHub Pages is configured to
-  deploy only from Actions. The canonical beta metadata URL currently returns
-  HTTP 404 because no channel artifact or beta release has been deployed. The
-  exact built-in client now reports that state as `unpublished`, but this does
-  not replace the required offline-signed release and protected promotion.
+  deploy only from Actions. The beta.6 release is public and immutable. Until
+  the separate protected channel deployment completes, the canonical beta
+  metadata URL may still return HTTP 404 and the built-in client reports
+  `unpublished`; direct release downloads are unaffected.
 - The Python 3.12 Windows frozen application passed resource discovery and the
   isolated first-run/install, browser handoff, MCP handshake, restart, startup,
   update-recovery, shutdown, uninstall, and cleanup smoke. The unsigned Windows
@@ -1418,7 +1366,7 @@ state is already noncurrent and creates no user queue.
 
 ## Explicitly unclaimed
 
-- No public beta downloads currently exist.
+- No signed beta-channel pointer is claimed until protected promotion passes.
 - macOS is not supported and no Mac package belongs to the public beta.
 - No secure automatic mobile endpoint currently exists.
 - No paid/native Windows publisher signing is planned for the community beta.
