@@ -619,8 +619,13 @@ def _parse_json_stream_atomic(
     is the only pass allowed to mutate the builder or generic candidate list.
     """
     builder = _builder(provider)
+    observed_providers: set[ArchiveProvider] = set()
 
     def validate() -> None:
+        # Keep provider evidence in a disposable builder until the complete
+        # bounded iterator succeeds. A valid prefix must not promote the live
+        # builder before trailing data or a later limit failure is observed.
+        validation_builder = _builder(provider)
         with open_stream() as stream:
             for document in _iter_json_documents(
                 stream,
@@ -629,19 +634,39 @@ def _parse_json_stream_atomic(
             ):
                 if progress is not None:
                     progress.check_cancelled()
-                builder.observe_json_provider(source_name, document.value)
+                detected = validation_builder.observe_json_provider(source_name, document.value)
+                if detected not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}:
+                    observed_providers.add(detected)
 
     try:
         validate()
     except UnicodeDecodeError:
+        if _is_neutral_auto_provider_container(source_name, provider):
+            return _generic_failure_result(
+                ArchiveProvider.GENERIC,
+                "neutral provider container failed bounded JSON validation",
+                reason="unparsed",
+            )
         return _generic_failure_result(
             provider,
             "standalone input is not valid UTF-8",
             reason="unparsed",
         )
     except json.JSONDecodeError as error:
+        if _is_neutral_auto_provider_container(source_name, provider):
+            return _generic_failure_result(
+                ArchiveProvider.GENERIC,
+                "neutral provider container failed bounded JSON validation",
+                reason="unparsed",
+            )
         raise _invalid_json_error(error) from error
     except _JsonNestingLimitError:
+        if _is_neutral_auto_provider_container(source_name, provider):
+            return _generic_failure_result(
+                ArchiveProvider.GENERIC,
+                "neutral provider container failed bounded JSON validation",
+                reason="unparsed",
+            )
         return _generic_failure_result(
             provider,
             "standalone JSON exceeded the nesting-depth limit",
@@ -650,12 +675,28 @@ def _parse_json_stream_atomic(
     except RecursionError:
         # Keep the public outcome deterministic if a future decoder path
         # recurses before the scanner can reject the document.
+        if _is_neutral_auto_provider_container(source_name, provider):
+            return _generic_failure_result(
+                ArchiveProvider.GENERIC,
+                "neutral provider container failed bounded JSON validation",
+                reason="unparsed",
+            )
         return _generic_failure_result(
             provider,
             "standalone JSON exceeded the nesting-depth limit",
             reason="unparsed",
         )
+    except InvalidStateError:
+        if _is_neutral_auto_provider_container(source_name, provider):
+            return _generic_failure_result(
+                ArchiveProvider.GENERIC,
+                "neutral provider container failed bounded JSON validation",
+                reason="unparsed",
+            )
+        raise
 
+    for detected in sorted(observed_providers, key=lambda item: item.value):
+        builder.note_provider_context(detected)
     generic: list[CandidateInput] = []
     coverage = _GenericCoverage()
     provider_container = _is_conversation_json_member(source_name, normalize_provider(provider))
@@ -1346,6 +1387,24 @@ def _is_conversation_json_member(
     )
 
 
+def _is_neutral_auto_provider_container(
+    safe_name: str,
+    provider: str | ArchiveProvider,
+) -> bool:
+    """Identify alternate JSON names whose auto-mode signature is provisional."""
+    if normalize_provider(provider) != ArchiveProvider.AUTO:
+        return False
+    path = PurePosixPath(safe_name)
+    basename = path.name.casefold()
+    if path.suffix.casefold() != ".json" or basename not in _PROVIDER_CONTAINER_BASENAMES:
+        return False
+    if basename == "conversations.json" or _DATED_CONVERSATIONS_BASENAME.fullmatch(basename):
+        return False
+    return not any(
+        part.casefold() in _PROVIDER_SIGNATURE_PATH_PARTS for part in path.parts[:-1]
+    )
+
+
 def _is_chatgpt_control_member(safe_name: str) -> bool:
     return PurePosixPath(safe_name).name.casefold() in _CHATGPT_CONTROL_BASENAMES
 
@@ -1366,17 +1425,21 @@ def _archive_chatgpt_structure_members(
             and not _DATED_CONVERSATIONS_BASENAME.fullmatch(basename)
         ):
             continue
+        signature_observed = False
         try:
             with archive.open(member) as stream:
                 for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
                     if _looks_like_chatgpt_structure(document.value):
-                        detected_members.add(safe_name)
-                        break
+                        # Do not publish the signature until the complete
+                        # bounded iterator has validated successfully.
+                        signature_observed = True
         except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
             continue
         finally:
             if progress is not None:
                 progress.check_cancelled()
+        if signature_observed:
+            detected_members.add(safe_name)
     return detected_members
 
 
@@ -1902,6 +1965,8 @@ def parse_zip_bundle(
                 }
                 try:
                     if suffix == ".json":
+                        observed_providers: set[ArchiveProvider] = set()
+                        validation_builder = _builder(provider_hint)
                         with archive.open(member) as stream:
                             # Validate the complete bounded member before
                             # publishing any candidates. Root-array items can
@@ -1910,7 +1975,19 @@ def parse_zip_bundle(
                                 stream,
                                 max_item_chars=max_json_item_chars,
                             ):
-                                builder.observe_json_provider(safe_name, document.value)
+                                detected = validation_builder.observe_json_provider(
+                                    safe_name, document.value
+                                )
+                                if detected not in {
+                                    ArchiveProvider.AUTO,
+                                    ArchiveProvider.GENERIC,
+                                }:
+                                    observed_providers.add(detected)
+                        # Provider promotion is atomic with complete member
+                        # validation. The observations are only bounded
+                        # provider signatures, never a buffered JSON root.
+                        for detected in sorted(observed_providers, key=lambda item: item.value):
+                            builder.note_provider_context(detected)
                         with archive.open(member) as stream:
                             for document in _iter_json_documents(
                                 stream,
@@ -1965,7 +2042,11 @@ def parse_zip_bundle(
                         close_archive_member(member_index, "unparsed")
                 except InvalidStateError as error:
                     malformed_csv = suffix == ".csv" and "not well formed" in str(error).casefold()
-                    if malformed_csv:
+                    malformed_neutral_json = (
+                        suffix == ".json"
+                        and _is_neutral_auto_provider_container(safe_name, provider_hint)
+                    )
+                    if malformed_csv or malformed_neutral_json:
                         # Malformed text is one unparsed logical item. Keep
                         # `failed` for bounded parser/runtime failures that
                         # are not malformed source data.
@@ -1977,7 +2058,7 @@ def parse_zip_bundle(
                         builder.note_failed_items()
                     if is_provider_container:
                         mark_structural_member(member_index)
-                    elif malformed_csv:
+                    elif malformed_csv or malformed_neutral_json:
                         close_archive_member(member_index, "unparsed")
                     else:
                         close_archive_member(member_index, "failed")
@@ -2261,6 +2342,10 @@ def _iter_json_documents(
                 raise _JsonNestingLimitError(
                     "JSON document exceeds the nesting-depth limit"
                 ) from error
+            if end - position > max_item_chars:
+                raise InvalidStateError(
+                    "one JSON conversation exceeds the per-conversation parse limit"
+                )
             position = end
             yield _JsonDocument(item, JsonValueContext.ROOT_ARRAY_ITEM)
             first_item = False

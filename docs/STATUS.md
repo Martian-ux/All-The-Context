@@ -114,6 +114,18 @@ unsupported binaries, traversal, member/total expansion, and text read bounds.
 Real-export structural inspection was content-free; no real export bytes or
 personal values enter the repository, tests, logs, or receipts.
 
+### 2026-08-22 neutral alternate promotion correction
+
+Auto provider detection now buffers only bounded structural-signature
+observations until the complete JSON iterator succeeds. A neutral alternate
+such as `messages.json` with valid ChatGPT-shaped content followed by trailing
+data or a later depth, item, byte, or parser-limit failure remains generic and
+incomplete, closes once as `unparsed`, and cannot enable ChatGPT attachment
+inventory or links. Direct, path, and ZIP entrypoints share this boundary; a
+valid named provider member remains independent of a malformed neutral sibling.
+This is synthetic local engineering evidence only, does not inspect live/private
+Core or exports, and grants no acceptance credit.
+
 ### 2026-08-22 Import Truth accounting closure
 
 Provider and ZIP results now expose a dimensionally bounded

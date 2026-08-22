@@ -21,10 +21,14 @@ remain `skipped`. No full root is materialized and terminal context is not
 filename-derived; malformed-entry coverage and completion remain invariant under
 permutation across direct, path, and ZIP entrypoints.
 Allowed neutral alternate JSON basenames establish ChatGPT attachment scanning
-only after a valid bounded content signature; malformed neutral alternates stay
-generic and cannot enable provider-specific link inventory. Focused tests cover
-all three terminal cases, adversarial permutations, four alternate names,
-direct/path/ZIP parity, and the negative neutral case. This is synthetic
+only after a valid bounded content signature and a successful complete iterator;
+the signature buffer retains no JSON root. A valid provider-looking prefix with
+trailing data or any later parse, depth, item, or byte-limit failure stays
+generic, closes one `unparsed` logical item, and cannot enable provider-specific
+attachment inventory or links. A malformed neutral sibling cannot poison a
+separately valid named provider member. Focused tests cover all three terminal
+cases, adversarial permutations, four alternate names, direct/path/ZIP parity,
+bounded failure classes, and the negative neutral case. This is synthetic
 engineering evidence only and grants no acceptance credit.
 
 ### 2026-08-22 bounded ordinary-JSON and exact-coverage correction

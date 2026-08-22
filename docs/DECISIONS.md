@@ -2973,11 +2973,16 @@ therefore never expose a missing or extra coverage key.
 not retarget, relabel, or grant acceptance credit to any published artifact.
 
 The importer observes provider evidence from every value yielded by the bounded
-JSON validator before the consuming pass mutates candidates or logical counts.
-This two-phase boundary is intentionally context-only: it does not retain the
-root array or publish any imported text. A malformed sibling that precedes a
-valid provider conversation therefore closes as `unparsed` in every permutation
-once the validated root establishes provider context.
+JSON validator in a disposable validation builder, buffering only a bounded set
+of structural provider signatures. Those signatures are published to the live
+builder only after the entire iterator succeeds; the consuming pass then mutates
+candidates or logical counts. This two-phase boundary is intentionally
+context-only: it does not retain the root array or publish any imported text. A
+valid provider-looking prefix followed by trailing data or any later bounded
+parse failure therefore cannot promote a neutral alternate or enable ChatGPT
+attachment links. Such a ZIP member closes exactly once as `unparsed`; direct
+and path entrypoints report generic incomplete coverage. A malformed neutral
+sibling cannot poison a separately valid named provider member.
 
 The bounded iterator carries an explicit context tag with each yielded value:
 standalone roots use root policy, while members streamed from a non-empty root
@@ -2995,6 +3000,8 @@ both a raw member and a logical item.
 
 Auto ZIP attachment discovery uses a bounded content signature over the allowed
 conversation basenames, including neutral `messages.json`, `chats.json`, and
-`history.json`. Only valid ChatGPT-shaped content promotes such a member before
-attachment link scanning. A malformed neutral alternate remains generic and
-does not activate ChatGPT attachment inventory; filename alone is insufficient.
+`history.json`. The signature scan consumes the entire bounded iterator before
+publishing a member observation. Only valid ChatGPT-shaped content promotes
+such a member before attachment link scanning. A malformed or over-limit
+neutral alternate remains generic and does not activate ChatGPT attachment
+inventory; filename alone is insufficient.

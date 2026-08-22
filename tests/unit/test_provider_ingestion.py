@@ -90,6 +90,28 @@ def _chatgpt_export() -> list[dict[str, Any]]:
     ]
 
 
+def _chatgpt_attachment_export(
+    conversation_id: str,
+    message_id: str,
+    asset_id: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": conversation_id,
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": message_id,
+                        "author": {"role": "user"},
+                        "content": {"parts": ["Preference: keep this bounded."]},
+                        "metadata": {"attachments": [{"id": asset_id}]},
+                    }
+                }
+            },
+        }
+    ]
+
+
 def test_chatgpt_zip_auto_detects_graph_and_ignores_assistant_claims() -> None:
     archive = _zip(
         {
@@ -1141,6 +1163,137 @@ def test_malformed_neutral_alternate_stays_generic_and_does_not_enable_attachmen
     assert parsed.stats["attachment_entries"] == 0
     assert audit["structural_members"] == 0
     assert audit["standalone_members"] == 2
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "path", "zip"])
+def test_neutral_prefix_trailing_data_is_generic_and_unparsed_once(
+    tmp_path: Path,
+    entrypoint: str,
+) -> None:
+    raw = json.dumps(
+        _chatgpt_attachment_export("neutral-prefix", "neutral-message", "file-neutral")
+    ).encode("utf-8") + b" trailing"
+    if entrypoint == "direct":
+        parsed = parse_archive("messages.json", raw)
+    elif entrypoint == "path":
+        path = tmp_path / "messages.json"
+        path.write_bytes(raw)
+        parsed = parse_archive_path(path)
+    else:
+        parsed = parse_zip_bundle(
+            _zip({"messages.json": raw, "file-neutral.dat": b"must remain raw"})
+        )
+
+    assert parsed.provider == "generic"
+    assert parsed.attachments == []
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.complete is False
+    if entrypoint == "zip":
+        audit = parsed.stats["archive_member_coverage"]
+        assert audit["structural_members"] == 0
+        assert audit["terminal_member_buckets"]["unparsed"] == 1
+        assert audit["unaccounted_members"] == 0
+
+
+@pytest.mark.parametrize("malformation", ["later-item", "suffix"])
+def test_neutral_valid_prefix_does_not_promote_after_later_stream_failure(
+    tmp_path: Path,
+    malformation: str,
+) -> None:
+    prefix = json.dumps(
+        _chatgpt_attachment_export("later-failure", "later-message", "file-later")
+    ).encode("utf-8")
+    if malformation == "later-item":
+        raw = prefix[:-1] + b', {"mapping": {}'
+    else:
+        raw = prefix + b" trailing"
+
+    direct = parse_archive("messages.json", raw)
+    path = tmp_path / "messages.json"
+    path.write_bytes(raw)
+    from_path = parse_archive_path(path)
+    from_zip = parse_zip_bundle(
+        _zip({"messages.json": raw, "file-later.dat": b"must remain raw"})
+    )
+
+    for parsed in (direct, from_path, from_zip):
+        assert parsed.provider == "generic"
+        assert parsed.attachments == []
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert parsed.complete is False
+    audit = from_zip.stats["archive_member_coverage"]
+    assert audit["structural_members"] == 0
+    assert audit["terminal_member_buckets"]["unparsed"] == 1
+    assert audit["unaccounted_members"] == 0
+
+
+@pytest.mark.parametrize("limit", ["depth", "item", "byte"])
+def test_neutral_provider_signature_limits_fail_before_promotion(limit: str) -> None:
+    prefix = json.dumps(
+        _chatgpt_attachment_export("limited", "limited-message", "file-limited")
+    ).encode("utf-8")
+    if limit == "depth":
+        raw = b"[" + prefix[1:-1] + b"," + (b"[" * 129) + b"0" + (b"]" * 129) + b"]"
+        parsed = parse_zip_bundle(
+            _zip({"messages.json": raw, "file-limited.dat": b"must remain raw"})
+        )
+    elif limit == "item":
+        raw = prefix
+        parsed = parse_zip_bundle(
+            _zip({"messages.json": raw, "file-limited.dat": b"must remain raw"}),
+            max_json_item_chars=64,
+        )
+    else:
+        raw = json.dumps([{"mapping": {}}] + ([{}] * 200)).encode("utf-8")
+        parsed = parse_zip_bundle(
+            _zip({"messages.json": raw, "file-limited.dat": b"must remain raw"}),
+            max_json_item_chars=64,
+        )
+
+    assert parsed.provider == "generic"
+    assert parsed.attachments == []
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert parsed.complete is False
+    audit = parsed.stats["archive_member_coverage"]
+    assert audit["structural_members"] == 0
+    assert audit["terminal_member_buckets"]["unparsed"] == 1
+    assert audit["unaccounted_members"] == 0
+
+
+@pytest.mark.parametrize("malformed_first", [True, False], ids=["malformed-first", "valid-first"])
+def test_malformed_neutral_does_not_poison_valid_named_provider_or_links(
+    malformed_first: bool,
+) -> None:
+    malformed = json.dumps(
+        _chatgpt_attachment_export("neutral-conversation", "neutral-message", "file-neutral")
+    ).encode("utf-8") + b" trailing"
+    valid = json.dumps(
+        _chatgpt_attachment_export("named-conversation", "named-message", "file-named")
+    )
+    ordered = [
+        ("messages.json", malformed),
+        ("chatgpt/conversations.json", valid),
+        ("file-neutral.dat", b"neutral raw"),
+        ("file-named.dat", b"named raw"),
+    ]
+    if not malformed_first:
+        ordered[0], ordered[1] = ordered[1], ordered[0]
+
+    parsed = parse_zip_bundle(_zip(dict(ordered)))
+
+    by_asset = {item.asset_id: item for item in parsed.attachments}
+    assert parsed.provider == "chatgpt"
+    assert parsed.complete is False
+    assert parsed.closed_coverage["unparsed"] == 1
+    assert by_asset["file-neutral.dat"].links == ()
+    assert by_asset["file-named.dat"].links == (
+        importers_module.AttachmentLink("named-conversation", "named-message"),
+    )
+    assert parsed.stats["attachment_link_pairs"] == 1
+    audit = parsed.stats["archive_member_coverage"]
+    assert audit["structural_members"] == 1
+    assert audit["terminal_member_buckets"]["unparsed"] == 1
+    assert audit["unaccounted_members"] == 0
 
 
 def test_malformed_provider_container_is_structural_and_logically_unparsed() -> None:
