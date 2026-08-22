@@ -37,29 +37,44 @@ Migration `015_continuous_capture.sql` adds five bounded SQLite tables:
   pair; local corrections remain an explicit sink responsibility and cannot be
   overwritten by this coordinator.
 - `capture_runs` stores lease, attempt, page, event, failure, and completion
-  telemetry. Lease tokens are internal and never exposed.
+  telemetry. Lease tokens are internal and never exposed; foreground mutators
+  receive a typed `CaptureRunHandle` containing the run ID, source ID, and
+  lease token.
 
 The migration runner performs a restart-safe repair probe after every migration
 pass. Missing migration-015 tables or indexes are recreated without advancing
-an already-recorded schema marker.
+an already-recorded schema marker. The probe reads and executes the packaged
+migration-015 SQL one statement at a time inside the caller's transaction, so
+initial migration and marker-present repair use the same bounds, enums,
+nonnegative counters/generation, hashes, IDs, item/run states, foreign keys,
+unique constraints, and indexes.
 
 ## Contracts and replay
 
 `allthecontext.capture` exposes `CaptureProviderAdapter`, `CapturePage`,
 `CaptureEvent`, `CaptureApplicationSink`, `CaptureCoordinator`,
-`BackoffPolicy`, and `CaptureRunResult`. `DeterministicFakeAdapter` and
+`BackoffPolicy`, `CaptureRunHandle`, and `CaptureRunResult`. `DeterministicFakeAdapter` and
 `IdempotentFakeSink` are test-only deterministic fixtures. No real adapter is
 registered by Core.
 
 For an explicitly enabled, local-only-acknowledged source, one foreground run:
 
-1. obtains a bounded lease and asks the injected adapter for ordered pages;
+1. obtains a bounded lease capability and asks the injected adapter for ordered
+   pages;
 2. durably stages each event before calling the injected sink;
 3. calls the sink with a deterministic idempotency key and source-scoped item
    lineage;
 4. commits the application receipt, capture-item mapping, and checkpoint in
    one SQLite transaction; and
 5. advances the page cursor only after every event in that page is applied.
+
+Every run-owned mutation transactionally requires the exact capability, a
+`running` run with a strictly future lease, and a source still in
+`reconciling`. Renewal uses the same checks. Pause, revoke, expiry, recovery,
+or replacement invalidates the old capability; stale completion cannot change
+the newer run or source state. If a sink crosses lease expiry, its result is
+not committed. Replay uses the same idempotency key, so an idempotent sink can
+complete safely on the replacement run.
 
 If the process fails after sink application but before the commit, the staged
 event is replayed with the same idempotency key. If the commit already exists,

@@ -17,10 +17,17 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from .ids import new_id, utc_now
-from .storage import ConflictError, CoreStore, NotFoundError, StorageError
+from .storage import (
+    ConflictError,
+    CoreStore,
+    NotFoundError,
+    StorageError,
+    _migration_statements,
+)
 
 CaptureLifecycleState = Literal[
     "disabled",
@@ -274,6 +281,26 @@ class CaptureApplicationReceipt:
     canonical_record_id: str
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class CaptureRunHandle:
+    """Opaque capability for mutating one still-owned capture run."""
+
+    run_id: str
+    source_id: str
+    lease_token: str = field(repr=False)
+
+    @classmethod
+    def _mint(cls, run_id: str, source_id: str, lease_token: str) -> CaptureRunHandle:
+        handle = object.__new__(cls)
+        object.__setattr__(handle, "run_id", run_id)
+        object.__setattr__(handle, "source_id", source_id)
+        object.__setattr__(handle, "lease_token", lease_token)
+        return handle
+
+    def __repr__(self) -> str:
+        return f"CaptureRunHandle(run_id={self.run_id!r}, source_id={self.source_id!r})"
+
+
 class CaptureProviderAdapter(Protocol):
     """Provider-neutral page source; implementations must be injected."""
 
@@ -396,55 +423,16 @@ def _idempotency_key(source_id: str, provider_event_id: str) -> str:
     return f"capture-event-{digest}"
 
 
+_CAPTURE_MIGRATION_PATH = (
+    Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql"
+)
+
+
 def ensure_capture_schema(connection: Any) -> None:
     """Repair missing migration-015 tables/indexes after an interrupted startup."""
 
-    statements = (
-        "CREATE TABLE IF NOT EXISTS capture_sources ("
-        "id TEXT PRIMARY KEY,vault_id TEXT NOT NULL REFERENCES vaults(id),"
-        "provider TEXT NOT NULL,account_label TEXT NOT NULL,account_fingerprint TEXT,"
-        "requested_scopes_json TEXT NOT NULL DEFAULT '[]' CHECK(length(requested_scopes_json)<=16384),"
-        "local_only INTEGER NOT NULL DEFAULT 0,"
-        "local_only_acknowledged INTEGER NOT NULL DEFAULT 0,lifecycle_state TEXT NOT NULL DEFAULT 'disabled',"
-        "credential_ref TEXT CHECK(credential_ref IS NULL OR length(credential_ref)<=256),"
-        "retry_count INTEGER NOT NULL DEFAULT 0,next_retry_at TEXT,"
-        "last_error_code TEXT CHECK(last_error_code IS NULL OR length(last_error_code)<=96),"
-        "last_error_at TEXT,lag_events INTEGER NOT NULL DEFAULT 0,"
-        "lag_pages INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_run_at TEXT)",
-        "CREATE INDEX IF NOT EXISTS ix_capture_sources_vault_state ON capture_sources(vault_id,lifecycle_state,created_at)",
-        "CREATE TABLE IF NOT EXISTS capture_checkpoints ("
-        "source_id TEXT PRIMARY KEY REFERENCES capture_sources(id) ON DELETE CASCADE,"
-        "generation INTEGER NOT NULL DEFAULT 0,cursor TEXT CHECK(cursor IS NULL OR length(cursor)<=1024),"
-        "last_order_key TEXT,last_event_id TEXT,updated_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS capture_events ("
-        "id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES capture_sources(id) ON DELETE CASCADE,"
-        "provider_event_id TEXT NOT NULL,provider_item_id TEXT NOT NULL,generation INTEGER NOT NULL,"
-        "order_key TEXT NOT NULL,operation TEXT NOT NULL,"
-        "normalized_payload_json TEXT NOT NULL DEFAULT '{}' CHECK(length(normalized_payload_json)<=65536),"
-        "payload_hash TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'staged',attempts INTEGER NOT NULL DEFAULT 0,"
-        "error_code TEXT CHECK(error_code IS NULL OR length(error_code)<=96),"
-        "application_receipt TEXT CHECK(application_receipt IS NULL OR length(application_receipt)<=96),"
-        "idempotency_key TEXT NOT NULL UNIQUE CHECK(length(idempotency_key)<=128),received_at TEXT NOT NULL,"
-        "applied_at TEXT,UNIQUE(source_id,provider_event_id))",
-        "CREATE INDEX IF NOT EXISTS ix_capture_events_source_order ON capture_events(source_id,generation,order_key,id)",
-        "CREATE INDEX IF NOT EXISTS ix_capture_events_source_status ON capture_events(source_id,status,received_at)",
-        "CREATE TABLE IF NOT EXISTS capture_items ("
-        "source_id TEXT NOT NULL REFERENCES capture_sources(id) ON DELETE CASCADE,provider_item_id TEXT NOT NULL,"
-        "canonical_record_id TEXT NOT NULL,generation INTEGER NOT NULL,last_event_id TEXT NOT NULL,"
-        "item_state TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(source_id,provider_item_id))",
-        "CREATE TABLE IF NOT EXISTS capture_runs ("
-        "id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES capture_sources(id) ON DELETE CASCADE,"
-        "state TEXT NOT NULL,lease_token TEXT NOT NULL CHECK(length(lease_token)<=256),"
-        "lease_expires_at TEXT NOT NULL CHECK(length(lease_expires_at)<=64),"
-        "attempt_count INTEGER NOT NULL DEFAULT 0,page_count INTEGER NOT NULL DEFAULT 0,event_count INTEGER NOT NULL DEFAULT 0,"
-        "applied_event_count INTEGER NOT NULL DEFAULT 0,duplicate_event_count INTEGER NOT NULL DEFAULT 0,"
-        "failure_count INTEGER NOT NULL DEFAULT 0,"
-        "error_code TEXT CHECK(error_code IS NULL OR length(error_code)<=96),"
-        "started_at TEXT NOT NULL,completed_at TEXT)",
-        "CREATE INDEX IF NOT EXISTS ix_capture_runs_source_time ON capture_runs(source_id,started_at DESC)",
-        "CREATE INDEX IF NOT EXISTS ix_capture_runs_lease ON capture_runs(state,lease_expires_at)",
-    )
-    for statement in statements:
+    migration = _CAPTURE_MIGRATION_PATH.read_text(encoding="utf-8")
+    for statement in _migration_statements(migration):
         connection.execute(statement)
 
 
@@ -584,6 +572,12 @@ class CaptureLedger:
             ):
                 raise CaptureError("capture_local_only_required")
             credential_ref = None if target == "revoked" else row["credential_ref"]
+            if current == "reconciling" and target != "reconciling":
+                connection.execute(
+                    "UPDATE capture_runs SET state='abandoned',error_code=?,completed_at=? "
+                    "WHERE source_id=? AND state='running'",
+                    ("capture_invalid_transition", now, source_id),
+                )
             connection.execute(
                 "UPDATE capture_sources SET lifecycle_state=?,credential_ref=?,updated_at=? WHERE id=?",
                 (target, credential_ref, now, source_id),
@@ -608,6 +602,21 @@ class CaptureLedger:
             for key in ("generation", "last_order_key", "last_event_id", "cursor", "updated_at")
         }
 
+    @staticmethod
+    def _require_active_run(connection: Any, handle: CaptureRunHandle, now: str) -> None:
+        if not isinstance(handle, CaptureRunHandle):
+            raise CaptureError("capture_lease_expired")
+        owned = connection.execute(
+            "SELECT 1 FROM capture_runs AS r "
+            "JOIN capture_sources AS s ON s.id=r.source_id "
+            "WHERE r.id=? AND r.source_id=? AND r.lease_token=? "
+            "AND r.state='running' AND r.lease_expires_at>? "
+            "AND s.lifecycle_state='reconciling'",
+            (handle.run_id, handle.source_id, handle.lease_token, now),
+        ).fetchone()
+        if owned is None:
+            raise CaptureError("capture_lease_expired")
+
     def recover_expired_runs(self) -> int:
         now = self.clock()
         changed = 0
@@ -623,16 +632,17 @@ class CaptureLedger:
                 )
                 connection.execute(
                     "UPDATE capture_sources SET lifecycle_state='degraded',last_error_code=?,"
-                    "last_error_at=?,updated_at=? WHERE id=? AND lifecycle_state!='revoked'",
+                    "last_error_at=?,updated_at=? WHERE id=? AND lifecycle_state='reconciling'",
                     ("capture_lease_expired", now, now, row["source_id"]),
                 )
                 changed += 1
         return changed
 
-    def begin_run(self, source_id: str) -> tuple[str, CaptureSource, int]:
+    def begin_run(self, source_id: str) -> tuple[CaptureRunHandle, CaptureSource, int]:
         self.recover_expired_runs()
         now = self.clock()
         run_id = new_id()
+        lease_token = secrets.token_urlsafe(18)
         with self.store.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM capture_sources WHERE id=?", (source_id,)
@@ -659,7 +669,7 @@ class CaptureLedger:
                     run_id,
                     source_id,
                     "running",
-                    secrets.token_urlsafe(18),
+                    lease_token,
                     _lease_expiry(now),
                     attempt,
                     now,
@@ -669,18 +679,41 @@ class CaptureLedger:
                 "UPDATE capture_sources SET lifecycle_state='reconciling',last_run_at=?,updated_at=? WHERE id=?",
                 (now, now, source_id),
             )
-        return run_id, self.get_source(source_id), attempt
+        return CaptureRunHandle._mint(run_id, source_id, lease_token), self.get_source(source_id), attempt
 
-    def stage_event(self, source_id: str, event: CaptureEvent) -> tuple[str, bool, int]:
-        payload_json, payload_hash = event.normalized()
-        idempotency_key = _idempotency_key(source_id, event.provider_event_id)
+    def renew_run(self, handle: CaptureRunHandle) -> CaptureRunHandle:
+        """Extend a bounded foreground lease only while its capability is valid."""
+
         now = self.clock()
         with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
+            updated = connection.execute(
+                "UPDATE capture_runs SET lease_expires_at=? "
+                "WHERE id=? AND source_id=? AND lease_token=? AND state='running' "
+                "AND lease_expires_at>?",
+                (
+                    _lease_expiry(now),
+                    handle.run_id,
+                    handle.source_id,
+                    handle.lease_token,
+                    now,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise CaptureError("capture_lease_expired")
+        return handle
+
+    def stage_event(self, handle: CaptureRunHandle, event: CaptureEvent) -> tuple[str, bool, int]:
+        payload_json, payload_hash = event.normalized()
+        idempotency_key = _idempotency_key(handle.source_id, event.provider_event_id)
+        now = self.clock()
+        with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
             existing = connection.execute(
                 "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts "
                 "FROM capture_events "
                 "WHERE source_id=? AND provider_event_id=?",
-                (source_id, event.provider_event_id),
+                (handle.source_id, event.provider_event_id),
             ).fetchone()
             if existing is not None:
                 if (
@@ -707,7 +740,7 @@ class CaptureLedger:
                 "VALUES(?,?,?,?,?,?,?,?,?,'staged',1,?,?)",
                 (
                     event_id,
-                    source_id,
+                    handle.source_id,
                     event.provider_event_id,
                     event.provider_item_id,
                     event.generation,
@@ -724,7 +757,7 @@ class CaptureLedger:
     def commit_event(
         self,
         *,
-        source_id: str,
+        handle: CaptureRunHandle,
         event: CaptureEvent,
         event_id: str,
         receipt: str,
@@ -734,17 +767,26 @@ class CaptureLedger:
         canonical_record_id = _bounded_opaque_id(canonical_record_id, maximum=MAX_EVENT_ID_CHARS)
         now = self.clock()
         with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
             stored = connection.execute(
-                "SELECT status,provider_item_id FROM capture_events WHERE id=? AND source_id=?",
-                (event_id, source_id),
+                "SELECT status,provider_event_id,provider_item_id,operation,generation,order_key,payload_hash "
+                "FROM capture_events WHERE id=? AND source_id=?",
+                (event_id, handle.source_id),
             ).fetchone()
             if stored is None:
                 raise ConflictError("capture event disappeared before commit")
-            if str(stored["provider_item_id"]) != event.provider_item_id:
+            if (
+                str(stored["provider_event_id"]) != event.provider_event_id
+                or str(stored["provider_item_id"]) != event.provider_item_id
+                or str(stored["operation"]) != event.operation
+                or int(stored["generation"]) != event.generation
+                or str(stored["order_key"]) != event.order_key
+                or str(stored["payload_hash"]) != event.normalized()[1]
+            ):
                 raise CaptureError("capture_event_payload_conflict")
             prior_item = connection.execute(
                 "SELECT canonical_record_id FROM capture_items WHERE source_id=? AND provider_item_id=?",
-                (source_id, event.provider_item_id),
+                (handle.source_id, event.provider_item_id),
             ).fetchone()
             if (
                 prior_item is not None
@@ -754,7 +796,7 @@ class CaptureLedger:
             connection.execute(
                 "UPDATE capture_events SET status='applied',application_receipt=?,error_code=NULL,applied_at=? "
                 "WHERE id=? AND source_id=?",
-                (receipt, now, event_id, source_id),
+                (receipt, now, event_id, handle.source_id),
             )
             connection.execute(
                 "INSERT INTO capture_items"
@@ -763,7 +805,7 @@ class CaptureLedger:
                 "canonical_record_id=excluded.canonical_record_id,generation=excluded.generation,"
                 "last_event_id=excluded.last_event_id,item_state=excluded.item_state,updated_at=excluded.updated_at",
                 (
-                    source_id,
+                    handle.source_id,
                     event.provider_item_id,
                     canonical_record_id,
                     event.generation,
@@ -774,7 +816,7 @@ class CaptureLedger:
             )
             checkpoint = connection.execute(
                 "SELECT generation,last_order_key FROM capture_checkpoints WHERE source_id=?",
-                (source_id,),
+                (handle.source_id,),
             ).fetchone()
             if checkpoint is None:
                 raise ConflictError("capture checkpoint disappeared before commit")
@@ -787,14 +829,16 @@ class CaptureLedger:
                 connection.execute(
                     "UPDATE capture_checkpoints SET generation=?,last_order_key=?,last_event_id=?,updated_at=? "
                     "WHERE source_id=?",
-                    (event.generation, event.order_key, event_id, now, source_id),
+                    (event.generation, event.order_key, event_id, now, handle.source_id),
                 )
 
-    def commit_page_cursor(self, source_id: str, page: CapturePage) -> None:
+    def commit_page_cursor(self, handle: CaptureRunHandle, page: CapturePage) -> None:
         now = self.clock()
         with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
             row = connection.execute(
-                "SELECT generation,cursor FROM capture_checkpoints WHERE source_id=?", (source_id,)
+                "SELECT generation,cursor FROM capture_checkpoints WHERE source_id=?",
+                (handle.source_id,),
             ).fetchone()
             if row is None:
                 raise ConflictError("capture checkpoint disappeared before page commit")
@@ -805,21 +849,30 @@ class CaptureLedger:
                 raise CaptureError("capture_invalid_cursor")
             connection.execute(
                 "UPDATE capture_checkpoints SET generation=?,cursor=?,updated_at=? WHERE source_id=?",
-                (page.generation, page.next_cursor, now, source_id),
+                (page.generation, page.next_cursor, now, handle.source_id),
             )
 
-    def mark_event_failure(self, event_id: str, code: str) -> None:
+    def mark_event_failure(self, handle: CaptureRunHandle, event_id: str, code: str) -> None:
+        now = self.clock()
         with self.store.transaction() as connection:
-            connection.execute(
-                "UPDATE capture_events SET status='staged',error_code=? WHERE id=?",
-                (code[:MAX_ERROR_CHARS], event_id),
+            self._require_active_run(connection, handle, now)
+            updated = connection.execute(
+                "UPDATE capture_events SET status='staged',error_code=? "
+                "WHERE id=? AND source_id=? AND status!='applied'",
+                (code[:MAX_ERROR_CHARS], event_id, handle.source_id),
             )
+            if updated.rowcount != 1:
+                event_row = connection.execute(
+                    "SELECT status FROM capture_events WHERE id=? AND source_id=?",
+                    (event_id, handle.source_id),
+                ).fetchone()
+                if event_row is None:
+                    raise ConflictError("capture event unavailable for failure mark")
 
     def finish_run(
         self,
         *,
-        run_id: str,
-        source_id: str,
+        handle: CaptureRunHandle,
         status: Literal["completed", "failed"],
         error_code: str | None,
         pages: int,
@@ -832,8 +885,9 @@ class CaptureLedger:
     ) -> CaptureRunResult:
         now = self.clock()
         with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
             source_row = connection.execute(
-                "SELECT retry_count FROM capture_sources WHERE id=?", (source_id,)
+                "SELECT retry_count FROM capture_sources WHERE id=?", (handle.source_id,)
             ).fetchone()
             if source_row is None:
                 raise NotFoundError("capture source not found")
@@ -849,14 +903,16 @@ class CaptureLedger:
             lag_events = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM capture_events WHERE source_id=? AND status!='applied'",
-                    (source_id,),
+                    (handle.source_id,),
                 ).fetchone()[0]
             )
             lag_pages = 1 if lag_events else 0
             run_state: CaptureRunState = "completed" if status == "completed" else "failed"
-            connection.execute(
+            updated_run = connection.execute(
                 "UPDATE capture_runs SET state=?,page_count=?,event_count=?,applied_event_count=?,"
-                "duplicate_event_count=?,failure_count=?,error_code=?,completed_at=? WHERE id=? AND source_id=?",
+                "duplicate_event_count=?,failure_count=?,error_code=?,completed_at=? "
+                "WHERE id=? AND source_id=? AND lease_token=? AND state='running' "
+                "AND lease_expires_at>?",
                 (
                     run_state,
                     pages,
@@ -866,13 +922,20 @@ class CaptureLedger:
                     failures,
                     error_code,
                     now,
-                    run_id,
-                    source_id,
+                    handle.run_id,
+                    handle.source_id,
+                    handle.lease_token,
+                    now,
                 ),
             )
-            connection.execute(
+            if updated_run.rowcount != 1:
+                raise CaptureError("capture_lease_expired")
+            updated_source = connection.execute(
                 "UPDATE capture_sources SET lifecycle_state=?,retry_count=?,next_retry_at=?,last_error_code=?,"
-                "last_error_at=?,lag_events=?,lag_pages=?,updated_at=? WHERE id=? AND lifecycle_state!='revoked'",
+                "last_error_at=?,lag_events=?,lag_pages=?,updated_at=? "
+                "WHERE id=? AND lifecycle_state='reconciling' AND EXISTS ("
+                "SELECT 1 FROM capture_runs WHERE id=? AND source_id=? AND lease_token=? "
+                "AND state=? AND lease_expires_at>?)",
                 (
                     "enabled" if status == "completed" else "degraded",
                     retry_count,
@@ -882,12 +945,19 @@ class CaptureLedger:
                     lag_events,
                     lag_pages,
                     now,
-                    source_id,
+                    handle.source_id,
+                    handle.run_id,
+                    handle.source_id,
+                    handle.lease_token,
+                    "completed" if status == "completed" else "failed",
+                    now,
                 ),
             )
+            if updated_source.rowcount != 1:
+                raise CaptureError("capture_lease_expired")
         return CaptureRunResult(
-            run_id=run_id,
-            source_id=source_id,
+            run_id=handle.run_id,
+            source_id=handle.source_id,
             status=status,
             error_code=error_code,
             pages=pages,
@@ -898,6 +968,34 @@ class CaptureLedger:
             retry_count=retry_count,
             lag_events=lag_events,
             lag_pages=lag_pages,
+        )
+
+    def stale_result(
+        self,
+        handle: CaptureRunHandle,
+        *,
+        pages: int,
+        events: int,
+        applied_events: int,
+        duplicate_events: int,
+        failures: int,
+    ) -> CaptureRunResult:
+        """Return a bounded result after ownership loss without writing state."""
+
+        source = self.get_source(handle.source_id)
+        return CaptureRunResult(
+            run_id=handle.run_id,
+            source_id=handle.source_id,
+            status="failed",
+            error_code="capture_lease_expired",
+            pages=pages,
+            events=events,
+            applied_events=applied_events,
+            duplicate_events=duplicate_events,
+            failures=failures,
+            retry_count=source.retry_count,
+            lag_events=source.lag_events,
+            lag_pages=source.lag_pages,
         )
 
     def skipped_result(self, source_id: str, code: str) -> CaptureRunResult:
@@ -1067,7 +1165,7 @@ class CaptureCoordinator:
             return self.ledger.skipped_result(source_id, "capture_run_in_progress")
         try:
             try:
-                run_id, active_source, attempt = self.ledger.begin_run(source_id)
+                handle, active_source, attempt = self.ledger.begin_run(source_id)
             except CaptureError as error:
                 return self.ledger.skipped_result(source_id, error.code)
             pages = events = applied = duplicates = failures = 0
@@ -1076,6 +1174,7 @@ class CaptureCoordinator:
             last_error: str | None = None
             try:
                 for page_index in range(MAX_RUN_PAGES):
+                    self.ledger.renew_run(handle)
                     page = self._adapter_page(adapter, active_source, cursor, page_index)
                     if expected_page_order is None:
                         expected_page_order = page.page_order
@@ -1088,9 +1187,7 @@ class CaptureCoordinator:
                         raise CaptureError("capture_event_limit_exceeded")
                     self._validate_page_events(source_id, page)
                     for event in page.events:
-                        event_id, already_applied, _attempts = self.ledger.stage_event(
-                            source_id, event
-                        )
+                        event_id, already_applied, _attempts = self.ledger.stage_event(handle, event)
                         events += 1
                         if already_applied:
                             duplicates += 1
@@ -1102,17 +1199,22 @@ class CaptureCoordinator:
                                 event_id=event_id,
                             )
                             self.ledger.commit_event(
-                                source_id=source_id,
+                                handle=handle,
                                 event=event,
                                 event_id=event_id,
                                 receipt=receipt,
                                 canonical_record_id=lineage,
                             )
                         except CaptureError as error:
-                            self.ledger.mark_event_failure(event_id, error.code)
+                            try:
+                                self.ledger.mark_event_failure(handle, event_id, error.code)
+                            except CaptureError as ownership_error:
+                                if ownership_error.code != "capture_lease_expired":
+                                    raise
+                                raise ownership_error from error
                             raise
                         applied += 1
-                    self.ledger.commit_page_cursor(source_id, page)
+                    self.ledger.commit_page_cursor(handle, page)
                     cursor = page.next_cursor
                     expected_page_order += 1
                     if page.done:
@@ -1120,8 +1222,7 @@ class CaptureCoordinator:
                 else:
                     raise CaptureError("capture_page_limit_exceeded")
                 return self.ledger.finish_run(
-                    run_id=run_id,
-                    source_id=source_id,
+                    handle=handle,
                     status="completed",
                     error_code=None,
                     pages=pages,
@@ -1135,19 +1236,30 @@ class CaptureCoordinator:
             except CaptureError as error:
                 last_error = error.code
                 failures += 1
-                return self.ledger.finish_run(
-                    run_id=run_id,
-                    source_id=source_id,
-                    status="failed",
-                    error_code=last_error,
-                    pages=pages,
-                    events=events,
-                    applied_events=applied,
-                    duplicate_events=duplicates,
-                    failures=failures,
-                    attempts=attempt,
-                    backoff=self.backoff,
-                )
+                try:
+                    return self.ledger.finish_run(
+                        handle=handle,
+                        status="failed",
+                        error_code=last_error,
+                        pages=pages,
+                        events=events,
+                        applied_events=applied,
+                        duplicate_events=duplicates,
+                        failures=failures,
+                        attempts=attempt,
+                        backoff=self.backoff,
+                    )
+                except CaptureError as ownership_error:
+                    if ownership_error.code != "capture_lease_expired":
+                        raise
+                    return self.ledger.stale_result(
+                        handle,
+                        pages=pages,
+                        events=events,
+                        applied_events=applied,
+                        duplicate_events=duplicates,
+                        failures=failures,
+                    )
         finally:
             self._run_lock.release()
 
@@ -1286,6 +1398,7 @@ __all__ = [
     "CaptureLifecycleState",
     "CapturePage",
     "CaptureProviderAdapter",
+    "CaptureRunHandle",
     "CaptureRunResult",
     "CaptureSource",
     "CaptureTransitionError",

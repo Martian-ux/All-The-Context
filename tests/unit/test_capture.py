@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,362 @@ def _event(
 
 def _enable(coordinator: CaptureCoordinator, source_id: str) -> None:
     coordinator.enable(source_id)
+
+
+def _begin(coordinator: CaptureCoordinator, source_id: str) -> Any:
+    handle, _source, _attempt = coordinator.ledger.begin_run(source_id)
+    return handle
+
+
+def _capture_schema_snapshot(connection: Any) -> tuple[tuple[Any, ...], ...]:
+    names = (
+        "capture_sources",
+        "ix_capture_sources_vault_state",
+        "capture_checkpoints",
+        "capture_events",
+        "ix_capture_events_source_order",
+        "ix_capture_events_source_status",
+        "capture_items",
+        "capture_runs",
+        "ix_capture_runs_source_time",
+        "ix_capture_runs_lease",
+    )
+    placeholders = ",".join("?" for _ in names)
+    rows = connection.execute(
+        f"SELECT type,name,sql FROM sqlite_master WHERE name IN ({placeholders}) "
+        "ORDER BY type,name",
+        names,
+    ).fetchall()
+    return tuple(tuple(row) for row in rows)
+
+
+class _MutableClock:
+    def __init__(self, value: str = "2026-01-01T00:00:00.000000Z") -> None:
+        self.value = value
+
+    def __call__(self) -> str:
+        return self.value
+
+
+class _GatedAdapter:
+    def __init__(self, page: CapturePage, gate: Any) -> None:
+        self.page = page
+        self.gate = gate
+        self.calls = 0
+
+    def fetch_page(self, source: Any, cursor: str | None, page_order: int) -> CapturePage:
+        del source, cursor, page_order
+        self.calls += 1
+        self.gate()
+        return self.page
+
+
+class _ExpiringSink(IdempotentFakeSink):
+    def __init__(self, clock: _MutableClock) -> None:
+        super().__init__()
+        self.clock = clock
+        self.expire_once = True
+
+    def apply(
+        self,
+        event: CaptureEvent,
+        *,
+        source_id: str,
+        canonical_record_id: str,
+        idempotency_key: str,
+    ) -> str:
+        receipt = super().apply(
+            event,
+            source_id=source_id,
+            canonical_record_id=canonical_record_id,
+            idempotency_key=idempotency_key,
+        )
+        if self.expire_once:
+            self.expire_once = False
+            self.clock.value = "2026-01-01T00:01:01.000000Z"
+        return receipt
+
+
+def test_migration_015_repair_matches_canonical_schema_and_rejects_malformed_rows(
+    tmp_path: Path,
+) -> None:
+    object_names = (
+        "capture_sources",
+        "capture_checkpoints",
+        "capture_events",
+        "capture_items",
+        "capture_runs",
+        "ix_capture_sources_vault_state",
+        "ix_capture_events_source_order",
+        "ix_capture_events_source_status",
+        "ix_capture_runs_source_time",
+        "ix_capture_runs_lease",
+    )
+    for object_name in object_names:
+        candidate = _store(tmp_path / object_name)
+        with candidate.connect() as connection:
+            expected = _capture_schema_snapshot(connection)
+        with candidate.transaction() as connection:
+            kind = "INDEX" if object_name.startswith("ix_") else "TABLE"
+            connection.execute(f"DROP {kind} IF EXISTS \"{object_name}\"")
+            assert connection.execute(
+                "SELECT MAX(version) FROM schema_migrations"
+            ).fetchone()[0] == 15
+        assert candidate.migrate() == 15
+        with candidate.connect() as connection:
+            assert _capture_schema_snapshot(connection) == expected
+
+    coordinator = _coordinator(tmp_path / "malformed")
+    source_id = _source(coordinator)
+    vault_id = coordinator.ledger.store.vault_id()
+    now = "2026-01-01T00:00:00.000000Z"
+    with coordinator.ledger.store.transaction() as connection:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO capture_sources"
+                "(id,vault_id,provider,account_label,local_only,local_only_acknowledged,"
+                "lifecycle_state,retry_count,lag_events,lag_pages,created_at,updated_at) "
+                "VALUES('bad-source',?,'fake','bad',2,0,'disabled',0,0,0,?,?)",
+                (vault_id, now, now),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE capture_checkpoints SET generation=-1 WHERE source_id=?", (source_id,)
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO capture_events"
+                "(id,source_id,provider_event_id,provider_item_id,generation,order_key,operation,"
+                "normalized_payload_json,payload_hash,status,attempts,idempotency_key,received_at) "
+                "VALUES('bad-event',?,'bad-event','bad-item',-1,'1','upsert','{}',?,"
+                "'staged',0,'bad-idempotency',?)",
+                (source_id, "0" * 64, now),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO capture_items"
+                "(source_id,provider_item_id,canonical_record_id,generation,last_event_id,item_state,"
+                "updated_at) "
+                "VALUES(?, 'bad-item', 'bad-record', 0, 'bad-event', 'invalid', ?)",
+                (source_id, now),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO capture_runs"
+                "(id,source_id,state,lease_token,lease_expires_at,started_at) "
+                "VALUES('bad-run',?,'invalid','token',?,?)",
+                (source_id, now, now),
+            )
+
+
+def test_stale_coordinator_cannot_mutate_after_recovery_and_successful_replacement(
+    tmp_path: Path,
+) -> None:
+    clock = _MutableClock()
+    database_path = tmp_path / "shared.sqlite3"
+    store = CoreStore(database_path)
+    store.initialize_vault()
+    coordinator_a = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    source_id = _source(coordinator_a)
+    _enable(coordinator_a, source_id)
+    handle_a, _source_a, _attempt_a = coordinator_a.ledger.begin_run(source_id)
+    event_a = _event("a-old", "item-a", "1")
+    event_id_a, _already_applied, _attempts = coordinator_a.ledger.stage_event(handle_a, event_a)
+
+    clock.value = "2026-01-01T00:01:01.000000Z"
+    assert coordinator_a.ledger.recover_expired_runs() == 1
+    coordinator_b = CaptureCoordinator(
+        CoreStore(database_path), clock=clock, sink=IdempotentFakeSink()
+    )
+    coordinator_b.resume(source_id)
+    coordinator_b.register_adapter(
+        "fake",
+        DeterministicFakeAdapter(
+            [CapturePage(generation=1, events=(_event("b-new", "item-b", "2"),))]
+        ),
+    )
+    successful = coordinator_b.run(source_id)
+    assert successful.status == "completed"
+    assert coordinator_b.get_source(source_id).lifecycle_state == "enabled"
+
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator_a.ledger.stage_event(handle_a, _event("a-new", "item-c", "3"))
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator_a.ledger.commit_event(
+            handle=handle_a,
+            event=event_a,
+            event_id=event_id_a,
+            receipt="late-receipt",
+            canonical_record_id="late-record",
+        )
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator_a.ledger.commit_page_cursor(
+            handle_a,
+            CapturePage(generation=1, next_cursor="late-cursor", done=True),
+        )
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator_a.ledger.mark_event_failure(handle_a, event_id_a, "capture_sink_failed")
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator_a.ledger.finish_run(
+            handle=handle_a,
+            status="failed",
+            error_code="capture_sink_failed",
+            pages=1,
+            events=1,
+            applied_events=0,
+            duplicate_events=0,
+            failures=1,
+            attempts=1,
+            backoff=BackoffPolicy(),
+        )
+
+    with coordinator_a.ledger.store.connect() as connection:
+        old_run = connection.execute(
+            "SELECT state FROM capture_runs WHERE id=?", (handle_a.run_id,)
+        ).fetchone()
+        old_event = connection.execute(
+            "SELECT status FROM capture_events WHERE id=?", (event_id_a,)
+        ).fetchone()
+        item = connection.execute(
+            "SELECT 1 FROM capture_items WHERE source_id=? AND provider_item_id='item-a'",
+            (source_id,),
+        ).fetchone()
+        checkpoint = connection.execute(
+            "SELECT last_order_key,cursor FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert old_run is not None and old_run["state"] == "abandoned"
+    assert old_event is not None and old_event["status"] == "staged"
+    assert item is None
+    assert checkpoint is not None and checkpoint["last_order_key"] == "2"
+    assert coordinator_b.get_source(source_id).lifecycle_state == "enabled"
+
+
+@pytest.mark.parametrize("transition", ["pause", "revoke"])
+def test_pause_or_revoke_blocks_later_run_handle_writes(
+    tmp_path: Path, transition: str
+) -> None:
+    clock = _MutableClock()
+    store = CoreStore(tmp_path / f"{transition}.sqlite3")
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    handle, _source_projection, _attempt = coordinator.ledger.begin_run(source_id)
+    event = _event("held", "held-item", "1")
+    event_id, _already_applied, _attempts = coordinator.ledger.stage_event(handle, event)
+    getattr(coordinator, transition)(source_id)
+
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator.ledger.stage_event(handle, _event("late", "late-item", "2"))
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator.ledger.commit_event(
+            handle=handle,
+            event=event,
+            event_id=event_id,
+            receipt="late-receipt",
+            canonical_record_id="late-record",
+        )
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator.ledger.commit_page_cursor(handle, CapturePage(generation=1, done=True))
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator.ledger.mark_event_failure(handle, event_id, "capture_sink_failed")
+    with pytest.raises(CaptureError, match="capture_lease_expired"):
+        coordinator.ledger.finish_run(
+            handle=handle,
+            status="completed",
+            error_code=None,
+            pages=1,
+            events=1,
+            applied_events=1,
+            duplicate_events=0,
+            failures=0,
+            attempts=1,
+            backoff=BackoffPolicy(),
+        )
+
+    with coordinator.ledger.store.connect() as connection:
+        run = connection.execute(
+            "SELECT state FROM capture_runs WHERE id=?", (handle.run_id,)
+        ).fetchone()
+        stored_event = connection.execute(
+            "SELECT status FROM capture_events WHERE id=?", (event_id,)
+        ).fetchone()
+        checkpoint = connection.execute(
+            "SELECT last_order_key,cursor FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert coordinator.get_source(source_id).lifecycle_state == (
+        "paused" if transition == "pause" else "revoked"
+    )
+    assert run is not None and run["state"] == "abandoned"
+    assert stored_event is not None and stored_event["status"] == "staged"
+    assert checkpoint is not None and checkpoint["last_order_key"] is None
+    assert checkpoint["cursor"] is None
+
+
+def test_lease_expiry_before_sink_does_not_stage_or_call_sink(tmp_path: Path) -> None:
+    clock = _MutableClock()
+    sink = IdempotentFakeSink()
+    store = CoreStore(tmp_path / "before-sink.sqlite3")
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    adapter = _GatedAdapter(
+        CapturePage(generation=1, events=(_event("before", "item", "1"),)),
+        lambda: setattr(clock, "value", "2026-01-01T00:01:01.000000Z"),
+    )
+    coordinator.register_adapter("fake", adapter)
+
+    result = coordinator.run(source_id)
+
+    assert result.error_code == "capture_lease_expired"
+    assert sink.calls == []
+    with coordinator.ledger.store.connect() as connection:
+        event = connection.execute(
+            "SELECT 1 FROM capture_events WHERE source_id=?", (source_id,)
+        ).fetchone()
+        run = connection.execute(
+            "SELECT state FROM capture_runs WHERE source_id=? ORDER BY started_at DESC LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert event is None
+    assert run is not None and run["state"] == "running"
+
+
+def test_lease_expiry_during_sink_replays_same_idempotency_key(tmp_path: Path) -> None:
+    clock = _MutableClock()
+    sink = _ExpiringSink(clock)
+    store = CoreStore(tmp_path / "during-sink.sqlite3")
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    page = CapturePage(generation=1, events=(_event("during", "item", "1"),))
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([page]))
+
+    first = coordinator.run(source_id)
+    assert first.error_code == "capture_lease_expired"
+    assert len(sink.calls) == 1
+    coordinator.ledger.recover_expired_runs()
+    coordinator.resume(source_id)
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([page]))
+    replay = coordinator.run(source_id)
+
+    assert replay.status == "completed"
+    assert len(sink.calls) == 1
+    with coordinator.ledger.store.connect() as connection:
+        event = connection.execute(
+            "SELECT status,idempotency_key FROM capture_events WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+        item = connection.execute(
+            "SELECT item_state FROM capture_items WHERE source_id=?", (source_id,)
+        ).fetchone()
+    assert event is not None and event["status"] == "applied"
+    assert event["idempotency_key"] == sink.calls[0][2]
+    assert item is not None and item["item_state"] == "active"
 
 
 def test_migration_015_restart_and_partial_damage_repair(tmp_path: Path) -> None:
@@ -196,9 +553,21 @@ def test_ordered_pages_updates_deletes_duplicate_replay_and_stable_lineage(tmp_p
 def test_changed_provider_event_payload_is_rejected_without_overwrite(tmp_path: Path) -> None:
     coordinator = _coordinator(tmp_path)
     source_id = _source(coordinator)
-    coordinator.ledger.stage_event(source_id, _event("e1", "i1", "1", payload={"a": "one"}))
+    _enable(coordinator, source_id)
+    handle = _begin(coordinator, source_id)
+    event_id, _already_applied, _attempts = coordinator.ledger.stage_event(
+        handle, _event("e1", "i1", "1", payload={"a": "one"})
+    )
     with pytest.raises(CaptureError, match="capture_event_payload_conflict"):
-        coordinator.ledger.stage_event(source_id, _event("e1", "i1", "1", payload={"a": "two"}))
+        coordinator.ledger.stage_event(handle, _event("e1", "i1", "1", payload={"a": "two"}))
+    with pytest.raises(CaptureError, match="capture_event_payload_conflict"):
+        coordinator.ledger.commit_event(
+            handle=handle,
+            event=_event("e2", "i1", "1", payload={"a": "one"}),
+            event_id=event_id,
+            receipt="receipt-1",
+            canonical_record_id="record-1",
+        )
     with coordinator.ledger.store.connect() as connection:
         row = connection.execute(
             "SELECT normalized_payload_json FROM capture_events "
@@ -299,6 +668,7 @@ def test_gap_invalid_cursor_page_limit_backoff_and_lease_recovery(tmp_path: Path
     limited = coordinator.run(source_id)
     assert limited.error_code == "capture_page_limit_exceeded"
 
+    coordinator.resume(source_id)
     with coordinator.ledger.store.transaction() as connection:
         now = "2000-01-01T00:00:00.000000Z"
         connection.execute(
@@ -315,9 +685,11 @@ def test_secret_markers_never_enter_capture_sqlite_state(tmp_path: Path) -> None
     with pytest.raises(CaptureError, match="capture_payload_rejected"):
         coordinator.create_source(provider="fake", account_label="Bearer secret=do-not-store")
     source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    handle = _begin(coordinator, source_id)
     with pytest.raises(CaptureError, match="capture_payload_rejected"):
         coordinator.ledger.stage_event(
-            source_id,
+            handle,
             _event("e1", "i1", "1", payload={"api_token": "not-persisted"}),
         )
     with coordinator.ledger.store.connect() as connection:

@@ -1740,3 +1740,20 @@ or papered over in this integration.
   and index repair, all typed local action paths, and duplicate import counts.
   This remains local review evidence only; encrypted package possession is not
   an external signature over a fully rewritten and re-encrypted archive.
+
+## Continuous Capture repair and lease-authority correction (2026-08-22)
+
+- Marker-present migration-015 repair now reads the packaged migration SQL and
+  executes its complete statements transactionally, so interrupted startup
+  repair and fresh migration share the exact capture table, constraint, and
+  index definitions. Focused damage/restart probes cover every capture table
+  and index plus representative malformed-row rejection.
+- Run-owned writes now require an opaque typed run handle with exact source and
+  lease-token binding, a live strictly-future lease, and a source still in
+  `reconciling`. Renewal uses the same guard. Complete event identity is
+  revalidated before application commit; stale, paused, revoked, abandoned, or
+  replaced runs cannot write events, items, checkpoints, or lifecycle state.
+- Leaving `reconciling` abandons active runs atomically, and expiry recovery
+  degrades only a source that remains reconciling. Sink-expiry replay retains
+  the same idempotency key. This is local beta.6 review evidence only; fresh
+  independent acceptance remains required.

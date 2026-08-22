@@ -3214,3 +3214,23 @@ background scheduler, dashboard/package-startup change, current product
 availability, beta.6 identity change, release/publication/acceptance claim,
 live/private Core/data work, or macOS work is included. The unsupported-macOS
 posture and Core authority boundary remain unchanged.
+
+## ADR-119: Continuous Capture repair and lease capability authority
+
+**Status:** implemented in the isolated 2026-08-22 Stage 4 first-slice
+candidate; fresh independent security/correctness/API acceptance remains
+required.
+
+Migration-015 startup repair reads the packaged authoritative migration and
+executes its statements one at a time inside the existing transaction. This
+keeps marker-present repair invariant-equivalent to fresh migration without a
+second weakened schema definition or `executescript` auto-commit behavior.
+
+After `begin_run`, every run-owned mutation carries a typed handle binding the
+run ID, source ID, and lease token. The ledger checks that exact capability,
+`running` state, strictly future expiry, and `reconciling` source state in the
+mutation transaction. Renewal has the same guard. Leaving `reconciling`
+atomically abandons active runs, and expiry recovery only degrades sources
+that still reconcile; a sink result crossing expiry is not committed and is
+safe to replay under the same idempotency key. These changes preserve the
+provider-neutral, foreground-only, beta.6 and unsupported-macOS boundaries.
