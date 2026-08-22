@@ -50,8 +50,8 @@ class ContractViolation(ValueError):
         super().__init__(code.value)
 
 
-def _bounded_text(value: str, *, allow_empty: bool = False) -> str:
-    if type(value) is not str:
+def _bounded_text(value: object, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
         raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     if not allow_empty and not value.strip():
         raise ContractViolation(ContractErrorCode.INVALID_FIELD)
@@ -60,11 +60,13 @@ def _bounded_text(value: str, *, allow_empty: bool = False) -> str:
     return value
 
 
-def _reference(value: str) -> str:
+def _reference(value: object) -> str:
     return _bounded_text(value)
 
 
 def _labels(value: Iterable[str], *, maximum: int = MAX_AUTHORIZATION_LABELS) -> frozenset[str]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     values = frozenset(_reference(item) for item in value)
     if len(values) > maximum:
         raise ContractViolation(ContractErrorCode.INVALID_FIELD)
@@ -75,7 +77,9 @@ def _optional_labels(value: Iterable[str] | None) -> frozenset[str] | None:
     return None if value is None else _labels(value)
 
 
-def _utc(value: datetime) -> datetime:
+def _utc(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise ContractViolation(ContractErrorCode.INVALID_TIMESTAMP)
     if value.tzinfo is None or value.utcoffset() is None:
         raise ContractViolation(ContractErrorCode.INVALID_TIMESTAMP)
     return value.astimezone(UTC)
@@ -181,6 +185,10 @@ class RetentionPolicy:
     expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.retention_class, RetentionClass):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+        if self.expires_at is not None and not isinstance(self.expires_at, datetime):
+            raise ContractViolation(ContractErrorCode.INVALID_TIMESTAMP)
         if self.expires_at is not None:
             object.__setattr__(self, "expires_at", _utc(self.expires_at))
         if self.retention_class is RetentionClass.EXPLICIT_EXPIRY and self.expires_at is None:
@@ -230,6 +238,8 @@ class AuthorizationApplicability:
     def narrowed_by(self, narrower: AuthorizationApplicability) -> AuthorizationApplicability:
         """Return an intersection; a caller can never widen source applicability."""
 
+        if not isinstance(narrower, AuthorizationApplicability):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         return AuthorizationApplicability(
             allowed_principals=_intersection(self.allowed_principals, narrower.allowed_principals),
             allowed_scopes=_intersection(self.allowed_scopes, narrower.allowed_scopes),
@@ -240,6 +250,8 @@ class AuthorizationApplicability:
     def no_broader_than(self, broader: AuthorizationApplicability) -> bool:
         """Check the monotonic narrowing invariant without exposing content."""
 
+        if not isinstance(broader, AuthorizationApplicability):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         return (
             _allowed_subset(self.allowed_principals, broader.allowed_principals)
             and _allowed_subset(self.allowed_scopes, broader.allowed_scopes)
@@ -278,6 +290,72 @@ class ContentInterpretation(StrEnum):
     INERT_UNTRUSTED_DATA = "inert_untrusted_data"
 
 
+def _validate_observation_contract(
+    *,
+    source: object,
+    event: object,
+    item: object,
+    witness_class: object,
+    evidence_class: object,
+    retention: object,
+    authorization: object,
+    observed_at: object,
+    content: object,
+    payload_kind: PayloadKind | None,
+    content_interpretation: object,
+    disposition: object,
+    supersedes_observation_ref: object,
+    derivation_refs: object,
+) -> tuple[datetime, tuple[str, ...]]:
+    if (
+        not isinstance(source, SourceLineage)
+        or not isinstance(event, EventLineage)
+        or not isinstance(item, ItemLineage)
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    if not isinstance(witness_class, WitnessClass) or not isinstance(
+        evidence_class, EvidenceClass
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    if not isinstance(retention, RetentionPolicy) or not isinstance(
+        authorization, AuthorizationApplicability
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    if not isinstance(content_interpretation, ContentInterpretation) or not isinstance(
+        disposition, ObservationDisposition
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    if (
+        source.source_id != event.source_id
+        or source.source_id != item.source_id
+        or source.generation != event.generation
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_LINEAGE)
+    normalized_observed_at = _utc(observed_at)
+    if content is not None:
+        if not isinstance(content, str) or not content.strip():
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+        if len(content) > MAX_CONTENT_CHARS or _CONTROL_CHARACTER_RE.search(content):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    if payload_kind is not None:
+        if not isinstance(payload_kind, PayloadKind):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+        if payload_kind is PayloadKind.BOUNDED_INLINE and content is None:
+            raise ContractViolation(ContractErrorCode.CONTENT_MODE_MISMATCH)
+        if payload_kind is PayloadKind.AUTHORITATIVE_SOURCE_REFERENCE and content is not None:
+            raise ContractViolation(ContractErrorCode.CONTENT_MODE_MISMATCH)
+    if supersedes_observation_ref is not None:
+        _reference(supersedes_observation_ref)
+    if not isinstance(derivation_refs, tuple):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    refs = tuple(_reference(item) for item in derivation_refs)
+    if len(refs) != len(set(refs)):
+        raise ContractViolation(ContractErrorCode.DUPLICATE_REFERENCE)
+    if len(refs) > MAX_DERIVATION_REFERENCES:
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    return normalized_observed_at, refs
+
+
 @dataclass(frozen=True, slots=True)
 class EventObservationInput:
     """Immutable, bounded input envelope for one formation attempt."""
@@ -298,37 +376,28 @@ class EventObservationInput:
     derivation_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if (
-            self.source.source_id != self.event.source_id
-            or self.source.source_id != self.item.source_id
-            or self.source.generation != self.event.generation
-        ):
-            raise ContractViolation(ContractErrorCode.INVALID_LINEAGE)
-        object.__setattr__(self, "observed_at", _utc(self.observed_at))
-        if self.content is not None:
-            if type(self.content) is not str or not self.content.strip():
-                raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-            if len(self.content) > MAX_CONTENT_CHARS or _CONTROL_CHARACTER_RE.search(self.content):
-                raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-        if self.payload_kind is PayloadKind.BOUNDED_INLINE and self.content is None:
-            raise ContractViolation(ContractErrorCode.CONTENT_MODE_MISMATCH)
-        if (
-            self.payload_kind is PayloadKind.AUTHORITATIVE_SOURCE_REFERENCE
-            and self.content is not None
-        ):
-            raise ContractViolation(ContractErrorCode.CONTENT_MODE_MISMATCH)
-        if self.supersedes_observation_ref is not None:
-            _reference(self.supersedes_observation_ref)
-        refs = tuple(_reference(item) for item in self.derivation_refs)
-        if len(refs) != len(set(refs)):
-            raise ContractViolation(ContractErrorCode.DUPLICATE_REFERENCE)
-        if len(refs) > MAX_DERIVATION_REFERENCES:
-            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-        object.__setattr__(self, "derivation_refs", refs)
+        observed_at, derivation_refs = _validate_observation_contract(
+            source=self.source,
+            event=self.event,
+            item=self.item,
+            witness_class=self.witness_class,
+            evidence_class=self.evidence_class,
+            retention=self.retention,
+            authorization=self.authorization,
+            observed_at=self.observed_at,
+            content=self.content,
+            payload_kind=self.payload_kind,
+            content_interpretation=self.content_interpretation,
+            disposition=self.disposition,
+            supersedes_observation_ref=self.supersedes_observation_ref,
+            derivation_refs=self.derivation_refs,
+        )
+        object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "derivation_refs", derivation_refs)
         if self.disposition is ObservationDisposition.DERIVED:
             if self.witness_class is WitnessClass.UNTRUSTED_IMPORTED_TEXT:
                 return
-            if self.evidence_class is not EvidenceClass.DERIVED_RELATION or not refs:
+            if self.evidence_class is not EvidenceClass.DERIVED_RELATION or not derivation_refs:
                 raise ContractViolation(ContractErrorCode.DERIVED_WITHOUT_LINEAGE)
 
 
@@ -349,6 +418,34 @@ class ObservationProposal:
     content_interpretation: ContentInterpretation
     supersedes_observation_ref: str | None
     derivation_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        observed_at, derivation_refs = _validate_observation_contract(
+            source=self.source,
+            event=self.event,
+            item=self.item,
+            witness_class=self.witness_class,
+            evidence_class=self.evidence_class,
+            retention=self.retention,
+            authorization=self.authorization,
+            observed_at=self.observed_at,
+            content=self.content,
+            payload_kind=None,
+            content_interpretation=self.content_interpretation,
+            disposition=self.disposition,
+            supersedes_observation_ref=self.supersedes_observation_ref,
+            derivation_refs=self.derivation_refs,
+        )
+        object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "derivation_refs", derivation_refs)
+        if self.disposition is ObservationDisposition.DERIVED:
+            if self.witness_class is WitnessClass.UNTRUSTED_IMPORTED_TEXT:
+                return
+            if (
+                self.evidence_class is not EvidenceClass.DERIVED_RELATION
+                or not self.derivation_refs
+            ):
+                raise ContractViolation(ContractErrorCode.DERIVED_WITHOUT_LINEAGE)
 
     @property
     def lineage_key(self) -> tuple[str, str, str]:
@@ -377,6 +474,10 @@ class FormationRefusal:
     detector_version: str = "packet-c-v0"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.status, FormationStatus) or not isinstance(
+            self.reason_code, FormationRefusalCode
+        ):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         if self.status is not FormationStatus.REFUSED:
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         _reference(self.per_run_artifact_ref)
@@ -392,6 +493,12 @@ class FormationResult:
     refusal: FormationRefusal | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.status, FormationStatus):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+        if self.proposal is not None and not isinstance(self.proposal, ObservationProposal):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+        if self.refusal is not None and not isinstance(self.refusal, FormationRefusal):
+            raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         if (self.proposal is None) == (self.refusal is None):
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
         if self.status is FormationStatus.FORMED and self.proposal is None:
@@ -412,6 +519,11 @@ def form_observation(
 ) -> FormationResult:
     """Form one inert proposal or refuse it without retaining secret-like data."""
 
+    if not isinstance(formation_input, EventObservationInput):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
+    _reference(refusal_ref)
+    if as_of is not None:
+        _utc(as_of)
     if (
         formation_input.content is not None
         and _SECRET_LIKE_RE.search(formation_input.content) is not None
@@ -461,6 +573,10 @@ def narrow_proposal_authorization(
 ) -> ObservationProposal:
     """Apply a monotonic applicability restriction to a disposable proposal."""
 
+    if not isinstance(proposal, ObservationProposal) or not isinstance(
+        restriction, AuthorizationApplicability
+    ):
+        raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     return replace(proposal, authorization=proposal.authorization.narrowed_by(restriction))
 
 

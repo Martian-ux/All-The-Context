@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import FrozenInstanceError, asdict, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -13,6 +13,7 @@ from allthecontext.experimental_event_observation import (
     EventObservationInput,
     EvidenceClass,
     FormationRefusalCode,
+    FormationResult,
     FormationStatus,
     ItemLineage,
     ObservationDisposition,
@@ -287,6 +288,44 @@ def test_retention_expiry_refuses_formation_at_exclusive_boundary() -> None:
     assert result.refusal.reason_code is FormationRefusalCode.RETENTION_EXPIRED
 
 
+@pytest.mark.parametrize(
+    ("field_name", "bad_value"),
+    (
+        ("source", object()),
+        ("event", object()),
+        ("item", object()),
+        ("witness_class", "authoritative_source"),
+        ("evidence_class", "source_item"),
+        ("retention", object()),
+        ("authorization", object()),
+        ("observed_at", object()),
+        ("payload_kind", "bounded_inline"),
+        ("content_interpretation", "evidence_data"),
+        ("disposition", "tentative"),
+        ("derivation_refs", "one-ref"),
+    ),
+)
+def test_public_formation_contract_rejects_wrong_nested_and_enum_types(
+    field_name: str,
+    bad_value: object,
+) -> None:
+    with pytest.raises(ContractViolation) as failure:
+        _formation_input(**{field_name: bad_value})
+    assert failure.value.code.value in {"invalid_field", "invalid_timestamp"}
+
+    with pytest.raises(ContractViolation):
+        RetentionPolicy("source_lifetime")  # type: ignore[arg-type]
+
+
+def test_public_formation_results_and_proposals_validate_their_fields() -> None:
+    result = form_observation(_formation_input())
+    assert result.proposal is not None
+    with pytest.raises(ContractViolation):
+        replace(result.proposal, disposition="tentative")  # type: ignore[arg-type]
+    with pytest.raises(ContractViolation):
+        FormationResult(status="formed", proposal=result.proposal)  # type: ignore[arg-type]
+
+
 def test_projection_plan_declares_all_future_surfaces_and_m3_mutation_mapping() -> None:
     plan = _plan()
     assert {item.kind for item in plan.declarations} == set(ProjectionKind)
@@ -324,12 +363,19 @@ def test_dependency_closure_covers_correction_drift_expiry_delete_and_destructiv
 def test_rebuild_is_deterministic_and_withdraws_ineligible_inputs() -> None:
     plan = _plan()
     seeds = (_seed(),)
-    forward = rebuild_projection(plan, seeds, principal="alice", policy_generation=3)
+    forward = rebuild_projection(
+        plan,
+        seeds,
+        principal="alice",
+        policy_generation=3,
+        required_scopes=("synthetic-project",),
+    )
     reverse = rebuild_projection(
         plan,
         seeds,
         principal="alice",
         policy_generation=3,
+        required_scopes=("synthetic-project",),
         schedule=tuple(reversed([item.projection_ref for item in plan.declarations])),
     )
     assert forward == reverse
@@ -341,12 +387,14 @@ def test_rebuild_is_deterministic_and_withdraws_ineligible_inputs() -> None:
         (_seed(state=ProjectionSeedState.DELETED),),
         principal="alice",
         policy_generation=3,
+        required_scopes=("synthetic-project",),
     )
     purged = rebuild_projection(
         plan,
         (_seed(state=ProjectionSeedState.PURGED),),
         principal="alice",
         policy_generation=3,
+        required_scopes=("synthetic-project",),
     )
     unauthorized = rebuild_projection(
         plan,
@@ -362,8 +410,79 @@ def test_rebuild_is_deterministic_and_withdraws_ineligible_inputs() -> None:
         ),
         principal="alice",
         policy_generation=3,
+        required_scopes=("synthetic-project",),
     )
     assert deleted == purged == unauthorized == ()
+    assert (
+        rebuild_projection(
+            plan,
+            seeds,
+            principal="alice",
+            policy_generation=3,
+            required_scopes=("different-synthetic-scope",),
+        )
+        == ()
+    )
+    assert all(
+        value.authorization.applies_to("alice", required_scopes=("synthetic-project",))
+        for value in forward
+    )
+
+
+def test_projection_declarations_require_typed_recipes_and_all_invalidation_causes() -> None:
+    invalidations = _all_invalidations()
+    dependency = (DependencyDeclaration("external-synthetic", InfluenceClass.CONTENT),)
+    with pytest.raises(ProjectionContractViolation) as empty:
+        ProjectionDeclaration(
+            "empty-recipe",
+            ProjectionKind.INDEX,
+            dependencies=(),
+            invalidation_declarations=invalidations,
+        )
+    assert empty.value.code.value == "empty_dependencies"
+    with pytest.raises(ProjectionContractViolation) as bad_dependency:
+        ProjectionDeclaration(
+            "bad-dependency",
+            ProjectionKind.INDEX,
+            dependencies=(object(),),  # type: ignore[arg-type]
+            invalidation_declarations=invalidations,
+        )
+    assert bad_dependency.value.code.value == "invalid_field"
+    with pytest.raises(ProjectionContractViolation) as bad_invalidation:
+        ProjectionDeclaration(
+            "bad-invalidation",
+            ProjectionKind.INDEX,
+            dependencies=dependency,
+            invalidation_declarations=(object(),),  # type: ignore[arg-type]
+        )
+    assert bad_invalidation.value.code.value == "invalid_field"
+    with pytest.raises(ProjectionContractViolation) as missing:
+        ProjectionDeclaration(
+            "missing-cause",
+            ProjectionKind.INDEX,
+            dependencies=dependency,
+            invalidation_declarations=invalidations[:-1],
+        )
+    assert missing.value.code.value == "missing_invalidation"
+
+
+def test_rebuild_rejects_unknown_and_derived_seed_references() -> None:
+    plan = _plan()
+    for seed_ref in ("unknown-synthetic", "index-synthetic"):
+        seed = ProjectionSeed(
+            node_ref=seed_ref,
+            version=1,
+            semantic_commitment="opaque-seed-commitment",
+            authorization=AuthorizationApplicability(),
+        )
+        with pytest.raises(ProjectionContractViolation) as failure:
+            rebuild_projection(plan, (seed,), principal="alice", policy_generation=1)
+        assert failure.value.code.value == "unknown_seed"
+        assert seed_ref not in str(failure.value)
+
+    with pytest.raises(ProjectionContractViolation) as wrong_seed:
+        rebuild_projection(plan, (object(),), principal="alice", policy_generation=1)  # type: ignore[arg-type]
+    assert wrong_seed.value.code.value == "invalid_seed"
 
 
 def test_invalid_contracts_fail_with_content_free_errors() -> None:
@@ -374,11 +493,13 @@ def test_invalid_contracts_fail_with_content_free_errors() -> None:
                     "cycle-a",
                     ProjectionKind.INDEX,
                     dependencies=(DependencyDeclaration("cycle-b", InfluenceClass.CONTENT),),
+                    invalidation_declarations=_all_invalidations(),
                 ),
                 ProjectionDeclaration(
                     "cycle-b",
                     ProjectionKind.SUMMARY,
                     dependencies=(DependencyDeclaration("cycle-a", InfluenceClass.CONTENT),),
+                    invalidation_declarations=_all_invalidations(),
                 ),
             )
         )

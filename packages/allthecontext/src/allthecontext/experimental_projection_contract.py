@@ -32,6 +32,9 @@ class ProjectionErrorCode(StrEnum):
     CYCLIC_DEPENDENCY = "cyclic_dependency"
     INVALID_SCHEDULE = "invalid_schedule"
     INVALID_SEED = "invalid_seed"
+    UNKNOWN_SEED = "unknown_seed"
+    EMPTY_DEPENDENCIES = "empty_dependencies"
+    MISSING_INVALIDATION = "missing_invalidation"
     EMPTY_INPUT = "empty_input"
 
 
@@ -43,8 +46,8 @@ class ProjectionContractViolation(ValueError):
         super().__init__(code.value)
 
 
-def _reference(value: str, *, maximum: int = MAX_COMMITMENT_CHARS) -> str:
-    if type(value) is not str or not value.strip() or len(value) > maximum:
+def _reference(value: object, *, maximum: int = MAX_COMMITMENT_CHARS) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
@@ -54,6 +57,8 @@ def _reference(value: str, *, maximum: int = MAX_COMMITMENT_CHARS) -> str:
 def _references(
     values: Iterable[str], *, maximum: int = MAX_PROJECTION_REFERENCES
 ) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
     result = tuple(_reference(value) for value in values)
     if len(result) > maximum:
         raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
@@ -98,6 +103,21 @@ class InvalidationAction(StrEnum):
     WITHDRAW_AND_REBUILD = "withdraw_and_rebuild"
     WITHDRAW_ONLY = "withdraw_only"
     ERASE = "erase"
+
+
+MANDATORY_INVALIDATION_CAUSES = frozenset(
+    {
+        InvalidationCause.CORRECTION,
+        InvalidationCause.SUPERSESSION,
+        InvalidationCause.SOURCE_DRIFT,
+        InvalidationCause.SCOPE_NARROWING,
+        InvalidationCause.PERMISSION_REVOCATION,
+        InvalidationCause.RETENTION_EXPIRY,
+        InvalidationCause.ORDINARY_DELETE,
+        InvalidationCause.TERMINAL_PURGE,
+        InvalidationCause.POLICY_GENERATION_CHANGE,
+    }
+)
 
 
 class ProjectionSeedState(StrEnum):
@@ -147,18 +167,30 @@ class ProjectionDeclaration:
         _reference(self.projection_ref)
         if not isinstance(self.kind, ProjectionKind):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-        dependencies = tuple(self.dependencies)
+        if not isinstance(self.dependencies, tuple):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        dependencies = self.dependencies
+        if any(not isinstance(item, DependencyDeclaration) for item in dependencies):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        if not dependencies:
+            raise ProjectionContractViolation(ProjectionErrorCode.EMPTY_DEPENDENCIES)
         if len(dependencies) > MAX_DEPENDENCIES:
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         if len({item.predecessor_ref for item in dependencies}) != len(dependencies):
             raise ProjectionContractViolation(ProjectionErrorCode.DUPLICATE_REFERENCE)
         if any(item.predecessor_ref == self.projection_ref for item in dependencies):
             raise ProjectionContractViolation(ProjectionErrorCode.CYCLIC_DEPENDENCY)
-        invalidations = tuple(self.invalidation_declarations)
+        if not isinstance(self.invalidation_declarations, tuple):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        invalidations = self.invalidation_declarations
+        if any(not isinstance(item, InvalidationDeclaration) for item in invalidations):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         if len(invalidations) > MAX_INVALIDATION_DECLARATIONS:
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         if len({item.cause for item in invalidations}) != len(invalidations):
             raise ProjectionContractViolation(ProjectionErrorCode.DUPLICATE_REFERENCE)
+        if MANDATORY_INVALIDATION_CAUSES - {item.cause for item in invalidations}:
+            raise ProjectionContractViolation(ProjectionErrorCode.MISSING_INVALIDATION)
         object.__setattr__(self, "dependencies", dependencies)
         object.__setattr__(self, "invalidation_declarations", invalidations)
 
@@ -167,6 +199,8 @@ class ProjectionDeclaration:
         return frozenset(item.cause for item in self.invalidation_declarations)
 
     def invalidation_for(self, cause: InvalidationCause) -> InvalidationDeclaration | None:
+        if not isinstance(cause, InvalidationCause):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         return next(
             (item for item in self.invalidation_declarations if item.cause is cause),
             None,
@@ -181,12 +215,18 @@ class ProjectionPlan:
     external_refs: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
-        declarations = tuple(self.declarations)
+        if not isinstance(self.declarations, tuple):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        declarations = self.declarations
         if not declarations:
             raise ProjectionContractViolation(ProjectionErrorCode.EMPTY_INPUT)
+        if any(not isinstance(item, ProjectionDeclaration) for item in declarations):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         refs = tuple(item.projection_ref for item in declarations)
         if len(refs) != len(set(refs)):
             raise ProjectionContractViolation(ProjectionErrorCode.DUPLICATE_REFERENCE)
+        if not isinstance(self.external_refs, frozenset):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         external_refs = frozenset(_references(self.external_refs))
         if set(refs) & external_refs:
             raise ProjectionContractViolation(ProjectionErrorCode.DUPLICATE_REFERENCE)
@@ -209,6 +249,8 @@ class ProjectionPlan:
     ) -> tuple[str, ...]:
         """Return all declared descendants affected by one mutation cause."""
 
+        if not isinstance(cause, InvalidationCause):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         changed = _references(changed_refs)
         reverse: dict[str, set[str]] = {}
         for declaration in self.declarations:
@@ -232,6 +274,8 @@ class ProjectionPlan:
     def m3_mutation_for(self, cause: InvalidationCause) -> MutationKind | None:
         """Map the six M3 mutations without redefining their semantics."""
 
+        if not isinstance(cause, InvalidationCause):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         return _M3_CAUSE_MAP.get(cause)
 
 
@@ -248,6 +292,8 @@ class ProjectionSeed:
     def __post_init__(self) -> None:
         _reference(self.node_ref)
         _reference(self.semantic_commitment)
+        if not isinstance(self.authorization, AuthorizationApplicability):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_SEED)
         if type(self.version) is not int or self.version < 1:
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_SEED)
         if not isinstance(self.state, ProjectionSeedState):
@@ -274,15 +320,28 @@ class ProjectionValue:
         _reference(self.projection_ref)
         if not isinstance(self.kind, ProjectionKind):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-        object.__setattr__(self, "input_refs", _references(self.input_refs))
-        versions = tuple(self.source_versions)
-        if len(versions) > MAX_PROJECTION_REFERENCES or len(set(versions)) != len(versions):
+        if not isinstance(self.input_refs, tuple) or not isinstance(
+            self.source_versions, tuple
+        ):
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-        for reference, version in versions:
+        object.__setattr__(self, "input_refs", _references(self.input_refs))
+        versions = self.source_versions
+        if len(versions) > MAX_PROJECTION_REFERENCES:
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        normalized_versions: list[tuple[str, int]] = []
+        for item in versions:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+            reference, version = item
             _reference(reference)
             if type(version) is not int or version < 1:
                 raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-        object.__setattr__(self, "source_versions", tuple(sorted(versions)))
+            normalized_versions.append((reference, version))
+        if len(set(normalized_versions)) != len(normalized_versions):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+        object.__setattr__(self, "source_versions", tuple(sorted(normalized_versions)))
+        if not isinstance(self.authorization, AuthorizationApplicability):
+            raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         if type(self.policy_generation) is not int or self.policy_generation < 1:
             raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
         _reference(self.semantic_commitment)
@@ -358,6 +417,7 @@ def rebuild_projection(
     *,
     principal: str,
     policy_generation: int,
+    required_scopes: Iterable[str] = (),
     schedule: Sequence[str] | None = None,
 ) -> tuple[ProjectionValue, ...]:
     """Rebuild all eligible projections from opaque seeds in fixed-point order.
@@ -366,17 +426,27 @@ def rebuild_projection(
     It intentionally reads no incremental artifact state and returns no content.
     """
 
+    if not isinstance(plan, ProjectionPlan):
+        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
     if type(policy_generation) is not int or policy_generation < 1:
         raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
-    if type(principal) is not str or not principal.strip():
-        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
+    principal_ref = _reference(principal)
+    required_scope_refs = _references(required_scopes, maximum=MAX_DEPENDENCIES)
+    if isinstance(seeds, (str, bytes)) or not isinstance(seeds, Sequence):
+        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_SEED)
     seed_values = tuple(seeds)
+    if any(not isinstance(item, ProjectionSeed) for item in seed_values):
+        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_SEED)
     seed_refs = tuple(item.node_ref for item in seed_values)
     if len(seed_refs) != len(set(seed_refs)):
         raise ProjectionContractViolation(ProjectionErrorCode.DUPLICATE_REFERENCE)
+    if set(seed_refs) - plan.external_refs:
+        raise ProjectionContractViolation(ProjectionErrorCode.UNKNOWN_SEED)
     seed_by_ref = {item.node_ref: item for item in seed_values}
-    ordering = tuple(schedule) if schedule is not None else tuple(
-        sorted(item.projection_ref for item in plan.declarations)
+    ordering = (
+        _references(schedule)
+        if schedule is not None
+        else tuple(sorted(item.projection_ref for item in plan.declarations))
     )
     if set(ordering) != set(item.projection_ref for item in plan.declarations) or len(
         ordering
@@ -404,7 +474,10 @@ def rebuild_projection(
                 predecessor_ref = dependency.predecessor_ref
                 seed = seed_by_ref.get(predecessor_ref)
                 if seed is not None:
-                    if not seed.eligible or not seed.authorization.applies_to(principal):
+                    if not seed.eligible or not seed.authorization.applies_to(
+                        principal_ref,
+                        required_scopes=required_scope_refs,
+                    ):
                         continue
                     input_values.append((predecessor_ref, seed.semantic_commitment))
                     input_versions.add((seed.node_ref, seed.version))
@@ -446,4 +519,6 @@ def dependency_closure(
 ) -> tuple[str, ...]:
     """Functional shorthand for the declared transitive invalidation closure."""
 
+    if not isinstance(plan, ProjectionPlan):
+        raise ProjectionContractViolation(ProjectionErrorCode.INVALID_FIELD)
     return plan.dependency_closure(changed_refs, cause)
