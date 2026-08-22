@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from allthecontext.capture import (
     BackoffPolicy,
+    CaptureCapabilityConformance,
     CaptureCapabilityManifest,
     CaptureCoordinator,
     CaptureError,
@@ -90,6 +91,14 @@ class _LegacyFetchOnlyAdapter:
         return self.page
 
 
+class _MutableClock:
+    def __init__(self, value: str = "2026-01-01T00:00:00.000000Z") -> None:
+        self.value = value
+
+    def __call__(self) -> str:
+        return self.value
+
+
 def test_manifest_is_versioned_immutable_and_content_free() -> None:
     manifest = CaptureCapabilityManifest(
         provider="synthetic-provider",
@@ -107,6 +116,7 @@ def test_manifest_is_versioned_immutable_and_content_free() -> None:
     )
 
     assert manifest.version == "v0"
+    assert manifest.network_access == "allowed"
     assert manifest.conformance().valid is True
     assert manifest.model_dump()["credential_ref"] == "keychain:synthetic-ref-1"
     assert manifest.model_dump()["retry_policy"]["rate_limit"] == {
@@ -142,6 +152,31 @@ def test_manifest_conformance_represents_partial_and_unavailable_truth() -> None
     assert unavailable.health_state == "unavailable"
 
 
+def test_unregistered_adapter_manifest_is_unavailable_with_unknown_posture(
+    tmp_path: Path,
+) -> None:
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=IdempotentFakeSink())
+    source_id = _source(coordinator)
+
+    manifest = coordinator.capability_manifest(source_id)
+
+    assert manifest.availability == "unavailable"
+    assert manifest.legacy_compatibility is False
+    assert manifest.connection == "unknown"
+    assert manifest.network_access == "unknown"
+    assert manifest.data_egress is None
+    serialized = manifest.model_dump()
+    assert serialized["connection"] == "unknown"
+    assert serialized["network_access"] == "unknown"
+    assert serialized["data_egress"] is None
+    assert {"network_posture_unknown", "data_egress_unknown"}.issubset(
+        set(manifest.conformance().warnings)
+    )
+    with coordinator.ledger.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_runs").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 0
+
+
 def test_manifest_rejects_contradictory_capability_claims() -> None:
     with pytest.raises(CaptureError, match="capture_capability_invalid"):
         CaptureCapabilityManifest(
@@ -156,6 +191,14 @@ def test_manifest_rejects_contradictory_capability_claims() -> None:
             coverage="partial",
             coverage_reason="missing_scope",
         )
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(provider="synthetic-provider", network_access=[])  # type: ignore[arg-type]
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(provider="synthetic-provider", data_egress=[])  # type: ignore[arg-type]
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityManifest(provider="synthetic-provider", connection=[])  # type: ignore[arg-type]
+    with pytest.raises(CaptureError, match="capture_capability_invalid"):
+        CaptureCapabilityConformance(valid=1)  # type: ignore[arg-type]
 
 
 def test_coordinator_accepts_complete_and_partial_page_truth(tmp_path: Path) -> None:
@@ -232,6 +275,15 @@ def test_fetch_only_adapter_uses_narrow_legacy_compatibility_default(tmp_path: P
     compatibility = coordinator.get_capability_manifest(source_id)
     assert compatibility.legacy_compatibility is True
     assert compatibility.coverage == "unavailable"
+    assert compatibility.network_access == "unknown"
+    assert compatibility.data_egress is None
+    assert compatibility.connection == "unknown"
+    assert {
+        "authorization_unknown",
+        "connection_unknown",
+        "network_posture_unknown",
+        "data_egress_unknown",
+    }.issubset(set(compatibility.conformance().warnings))
 
 
 @pytest.mark.parametrize(
@@ -251,6 +303,28 @@ def test_fetch_only_adapter_uses_narrow_legacy_compatibility_default(tmp_path: P
                 health="degraded",
             ),
             "capture_reauthorization_required",
+        ),
+        (
+            CaptureCapabilityManifest(
+                provider="fake",
+                availability="partial",
+                coverage="partial",
+                coverage_reason="authorization_unknown_fixture",
+                authorization="unknown",
+                health="degraded",
+            ),
+            "capture_capability_invalid",
+        ),
+        (
+            CaptureCapabilityManifest(
+                provider="fake",
+                availability="partial",
+                coverage="partial",
+                coverage_reason="connection_unknown_fixture",
+                connection="unknown",
+                health="degraded",
+            ),
+            "capture_capability_invalid",
         ),
         (
             CaptureCapabilityManifest(
@@ -315,6 +389,92 @@ def test_retryable_failure_uses_existing_run_backoff_and_recovers(tmp_path: Path
     assert recovered.status == "completed"
     assert recovered.applied_events == 1
     assert len(adapter.calls) == 2
+
+
+def test_explicit_retry_policy_honors_retry_after_and_attempt_bound(tmp_path: Path) -> None:
+    clock = _MutableClock()
+    coordinator = CaptureCoordinator(
+        _store(tmp_path),
+        sink=IdempotentFakeSink(),
+        clock=clock,
+    )
+    source_id = _source(coordinator)
+    coordinator.enable(source_id)
+    manifest = CaptureCapabilityManifest(
+        provider="fake",
+        retry_policy=CaptureRetryPolicy(
+            retryable_failures=True,
+            max_attempts=2,
+            backoff=BackoffPolicy(base_seconds=5, max_seconds=30),
+            rate_limit=CaptureRateLimitPolicy(mode="retry_after", max_delay_seconds=10),
+        ),
+    )
+    adapter = _CapabilityAdapter(manifest, retry_once=True)
+    coordinator.register_adapter("fake", adapter)
+
+    first = coordinator.run(source_id)
+
+    assert first.error_code == "capture_retryable_failure"
+    assert coordinator.get_source(source_id).next_retry_at == "2026-01-01T00:00:07.000000Z"
+
+    coordinator.resume(source_id)
+    adapter.retry_once = True
+    second = coordinator.run(source_id)
+    assert second.error_code == "capture_retryable_failure"
+
+    coordinator.resume(source_id)
+    exhausted = coordinator.run(source_id)
+
+    assert exhausted.status == "skipped"
+    assert exhausted.error_code == "capture_retry_exhausted"
+    assert len(adapter.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("manifest", "page"),
+    [
+        (
+            CaptureCapabilityManifest(
+                provider="fake",
+                availability="partial",
+                coverage="partial",
+                coverage_reason="page_truth_fixture",
+                freshness="fresh",
+                health="degraded",
+            ),
+            CapturePage(generation=1, coverage="partial", freshness="stale"),
+        ),
+        (
+            CaptureCapabilityManifest(
+                provider="fake",
+                availability="partial",
+                coverage="partial",
+                coverage_reason="page_truth_fixture",
+                freshness="stale",
+                health="degraded",
+            ),
+            CapturePage(generation=1, coverage="complete", freshness="stale"),
+        ),
+    ],
+)
+def test_explicit_page_truth_cannot_contradict_manifest(
+    tmp_path: Path,
+    manifest: CaptureCapabilityManifest,
+    page: CapturePage,
+) -> None:
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=IdempotentFakeSink())
+    source_id = _source(coordinator)
+    coordinator.enable(source_id)
+    adapter = _CapabilityAdapter(manifest, (page,))
+    coordinator.register_adapter("fake", adapter)
+
+    result = coordinator.run(source_id)
+
+    assert result.error_code == "capture_capability_invalid"
+    assert adapter.calls == [(None, 0)]
+    assert coordinator.ledger._checkpoint(source_id)["cursor"] is None
+    with coordinator.ledger.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 0
 
 
 def test_cursor_declaration_conflict_fails_without_advancing_capture_ledger(tmp_path: Path) -> None:

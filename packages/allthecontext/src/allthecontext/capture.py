@@ -57,11 +57,12 @@ CaptureAuthorizationState = Literal[
     "unauthorized",
     "unknown",
 ]
-CaptureConnectionState = Literal["connected", "disconnected"]
+CaptureConnectionState = Literal["connected", "disconnected", "unknown"]
 CaptureHealthState = Literal["healthy", "degraded", "unavailable"]
 CaptureRateLimitMode = Literal["none", "retry_after", "bounded_backoff", "unavailable"]
 CaptureDeletionCoordination = Literal["coordinated", "unsupported"]
 CapturePurgeCoordination = Literal["coordinated", "external_only", "unsupported"]
+CaptureNetworkAccessState = Literal["allowed", "denied", "unknown"]
 
 CAPTURE_CAPABILITY_MANIFEST_VERSION = "v0"
 
@@ -97,6 +98,7 @@ CAPTURE_ERROR_CODES = frozenset(
         "capture_authorization_unavailable",
         "capture_disconnected",
         "capture_retryable_failure",
+        "capture_retry_exhausted",
         "capture_page_malformed",
         "capture_invalid_cursor",
         "capture_page_limit_exceeded",
@@ -328,24 +330,25 @@ class CapturePage:
             or not 0 <= self.page_order <= MAX_CAPTURE_INTEGER
         ):
             raise CaptureError("capture_page_malformed")
+        if isinstance(self.events, list):
+            object.__setattr__(self, "events", tuple(self.events))
+        elif not isinstance(self.events, tuple):
+            raise CaptureError("capture_page_malformed")
         if len(self.events) > MAX_PAGE_EVENTS:
             raise CaptureError("capture_event_limit_exceeded")
         if self.next_cursor is not None:
             _bounded_cursor(self.next_cursor)
         if not isinstance(self.done, bool):
             raise CaptureError("capture_page_malformed")
-        if self.coverage is not None and self.coverage not in {
-            "complete",
-            "partial",
-            "unavailable",
-        }:
+        if self.coverage is not None and (
+            not isinstance(self.coverage, str)
+            or self.coverage not in {"complete", "partial", "unavailable"}
+        ):
             raise CaptureError("capture_page_malformed")
-        if self.freshness is not None and self.freshness not in {
-            "fresh",
-            "stale",
-            "unknown",
-            "unavailable",
-        }:
+        if self.freshness is not None and (
+            not isinstance(self.freshness, str)
+            or self.freshness not in {"fresh", "stale", "unknown", "unavailable"}
+        ):
             raise CaptureError("capture_page_malformed")
         for event in self.events:
             if not isinstance(event, CaptureEvent):
@@ -508,6 +511,21 @@ class CaptureCapabilityConformance:
     errors: tuple[str, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
+    def __post_init__(self) -> None:
+        if type(self.valid) is not bool:
+            raise CaptureError("capture_capability_invalid")
+        for values in (self.errors, self.warnings):
+            if not isinstance(values, tuple) or len(values) > 16:
+                raise CaptureError("capture_capability_invalid")
+            if any(
+                not isinstance(value, str)
+                or not value
+                or len(value) > MAX_ERROR_CHARS
+                or _SAFE_ID_RE.fullmatch(value) is None
+                for value in values
+            ):
+                raise CaptureError("capture_capability_invalid")
+
     def model_dump(self) -> dict[str, Any]:
         return {
             "valid": self.valid,
@@ -537,13 +555,19 @@ class CaptureCapabilityManifest:
     disconnect_supported: bool = False
     source_deletion: CaptureDeletionCoordination = "unsupported"
     purge_coordination: CapturePurgeCoordination = "unsupported"
-    network_access: bool = False
-    data_egress: tuple[str, ...] = field(default_factory=tuple)
+    network_access: CaptureNetworkAccessState | bool = "denied"
+    data_egress: tuple[str, ...] | None = field(default_factory=tuple)
     health: CaptureHealthState = "healthy"
     health_diagnostics: tuple[str, ...] = field(default_factory=tuple)
     legacy_compatibility: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.network_access) is bool:
+            object.__setattr__(
+                self,
+                "network_access",
+                "allowed" if self.network_access else "denied",
+            )
         if self._declaration_errors():
             raise CaptureError("capture_capability_invalid")
 
@@ -567,12 +591,12 @@ class CaptureCapabilityManifest:
                 max_attempts=1,
                 rate_limit=CaptureRateLimitPolicy(mode="unavailable"),
             ),
-            connection="connected",
+            connection="unknown",
             disconnect_supported=False,
             source_deletion="unsupported",
             purge_coordination="unsupported",
-            network_access=False,
-            data_egress=(),
+            network_access="unknown",
+            data_egress=None,
             health="degraded",
             health_diagnostics=("capability_manifest_missing",),
             legacy_compatibility=True,
@@ -585,7 +609,7 @@ class CaptureCapabilityManifest:
         *,
         reason: str = "provider_unavailable",
         authorization: CaptureAuthorizationState = "unknown",
-        connection: CaptureConnectionState = "connected",
+        connection: CaptureConnectionState = "unknown",
     ) -> CaptureCapabilityManifest:
         return cls(
             provider=provider,
@@ -599,6 +623,8 @@ class CaptureCapabilityManifest:
             freshness="unavailable",
             authorization=authorization,
             connection=connection,
+            network_access="unknown",
+            data_egress=None,
             health="unavailable",
             health_diagnostics=(reason,),
         )
@@ -659,7 +685,6 @@ class CaptureCapabilityManifest:
             self.incremental,
             self.cursor_support,
             self.disconnect_supported,
-            self.network_access,
             self.legacy_compatibility,
         ):
             if type(value) is not bool:
@@ -684,16 +709,20 @@ class CaptureCapabilityManifest:
             errors.append("credential_ref")
         if not isinstance(self.retry_policy, CaptureRetryPolicy):
             errors.append("retry_policy")
-        if not choice(self.connection, {"connected", "disconnected"}):
+        if not choice(self.connection, {"connected", "disconnected", "unknown"}):
             errors.append("connection")
         if not choice(self.source_deletion, {"coordinated", "unsupported"}):
             errors.append("source_deletion")
         if not choice(self.purge_coordination, {"coordinated", "external_only", "unsupported"}):
             errors.append("purge_coordination")
-        if not isinstance(self.data_egress, tuple) or len(self.data_egress) > 16:
+        if not choice(self.network_access, {"allowed", "denied", "unknown"}):
+            errors.append("network_access")
+        if self.data_egress is not None and (
+            not isinstance(self.data_egress, tuple) or len(self.data_egress) > 16
+        ):
             errors.append("data_egress")
-        else:
-            if not self.network_access and self.data_egress:
+        elif self.data_egress is not None:
+            if self.network_access == "denied" and self.data_egress:
                 errors.append("data_egress")
             if any(not safe_id(destination, MAX_PROVIDER_CHARS) for destination in self.data_egress):
                 errors.append("data_egress")
@@ -707,7 +736,13 @@ class CaptureCapabilityManifest:
             errors.append("health_diagnostics")
 
         if self.legacy_compatibility:
-            if self.acquisition_mode != "legacy" or self.availability == "complete":
+            if (
+                self.acquisition_mode != "legacy"
+                or self.availability == "complete"
+                or self.connection != "unknown"
+                or self.network_access != "unknown"
+                or self.data_egress is not None
+            ):
                 errors.append("legacy_compatibility")
         elif self.acquisition_mode == "legacy":
             errors.append("legacy_compatibility")
@@ -761,8 +796,16 @@ class CaptureCapabilityManifest:
             warnings.append("freshness_not_current")
         if self.authorization == "reauthorization_required":
             warnings.append("reauthorization_required")
+        if self.authorization == "unknown":
+            warnings.append("authorization_unknown")
         if self.connection == "disconnected":
             warnings.append("disconnected")
+        if self.connection == "unknown":
+            warnings.append("connection_unknown")
+        if self.network_access == "unknown":
+            warnings.append("network_posture_unknown")
+        if self.data_egress is None:
+            warnings.append("data_egress_unknown")
         if self.legacy_compatibility:
             warnings.append("legacy_compatibility")
         return CaptureCapabilityConformance(
@@ -792,7 +835,7 @@ class CaptureCapabilityManifest:
             "source_deletion": self.source_deletion,
             "purge_coordination": self.purge_coordination,
             "network_access": self.network_access,
-            "data_egress": list(self.data_egress),
+            "data_egress": None if self.data_egress is None else list(self.data_egress),
             "health": self.health,
             "health_diagnostics": list(self.health_diagnostics),
             "legacy_compatibility": self.legacy_compatibility,
@@ -1545,7 +1588,11 @@ class CaptureCoordinator:
         source = self.get_source(source_id)
         adapter = self.adapters.get(source.provider)
         if adapter is None:
-            return CaptureCapabilityManifest.compatibility_default(source.provider)
+            return CaptureCapabilityManifest.unavailable(
+                source.provider,
+                reason="adapter_not_registered",
+                connection="unknown",
+            )
         return self._adapter_manifest(adapter, source)
 
     def get_capability_manifest(self, source_id: str) -> CaptureCapabilityManifest:
@@ -1636,14 +1683,33 @@ class CaptureCoordinator:
             return
         if page.next_cursor is not None and not manifest.cursor_support:
             raise CaptureError("capture_capability_invalid")
-        if page.coverage == "complete" and manifest.coverage != "complete":
+        if page.coverage is not None and page.coverage != manifest.coverage:
             raise CaptureError("capture_capability_invalid")
         if page.coverage == "unavailable" and page.events:
             raise CaptureError("capture_capability_invalid")
-        if page.freshness == "fresh" and manifest.freshness != "fresh":
+        if page.freshness is not None and page.freshness != manifest.freshness:
             raise CaptureError("capture_capability_invalid")
-        if page.freshness == "unavailable" and manifest.freshness == "fresh":
-            raise CaptureError("capture_capability_invalid")
+
+    def _retry_backoff(
+        self,
+        manifest: CaptureCapabilityManifest,
+        error: CaptureError | None = None,
+    ) -> BackoffPolicy:
+        """Use declared bounded provider retry semantics through the existing ledger."""
+
+        if manifest.legacy_compatibility:
+            return self.backoff
+        if (
+            isinstance(error, CaptureRetryableError)
+            and error.retry_after_seconds is not None
+            and manifest.retry_policy.rate_limit.mode == "retry_after"
+        ):
+            delay = min(
+                error.retry_after_seconds,
+                manifest.retry_policy.rate_limit.max_delay_seconds,
+            )
+            return BackoffPolicy(base_seconds=delay, max_seconds=delay)
+        return manifest.retry_policy.backoff
 
     def _apply(
         self,
@@ -1700,12 +1766,21 @@ class CaptureCoordinator:
         if manifest.availability == "unavailable" or manifest.health == "unavailable":
             self._mark_unavailable(source_id)
             return self.ledger.skipped_result(source_id, "capture_adapter_unavailable")
+        if not manifest.legacy_compatibility and manifest.authorization == "unknown":
+            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
         if manifest.authorization == "reauthorization_required":
             return self.ledger.skipped_result(source_id, "capture_reauthorization_required")
         if manifest.authorization == "unauthorized":
             return self.ledger.skipped_result(source_id, "capture_authorization_unavailable")
+        if not manifest.legacy_compatibility and manifest.connection == "unknown":
+            return self.ledger.skipped_result(source_id, "capture_capability_invalid")
         if manifest.connection == "disconnected":
             return self.ledger.skipped_result(source_id, "capture_disconnected")
+        if (
+            not manifest.legacy_compatibility
+            and source.retry_count >= manifest.retry_policy.max_attempts
+        ):
+            return self.ledger.skipped_result(source_id, "capture_retry_exhausted")
         if not self._run_lock.acquire(blocking=False):
             return self.ledger.skipped_result(source_id, "capture_run_in_progress")
         try:
@@ -1785,7 +1860,7 @@ class CaptureCoordinator:
                     duplicate_events=duplicates,
                     failures=failures,
                     attempts=attempt,
-                    backoff=self.backoff,
+                    backoff=self._retry_backoff(manifest),
                 )
             except CaptureError as error:
                 last_error = error.code
@@ -1801,7 +1876,7 @@ class CaptureCoordinator:
                         duplicate_events=duplicates,
                         failures=failures,
                         attempts=attempt,
-                        backoff=self.backoff,
+                        backoff=self._retry_backoff(manifest, error),
                     )
                 except CaptureError as ownership_error:
                     if ownership_error.code != "capture_lease_expired":
@@ -2006,6 +2081,7 @@ __all__ = [
     "CaptureHealthState",
     "CaptureLedger",
     "CaptureLifecycleState",
+    "CaptureNetworkAccessState",
     "CapturePage",
     "CaptureProviderAdapter",
     "CapturePurgeCoordination",
