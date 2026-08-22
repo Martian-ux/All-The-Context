@@ -197,6 +197,8 @@ def _canonical_reason(reason: str | None, default: str = "record_state_changed")
         (
             "explicit claim reduced to tentative: principal lacks witness grant"
         ): "explicit_user_statement_witness_required",
+        "remote relay proposals cannot attest direct user statements":
+            "explicit_user_statement_witness_required",
     }
     if value in exact:
         return exact[value]
