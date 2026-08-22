@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import pytest
 from allthecontext.admissibility import ConflictState
 from allthecontext.config import CoreConfig
 from allthecontext.models import ApprovalRequest, BootstrapRequest, CandidateInput, SearchRequest
-from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, parse_query_intent
+from allthecontext.retrieval import (
+    DeterministicUsefulnessReranker,
+    RankingExplanation,
+    RetrievalEngine,
+    _admissibility_inputs,
+    parse_query_intent,
+)
 from allthecontext.storage import CoreStore
 
 from bench.retrieval_usefulness import (
@@ -138,6 +145,44 @@ def test_query_intent_uses_bounded_local_features() -> None:
     assert intent.asks_current is True
     assert intent.asks_location is True
     assert intent.asks_procedure is True
+
+
+@pytest.mark.parametrize("unsafe_score", (float("nan"), float("inf"), "not-a-number"))
+def test_usefulness_reranker_neutralizes_nonfinite_or_malformed_lexical_scores(
+    tmp_path: Path, unsafe_score: object
+) -> None:
+    store = CoreStore(tmp_path / "unsafe-score.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    candidate = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="The synthetic score fixture remains deterministic.",
+            idempotency_key="unsafe-score-fixture",
+        )
+    )
+    record = store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record.id,)
+            ).fetchone()
+            assert row is not None
+            ranked, explanations = DeterministicUsefulnessReranker().rerank(
+                [row],
+                [
+                    RankingExplanation(
+                        record_id=record.id,
+                        score=unsafe_score,  # type: ignore[arg-type]
+                        channel_ranks={},
+                        signals={},
+                    )
+                ],
+                "synthetic deterministic",
+            )
+        assert [str(item["id"]) for item in ranked] == [record.id]
+        assert math.isfinite(explanations[0].score)
+    finally:
+        store.close()
 
 
 def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path) -> None:

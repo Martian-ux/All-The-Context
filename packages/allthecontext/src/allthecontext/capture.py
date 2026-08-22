@@ -14,6 +14,7 @@ import math
 import re
 import secrets
 import threading
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -81,6 +82,7 @@ CAPTURE_ERROR_CODES = frozenset(
         "capture_lineage_conflict",
         "capture_local_only_required",
         "capture_invalid_transition",
+        "capture_failed",
     }
 )
 
@@ -110,11 +112,22 @@ class CaptureTransitionError(CaptureError):
         super().__init__("capture_invalid_transition")
 
 
+def _secret_scan_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value).casefold()
+    return "".join(
+        char
+        for char in decomposed
+        if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
+    )
+
+
 def _bounded_text(value: str, *, maximum: int, code: str = "capture_page_malformed") -> str:
-    text = str(value).strip()
+    if not isinstance(value, str):
+        raise CaptureError(code)
+    text = value.strip()
     if not text or len(text) > maximum or _SAFE_TEXT_RE.fullmatch(text) is None:
         raise CaptureError(code)
-    if _SECRET_MARKER_RE.search(text):
+    if _SECRET_MARKER_RE.search(_secret_scan_text(text)):
         raise CaptureError("capture_payload_rejected")
     return text
 
@@ -136,7 +149,9 @@ def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) ->
     if depth > MAX_PAYLOAD_DEPTH:
         raise CaptureError("capture_payload_rejected")
     if key is not None:
-        if len(key) > MAX_PAYLOAD_STRING_CHARS or _SENSITIVE_KEY_RE.search(key):
+        if len(key) > MAX_PAYLOAD_STRING_CHARS or _SENSITIVE_KEY_RE.search(
+            _secret_scan_text(key)
+        ):
             raise CaptureError("capture_payload_rejected")
         _bounded_text(key, maximum=MAX_PAYLOAD_STRING_CHARS, code="capture_payload_rejected")
     if value is None or isinstance(value, bool):
@@ -157,10 +172,10 @@ def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) ->
     if isinstance(value, Mapping):
         if len(value) > MAX_PAYLOAD_KEYS:
             raise CaptureError("capture_payload_rejected")
+        if any(not isinstance(raw_key, str) for raw_key in value):
+            raise CaptureError("capture_payload_rejected")
         result: dict[str, Any] = {}
-        for raw_key, raw_value in sorted(value.items(), key=lambda item: str(item[0])):
-            if not isinstance(raw_key, str):
-                raise CaptureError("capture_payload_rejected")
+        for raw_key, raw_value in sorted(value.items()):
             result[raw_key] = _normalize_payload(raw_value, depth=depth + 1, key=raw_key)
         return result
     if isinstance(value, (list, tuple)):
@@ -238,7 +253,12 @@ class CaptureEvent:
         _bounded_opaque_id(self.provider_event_id, maximum=MAX_EVENT_ID_CHARS)
         _bounded_opaque_id(self.provider_item_id, maximum=MAX_EVENT_ID_CHARS)
         _bounded_opaque_id(self.order_key, maximum=MAX_ORDER_KEY_CHARS)
-        if self.operation not in {"upsert", "delete"} or self.generation < 0:
+        if (
+            not isinstance(self.operation, str)
+            or self.operation not in {"upsert", "delete"}
+            or type(self.generation) is not int
+            or self.generation < 0
+        ):
             raise CaptureError("capture_page_malformed")
         if not isinstance(self.payload, Mapping):
             raise CaptureError("capture_payload_rejected")
@@ -260,7 +280,12 @@ class CapturePage:
     done: bool = True
 
     def __post_init__(self) -> None:
-        if self.generation < 0 or self.page_order < 0:
+        if (
+            type(self.generation) is not int
+            or type(self.page_order) is not int
+            or self.generation < 0
+            or self.page_order < 0
+        ):
             raise CaptureError("capture_page_malformed")
         if len(self.events) > MAX_PAGE_EVENTS:
             raise CaptureError("capture_event_limit_exceeded")
@@ -337,7 +362,12 @@ class BackoffPolicy:
     max_seconds: int = 3_600
 
     def __post_init__(self) -> None:
-        if self.base_seconds < 0 or self.max_seconds < self.base_seconds:
+        if (
+            type(self.base_seconds) is not int
+            or type(self.max_seconds) is not int
+            or self.base_seconds < 0
+            or self.max_seconds < self.base_seconds
+        ):
             raise ValueError("invalid capture backoff policy")
 
     def delay_seconds(self, attempt: int) -> int:
@@ -487,7 +517,7 @@ class CaptureLedger:
             if account_fingerprint is not None
             else None
         )
-        if len(requested_scopes) > MAX_SCOPE_COUNT:
+        if isinstance(requested_scopes, (str, bytes)) or len(requested_scopes) > MAX_SCOPE_COUNT:
             raise CaptureError("capture_page_malformed")
         scopes = tuple(
             _bounded_opaque_id(scope, maximum=MAX_SCOPE_CHARS) for scope in requested_scopes
@@ -538,6 +568,8 @@ class CaptureLedger:
         return self._source_from_row(row)
 
     def list_sources(self, *, limit: int = 100, offset: int = 0) -> tuple[list[CaptureSource], int]:
+        if type(limit) is not int or type(offset) is not int:
+            raise CaptureError("capture_page_malformed")
         bounded_limit = min(max(limit, 1), 500)
         bounded_offset = max(offset, 0)
         with self.store.connect() as connection:
@@ -1148,6 +1180,12 @@ class CaptureCoordinator:
             receipt = result
             returned_lineage = canonical_record_id
         else:
+            raise CaptureError("capture_sink_receipt_invalid")
+        if (
+            not isinstance(receipt, str)
+            or not isinstance(returned_lineage, str)
+            or returned_lineage != canonical_record_id
+        ):
             raise CaptureError("capture_sink_receipt_invalid")
         return receipt, returned_lineage
 

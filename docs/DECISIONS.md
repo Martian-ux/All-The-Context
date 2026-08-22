@@ -3239,3 +3239,31 @@ atomically abandons active runs, and expiry recovery only degrades sources
 that still reconcile; a sink result crossing expiry is not committed and is
 safe to replay under the same idempotency key. These changes preserve the
 provider-neutral, foreground-only, beta.6 and unsupported-macOS boundaries.
+
+## ADR-120: Canonical boundaries normalize hostile representations before authority
+
+**Status:** accepted locally on 2026-08-22 after focused adversarial
+reproduction and regression checks; this is not release acceptance.
+
+Equivalent hostile representations must not bypass a boundary or change
+identity after validation. Direct-secret detector v3 therefore scans a
+compatibility-normalized, zero-width/combining-free projection while retaining
+the existing high-confidence credential patterns and content-free refusal
+receipt. Capture applies the same representation rule to its content-free
+metadata contract and rejects implicit identifier or integer coercion.
+
+Canonical Memory Truth supersession is a database relationship, not caller
+metadata. Every direct canonical write validates that the target exists in the
+same vault and that following the bounded predecessor chain cannot reach the
+record being written. This prevents dangling/self/cyclic state from making the
+rebuildable temporal resolver fail. ZIP display names remain safely escaped and
+bounded; names that cannot preserve unique identity inside that bound close as
+unavailable instead of being truncated into a false duplicate.
+
+An injected Continuous Capture sink may acknowledge only the exact
+source-scoped canonical lineage supplied by Core. A different lineage is an
+invalid receipt even on the first event and cannot create an item mapping.
+Experimental retrieval diagnostics accept only finite bounded primitives, and
+malformed/nonfinite upstream lexical scores become a neutral score before local
+usefulness reranking. These rules do not add a provider connector, change Core
+authority, inspect private data, publish a release, or add macOS support.

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from allthecontext.capture import (
     BackoffPolicy,
+    CaptureApplicationReceipt,
     CaptureCoordinator,
     CaptureError,
     CaptureEvent,
@@ -699,6 +700,90 @@ def test_secret_markers_never_enter_capture_sqlite_state(tmp_path: Path) -> None
             for row in connection.execute(f"SELECT * FROM {table}").fetchall()
         )
     assert "do-not-store" not in dump and "not-persisted" not in dump
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"\uff41\uff50\uff49\uff3f\uff54\uff4f\uff4b\uff45\uff4e": "unicode-key-canary"},
+        {"to\u200bken": "zero-width-key-canary"},
+        {"safe": "\uff22\uff45\uff41\uff52\uff45\uff52 unicode-value-canary"},
+    ),
+)
+def test_unicode_secret_markers_never_enter_capture_state(
+    tmp_path: Path, payload: dict[str, Any]
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    handle = _begin(coordinator, source_id)
+
+    with pytest.raises(CaptureError, match="capture_payload_rejected"):
+        coordinator.ledger.stage_event(
+            handle,
+            _event("unicode-event", "unicode-item", "1", payload=payload),
+        )
+
+    with coordinator.ledger.store.connect() as connection:
+        dump = " ".join(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT normalized_payload_json FROM capture_events"
+            ).fetchall()
+        )
+    assert "canary" not in dump
+
+
+def test_capture_contract_rejects_implicit_identifier_and_integer_coercions() -> None:
+    with pytest.raises(CaptureError, match="capture_page_malformed"):
+        CaptureEvent(  # type: ignore[arg-type]
+            provider_event_id=1,
+            provider_item_id="item",
+            order_key="1",
+        )
+    with pytest.raises(CaptureError, match="capture_page_malformed"):
+        CaptureEvent(
+            provider_event_id="event",
+            provider_item_id="item",
+            order_key="1",
+            generation=True,  # type: ignore[arg-type]
+        )
+    with pytest.raises(CaptureError, match="capture_page_malformed"):
+        CapturePage(generation=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid capture backoff policy"):
+        BackoffPolicy(base_seconds=True)  # type: ignore[arg-type]
+
+
+def test_sink_cannot_redirect_first_event_to_noncanonical_lineage(tmp_path: Path) -> None:
+    class MisdirectedSink:
+        def apply(self, event: Any, **kwargs: Any) -> CaptureApplicationReceipt:
+            del event, kwargs
+            return CaptureApplicationReceipt(
+                receipt="synthetic-receipt",
+                canonical_record_id="attacker-selected-record",
+            )
+
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=MisdirectedSink())
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    coordinator.register_adapter(
+        "fake",
+        DeterministicFakeAdapter(
+            [CapturePage(generation=1, events=(_event("e1", "i1", "1"),))]
+        ),
+    )
+
+    result = coordinator.run(source_id)
+
+    assert result.status == "failed"
+    assert result.error_code == "capture_sink_receipt_invalid"
+    with coordinator.ledger.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_items").fetchone()[0] == 0
+        event = connection.execute(
+            "SELECT status,error_code FROM capture_events WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert tuple(event) == ("staged", "capture_sink_receipt_invalid")
 
 
 def test_capture_api_is_authenticated_and_content_free(tmp_path: Path) -> None:

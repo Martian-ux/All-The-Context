@@ -15,6 +15,33 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## Adversarial boundary sweep (2026-08-22)
+
+A focused post-integration sweep reproduced and closed four boundary defects:
+
+- Direct-secret detector v3 normalizes Unicode compatibility forms and removes
+  zero-width/combining obfuscation before applying the existing high-confidence
+  credential rules. Refused content still receives only an opaque replayable
+  receipt and never enters Core, Relay, SQLite/WAL/FTS, or diagnostics.
+- Canonical `supersedes` writes now reject missing, cross-vault, overlong, and
+  cyclic chains transactionally. Self- and two-record-cycle regressions prove a
+  local correction cannot poison the temporal sidecar or make retrieval fail.
+- ZIP members with names beyond the 1,000-character diagnostic/identity bound,
+  or with non-printable names, close as unavailable with bounded escaped
+  diagnostics. Distinct long paths can no longer collapse after truncation and
+  silently discard one member.
+- Continuous Capture now rejects implicit identifier/integer coercion and
+  Unicode-obfuscated credential markers. An injected sink must echo the exact
+  deterministic source/item lineage; a mismatched first-event receipt fails
+  before `capture_items` or checkpoints can advance. Retrieval experiment
+  diagnostics and selection constraints are strictly finite and bounded, and
+  malformed/nonfinite lexical scores are neutralized before usefulness ranking.
+
+This is local focused evidence only. The long full pytest matrix, hosted CI,
+exact artifacts, live/private data, publication, release acceptance, and macOS
+work were not run or claimed; beta.6 and the unsupported-macOS posture are
+unchanged.
+
 ## Sources/Context dashboard contract reconciliation (2026-08-22)
 
 - The beta.6 dashboard keeps source item accounting separate from terminal

@@ -62,6 +62,7 @@ DEFAULT_MAX_ZIP_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_TEXT_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_ATTACHMENT_LINK_PAIRS = 10_000
 DEFAULT_MAX_ZIP_PATH_DEPTH = 64
+DEFAULT_MAX_ZIP_MEMBER_NAME_CHARS = 1_000
 MAX_CHATGPT_ATTACHMENT_SCAN_DEPTH = 64
 MAX_CHATGPT_ATTACHMENT_SCAN_NODES = 10_000
 _OPERATION_COOPERATIVE_YIELD_SECONDS = 0.001
@@ -1599,7 +1600,8 @@ def parse_zip_bundle(
                     close_archive_member(member_index, "unavailable")
                     _append_warning(
                         warnings,
-                        "one ZIP member was rejected by the path safety limit",
+                        f"{_safe_zip_name(member.filename)}: "
+                        "ZIP member rejected by the path safety limit",
                     )
                     continue
                 builder.note_file(safe_name)
@@ -2387,12 +2389,14 @@ def _validate_zip_member_name(
     first = path.parts[0] if path.parts else ""
     if (
         max_depth < 1
+        or len(normalized) > DEFAULT_MAX_ZIP_MEMBER_NAME_CHARS
         or len(path.parts) > max_depth
         or path.is_absolute()
         or ".." in path.parts
         or first.endswith(":")
         or re.match(r"^[A-Za-z]:", first) is not None
         or normalized.startswith("//")
+        or any(not char.isprintable() for char in normalized)
     ):
         raise InvalidStateError("ZIP bundle contains an unsafe member path")
     return _safe_zip_name(filename)

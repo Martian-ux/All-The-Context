@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import unicodedata
@@ -653,7 +654,7 @@ class DeterministicUsefulnessReranker:
                 return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(
                     UTC
                 ).timestamp()
-            except ValueError:
+            except (ValueError, OverflowError, OSError):
                 continue
         return 0.0
 
@@ -690,11 +691,16 @@ class DeterministicUsefulnessReranker:
         expanded = set(intent.expanded_tokens)
         explanation_by_id = {item.record_id: item for item in explanations}
         ordered_ids = [str(row["id"]) for row in rows]
-        lexical_scores = {
-            record_id: max(0.0, explanation_by_id[record_id].score)
-            for record_id in ordered_ids
-            if record_id in explanation_by_id
-        }
+        lexical_scores: dict[str, float] = {}
+        for record_id in ordered_ids:
+            explanation = explanation_by_id.get(record_id)
+            if explanation is None:
+                continue
+            try:
+                score = float(explanation.score)
+            except (TypeError, ValueError):
+                score = 0.0
+            lexical_scores[record_id] = score if math.isfinite(score) and score > 0.0 else 0.0
         maximum_lexical = max(lexical_scores.values(), default=0.0)
         timestamps = [self._timestamp(row) for row in rows]
         oldest = min(timestamps, default=0.0)

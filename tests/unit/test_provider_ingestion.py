@@ -1649,6 +1649,23 @@ def test_case_insensitive_zip_member_collisions_are_deterministic() -> None:
     assert parsed.complete is False
 
 
+def test_overlong_zip_names_fail_closed_instead_of_colliding_after_truncation() -> None:
+    shared_suffix = "x" * 990 + ".txt"
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                f"first-prefix/{shared_suffix}": "Goal: first must not be silently preferred",
+                f"second-prefix/{shared_suffix}": "Goal: second must not be silently dropped",
+            }
+        )
+    )
+
+    assert parsed.candidates == []
+    assert parsed.stats["duplicate_entries"] == 0
+    assert parsed.closed_coverage["unavailable"] == 2
+    assert parsed.complete is False
+
+
 def test_streaming_json_array_rejects_missing_separator(tmp_path: Path) -> None:
     malformed = tmp_path / "conversations.json"
     malformed.write_text('[{"goals":["first"]} {"goals":["second"]}]', encoding="utf-8")

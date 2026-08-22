@@ -6,6 +6,20 @@ does not claim hosted CI, release publication, exact artifact/client/provider
 acceptance, or live/private data inspection. Earlier evidence is retained only
 as historical context and does not become evidence for this checkout.
 
+### 2026-08-22 adversarial boundary sweep
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Unicode-equivalent direct credentials fail before durable state | `secret_boundary.py` detector v3; Core/Relay refusal paths; `tests/security/test_preledger_secret_boundary.py` | Implemented locally for compatibility-width, zero-width, and combining-form projections while retaining high-confidence matching and opaque content-free receipts. No raw secret, payload digest, or private fixture is retained |
+| Canonical supersession remains acyclic and vault-local | `CoreStore._validate_supersedes_tx`; correction, approval, restore, automatic-create, and rebuild-reapply write paths; `tests/unit/test_memory_truth.py` | Implemented locally: missing, overlong, cross-vault, self, and bounded-chain cycles fail transactionally before canonical mutation. Self/two-node regressions keep temporal retrieval operational |
+| ZIP member identity cannot collapse after diagnostic truncation | `_validate_zip_member_name`; `tests/unit/test_provider_ingestion.py` | Implemented locally: names over 1,000 characters or containing non-printable characters close unavailable with bounded escaped warnings; distinct long names are not reported as duplicates or silently preferred. Raw-first preservation remains unchanged |
+| Capture sink cannot redirect canonical lineage | `CaptureCoordinator._apply`; strict capture value normalization; `tests/unit/test_capture.py` | Implemented locally: Unicode-obfuscated credential markers and implicit ID/integer coercions fail closed, and a sink receipt must return the exact deterministic source/item lineage before any item/checkpoint commit |
+| Retrieval diagnostics remain finite and bounded under malformed inputs | `retrieval_contracts.py`; `DeterministicUsefulnessReranker`; `tests/unit/test_retrieval_contracts.py`; `tests/unit/test_retrieval_usefulness.py` | Implemented locally for strict diagnostic/selection primitives and neutral handling of NaN, infinity, or nonnumeric lexical scores. Authorization, temporal, and admissibility boundaries remain ahead of relevance |
+
+The sweep is focused local engineering evidence. Full pytest, hosted CI,
+exact-artifact/client/provider acceptance, live/private data, publication,
+release acceptance, and macOS execution remain unclaimed.
+
 ### 2026-08-22 Sources/Context dashboard reconciliation
 
 The accepted dashboard now maps the integrated contracts without flattening

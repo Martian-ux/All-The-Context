@@ -42,6 +42,12 @@ def test_contract_values_are_immutable_and_temporal_context_has_no_implicit_cloc
         TemporalContext(evaluated_at=datetime(2026, 7, 22))
     with pytest.raises(ValueError, match="non-negative"):
         SetSelectionConstraints(limit=-1)
+    for invalid_limit in (True, 1.5, 10_001):
+        with pytest.raises(ValueError, match="bounded non-negative integer"):
+            SetSelectionConstraints(limit=invalid_limit)  # type: ignore[arg-type]
+    for invalid_budget in (True, 1.5, 10_000_001):
+        with pytest.raises(ValueError, match="bounded non-negative integer"):
+            SetSelectionConstraints(limit=1, budget=invalid_budget)  # type: ignore[arg-type]
     assert ShadowRetrievalPlan[str, str]().enabled is False
 
 
@@ -58,6 +64,8 @@ def test_safe_diagnostics_have_only_closed_codes_and_numeric_or_boolean_values()
     assert all(isinstance(value.value, bool | int | float) for value in diagnostic.values)
     with pytest.raises(ValueError, match="finite"):
         DiagnosticValue(DiagnosticMetricCode.SCORE, float("nan"))
+    with pytest.raises(ValueError, match="signed 64 bits"):
+        DiagnosticValue(DiagnosticMetricCode.SCORE, 1 << 63)
     with pytest.raises(ValueError, match="unique"):
         SafeRetrievalDiagnostic(
             DiagnosticReasonCode.SET_SELECTED,

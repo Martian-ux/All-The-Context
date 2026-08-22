@@ -68,6 +68,13 @@ For an explicitly enabled, local-only-acknowledged source, one foreground run:
    one SQLite transaction; and
 5. advances the page cursor only after every event in that page is applied.
 
+The sink receipt must echo the exact deterministic lineage supplied by Core.
+A different first-event lineage is invalid and cannot create a capture-item
+mapping. Provider IDs, generations, page orders, scopes, and receipt fields do
+not accept implicit string/integer coercion. Content-free payload metadata is
+compatibility-normalized for credential-marker scanning, including zero-width
+and combining-form obfuscations, before it can be staged.
+
 Every run-owned mutation transactionally requires the exact capability, a
 `running` run with a strictly future lease, and a source still in
 `reconciling`. Renewal uses the same checks. Pause, revoke, expiry, recovery,

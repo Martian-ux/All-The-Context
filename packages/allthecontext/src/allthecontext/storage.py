@@ -591,6 +591,38 @@ class CoreStore:
                 connection.commit()
 
     @staticmethod
+    def _validate_supersedes_tx(
+        connection: sqlite3.Connection,
+        *,
+        record_id: str,
+        vault_id: str,
+        supersedes: str | None,
+    ) -> None:
+        """Reject dangling, cross-vault, and cyclic canonical supersession links."""
+
+        if supersedes is None:
+            return
+        if not isinstance(supersedes, str) or not supersedes or len(supersedes) > 200:
+            raise InvalidStateError("supersedes target is invalid")
+        seen = {record_id}
+        current_id: str | None = supersedes
+        while current_id is not None:
+            if current_id in seen:
+                raise InvalidStateError("supersedes relation would create a cycle")
+            seen.add(current_id)
+            if len(seen) > 10_000:
+                raise InvalidStateError("supersedes chain exceeds the safety limit")
+            row = connection.execute(
+                "SELECT vault_id,supersedes FROM context_records WHERE id=?",
+                (current_id,),
+            ).fetchone()
+            if row is None:
+                raise InvalidStateError("supersedes target does not exist")
+            if str(row["vault_id"]) != vault_id:
+                raise InvalidStateError("supersedes target belongs to another vault")
+            current_id = cast(str | None, row["supersedes"])
+
+    @staticmethod
     def _ensure_user_mutation_boundary_tx(connection: sqlite3.Connection) -> None:
         """Repair an interrupted/older 013 schema without advancing its version."""
 
@@ -4361,6 +4393,12 @@ class CoreStore:
         record_id = str(prior["id"])
         now = utc_now()
         version = int(prior["version"]) + 1
+        self._validate_supersedes_tx(
+            connection,
+            record_id=record_id,
+            vault_id=str(prior["vault_id"]),
+            supersedes=cast(str | None, observation["supersedes"]),
+        )
         connection.execute(
             "UPDATE context_records SET candidate_id=?,source_id=?,source_reference=?,kind=?,"
             "content=?,structured_value_json=?,entity_key=?,attribute_key=?,scopes_json=?,"
@@ -4474,6 +4512,12 @@ class CoreStore:
 
         record_id = new_id()
         now = utc_now()
+        self._validate_supersedes_tx(
+            connection,
+            record_id=record_id,
+            vault_id=str(observation["vault_id"]),
+            supersedes=cast(str | None, observation["supersedes"]),
+        )
         values = (
             record_id,
             observation["vault_id"],
@@ -5085,6 +5129,12 @@ class CoreStore:
                 )
             record_id = new_id()
             now = utc_now()
+            self._validate_supersedes_tx(
+                connection,
+                record_id=record_id,
+                vault_id=str(row["vault_id"]),
+                supersedes=cast(str | None, row["supersedes"]),
+            )
             content = request.content or str(row["content"])
             kind = request.kind if request.kind is not None else str(row["kind"])
             source_reference = (
@@ -5354,6 +5404,15 @@ class CoreStore:
             ).fetchone()
             if previous is None:
                 raise NotFoundError("context record not found")
+            effective_supersedes = (
+                supersedes if supersedes is not None else cast(str | None, previous["supersedes"])
+            )
+            self._validate_supersedes_tx(
+                connection,
+                record_id=record_id,
+                vault_id=str(previous["vault_id"]),
+                supersedes=effective_supersedes,
+            )
             version = int(previous["version"]) + 1
             now = utc_now()
             connection.execute(
@@ -5365,7 +5424,7 @@ class CoreStore:
                     _json(dict(structured_value))
                     if structured_value is not None
                     else previous["structured_value_json"],
-                    supersedes if supersedes is not None else previous["supersedes"],
+                    effective_supersedes,
                     _normalized_slot_key(entity_key)
                     if entity_key is not None
                     else previous["entity_key"],
@@ -5636,6 +5695,15 @@ class CoreStore:
             target_availability = Availability(
                 str(snapshot.get("availability", current["availability"]))
             )
+            target_supersedes = cast(
+                str | None, snapshot.get("supersedes", current["supersedes"])
+            )
+            self._validate_supersedes_tx(
+                connection,
+                record_id=record_id,
+                vault_id=str(current["vault_id"]),
+                supersedes=target_supersedes,
+            )
             structured = snapshot.get("structured_value")
             connection.execute(
                 "UPDATE context_records SET source_id=?,source_reference=?,kind=?,content=?,"
@@ -5677,7 +5745,7 @@ class CoreStore:
                     ),
                     snapshot.get("valid_from", current["valid_from"]),
                     snapshot.get("expires_at", current["expires_at"]),
-                    snapshot.get("supersedes", current["supersedes"]),
+                    target_supersedes,
                     int(
                         bool(
                             snapshot.get(

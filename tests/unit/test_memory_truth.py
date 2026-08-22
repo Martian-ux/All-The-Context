@@ -15,7 +15,9 @@ from allthecontext.models import (
     IngestionMode,
     MemoryTruthStatus,
     ObservationDisposition,
+    SearchRequest,
 )
+from allthecontext.retrieval import RetrievalEngine
 from allthecontext.storage import (
     SOURCE_REBUILD_REASON,
     CoreStore,
@@ -125,6 +127,107 @@ def _publish_rebuild(
         session_id,
         rebuild_generation=generation,
     ), str(batch["candidate_ids"][0])
+
+
+def test_direct_correction_cannot_create_self_supersession_cycle(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    observation_id = _archive_observation(
+        store,
+        source.id,
+        content="The primary fixture remains current.",
+        source_reference="message:self-cycle",
+        session_key="self-cycle",
+        entity_key="fixture",
+        attribute_key="primary",
+    )
+    record_id = store.get_observation(observation_id).record_id
+    assert record_id is not None
+
+    with pytest.raises(InvalidStateError, match="create a cycle"):
+        store.correct_record(
+            record_id,
+            content="The primary fixture remains corrected.",
+            reason="adversarial self-cycle probe",
+            supersedes=record_id,
+        )
+
+    assert store.get_record(record_id).supersedes is None
+    assert RetrievalEngine(store).search(SearchRequest(query="primary fixture")).total == 1
+
+
+def test_manual_approval_cannot_publish_a_dangling_supersession_target(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    candidate = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="The dangling fixture must remain provisional.",
+            supersedes="missing-canonical-record",
+            explicit_user_statement=False,
+            idempotency_key="dangling-supersession-candidate",
+        )
+    )
+
+    with pytest.raises(InvalidStateError, match="target does not exist"):
+        store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+
+    assert store.get_candidate(candidate.id).approval_status.value == "pending"
+    assert RetrievalEngine(store).search(SearchRequest(query="dangling fixture")).total == 0
+
+
+def test_direct_correction_cannot_close_a_two_record_supersession_cycle(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    source = store.add_source(
+        b"fiction archive",
+        source_service="fiction-provider",
+        source_type="provider_archive",
+    )
+    first_observation = _archive_observation(
+        store,
+        source.id,
+        content="The alpha fixture is current.",
+        source_reference="message:alpha-cycle",
+        session_key="alpha-cycle",
+        entity_key="fixture",
+        attribute_key="alpha",
+    )
+    second_observation = _archive_observation(
+        store,
+        source.id,
+        content="The beta fixture is current.",
+        source_reference="message:beta-cycle",
+        session_key="beta-cycle",
+        entity_key="fixture",
+        attribute_key="beta",
+    )
+    first_id = store.get_observation(first_observation).record_id
+    second_id = store.get_observation(second_observation).record_id
+    assert first_id is not None and second_id is not None
+
+    store.correct_record(
+        first_id,
+        content="The alpha fixture supersedes beta.",
+        reason="adversarial acyclic setup",
+        supersedes=second_id,
+    )
+    with pytest.raises(InvalidStateError, match="create a cycle"):
+        store.correct_record(
+            second_id,
+            content="The beta fixture must not supersede alpha.",
+            reason="adversarial two-node cycle probe",
+            supersedes=first_id,
+        )
+
+    assert store.get_record(second_id).supersedes is None
+    RetrievalEngine(store).search(SearchRequest(query="fixture"))
 
 
 def test_public_source_withdrawal_cannot_mint_rebuild_tombstone(tmp_path: Path) -> None:
