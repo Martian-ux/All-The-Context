@@ -2271,16 +2271,16 @@ Windows; Linux Claude beta is not promoted into the stable-only claim. ChatGPT,
 Claude, and Grok export claims remain mandatory and unchanged.
 
 macOS is not a beta platform. Existing Mac runtime, packaging, Keychain,
-LaunchAgent, DMG, preflight, tests, and hosted CI code remain in the public
-source tree so the cross-platform implementation is not destructively removed.
-Those paths are unsupported portability code: the consumer release workflow
-builds no Mac job, the candidate inventory accepts no Mac asset, publication
-accepts no Mac manifest, public copy advertises no Mac download, and no Mac
-receipt can close or strengthen a beta gate. Retained Mac CI on the ordinary
-source workflow is a regression check only and grants zero support credit. A
-future return to Mac support requires a new ADR, newly frozen support table,
-new candidate, current documentation, and native evidence; ADR-085 preparation
-cannot be retroactively counted.
+LaunchAgent, DMG, preflight, and tests remain in the public source tree so the
+cross-platform implementation is not destructively removed. The former hosted
+Mac CI configuration is historical only; ordinary CI now schedules supported
+Windows and Ubuntu runners, while the Mac paths remain unsupported portability
+code. The consumer release workflow builds no Mac job, the candidate inventory
+accepts no Mac asset, publication accepts no Mac manifest, public copy
+advertises no Mac download, and no Mac receipt can close or strengthen a beta
+gate. A future return to Mac support requires a new ADR, newly frozen support
+table, new candidate, current documentation, and native evidence; ADR-085
+preparation cannot be retroactively counted.
 
 The 20 prepublication gate IDs remain unchanged. Gates such as BETA-D01,
 BETA-D03, and BETA-X01 now quantify only over the two supported artifact

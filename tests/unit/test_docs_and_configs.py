@@ -44,8 +44,12 @@ def test_cross_platform_workflow_and_operations_are_present() -> None:
     platforms = (REPOSITORY_ROOT / "docs" / "operations" / "PLATFORMS.md").read_text()
     runbook = (REPOSITORY_ROOT / "docs" / "operations" / "RUNBOOK.md").read_text()
 
-    for runner in ("windows-latest", "macos-latest", "ubuntu-latest"):
+    for runner in ("windows-latest", "ubuntu-latest"):
         assert runner in workflow
+    assert "macos-latest" not in workflow
+    assert "macos-26" not in workflow
+    assert "macos_acceptance_preflight.py" not in workflow
+    assert "platform: macos" not in workflow
     assert 'python-version: "3.12"' in workflow
     assert "npm run build" in workflow
     assert "Windows Credential Manager" in platforms

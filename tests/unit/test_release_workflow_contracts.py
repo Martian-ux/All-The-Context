@@ -376,12 +376,12 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
 
     ci = _read(WORKFLOWS / "ci.yml")
     candidate = _read(WORKFLOWS / "release-candidate.yml")
-    assert "scripts/macos_acceptance_preflight.py" in ci
+    assert "scripts/macos_acceptance_preflight.py" not in ci
     assert "scripts/macos_acceptance_preflight.py" not in candidate
 
 
 def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
-    """Retained macOS code and CI do not create a supported release asset."""
+    """Retained macOS source does not create a supported release asset."""
 
     ci = _read(WORKFLOWS / "ci.yml")
     candidate = _read(WORKFLOWS / "release-candidate.yml")
@@ -397,11 +397,11 @@ def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
     assert "-unsigned.dmg" not in candidate
     assert "scripts/macos_acceptance_preflight.py" not in candidate
 
-    assert "macos-latest" in ci
-    assert "macos-26" in ci
-    assert "macos-26-intel" in ci
-    assert "scripts/macos_acceptance_preflight.py" in ci
-    assert "platform: macos" in ci
+    assert "macos-latest" not in ci
+    assert "macos-26" not in ci
+    assert "macos-26-intel" not in ci
+    assert "scripts/macos_acceptance_preflight.py" not in ci
+    assert "platform: macos" not in ci
 
     for workflow in (candidate, publish, promote):
         assert workflow.count("--target windows:x86_64") == 1

@@ -36,8 +36,9 @@ and is no longer the live release identity. The unpublished `0.1.0-beta.2`
 Windows/Linux-only identity remains an occupied historical draft; its
 evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
 from the product support table and consumer release composition while retaining
-the existing Mac source and CI code as unsupported portability work. No Mac
-execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
+the existing Mac source and historical evidence as unsupported portability
+work. Ordinary CI no longer schedules Mac hosted runners, jobs, or preflight;
+no Mac execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
 relabeled as passed, skipped, waived, or unavailable.
 
 The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
@@ -404,7 +405,7 @@ credentials with the null keyring backend **and** explicit
 real OS credential acceptance. Real Windows Credential Manager and supported
 Linux Secret Service round-trips remain the separate
 `--packaged-credential-acceptance` / `smoke_platform_acceptance.py` gates. The
-retained macOS Keychain adapter is unsupported source/CI code and is not a
+retained macOS Keychain adapter is unsupported source code and is not a
 `0.1.0-beta.2` receipt. Headless setup writes a redacted failure
 report when setup exits non-zero. On smoke failure the disposable work tree
 (credentials, vault, configs, binaries) is always deleted; only a content-free

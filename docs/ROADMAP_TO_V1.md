@@ -58,7 +58,7 @@ scale acceptance profile used to prove it.
 | Surface | `0.1.0-beta.6` floor |
 |---|---|
 | Windows | Windows 11 x86-64 desktop artifact; the exact supported feature release/build is recorded at candidate freeze |
-| macOS | Unsupported; retained source/CI code only, with no candidate asset, receipt, or support claim |
+| macOS | Unsupported; retained source and historical evidence only, with no ordinary hosted CI job, candidate asset, receipt, or support claim |
 | Linux | Ubuntu 24.04 LTS x86-64 GNOME desktop with a working Secret Service/GNOME Keyring backend; other distributions/desktops are experimental |
 | Local AI clients | Current stable Codex on Windows and Linux plus current stable Claude Desktop on Windows; freeze exact versions/config paths. Linux Claude beta is excluded unless a stable supported client is deliberately added before candidate freeze |
 | Provider exports | Current nonempty ChatGPT, Claude, and Grok account exports, with the freshness/shape/reconciliation rules below |
@@ -117,7 +117,7 @@ Current main is a strong implementation baseline, not a release candidate.
 | Credentials | OS keyring abstraction and scoped client principals | No silent plaintext fallback; failed configuration must not leave a usable orphaned credential |
 | Runtime scope | Edge UI, worker, and deployment workflow removed | Core still constructs Edge managers and exposes callable enrollment/connect/sync/client-management and CLI surfaces |
 | Release | Candidate assets, checksums, SBOM/provenance, beta public key, updater/rollback mechanics | Exact-SHA quality enforcement, locked composition, generated-dashboard parity, key backups, protected publication, and first immutable release |
-| Repository operations | Strong hosted nine-job matrix; GitHub private vulnerability reporting enabled | No execution backlog; `main` remains unprotected and several repository security controls are absent at the baseline snapshot |
+| Repository operations | Current exact-source gate has eight required CI jobs on supported Windows/Ubuntu hosts; GitHub private vulnerability reporting enabled | No execution backlog; `main` remains unprotected and several repository security controls are absent at the baseline snapshot |
 | Recovery | Encrypted export, contributor CLI restore tests, Windows transactional rollback, version-matched Windows helper and Linux console recovery modes | Exact downloaded-artifact backup/restore/purge receipts on both supported OS families remain open; contributor CLI alone is not the acceptance surface |
 
 Exact `main` commit `1d44fdd` passed all nine hosted jobs in
@@ -388,10 +388,10 @@ All implementation changes finish before the candidate is frozen.
   ```
 
 - Require dashboard `npm ci`, type/check, tests, build, and high-severity audit.
-- Require the exact nine-job hosted source-health matrix on the candidate SHA:
-  Python 3.12 on Windows/macOS/Ubuntu; dashboard on Node 20/22; and package
-  regressions on Windows, Ubuntu, macOS ARM64, and macOS x86-64. The Mac jobs
-  are portability regressions, not release targets or acceptance receipts.
+- Require the exact six-slot supported-host source-health matrix on the candidate
+  SHA: Python 3.12 and package regressions on Windows and Ubuntu, plus dashboard
+  checks on Node 20/22. Retained Mac runtime/packaging source and historical
+  evidence are outside ordinary CI and the release receipt contract.
 - Build Python and Node dependencies from reviewed locks/constraints rather
   than resolving broad ranges independently.
 - Verify committed dashboard assets match the production build byte-for-byte.
@@ -554,7 +554,7 @@ truthful and open after a lean beta; it is not the six-gate publication bundle.
 | BETA-D01 | The inclusive 2,000,000,000-byte import boundary is usable on every supported frozen target | Structural chunks only | Predeclared hardware/budgets; allocated non-sparse canary; Windows/Linux exact-boundary success; boundary+1 refusal; progress/cancel/retry/interruption/SHA/export/restore |
 | BETA-D02 | Authorization/deletion/purge survive restart and restore | Earlier API evidence; packaged purge surface integrated | Exact-candidate packaged destructive-privacy matrix |
 | BETA-D03 | Encrypted backup and documented packaged recovery work | Packaged helper/mode and fail-closed built-byte recovery smokes integrated; contributor CLI remains secondary | Shipped-helper stopped-Core restore receipt on supported Windows and Linux from exact downloaded artifacts |
-| BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact nine-job matrix + security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
+| BETA-R01 | Candidate derives from exact green, locked source | Source-side closed (ADR-059); frozen SHA evidence open | Exact six-slot supported-host matrix plus security/parity jobs on same 40-hex SHA, locks, dashboard parity, component inventory |
 | BETA-R02 | Key custody is recoverable and publication remains deliberate | `release-2026-b` public key prepared; one separate encrypted backup was restore-tested by the human custodian; candidate binding remains open | One restore-tested encrypted backup separate from the operator-controlled primary, then one source receipt; the separate selected-profile maintainer decision precedes offline signing/publication |
 | BETA-R03 | Candidate inventory is complete and immutable | Earlier mechanics | Digests, checksums, SBOM/provenance, notices, descriptor |
 | BETA-R04 | Windows replacement failure preserves app and vault | Engineering evidence | Exact-candidate same-version interruption/rollback receipt |
@@ -578,7 +578,7 @@ make the mapping explicit.
 | [B-105 Honest provider/import boundary](https://github.com/Martian-ux/All-The-Context/issues/20) | B | B-001 | BETA-P04, BETA-D01 | parser/claim versions and tested size behavior |
 | [B-109 Packaged recovery and deliberate purge administration](https://github.com/Martian-ux/All-The-Context/issues/37) | B | B-001 | BETA-P05, BETA-D02, BETA-D03 | version-matched restore/admin surface in every supported artifact |
 | [B-106 Repository security and private intake](https://github.com/Martian-ux/All-The-Context/issues/21) | C | B-001 | BETA-S06, BETA-O01 | feasible controls, intake path, scan policy |
-| [B-107 Exact-SHA locked candidate pipeline](https://github.com/Martian-ux/All-The-Context/issues/22) | C | B-101..B-106, B-109 | BETA-R01, BETA-R03 | exact nine-job matrix, required checks, locks, parity, inventory |
+| [B-107 Exact-SHA locked candidate pipeline](https://github.com/Martian-ux/All-The-Context/issues/22) | C | B-101..B-106, B-109 | BETA-R01, BETA-R03 | exact six-slot supported-host matrix, eight required CI jobs, locks, parity, inventory |
 | [B-108 Beta key backup and protected publication](https://github.com/Martian-ux/All-The-Context/issues/23) | C | B-106 | BETA-R02 | verified backups and deliberate solo workflow |
 | [B-201 Freeze immutable beta candidate](https://github.com/Martian-ux/All-The-Context/issues/24) | C | B-002, B-107, B-108 | BETA-R01..BETA-R03 | one exact SHA and candidate inventory |
 | [B-202 Browser and auth acceptance](https://github.com/Martian-ux/All-The-Context/issues/25) | D | B-201 | BETA-P03, BETA-P05, BETA-P06, BETA-S05 | real packaged browser receipt |
