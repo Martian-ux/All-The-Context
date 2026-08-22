@@ -2486,12 +2486,14 @@ L1-L3 lifecycle hooks and acceptance evidence. Experimental connector, runtime,
 event, and lineage contracts remain v0 until exercised by a fake harness and
 one real vertical slice; stable SDK promises come later.
 
-This decision does not expand, block, or grant acceptance credit to
-`0.1.0-beta.3`. Phase 0 preserves the Windows/Ubuntu beta scope and completes
-the existing release boundary. `ZF-*` implementation issues and implementation
-PRs begin only after beta publication and tracker reconciliation. Successor-beta
-and stable hardening, including real N-1 updates and stable contracts, remains a
-separate post-V1 track.
+This decision does not expand, block, or grant acceptance credit to the public
+immutable `0.1.0-beta.6`. Beta publication and tracker reconciliation are now
+complete, and PR #73 merged the provider-neutral capture ledger. The execution
+plan therefore begins with contract reconciliation against that ledger, then a
+disposable zero-dashboard harness and one real integration pair. Stable project
+identity and deterministic Project Context Capsules precede graph shadow
+evaluation. Successor-beta and stable hardening, including real N-1 updates and
+stable contracts, remains a separate post-V1 track.
 
 ## ADR-091: Raise the reviewed pip floor after PYSEC-2026-3721
 
