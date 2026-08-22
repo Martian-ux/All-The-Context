@@ -980,6 +980,8 @@ class ContextCompiler:
             if item.id not in seen_ids:
                 seen_ids.add(item.id)
                 ordered.append(item)
+        original_order = {item.id: index for index, item in enumerate(ordered)}
+        original_count = len(ordered)
 
         redundancy = self._redundancy_groups(ordered)
         mandatory_preferences = [
@@ -1034,9 +1036,9 @@ class ContextCompiler:
                 SetSelectionCandidate(
                     key=item.id,
                     budget_cost=self._cost(item),
-                    base_utility=self._base_utility(item, index, len(fixed_mandatory_items)),
-                    semantic_facets=self._semantic_facets(item),
-                    diversity_dimensions=self._diversity_dimensions(item),
+                    base_utility=self._base_utility(item, original_order[item.id], original_count),
+                    semantic_facets=frozenset(),
+                    diversity_dimensions=frozenset(),
                     redundancy_groups=redundancy[item.id],
                     conflict_groups=self._conflict_groups(item),
                     mandatory_interaction_preference=True,
@@ -1190,6 +1192,9 @@ class ContextCompiler:
             mandatory_preference = item.id in mandatory_ids
             supports: set[str] = set()
             optional_preference_fallback = item.id in overflow_preference_ids
+            fixed_mandatory = high_cardinality_preferences and (
+                item.id in mandatory_ids and not self._is_interaction_preference(item)
+            )
             if optional_preference_fallback:
                 # Overflow is dormant for no-match queries and becomes feasible
                 # only after any compatible primary relevant record is selected.
@@ -1216,14 +1221,22 @@ class ContextCompiler:
                 key=item.id,
                 budget_cost=self._cost(item),
                 base_utility=(
-                    1 if optional_preference_fallback else self._base_utility(item, index, count)
+                    1
+                    if optional_preference_fallback
+                    else self._base_utility(
+                        item,
+                        original_order[item.id] if fixed_mandatory else index,
+                        original_count if fixed_mandatory else count,
+                    )
                 ),
                 semantic_facets=(
-                    frozenset() if optional_preference_fallback else self._semantic_facets(item)
+                    frozenset()
+                    if optional_preference_fallback or fixed_mandatory
+                    else self._semantic_facets(item)
                 ),
                 diversity_dimensions=(
                     frozenset()
-                    if optional_preference_fallback
+                    if optional_preference_fallback or fixed_mandatory
                     else self._diversity_dimensions(item)
                 ),
                 redundancy_groups=redundancy[item.id],

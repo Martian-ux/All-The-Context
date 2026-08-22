@@ -1501,7 +1501,10 @@ state is already noncurrent and creates no user queue.
   the final exact budget may retain that evidence while omitting overflow, and
   absent, infeasible, or excluded-primary evidence keeps the primary fallback.
   Fixed mandatory conflicts are reduced to deterministic selector survivors
-  before reserve budgeting. Bounded bootstrap metadata uses the exact union of
+  before reserve budgeting, with original-order base utility and
+  context-independent fixed semantic/diversity signals shared by both passes
+  so the final selector cannot change that survivor. Bounded bootstrap metadata
+  uses the exact union of
   complete policy/temporal candidate-pool IDs, with a count fallback only for
   legacy/injected diagnostics. The focused sanitized regression covers 77
   preferences, 20 relevant records, ten generic queries at a 4,000-character

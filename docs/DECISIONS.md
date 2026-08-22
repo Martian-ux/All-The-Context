@@ -672,6 +672,9 @@ retain evidence while omitting overflow. If no such evidence is selected,
 overflow falls back to an actually selected compatible primary. This keeps
 evidence ahead of optional preference fallback without changing the selector
 contract or pretending its OR-based `supports` field expresses an AND chain.
+Fixed mandatory candidates use original ordered base utilities and
+context-independent semantic/diversity signals in both compiler passes, so
+reserved preference facets cannot change the authoritative fixed survivor.
 Bootstrap metadata counts the exact union of the complete bounded
 policy/temporal-eligible candidate ID sets when available, while legacy or
 injected diagnostics retain the bounded count fallback; those internal IDs

@@ -12,6 +12,7 @@ from allthecontext.models import (
 )
 from allthecontext.retrieval import ContextCompiler, RetrievalEngine, _PipelineDiagnostics
 from allthecontext.security import ClientPrincipal
+from allthecontext.set_selection import DeterministicSetSelector
 from allthecontext.storage import CoreStore
 
 _BUDGET = 4_000
@@ -311,6 +312,89 @@ def test_high_cardinality_fixed_mandatory_prepass_keeps_one_conflicting_survivor
     assert used <= budget
     assert metadata.used_chars == used
     assert len(selected_ids) == len(selected)
+
+
+def test_high_cardinality_fixed_survivor_is_identical_after_preference_marginals() -> None:
+    preferences = [
+        _record(
+            f"preference-{index:02d}",
+            "interaction_preference",
+            f"p{index:02d} q{index:02d} r{index:02d} s{index:02d}",
+        )
+        for index in range(9)
+    ]
+    fixed_a = _record(
+        "fixed-a",
+        "fact",
+        "p00 q00 fixed overlap unique",
+        entity_key="entity",
+        attribute_key="slot",
+    )
+    fixed_b = _record(
+        "fixed-b",
+        "fact",
+        "unique fixed survivor content",
+        entity_key="entity",
+        attribute_key="slot",
+    )
+
+    class RecordingSelector(DeterministicSetSelector):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[frozenset[str], frozenset[str]]] = []
+
+        def select(self, candidates, constraints):  # type: ignore[no-untyped-def]
+            selection = super().select(candidates, constraints)
+            self.calls.append(
+                (
+                    frozenset(candidate.key for candidate in candidates),
+                    frozenset(candidate.key for candidate in selection.candidates),
+                )
+            )
+            return selection
+
+    selector = RecordingSelector()
+    selected, used, metadata = ContextCompiler(selector).compile_with_diagnostics(
+        [*preferences, fixed_a, fixed_b],
+        [],
+        964,
+    )
+
+    fixed_input = frozenset({fixed_a.id, fixed_b.id})
+    fixed_only = [
+        selected_ids
+        for candidate_ids, selected_ids in selector.calls
+        if candidate_ids == fixed_input
+    ]
+    assert fixed_only == [frozenset({fixed_a.id})]
+    final_fixed = {
+        item.id for item in selected if item.entity_key == "entity" and item.attribute_key == "slot"
+    }
+    assert final_fixed == fixed_only[0]
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= 964
+    assert metadata.used_chars == used
+
+    reordered_selector = RecordingSelector()
+    reordered_selected, _reordered_used, _reordered_metadata = ContextCompiler(
+        reordered_selector
+    ).compile_with_diagnostics(
+        [*reversed(preferences), fixed_a, fixed_b],
+        [],
+        964,
+    )
+    reordered_fixed = {
+        item.id
+        for item in reordered_selected
+        if item.entity_key == "entity" and item.attribute_key == "slot"
+    }
+    reordered_fixed_only = [
+        selected_ids
+        for candidate_ids, selected_ids in reordered_selector.calls
+        if candidate_ids == fixed_input
+    ]
+    assert reordered_fixed_only == [fixed_only[0]]
+    assert reordered_fixed == final_fixed
 
 
 def test_high_cardinality_overflow_supports_any_selected_compatible_primary() -> None:

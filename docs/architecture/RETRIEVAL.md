@@ -54,10 +54,13 @@ The production pipeline has seven ordered boundaries:
    tied to an excluded primary), overflow falls back to primary support rather
    than deadlocking. Fixed mandatory records are first reduced to their
    deterministic feasible selector survivors, whose duplicate/conflict groups
-   exclude preferences from the reserve. Caller-ranked non-preference
-   candidates retain their order; only preference reserve/overflow tiers are
-   canonicalized for input-order determinism. The reserve budget leaves room
-   for the cheapest feasible primary result when such a pair fits. At eight or
+   exclude preferences from the reserve. Fixed candidates use their original
+   ordered base utility and context-independent semantic/diversity signals in
+   both compiler passes, so the authoritative survivor cannot change after
+   reserve facets are selected. Caller-ranked non-preference candidates retain
+   their order; only preference reserve/overflow tiers are canonicalized for
+   input-order determinism. The reserve budget leaves room for the cheapest
+   feasible primary result when such a pair fits. At eight or
    fewer preferences, the existing mandatory behavior is unchanged. Bootstrap
    returns optional content-free `pack_metadata` accounting for the exact union
    of complete bounded policy/temporal candidate pools, omissions,
