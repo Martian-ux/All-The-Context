@@ -1,0 +1,227 @@
+"""Focused isolated tests for the explicit-root local workspace adapter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+from allthecontext.capture import CaptureCoordinator, CaptureError, IdempotentFakeSink
+from allthecontext.experimental_local_git_workspace_connector import (
+    LOCAL_GIT_WORKSPACE_PROVIDER,
+    LocalGitWorkspaceCaptureProviderAdapter,
+)
+from allthecontext.storage import CoreStore
+
+from tests.fixtures.local_git_workspace import create_sanitized_workspace
+
+
+def _adapter(root: Path) -> LocalGitWorkspaceCaptureProviderAdapter:
+    return LocalGitWorkspaceCaptureProviderAdapter((root,))
+
+
+def _fetch(
+    adapter: LocalGitWorkspaceCaptureProviderAdapter,
+    cursor: str | None = None,
+    page_order: int = 0,
+) -> Any:
+    return adapter.fetch_page(cast(Any, object()), cursor, page_order)
+
+
+def _store(tmp_path: Path) -> CoreStore:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    store.initialize_vault()
+    return store
+
+
+def test_requires_explicit_non_overlapping_roots(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit_root_required"):
+        LocalGitWorkspaceCaptureProviderAdapter(())
+    with pytest.raises(ValueError, match="explicit_roots_must_be_a_sequence"):
+        LocalGitWorkspaceCaptureProviderAdapter(cast(Any, tmp_path))
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "src").mkdir()
+    with pytest.raises(ValueError, match="overlapping_explicit_roots"):
+        LocalGitWorkspaceCaptureProviderAdapter((root, root / "src"))
+
+
+def test_manifest_declares_local_partial_and_bounded_posture(tmp_path: Path) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = _adapter(root)
+    manifest = adapter.capability_manifest
+
+    assert manifest.provider == LOCAL_GIT_WORKSPACE_PROVIDER
+    assert manifest.availability == "partial"
+    assert manifest.coverage == "partial"
+    assert manifest.coverage_reason == "explicit-root-exclusions"
+    assert manifest.acquisition_mode == "snapshot_and_incremental"
+    assert manifest.initial_snapshot is True
+    assert manifest.incremental is True
+    assert manifest.cursor_support is True
+    assert manifest.authorization == "authorized"
+    assert manifest.network_access == "denied"
+    assert manifest.data_egress == ()
+    assert manifest.conformance().valid is True
+    assert "git-metadata-excluded" in manifest.health_diagnostics
+    assert adapter.source_identity.startswith("workspace-source-")
+    assert len(adapter.source_identity) == len("workspace-source-") + 64
+
+
+def test_snapshot_is_deterministic_and_excludes_git_credentials_and_outside_paths(
+    tmp_path: Path,
+) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside authorized root\n", encoding="utf-8")
+    symlink = root / "outside-link.txt"
+    try:
+        symlink.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        symlink = None  # type: ignore[assignment]
+
+    first = _fetch(_adapter(root))
+    second_adapter = _adapter(root)
+    second = _fetch(second_adapter)
+
+    assert first.events == second.events
+    assert first.next_cursor == second.next_cursor
+    assert [event.order_key for event in first.events] == sorted(
+        event.order_key for event in first.events
+    )
+    relative_paths = {
+        str(event.payload["relative_path"]) for event in first.events if event.operation == "upsert"
+    }
+    assert relative_paths == {
+        "README.md",
+        "docs/decision.md",
+        "scripts/build.sh",
+        "src/app.py",
+    }
+    assert all("outside" not in path for path in relative_paths)
+    if symlink is not None:
+        assert "outside-link.txt" not in relative_paths
+    report = second_adapter.last_scan_report
+    assert report is not None
+    assert report.excluded_paths >= 2  # Git metadata and dependency directory.
+    assert report.credential_like_paths >= 2  # .env and secret-like content.
+    assert report.symlinks_or_reparse_points_skipped >= (1 if symlink is not None else 0)
+
+
+def test_incremental_cursor_detects_change_and_deletion_after_restart(tmp_path: Path) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = _adapter(root)
+    snapshot = _fetch(adapter)
+    assert snapshot.next_cursor is not None
+
+    (root / "src/app.py").write_text(
+        "def answer() -> str:\n    return 'changed fixture'\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (root / "docs/decision.md").unlink()
+    incremental = _fetch(_adapter(root), snapshot.next_cursor)
+    replay = _fetch(_adapter(root), snapshot.next_cursor)
+
+    assert incremental.events == replay.events
+    assert {event.operation for event in incremental.events} == {"upsert", "delete"}
+    changed = [
+        event
+        for event in incremental.events
+        if event.operation == "upsert" and event.payload.get("relative_path") == "src/app.py"
+    ]
+    deleted = [event for event in incremental.events if event.operation == "delete"]
+    deleted_item_id = next(
+        event.provider_item_id
+        for event in snapshot.events
+        if event.payload.get("relative_path") == "docs/decision.md"
+    )
+    assert len(changed) == 1
+    assert changed[0].payload["text"] == "def answer() -> str: return 'changed fixture'"
+    assert len(deleted) == 1
+    assert deleted[0].payload == {}
+    assert deleted[0].provider_item_id == deleted_item_id
+
+    unchanged = _fetch(_adapter(root), incremental.next_cursor)
+    assert unchanged.events == ()
+
+
+def test_coordinator_replay_uses_existing_capture_idempotency_and_lineage(
+    tmp_path: Path,
+) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    sink = IdempotentFakeSink()
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=sink)
+    source = coordinator.create_source(
+        provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+        account_label="sanitized-local-workspace",
+        local_only_acknowledged=True,
+    )
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, _adapter(root))
+    coordinator.enable(source.id)
+
+    first = coordinator.run(source.id)
+    replay = coordinator.run(source.id)
+    assert first.status == "completed"
+    assert first.applied_events == 4
+    assert replay.status == "completed"
+    assert replay.applied_events == 0
+    assert replay.duplicate_events == 0
+    assert len(sink.calls) == 4
+
+    (root / "README.md").unlink()
+    second = coordinator.run(source.id)
+    assert second.status == "completed"
+    assert second.applied_events == 1
+    assert second.duplicate_events == 0
+    assert len(sink.calls) == 5
+
+    with coordinator.ledger.store.connect() as connection:
+        counts = connection.execute(
+            "SELECT operation,COUNT(*) AS count FROM capture_events "
+            "WHERE source_id=? GROUP BY operation ORDER BY operation",
+            (source.id,),
+        ).fetchall()
+    assert [(str(row["operation"]), int(row["count"])) for row in counts] == [
+        ("delete", 1),
+        ("upsert", 4),
+    ]
+
+
+def test_missing_root_fails_closed_without_inventing_deletions(tmp_path: Path) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = _adapter(root)
+    snapshot = _fetch(adapter)
+    assert snapshot.next_cursor is not None
+    for child in tuple(root.iterdir()):
+        if child.is_dir():
+            for nested in sorted(child.rglob("*"), reverse=True):
+                if nested.is_file():
+                    nested.unlink()
+                elif nested.is_dir():
+                    nested.rmdir()
+            child.rmdir()
+        else:
+            child.unlink()
+    root.rmdir()
+
+    with pytest.raises(CaptureError, match="capture_adapter_unavailable"):
+        _fetch(adapter, snapshot.next_cursor)
+
+
+def test_bounded_cursor_reports_incomplete_state_without_partial_events(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    for index in range(21):
+        (root / f"file-{index:02d}.txt").write_text(
+            f"sanitized fixture {index}\n", encoding="utf-8", newline="\n"
+        )
+
+    adapter = _adapter(root)
+    with pytest.raises(CaptureError, match="capture_page_limit_exceeded"):
+        _fetch(adapter)
+    report = adapter.last_scan_report
+    assert report is not None
+    assert report.incomplete is True
+    assert report.items_emitted == 0
