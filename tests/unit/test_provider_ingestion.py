@@ -3,13 +3,18 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 import pytest
 from allthecontext import importers as importers_module
 from allthecontext.core.service import CoreService
-from allthecontext.import_boundary import ImportCancelledError, ImportCancelRegistry
+from allthecontext.import_boundary import (
+    ImportCancelledError,
+    ImportCancelRegistry,
+    ImportProgressTracker,
+)
 from allthecontext.importers import (
     ArchiveImportService,
     parse_archive_path,
@@ -27,6 +32,25 @@ def _zip(entries: dict[str, bytes | str]) -> bytes:
         for name, content in entries.items():
             archive.writestr(name, content)
     return bundle.getvalue()
+
+
+def _zip_with_duplicate_names() -> bytes:
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("file-duplicate.dat", b"first")
+        archive.writestr("FILE-DUPLICATE.DAT", b"second")
+    return bundle.getvalue()
+
+
+def _mark_zip_entry_encrypted(bundle: bytes) -> bytes:
+    data = bytearray(bundle)
+    local_offset = data.find(b"PK\x03\x04")
+    central_offset = data.find(b"PK\x01\x02")
+    assert local_offset >= 0 and central_offset >= 0
+    for offset in (local_offset + 6, central_offset + 8):
+        flags = int.from_bytes(data[offset : offset + 2], "little")
+        data[offset : offset + 2] = (flags | 0x1).to_bytes(2, "little")
+    return bytes(data)
 
 
 def _chatgpt_export() -> list[dict[str, Any]]:
@@ -95,6 +119,223 @@ def test_chatgpt_zip_auto_detects_graph_and_ignores_assistant_claims() -> None:
         "conversations.json#conversation=conversation-1&message=user-message-1"
     )
     assert parsed.candidates[-1].explicit_user_statement is False
+
+
+def test_chatgpt_dat_attachments_are_hashed_linked_and_text_bounded() -> None:
+    manifest = {
+        "version": 1,
+        "logical_files": {
+            "conversation_asset_file_names.json": {
+                "files": ["conversation_asset_file_names.json"]
+            },
+            "conversations.json": {"files": ["conversations.json"]},
+            "file-notes.dat": {"files": ["file-notes.dat"]},
+            "file-data.dat": {"files": ["file-data.dat"]},
+            "file-image.dat": {"files": ["file-image.dat"]},
+        },
+        "export_files": [
+            "conversation_asset_file_names.json",
+            "conversations.json",
+            "file-notes.dat",
+            "file-data.dat",
+            "file-image.dat",
+        ],
+    }
+    conversations = [
+        {
+            "id": "conversation-synthetic",
+            "mapping": {
+                "node": {
+                    "message": {
+                        "id": "message-synthetic",
+                        "author": {"role": "user"},
+                        "content": {"parts": ["Attached notes"]},
+                        "metadata": {
+                            "attachments": [
+                                {
+                                    "id": "file-notes",
+                                    "name": "notes.txt",
+                                    "mime_type": "text/plain",
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+        }
+    ]
+    notes = b"Preference: Keep attachment text local."
+    data = b'{"kind":"goal","content":"Use bounded attachment search."}'
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": json.dumps(manifest),
+                "conversation_asset_file_names.json": json.dumps(
+                    {
+                        "/file-notes.dat": "notes.txt",
+                        "/file-data.dat": "data.json",
+                        "/file-image.dat": "preview.png",
+                    }
+                ),
+                "library_files.json": json.dumps(
+                    [{"file_name": "preview.png", "mime_type": "image/png"}]
+                ),
+                "conversations.json": json.dumps(conversations),
+                "file-notes.dat": notes,
+                "file-data.dat": data,
+                "file-image.dat": b"\x89PNG\r\nsynthetic-binary",
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    by_id = {item.asset_id: item for item in parsed.attachments}
+    assert set(by_id) == {"file-notes", "file-data", "file-image"}
+    assert by_id["file-notes"].content_sha256 == sha256(notes).hexdigest()
+    assert by_id["file-notes"].original_filename == "notes.txt"
+    assert by_id["file-notes"].mime_type == "text/plain"
+    assert by_id["file-notes"].conversation_ids == ("conversation-synthetic",)
+    assert by_id["file-notes"].message_ids == ("message-synthetic",)
+    assert by_id["file-notes"].extraction_status == "text_extracted"
+    assert by_id["file-data"].extraction_status == "text_extracted"
+    assert by_id["file-data"].extracted_format == "json"
+    assert by_id["file-image"].extraction_status == "unsupported_binary"
+    assert by_id["file-image"].mime_type == "image/png"
+    assert by_id["file-image"].mime_type_source == "library_files"
+    assert parsed.stats["attachment_entries"] == 3
+    assert parsed.stats["attachment_hashed"] == 3
+    assert parsed.stats["attachment_text_extracted"] == 2
+    assert parsed.stats["unsupported_attachments"] == 1
+    assert parsed.stats["zip_total_uncompressed_bytes"] > 0
+    assert any(item.kind == "goal" for item in parsed.candidates)
+
+
+def test_chatgpt_dat_attachment_text_read_limit_retains_binary_raw() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": json.dumps(
+                    {
+                        "logical_files": {
+                            "file-notes.dat": {"files": ["file-notes.dat"]}
+                        }
+                    }
+                ),
+                "conversation_asset_file_names.json": json.dumps(
+                    {"file-notes.dat": "notes.txt"}
+                ),
+                "file-notes.dat": b"Preference: " + b"x" * 64,
+            }
+        ),
+        max_attachment_text_bytes=16,
+    )
+
+    assert parsed.attachments[0].extraction_status == "text_read_limit"
+    assert parsed.stats["attachment_text_supported"] == 1
+    assert parsed.stats["attachment_text_extracted"] == 0
+    assert parsed.stats["attachment_text_over_limit"] == 1
+    assert parsed.stats["unsupported_attachments"] == 1
+    assert parsed.attachments[0].content_sha256 == sha256(b"Preference: " + b"x" * 64).hexdigest()
+
+
+def test_chatgpt_dat_malformed_supported_text_is_counted_as_supported_but_not_extracted() -> None:
+    parsed = parse_zip_bundle(
+        _zip(
+            {
+                "export_manifest.json": json.dumps(
+                    {"logical_files": {"file-bad.dat": {"files": ["file-bad.dat"]}}}
+                ),
+                "conversation_asset_file_names.json": json.dumps({"file-bad.dat": "bad.json"}),
+                "file-bad.dat": b"{malformed",
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert parsed.attachments[0].extraction_status == "text_parse_failed"
+    assert parsed.stats["attachment_text_supported"] == 1
+    assert parsed.stats["attachment_text_extracted"] == 0
+    assert parsed.stats["attachment_text_parse_failed"] == 1
+
+
+def test_zip_attachment_member_and_total_limits_cover_opaque_assets() -> None:
+    with pytest.raises(InvalidStateError, match="too many entries"):
+        parse_zip_bundle(_zip({"one.bin": b"1", "two.bin": b"2"}), max_entries=1)
+    with pytest.raises(InvalidStateError, match="per-member size"):
+        parse_zip_bundle(_zip({"file-large.dat": b"12345"}), max_member_uncompressed_bytes=4)
+    with pytest.raises(InvalidStateError, match="total uncompressed-size"):
+        parse_zip_bundle(_zip({"file-large.dat": b"12345"}), max_uncompressed_bytes=4)
+
+
+def test_zip_attachment_hashing_checks_cancellation_inside_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = ImportProgressTracker(bytes_total=16)
+    calls = 0
+    original_check = ImportProgressTracker.check_cancelled
+
+    def cancel_on_hash_check(current: ImportProgressTracker) -> None:
+        nonlocal calls
+        calls += 1
+        if calls >= 2:
+            raise ImportCancelledError("synthetic cancellation")
+        original_check(current)
+
+    monkeypatch.setattr(ImportProgressTracker, "check_cancelled", cancel_on_hash_check)
+    try:
+        with pytest.raises(ImportCancelledError, match="synthetic cancellation"):
+            parse_zip_bundle(_zip({"file-cancel.dat": b"attachment"}), progress=tracker)
+    finally:
+        tracker.close()
+    assert calls >= 2
+
+
+def test_zip_attachment_guards_cover_encryption_duplicates_compression_and_metadata() -> None:
+    with pytest.raises(InvalidStateError, match="encrypted ZIP"):
+        parse_zip_bundle(_mark_zip_entry_encrypted(_zip({"file-secret.dat": b"bytes"})))
+
+    duplicate = parse_zip_bundle(_zip_with_duplicate_names())
+    assert len(duplicate.attachments) == 1
+    assert any("duplicate entry skipped" in warning for warning in duplicate.warnings)
+
+    with pytest.raises(InvalidStateError, match="compression-ratio"):
+        parse_zip_bundle(_zip({"file-compress.dat": b"x" * 10_000}), max_compression_ratio=2)
+
+    with pytest.raises(InvalidStateError, match="metadata JSON"):
+        parse_zip_bundle(
+            _zip(
+                {
+                    "export_manifest.json": b"{malformed",
+                    "file-metadata.dat": b"bytes",
+                }
+            )
+        )
+
+
+def test_attachment_inventory_is_persisted_in_source_metadata(tmp_path: Path) -> None:
+    content = _zip(
+        {
+            "export_manifest.json": json.dumps(
+                {"logical_files": {"file-persisted.dat": {"files": ["file-persisted.dat"]}}}
+            ),
+            "conversation_asset_file_names.json": json.dumps(
+                {"file-persisted.dat": "persisted.txt"}
+            ),
+            "file-persisted.dat": b"Preference: Preserve attachment identity.",
+        }
+    )
+    core = CoreService.in_directory(tmp_path)
+    result = ArchiveImportService(core.store, skip_disk_preflight=True).import_bytes(
+        "chatgpt.zip", content, provider="chatgpt"
+    )
+
+    source = result["source"]
+    inventory = source["metadata"]["attachments"]
+    assert len(inventory) == 1
+    assert inventory[0]["asset_id"] == "file-persisted"
+    assert inventory[0]["content_sha256"] == sha256(
+        b"Preference: Preserve attachment identity."
+    ).hexdigest()
 
 
 def test_provider_preference_slots_use_subject_not_value() -> None:

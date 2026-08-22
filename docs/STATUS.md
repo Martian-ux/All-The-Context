@@ -99,6 +99,21 @@ rollback, cancellation, corrected records, and local-authored records. Full
 Ruff passes; mypy reports no issues across 81 source files; and pytest passes
 1,065 tests with 4 Windows symlink-capability skips and 3 dependency warnings.
 
+### 2026-08-22 bounded ChatGPT attachment ingestion slice
+
+The provider importer now inventories every ChatGPT `.dat` ZIP member without
+extracting it to disk: each member is bounded, streamed, SHA-256 hashed, and
+stored in source metadata with archive identity, manifest/filename/MIME
+provenance, and attachment-ID conversation/message linkage where the export
+metadata establishes it. Text extraction is intentionally limited to
+manifest-proven `.txt`, `.json`, `.jsonl`, `.csv`, `.md`, and `.markdown` assets.
+Images/audio and office/document/web/script formats remain retained raw and
+explicitly unsupported; the importer does not claim that all `.dat` contents
+are searchable. Synthetic tests cover identity, linkage, supported text,
+unsupported binaries, traversal, member/total expansion, and text read bounds.
+Real-export structural inspection was content-free; no real export bytes or
+personal values enter the repository, tests, logs, or receipts.
+
 PR 63 was squash-merged into protected `main` at
 `6be7e1d032714b39528fcc31d5333539406d08a6`, after PR 62 at
 `080d90669dd5936206c088ae0f4fe4cca24d327e`. PR 64 then landed the ADR-088

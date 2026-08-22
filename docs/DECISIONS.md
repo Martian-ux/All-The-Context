@@ -2799,3 +2799,34 @@ and it must not log raw personal context. Results are developer evidence only
 and grant no beta-acceptance credit. Core-correctness work remains the
 authority for observation/policy behavior; this harness should follow those
 public APIs rather than inserting fixture rows into canonical tables.
+
+## ADR-105: Bound ChatGPT attachment ingestion at the preserved-source edge
+
+**Status:** accepted 2026-08-22. Post-beta source correction. Does not
+retarget, relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+ChatGPT export `.dat` members are attachment assets, not a generic searchable
+document format. The importer preserves the raw ZIP as Core already requires,
+then records one content-addressed inventory item per `.dat` member: archive
+identity, uncompressed byte size, explicit `content_sha256`, bounded original
+filename and MIME metadata, provenance sources, and attachment-ID
+conversation/message links.
+The inventory is source metadata and contains no attachment payload.
+
+Text extraction is permitted only when both the export manifest and filename
+metadata establish a supported text format: `.txt`, `.json`, `.jsonl`, `.csv`,
+`.md`, or `.markdown`. It uses bounded in-memory reads and existing
+deterministic provider extraction; no member is rendered, macro-enabled, or
+executed. Images/audio, PDF, DOCX, PPTX, XLSX, RTF, HTML, scripts, unknown
+extensions, malformed text, and over-limit text remain raw and are counted as
+unsupported/unavailable. Attachment inventory presence, hashing, or raw
+preservation must never be reported as searchable coverage. Linkage is
+retained only when a conversation attachment ID resolves to the `.dat` asset
+identity; unresolved assets remain inventoried without an invented link.
+
+The default ZIP safety limits are 10,000 entries, 512 MiB per member, 2 GiB
+total declared uncompressed expansion, 500:1 compression ratio, 1 MiB stream
+reads, 128 MiB JSON item parsing, and 8 MiB attachment-text reads. These limits
+are independent of the 2,000,000,000-byte raw import boundary. Path traversal,
+absolute/drive-qualified paths, encrypted entries, and malformed bounded reads
+fail closed. Synthetic ZIP fixtures are the only attachment test inputs.
