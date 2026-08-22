@@ -195,9 +195,11 @@ classified from parser evidence and malformed neutral files left generic.
 
 Provider-shaped empty roots and zero-message conversations still close one
 logical item: known-provider empties are skipped, while identity-free or
-malformed provider entries are unparsed and keep the source incomplete. Auto
-root-array detection establishes provider context during bounded validation
-before sibling terminal accounting, so malformed entries are not order-dependent.
+malformed provider entries are unparsed and keep the source incomplete. The
+bounded parser carries explicit root versus root-array-item context beside each
+streamed value, so an empty object or wrapper sibling is unparsed exactly once
+without materializing the root or deriving terminal context from a filename.
+Malformed entries are not order-dependent.
 For ZIPs, a valid ChatGPT content signature in an allowed neutral alternate
 (`messages.json`, `chats.json`, or `history.json`) enables the same attachment
 link inventory as explicit ChatGPT selection; malformed neutral JSON remains

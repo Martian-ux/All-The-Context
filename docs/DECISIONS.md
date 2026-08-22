@@ -2979,6 +2979,13 @@ root array or publish any imported text. A malformed sibling that precedes a
 valid provider conversation therefore closes as `unparsed` in every permutation
 once the validated root establishes provider context.
 
+The bounded iterator carries an explicit context tag with each yielded value:
+standalone roots use root policy, while members streamed from a non-empty root
+array use root-array-item policy. An empty object or empty provider wrapper in
+that item context is therefore one `unparsed` terminal even when the valid
+conversation is its sibling. The distinction is part of the parser boundary;
+it is not inferred from a filename and does not require materializing the root.
+
 Provider containers and conversations have a nonzero logical denominator even
 when they contain no messages. A known empty provider root or zero-message
 conversation closes as one `skipped` item; an identity-free provider-shaped

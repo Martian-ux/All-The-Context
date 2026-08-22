@@ -1569,11 +1569,12 @@ state is already noncurrent and creates no user queue.
   `skipped`; an identity-free provider-shaped empty or malformed entry closes
   as `unparsed` and keeps coverage incomplete. Structural provider containers
   remain outside the raw-member terminal buckets.
-- Auto provider classification observes every bounded, validated root-array
-  value before consuming any sibling. Malformed entries therefore cannot be
-  classified as generic `skipped` merely because they precede the entry that
-  establishes provider context. Direct bytes, filesystem paths, and ZIP
-  members use the same terminal accounting.
+- The bounded JSON iterator carries explicit root versus root-array-item context
+  with each streamed value. An empty object or provider wrapper inside a
+  non-empty root array is therefore one `unparsed` terminal in either sibling
+  order, while a standalone known-provider root remains one `skipped` terminal.
+  This context is not filename-derived and does not materialize the root;
+  direct bytes, filesystem paths, and ZIP members use the same accounting.
 - Auto ZIP attachment discovery scans the allowed neutral alternate basenames
   for a bounded ChatGPT content signature before link inventory. Valid
   `messages.json`, `chats.json`, `history.json`, and `conversations.json`

@@ -14,9 +14,12 @@ siblings now close exactly one logical terminal result. Known-provider empty
 roots/conversations are `skipped`; identity-free provider-shaped empties and
 malformed entries are `unparsed` and keep coverage incomplete. Provider
 containers remain structural in raw ZIP accounting and are not double-counted.
-Auto detection seeds provider context from the complete bounded validated root
-before consuming root-array siblings, making malformed-entry coverage and
-completion invariant under permutation across direct, path, and ZIP entrypoints.
+The bounded parser carries explicit root versus root-array-item context beside
+each streamed value, so an empty object or wrapper sibling is `unparsed` exactly
+once while standalone known-provider empties and zero-message conversations
+remain `skipped`. No full root is materialized and terminal context is not
+filename-derived; malformed-entry coverage and completion remain invariant under
+permutation across direct, path, and ZIP entrypoints.
 Allowed neutral alternate JSON basenames establish ChatGPT attachment scanning
 only after a valid bounded content signature; malformed neutral alternates stay
 generic and cannot enable provider-specific link inventory. Focused tests cover

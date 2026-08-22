@@ -15,6 +15,7 @@ import zipfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
@@ -110,6 +111,19 @@ _DATED_CONVERSATIONS_BASENAME = re.compile(
 
 class _JsonNestingLimitError(InvalidStateError):
     """The bounded JSON scanner rejected a document before recursive decode."""
+
+
+class JsonValueContext(StrEnum):
+    """Context assigned by the bounded JSON reader to each yielded value."""
+
+    ROOT = "root"
+    ROOT_ARRAY_ITEM = "root_array_item"
+
+
+@dataclass(frozen=True, slots=True)
+class _JsonDocument:
+    value: Any
+    context: JsonValueContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,7 +355,7 @@ def _consume_json_value(
     coverage: _GenericCoverage,
     *,
     provider_container: bool = False,
-    empty_provider_root: bool = False,
+    context: JsonValueContext = JsonValueContext.ROOT,
 ) -> None:
     if isinstance(value, list):
         if builder.consume_json_list(source_name, value):
@@ -351,8 +365,10 @@ def _consume_json_value(
             if provider_container:
                 builder.note_provider_terminal(
                     source_name,
-                    "skipped"
-                    if empty_provider_root and builder.provider_context_established()
+                    "unparsed"
+                    if context is JsonValueContext.ROOT_ARRAY_ITEM
+                    else "skipped"
+                    if builder.provider_context_established()
                     else "unparsed",
                 )
             else:
@@ -366,12 +382,15 @@ def _consume_json_value(
                 generic,
                 coverage,
                 provider_container=provider_container,
+                context=context,
             )
         return
     if provider_container and is_empty_provider_container(value):
         builder.note_provider_terminal(
             source_name,
-            "skipped" if builder.provider_context_established() else "unparsed",
+            "unparsed"
+            if context is JsonValueContext.ROOT_ARRAY_ITEM
+            else "skipped" if builder.provider_context_established() else "unparsed",
         )
         return
     recognized = builder.consume_json(source_name, value)
@@ -600,19 +619,17 @@ def _parse_json_stream_atomic(
     is the only pass allowed to mutate the builder or generic candidate list.
     """
     builder = _builder(provider)
-    root_array_state: list[bool] = []
 
     def validate() -> None:
         with open_stream() as stream:
-            for _document in _iter_json_documents(
+            for document in _iter_json_documents(
                 stream,
                 max_item_chars=max_item_chars,
                 max_bytes=max_json_bytes,
-                root_array_state=root_array_state,
             ):
                 if progress is not None:
                     progress.check_cancelled()
-                builder.observe_json_provider(source_name, _document)
+                builder.observe_json_provider(source_name, document.value)
 
     try:
         validate()
@@ -654,11 +671,11 @@ def _parse_json_stream_atomic(
                 _consume_json_value(
                     builder,
                     source_name,
-                    document,
+                    document.value,
                     generic,
                     coverage,
                     provider_container=provider_container,
-                    empty_provider_root=root_array_state == [True],
+                    context=document.context,
                 )
     except UnicodeDecodeError:
         return _generic_failure_result(
@@ -1123,13 +1140,14 @@ def _load_zip_json_member(
                 max_bytes=max_item_chars,
             )
         )
+        values = [document.value for document in documents]
         if root_is_array:
-            if len(documents) == 1 and documents[0] == []:
+            if len(values) == 1 and values[0] == []:
                 return []
-            return documents
+            return values
         if len(documents) == 1:
-            return documents[0]
-        return documents
+            return values[0]
+        return values
     except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError) as error:
         raise InvalidStateError("attachment metadata JSON is invalid") from error
 
@@ -1351,7 +1369,7 @@ def _archive_chatgpt_structure_members(
         try:
             with archive.open(member) as stream:
                 for document in _iter_json_documents(stream, max_item_chars=max_item_chars):
-                    if _looks_like_chatgpt_structure(document):
+                    if _looks_like_chatgpt_structure(document.value):
                         detected_members.add(safe_name)
                         break
         except (UnicodeDecodeError, json.JSONDecodeError, InvalidStateError):
@@ -1668,7 +1686,7 @@ def parse_zip_bundle(
                         ):
                             if attachment_enabled:
                                 _collect_chatgpt_attachment_links(
-                                    document,
+                                    document.value,
                                     context,
                                     source_name=safe_name,
                                 )
@@ -1736,16 +1754,17 @@ def parse_zip_bundle(
                                             safe_name
                                         ):
                                             _collect_chatgpt_attachment_links(
-                                                document,
+                                                document.value,
                                                 context,
                                                 source_name=safe_name,
                                             )
                                         _consume_json_value(
                                             builder,
                                             source_name,
-                                            document,
+                                            document.value,
                                             generic,
                                             coverage,
+                                            context=document.context,
                                         )
                                 elif text_format == "jsonl":
                                     for line_number, line in enumerate(text.splitlines(), 1):
@@ -1883,17 +1902,15 @@ def parse_zip_bundle(
                 }
                 try:
                     if suffix == ".json":
-                        root_array_state: list[bool] = []
                         with archive.open(member) as stream:
                             # Validate the complete bounded member before
                             # publishing any candidates. Root-array items can
                             # be yielded before trailing garbage is found.
-                            for _ in _iter_json_documents(
+                            for document in _iter_json_documents(
                                 stream,
                                 max_item_chars=max_json_item_chars,
-                                root_array_state=root_array_state,
                             ):
-                                builder.observe_json_provider(safe_name, _)
+                                builder.observe_json_provider(safe_name, document.value)
                         with archive.open(member) as stream:
                             for document in _iter_json_documents(
                                 stream,
@@ -1902,11 +1919,11 @@ def parse_zip_bundle(
                                 _consume_json_value(
                                     builder,
                                     safe_name,
-                                    document,
+                                    document.value,
                                     generic,
                                     coverage,
                                     provider_container=is_provider_container,
-                                    empty_provider_root=root_array_state == [True],
+                                    context=document.context,
                                 )
                     elif suffix == ".jsonl":
                         _consume_zip_jsonl(
@@ -2098,13 +2115,10 @@ def _iter_json_documents(
     chunk_chars: int = 1024 * 1024,
     max_bytes: int | None = None,
     max_depth: int = DEFAULT_MAX_JSON_NESTING_DEPTH,
-    root_array_state: list[bool] | None = None,
-) -> Iterator[Any]:
-    """Yield bounded root JSON values without json.loads or root-array materialization."""
+) -> Iterator[_JsonDocument]:
+    """Yield bounded JSON values with root context, without root materialization."""
     if max_item_chars < 1 or chunk_chars < 1 or max_depth < 1:
         raise ValueError("JSON limits must be positive")
-    if root_array_state is not None:
-        root_array_state.clear()
     byte_limit = max_bytes if max_bytes is not None else max_item_chars * 4
     if byte_limit < 1:
         raise ValueError("JSON byte limit must be positive")
@@ -2208,7 +2222,7 @@ def _iter_json_documents(
                     "JSON document exceeds the nesting-depth limit"
                 ) from error
             position = end
-            yield document
+            yield _JsonDocument(document, JsonValueContext.ROOT)
             reject_trailing_data()
             return
 
@@ -2228,9 +2242,7 @@ def _iter_json_documents(
                 # Preserve an empty ordinary root as one logical value. The
                 # caller may classify a provider container as structural and
                 # suppress this generic item accounting explicitly.
-                if root_array_state is not None:
-                    root_array_state.append(True)
-                yield []
+                yield _JsonDocument([], JsonValueContext.ROOT)
                 reject_trailing_data()
                 return
             raise json.JSONDecodeError("trailing comma in JSON array", buffer, position)
@@ -2250,9 +2262,7 @@ def _iter_json_documents(
                     "JSON document exceeds the nesting-depth limit"
                 ) from error
             position = end
-            if first_item and root_array_state is not None:
-                root_array_state.append(False)
-            yield item
+            yield _JsonDocument(item, JsonValueContext.ROOT_ARRAY_ITEM)
             first_item = False
             break
         while True:

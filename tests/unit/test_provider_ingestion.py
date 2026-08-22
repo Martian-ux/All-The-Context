@@ -888,6 +888,143 @@ def test_provider_empty_and_malformed_terminals_match_direct_path_and_zip(
     assert sum(audit["terminal_member_buckets"].values()) == 0
 
 
+def _provider_entrypoints(tmp_path: Path, payload: Any) -> tuple[Any, Any, Any]:
+    raw = json.dumps(payload).encode("utf-8")
+    direct = parse_archive("conversations.json", raw, provider="chatgpt")
+    path = tmp_path / "conversations.json"
+    path.write_bytes(raw)
+    from_path = parse_archive_path(path, provider="chatgpt")
+    from_zip = parse_zip_bundle(
+        _zip({"conversations.json": raw}),
+        provider="chatgpt",
+    )
+    return direct, from_path, from_zip
+
+
+def test_empty_object_root_array_item_is_one_unparsed_terminal_across_entrypoints(
+    tmp_path: Path,
+) -> None:
+    for parsed in _provider_entrypoints(tmp_path, [{}]):
+        assert parsed.closed_coverage["skipped"] == 0
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert sum(parsed.closed_coverage.values()) == 1
+        assert parsed.complete is False
+
+
+@pytest.mark.parametrize("empty_first", [True, False], ids=["empty-first", "empty-last"])
+def test_empty_object_sibling_with_zero_message_conversation_is_not_skipped(
+    tmp_path: Path,
+    empty_first: bool,
+) -> None:
+    zero_message = {"id": "zero-message", "mapping": {}}
+    payload = [{}, zero_message] if empty_first else [zero_message, {}]
+
+    for parsed in _provider_entrypoints(tmp_path, payload):
+        assert parsed.stats["conversations"] == 1
+        assert parsed.closed_coverage["skipped"] == 1
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert sum(parsed.closed_coverage.values()) == 2
+        assert parsed.complete is False
+        assert parsed.candidates == []
+
+
+@pytest.mark.parametrize("empty_first", [True, False], ids=["empty-first", "empty-last"])
+def test_empty_object_sibling_with_message_conversation_is_not_skipped(
+    tmp_path: Path,
+    empty_first: bool,
+) -> None:
+    message_conversation = _chatgpt_export()[0]
+    payload = (
+        [{}, message_conversation]
+        if empty_first
+        else [message_conversation, {}]
+    )
+
+    for parsed in _provider_entrypoints(tmp_path, payload):
+        assert parsed.stats["conversations"] == 1
+        assert parsed.closed_coverage["recognized"] >= 1
+        assert parsed.closed_coverage["skipped"] == 0
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert parsed.stats["unparsed_messages"] == 1
+        assert parsed.complete is False
+
+
+@pytest.mark.parametrize(
+    "empty_wrapper",
+    [
+        {"conversations": []},
+        {"items": []},
+        {"data": []},
+        {"data": {"conversations": []}},
+        {"export": {"conversations": []}},
+        {"account_data": {"conversations": []}},
+    ],
+    ids=[
+        "conversations",
+        "items",
+        "data-list",
+        "data-conversations",
+        "export-conversations",
+        "account-data-conversations",
+    ],
+)
+@pytest.mark.parametrize("empty_first", [True, False], ids=["empty-first", "empty-last"])
+def test_empty_provider_wrappers_as_streamed_siblings_are_unparsed(
+    tmp_path: Path,
+    empty_wrapper: dict[str, Any],
+    empty_first: bool,
+) -> None:
+    message_conversation = _chatgpt_export()[0]
+    payload = (
+        [empty_wrapper, message_conversation]
+        if empty_first
+        else [message_conversation, empty_wrapper]
+    )
+
+    for parsed in _provider_entrypoints(tmp_path, payload):
+        assert parsed.stats["conversations"] == 1
+        assert parsed.closed_coverage["recognized"] >= 1
+        assert parsed.closed_coverage["skipped"] == 0
+        assert parsed.closed_coverage["unparsed"] == 1
+        assert parsed.stats["unparsed_messages"] == 1
+        assert parsed.complete is False
+        if "archive_member_coverage" in parsed.stats:
+            audit = parsed.stats["archive_member_coverage"]
+            assert audit["structural_members"] == 1
+            assert audit["unaccounted_members"] == 0
+            assert sum(audit["terminal_member_buckets"].values()) == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {},
+        {"conversations": []},
+        {"data": []},
+        {"data": {"conversations": []}},
+        {"mapping": {}},
+    ],
+    ids=[
+        "empty-array-root",
+        "empty-object-root",
+        "empty-conversations-wrapper",
+        "empty-data-wrapper",
+        "nested-empty-wrapper",
+        "zero-message-conversation",
+    ],
+)
+def test_standalone_known_provider_empty_controls_remain_one_skipped_terminal(
+    tmp_path: Path,
+    payload: Any,
+) -> None:
+    for parsed in _provider_entrypoints(tmp_path, payload):
+        assert parsed.closed_coverage["skipped"] == 1
+        assert parsed.closed_coverage["unparsed"] == 0
+        assert sum(parsed.closed_coverage.values()) == 1
+        assert parsed.complete is True
+
+
 @pytest.mark.parametrize("payload_order", ["malformed-first", "valid-first"])
 def test_auto_provider_array_permutations_are_terminally_deterministic(
     tmp_path: Path,

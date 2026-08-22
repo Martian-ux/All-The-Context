@@ -820,9 +820,14 @@ def _looks_like_conversation(value: Any) -> bool:
 
 
 def is_empty_provider_container(value: Any) -> bool:
-    """Return whether a mapping is an empty provider conversation container."""
+    """Return whether a value is an empty provider conversation container/wrapper."""
     if isinstance(value, dict) and not value:
         return True
+    if isinstance(value, dict):
+        for key in _NESTED_CONVERSATION_WRAPPER_KEYS:
+            nested = value.get(key)
+            if nested == [] or (isinstance(nested, dict) and is_empty_provider_container(nested)):
+                return True
     collection = _conversation_collection(value)
     return (
         collection.key is not None
