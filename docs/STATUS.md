@@ -887,8 +887,13 @@ identity, while broader certification-profile browser evidence remains open:
   automatic records from that source are reversibly withdrawn and history is
   kept.
 - Context catalog search returns the exact post-policy `total` with cursor
-  pagination and optional kind, sensitivity, confidence, and source-id
-  filters, including pages beyond the 100-record bounded evidence pool. The
+  pagination, including pages beyond the 100-record bounded evidence pool,
+  with signed, request-bound cursors and optional kind, sensitivity,
+  confidence, and source-id filters.
+  Cursors bind the normalized query/filter/page-size criteria and authenticated
+  principal; malformed, negative, oversized, or mismatched cursors fail with a
+  safe 422. Direct bounded `offset` requests remain available to MCP/CLI, and
+  no next cursor is issued past the inclusive 100,000 offset bound. The
   dashboard shows that total, loads further pages, and opens without
   auto-selecting a record. `bootstrap_context` retains the separate bounded
   evidence path used for context compilation.

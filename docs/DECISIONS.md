@@ -2757,3 +2757,26 @@ personal frame can remain `normal`, while an explicit first-person fictional
 statement can still be conservatively localized. Secret-like content and
 identifier rules remain higher precedence and highly sensitive content remains
 excluded from automatic current context.
+
+## ADR-103: Bind Core context-search cursors to the request and principal
+
+**Status:** accepted 2026-08-22.
+
+The Core HTTP search endpoint no longer emits or accepts bare decimal cursors.
+It emits a compact versioned cursor whose payload contains a bounded offset and
+the SHA-256 fingerprint of the normalized search criteria. The payload is
+authenticated with an HMAC derived from the per-installation Core instance
+secret; the authenticated principal ID is part of the signed message. Reusing
+a cursor with a different query, filter, page size, or principal therefore
+fails closed with HTTP 422 instead of silently returning a page from a
+different request. Malformed, negative, and over-limit cursor payloads are
+rejected by the `SearchCursor` model and the reconstructed `SearchRequest`.
+
+Direct `offset` requests remain available for the existing MCP/CLI transport
+contract, with the existing inclusive `0..100000` bound. A next cursor is not
+issued when advancing would exceed that bound or when the current page is
+empty. The cursor is opaque and integrity/authenticated, but it is not
+encrypted, one-time-use, expiry-bound, or a snapshot-consistency token; record
+changes between pages retain the existing retrieval semantics. This decision
+changes only the Core search request/response contract and its focused API
+coverage, not ranking, totals, or retrieval selection.
