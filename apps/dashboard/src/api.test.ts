@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, normalizeClosedCoverage, sourceCoverageForRecord } from "./api";
+import { ApiError, api, normalizeClosedCoverage, sourceCoverageForRecord } from "./api";
 
 describe("desktop browser session", () => {
   afterEach(() => { window.sessionStorage.clear(); vi.unstubAllGlobals(); });
@@ -192,6 +192,87 @@ describe("desktop browser session", () => {
       "/v1/context/coverage",
       "/v1/context/truth/record-1",
     ]);
+  });
+
+  it("drops malformed list records, bounds truth fields, and fails malformed truth records content-free", async () => {
+    const record = {
+      id: "record-1",
+      kind: "preference",
+      content: "Keep it concise",
+      scopes: ["personal"],
+      source_service: "claude",
+      source_id: "source-1",
+      source_reference: "conversation/1",
+      evidence: "linked evidence",
+      confidence: 0.9,
+      sensitivity: "normal",
+      availability: "core_available",
+      allowed_clients: [],
+      version: 2,
+      content_hash: "hash",
+      created_at: "2026-08-21T00:00:00Z",
+      updated_at: "2026-08-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/context/search")) {
+        return new Response(JSON.stringify({
+          total: 4,
+          items: [
+            { ...record, unexpected: { must_not_escape: true } },
+            { ...record, id: { dangerous: true } },
+            { ...record, content: ["not text"] },
+            { ...record, content: "x".repeat(64_001) },
+            { ...record, availability: "not-an-availability" },
+            { ...record, allowed_clients: ["safe", { dangerous: true }] },
+            { ...record, id: "record-unicode", content: "保存 🧠" },
+          ],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/context/truth/record-1")) {
+        return new Response(JSON.stringify({
+          record,
+          status: "conflicted",
+          status_reason: { unsafe: true },
+          conflict_state: "active",
+          conflict_group_ids: ["group-1", { unsafe: true }, "x".repeat(257)],
+          superseded_by: ["record-2"],
+          source: { id: { unsafe: true } },
+          evidence: [
+            {
+              observation_id: "observation-1", record_id: "record-1", relationship: "supports",
+              link_created_at: "2026-08-21T00:00:00Z", disposition: "applied", content: "safe",
+              confidence: 0.9, sensitivity: "normal", recorded_at: "2026-08-21T00:00:00Z", content_hash: "evidence-hash",
+            },
+            { content: { unsafe: true }, confidence: { unsafe: true }, sensitivity: "unsafe" },
+          ],
+          history_count: Number.MAX_SAFE_INTEGER,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ record: { ...record, content: { unsafe: true } } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await api.searchContext("");
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).not.toHaveProperty("unexpected");
+    expect(result.items[1]?.content).toBe("保存 🧠");
+
+    const truth = await api.contextTruth("record-1");
+    expect(truth.status_reason).toBeNull();
+    expect(truth.source).toBeNull();
+    expect(truth.conflict_group_ids).toEqual(["group-1"]);
+    expect(truth.evidence).toHaveLength(1);
+    expect(truth.history_count).toBeNull();
+
+    await expect(api.contextTruth("malformed")).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Core returned an invalid response.",
+      detail: undefined,
+    } satisfies Partial<ApiError>);
   });
 
   it("preserves the record provenance contract without relabeling source fields", async () => {
@@ -422,6 +503,51 @@ describe("desktop browser session", () => {
       observation_count: 2,
       outcomes: { applied: 1, tentative: 1 },
       operation_id: "op-1",
+    });
+  });
+
+  it("counts only valid bounded import IDs and strict nonnegative stats", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      source: { id: "source-1", duplicate: false, import_status: "complete" },
+      observation_ids: ["observation-1", null, { unsafe: true }, 42, "", "observation-2", "x".repeat(257)],
+      stats: {
+        conversations: "12",
+        observations: { unsafe: true },
+        messages: 4,
+        user_messages: 1.5,
+        assistant_messages: -1,
+        candidates: 100,
+        unsupported_entries: Number.MAX_SAFE_INTEGER,
+      },
+      coverage: {
+        closed_coverage: {
+          recognized: 1,
+          excluded: -1,
+          skipped: 3,
+          unavailable: "4",
+          duplicate: { unsafe: true },
+          failed: Number.MAX_SAFE_INTEGER,
+          unparsed: 0,
+          unknown: 99,
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.reprocessSource("source-1")).resolves.toMatchObject({
+      observation_count: 2,
+      stats: { messages: 4, candidates: 100 },
+      coverage: {
+        closed_coverage: {
+          recognized: 1,
+          excluded: 0,
+          skipped: 3,
+          unavailable: 0,
+          duplicate: 0,
+          failed: 0,
+          unparsed: 0,
+        },
+        item_accounting_available: true,
+      },
     });
   });
 

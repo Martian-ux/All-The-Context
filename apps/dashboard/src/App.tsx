@@ -621,7 +621,6 @@ function contextCriteriaSummary(criteria: ContextSearchCriteria): string {
 }
 
 function ContextAccounting({
-  status,
   coverage,
   coverageLoading,
   coverageError,
@@ -631,7 +630,6 @@ function ContextAccounting({
   appliedCriteria,
   criteriaPending,
 }: {
-  status: CoreStatus | null;
   coverage: TruthCoverage | null;
   coverageLoading: boolean;
   coverageError: string | null;
@@ -673,12 +671,12 @@ function ContextAccounting({
         </div>
         <div>
           <dt>Observations</dt>
-          <dd>{formatCount(coverage?.observation_count ?? status?.observations)}</dd>
+          <dd>{formatCount(coverage?.observation_count)}</dd>
           <small>Disposition accounting from Core</small>
         </div>
         <div>
           <dt>Sources</dt>
-          <dd>{formatCount(coverage?.source_count ?? status?.sources)}</dd>
+          <dd>{formatCount(coverage?.source_count)}</dd>
           <small>Registered sources in truth coverage</small>
         </div>
       </dl>
@@ -792,7 +790,10 @@ function ContextView({ status, onChanged }: { status: CoreStatus | null; onChang
       setCoverageError(null);
       return result;
     } catch (caught) {
-      if (sequence === coverageSequence.current) setCoverageError(errorMessage(caught));
+      if (sequence === coverageSequence.current) {
+        setCoverage(null);
+        setCoverageError(errorMessage(caught));
+      }
       return null;
     } finally {
       if (sequence === coverageSequence.current) setCoverageLoading(false);
@@ -1015,7 +1016,6 @@ function ContextView({ status, onChanged }: { status: CoreStatus | null; onChang
     <div className="context-layout">
       <section className="context-results">
         <ContextAccounting
-          status={status}
           coverage={coverage}
           coverageLoading={coverageLoading}
           coverageError={coverageError}

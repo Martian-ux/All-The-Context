@@ -20,14 +20,24 @@ evidence for this integrated checkout.
 - The beta.6 dashboard keeps source item accounting separate from terminal
   import processing, normalizes the exact seven-key closed-coverage shape, and
   preserves cancelled/failed terminal reasons without fabricating counts.
+- Dashboard wire reads now construct record and selected-truth values
+  field-by-field with bounded strings, arrays, enums, timestamps, hashes,
+  confidence, versions, and counts. Malformed detail envelopes fail with a
+  content-free API error; malformed list rows are omitted while valid siblings
+  remain usable. Import IDs and displayed stats count only valid bounded
+  values, including mixed legacy `candidate_ids` responses.
 - Context uses the existing bounded current-only search plus typed Core reads for
   content-free coverage and selected truth. The accounting view shows real
   state counts, conflict groups, and incomplete ingestion sessions; the
   inspector renders selected truth status, provenance, evidence, and history
-  without per-row truth requests.
+  without per-row truth requests. A coverage failure clears cached truth
+  metrics while retaining search results, and sequence guards prevent stale
+  concurrent coverage responses from changing a newer refresh.
 - Focused dashboard tests cover normalization, terminal/item split, coverage
-  fallback, truth races, mutation refresh, and rendered statuses. Synthetic
-  loopback browser checks are local review evidence only; fresh independent
+  fallback, truth races, mutation refresh, and rendered statuses. Adversarial
+  normalization and coverage recovery/race checks bring the suite to 54 tests
+  across 2 files. Synthetic loopback browser checks are local review evidence
+  only; fresh independent
   Product Design/API acceptance remains required. No release, publish, merge,
   or live/private Core/data work is claimed here.
 

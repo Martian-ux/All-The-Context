@@ -12,17 +12,23 @@ The accepted dashboard now maps the integrated contracts without flattening
 state:
 
 - `apps/dashboard/src/types.ts` and `api.ts` define defensive import, exact
-  closed-coverage, context coverage, and selected-truth shapes. Unknown or
-  missing legacy metadata is visible as unavailable rather than fabricated
-  accounting.
+  closed-coverage, context coverage, and selected-truth shapes. Record and
+  truth values are constructed field-by-field with bounded primitives/enums;
+  malformed detail envelopes fail content-free, malformed list rows are
+  omitted, and unknown or missing legacy metadata is visible as unavailable
+  rather than fabricated accounting. Import IDs and displayed statistics
+  accept only valid bounded nonnegative integers.
 - `apps/dashboard/src/App.tsx` and `styles.css` preserve the accepted desktop /
   mobile layout and existing actions while separating source item accounting
   from terminal processing, rendering real Core coverage, and showing the
   selected truth status, conflict, provenance, evidence, and history.
 - `apps/dashboard/src/api.test.ts` and `App.test.tsx` provide focused evidence
-  for normalization, terminal/item split, coverage failure fallback, no-N+1
-  truth selection, stale-response protection, mutation refresh, and rendered
-  statuses. The dashboard suite is 50 tests across 2 files.
+  for normalization, terminal/item split, coverage failure fallback and
+  recovery, malformed-wire filtering, honest count handling, no-N+1 truth
+  selection, stale-response protection, mutation refresh, and rendered
+  statuses. A failed coverage refresh clears cached truth metrics while
+  preserving the independent search result counts. The dashboard suite is 54
+  tests across 2 files.
 
 This is a local-only beta.6 review candidate. Synthetic loopback browser checks
 do not inspect real exports or live/private Core data, and do not constitute

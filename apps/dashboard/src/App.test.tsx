@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import type { Availability } from "./types";
 
 function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -277,8 +278,95 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByText(/Truth accounting is unavailable right now/i)).toBeInTheDocument();
-    expect(screen.getByText("Prefers concise technical explanations.")).toBeInTheDocument();
+    expect(screen.getAllByText("Prefers concise technical explanations.").length).toBeGreaterThan(0);
     expect(screen.getByText(/This bounded search is current-only/i)).toBeInTheDocument();
+  });
+
+  it("clears failed truth coverage metrics while preserving search counts and restores them on retry", async () => {
+    let coverageAttempt = 0;
+    let availability: Availability = "core_available";
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) {
+        coverageAttempt += 1;
+        if (coverageAttempt === 2) return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+        return json(truthCoveragePayload({ record_count: coverageAttempt === 3 ? 3 : 2, observation_count: coverageAttempt === 3 ? 5 : 4, source_count: coverageAttempt === 3 ? 3 : 2 }));
+      }
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [{ ...contextRecord(), availability }] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload({ ...contextRecord(), availability }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        const body = JSON.parse(String(init?.body)) as { availability: Availability };
+        availability = body.availability;
+        return json({ ...contextRecord(), availability });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const row = await screen.findByRole("button", { name: /preference memory/i });
+    fireEvent.click(row);
+    const metrics = () => document.querySelector(".context-metrics") as HTMLElement;
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("2"));
+
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "local_only" } });
+    expect(await screen.findByText(/Truth accounting is unavailable right now/i)).toBeInTheDocument();
+    await waitFor(() => {
+      const values = metrics().querySelectorAll("dd");
+      expect(values[0]).toHaveTextContent("1");
+      expect(values[1]).toHaveTextContent("1");
+      expect(values[2]).toHaveTextContent("—");
+      expect(values[3]).toHaveTextContent("—");
+      expect(values[4]).toHaveTextContent("—");
+    });
+    expect(screen.getAllByText("Prefers concise technical explanations.").length).toBeGreaterThan(0);
+
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "core_available" } });
+    await screen.findByText(/Search results refreshed/i);
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("3"));
+    expect(metrics().querySelectorAll("dd")[3]).toHaveTextContent("5");
+    expect(metrics().querySelectorAll("dd")[4]).toHaveTextContent("3");
+  });
+
+  it("ignores a stale truth coverage failure after a newer refresh succeeds", async () => {
+    let releaseInitial: (response: Response) => void = () => undefined;
+    const initialCoverage = new Promise<Response>((resolve) => { releaseInitial = resolve; });
+    let coverageCalls = 0;
+    let availability: Availability = "core_available";
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) {
+        coverageCalls += 1;
+        if (coverageCalls === 1) return initialCoverage;
+        return json(truthCoveragePayload({ record_count: 7, observation_count: 8, source_count: 4 }));
+      }
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [{ ...contextRecord(), availability }] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload({ ...contextRecord(), availability }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        const body = JSON.parse(String(init?.body)) as { availability: Availability };
+        availability = body.availability;
+        return json({ ...contextRecord(), availability });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "local_only" } });
+
+    const metrics = () => document.querySelector(".context-metrics") as HTMLElement;
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("7"));
+    expect(coverageCalls).toBeGreaterThanOrEqual(2);
+    releaseInitial(new Response(JSON.stringify({ detail: "stale failure" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("7");
+    expect(screen.queryByText(/Truth accounting is unavailable right now/i)).not.toBeInTheDocument();
   });
 
   it("ignores a stale selected-truth response after the user chooses a newer row", async () => {

@@ -3167,8 +3167,9 @@ developer evidence only.
 
 ## ADR-117: Dashboard truth surfaces preserve backend accounting boundaries
 
-**Status:** implemented in the isolated 2026-08-22 beta.6 review candidate;
-fresh Product Design/API acceptance remains required.
+**Status:** implemented in the isolated 2026-08-22 beta.6 review candidate,
+including the post-review wire-safety/count/coverage hardening; fresh Product
+Design/API acceptance remains required.
 
 Sources UI treats item closure and source processing as different dimensions.
 The wire normalizer accepts the exact seven-key `closed_coverage` contract,
@@ -3183,6 +3184,12 @@ adds only the existing Core reads for `/context/coverage` and
 search results remain usable when accounting is unavailable. A selected row gets
 one truth read for status, conflict, provenance, evidence, and history metadata;
 sequence guards prevent stale responses from replacing a newer selection, and
-mutations refresh coverage and the selected truth at bounded times. The slice is
-local-only review evidence and does not change routes, Core authority, release
-state, or the beta.6 public identity.
+mutations refresh coverage and the selected truth at bounded times. The
+dashboard now builds record/truth values field-by-field, bounds all displayed
+strings, arrays, enums, timestamps, hashes, confidence values, versions, and
+counts, drops malformed list rows, and fails malformed detail envelopes with a
+content-free error. Import IDs ignore non-string values, stats reject invalid
+count shapes, and a failed coverage refresh clears cached truth metrics while
+retaining the independent search window. The slice is local-only review
+evidence and does not change routes, Core authority, release state, or the
+beta.6 public identity.
