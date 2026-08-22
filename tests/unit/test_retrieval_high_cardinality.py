@@ -8,6 +8,7 @@ from allthecontext.models import (
     BootstrapRequest,
     CandidateInput,
     ContextRecordOut,
+    SearchRequest,
     SearchResponse,
 )
 from allthecontext.retrieval import ContextCompiler, RetrievalEngine, _PipelineDiagnostics
@@ -747,6 +748,39 @@ def _apply_high_cardinality_store(store: CoreStore) -> None:
         )
         if candidate.disposition.value in {"staged", "tentative"}:
             store.approve_candidate(candidate.id, ApprovalRequest(), actor="synthetic-test")
+
+
+def test_bounded_search_only_materializes_complete_candidate_pool_ids(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "bounded-pool-diagnostics.sqlite3")
+    _apply_high_cardinality_store(store)
+    principal = ClientPrincipal("reader", "Synthetic reader", frozenset({"context:read"}))
+    engine = RetrievalEngine(store)
+    request = SearchRequest(
+        query="generic topic 00",
+        scopes=["project:synthetic"],
+        limit=100,
+    )
+    try:
+        _unbounded_response, _unbounded_explanations, unbounded_diagnostics = engine._search(
+            request,
+            principal,
+            bounded=False,
+        )
+        _bounded_response, _bounded_explanations, bounded_diagnostics = engine._search(
+            request,
+            principal,
+            bounded=True,
+        )
+    finally:
+        store.close()
+
+    assert unbounded_diagnostics.candidate_pool_ids is None
+    assert bounded_diagnostics.candidate_pool_ids is not None
+    assert unbounded_diagnostics.candidate_pool_count == 2
+    assert len(bounded_diagnostics.candidate_pool_ids) == _RELEVANT_COUNT
+    assert bounded_diagnostics.candidate_pool_count == 2
+    assert "candidate_pool_ids" not in unbounded_diagnostics.safe_dict()
+    assert "candidate_pool_ids" not in bounded_diagnostics.safe_dict()
 
 
 def test_high_cardinality_bootstrap_regression_has_no_policy_or_pack_violations(

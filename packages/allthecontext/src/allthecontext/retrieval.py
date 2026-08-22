@@ -1832,7 +1832,9 @@ class RetrievalEngine:
                 admissibility=admissibility,
                 candidate_pool_count=candidate_pool_count,
                 candidate_pool_truncated=candidate_pool_truncated,
-                candidate_pool_ids=frozenset(str(row["id"]) for row in temporally_eligible),
+                candidate_pool_ids=(
+                    frozenset(str(row["id"]) for row in temporally_eligible) if bounded else None
+                ),
             ),
         )
 
@@ -1856,7 +1858,9 @@ class RetrievalEngine:
                 diagnostics = _PipelineDiagnostics(
                     candidate_pool_count=len(authorized),
                     candidate_pool_truncated=bounded and len(authorized) > 100,
-                    candidate_pool_ids=frozenset(str(row["id"]) for row in authorized),
+                    candidate_pool_ids=(
+                        frozenset(str(row["id"]) for row in authorized) if bounded else None
+                    ),
                 )
             else:
                 ranked, explanations, denied, diagnostics = self._v3_rows(
