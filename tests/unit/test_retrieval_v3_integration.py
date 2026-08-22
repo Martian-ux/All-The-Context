@@ -179,9 +179,7 @@ def test_catalog_search_counts_and_pages_all_authorized_matches_without_unboundi
         )
 
     engine = RetrievalEngine(store)
-    first = engine.search(
-        SearchRequest(query="catalog page marker", limit=100, offset=0), reader
-    )
+    first = engine.search(SearchRequest(query="catalog page marker", limit=100, offset=0), reader)
     second = engine.search(
         SearchRequest(query="catalog page marker", limit=100, offset=100), reader
     )
@@ -208,8 +206,6 @@ def test_catalog_search_counts_and_pages_all_authorized_matches_without_unboundi
     assert all(item.kind == "fact" and "project:atlas" in item.scopes for item in filtered.items)
     assert all("unauthorized" not in item.content for item in filtered.items)
 
-    bounded = engine._bounded_search(
-        SearchRequest(query="catalog page marker", limit=100), reader
-    )
+    bounded = engine._bounded_search(SearchRequest(query="catalog page marker", limit=100), reader)
     assert bounded.total == 100
     assert len(bounded.items) == 100

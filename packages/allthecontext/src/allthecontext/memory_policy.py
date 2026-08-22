@@ -196,9 +196,7 @@ _QUANTITY_BOUND = re.compile(
     rf"\b(?:under|over|at most|at least|no more than)\s+{_NUMBER}\b",
     flags=re.IGNORECASE,
 )
-_PREFERENCE_VALUE = re.compile(
-    rf"\b(?:{_PREFERENCE_VALUE_TERMS})\b", flags=re.IGNORECASE
-)
+_PREFERENCE_VALUE = re.compile(rf"\b(?:{_PREFERENCE_VALUE_TERMS})\b", flags=re.IGNORECASE)
 _CHOICE_BEFORE_FOR = re.compile(r"\b[\w.+-]+(?=\s+for\b)", flags=re.IGNORECASE)
 
 
@@ -414,8 +412,7 @@ class AutomaticMemoryPolicy:
         if not effective_explicit:
             return decide(
                 ObservationDisposition.TENTATIVE,
-                strip_reason
-                or "inferred or provider-generated observations require corroboration",
+                strip_reason or "inferred or provider-generated observations require corroboration",
                 availability,
             )
         if candidate.confidence < 0.5:

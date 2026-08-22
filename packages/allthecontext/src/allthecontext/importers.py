@@ -603,9 +603,7 @@ def _collect_chatgpt_attachment_links(
         return
     mapping = value.get("mapping")
     if isinstance(mapping, dict):
-        conversation_id = _first_mapping_string(
-            value, ("conversation_id", "id", "uuid", "chat_id")
-        )
+        conversation_id = _first_mapping_string(value, ("conversation_id", "id", "uuid", "chat_id"))
         if conversation_id is None:
             return
         for node_id, node in mapping.items():
@@ -659,9 +657,7 @@ def _collect_library_mime_types(value: Any, context: _ChatGPTAttachmentContext) 
         by_filename.setdefault(safe_filename, set()).add(mime_type.strip()[:256])
     # A repeated filename with conflicting declarations is not safe to resolve.
     context.mime_types_by_filename = {
-        filename: next(iter(values))
-        for filename, values in by_filename.items()
-        if len(values) == 1
+        filename: next(iter(values)) for filename, values in by_filename.items() if len(values) == 1
     }
 
 
@@ -787,8 +783,7 @@ def _attachment_context(
                 context.manifest_members.update(
                     _normalize_attachment_member_name(item)
                     for item in export_files
-                    if isinstance(item, str)
-                    and PurePosixPath(item).suffix.casefold() == ".dat"
+                    if isinstance(item, str) and PurePosixPath(item).suffix.casefold() == ".dat"
                 )
 
     library_member = by_basename.get("library_files.json")
@@ -997,9 +992,7 @@ def parse_zip_bundle(
                         key=lambda item: (item.conversation_id, item.message_id),
                     )
                     provenance = (
-                        ["export_manifest.json"]
-                        if safe_name in context.manifest_members
-                        else []
+                        ["export_manifest.json"] if safe_name in context.manifest_members else []
                     )
                     if original_filename is not None:
                         provenance.append("conversation_asset_file_names.json")
@@ -1117,8 +1110,7 @@ def parse_zip_bundle(
                 bool(item.conversation_ids or item.message_ids) for item in attachments
             ),
             "attachment_text_supported": sum(
-                item.extraction_status
-                in {"text_extracted", "text_read_limit", "text_parse_failed"}
+                item.extraction_status in {"text_extracted", "text_read_limit", "text_parse_failed"}
                 for item in attachments
             ),
             "attachment_text_extracted": sum(

@@ -414,9 +414,7 @@ def test_search_reports_total_and_supports_review_filters(core: CoreService) -> 
     assert len(rest.items) == 1
     goals = core.retrieval.search(SearchRequest(query="", kinds=["goal"]))
     assert goals.total == 1
-    located = core.retrieval.search(
-        SearchRequest(query="", sensitivity=[Sensitivity.SENSITIVE])
-    )
+    located = core.retrieval.search(SearchRequest(query="", sensitivity=[Sensitivity.SENSITIVE]))
     assert located.total == 1
     assert "Seattle" in located.items[0].content
     assert located.items[0].availability == Availability.LOCAL

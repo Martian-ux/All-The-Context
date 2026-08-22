@@ -127,9 +127,7 @@ def test_secret_is_refused_before_write_and_sensitive_context_stays_local(tmp_pa
         "My mortgage is with a bank.",
     ),
 )
-def test_personal_sensitivity_classifier_forces_local_only(
-    tmp_path: Path, content: str
-) -> None:
+def test_personal_sensitivity_classifier_forces_local_only(tmp_path: Path, content: str) -> None:
     store = _store(tmp_path)
 
     observation = store.add_candidate(

@@ -119,9 +119,7 @@ def test_context_search_cursor_validation_and_request_binding(tmp_path: Path) ->
                     },
                 )
                 assert invalid.status_code == 422
-                assert invalid.json()["detail"] == (
-                    "invalid or request-mismatched search cursor"
-                )
+                assert invalid.json()["detail"] == ("invalid or request-mismatched search cursor")
 
             changed_query = client.post(
                 "/v1/context/search",

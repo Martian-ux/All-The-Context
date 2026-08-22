@@ -304,9 +304,7 @@ def test_unrelated_archive_goals_remain_independent_current_records(tmp_path: Pa
         ],
         scenario_id="unrelated-goals",
     )
-    applied = [
-        item for item in observations if item.disposition == ObservationDisposition.APPLIED
-    ]
+    applied = [item for item in observations if item.disposition == ObservationDisposition.APPLIED]
     assert len(applied) == 2
     assert applied[0].record_id is not None
     assert applied[1].record_id is not None
@@ -411,9 +409,7 @@ def test_archive_preference_revisions_share_lineage_but_direct_records_do_not(
     assert observations[0].record_id is not None
     assert observations[1].record_id == observations[0].record_id
     assert observations[1].disposition == ObservationDisposition.APPLIED
-    assert revision_store.get_record(observations[1].record_id).content == (
-        "I prefer light mode"
-    )
+    assert revision_store.get_record(observations[1].record_id).content == ("I prefer light mode")
     assert revision_store.status()["counts"]["active_records"] == 1
 
     direct_store = _store(tmp_path / "direct.db")
@@ -482,17 +478,12 @@ def test_classify_sensitivity_is_conservative_for_health_and_location() -> None:
         == Sensitivity.SENSITIVE
     )
     assert (
-        classify_sensitivity("I live in Seattle for the fiction scenario.")
-        == Sensitivity.SENSITIVE
+        classify_sensitivity("I live in Seattle for the fiction scenario.") == Sensitivity.SENSITIVE
     )
     assert (
-        classify_sensitivity("My wife works remotely in the fiction lab.")
-        == Sensitivity.SENSITIVE
+        classify_sensitivity("My wife works remotely in the fiction lab.") == Sensitivity.SENSITIVE
     )
-    assert (
-        classify_sensitivity("My salary is listed with a bank account.")
-        == Sensitivity.SENSITIVE
-    )
+    assert classify_sensitivity("My salary is listed with a bank account.") == Sensitivity.SENSITIVE
     assert classify_sensitivity("My social security number is 123-45-6789.") == (
         Sensitivity.HIGHLY_SENSITIVE
     )

@@ -125,9 +125,7 @@ def test_chatgpt_dat_attachments_are_hashed_linked_and_text_bounded() -> None:
     manifest = {
         "version": 1,
         "logical_files": {
-            "conversation_asset_file_names.json": {
-                "files": ["conversation_asset_file_names.json"]
-            },
+            "conversation_asset_file_names.json": {"files": ["conversation_asset_file_names.json"]},
             "conversations.json": {"files": ["conversations.json"]},
             "file-notes.dat": {"files": ["file-notes.dat"]},
             "file-data.dat": {"files": ["file-data.dat"]},
@@ -215,15 +213,9 @@ def test_chatgpt_dat_attachment_text_read_limit_retains_binary_raw() -> None:
         _zip(
             {
                 "export_manifest.json": json.dumps(
-                    {
-                        "logical_files": {
-                            "file-notes.dat": {"files": ["file-notes.dat"]}
-                        }
-                    }
+                    {"logical_files": {"file-notes.dat": {"files": ["file-notes.dat"]}}}
                 ),
-                "conversation_asset_file_names.json": json.dumps(
-                    {"file-notes.dat": "notes.txt"}
-                ),
+                "conversation_asset_file_names.json": json.dumps({"file-notes.dat": "notes.txt"}),
                 "file-notes.dat": b"Preference: " + b"x" * 64,
             }
         ),
@@ -333,9 +325,10 @@ def test_attachment_inventory_is_persisted_in_source_metadata(tmp_path: Path) ->
     inventory = source["metadata"]["attachments"]
     assert len(inventory) == 1
     assert inventory[0]["asset_id"] == "file-persisted"
-    assert inventory[0]["content_sha256"] == sha256(
-        b"Preference: Preserve attachment identity."
-    ).hexdigest()
+    assert (
+        inventory[0]["content_sha256"]
+        == sha256(b"Preference: Preserve attachment identity.").hexdigest()
+    )
 
 
 def test_provider_preference_slots_use_subject_not_value() -> None:
@@ -345,9 +338,7 @@ def test_provider_preference_slots_use_subject_not_value() -> None:
         source_name="synthetic-preferences.md",
     )
 
-    preferences = [
-        item for item in parsed.candidates if item.kind == "interaction_preference"
-    ]
+    preferences = [item for item in parsed.candidates if item.kind == "interaction_preference"]
     assert len(preferences) == 2
     assert preferences[0].entity_key == preferences[1].entity_key == "archive_slot"
     assert preferences[0].attribute_key == preferences[1].attribute_key
@@ -364,9 +355,7 @@ def test_provider_preference_choice_slots_use_purpose_subject() -> None:
         source_name="synthetic-choice-preferences.md",
     )
 
-    preferences = [
-        item for item in parsed.candidates if item.kind == "interaction_preference"
-    ]
+    preferences = [item for item in parsed.candidates if item.kind == "interaction_preference"]
     assert len(preferences) == 2
     assert preferences[0].attribute_key == preferences[1].attribute_key
     assert preferences[0].attribute_key is not None
@@ -899,8 +888,7 @@ def test_broad_first_person_fragments_are_not_auto_current_memory() -> None:
     assert not any(item.casefold() in {"i am tired.", "i have a meeting."} for item in contents)
     assert all("haiku" not in item.casefold() for item in contents)
     assert all(
-        item.confidence >= 0.5 or item.kind == "personal_context"
-        for item in parsed.candidates
+        item.confidence >= 0.5 or item.kind == "personal_context" for item in parsed.candidates
     )
 
 
@@ -1060,8 +1048,7 @@ def test_rebuild_parse_failure_keeps_prior_current_records(
 
     assert store.get_source_content(source_id) == raw
     assert all(
-        store.get_record(record_id).content == content
-        for record_id, content in prior.items()
+        store.get_record(record_id).content == content for record_id, content in prior.items()
     )
     sources, _ = store.list_sources()
     assert sources[0]["import_status"] == "failed"
@@ -1188,8 +1175,7 @@ def test_rebuild_cancellation_keeps_prior_current_records(
         service.reprocess_source(source_id, rebuild=True)
 
     assert all(
-        store.get_record(record_id).content == content
-        for record_id, content in prior.items()
+        store.get_record(record_id).content == content for record_id, content in prior.items()
     )
     sources, _ = store.list_sources()
     assert sources[0]["import_status"] == "cancelled"

@@ -1088,9 +1088,7 @@ class RetrievalEngine:
                     request.query,
                     limit=100,
                 )
-            return self.ranker.catalog_rank_with_explanations(
-                connection, candidates, request.query
-            )
+            return self.ranker.catalog_rank_with_explanations(connection, candidates, request.query)
         if isinstance(self.ranker, V2LexicalRanker):
             ranked, explanations = self.ranker.rank_with_explanations(
                 connection, candidates, request.query
@@ -1225,9 +1223,7 @@ class RetrievalEngine:
         self, request: SearchRequest, principal: ClientPrincipal | None = None
     ) -> SearchResponse:
         """Retrieve the bounded evidence pool used by context compilation."""
-        response, _explanations, _diagnostics = self._search(
-            request, principal, bounded=True
-        )
+        response, _explanations, _diagnostics = self._search(request, principal, bounded=True)
         return response
 
     def diagnose_search(

@@ -382,9 +382,7 @@ class ProviderArchiveBuilder:
         self.note_file(safe_name)
         provider = _detect_json_provider(value, safe_name, self.provider_hint)
         valid = [
-            item
-            for item in value
-            if isinstance(item, dict) and _looks_like_conversation(item)
+            item for item in value if isinstance(item, dict) and _looks_like_conversation(item)
         ]
         malformed_count = len(value) - len(valid)
         if malformed_count:
@@ -409,8 +407,7 @@ class ProviderArchiveBuilder:
         """Account for a streamed residual once a provider shape is established."""
         safe_name = _safe_source_name(source_name)
         meaningful = any(
-            item not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
-            for item in self._providers
+            item not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC} for item in self._providers
         )
         provider_context = (
             self.provider_hint not in {ArchiveProvider.AUTO, ArchiveProvider.GENERIC}
@@ -1145,9 +1142,7 @@ def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
         if specific:
             result.extend(specific)
             continue
-        fallback = _candidate_from_statement(
-            " ".join(sentences), message, require_specific=False
-        )
+        fallback = _candidate_from_statement(" ".join(sentences), message, require_specific=False)
         if fallback is not None:
             result.append(fallback)
     return _deduplicate_candidates(result)
@@ -1162,9 +1157,7 @@ def _candidate_from_statement(
     cleaned = _clean_statement(segment)
     if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
         return None
-    if cleaned.endswith("?") or _is_inert_instruction(cleaned) or _EPHEMERAL_STANCE.search(
-        cleaned
-    ):
+    if cleaned.endswith("?") or _is_inert_instruction(cleaned) or _EPHEMERAL_STANCE.search(cleaned):
         return None
     classified = _classify_statement(cleaned)
     if classified is None:
