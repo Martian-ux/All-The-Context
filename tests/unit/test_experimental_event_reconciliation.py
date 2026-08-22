@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -20,11 +20,11 @@ from allthecontext.experimental_event_observation import (
     AuthorizationApplicability,
     RetentionClass,
     RetentionPolicy,
+    WitnessClass,
 )
 from allthecontext.experimental_event_reconciliation import (
     DependencyWithdrawal,
     EventOrigin,
-    EventReconciliationInput,
     ReconciliationErrorCode,
     ReconciliationViolation,
     SensitivityClass,
@@ -80,6 +80,9 @@ def test_capture_normalizes_existing_identity_without_copying_payload() -> None:
     )
 
     assert result.origin is EventOrigin.CAPTURE
+    assert result.capture_operation == "upsert"
+    assert result.lifecycle_hook is None
+    assert result.session_ref is None
     assert result.event_id == "provider-event-1"
     assert result.source_generation == 3
     assert result.source_cursor == "cursor-1"
@@ -107,6 +110,8 @@ def test_lifecycle_requires_exact_envelope_and_preserves_reference_truth() -> No
         observed_time=T0,
     )
     assert result.witness_class.value == "direct_user"
+    assert result.lifecycle_hook == "direct_user_turn"
+    assert result.session_ref == envelope.session_id
     assert result.client_ref == "client-1"
     assert result.conversation_ref == "conversation-1"
     assert result.artifact_refs == ("turn-1",)
@@ -237,9 +242,7 @@ def test_withdrawals_are_actual_tuples_and_nested_types_fail_without_typeerror(
     assert failure.value.code is ReconciliationErrorCode.INVALID_WITHDRAWAL
 
     with pytest.raises(ReconciliationViolation) as nested:
-        DependencyWithdrawal(
-            "x", cast(Any, "correction"), "authorization-1", cast(Any, "erase")
-        )
+        DependencyWithdrawal("x", cast(Any, "correction"), "authorization-1", cast(Any, "erase"))
     assert nested.value.code is ReconciliationErrorCode.INVALID_WITHDRAWAL
 
 
@@ -338,22 +341,45 @@ def test_denied_authorization_and_expiry_are_serialized_without_content() -> Non
 
 
 def test_direct_constructor_revalidates_all_required_boundary_fields() -> None:
-    with pytest.raises(ReconciliationViolation) as timestamp:
-        EventReconciliationInput(
-            event_id="event-1",
-            origin=EventOrigin.CAPTURE,
-            witness_class=cast(Any, "authoritative_source"),
-        )
-    assert timestamp.value.code is ReconciliationErrorCode.INVALID_FIELD
+    capture = normalize_capture_event(
+        _capture(),
+        source_id="source-1",
+        idempotency_key="idempotency-1",
+        event_time=T0,
+        observed_time=T0,
+    )
+    with pytest.raises(ReconciliationViolation) as missing_commitment:
+        replace(capture, payload_commitment=None)
+    assert missing_commitment.value.code is ReconciliationErrorCode.INVALID_LINEAGE
 
-    with pytest.raises(ReconciliationViolation) as whitespace:
-        EventReconciliationInput(
-            event_id="event-1",
-            origin=EventOrigin.CAPTURE,
-            witness_class=cast(Any, "authoritative_source"),
-            source_id=" source-1",
+    with pytest.raises(ReconciliationViolation) as mismatched_capture:
+        replace(capture, capture_operation="delete", witness_class=WitnessClass.DIRECT_USER)
+    assert mismatched_capture.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
+    envelope = host.observe_direct_user_turn(PayloadReference("turn-direct", "user_turn"))
+    assert isinstance(envelope, ClientLifecycleEnvelope)
+    lifecycle = normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
+    with pytest.raises(ReconciliationViolation) as commitment_without_reference:
+        replace(
+            lifecycle,
+            payload_reference=None,
+            payload_reference_kind=None,
+            payload_commitment="a" * 64,
         )
-    assert whitespace.value.code is ReconciliationErrorCode.INVALID_FIELD
+    assert commitment_without_reference.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    with pytest.raises(ReconciliationViolation) as missing_hook:
+        replace(lifecycle, lifecycle_hook=None)
+    assert missing_hook.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    with pytest.raises(ReconciliationViolation) as missing_session:
+        replace(lifecycle, session_ref=None)
+    assert missing_session.value.code is ReconciliationErrorCode.INVALID_LINEAGE
+
+    with pytest.raises(ReconciliationViolation) as invalid_kind:
+        replace(lifecycle, payload_reference_kind="response")
+    assert invalid_kind.value.code is ReconciliationErrorCode.INVALID_LINEAGE
 
 
 def test_mutated_lifecycle_reference_commitment_and_time_are_revalidated() -> None:
@@ -363,14 +389,14 @@ def test_mutated_lifecycle_reference_commitment_and_time_are_revalidated() -> No
     object.__setattr__(envelope.payload.turn_ref, "sha256", "not-a-sha")
     with pytest.raises(ReconciliationViolation) as commitment:
         normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
-    assert commitment.value.code is ReconciliationErrorCode.INVALID_FIELD
+    assert commitment.value.code is ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD
 
     envelope = host.observe_direct_user_turn(PayloadReference("turn-size", "user_turn"))
     assert isinstance(envelope, ClientLifecycleEnvelope)
     object.__setattr__(envelope.payload.turn_ref, "size_bytes", -1)
     with pytest.raises(ReconciliationViolation) as size:
         normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
-    assert size.value.code is ReconciliationErrorCode.INVALID_FIELD
+    assert size.value.code is ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD
 
     envelope = host.observe_direct_user_turn(PayloadReference("turn-2", "user_turn"))
     assert isinstance(envelope, ClientLifecycleEnvelope)
@@ -378,6 +404,19 @@ def test_mutated_lifecycle_reference_commitment_and_time_are_revalidated() -> No
     with pytest.raises(ReconciliationViolation) as observed:
         normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
     assert observed.value.code is ReconciliationErrorCode.INVALID_TIMESTAMP
+
+
+def test_mutated_nested_lifecycle_payload_fields_are_revalidated() -> None:
+    host = DeterministicFakeClientRuntimeHost.for_level("L1", client_id="client-1")
+    envelope = host.request_pre_generation_context(
+        generation_id="generation-1",
+        requested_scopes=("project-1",),
+    )
+    assert isinstance(envelope, ClientLifecycleEnvelope)
+    object.__setattr__(envelope.payload, "budget_chars", -1)
+    with pytest.raises(ReconciliationViolation) as failure:
+        normalize_lifecycle_event(envelope, event_time=T0, observed_time=T0)
+    assert failure.value.code is ReconciliationErrorCode.INVALID_LIFECYCLE_PAYLOAD
 
 
 def test_direct_constructor_rejects_whitespace_in_mutated_reference() -> None:

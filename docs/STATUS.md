@@ -20,10 +20,11 @@ evidence for this integrated checkout.
 The integration-owned Wave 1 slice now has a bounded pure reference boundary in
 `experimental_event_reconciliation.py` with isolated synthetic tests. It
 accepts the exact existing `CaptureEvent` and `ClientLifecycleEnvelope`
-contracts, carries stable IDs, source generation/order/cursor/idempotency,
-payload commitment/size, lifecycle references, timestamps, retention,
-sensitivity, authorization, version, ownership, and dependency withdrawal
-metadata without copying raw payload content.
+contracts, preserves the capture operation and lifecycle hook/session alongside
+stable IDs, source generation/order/cursor/idempotency, payload commitment/size,
+lifecycle references, timestamps, retention, sensitivity, authorization,
+version, ownership, and dependency withdrawal metadata without copying raw
+payload content.
 
 The boundary normalizes capture and lifecycle inputs independently; because the
 existing lifecycle envelope declares no linkage to a capture event, supplying

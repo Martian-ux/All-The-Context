@@ -10,11 +10,12 @@ ZF-004 Wave 1 normalizes either the existing `CaptureEvent` or the exact
 later formation step. The existing lifecycle envelope declares no linkage to a
 capture event, so the composed call is rejected until a real link contract
 exists. The slice reuses source/event IDs, capture generation and order, the
-existing capture normalizer's commitment and bounded byte size, source cursor
-and idempotency material, lifecycle payload references with optional
-commitment/size, lifecycle idempotency `(client_id, event_id, sequence)`, and
-bounded account/client/conversation/task/workspace/project/artifact references.
-Raw source text is never copied or returned by `as_dict()`.
+existing capture normalizer's operation, commitment, and bounded byte size,
+source cursor and idempotency material, lifecycle hook/session and payload
+references with optional commitment/size, lifecycle idempotency
+`(client_id, event_id, sequence)`, and bounded
+account/client/conversation/task/workspace/project/artifact references. Raw
+source text is never copied or returned by `as_dict()`.
 
 Dependency withdrawals are actual immutable tuples of typed Packet C
 cause/action declarations. Authorized ordinary-delete withdrawals must match
