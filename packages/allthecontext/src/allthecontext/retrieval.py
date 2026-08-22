@@ -1125,12 +1125,60 @@ class ContextCompiler:
                 if all(can_coexist(item, reserved) for reserved in reserve_items)
                 and all(can_coexist(item, fixed) for fixed in fixed_mandatory_items)
             ]
-            overflow_support_ids = {
-                item.id: frozenset(
-                    target.id for target in compatible_primary if can_coexist(item, target)
+            supporting_target_ids: dict[str, frozenset[str]] = {}
+            for evidence in ordered:
+                if (
+                    evidence.id in mandatory_ids
+                    or self._is_interaction_preference(evidence)
+                    or not self._is_supporting(evidence)
+                ):
+                    continue
+                targets = {
+                    target.id
+                    for target in primary
+                    if (evidence.source_id is not None and evidence.source_id == target.source_id)
+                    or (
+                        evidence.entity_key is not None
+                        and evidence.entity_key == target.entity_key
+                        and evidence.attribute_key == target.attribute_key
+                    )
+                }
+                supporting_target_ids[evidence.id] = frozenset(
+                    targets or {target.id for target in primary}
                 )
-                for item in overflow_items
-            }
+
+            fixed_reserve_cost = sum(self._cost(item) for item in fixed_mandatory_items) + sum(
+                self._cost(item) for item in reserve_items
+            )
+            for overflow in overflow_items:
+                evidence_support_ids: set[str] = set()
+                for evidence_id, target_ids in supporting_target_ids.items():
+                    evidence = next(item for item in ordered if item.id == evidence_id)
+                    if not all(
+                        can_coexist(evidence, fixed) for fixed in fixed_mandatory_items
+                    ) or not all(can_coexist(evidence, reserved) for reserved in reserve_items):
+                        continue
+                    for target in compatible_primary:
+                        if (
+                            target.id in target_ids
+                            and can_coexist(evidence, target)
+                            and can_coexist(overflow, evidence)
+                            and fixed_reserve_cost + self._cost(target) + self._cost(evidence)
+                            <= budget_chars
+                        ):
+                            evidence_support_ids.add(evidence.id)
+                            break
+                if evidence_support_ids:
+                    # Selector supports are OR-based. Requiring evidence IDs
+                    # here forms a primary -> evidence -> overflow chain because
+                    # each evidence candidate independently supports its primary.
+                    overflow_support_ids[overflow.id] = frozenset(evidence_support_ids)
+                else:
+                    # No applicable evidence can be selected within the base
+                    # budget, so do not deadlock an otherwise valid fallback.
+                    overflow_support_ids[overflow.id] = frozenset(
+                        target.id for target in compatible_primary if can_coexist(overflow, target)
+                    )
         else:
             primary = [
                 item

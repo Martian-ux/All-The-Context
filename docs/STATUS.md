@@ -1496,11 +1496,14 @@ state is already noncurrent and creates no user queue.
   result, while overflow preferences remain optional fallback candidates. The
   compiler preserves caller ranking for non-preference records, excludes fixed
   mandatory duplicate/conflict slots from the reserve, and unlocks each overflow
-  preference after any compatible selected primary. The focused sanitized
-  regression covers 77 preferences, 20 relevant records, ten generic queries at
-  a 4,000-character budget, no-match behavior, ACL/temporal/sensitivity
-  exclusion, exact accounting, caller-rank preservation, fixed-slot conflicts,
-  alternate-primary evidence ordering, and preference-input determinism.
+  preference after any compatible selected primary. When applicable evidence is
+  feasible, overflow is chained through that evidence so selector utility density
+  cannot place it first; absent or infeasible evidence keeps the primary fallback.
+  The focused sanitized regression covers 77 preferences, 20 relevant records,
+  ten generic queries at a 4,000-character budget, no-match behavior, ACL/temporal/
+  sensitivity exclusion, exact accounting, caller-rank preservation, fixed-slot
+  conflicts, alternate-primary evidence ordering, large-evidence ordering,
+  infeasible-evidence fallback, and preference-input determinism.
 - Edge forwarding now reconciles context-pack metadata to the final returned
   items after scope filtering or envelope trimming: selected, omitted, used,
   and provenance counts are recomputed; duplicate/conflict aggregates are

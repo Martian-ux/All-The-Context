@@ -46,14 +46,17 @@ The production pipeline has seven ordered boundaries:
    selector and opaque signals to choose a deterministic reserve of at most
    eight; overflow preferences become optional fallback candidates after a
    compatible primary result. Each overflow preference may follow any selected
-   compatible primary, while supporting evidence remains ahead of that fallback
-   tier. Fixed mandatory records exclude their duplicate/conflict groups from
-   the reserve, and caller-ranked non-preference candidates retain their order;
-   only preference reserve/overflow tiers are canonicalized for input-order
-   determinism. The reserve budget leaves room for the cheapest feasible primary
-   result when such a pair fits. At eight or fewer preferences, the existing
-   mandatory behavior is unchanged. Bootstrap returns optional content-free
-   `pack_metadata` accounting for candidate-pool caps, omissions,
+   compatible primary, while applicable supporting evidence remains ahead of
+   that fallback tier. The compiler expresses primary-plus-evidence as a chain:
+   evidence supports the primary, and overflow supports feasible evidence; when
+   no applicable evidence can fit, overflow falls back to primary support rather
+   than deadlocking. Fixed mandatory records exclude their duplicate/conflict
+   groups from the reserve, and caller-ranked non-preference candidates retain
+   their order; only preference reserve/overflow tiers are canonicalized for
+   input-order determinism. The reserve budget leaves room for the cheapest
+   feasible primary result when such a pair fits. At eight or fewer preferences,
+   the existing mandatory behavior is unchanged. Bootstrap returns optional
+   content-free `pack_metadata` accounting for candidate-pool caps, omissions,
    provenance-backed items, and truthful truncation reasons. It cannot weaken an
    upstream gate.
 7. Administrator-only diagnostics expose authorized returned record IDs plus

@@ -249,6 +249,83 @@ def test_high_cardinality_overflow_supports_any_selected_compatible_primary() ->
     assert metadata.used_chars == used
 
 
+def test_high_cardinality_large_supporting_evidence_precedes_overflow() -> None:
+    preferences = _synthetic_preferences()[:9]
+    primary = _record(
+        "primary",
+        "fact",
+        "The selected primary answer is cobalt.",
+        source_id="primary-source",
+        source_reference="synthetic-primary-source",
+    )
+    anchor = _record(
+        "anchor",
+        "fact",
+        "The additional compatible anchor is amber.",
+        source_id="anchor-source",
+        source_reference="synthetic-anchor-source",
+    )
+    evidence = _record(
+        "large-supporting-evidence",
+        "evidence",
+        "support " * 375,
+        source_id="primary-source",
+        source_reference="synthetic-evidence-source",
+    )
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [primary, anchor, evidence],
+        budget_chars=5_000,
+    )
+
+    selected_ids = {item.id for item in selected}
+    selected_order = [item.id for item in selected]
+    overflow = "preference-08"
+    assert primary.id in selected_ids
+    assert anchor.id in selected_ids
+    assert evidence.id in selected_ids
+    assert overflow in selected_ids
+    assert selected_order.index(primary.id) < selected_order.index(overflow)
+    assert selected_order.index(anchor.id) < selected_order.index(overflow)
+    assert selected_order.index(evidence.id) < selected_order.index(overflow)
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= 5_000
+    assert metadata.used_chars == used
+
+
+def test_high_cardinality_overflow_falls_back_when_evidence_is_infeasible() -> None:
+    preferences = _synthetic_preferences()[:9]
+    primary = _record(
+        "primary",
+        "fact",
+        "The feasible primary answer is cobalt.",
+        source_id="primary-source",
+    )
+    evidence = _record(
+        "infeasible-supporting-evidence",
+        "evidence",
+        "evidence " * 375,
+        source_id="primary-source",
+    )
+    budget = 1_300
+
+    selected, used, metadata = ContextCompiler().compile_with_diagnostics(
+        preferences,
+        [primary, evidence],
+        budget,
+    )
+
+    selected_ids = {item.id for item in selected}
+    selected_preferences = [item for item in selected if item.kind == "interaction_preference"]
+    assert primary.id in selected_ids
+    assert evidence.id not in selected_ids
+    assert len(selected_preferences) > 8
+    assert used == sum(len(item.content) + 64 for item in selected)
+    assert used <= budget
+    assert metadata.used_chars == used
+
+
 def test_low_cardinality_preserves_every_feasible_preference() -> None:
     preferences = [
         _record(

@@ -3459,6 +3459,14 @@ record. Each overflow preference supports the intersection of all compatible
 primary IDs, rather than one preselected anchor, so a different selected primary
 can unlock it while no-match overflow remains dormant.
 
+Because selector support is an OR relationship, the compiler does not pretend
+that one support set can require both a primary and evidence. When applicable
+evidence is feasible within the fixed-plus-reserve-plus-primary budget, overflow
+supports only that evidence's IDs; each evidence candidate independently supports
+its compatible primary, forming the required chain. If no applicable evidence can
+fit, overflow retains the compatible-primary fallback so the optional tier does
+not deadlock under absent or infeasible evidence.
+
 This is deliberately not a selector, storage, retrieval-pool, ACL, temporal,
 sensitivity, API, or metadata-schema change. Core still reports exact used
 characters, selected/omitted counts, duplicate/conflict aggregates, and
