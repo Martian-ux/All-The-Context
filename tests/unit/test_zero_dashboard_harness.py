@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from allthecontext import experimental_zero_dashboard_harness as harness
 from allthecontext.capture import (
     CaptureCapabilityManifest,
@@ -14,11 +12,6 @@ from allthecontext.capture import (
     CaptureEvent,
     CapturePage,
     DeterministicFakeAdapter,
-)
-from allthecontext.client_runtime import (
-    ClientLifecycleEnvelope,
-    ContextRequestPayload,
-    OrderingViolation,
 )
 from allthecontext.experimental_zero_dashboard_harness import (
     ZeroDashboardFixture,
@@ -139,37 +132,46 @@ def test_scorecard_rejects_poisoned_final_import(monkeypatch, tmp_path: Path) ->
 
 
 def test_altered_lifecycle_request_parameters_are_not_ignored(monkeypatch, tmp_path: Path) -> None:
-    original = harness.DeterministicFakeClientRuntimeHost.request_pre_generation_context
+    original_request = harness.DeterministicFakeClientRuntimeHost.request_pre_generation_context
+    original_bootstrap = harness.RetrievalEngine.bootstrap
+    bootstrap_requests: list[object] = []
 
     def altered_request(self: object, **kwargs: object) -> object:
-        result = original(self, **kwargs)  # type: ignore[arg-type]
-        if not isinstance(result, ClientLifecycleEnvelope):
-            return result
-        if not isinstance(result.payload, ContextRequestPayload):
-            return result
-        return replace(
-            result,
+        altered = dict(kwargs)
+        altered.update(
+            requested_scopes=("project:neptune",),
             project_id="neptune",
-            payload=replace(
-                result.payload,
-                requested_scopes=("project:neptune",),
-                budget_chars=256,
-            ),
+            budget_chars=256,
         )
+        return original_request(self, **altered)  # type: ignore[arg-type]
+
+    def spy_bootstrap(self: object, request: object, principal: object = None) -> object:
+        bootstrap_requests.append(request)
+        return original_bootstrap(self, request, principal)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         harness.DeterministicFakeClientRuntimeHost,
         "request_pre_generation_context",
         altered_request,
     )
-    with pytest.raises(OrderingViolation):
-        run_zero_dashboard_journey(tmp_path / "altered-request.sqlite3")
+    monkeypatch.setattr(harness.RetrievalEngine, "bootstrap", spy_bootstrap)
+    receipt = run_zero_dashboard_journey(tmp_path / "altered-request.sqlite3")
+
+    assert receipt.scorecard.passed is False
+    assert receipt.scorecard.context_correctness is False
+    assert bootstrap_requests
+    first_request = bootstrap_requests[0]
+    assert first_request.requested_scopes == ["project:neptune"]
+    assert first_request.current_project == "neptune"
+    assert first_request.budget_chars == 256
 
 
 def test_idempotent_sink_commit_failure_window_has_no_duplicate_core_state(
     tmp_path: Path,
 ) -> None:
-    store = CoreStore(tmp_path / "commit-window.sqlite3")
+    database_path = tmp_path / "commit-window.sqlite3"
+    store = CoreStore(database_path)
+    reopened: CoreStore | None = None
     try:
         store.initialize_vault()
         principal, _token = store.create_client(harness._client_request())
@@ -224,17 +226,35 @@ def test_idempotent_sink_commit_failure_window_has_no_duplicate_core_state(
         coordinator.register_adapter("fake", adapter)
 
         first = coordinator.run(source.id)
-        before_retry = harness._core_counts(store)
-        coordinator.resume(source.id)
-        second = coordinator.run(source.id)
-        after_retry = harness._core_counts(store)
-
         assert first.error_code == "capture_sink_failed"
+        before_retry = harness._core_counts(store)
+        assert before_retry["observation_count"] == 1
+        store.close()
+
+        reopened = CoreStore(database_path)
+        reopened.initialize_vault()
+        fresh_sink = harness._FormationCaptureSink(reopened, principal, core_source.id)
+        fresh_coordinator = CaptureCoordinator(
+            reopened,
+            sink=fresh_sink,
+            clock=lambda: harness._iso(harness.ZERO_DASHBOARD_TIME),
+        )
+        fresh_coordinator.resume(source.id)
+        fresh_adapter = DeterministicFakeAdapter((page,), capability_manifest=manifest)
+        fresh_coordinator.register_adapter("fake", fresh_adapter)
+        assert fresh_sink.delegate.receipts == {}
+
+        second = fresh_coordinator.run(source.id)
+        after_retry = harness._core_counts(reopened)
+
         assert second.status == "completed"
         assert before_retry == after_retry
-        assert after_retry["observation_count"] == 1
         assert after_retry["observation_count"] == after_retry["distinct_observation_key_count"]
         assert after_retry["current_record_count"] == after_retry["distinct_record_key_count"]
-        assert len(sink.delegate.calls) == 1
+        assert len(fresh_sink.delegate.calls) == 1
+        assert len(fresh_sink.delegate.receipts) == 1
+        assert fresh_adapter.calls == [(None, 0)]
     finally:
         store.close()
+        if reopened is not None:
+            reopened.close()
