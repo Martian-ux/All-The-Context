@@ -1,5 +1,18 @@
 export type Availability = "always_available" | "core_available" | "local_only";
 export type HealthState = "ready" | "degraded" | "offline";
+export type ImportStatus = "processing" | "complete" | "failed" | "cancelled";
+export type SourceTerminalReason = "failed" | "cancelled";
+
+export type ClosedCoverageKey =
+  | "recognized"
+  | "excluded"
+  | "skipped"
+  | "unavailable"
+  | "duplicate"
+  | "failed"
+  | "unparsed";
+
+export type ClosedCoverage = { [Key in ClosedCoverageKey]: number };
 
 export interface ContextRecord {
   id: string;
@@ -36,7 +49,7 @@ export interface SourceRecord {
   size_bytes: number;
   content_hash: string;
   observation_count?: number;
-  import_status?: "processing" | "complete" | "failed";
+  import_status?: ImportStatus | null;
   metadata?: SourceMetadata;
   parser_warnings?: string[];
   created_at: string;
@@ -69,6 +82,8 @@ export interface SourceMetadata {
   export_format?: string;
   parser_version?: string;
   coverage_complete?: boolean;
+  closed_coverage?: ClosedCoverage;
+  source_terminal_reason?: SourceTerminalReason;
   stats?: IngestionStats;
 }
 
@@ -77,7 +92,10 @@ export interface IngestionCoverage {
   unavailable: string[];
   limitations: string[];
   warnings: string[];
-  complete: boolean;
+  closed_coverage: ClosedCoverage;
+  coverage_complete: boolean | null;
+  source_terminal_reason: SourceTerminalReason | null;
+  item_accounting_available: boolean;
 }
 
 export interface ClientRegistration {
@@ -185,8 +203,10 @@ export interface ContextSearchOptions {
 
 export interface ImportResult {
   source_id: string;
-  observation_count: number;
+  observation_count: number | null;
   duplicate: boolean;
+  import_status: ImportStatus | null;
+  source_terminal_reason: SourceTerminalReason | null;
   provider: string;
   export_format: string;
   stats: IngestionStats;
@@ -234,7 +254,7 @@ export interface ImportOperation {
 
 /** Wire shape returned inside operation.result before dashboard mapping. */
 export interface ImportWireLike {
-  source?: { id: string; duplicate?: boolean };
+  source?: { id: string; duplicate?: boolean; import_status?: unknown; metadata?: unknown };
   candidate_ids?: string[];
   observation_ids?: string[];
   provider?: string;
@@ -243,6 +263,77 @@ export interface ImportWireLike {
   outcomes?: ImportResult["outcomes"];
   warnings?: string[];
   coverage?: IngestionCoverage;
+}
+
+export type MemoryTruthStatus =
+  | "current"
+  | "tentative"
+  | "superseded"
+  | "conflicted"
+  | "deleted";
+
+export type TruthConflictState = "none" | "active" | "resolved";
+
+export interface TruthSource {
+  id: string;
+  content_hash: string;
+  source_service: string;
+  source_type: string;
+  filename?: string | null;
+  media_type: string;
+  created_at: string;
+  import_status: ImportStatus | null;
+  deleted_at?: string | null;
+  deleted_reason?: string | null;
+}
+
+export interface TruthEvidence {
+  observation_id: string;
+  record_id: string;
+  relationship: string;
+  link_created_at: string;
+  disposition: ActivityEvent["disposition"];
+  decision_reason?: string | null;
+  decided_at?: string | null;
+  observation_origin?: string | null;
+  policy_version?: string | null;
+  content: string;
+  evidence?: string | null;
+  confidence: number;
+  sensitivity: string;
+  source_id?: string | null;
+  source_reference?: string | null;
+  source_service?: string | null;
+  source_type?: string | null;
+  effective_at?: string | null;
+  observed_at?: string | null;
+  recorded_at: string;
+  content_hash: string;
+}
+
+export interface MemoryTruthRecord {
+  record: ContextRecord;
+  status: MemoryTruthStatus | null;
+  status_reason: string | null;
+  conflict_state: TruthConflictState | null;
+  conflict_group_ids: string[];
+  superseded_by: string[];
+  source: TruthSource | null;
+  evidence: TruthEvidence[];
+  history_count: number | null;
+}
+
+export interface TruthCoverage {
+  source_count: number | null;
+  deleted_source_count: number | null;
+  observation_count: number | null;
+  observations_by_disposition: Partial<Record<ActivityEvent["disposition"], number>>;
+  record_count: number | null;
+  records_by_status: Partial<Record<MemoryTruthStatus, number>>;
+  conflict_group_count: number | null;
+  ingestion_session_count: number | null;
+  incomplete_ingestion_session_count: number | null;
+  sessions_with_unavailable_sources: number | null;
 }
 
 export interface ContextDeletion {

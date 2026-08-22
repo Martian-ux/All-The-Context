@@ -34,6 +34,63 @@ function contextRecord(id = "record-1", content = "Prefers concise technical exp
   };
 }
 
+function truthCoveragePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    source_count: 2,
+    deleted_source_count: 0,
+    observation_count: 4,
+    observations_by_disposition: { staged: 0, applied: 3, reinforced: 0, tentative: 1, ignored: 0 },
+    record_count: 2,
+    records_by_status: { current: 1, tentative: 0, superseded: 0, conflicted: 1, deleted: 0 },
+    conflict_group_count: 1,
+    ingestion_session_count: 2,
+    incomplete_ingestion_session_count: 1,
+    sessions_with_unavailable_sources: 1,
+    ...overrides,
+  };
+}
+
+function truthPayload(record = contextRecord(), overrides: Record<string, unknown> = {}) {
+  return {
+    record,
+    status: "conflicted",
+    status_reason: "multiple current values remain for the same memory slot",
+    conflict_state: "active",
+    conflict_group_ids: ["conflict-group-1"],
+    superseded_by: [],
+    source: {
+      id: "source-1",
+      content_hash: "source-hash",
+      source_service: "archive",
+      source_type: "archive",
+      filename: "archive.zip",
+      media_type: "application/zip",
+      created_at: "2026-07-20T00:00:00Z",
+      import_status: "complete",
+    },
+    evidence: [{
+      observation_id: "observation-1",
+      record_id: record.id,
+      relationship: "supports",
+      link_created_at: "2026-07-21T00:00:00Z",
+      disposition: "applied",
+      decision_reason: "automatic policy",
+      content: "The linked observation",
+      evidence: "Evidence summary from Core",
+      confidence: 0.94,
+      sensitivity: "normal",
+      source_id: "source-1",
+      source_reference: "conversation/42",
+      source_service: "archive",
+      source_type: "archive",
+      recorded_at: "2026-07-21T00:00:00Z",
+      content_hash: "evidence-hash",
+    }],
+    history_count: 3,
+    ...overrides,
+  };
+}
+
 function matchMedia(matches: boolean): MediaQueryList {
   return { matches, media: "(max-width: 760px)", onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() };
 }
@@ -168,6 +225,89 @@ describe("dashboard", () => {
     expect(screen.queryByRole("button", { name: "Audit" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
+  });
+
+  it("loads content-free truth accounting and selected canonical truth without N+1 row requests", async () => {
+    let availabilityChanged = false;
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload(contextRecord("record-1", availabilityChanged ? "Now local" : "Prefers concise technical explanations."), { status: availabilityChanged ? "current" : "conflicted", status_reason: availabilityChanged ? "current applied record" : "multiple current values remain for the same memory slot", conflict_state: availabilityChanged ? "none" : "active", conflict_group_ids: availabilityChanged ? [] : ["conflict-group-1"] }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        availabilityChanged = true;
+        return json(contextRecord("record-1", "Now local"));
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByText("Conflict groups")).toBeInTheDocument();
+    expect(screen.getByText("Incomplete sessions")).toBeInTheDocument();
+    expect(screen.getAllByText("1", { selector: ".context-state-title span" })).toHaveLength(2);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(await within(inspector).findByText("Conflicted", { selector: "dd" })).toBeInTheDocument();
+    expect(within(inspector).getByText("multiple current values remain for the same memory slot", { selector: "dd" })).toBeInTheDocument();
+    expect(within(inspector).getByText("Active")).toBeInTheDocument();
+    expect(within(inspector).getByText(/Evidence summary from Core/)).toBeInTheDocument();
+    expect(within(inspector).getByText("3 versions")).toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([request]) => String(request).includes("/context/truth/")).length).toBe(1);
+
+    fireEvent.change(within(inspector).getByLabelText("Availability"), { target: { value: "local_only" } });
+    expect(await screen.findByText(/Search results refreshed/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([request]) => String(request).endsWith("/context/coverage")).length).toBeGreaterThan(1);
+    expect(fetch.mock.calls.filter(([request]) => String(request).endsWith("/context/truth/record-1")).length).toBeGreaterThan(1);
+  });
+
+  it("keeps current-only search results visible when truth coverage is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return new Response(JSON.stringify({ detail: "forbidden" }), { status: 403, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText(/Truth accounting is unavailable right now/i)).toBeInTheDocument();
+    expect(screen.getByText("Prefers concise technical explanations.")).toBeInTheDocument();
+    expect(screen.getByText(/This bounded search is current-only/i)).toBeInTheDocument();
+  });
+
+  it("ignores a stale selected-truth response after the user chooses a newer row", async () => {
+    let releaseFirstTruth = (_response: Response) => {};
+    const firstTruth = new Promise<Response>((resolve) => { releaseFirstTruth = resolve; });
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 2, items: [contextRecord("record-a", "First selection"), contextRecord("record-b", "Second selection")] });
+      if (url.endsWith("/context/truth/record-a")) return firstTruth;
+      if (url.endsWith("/context/truth/record-b")) return json(truthPayload(contextRecord("record-b", "Second selection"), { status: "current", status_reason: "newer selected record", conflict_state: "none", conflict_group_ids: [] }));
+      if (url.includes("/admin/records/") && url.endsWith("/history")) return json({ items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const first = await screen.findByRole("button", { name: /First selection/i });
+    const second = screen.getByRole("button", { name: /Second selection/i });
+    fireEvent.click(first);
+    fireEvent.click(second);
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(await within(inspector).findByText("newer selected record", { selector: "dd" })).toBeInTheDocument();
+    releaseFirstTruth?.(new Response(JSON.stringify(truthPayload(contextRecord("record-a", "First selection"), { status: "deleted", status_reason: "stale response" })), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(inspector).queryByText("stale response")).not.toBeInTheDocument();
+    expect(within(inspector).getByText("newer selected record", { selector: "dd" })).toBeInTheDocument();
   });
 
   it("shows stored provenance fields with accurate labels and safe text rendering", async () => {
@@ -601,6 +741,38 @@ describe("dashboard", () => {
     expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request, init]) => String(request).endsWith("/admin/sources/source-failed/reprocess") && init?.method === "POST")).toBe(true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
+  });
+
+  it("keeps cancelled and incomplete source accounting separate from terminal status", async () => {
+    const sources = [
+      {
+        id: "source-cancelled", filename: "cancelled.zip", media_type: "application/zip", source_service: "claude", source_type: "archive", byte_size: 2048, content_hash: "cancelled-hash", candidate_count: 0, import_status: "cancelled", metadata: { provider: "claude", coverage_complete: false, source_terminal_reason: "cancelled", closed_coverage: { recognized: 2, excluded: 1, skipped: 1, unavailable: 0, duplicate: 1, failed: 0, unparsed: 0 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+      {
+        id: "source-incomplete", filename: "incomplete.zip", media_type: "application/zip", source_service: "chatgpt", source_type: "archive", byte_size: 2048, content_hash: "incomplete-hash", candidate_count: 2, import_status: "complete", metadata: { provider: "chatgpt", coverage_complete: false, closed_coverage: { recognized: 2, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 1, unparsed: 1 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+      {
+        id: "source-complete", filename: "complete.zip", media_type: "application/zip", source_service: "grok", source_type: "archive", byte_size: 2048, content_hash: "complete-hash", candidate_count: 2, import_status: "complete", metadata: { provider: "grok", coverage_complete: true, closed_coverage: { recognized: 2, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 0 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/sources")) return json({ total: sources.length, items: sources });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    expect(await screen.findByText(/Cancelled/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Incomplete/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Rebuild complete.zip from archive" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rebuild cancelled.zip from archive" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rebuild incomplete.zip from archive" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Retry extraction" })).toHaveLength(2);
+    expect(screen.getByText(/Recognized 2.*Skipped 1.*Excluded 1.*Duplicate 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed 1.*Unparsed 1/i)).toBeInTheDocument();
   });
 
   it("rebuilds a complete source from the preserved archive", async () => {

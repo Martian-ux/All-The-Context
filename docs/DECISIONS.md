@@ -3164,3 +3164,25 @@ record-limit truncation reasons so providers can distinguish omission from an
 empty result. The synthetic usefulness fixture adds sparse location/latest
 intent cases and budget-metadata assertions; its 17-case scorecard is
 developer evidence only.
+
+## ADR-117: Dashboard truth surfaces preserve backend accounting boundaries
+
+**Status:** implemented in the isolated 2026-08-22 beta.6 review candidate;
+fresh Product Design/API acceptance remains required.
+
+Sources UI treats item closure and source processing as different dimensions.
+The wire normalizer accepts the exact seven-key `closed_coverage` contract,
+retains unknown or missing older metadata without inventing counts, and exposes
+terminal `failed`/`cancelled` reasons separately from incomplete item coverage.
+Retry is available for failed, cancelled, or incomplete extraction; rebuild is
+available only for a complete source. Existing remove/undo behavior is retained.
+
+Context keeps `/context/search` as a bounded, explicitly current-only list and
+adds only the existing Core reads for `/context/coverage` and
+`/context/truth/{record_id}`. Coverage is content-free and failure-visible, so
+search results remain usable when accounting is unavailable. A selected row gets
+one truth read for status, conflict, provenance, evidence, and history metadata;
+sequence guards prevent stale responses from replacing a newer selection, and
+mutations refresh coverage and the selected truth at bounded times. The slice is
+local-only review evidence and does not change routes, Core authority, release
+state, or the beta.6 public identity.

@@ -6,6 +6,29 @@ does not claim hosted CI, release publication, exact artifact/client/provider
 acceptance, or live/private data inspection. Earlier evidence is retained only
 as historical context and does not become evidence for this checkout.
 
+### 2026-08-22 Sources/Context dashboard reconciliation
+
+The accepted dashboard now maps the integrated contracts without flattening
+state:
+
+- `apps/dashboard/src/types.ts` and `api.ts` define defensive import, exact
+  closed-coverage, context coverage, and selected-truth shapes. Unknown or
+  missing legacy metadata is visible as unavailable rather than fabricated
+  accounting.
+- `apps/dashboard/src/App.tsx` and `styles.css` preserve the accepted desktop /
+  mobile layout and existing actions while separating source item accounting
+  from terminal processing, rendering real Core coverage, and showing the
+  selected truth status, conflict, provenance, evidence, and history.
+- `apps/dashboard/src/api.test.ts` and `App.test.tsx` provide focused evidence
+  for normalization, terminal/item split, coverage failure fallback, no-N+1
+  truth selection, stale-response protection, mutation refresh, and rendered
+  statuses. The dashboard suite is 50 tests across 2 files.
+
+This is a local-only beta.6 review candidate. Synthetic loopback browser checks
+do not inspect real exports or live/private Core data, and do not constitute
+release, Product Design, or API acceptance; fresh independent acceptance
+remains required.
+
 ### 2026-08-22 provider-terminal Import Truth correction
 
 Provider-shaped empty roots, zero-message conversations, and malformed provider

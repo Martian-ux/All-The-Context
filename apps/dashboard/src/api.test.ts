@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { api, normalizeClosedCoverage, sourceCoverageForRecord } from "./api";
 
 describe("desktop browser session", () => {
   afterEach(() => { window.sessionStorage.clear(); vi.unstubAllGlobals(); });
@@ -73,6 +73,125 @@ describe("desktop browser session", () => {
     ), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345, observations: 8, current_context: 3 });
+  });
+
+  it("normalizes the exact seven-key source accounting map without inventing missing counts", async () => {
+    expect(normalizeClosedCoverage({ recognized: 4, skipped: 1, unexpected: 99 })).toEqual({
+      closed_coverage: {
+        recognized: 4,
+        excluded: 0,
+        skipped: 1,
+        unavailable: 0,
+        duplicate: 0,
+        failed: 0,
+        unparsed: 0,
+      },
+      available: true,
+    });
+    expect(normalizeClosedCoverage(undefined)).toEqual({
+      closed_coverage: {
+        recognized: 0,
+        excluded: 0,
+        skipped: 0,
+        unavailable: 0,
+        duplicate: 0,
+        failed: 0,
+        unparsed: 0,
+      },
+      available: false,
+    });
+  });
+
+  it("keeps source terminal status separate from item coverage and leaves old metadata graceful", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      total: 1,
+      items: [{
+        id: "source-cancelled",
+        filename: "partial.zip",
+        media_type: "application/zip",
+        source_service: "claude",
+        source_type: "archive",
+        byte_size: 9,
+        content_hash: "hash",
+        import_status: "cancelled",
+        candidate_count: "not-a-count",
+        metadata: {
+          provider: "claude",
+          coverage_complete: false,
+          source_terminal_reason: "cancelled",
+          closed_coverage: { recognized: 2, unavailable: 1, duplicate: 3, made_up: 20 },
+          stats: { conversations: "unknown" },
+        },
+        created_at: "2026-08-22T00:00:00Z",
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const result = await api.sources();
+    expect(result.items[0]).toMatchObject({ import_status: "cancelled", observation_count: undefined });
+    expect(Object.keys(result.items[0]?.metadata?.closed_coverage ?? {})).toEqual([
+      "recognized", "excluded", "skipped", "unavailable", "duplicate", "failed", "unparsed",
+    ]);
+    expect(sourceCoverageForRecord(result.items[0]!)).toMatchObject({
+      coverage_complete: false,
+      source_terminal_reason: "cancelled",
+      item_accounting_available: true,
+      closed_coverage: { recognized: 2, unavailable: 1, duplicate: 3 },
+    });
+    expect(result.items[0]?.metadata?.stats?.conversations).toBe("unknown");
+  });
+
+  it("maps content-free truth coverage and the selected truth envelope", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/context/coverage")) return new Response(JSON.stringify({
+        source_count: 3,
+        deleted_source_count: 1,
+        observation_count: 8,
+        observations_by_disposition: { applied: 5, tentative: 3 },
+        record_count: 4,
+        records_by_status: { current: 2, tentative: 1, conflicted: 1, superseded: 0, deleted: 0 },
+        conflict_group_count: 1,
+        ingestion_session_count: 2,
+        incomplete_ingestion_session_count: 1,
+        sessions_with_unavailable_sources: 1,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({
+        record: {
+          id: "record-1", kind: "preference", content: "Keep it concise", scopes: ["personal"],
+          source_id: "source-1", source_reference: "conversation/1", source_service: "claude",
+          evidence: "linked evidence", confidence: 0.9, sensitivity: "normal", availability: "core_available",
+          allowed_clients: [], version: 2, content_hash: "hash", created_at: "2026-08-21T00:00:00Z", updated_at: "2026-08-22T00:00:00Z",
+        },
+        status: "conflicted",
+        status_reason: "multiple current values remain for the same memory slot",
+        conflict_state: "active",
+        conflict_group_ids: ["group-1", "group-2"],
+        superseded_by: [],
+        source: { id: "source-1", content_hash: "source-hash", source_service: "claude", source_type: "archive", filename: "export.zip", media_type: "application/zip", created_at: "2026-08-20T00:00:00Z", import_status: "complete" },
+        evidence: [{ observation_id: "obs-1", record_id: "record-1", relationship: "supports", link_created_at: "2026-08-21T00:00:00Z", disposition: "applied", content: "", confidence: 0.9, sensitivity: "normal", recorded_at: "2026-08-21T00:00:00Z", content_hash: "evidence-hash" }],
+        history_count: 3,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.contextCoverage()).resolves.toMatchObject({
+      records_by_status: { current: 2, conflicted: 1 },
+      conflict_group_count: 1,
+      incomplete_ingestion_session_count: 1,
+    });
+    await expect(api.contextTruth("record-1")).resolves.toMatchObject({
+      status: "conflicted",
+      status_reason: "multiple current values remain for the same memory slot",
+      conflict_state: "active",
+      conflict_group_ids: ["group-1", "group-2"],
+      source: { source_service: "claude", import_status: "complete" },
+      evidence: [{ relationship: "supports", disposition: "applied" }],
+      history_count: 3,
+    });
+    expect(fetch.mock.calls.map(([request]) => String(request))).toEqual([
+      "/v1/context/coverage",
+      "/v1/context/truth/record-1",
+    ]);
   });
 
   it("preserves the record provenance contract without relabeling source fields", async () => {

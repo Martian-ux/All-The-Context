@@ -15,6 +15,22 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## Sources/Context dashboard contract reconciliation (2026-08-22)
+
+- The beta.6 dashboard keeps source item accounting separate from terminal
+  import processing, normalizes the exact seven-key closed-coverage shape, and
+  preserves cancelled/failed terminal reasons without fabricating counts.
+- Context uses the existing bounded current-only search plus typed Core reads for
+  content-free coverage and selected truth. The accounting view shows real
+  state counts, conflict groups, and incomplete ingestion sessions; the
+  inspector renders selected truth status, provenance, evidence, and history
+  without per-row truth requests.
+- Focused dashboard tests cover normalization, terminal/item split, coverage
+  fallback, truth races, mutation refresh, and rendered statuses. Synthetic
+  loopback browser checks are local review evidence only; fresh independent
+  Product Design/API acceptance remains required. No release, publish, merge,
+  or live/private Core/data work is claimed here.
+
 The integrated truth boundary is explicit: import `closed_coverage` counts
 logical source items; source terminal failure/cancellation is separate; Memory
 Truth coverage counts durable Core entities; and Retrieval `pack_metadata`
