@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import type { Availability } from "./types";
 
 function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -21,6 +22,8 @@ function contextRecord(id = "record-1", content = "Prefers concise technical exp
     scopes: ["personal"],
     source_service: "archive",
     source_id: "source-1",
+    source_reference: "conversation/42",
+    evidence: "The user prefers concise technical explanations.",
     confidence: 0.94,
     sensitivity: "normal",
     availability: "core_available",
@@ -29,6 +32,63 @@ function contextRecord(id = "record-1", content = "Prefers concise technical exp
     content_hash: `hash-${version}`,
     created_at: "2026-07-21T00:00:00Z",
     updated_at: `2026-07-${20 + version}T00:00:00Z`,
+  };
+}
+
+function truthCoveragePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    source_count: 2,
+    deleted_source_count: 0,
+    observation_count: 4,
+    observations_by_disposition: { staged: 0, applied: 3, reinforced: 0, tentative: 1, ignored: 0 },
+    record_count: 2,
+    records_by_status: { current: 1, tentative: 0, superseded: 0, conflicted: 1, deleted: 0 },
+    conflict_group_count: 1,
+    ingestion_session_count: 2,
+    incomplete_ingestion_session_count: 1,
+    sessions_with_unavailable_sources: 1,
+    ...overrides,
+  };
+}
+
+function truthPayload(record = contextRecord(), overrides: Record<string, unknown> = {}) {
+  return {
+    record,
+    status: "conflicted",
+    status_reason: "multiple current values remain for the same memory slot",
+    conflict_state: "active",
+    conflict_group_ids: ["conflict-group-1"],
+    superseded_by: [],
+    source: {
+      id: "source-1",
+      content_hash: "source-hash",
+      source_service: "archive",
+      source_type: "archive",
+      filename: "archive.zip",
+      media_type: "application/zip",
+      created_at: "2026-07-20T00:00:00Z",
+      import_status: "complete",
+    },
+    evidence: [{
+      observation_id: "observation-1",
+      record_id: record.id,
+      relationship: "supports",
+      link_created_at: "2026-07-21T00:00:00Z",
+      disposition: "applied",
+      decision_reason: "automatic policy",
+      content: "The linked observation",
+      evidence: "Evidence summary from Core",
+      confidence: 0.94,
+      sensitivity: "normal",
+      source_id: "source-1",
+      source_reference: "conversation/42",
+      source_service: "archive",
+      source_type: "archive",
+      recorded_at: "2026-07-21T00:00:00Z",
+      content_hash: "evidence-hash",
+    }],
+    history_count: 3,
+    ...overrides,
   };
 }
 
@@ -168,6 +228,216 @@ describe("dashboard", () => {
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
   });
 
+  it("loads content-free truth accounting and selected canonical truth without N+1 row requests", async () => {
+    let availabilityChanged = false;
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload(contextRecord("record-1", availabilityChanged ? "Now local" : "Prefers concise technical explanations."), { status: availabilityChanged ? "current" : "conflicted", status_reason: availabilityChanged ? "current applied record" : "multiple current values remain for the same memory slot", conflict_state: availabilityChanged ? "none" : "active", conflict_group_ids: availabilityChanged ? [] : ["conflict-group-1"] }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        availabilityChanged = true;
+        return json(contextRecord("record-1", "Now local"));
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByText("Conflict groups")).toBeInTheDocument();
+    expect(screen.getByText("Incomplete sessions")).toBeInTheDocument();
+    expect(screen.getAllByText("1", { selector: ".context-state-title span" })).toHaveLength(2);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(await within(inspector).findByText("Conflicted", { selector: "dd" })).toBeInTheDocument();
+    expect(within(inspector).getByText("multiple current values remain for the same memory slot", { selector: "dd" })).toBeInTheDocument();
+    expect(within(inspector).getByText("Active")).toBeInTheDocument();
+    expect(within(inspector).getByText(/Evidence summary from Core/)).toBeInTheDocument();
+    expect(within(inspector).getByText("3 versions")).toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([request]) => String(request).includes("/context/truth/")).length).toBe(1);
+
+    fireEvent.change(within(inspector).getByLabelText("Availability"), { target: { value: "local_only" } });
+    expect(await screen.findByText(/Search results refreshed/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([request]) => String(request).endsWith("/context/coverage")).length).toBeGreaterThan(1);
+    expect(fetch.mock.calls.filter(([request]) => String(request).endsWith("/context/truth/record-1")).length).toBeGreaterThan(1);
+  });
+
+  it("keeps current-only search results visible when truth coverage is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return new Response(JSON.stringify({ detail: "forbidden" }), { status: 403, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText(/Truth accounting is unavailable right now/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Prefers concise technical explanations.").length).toBeGreaterThan(0);
+    expect(screen.getByText(/This bounded search is current-only/i)).toBeInTheDocument();
+  });
+
+  it("clears failed truth coverage metrics while preserving search counts and restores them on retry", async () => {
+    let coverageAttempt = 0;
+    let availability: Availability = "core_available";
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) {
+        coverageAttempt += 1;
+        if (coverageAttempt === 2) return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+        return json(truthCoveragePayload({ record_count: coverageAttempt === 3 ? 3 : 2, observation_count: coverageAttempt === 3 ? 5 : 4, source_count: coverageAttempt === 3 ? 3 : 2 }));
+      }
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [{ ...contextRecord(), availability }] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload({ ...contextRecord(), availability }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        const body = JSON.parse(String(init?.body)) as { availability: Availability };
+        availability = body.availability;
+        return json({ ...contextRecord(), availability });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const row = await screen.findByRole("button", { name: /preference memory/i });
+    fireEvent.click(row);
+    const metrics = () => document.querySelector(".context-metrics") as HTMLElement;
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("2"));
+
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "local_only" } });
+    expect(await screen.findByText(/Truth accounting is unavailable right now/i)).toBeInTheDocument();
+    await waitFor(() => {
+      const values = metrics().querySelectorAll("dd");
+      expect(values[0]).toHaveTextContent("1");
+      expect(values[1]).toHaveTextContent("1");
+      expect(values[2]).toHaveTextContent("—");
+      expect(values[3]).toHaveTextContent("—");
+      expect(values[4]).toHaveTextContent("—");
+    });
+    expect(screen.getAllByText("Prefers concise technical explanations.").length).toBeGreaterThan(0);
+
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "core_available" } });
+    await screen.findByText(/Search results refreshed/i);
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("3"));
+    expect(metrics().querySelectorAll("dd")[3]).toHaveTextContent("5");
+    expect(metrics().querySelectorAll("dd")[4]).toHaveTextContent("3");
+  });
+
+  it("ignores a stale truth coverage failure after a newer refresh succeeds", async () => {
+    let releaseInitial: (response: Response) => void = () => undefined;
+    const initialCoverage = new Promise<Response>((resolve) => { releaseInitial = resolve; });
+    let coverageCalls = 0;
+    let availability: Availability = "core_available";
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) {
+        coverageCalls += 1;
+        if (coverageCalls === 1) return initialCoverage;
+        return json(truthCoveragePayload({ record_count: 7, observation_count: 8, source_count: 4 }));
+      }
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [{ ...contextRecord(), availability }] });
+      if (url.endsWith("/context/truth/record-1")) return json(truthPayload({ ...contextRecord(), availability }));
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        const body = JSON.parse(String(init?.body)) as { availability: Availability };
+        availability = body.availability;
+        return json({ ...contextRecord(), availability });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    fireEvent.change(await screen.findByLabelText("Availability"), { target: { value: "local_only" } });
+
+    const metrics = () => document.querySelector(".context-metrics") as HTMLElement;
+    await waitFor(() => expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("7"));
+    expect(coverageCalls).toBeGreaterThanOrEqual(2);
+    releaseInitial(new Response(JSON.stringify({ detail: "stale failure" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(metrics().querySelectorAll("dd")[2]).toHaveTextContent("7");
+    expect(screen.queryByText(/Truth accounting is unavailable right now/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale selected-truth response after the user chooses a newer row", async () => {
+    let releaseFirstTruth = (_response: Response) => {};
+    const firstTruth = new Promise<Response>((resolve) => { releaseFirstTruth = resolve; });
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 2, items: [contextRecord("record-a", "First selection"), contextRecord("record-b", "Second selection")] });
+      if (url.endsWith("/context/truth/record-a")) return firstTruth;
+      if (url.endsWith("/context/truth/record-b")) return json(truthPayload(contextRecord("record-b", "Second selection"), { status: "current", status_reason: "newer selected record", conflict_state: "none", conflict_group_ids: [] }));
+      if (url.includes("/admin/records/") && url.endsWith("/history")) return json({ items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const first = await screen.findByRole("button", { name: /First selection/i });
+    const second = screen.getByRole("button", { name: /Second selection/i });
+    fireEvent.click(first);
+    fireEvent.click(second);
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(await within(inspector).findByText("newer selected record", { selector: "dd" })).toBeInTheDocument();
+    releaseFirstTruth?.(new Response(JSON.stringify(truthPayload(contextRecord("record-a", "First selection"), { status: "deleted", status_reason: "stale response" })), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(inspector).queryByText("stale response")).not.toBeInTheDocument();
+    expect(within(inspector).getByText("newer selected record", { selector: "dd" })).toBeInTheDocument();
+  });
+
+  it("shows stored provenance fields with accurate labels and safe text rendering", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    expect(await screen.findByText("Source ID")).toBeInTheDocument();
+    expect(screen.getByText("source-1")).toBeInTheDocument();
+    expect(screen.getByText("Source reference")).toBeInTheDocument();
+    expect(screen.getByText("conversation/42")).toBeInTheDocument();
+    expect(screen.getByText("Stored evidence")).toBeInTheDocument();
+    expect(screen.getByText("The user prefers concise technical explanations.")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty inspector compact on mobile until a record is selected", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(true)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    expect(document.querySelector(".record-detail--empty")).not.toBeNull();
+    expect(document.querySelector(".record-detail--selected")).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    expect(document.querySelector(".record-detail--selected")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: /Prefers concise technical explanations/i })).toBeInTheDocument();
+  });
+
   it("shows the API total and loads additional context pages", async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
@@ -229,27 +499,55 @@ describe("dashboard", () => {
   });
 
   it.each([
-    { label: "kind", control: "Filter by kind", bodyKey: "kinds", value: "goal" },
-    { label: "availability", control: "Filter by availability", bodyKey: "availability", value: "core_available" },
-    { label: "sensitivity", control: "Filter by sensitivity", bodyKey: "sensitivity", value: "sensitive" },
-    { label: "minimum confidence", control: "High confidence", bodyKey: "min_confidence", value: undefined },
-  ])("starts pagination over when the $label filter changes", async ({ label, control, bodyKey, value }) => {
+    { label: "kind", control: "Filter by kind", value: "goal", bodyKey: "kinds" },
+    { label: "availability", control: "Filter by availability", value: "core_available", bodyKey: "availability" },
+    { label: "sensitivity", control: "Filter by sensitivity", value: "sensitive", bodyKey: "sensitivity" },
+    { label: "high confidence", control: "High confidence", value: undefined, bodyKey: "min_confidence" },
+  ])("keeps the $label edit pending until Search is submitted", async ({ control, value, bodyKey }) => {
     const searchBodies: Array<Record<string, unknown>> = [];
-    const filterMatches = (body: Record<string, unknown>): boolean => {
-      if (bodyKey === "min_confidence") return body.min_confidence === 0.85;
-      const values = body[bodyKey];
-      return Array.isArray(values) && values.includes(value);
-    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        searchBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return json({ total: 0, items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Search context" });
+    const field = screen.getByLabelText(control);
+    if (value === undefined) fireEvent.click(field);
+    else fireEvent.change(field, { target: { value } });
+
+    expect(searchBodies).toHaveLength(1);
+    expect(screen.getByText("Search criteria not applied")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    await waitFor(() => {
+      expect(searchBodies.some((body) => bodyKey === "min_confidence"
+        ? body.min_confidence === 0.85
+        : Array.isArray(body[bodyKey]) && body[bodyKey].includes(value))).toBe(true);
+    });
+    expect(screen.getAllByText("Search applied").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Search criteria not applied")).not.toBeInTheDocument();
+  });
+
+  it("keeps an applied continuation cursor through dirty edits and restores it when edits revert", async () => {
+    const searchBodies: Array<Record<string, unknown>> = [];
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json(status());
       if (url.endsWith("/context/search")) {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
         searchBodies.push(body);
-        if (body.cursor === "old-cursor") return json({ total: 99, next_cursor: null, items: [contextRecord("mixed", "Mixed stale page")] });
-        if (filterMatches(body) && body.cursor === undefined) return json({ total: 2, next_cursor: "new-cursor", items: [contextRecord("filtered-1", `${label} filtered first page`)] });
-        if (filterMatches(body) && body.cursor === "new-cursor") return json({ total: 3, next_cursor: null, items: [contextRecord("filtered-2", `${label} filtered second page`)] });
-        return json({ total: 2, next_cursor: "old-cursor", items: [contextRecord("base-1", "Base first page")] });
+        if (body.cursor === "base-cursor") return json({ total: 2, next_cursor: null, items: [contextRecord("base-2", "Reverted second page")] });
+        if (body.query === "applied") return json({ total: 2, next_cursor: "applied-cursor", items: [contextRecord("applied-1", "Applied first page")] });
+        return json({ total: 2, next_cursor: "base-cursor", items: [contextRecord("base-1", "Base first page")] });
       }
       return json({ items: [] });
     });
@@ -257,15 +555,136 @@ describe("dashboard", () => {
 
     render(<App />);
     expect(await screen.findByText("Base first page")).toBeInTheDocument();
-    if (value === undefined) fireEvent.click(screen.getByLabelText(control));
-    else fireEvent.change(screen.getByLabelText(control), { target: { value } });
+    const input = screen.getByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "applied" } });
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
-    expect(await screen.findByText(`${label} filtered first page`)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByText(`${label} filtered second page`)).toBeInTheDocument();
-    expect(searchBodies.some((body) => body.cursor === "old-cursor")).toBe(false);
-    expect(searchBodies.find((body) => body.cursor === "new-cursor")).toMatchObject({ cursor: "new-cursor" });
+    expect(await screen.findByText("Reverted second page")).toBeInTheDocument();
+    expect(searchBodies.some((body) => body.cursor === "base-cursor")).toBe(true);
+    expect(searchBodies.some((body) => body.cursor === "applied-cursor")).toBe(false);
+  });
+
+  it("refreshes the applied filtered window after an availability mutation", async () => {
+    let availability: "core_available" | "local_only" = "core_available";
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        const coreFilter = Array.isArray(body.availability) && body.availability.includes("core_available");
+        if (coreFilter && availability === "local_only") return json({ total: 0, next_cursor: null, items: [] });
+        return json({ total: 1, next_cursor: null, items: [{ ...contextRecord(), availability }] });
+      }
+      if (url.endsWith("/admin/records/record-1/availability")) {
+        availability = "local_only";
+        return json({ ...contextRecord(), availability });
+      }
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const filter = await screen.findByLabelText("Filter by availability");
+    fireEvent.change(filter, { target: { value: "core_available" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    fireEvent.change(screen.getByLabelText("Availability"), { target: { value: "local_only" } });
+
+    expect(await screen.findByText("0 current memories")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /preference memory/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Evidence & provenance")).not.toBeInTheDocument();
+    expect(searchBodies.filter((body) => Array.isArray(body.availability) && body.availability.includes("core_available"))).toHaveLength(2);
+  });
+
+  it("refreshes the applied query window after a history restore that no longer matches", async () => {
+    let restored = false;
+    const searchBodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        searchBodies.push(body);
+        if (body.query === "concise" && restored) return json({ total: 0, next_cursor: null, items: [] });
+        if (body.query === "concise") return json({ total: 1, next_cursor: null, items: [contextRecord("record-1", "Prefers concise technical explanations.", 2)] });
+        return json({ total: 0, next_cursor: null, items: [] });
+      }
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [
+        { version_id: "v1", record_id: "record-1", version: 1, snapshot: contextRecord(), reason: "Memory created", created_at: "2026-07-21T00:00:00Z" },
+      ] });
+      if (url.endsWith("/admin/records/record-1/restore")) {
+        restored = true;
+        return json({ ...contextRecord(), content: "Uses a different phrase now", version: 2 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    const input = await screen.findByRole("textbox", { name: "Search context" });
+    fireEvent.change(input, { target: { value: "concise" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore version 1" }));
+
+    expect(await screen.findByText("0 current memories")).toBeInTheDocument();
+    expect(screen.queryByText("Uses a different phrase now")).not.toBeInTheDocument();
+    expect(searchBodies.filter((body) => body.query === "concise")).toHaveLength(2);
+  });
+
+  it("distinguishes history loading failure from an empty history response", async () => {
+    let historyAttempt = 0;
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) {
+        historyAttempt += 1;
+        if (historyAttempt === 1) return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+        return json({ items: [] });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+    expect(await screen.findByText("History unavailable. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("0 versions")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("History unavailable. Try again.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("No versions")).toBeInTheDocument();
+    expect(await screen.findByText("No version history is available for this record.")).toBeInTheDocument();
+    expect(screen.queryByText("No version history was returned")).not.toBeInTheDocument();
+  });
+
+  it("gives the selected inspector a keyboard-focusable scroll region on desktop", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => matchMedia(false)));
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      if (url.endsWith("/admin/records/record-1/history")) return json({ items: [] });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /preference memory/i }));
+
+    const inspector = await screen.findByRole("region", { name: "Selected memory inspector" });
+    expect(inspector).toHaveAttribute("tabindex", "0");
+    expect(inspector).toHaveTextContent("Availability");
+    expect(inspector).toHaveTextContent("Correct");
+    expect(inspector).toHaveTextContent("Remove");
+    expect(inspector).toHaveTextContent("History");
   });
 
   it("navigates to source import", async () => {
@@ -410,6 +829,86 @@ describe("dashboard", () => {
     expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request, init]) => String(request).endsWith("/admin/sources/source-failed/reprocess") && init?.method === "POST")).toBe(true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
+  });
+
+  it("repairs complete sources with incomplete coverage through the retry endpoint", async () => {
+    let repaired = false;
+    const source = {
+      id: "source-incomplete",
+      filename: "incomplete.zip",
+      media_type: "application/zip",
+      source_service: "chatgpt",
+      source_type: "archive",
+      byte_size: 2048,
+      content_hash: "incomplete-hash",
+      candidate_count: 1,
+      import_status: "complete",
+      metadata: {
+        provider: "chatgpt",
+        coverage_complete: false,
+        closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 1 },
+      },
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/sources/source-incomplete/reprocess")) {
+        repaired = true;
+        return json({
+          source: { ...source, import_status: "complete", metadata: { ...source.metadata, coverage_complete: true, closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 0 } } },
+          candidate_ids: ["candidate-1"],
+          provider: "chatgpt",
+          export_format: "generic_document",
+          stats: { conversations: 1, user_messages: 1, candidates: 1 },
+          warnings: [],
+          coverage: { available: ["1 conversation"], unavailable: [], limitations: [], warnings: [], complete: true },
+        });
+      }
+      if (url.endsWith("/admin/sources")) return json({ total: 1, items: [{ ...source, import_status: "complete", metadata: { ...source.metadata, coverage_complete: repaired, closed_coverage: { recognized: 1, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: repaired ? 0 : 1 } } }] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry extraction" }));
+
+    expect(await screen.findByText(/extraction resumed; 1 observations processed automatically/i)).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, requestInit]) => String(request).endsWith("/admin/sources/source-incomplete/reprocess") && requestInit?.method === "POST" && !String(request).includes("rebuild=true"))).toBe(true);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument());
+  });
+
+  it("keeps cancelled and incomplete source accounting separate from terminal status", async () => {
+    const sources = [
+      {
+        id: "source-cancelled", filename: "cancelled.zip", media_type: "application/zip", source_service: "claude", source_type: "archive", byte_size: 2048, content_hash: "cancelled-hash", candidate_count: 0, import_status: "cancelled", metadata: { provider: "claude", coverage_complete: false, source_terminal_reason: "cancelled", closed_coverage: { recognized: 2, excluded: 1, skipped: 1, unavailable: 0, duplicate: 1, failed: 0, unparsed: 0 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+      {
+        id: "source-incomplete", filename: "incomplete.zip", media_type: "application/zip", source_service: "chatgpt", source_type: "archive", byte_size: 2048, content_hash: "incomplete-hash", candidate_count: 2, import_status: "complete", metadata: { provider: "chatgpt", coverage_complete: false, closed_coverage: { recognized: 2, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 1, unparsed: 1 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+      {
+        id: "source-complete", filename: "complete.zip", media_type: "application/zip", source_service: "grok", source_type: "archive", byte_size: 2048, content_hash: "complete-hash", candidate_count: 2, import_status: "complete", metadata: { provider: "grok", coverage_complete: true, closed_coverage: { recognized: 2, excluded: 0, skipped: 0, unavailable: 0, duplicate: 0, failed: 0, unparsed: 0 } }, created_at: "2026-07-22T00:00:00Z",
+      },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/sources")) return json({ total: sources.length, items: sources });
+      return json({ items: [] });
+    }));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    expect(await screen.findByText(/Cancelled/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Incomplete/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Rebuild complete.zip from archive" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rebuild cancelled.zip from archive" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rebuild incomplete.zip from archive" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Retry extraction" })).toHaveLength(2);
+    expect(screen.getByText(/Recognized 2.*Skipped 1.*Excluded 1.*Duplicate 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed 1.*Unparsed 1/i)).toBeInTheDocument();
   });
 
   it("rebuilds a complete source from the preserved archive", async () => {
@@ -751,14 +1250,19 @@ describe("dashboard", () => {
   });
 
   it("removes a memory from current context through the soft-delete contract", async () => {
+    let deleted = false;
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/context/status")) return json(status());
-      if (url.endsWith("/context/search")) return json({ total: 2, items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")] });
+      if (url.endsWith("/context/search")) return deleted
+        ? json({ total: 1, items: [contextRecord("record-2", "Works in Eastern time.")] })
+        : json({ total: 2, items: [contextRecord(), contextRecord("record-2", "Works in Eastern time.")] });
       if (url.endsWith("/admin/records/record-1/delete") && init?.method === "POST") {
+        deleted = true;
         return json({ record_id: "record-1", deleted_version: 2, reason: "Removed by user", content_hash: "deleted-hash", deleted_at: "2026-07-23T00:00:00Z" });
       }
       if (url.endsWith("/admin/records/record-1/restore") && init?.method === "POST") {
+        deleted = false;
         return json(contextRecord("record-1", "Prefers concise technical explanations.", 3));
       }
       return json({ items: [] });

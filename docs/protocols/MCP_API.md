@@ -8,7 +8,7 @@ HTTP; the adapter is pinned below the pending v2 major release.
 
 | Tool | Purpose | Required client scope |
 |---|---|---|
-| `bootstrap_context` | Compile mandatory and task-relevant current context within a character budget | `context:read` |
+| `bootstrap_context` | Compile mandatory and task-relevant current context within a character budget; return optional bounded `pack_metadata` accounting | `context:read` |
 | `search_context` | Structured/FTS catalog search with exact post-policy totals and offset pagination | `context:read` |
 | `get_context_item` | Retrieve one permitted current record and provenance | `context:read` |
 | `context_status` | Report mode, connectivity, and freshness without private content | `context:status` |
@@ -50,10 +50,42 @@ Relay compatibility, it remains a staged observation until Core evaluates it.
 Administrative permission, availability, restoration, and irreversible purge
 tools remain absent from the model-facing MCP surface.
 
+The separate authenticated Core administrator endpoints for record/source
+restore are local user mutation boundaries. A successful restore preserves the
+record's original source provenance and writes a typed append-only mutation
+ledger row; the free-form request reason is descriptive only. Automatic
+duplicate-import recovery and source-rebuild reapply do not write that row.
+
 `search_context` reports the exact count after authorization, request filters,
 temporal selection, and admissibility; its cursor can page through every
 permitted match. `bootstrap_context` remains a separate bounded retrieval and
-budgeted compilation contract.
+budgeted compilation contract. A Core bootstrap response may include the
+backward-compatible `pack_metadata` envelope with candidate/selected/omitted
+counts, budget usage, provenance-backed selected-item count, and explicit
+candidate-pool, budget, or record-limit truncation reasons. It contains no raw
+query or ranking diagnostics.
+
+The v1 metadata contract is closed and bounded: candidate and omitted counts
+are limited to 50,000, selected and provenance-backed counts to 32, and budget
+and used-character counts to 100,000; duplicate- and conflict-suppression
+counts are limited to 50,000. Its boolean flags are strict booleans.
+`truncation_reasons` is a unique list of at most five values from exactly
+`candidate_pool`, `budget`, `record_limit`, `edge_filter`, and `edge_envelope`.
+
+## Core HTTP truth endpoints
+
+These additive HTTP endpoints are for authorized provider/admin integrations;
+they are not model-facing MCP tools. `GET /v1/context/truth/{record_id}`
+requires `context:read` and returns the authorized canonical record with its
+bounded evidence, source metadata, status, conflict state, and distinct
+effective/observed/recorded times. `GET /v1/context/coverage` requires
+`context:status` and returns content-free source, observation, record, conflict,
+and ingestion accounting. `GET /v1/admin/memory-truth` and
+`GET /v1/admin/memory-truth/{record_id}` require `admin`; they include deleted
+records and detached tentative observations for inspection. Archive evidence
+blocked by an ordinary deletion is returned as an explicit `ignored`
+disposition with a deletion-barrier reason and never as a replacement current
+record.
 
 ## One-time local configuration
 

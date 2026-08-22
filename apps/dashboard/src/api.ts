@@ -8,32 +8,31 @@ import type {
   ContextRecordVersion,
   ContextSearchOptions,
   CoreStatus,
+  ClosedCoverage,
+  ClosedCoverageKey,
   ImportOperation,
   ImportResult,
+  ImportStatus,
+  IngestionCoverage,
   IntegrationsStatus,
   IntegrationConnectResult,
+  MemoryTruthRecord,
+  MemoryTruthStatus,
   Page,
   SourceDeletion,
+  SourceMetadata,
   SourceRecord,
   SourceRestoration,
+  SourceTerminalReason,
+  TruthConflictState,
+  TruthCoverage,
+  TruthEvidence,
+  TruthSource,
   UpdateStatus,
 } from "./types";
 
 const API_ROOT = (import.meta.env.VITE_ATC_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/v1";
 const BROWSER_SESSION_KEY = "atc.browserSession";
-
-interface RecordWire extends Omit<ContextRecord, "scope" | "source_record_id" | "valid_until"> {
-  scopes: string[];
-  source_id?: string | null;
-  expires_at?: string | null;
-}
-
-interface SourceWire extends Omit<SourceRecord, "size_bytes" | "observation_count"> {
-  byte_size: number;
-  observation_count?: number;
-  candidate_count?: number;
-  duplicate?: boolean;
-}
 
 interface ClientWire {
   id: string;
@@ -46,66 +45,514 @@ interface ClientWire {
   protected?: boolean;
 }
 
-interface ImportWire {
-  source: SourceWire;
-  observation_ids?: string[];
-  candidate_ids?: string[];
-  provider: string;
-  export_format: string;
-  stats: ImportResult["stats"];
-  processing?: {
-    added?: number;
-    updated?: number;
-    reinforced?: number;
-    tentative?: number;
-    skipped?: number;
-  };
-  outcomes?: ImportResult["outcomes"];
-  warnings: string[];
-  coverage: ImportResult["coverage"];
+const CLOSED_COVERAGE_KEYS: readonly ClosedCoverageKey[] = [
+  "recognized",
+  "excluded",
+  "skipped",
+  "unavailable",
+  "duplicate",
+  "failed",
+  "unparsed",
+];
+
+const IMPORT_STATUSES: readonly ImportStatus[] = ["processing", "complete", "failed", "cancelled"];
+const TERMINAL_REASONS: readonly SourceTerminalReason[] = ["failed", "cancelled"];
+const TRUTH_STATUSES: readonly MemoryTruthStatus[] = ["current", "tentative", "superseded", "conflicted", "deleted"];
+const CONFLICT_STATES: readonly TruthConflictState[] = ["none", "active", "resolved"];
+const AVAILABILITIES: readonly Availability[] = ["always_available", "core_available", "local_only"];
+const SENSITIVITIES = ["normal", "sensitive", "highly_sensitive"] as const;
+const DISPOSITIONS = ["staged", "applied", "reinforced", "tentative", "ignored"] as const;
+
+const MAX_COUNT = 2_147_483_647;
+const MAX_CONTEXT_CHARS = 64_000;
+const MAX_EVIDENCE_CHARS = 16_000;
+const MAX_ID_CHARS = 256;
+const MAX_HASH_CHARS = 256;
+const MAX_KIND_CHARS = 128;
+const MAX_TIMESTAMP_CHARS = 100;
+const MAX_REASON_CHARS = 2_000;
+const MAX_SOURCE_REFERENCE_CHARS = 2_000;
+const MAX_GENERIC_STRING_CHARS = 4_000;
+const MAX_LIST_ITEM_CHARS = 200;
+const MAX_COVERAGE_LIST_ITEMS = 512;
+const MAX_COVERAGE_LIST_ITEM_CHARS = 2_000;
+const MAX_ID_LIST_ITEMS = 50_000;
+const MAX_RECORD_SCOPES = 64;
+const MAX_ALLOWED_CLIENTS = 256;
+const MAX_TRUTH_CONFLICT_GROUPS = 64;
+const MAX_TRUTH_SUPERSEDED_BY = 64;
+const MAX_TRUTH_EVIDENCE = 512;
+const MAX_STATS_STRING_CHARS = 256;
+const MAX_SOURCE_BYTES = 2_147_483_647;
+
+const COUNT_STAT_KEYS = [
+  "files",
+  "recognized_files",
+  "conversations",
+  "messages",
+  "message_records",
+  "user_messages",
+  "assistant_messages",
+  "memory_items",
+  "skipped_messages",
+  "unparsed_messages",
+  "unsupported_entries",
+  "observations",
+  "candidates",
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function recordFromWire(item: RecordWire): ContextRecord {
+function asBoundedString(value: unknown, maxLength: number, allowEmpty = true): string | undefined {
+  return typeof value === "string" && value.length <= maxLength && (allowEmpty || value.length > 0)
+    ? value
+    : undefined;
+}
+
+function asRequiredString(value: unknown, maxLength: number): string | undefined {
+  return asBoundedString(value, maxLength, false);
+}
+
+function asTimestamp(value: unknown): string | undefined {
+  const timestamp = asRequiredString(value, MAX_TIMESTAMP_CHARS);
+  return timestamp !== undefined && !Number.isNaN(Date.parse(timestamp)) ? timestamp : undefined;
+}
+
+function asNullableTimestamp(value: unknown): string | null | undefined {
+  return value === null ? null : asTimestamp(value);
+}
+
+function asNullableString(value: unknown, maxLength = MAX_GENERIC_STRING_CHARS): string | null | undefined {
+  return value === null ? null : asBoundedString(value, maxLength);
+}
+
+function asCount(value: unknown, maximum = MAX_COUNT): number | undefined {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= maximum
+    ? value
+    : undefined;
+}
+
+function asVersion(value: unknown): number | undefined {
+  const version = asCount(value);
+  return version !== undefined && version > 0 ? version : undefined;
+}
+
+function asConfidence(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
+}
+
+function asStringArray(value: unknown, maxItems = MAX_COVERAGE_LIST_ITEMS, maxItemLength = MAX_COVERAGE_LIST_ITEM_CHARS): string[] {
+  if (!Array.isArray(value)) return [];
+  const strings: string[] = [];
+  for (let index = 0; index < Math.min(value.length, maxItems); index += 1) {
+    const item = asBoundedString(value[index], maxItemLength);
+    if (item !== undefined) strings.push(item);
+  }
+  return strings;
+}
+
+function strictStringArray(
+  value: unknown,
+  maxItems: number,
+  maxItemLength: number,
+): string[] | null {
+  if (!Array.isArray(value) || value.length > maxItems) return null;
+  const strings: string[] = [];
+  for (const item of value) {
+    const normalized = asRequiredString(item, maxItemLength);
+    if (normalized === undefined) return null;
+    strings.push(normalized);
+  }
+  return strings;
+}
+
+function boundedIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids: string[] = [];
+  for (let index = 0; index < Math.min(value.length, MAX_ID_LIST_ITEMS); index += 1) {
+    const id = asRequiredString(value[index], MAX_ID_CHARS);
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
+}
+
+function invalidWireError(): ApiError {
+  return new ApiError("Core returned an invalid response.", 502);
+}
+
+function normalizeImportStatus(value: unknown): ImportStatus | null {
+  return IMPORT_STATUSES.includes(value as ImportStatus) ? value as ImportStatus : null;
+}
+
+function normalizeTerminalReason(value: unknown): SourceTerminalReason | null {
+  return TERMINAL_REASONS.includes(value as SourceTerminalReason) ? value as SourceTerminalReason : null;
+}
+
+function normalizeTruthStatus(value: unknown): MemoryTruthStatus | null {
+  return TRUTH_STATUSES.includes(value as MemoryTruthStatus) ? value as MemoryTruthStatus : null;
+}
+
+function normalizeAvailability(value: unknown): Availability | null {
+  return AVAILABILITIES.includes(value as Availability) ? value as Availability : null;
+}
+
+function normalizeSensitivity(value: unknown): (typeof SENSITIVITIES)[number] | null {
+  return SENSITIVITIES.includes(value as (typeof SENSITIVITIES)[number])
+    ? value as (typeof SENSITIVITIES)[number]
+    : null;
+}
+
+function normalizeConflictState(value: unknown): TruthConflictState | null {
+  return CONFLICT_STATES.includes(value as TruthConflictState) ? value as TruthConflictState : null;
+}
+
+export function normalizeClosedCoverage(value: unknown): { closed_coverage: ClosedCoverage; available: boolean } {
+  const source = isRecord(value) ? value : null;
+  const closed_coverage = Object.fromEntries(
+    CLOSED_COVERAGE_KEYS.map((key) => [key, asCount(source?.[key]) ?? 0]),
+  ) as ClosedCoverage;
   return {
-    ...item,
-    scope: item.scopes.join(", ") || "general",
-    source_record_id: item.source_id,
-    valid_until: item.expires_at,
+    closed_coverage,
+    available: source !== null && CLOSED_COVERAGE_KEYS.some((key) => asCount(source[key]) !== undefined),
   };
 }
 
-function sourceFromWire(item: SourceWire): SourceRecord {
+export function normalizeSourceMetadata(value: unknown): SourceMetadata | undefined {
+  if (!isRecord(value)) return undefined;
+  const coverage = normalizeClosedCoverage(value.closed_coverage);
+  const stats = normalizeStats(value.stats, true);
+  const metadata: SourceMetadata = {};
+  const provider = asBoundedString(value.provider, MAX_STATS_STRING_CHARS, false);
+  const exportFormat = asBoundedString(value.export_format, MAX_STATS_STRING_CHARS, false);
+  const parserVersion = asBoundedString(value.parser_version, MAX_STATS_STRING_CHARS, false);
+  if (provider !== undefined) metadata.provider = provider;
+  if (exportFormat !== undefined) metadata.export_format = exportFormat;
+  if (parserVersion !== undefined) metadata.parser_version = parserVersion;
+  if (typeof value.coverage_complete === "boolean") metadata.coverage_complete = value.coverage_complete;
+  if (coverage.available) metadata.closed_coverage = coverage.closed_coverage;
+  const terminalReason = normalizeTerminalReason(value.source_terminal_reason);
+  if (terminalReason) metadata.source_terminal_reason = terminalReason;
+  if (Object.keys(stats).length > 0) metadata.stats = stats;
+  return metadata;
+}
+
+function normalizeCoverage(value: unknown, metadata?: SourceMetadata): IngestionCoverage {
+  const source = isRecord(value) ? value : {};
+  const rawClosedCoverage = source.closed_coverage ?? metadata?.closed_coverage;
+  const closed = normalizeClosedCoverage(rawClosedCoverage);
+  const rawComplete = source.coverage_complete ?? source.complete ?? metadata?.coverage_complete;
+  const coverageComplete = typeof rawComplete === "boolean" ? rawComplete : null;
+  const terminalReason = normalizeTerminalReason(source.source_terminal_reason ?? metadata?.source_terminal_reason);
   return {
-    ...item,
-    size_bytes: item.byte_size,
-    observation_count: item.observation_count ?? item.candidate_count,
+    available: asStringArray(source.available),
+    unavailable: asStringArray(source.unavailable),
+    limitations: asStringArray(source.limitations),
+    warnings: asStringArray(source.warnings),
+    closed_coverage: closed.closed_coverage,
+    coverage_complete: coverageComplete,
+    source_terminal_reason: terminalReason,
+    item_accounting_available: closed.available,
   };
 }
 
-function importFromWire(result: ImportWire): ImportResult {
-  const observationIds = result.observation_ids ?? result.candidate_ids ?? [];
-  const outcomes = result.outcomes ?? {
-    applied: (result.processing?.added ?? 0) + (result.processing?.updated ?? 0),
-    reinforced: result.processing?.reinforced,
-    tentative: result.processing?.tentative,
-    ignored: result.processing?.skipped,
-  };
-  const legacyObservationCount = result.stats["candidates"];
+export function sourceCoverageForRecord(source: SourceRecord): IngestionCoverage {
+  return normalizeCoverage(source.metadata, source.metadata);
+}
+
+function normalizeStatsValue(value: unknown, preserveUnavailableMarker: boolean): ImportResult["stats"] {
+  if (!isRecord(value)) return {};
+  const stats: Record<string, string | number> = {};
+  for (const key of ["provider", "parser_version"] as const) {
+    const text = asBoundedString(value[key], MAX_STATS_STRING_CHARS, false);
+    if (text !== undefined) stats[key] = text;
+  }
+  for (const key of COUNT_STAT_KEYS) {
+    const count = asCount(value[key]);
+    if (count !== undefined) {
+      stats[key] = count;
+    } else if (preserveUnavailableMarker && value[key] === "unknown") {
+      // Older source metadata used this explicit marker. It remains a safe
+      // unavailable value and is never accepted by a count renderer.
+      stats[key] = "unknown";
+    }
+  }
+  return stats as ImportResult["stats"];
+}
+
+function normalizeStats(value: unknown, preserveUnavailableMarker = false): ImportResult["stats"] {
+  return normalizeStatsValue(value, preserveUnavailableMarker);
+}
+
+function normalizeNumberMap(value: unknown, allowedKeys: readonly string[]): Record<string, number> {
+  if (!isRecord(value)) return {};
+  const result: Record<string, number> = {};
+  for (const key of allowedKeys) {
+    const count = asCount(value[key]);
+    if (count !== undefined) result[key] = count;
+  }
+  return result;
+}
+
+function normalizeTruthCoverage(value: unknown): TruthCoverage {
+  if (!isRecord(value)) throw invalidWireError();
+  const source = value;
   return {
-    source_id: result.source.id,
-    observation_count: observationIds.length,
-    duplicate: Boolean(result.source.duplicate),
-    provider: result.provider,
-    export_format: result.export_format,
-    stats: {
-      ...result.stats,
-      observations: result.stats.observations ?? (
-        typeof legacyObservationCount === "number" ? legacyObservationCount : undefined
-      ),
-    },
+    source_count: asCount(source.source_count) ?? null,
+    deleted_source_count: asCount(source.deleted_source_count) ?? null,
+    observation_count: asCount(source.observation_count) ?? null,
+    observations_by_disposition: normalizeNumberMap(source.observations_by_disposition, DISPOSITIONS),
+    record_count: asCount(source.record_count) ?? null,
+    records_by_status: normalizeNumberMap(source.records_by_status, TRUTH_STATUSES) as TruthCoverage["records_by_status"],
+    conflict_group_count: asCount(source.conflict_group_count) ?? null,
+    ingestion_session_count: asCount(source.ingestion_session_count) ?? null,
+    incomplete_ingestion_session_count: asCount(source.incomplete_ingestion_session_count) ?? null,
+    sessions_with_unavailable_sources: asCount(source.sessions_with_unavailable_sources) ?? null,
+  };
+}
+
+function normalizeTruthSource(value: unknown): TruthSource | null {
+  if (!isRecord(value)) return null;
+  const id = asRequiredString(value.id, MAX_ID_CHARS);
+  const contentHash = asRequiredString(value.content_hash, MAX_HASH_CHARS);
+  const sourceService = asRequiredString(value.source_service, MAX_GENERIC_STRING_CHARS);
+  const sourceType = asRequiredString(value.source_type, MAX_KIND_CHARS);
+  const mediaType = asRequiredString(value.media_type, MAX_GENERIC_STRING_CHARS);
+  const createdAt = asTimestamp(value.created_at);
+  const importStatus = normalizeImportStatus(value.import_status);
+  if (!id || !contentHash || !sourceService || !sourceType || !mediaType || !createdAt || !importStatus) return null;
+  return {
+    id,
+    content_hash: contentHash,
+    source_service: sourceService,
+    source_type: sourceType,
+    filename: asNullableString(value.filename, MAX_GENERIC_STRING_CHARS),
+    media_type: mediaType,
+    created_at: createdAt,
+    import_status: importStatus,
+    deleted_at: asNullableTimestamp(value.deleted_at),
+    deleted_reason: asNullableString(value.deleted_reason, MAX_REASON_CHARS),
+  };
+}
+
+function normalizeTruthEvidence(value: unknown): TruthEvidence | null {
+  if (!isRecord(value)) return null;
+  const observationId = asRequiredString(value.observation_id, MAX_ID_CHARS);
+  const recordId = asRequiredString(value.record_id, MAX_ID_CHARS);
+  const relationship = asRequiredString(value.relationship, MAX_GENERIC_STRING_CHARS);
+  const linkCreatedAt = asTimestamp(value.link_created_at);
+  const disposition = DISPOSITIONS.includes(value.disposition as TruthEvidence["disposition"])
+    ? value.disposition as TruthEvidence["disposition"]
+    : null;
+  const content = asBoundedString(value.content, MAX_CONTEXT_CHARS);
+  const confidence = asConfidence(value.confidence);
+  const sensitivity = normalizeSensitivity(value.sensitivity);
+  const recordedAt = asTimestamp(value.recorded_at);
+  const contentHash = asRequiredString(value.content_hash, MAX_HASH_CHARS);
+  if (!observationId || !recordId || !relationship || !linkCreatedAt || !disposition || content === undefined || confidence === undefined || !sensitivity || !recordedAt || !contentHash) return null;
+  return {
+    observation_id: observationId,
+    record_id: recordId,
+    relationship,
+    link_created_at: linkCreatedAt,
+    disposition,
+    decision_reason: asNullableString(value.decision_reason, MAX_REASON_CHARS),
+    decided_at: asNullableTimestamp(value.decided_at),
+    observation_origin: asNullableString(value.observation_origin, MAX_KIND_CHARS),
+    policy_version: asNullableString(value.policy_version, MAX_GENERIC_STRING_CHARS),
+    content,
+    evidence: asNullableString(value.evidence, MAX_EVIDENCE_CHARS),
+    confidence,
+    sensitivity,
+    source_id: asNullableString(value.source_id, MAX_ID_CHARS),
+    source_reference: asNullableString(value.source_reference, MAX_SOURCE_REFERENCE_CHARS),
+    source_service: asNullableString(value.source_service, MAX_GENERIC_STRING_CHARS),
+    source_type: asNullableString(value.source_type, MAX_KIND_CHARS),
+    effective_at: asNullableTimestamp(value.effective_at),
+    observed_at: asNullableTimestamp(value.observed_at),
+    recorded_at: recordedAt,
+    content_hash: contentHash,
+  };
+}
+
+function truthFromWire(value: unknown): MemoryTruthRecord {
+  if (!isRecord(value) || !isRecord(value.record)) throw invalidWireError();
+  const source = value;
+  const record = recordFromWire(source.record);
+  const rawEvidence = Array.isArray(source.evidence) ? source.evidence.slice(0, MAX_TRUTH_EVIDENCE) : [];
+  return {
+    record,
+    status: normalizeTruthStatus(source.status),
+    status_reason: asNullableString(source.status_reason, MAX_REASON_CHARS) ?? null,
+    conflict_state: normalizeConflictState(source.conflict_state),
+    conflict_group_ids: asStringArray(source.conflict_group_ids, MAX_TRUTH_CONFLICT_GROUPS, MAX_ID_CHARS),
+    superseded_by: asStringArray(source.superseded_by, MAX_TRUTH_SUPERSEDED_BY, MAX_ID_CHARS),
+    source: normalizeTruthSource(source.source),
+    evidence: rawEvidence.map(normalizeTruthEvidence).filter((item): item is TruthEvidence => item !== null),
+    history_count: asCount(source.history_count) ?? null,
+  };
+}
+
+function recordFromWire(value: unknown): ContextRecord {
+  if (!isRecord(value)) throw invalidWireError();
+  const id = asRequiredString(value.id, MAX_ID_CHARS);
+  const kind = asRequiredString(value.kind, MAX_KIND_CHARS);
+  const content = asRequiredString(value.content, MAX_CONTEXT_CHARS);
+  const confidence = asConfidence(value.confidence);
+  const availability = normalizeAvailability(value.availability);
+  const sensitivity = normalizeSensitivity(value.sensitivity);
+  const version = asVersion(value.version);
+  const contentHash = asRequiredString(value.content_hash, MAX_HASH_CHARS);
+  const createdAt = asTimestamp(value.created_at);
+  const updatedAt = asTimestamp(value.updated_at);
+  const rawScopes = value.scopes !== undefined ? value.scopes : value.scope === undefined ? undefined : [value.scope];
+  const scopes = rawScopes === undefined ? [] : strictStringArray(rawScopes, MAX_RECORD_SCOPES, MAX_LIST_ITEM_CHARS);
+  const allowedClients = value.allowed_clients === undefined
+    ? []
+    : strictStringArray(value.allowed_clients, MAX_ALLOWED_CLIENTS, MAX_LIST_ITEM_CHARS);
+  if (!id || !kind || content === undefined || confidence === undefined || !availability || !sensitivity || version === undefined || !contentHash || !createdAt || !updatedAt || scopes === null || allowedClients === null) {
+    throw invalidWireError();
+  }
+  return {
+    id,
+    kind,
+    content,
+    scope: scopes.join(", ") || "general",
+    source_service: asNullableString(value.source_service, MAX_GENERIC_STRING_CHARS),
+    source_id: asNullableString(value.source_id, MAX_ID_CHARS),
+    source_reference: asNullableString(value.source_reference, MAX_SOURCE_REFERENCE_CHARS),
+    evidence: asNullableString(value.evidence, MAX_EVIDENCE_CHARS),
+    confidence,
+    sensitivity,
+    availability,
+    allowed_clients: allowedClients,
+    valid_from: asNullableTimestamp(value.valid_from),
+    valid_until: asNullableTimestamp(value.expires_at !== undefined ? value.expires_at : value.valid_until),
+    version,
+    supersedes: asNullableString(value.supersedes, MAX_ID_CHARS),
+    content_hash: contentHash,
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+function firstCount(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const count = asCount(value, MAX_SOURCE_BYTES);
+    if (count !== undefined) return count;
+  }
+  return undefined;
+}
+
+function sourceFromWire(value: unknown): SourceRecord {
+  if (!isRecord(value)) throw invalidWireError();
+  const id = asRequiredString(value.id, MAX_ID_CHARS);
+  if (!id) throw invalidWireError();
+  const metadata = normalizeSourceMetadata(value.metadata);
+  return {
+    id,
+    filename: asNullableString(value.filename, MAX_GENERIC_STRING_CHARS),
+    media_type: asBoundedString(value.media_type, MAX_GENERIC_STRING_CHARS, false) ?? "application/octet-stream",
+    source_service: asNullableString(value.source_service, MAX_GENERIC_STRING_CHARS),
+    source_type: asNullableString(value.source_type, MAX_KIND_CHARS),
+    size_bytes: asCount(value.byte_size, MAX_SOURCE_BYTES) ?? 0,
+    content_hash: asBoundedString(value.content_hash, MAX_HASH_CHARS, false) ?? "",
+    observation_count: firstCount(value.observation_count, value.candidate_count),
+    import_status: normalizeImportStatus(value.import_status),
+    metadata,
+    parser_warnings: asStringArray(value.parser_warnings),
+    created_at: asTimestamp(value.created_at) ?? "",
+    deleted_at: asNullableTimestamp(value.deleted_at),
+    deleted_reason: asNullableString(value.deleted_reason, MAX_REASON_CHARS),
+  };
+}
+
+function importFromWire(value: unknown): ImportResult {
+  if (!isRecord(value) || !isRecord(value.source)) throw invalidWireError();
+  const result = value;
+  const source = sourceFromWire(result.source);
+  const observationIds = Array.isArray(result.observation_ids)
+    ? boundedIds(result.observation_ids)
+    : Array.isArray(result.candidate_ids) ? boundedIds(result.candidate_ids) : null;
+  const processing = isRecord(result.processing) ? result.processing : {};
+  const rawOutcomes = isRecord(result.outcomes) ? result.outcomes : null;
+  const outcomes = rawOutcomes
+    ? {
+        staged: asCount(rawOutcomes.staged),
+        applied: asCount(rawOutcomes.applied),
+        reinforced: asCount(rawOutcomes.reinforced),
+        tentative: asCount(rawOutcomes.tentative),
+        ignored: asCount(rawOutcomes.ignored),
+      }
+    : {
+        applied: Math.min(MAX_COUNT, (asCount(processing.added) ?? 0) + (asCount(processing.updated) ?? 0)),
+        reinforced: asCount(processing.reinforced),
+        tentative: asCount(processing.tentative),
+        ignored: asCount(processing.skipped),
+      };
+  const stats = normalizeStats(result.stats);
+  const metadata = source.metadata;
+  const coverage = normalizeCoverage(result.coverage, metadata);
+  const observationCount = observationIds
+    ? observationIds.length
+    : asCount(stats.observations) ?? asCount(stats.candidates) ?? null;
+  return {
+    source_id: source.id,
+    observation_count: observationCount,
+    duplicate: isRecord(result.source) && result.source.duplicate === true,
+    import_status: source.import_status ?? null,
+    source_terminal_reason: coverage.source_terminal_reason,
+    provider: asBoundedString(result.provider, MAX_STATS_STRING_CHARS, false) ?? metadata?.provider ?? "unknown",
+    export_format: asBoundedString(result.export_format, MAX_STATS_STRING_CHARS, false) ?? metadata?.export_format ?? "unknown",
+    stats,
     outcomes,
-    warnings: result.warnings,
-    coverage: result.coverage,
+    warnings: asStringArray(result.warnings),
+    coverage,
+  };
+}
+
+function normalizePage<T>(value: unknown, normalizeItem: (item: unknown) => T): Page<T> {
+  if (!isRecord(value) || !Array.isArray(value.items)) throw invalidWireError();
+  const items: T[] = [];
+  for (let index = 0; index < Math.min(value.items.length, MAX_COVERAGE_LIST_ITEMS); index += 1) {
+    try {
+      items.push(normalizeItem(value.items[index]));
+    } catch {
+      // List semantics permit a malformed row to be omitted while valid
+      // siblings remain usable. Detail and mutation envelopes fail closed.
+    }
+  }
+  const nextCursor = value.next_cursor === null ? null : asBoundedString(value.next_cursor, MAX_ID_CHARS, false);
+  const total = asCount(value.total);
+  return {
+    items,
+    ...(nextCursor === undefined ? {} : { next_cursor: nextCursor }),
+    ...(total === undefined ? {} : { total }),
+  };
+}
+
+function historyItemFromWire(value: unknown): ContextRecordVersion {
+  if (!isRecord(value)) throw invalidWireError();
+  const record = recordFromWire(value.snapshot);
+  const recordId = asRequiredString(value.record_id, MAX_ID_CHARS);
+  const version = asVersion(value.version);
+  const createdAt = asTimestamp(value.created_at);
+  const changeReason = value.reason === undefined
+    ? null
+    : asNullableString(value.reason, MAX_REASON_CHARS);
+  if (!recordId || version === undefined || !createdAt || (value.reason !== undefined && changeReason === undefined)) {
+    throw invalidWireError();
+  }
+  return {
+    ...record,
+    id: recordId,
+    version,
+    change_reason: changeReason,
+    updated_at: createdAt,
   };
 }
 
@@ -198,11 +645,7 @@ export const api = {
     };
   },
   sources: async (): Promise<Page<SourceRecord>> => {
-    const result = await request<Page<SourceWire>>("/admin/sources");
-    return {
-      ...result,
-      items: result.items.map(sourceFromWire),
-    };
+    return normalizePage(await request<unknown>("/admin/sources"), sourceFromWire);
   },
   startImportOperation: async (
     declaredByteSize: number,
@@ -274,38 +717,44 @@ export const api = {
     try {
       const finished = await api.uploadImportOperation(started.operation_id, file);
       options?.onOperation?.(finished);
-      if (finished.result && typeof finished.result === "object" && "source" in (finished.result as object)) {
+      if (isRecord(finished.result) && "source" in finished.result) {
         return {
-          ...importFromWire(finished.result as ImportWire),
+          ...importFromWire(finished.result),
           operation_id: finished.operation_id,
         };
       }
-      if (finished.status === "complete" && finished.source_id) {
-        const reprocessed = await api.reprocessSource(finished.source_id);
+      const finishedSourceId = asRequiredString(finished.source_id, MAX_ID_CHARS);
+      if (finished.status === "complete" && finishedSourceId) {
+        const reprocessed = await api.reprocessSource(finishedSourceId);
         return { ...reprocessed, operation_id: finished.operation_id };
       }
-      throw new ApiError(finished.error_message ?? "Import operation failed.", 422, finished);
+      throw new ApiError(asBoundedString(finished.error_message, MAX_REASON_CHARS, false) ?? "Import operation failed.", 422, finished);
     } finally {
       stopPolling = true;
       window.clearInterval(poll);
     }
   },
   reprocessSource: async (sourceId: string, options?: { rebuild?: boolean }): Promise<ImportResult> =>
-    importFromWire(await request<ImportWire>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess${options?.rebuild ? "?rebuild=true" : ""}`, { method: "POST" })),
+    importFromWire(await request<unknown>(`/admin/sources/${encodeURIComponent(sourceId)}/reprocess${options?.rebuild ? "?rebuild=true" : ""}`, { method: "POST" })),
   deleteSource: (sourceId: string, reason: string): Promise<SourceDeletion> =>
     request<SourceDeletion>(`/admin/sources/${encodeURIComponent(sourceId)}/delete`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
   restoreSource: async (sourceId: string, reason: string): Promise<SourceRestoration> => {
-    const result = await request<{ source: SourceWire; restored_record_ids: string[] }>(
+    const value = await request<unknown>(
       `/admin/sources/${encodeURIComponent(sourceId)}/restore`,
       {
         method: "POST",
         body: JSON.stringify({ reason }),
       },
     );
-    return { ...result, source: sourceFromWire(result.source) };
+    if (!isRecord(value) || !("source" in value)) throw invalidWireError();
+    const restoredRecordIds = boundedIds(value.restored_record_ids);
+    return {
+      source: sourceFromWire(value.source),
+      restored_record_ids: restoredRecordIds ?? [],
+    };
   },
   searchContext: async (query: string, options: ContextSearchOptions = {}): Promise<Page<ContextRecord>> => {
     const payload: Record<string, unknown> = {
@@ -317,24 +766,27 @@ export const api = {
     };
     if (options.minConfidence !== undefined) payload.min_confidence = options.minConfidence;
     if (options.cursor) payload.cursor = options.cursor;
-    const result = await request<Page<RecordWire>>("/context/search", {
+    const result = await request<unknown>("/context/search", {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    return { ...result, items: result.items.map(recordFromWire) };
+    return normalizePage(result, recordFromWire);
   },
-  contextItem: async (id: string) => recordFromWire(await request<RecordWire>(`/context/${encodeURIComponent(id)}`)),
+  contextCoverage: async (): Promise<TruthCoverage> =>
+    normalizeTruthCoverage(await request<unknown>("/context/coverage")),
+  contextTruth: async (id: string): Promise<MemoryTruthRecord> =>
+    truthFromWire(await request<unknown>(`/context/truth/${encodeURIComponent(id)}`)),
+  contextItem: async (id: string) => recordFromWire(await request<unknown>(`/context/${encodeURIComponent(id)}`)),
   contextHistory: async (id: string): Promise<Page<ContextRecordVersion>> => {
-    const result = await request<{ items: Array<{ version_id: string; record_id: string; version: number; snapshot: RecordWire; reason: string; created_at: string }> }>(`/admin/records/${encodeURIComponent(id)}/history`);
-    return { items: result.items.map((item) => ({ ...recordFromWire(item.snapshot), id: item.record_id, version: item.version, change_reason: item.reason, updated_at: item.created_at })) };
+    return normalizePage(await request<unknown>(`/admin/records/${encodeURIComponent(id)}/history`), historyItemFromWire);
   },
   updateAvailability: async (id: string, availability: Availability, explicitSensitiveReplication = false): Promise<ContextRecord> =>
-    recordFromWire(await request<RecordWire>(`/admin/records/${encodeURIComponent(id)}/availability`, {
+    recordFromWire(await request<unknown>(`/admin/records/${encodeURIComponent(id)}/availability`, {
       method: "POST",
       body: JSON.stringify({ availability, explicit_sensitive_replication: explicitSensitiveReplication }),
     })),
   correctContext: async (id: string, content: string, reason: string): Promise<ContextRecord> =>
-    recordFromWire(await request<RecordWire>(`/admin/records/${encodeURIComponent(id)}/correct`, {
+    recordFromWire(await request<unknown>(`/admin/records/${encodeURIComponent(id)}/correct`, {
       method: "POST",
       body: JSON.stringify({ content, reason }),
     })),
@@ -344,7 +796,7 @@ export const api = {
       body: JSON.stringify({ reason }),
     }),
   restoreContext: async (id: string, version: number | undefined, reason: string): Promise<ContextRecord> =>
-    recordFromWire(await request<RecordWire>(`/admin/records/${encodeURIComponent(id)}/restore`, {
+    recordFromWire(await request<unknown>(`/admin/records/${encodeURIComponent(id)}/restore`, {
       method: "POST",
       body: JSON.stringify(version === undefined ? { reason } : { version, reason }),
     })),

@@ -2818,8 +2818,9 @@ metadata establish a supported text format: `.txt`, `.json`, `.jsonl`, `.csv`,
 `.md`, or `.markdown`. It uses bounded in-memory reads and existing
 deterministic provider extraction; no member is rendered, macro-enabled, or
 executed. Images/audio, PDF, DOCX, PPTX, XLSX, RTF, HTML, scripts, unknown
-extensions, malformed text, and over-limit text remain raw and are counted as
-unsupported/unavailable. Attachment inventory presence, hashing, or raw
+extensions, and over-limit text remain raw and are counted as
+unsupported/unavailable. Malformed JSON or text is one `unparsed` logical item;
+it is never also counted as unavailable. Attachment inventory presence, hashing, or raw
 preservation must never be reported as searchable coverage. Linkage is
 retained only when a conversation attachment ID resolves to the `.dat` asset
 identity; unresolved assets remain inventoried without an invented link.
@@ -2843,3 +2844,592 @@ pairs; a colliding stem produces no inferred link. MIME conflicts persist as
 source. Total link accumulation is bounded at 10,000 pairs, with per-document
 link scanning bounded to 64 levels and 10,000 nodes; either truncation is
 visible and leaves coverage incomplete.
+
+## ADR-106: Keep item coverage separate from source terminal state
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The public import contract carries a closed item-level map in
+`CoverageReport.closed_coverage`. Its keys are `recognized`, `excluded`,
+`skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`. Duplicate ZIP
+members and bounded per-member parser failures are counted there because they
+refer to source items. A parser failure makes coverage incomplete even when
+other members are retained and imported.
+
+The schema is closed to those seven keys and accepts only strict non-negative
+integer counts up to 2,147,483,647. `complete=true` is inconsistent with any
+unavailable, duplicate, failed, or unparsed count; excluded/skipped material is
+still resolved item accounting. An oversized ZIP text member is unavailable,
+while a malformed manifest-declared text `.dat` attachment is unparsed only,
+never both. Attacker-controlled member names are bounded and escaped before
+they enter warnings, errors, or diagnostics.
+
+Fatal source errors and operator cancellation are lifecycle events, not items.
+They preserve any already-known item counts, set `coverage_complete` false,
+and store `source_terminal_reason=failed|cancelled` in source metadata while
+the durable import-operation row exposes its corresponding terminal status.
+They must never be added to `closed_coverage` or summed with its item counts.
+The preserved raw source remains the retry authority. This keeps pre-parse
+failure, partial member failure, and cancellation dimensionally honest.
+
+The contract remains content-free: warnings and durable error messages use
+bounded status codes/classes, while the raw source stays local and untrusted.
+The dashboard may render the two dimensions together but must label them
+separately.
+
+## ADR-107: Packaged acceptance must validate the same import coverage contract
+
+**Status:** accepted 2026-08-22. Post-review import-truth correction. Does not
+retarget, relabel, or grant acceptance credit to any published artifact.
+
+Declared-text JSON `.dat` members are bounded source items. The importer first
+validates the complete member, including trailing-data rejection, and only then
+publishes its parsed items. A malformed member cannot publish early array items
+and also be counted as `unparsed`; JSONL remains line-oriented with its existing
+per-line behavior.
+
+The packaged-provider acceptance boundary constructs the shared
+`CoverageReport` model for its dict-level coverage map. It therefore rejects
+unknown keys, booleans/floats/strings, negative or overflowing counts, and
+`complete=true` when unavailable, duplicate, failed, or unparsed items exist.
+Synthetic acceptance fixtures with unavailable content remain incomplete and
+cannot produce a complete packaged report.
+
+## ADR-108: Close terminal import partitions at both archive dimensions
+
+**Status:** accepted 2026-08-22. Import Truth correction. Does not retarget,
+relabel, or grant acceptance credit to any published artifact.
+
+The importer keeps two deliberately separate contracts. `closed_coverage` is
+the logical item map; `stats.archive_member_coverage` is the content-free raw
+ZIP-member audit. Provider containers and controls remain structural in the
+raw audit even when bounded parsing finds malformed content. Their applicable
+logical `unparsed` or `failed` result is assigned exactly once, and the raw
+member is never also placed in a terminal ordinary-member bucket.
+
+Provider-memory/profile values rejected before candidate construction by
+secret-like, inert, highly-sensitive, or size policy close as logical
+`skipped` items. Accepted and rejected values therefore cannot produce a
+nonempty provider-memory surface with an all-zero logical denominator, and
+rejected text is not copied into warnings or receipts. Sensitivity that is
+allowed by the configured local-only policy remains a candidate with its
+declared sensitivity; parser coverage is not confused with later policy
+dispositions.
+
+Standalone text, JSON, and CSV decoding is strict UTF-8. Invalid bytes are one
+atomic `unparsed` item, never replacement-decoded. CSV is a supported generic
+logical item through both public archive entrypoints, with malformed CSV
+closing atomically as `unparsed`. Ordinary JSON roots use a bounded two-pass
+validate-then-consume strategy, preserving trailing-data atomicity without an
+unbounded document list or a retained raw temporary artifact.
+
+When ZIP metadata can be enumerated, entry-count, declared-size, compression,
+encryption, and path/depth safety failures return a content-free member audit.
+Every rejected file member is placed in exactly one `unavailable` bucket, the
+raw denominator closes, and no rejected payload is opened. If enumeration
+fails, the result uses `archive_level_failure=zip_enumeration_failed` and
+`member_coverage_available=false`; it deliberately has no invented member
+closure. These are parser results and coverage contracts, not fresh acceptance
+evidence.
+
+## ADR-109: Share bounded ordinary-JSON parsing across every archive entrypoint
+
+**Status:** accepted 2026-08-22. Import Truth acceptance-blocker correction.
+Does not retarget, relabel, or grant acceptance credit to any published artifact.
+
+Direct byte imports, filesystem JSON paths, and ordinary JSON ZIP members use the
+same incremental strict-UTF-8 reader and `JSONDecoder.raw_decode` contract. The
+reader enforces a 512 MiB raw-byte ceiling, a 128 MiB decoded item/document
+ceiling, and a 128-level quote/escape-aware nesting ceiling before recursive
+decode can raise `RecursionError`. It validates the complete source before the
+builder or generic candidate list is mutated; trailing data, malformed JSON,
+depth rejection, and parser failure therefore cannot leave partial candidates.
+The reader yields root-array members without materializing the array. An empty
+ordinary root array is represented as one logical value so direct, path, and ZIP
+coverage agree; provider containers remain structural and are counted only by
+their semantic contents.
+
+Raw ZIP classification has an explicit bounded allowlist. Canonical
+`conversations.json` and dated `conversations-YYYY[-MM[-DD]].json` names are
+provider containers. The alternate `chats.json`, `history.json`, and
+`messages.json` basenames require an explicit provider hint or an exact provider
+path component from `chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, or
+`x.ai`. A neutral alternate with valid provider-shaped content can still be
+promoted to structural by provider parser statistics; malformed neutral
+alternates remain ordinary unparsed members because filename-only inference
+would overclassify arbitrary generic JSON. This residual is visible in the raw
+member audit and closed logical coverage.
+
+`CoverageReport.closed_coverage` remains closed to the seven recognized keys and
+strict bounded non-negative integers. Omitted or partial maps are normalized to
+the exact zero-filled seven-key map for backward-compatible callers; unknown
+keys and invalid counts remain validation errors. The API and serialized model
+therefore never expose a missing or extra coverage key.
+
+## ADR-110: Establish provider context before terminal accounting
+
+**Status:** implemented as a bounded synthetic correction on 2026-08-22. Does
+not retarget, relabel, or grant acceptance credit to any published artifact.
+
+The importer observes provider evidence from every value yielded by the bounded
+JSON validator in a disposable validation builder, buffering only a bounded set
+of structural provider signatures. Those signatures are published to the live
+builder only after the entire iterator succeeds; the consuming pass then mutates
+candidates or logical counts. This two-phase boundary is intentionally
+context-only: it does not retain the root array or publish any imported text. A
+valid provider-looking prefix followed by trailing data or any later bounded
+parse failure therefore cannot promote a neutral alternate or enable ChatGPT
+attachment links. Such a ZIP member closes exactly once as `unparsed`; direct
+and path entrypoints report generic incomplete coverage. A malformed neutral
+sibling cannot poison a separately valid named provider member.
+
+The bounded iterator carries an explicit context tag with each yielded value:
+standalone roots use root policy, while members streamed from a non-empty root
+array use root-array-item policy. An empty object or empty provider wrapper in
+that item context is therefore one `unparsed` terminal even when the valid
+conversation is its sibling. The distinction is part of the parser boundary;
+it is not inferred from a filename and does not require materializing the root.
+
+Provider containers and conversations have a nonzero logical denominator even
+when they contain no messages. A known empty provider root or zero-message
+conversation closes as one `skipped` item; an identity-free provider-shaped
+empty root and malformed provider entries close as one `unparsed` item. The
+container remains structural in the ZIP-member audit, so it is never counted as
+both a raw member and a logical item.
+
+Auto ZIP attachment discovery uses a bounded content signature over the allowed
+conversation basenames, including neutral `messages.json`, `chats.json`, and
+`history.json`. The signature scan consumes the entire bounded iterator before
+publishing a member observation. Only valid ChatGPT-shaped content promotes
+such a member before attachment link scanning. A malformed or over-limit
+neutral alternate remains generic and does not activate ChatGPT attachment
+inventory; filename alone is insufficient.
+## ADR-111: Core owns the Memory Truth projection and deletion barriers
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth is an additive Core projection over existing observations,
+current-record versions, evidence links, source metadata, integrity groups, and
+tombstones. It gives authorized clients a canonical record status (`current`,
+`tentative`, `superseded`, `conflicted`, or `deleted`), bounded evidence and
+history, source identity, decision metadata, confidence, sensitivity, and
+separate effective/observed/recorded times. Content-free coverage is exposed
+separately so a client can report source and decision accounting without
+revealing memory text. The public record endpoint remains authorization-first;
+admin list/detail endpoints are the inspection surface for deleted records and
+detached tentative observations. No new model-facing MCP tool is added.
+
+Reprocessing identity is source-scoped and value-aware. A stable key includes
+the source ID and reference, kind/slot keys, and a canonical value fingerprint;
+the source reference alone is never an identity. Complete-source rebuild
+withdrawal marks its tombstone with the exact internal source and origin. Core
+may reapply only an untouched automatic archive record whose tombstone proves
+that same source-rebuild removal. Ordinary user or source deletion is not
+eligible: matching archive evidence receives an explicit ignored disposition
+linked to the deleted record, and cannot create a replacement current record.
+An authorized restore is required before that lineage can become current again.
+
+This slice does not add a replayable append-only decision event stream,
+tentative expiration/decay, provider extraction changes, retrieval/ranking
+changes, dashboard wiring, or source-content history/purge presentation.
+
+## ADR-112: Memory Truth review corrections fail closed at storage boundaries
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth identity is derived from the current durable source address, kind,
+slot keys, and value. Every path that changes those fields recomputes the
+identity key before recording the next version, so an ordinary deletion remains
+a barrier after an observation update or restore. Manual approval links its
+originating observation through the same unique durable link used by automatic
+application; retries update no duplicate row.
+
+Migration 010/011 statement inspection strips leading SQL comments before
+idempotent `ALTER TABLE` recovery. Rebuild deletion provenance is constrained
+to a Core-internal validated cutover helper, with SQLite provenance checks and
+record/source/version/hash invariants before reuse. Portable restore treats all
+rebuild markers as untrusted input and imports them as ordinary deletion
+barriers; a valid rebuild marker is never sufficient authority merely because
+it appears in an authenticated export.
+
+Truth list pagination and status coverage use bounded SQL selection/counting.
+Projection arrays use the public limits of 64 superseders, 64 conflict groups,
+and 512 evidence links. This correction is additive and preserves existing
+purge, relay, authorization, and source-restore contracts.
+
+## ADR-113: Bind reopenable rebuild tombstones to one validated ceremony
+
+**Status:** accepted 2026-08-22.
+
+Only the atomic `publish_source_rebuild` transaction may mint a trusted
+source-rebuild tombstone. Its private withdrawal capability requires a binding
+containing the exact finished archive session, rebuild generation, and
+content-hash-derived source marker. The storage checks also require archive
+mode, finished status, client-free and source-accessible session state,
+source-rebuild-in-progress metadata, stable identity, tombstone hash/version,
+and no user edit. The public compatibility withdrawal method fails closed;
+legacy or portable rows without the binding are ordinary deletion barriers.
+Reapply verifies the same source/session/generation and marker relationships in
+the transaction, preserving stable IDs only for a valid untouched lineage.
+
+Manual approval derives the candidate and record keys from the final persisted
+identity-bearing values, including content, source reference, kind, slots, and
+structured value. Truth list projection counts and pages in SQL, avoids
+read-time integrity rebuilding, and uses page-scoped SQL set prefetch with
+per-record limits for superseders, conflict groups, and evidence. Focused
+regressions cover tampered provenance, delete/reimport replacement prevention,
+idempotent approval evidence, and near-constant query count as the database
+grows. This is additive to the existing purge, restore, relay, export, and
+provider contracts.
+
+## ADR-114: Explicit local mutation ledger guards restore/rebuild boundaries
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Source-rebuild eligibility must not infer human edits from free-form version
+reasons. Migration 013 adds the append-only `context_user_mutations` ledger.
+Public/local record restore, source restore, correction, availability change,
+and explicit deletion paths write typed rows with `mutation_origin='local_user'`.
+The original record/source observation provenance is not rewritten. Automatic
+duplicate-import recovery, archive-import forget evaluation, and source-rebuild
+reapply remain distinct because they do not write a local mutation row.
+
+The ledger deliberately has no record foreign key: purge removes record content
+but retains the opaque stable-ID mutation barrier. Export/restore uses
+duplicate-safe inserts and never deletes destination rows. Imported
+source-rebuild tombstones remain ordinary barriers. A pre-013 database or
+export is upgraded by a deterministic, unique-per-record `legacy_user_edit`
+row derived from durable correction or deleted-snapshot evidence; this one
+compatibility fact is distinct from typed explicit actions and repeated legacy
+restores are idempotent. New rows bind a canonical actor, version evidence
+coordinates/digest, and deterministic intent key. Portable restore stages and
+validates ledger rows only after same-package records, versions, tombstones,
+and source relationships exist; forged or incomplete rows are ignored.
+Recovery carries verified destination-local barriers and purge tombstones into
+an isolated restore transaction, including no-record/purged targets. All
+version/source/tombstone reasons are canonical codes, and restore of an already
+current record is one version-backed, exact-retry-idempotent barrier. SQLite
+checks and append-only triggers fail closed on invalid, copied, or tampered
+ledger mutations.
+
+## ADR-115: Require typed canonical action evidence for portable mutation authority
+
+**Status:** implemented in the isolated 2026-08-22 review candidate; final
+acceptance remains a fresh-review decision.
+
+Migration 014 adds nullable `user_action_kind` and deterministic
+`user_action_key` fields to `context_record_versions`. Core emits those fields
+only in the local correction, availability-change, restore, delete, and
+source-delete paths. New `context_user_mutations` rows use
+`evidence_kind='user_action'`; portable restore recomputes the typed digest and
+requires the history action kind/key, canonical reason, exact vault/record/
+source relationship, and ledger intent to agree. A generic `record_version`
+coordinate can remain a compatibility-scoped `legacy_user_edit` fact but cannot
+authorize a typed action.
+
+Migration repair drops and recreates both append-only ledger triggers on every
+restart-safe repair pass, including when migration 013 is already marked
+applied. The same pass probes the schema-014 history table, adds any missing
+typed-action columns, and recreates the typed-action unique index idempotently
+when migration 014 is already marked applied. Duplicate-safe restore and
+isolated carry-forward counters increment only when SQLite actually inserts a
+row. The encrypted export passphrase is
+not an external author signature: a holder who rewrites and re-encrypts every
+package member can rewrite both canonical history and ledger data. This
+decision closes row-only forgery without claiming provenance that the package
+trust model cannot establish.
+## ADR-116: Retrieval usefulness reranks only after hard boundaries
+
+**Status:** accepted 2026-08-22. This focused post-beta retrieval slice does
+not change Core authority, import policy, storage schema, lifecycle semantics,
+release state, or acceptance credit.
+
+Production Retrieval V3 keeps authorization, temporal resolution, and numeric
+admissibility ahead of relevance. After those boundaries, the default lexical
+candidate order receives a deterministic local-usefulness rerank using bounded
+query-intent features and record metadata: salient-token/field coverage,
+recency, confidence, availability, sensitivity, conflict state, provenance,
+and actionability. The feature projection never accepts raw unauthorized rows,
+learned model output, network data, or imported instructions, and the frozen V2
+comparator remains unchanged.
+
+Bootstrap remains a separate 100-record evidence pool followed by metadata-only
+set selection. The compiler caps a pack at 32 records, preserves mandatory
+preferences, deduplicates and excludes same-slot conflicts, and enforces the
+exact character budget. Its additive `pack_metadata` envelope reports bounded
+counts, provenance-backed selected items, and explicit candidate-pool/budget/
+record-limit truncation reasons so providers can distinguish omission from an
+empty result. The synthetic usefulness fixture adds sparse location/latest
+intent cases and budget-metadata assertions; its 17-case scorecard is
+developer evidence only.
+
+## ADR-117: Dashboard truth surfaces preserve backend accounting boundaries
+
+**Status:** API/DOM behavior accepted locally on 2026-08-22 after independent
+review of the post-review wire-safety/count/coverage hardening. Fresh visual
+Product Design acceptance remains pending; this is not release acceptance.
+
+Sources UI treats item closure and source processing as different dimensions.
+The wire normalizer accepts the exact seven-key `closed_coverage` contract,
+retains unknown or missing older metadata without inventing counts, and exposes
+terminal `failed`/`cancelled` reasons separately from incomplete item coverage.
+Retry is available for failed, cancelled, or incomplete extraction; rebuild is
+available only for a complete source. Existing remove/undo behavior is retained.
+
+Context keeps `/context/search` as a bounded, explicitly current-only list and
+adds only the existing Core reads for `/context/coverage` and
+`/context/truth/{record_id}`. Coverage is content-free and failure-visible, so
+search results remain usable when accounting is unavailable. A selected row gets
+one truth read for status, conflict, provenance, evidence, and history metadata;
+sequence guards prevent stale responses from replacing a newer selection, and
+mutations refresh coverage and the selected truth at bounded times. The
+dashboard now builds record/truth values field-by-field, bounds all displayed
+strings, arrays, enums, timestamps, hashes, confidence values, versions, and
+counts, drops malformed list rows, and fails malformed detail envelopes with a
+content-free error. Import IDs ignore non-string values, stats reject invalid
+count shapes, and a failed coverage refresh clears cached truth metrics while
+retaining the independent search window. The slice is local-only review
+evidence and does not change routes, Core authority, release state, or the
+beta.6 public identity.
+
+## ADR-118: Continuous Capture begins as a provider-neutral local ledger
+
+**Status:** accepted locally on 2026-08-22 after fresh independent
+security/correctness/API review; this is not release or provider acceptance.
+
+Continuous Capture starts with migration 015 contracts only. Core stores
+content-free source metadata, bounded opaque checkpoints, normalized inert
+events, source-scoped provider-item lineage, and foreground run telemetry.
+Creation is disabled; enabling/resuming requires explicit local-only
+acknowledgement; revocation is terminal and clears the reserved credential
+reference. Disabled, paused, and revoked sources make zero adapter calls.
+
+The coordinator durably stages an event, calls an injected idempotent sink with
+a deterministic key, and atomically commits the application receipt, item
+mapping, and checkpoint. Page cursors advance only after all page events apply.
+Duplicate replay is a no-op, while gaps, malformed pages, invalid cursors,
+bounded-limit failures, sink failures, and expired leases degrade the source
+with canonical retry metadata. Provider deletes are constrained to one source
+and item lineage; local corrections remain an explicit sink contract. Full
+snapshot/rescan deletion is deferred rather than inferred from page absence.
+
+No real connector, provider/network implementation, OAuth or credential flow,
+background scheduler, dashboard/package-startup change, current product
+availability, beta.6 identity change, release/publication/acceptance claim,
+live/private Core/data work, or macOS work is included. The unsupported-macOS
+posture and Core authority boundary remain unchanged.
+
+## ADR-119: Continuous Capture repair and lease capability authority
+
+**Status:** accepted locally on 2026-08-22 after fresh independent
+security/correctness review; this is not release or provider acceptance.
+
+Migration-015 startup repair reads the packaged authoritative migration and
+executes its statements one at a time inside the existing transaction. This
+keeps marker-present repair invariant-equivalent to fresh migration without a
+second weakened schema definition or `executescript` auto-commit behavior.
+
+After `begin_run`, every run-owned mutation carries a typed handle binding the
+run ID, source ID, and lease token. The ledger checks that exact capability,
+`running` state, strictly future expiry, and `reconciling` source state in the
+mutation transaction. Renewal has the same guard. Leaving `reconciling`
+atomically abandons active runs, and expiry recovery only degrades sources
+that still reconcile; a sink result crossing expiry is not committed and is
+safe to replay under the same idempotency key. These changes preserve the
+provider-neutral, foreground-only, beta.6 and unsupported-macOS boundaries.
+
+## ADR-120: Canonical boundaries normalize hostile representations before authority
+
+**Status:** accepted locally on 2026-08-22 after focused adversarial
+reproduction and regression checks; this is not release acceptance.
+
+Equivalent hostile representations must not bypass a boundary or change
+identity after validation. Direct-secret detector v3 therefore scans a
+compatibility-normalized, zero-width/combining-free projection while retaining
+the existing high-confidence credential patterns and content-free refusal
+receipt. Capture applies the same representation rule to its content-free
+metadata contract and rejects implicit identifier or integer coercion.
+
+Canonical Memory Truth supersession is a database relationship, not caller
+metadata. Every direct canonical write validates that the target exists in the
+same vault and that following the bounded predecessor chain cannot reach the
+record being written. This prevents dangling/self/cyclic state from making the
+rebuildable temporal resolver fail. ZIP display names remain safely escaped and
+bounded; names that cannot preserve unique identity inside that bound close as
+unavailable instead of being truncated into a false duplicate.
+
+An injected Continuous Capture sink may acknowledge only the exact
+source-scoped canonical lineage supplied by Core. A different lineage is an
+invalid receipt even on the first event and cannot create an item mapping.
+Experimental retrieval diagnostics accept only finite bounded primitives, and
+malformed/nonfinite upstream lexical scores become a neutral score before local
+usefulness reranking. These rules do not add a provider connector, change Core
+authority, inspect private data, publish a release, or add macOS support.
+
+## ADR-121: Cross-platform identities and local authority fail closed
+
+**Status:** accepted locally on 2026-08-22 through focused synthetic
+regressions; this is not release or provider acceptance.
+
+ZIP member identity is normalized with Unicode NFKC plus case folding before
+duplicate selection. Members are still read in archive order and never
+extracted, so the first logical path is deterministic and a compatibility-
+equivalent later path closes as a duplicate. Raw-source preservation and
+bounded diagnostic names are unchanged.
+
+Continuous Capture counters and metadata integers are limited to SQLite's
+signed-64-bit range before durable writes. If an unexpected local runtime or
+storage exception still occurs after a run begins, the coordinator records a
+content-free `capture_failed` terminal result through the ordinary retry path;
+lease loss remains governed by the existing stale-result behavior. Context
+pagination similarly uses strict bounded integer fields so booleans cannot
+become offsets or page sizes through model coercion.
+
+Core's existing single-authoritative-vault selection now participates in direct
+record/truth lookup and registered-client lookup. Record IDs and client tokens
+are not treated as sufficient authority across vault rows. Client counts,
+listing, revocation, ordinary authentication, and the import-operation observer
+all use the same authoritative-vault boundary. This decision changes no schema,
+network behavior, provider support, release state, or macOS posture.
+
+## ADR-122: Pull requests, default-branch pushes, and version tags are distinct CI evidence
+
+**Status:** accepted locally on 2026-08-22 after draft PR 73 exposed duplicate
+feature-branch matrices; hosted revalidation of the follow-up commit is pending.
+
+The canonical CI workflow validates every pull request, every push to `main`,
+and every push for a version tag matching `v*`, but it does not also run the
+full matrix for an ordinary feature-branch push that already has a pull-request
+event. This keeps pre-merge review evidence, post-merge protected-default-branch
+evidence, and version-tag validation while avoiding two equivalent Windows,
+Ubuntu, dashboard, security, parity, and desktop matrices for one feature
+commit.
+
+Release candidate construction, beta publication, and channel promotion remain
+separate explicit `workflow_dispatch` ceremonies. This trigger routing removes
+no CI job, platform, or release approval, and it does not add or imply macOS
+support.
+
+## ADR-123: New vault identity starts at the applied migration generation
+
+**Status:** accepted locally on 2026-08-22 after the PR 73 full suite exposed a
+recovery fingerprint mismatch; hosted revalidation is pending.
+
+`CoreStore.initialize_vault()` applies migrations before creating the first
+vault row. The new row must therefore be inserted with the latest applied
+migration generation rather than the table's historical version-1 default.
+Otherwise a later integrity/export pass changes schema identity simply by
+reopening an otherwise unchanged vault, which invalidates recovery's logical
+old-or-new fingerprint invariant.
+
+The accepted deterministic retrieval integration also changes the frozen B01
+`atc-retrieval-v3` confirmatory result from 1/7 to 3/7. That expected result is
+updated without changing the frozen fixture/config identities, boundary flags,
+operation accounting, or final `KILL_MECHANISM` decision. Neither reconciliation
+changes provider availability, release state, or the unsupported-macOS posture.
+
+## ADR-124: ACLs follow replacement content and evidence follows observation ACLs
+
+**Status:** accepted locally on 2026-08-22 after focused synthetic privacy
+regressions; this is not release acceptance.
+
+Persisted empty `allowed_clients` means unrestricted, but an observation with
+that omitted/empty allowlist must not loosen a currently restrictive canonical
+record. When both the current record and observation are restrictive, an
+overlap is intersected. If the restrictions are disjoint, a content-replacing
+observation adopts its own allowlist because the canonical payload has changed;
+retaining the old set would authorize the old client to read new private
+content. A reinforcement does not replace content, so a disjoint observation
+retains the current allowlist and cannot transfer existing content to the new
+client. Deny sets continue to union, preserving the fail-closed result when a
+client is both allowed and denied.
+
+`CoreStore.get_memory_truth(principal=...)` is authorization-first for the
+canonical record and now filters linked observation evidence with each
+observation's own allow/deny ACL before applying the bounded evidence limit.
+When a correction transfers a restrictive ACL to a disjoint client set, the
+canonical record's content-bearing projection fields (structured value,
+scopes, tags, source provenance, evidence, confidence, and validity window)
+follow the replacement observation rather than the old target. Stable kind and
+slot identity remain attached to the canonical record. The principal-less
+Core/local-admin path intentionally retains complete linked observation
+history; no admin-scope bypass is added to the principal-scoped path. This is a
+storage/query repair with no schema or provider-contract change, and it uses
+only synthetic temporary-database tests.
+
+## ADR-125: Complete-but-incomplete sources use the existing rebuild authority
+
+**Status:** accepted locally on 2026-08-22 after focused synthetic backend and
+dashboard regression tests; hosted revalidation is pending.
+
+`import_status=complete` and `coverage_complete=false` is a repairable source
+state, not a successful extraction. A non-rebuild source reprocess request from
+that exact state therefore enters the existing source-rebuild ceremony. The
+preserved source blob is reparsed, candidates remain staged, and
+`publish_source_rebuild` is allowed to cut over only when the new coverage is
+complete. A parser failure leaves prior current records in place and marks the
+rebuild resumable/failed through the existing terminal path.
+
+This decision deliberately does not create a new endpoint, parser session, or
+deletion primitive. Explicit healthy complete-source reprocess remains a
+duplicate/no-op, and the source-rebuild authority continues to protect user
+mutations, local-only records, stable identities, and ordinary deletion
+barriers. Concurrent repair callers may share one idempotent rebuild generation
+and session; only the validated atomic cutover withdraws eligible automatic
+records.
+
+## ADR-126: Adapter availability cannot revoke another coordinator's live run
+
+**Status:** accepted locally on 2026-08-22 after focused shared-SQLite
+correctness reproduction; this is not release or provider acceptance.
+
+`CaptureCoordinator.run()` may be invoked by a coordinator that has no adapter
+for the source provider while another coordinator or process owns a live leased
+run. The adapter-missing path therefore checks the source lifecycle and
+future-expiring running lease in the same serialized transaction before
+degrading. A live owner leaves `reconciling`, retry metadata, and operator
+pause/revoke state authoritative, while the caller still receives the bounded
+`capture_adapter_unavailable` result. If no live run exists, the existing
+degradation and retry behavior remains unchanged. Run-owned renewal and finish
+continue to require the exact handle, lease, and `reconciling` state.
+
+## ADR-127: Generic bounded failures map to declared closed-coverage counters
+
+**Status:** accepted locally on 2026-08-22 after focused PR 73 review
+reproduction and importer regressions; this is not release or provider
+acceptance.
+
+Generic standalone parsing has three bounded terminal reasons: `unavailable`,
+`failed`, and `unparsed`. The generic coverage accumulator declares a counter
+for each reason, `_generic_failure_result()` assigns them through an explicit
+bounded match, and `_combine()` merges every counter into the exact seven-key
+`closed_coverage` map and generic stats. This prevents a slotted-dataclass
+`AttributeError` and prevents a successful return with an unreported terminal
+item.
+
+An oversized standalone CSV is one `unavailable` item; malformed CSV remains
+one `unparsed` item. The focused synthetic tests assert no exception, one
+closed item, exact bucket identity, and incomplete coverage. No provider,
+network, private data, release state, or unsupported-macOS posture changes.
+
+## ADR-128: Forwarded context-pack accounting is boundary-reconciled
+
+**Status:** accepted locally on 2026-08-22 after synthetic Edge filter and
+envelope-trim reproduction; this is not release or provider acceptance.
+
+`pack_metadata` is provider-facing accounting for the pack at the boundary
+where it is emitted. Core reports its bounded selection; Edge recomputes the
+returned-item count, exact omission complement, character usage, and
+provenance-backed returned-item count after any ACL or envelope projection.
+The model rejects `selected_count > candidate_count`, an incorrect omission
+complement, provenance exceeding selected items, or suppression counts
+exceeding omitted items.
+
+Duplicate/conflict suppression counts remain explicitly Core-selection-scoped,
+because Edge receives no Core suppression-group identities from which to
+recompute those reason-specific counts. Edge therefore preserves only bounded
+claims about candidates still omitted and never presents ACL or envelope
+removals as duplicate/conflict suppression. No Core authority, transport,
+provider support, release state, or macOS posture changes.

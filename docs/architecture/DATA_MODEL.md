@@ -9,22 +9,41 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | Entity | Purpose |
 |---|---|
 | `vault` | User-owned authority, display time zone, and versioned memory policy |
-| `source_record` / `source_blob` / `source_blob_chunk` | Deduplicated raw local evidence; provider/format/coverage metadata, extraction status, and ordered bounded storage for large raw sources |
+| `source_record` / `source_blob` / `source_blob_chunk` | Deduplicated raw local evidence; provider/format/import-coverage metadata, extraction status, and ordered bounded storage for large raw sources |
 | `ingestion_session` / `ingestion_batch` | Coverage, resumability, atomic publication, and idempotency |
 | observation | Immutable proposed, extracted, corrected, or inferred durable-context evidence |
 | observation decision | Core-derived `applied`, `reinforced`, `tentative`, or `ignored` disposition, reason, policy version, origin class, and decision time |
 | `context_record` | Current applied context selected by Core policy |
+| Memory Truth projection | Canonical status, provenance/evidence, source metadata, decision timing, conflict state, and content-free coverage over the durable entities above |
 | `context_record_version` | Immutable correction, replacement, deletion, and restoration history |
 | observation/record evidence link | Why an observation created, changed, or reinforced a current record |
 | `client_registration` / `permission_grant` | Identity, credential hash, scopes, and server-known client origin |
 | `replication_event` / `replication_checkpoint` | Ordered signed Core projection; never an alternate authority |
 | `deletion_tombstone` | Durable evidence that content is reversibly absent |
+| `context_user_mutation` | Append-only typed local mutation ledger used as a rebuild barrier |
 | integrity group/member | Derived duplicate/conflict diagnostics; never authority or a user task queue |
 | `purge_tombstone` | Minimum opaque stable-ID replay barrier, with no raw content hash |
 | `purge_job` | Crash-resumable logical-delete/compaction phase metadata |
 | `audit_event` | Client access and automatic or administrative decision trace |
 | Relay queued observation | Noncurrent input waiting for authoritative Core evaluation |
 | `export_manifest` | Portable package schema and integrity metadata |
+
+Import, truth, and retrieval accounting are separate contracts. Import parsing
+publishes the item-level `CoverageReport.closed_coverage` map with exactly the
+seven logical keys `recognized`, `excluded`, `skipped`, `unavailable`,
+`duplicate`, `failed`, and `unparsed`. A source-level `failed` or `cancelled`
+terminal state is stored separately in source metadata and operation status; it
+is never added to those item counts. Memory Truth exposes the durable,
+content-free `TruthCoverageOut` projection over sources, observations, records,
+conflicts, and ingestion sessions. Retrieval's `ContextPackMetadata` is a
+bounded provider-facing report for one compiled bootstrap pack. It is transient
+selection accounting, not import coverage or Memory Truth coverage, and is not
+part of canonical Core authority.
+
+Core migrations `010_memory_truth.sql` through
+`014_typed_user_action_evidence.sql` belong to the Memory Truth foundation. The
+Migration `015_continuous_capture.sql` is the provider-neutral Continuous
+Capture foundation. The next free Core migration number is `016`.
 
 The compatibility schema may retain historical table or column names such as
 `context_candidate` and `approval_status` during migration. Those are storage
@@ -45,6 +64,56 @@ value, scopes, tags, provenance/evidence links, confidence, sensitivity,
 availability, allow/deny clients, validity, version, replacement/supersession,
 timestamps, content hash, and schema version. Only current applied records are
 retrieval-eligible.
+
+`context_user_mutations` is an append-only typed authority ledger. Each new
+row stores a closed mutation kind/origin, a bounded normalized actor, typed
+user-action evidence ID/version/digest, and a deterministic intent key. Schema
+14 adds nullable `user_action_kind` and `user_action_key` fields to
+`context_record_versions`; Core fills them only on the local user-action path.
+The ledger's `evidence_kind='user_action'` row must match those fields exactly,
+including the action key, before a portable restore may import it. A generic
+record-version coordinate remains only as a compatibility fact for
+`legacy_user_edit`, never as authority for a typed action. The ledger does not
+store caller reason text; version, source-deletion, and tombstone reason fields
+are canonical content-free codes. Purge may remove the referenced record and
+history while retaining the opaque barrier row.
+
+## Memory Truth semantics
+
+The Core truth projection distinguishes `current`, `tentative`, `superseded`,
+`conflicted`, and `deleted`. A record's evidence links retain the observation,
+relationship, disposition, decision reason, policy version, confidence,
+sensitivity, source identity, and three different clocks: `effective_at` is
+the asserted validity time, `observed_at` is when the source observation was
+made, and `recorded_at` is when Core stored it. `deleted` is a reversible
+tombstoned state; `superseded` and resolved conflict history remain inspectable
+rather than being silently discarded. Coverage counts are intentionally
+content-free.
+
+Archive rebuild identity uses a source-scoped, value-aware key containing the
+source ID/reference, kind and slot keys, and a canonical value fingerprint.
+Only an untouched automatic record with a matching internal source-rebuild
+tombstone can reuse its record ID. An ordinary user deletion blocks matching
+archive evidence from creating any replacement current record until an
+authorized restore. Every public/local restore, correction, availability
+change, and explicit deletion path writes a typed `local_user` row to
+`context_user_mutations`; source rebuild checks that ledger rather than
+interpreting free-form version reasons. Portable restore does not generically
+insert ledger rows: it accepts only typed rows whose action kind/key, evidence
+ID/version, digest, vault, record, source relationship, canonical reason, and
+intent key all match same-package durable evidence; malformed or forged rows
+are ignored. Isolated
+recovery carries verified destination-local mutation rows transactionally with
+purge tombstones before package import. A restore of an already-current record
+still creates one version-backed barrier and exact retry is idempotent. Legacy
+databases and pre-ledger exports infer at most one `legacy_user_edit` row from
+typed source-lineage evidence, excluding source-free manual records and
+validated automatic reapplications. Distinct values that reuse one source
+reference remain distinct records. Encrypted package authentication proves
+possession of the passphrase and package integrity, not provenance from an
+untampered originating Core: a party able to rewrite and re-encrypt every
+package member can also rewrite its canonical evidence. The typed boundary
+therefore rejects row-only forgery but does not claim external authenticity.
 
 ## Slots, conflicts, and reinforcement
 
@@ -76,7 +145,8 @@ Provider archive metadata is intentionally schema-flexible JSON attached to the
 source record. The writer records detected provider, export format, parser
 version, coverage completion, and bounded aggregate statistics. Durable
 session/batch rows, not metadata, remain the authority for replay and
-idempotency. `import_status` exposes `processing`, `failed`, or `complete`; the
+idempotency. `import_status` exposes `processing`, `failed`, `cancelled`, or
+`complete`; the
 content-addressed source blob is retained for a safe retry or later parser.
 `source_blobs` owns the source hash, total size, media type, and storage kind.
 Inline values are at most 8 MiB; nonempty path imports and larger in-memory

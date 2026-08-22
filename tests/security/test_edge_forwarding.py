@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -301,6 +302,14 @@ def test_core_executes_only_authorized_core_available_records(
     assert scoped_bootstrap["used_chars"] == sum(
         len(item["content"]) + 64 for item in scoped_bootstrap["items"]
     )
+    scoped_metadata = scoped_bootstrap["pack_metadata"]
+    assert isinstance(scoped_metadata, dict)
+    assert scoped_metadata["selected_count"] == len(scoped_bootstrap["items"])
+    assert scoped_metadata["omitted_count"] == (
+        scoped_metadata["candidate_count"] - scoped_metadata["selected_count"]
+    )
+    assert scoped_metadata["used_chars"] == scoped_bootstrap["used_chars"]
+    assert "edge_filter" in scoped_metadata["truncation_reasons"]
     denied_scope_bootstrap = execute(
         "edge:scoped",
         operation="bootstrap_context",
@@ -389,6 +398,186 @@ def test_forwarding_record_scope_matching_matches_relay_semantics(
     expected: bool,
 ) -> None:
     assert EdgeSyncManager._record_matches_approved_context_scopes(record, approved) is expected
+
+
+def test_edge_bootstrap_metadata_reconciles_filtered_items() -> None:
+    payload: dict[str, object] = {
+        "items": [
+            {
+                "content": "forwarded",
+                "provenance": {"source_reference": "synthetic-core-pack"},
+            }
+        ],
+        "used_chars": 0,
+        "pack_metadata": {
+            "candidate_count": 5,
+            "selected_count": 2,
+            "omitted_count": 3,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 2,
+            "duplicate_suppressed_count": 99,
+            "conflict_suppressed_count": 99,
+        },
+    }
+
+    EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="edge_filter")
+
+    metadata = payload["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["candidate_count"] == 5
+    assert metadata["selected_count"] == 1
+    assert metadata["omitted_count"] == 4
+    assert metadata["used_chars"] == len("forwarded") + 64
+    assert payload["used_chars"] == metadata["used_chars"]
+    assert metadata["provenance_backed_count"] == 1
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] == 4
+    assert metadata["conflict_suppressed_count"] == 4
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["candidate_pool_truncated"] is True
+    assert metadata["truncated"] is True
+    assert metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
+
+
+def test_edge_reconciliation_drops_untrusted_reasons_and_unknown_edge_reason() -> None:
+    payload: dict[str, object] = {
+        "items": [{"content": "forwarded"}],
+        "used_chars": 0,
+        "pack_metadata": {
+            "candidate_count": 2,
+            "selected_count": 1,
+            "omitted_count": 1,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": [
+                "candidate_pool",
+                "attacker-controlled",
+                1,
+                "candidate_pool",
+                "budget",
+            ],
+        },
+    }
+
+    EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="attacker-controlled")
+
+    metadata = payload["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["truncation_reasons"] == ["candidate_pool", "budget"]
+    assert metadata["truncated"] is True
+
+
+def test_edge_bootstrap_metadata_reconciles_envelope_trim() -> None:
+    items = [
+        {
+            "content": "x" * 5_000,
+            "source_service": "synthetic-core",
+        }
+        for _ in range(20)
+    ]
+    original_item_count = len(items)
+    payload: dict[str, object] = {
+        "state": "available",
+        "items": items,
+        "used_chars": sum(len(str(item["content"])) + 64 for item in items),
+        "pack_metadata": {
+            "candidate_count": 24,
+            "selected_count": 20,
+            "omitted_count": 4,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 20,
+            "duplicate_suppressed_count": 4,
+            "conflict_suppressed_count": 4,
+        },
+    }
+
+    bounded = EdgeSyncManager._bounded_forward_response(payload)
+
+    bounded_items = bounded["items"]
+    assert isinstance(bounded_items, list)
+    assert len(bounded_items) < original_item_count
+    metadata = bounded["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["selected_count"] == len(bounded_items)
+    assert metadata["omitted_count"] == 24 - len(bounded_items)
+    expected_used = sum(len(str(item["content"])) + 64 for item in bounded_items)
+    assert metadata["used_chars"] == expected_used
+    assert bounded["used_chars"] == expected_used
+    assert metadata["provenance_backed_count"] == len(bounded_items)
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["candidate_pool_truncated"] is True
+    assert metadata["truncated"] is True
+    assert metadata["truncation_reasons"] == ["candidate_pool", "edge_envelope"]
+    assert len(json.dumps(bounded, ensure_ascii=False).encode("utf-8")) <= 60_000
+
+
+def test_edge_bootstrap_metadata_reconciles_filter_then_envelope_sequentially() -> None:
+    items = [
+        {
+            "content": "x" * 5_000,
+            "provenance": {"source_reference": "synthetic-core-pack"},
+        }
+        for _ in range(20)
+    ]
+    payload: dict[str, object] = {
+        "state": "available",
+        "items": items,
+        "used_chars": sum(len(str(item["content"])) + 64 for item in items),
+        "pack_metadata": {
+            "candidate_count": 24,
+            "selected_count": 20,
+            "omitted_count": 4,
+            "used_chars": 0,
+            "candidate_pool_truncated": True,
+            "truncated": True,
+            "truncation_reasons": ["candidate_pool"],
+            "provenance_backed_count": 20,
+            "duplicate_suppressed_count": 4,
+            "conflict_suppressed_count": 4,
+        },
+    }
+
+    items.pop()
+    EdgeSyncManager._reconcile_bootstrap_pack_metadata(payload, reason="edge_filter")
+    filtered_metadata = payload["pack_metadata"]
+    assert isinstance(filtered_metadata, dict)
+    assert filtered_metadata["selected_count"] == 19
+    assert filtered_metadata["omitted_count"] == 5
+    assert filtered_metadata["provenance_backed_count"] == 19
+    assert filtered_metadata["duplicate_suppressed_count"] == 4
+    assert filtered_metadata["conflict_suppressed_count"] == 4
+    assert filtered_metadata["truncation_reasons"] == ["candidate_pool", "edge_filter"]
+
+    bounded = EdgeSyncManager._bounded_forward_response(payload)
+
+    bounded_items = bounded["items"]
+    assert isinstance(bounded_items, list)
+    metadata = bounded["pack_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["selected_count"] == len(bounded_items)
+    assert metadata["omitted_count"] == 24 - len(bounded_items)
+    expected_used = sum(len(str(item["content"])) + 64 for item in bounded_items)
+    assert metadata["used_chars"] == expected_used
+    assert bounded["used_chars"] == expected_used
+    assert metadata["provenance_backed_count"] == len(bounded_items)
+    assert metadata["provenance_backed_count"] <= metadata["selected_count"]
+    assert metadata["duplicate_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["conflict_suppressed_count"] <= metadata["omitted_count"]
+    assert metadata["truncation_reasons"] == [
+        "candidate_pool",
+        "edge_filter",
+        "edge_envelope",
+    ]
 
 
 def test_wait_timeout_cancels_request(tmp_path: Path) -> None:

@@ -7,12 +7,13 @@ entropy detector would silently discard ordinary memory text.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from uuid import UUID
 
 from .models import CandidateInput
 
-SECRET_DETECTOR_VERSION = "direct-secret-v2"
+SECRET_DETECTOR_VERSION = "direct-secret-v3"
 SECRET_REFUSAL_REASON = "direct_secret_like_content"
 SECRET_REASON_REDACTION = "Explicit user privacy action"
 
@@ -41,11 +42,21 @@ _WELL_KNOWN_TOKEN = re.compile(
 _CREDENTIAL_URI = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*)://[^\s/@:?#]+:[^\s/@?#]+@")
 
 
+def _credential_scan_text(value: str) -> str:
+    """Expose compatibility and zero-width obfuscations to ASCII-oriented rules."""
+
+    decomposed = unicodedata.normalize("NFKD", value).casefold()
+    return "".join(
+        char for char in decomposed if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}
+    )
+
+
 def contains_secret_like_text(value: str) -> bool:
     """Return whether text resembles a directly supplied credential value."""
 
+    normalized = _credential_scan_text(value)
     return any(
-        pattern.search(value) is not None
+        pattern.search(normalized) is not None
         for pattern in (
             _SECRET_ASSIGNMENT,
             _PRIVATE_KEY_BLOCK,

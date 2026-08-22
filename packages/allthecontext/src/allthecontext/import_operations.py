@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Literal
 
 from .config import MAX_IMPORT_BYTES
 from .import_boundary import (
@@ -36,6 +36,7 @@ from .import_boundary import (
 )
 from .importers import (
     ArchiveImportService,
+    _mark_terminal_status,
     _media_type,
     _processing_source_metadata,
     _provisional_source_service,
@@ -131,15 +132,10 @@ class ImportOperationService:
                 try:
                     source = self.store.get_source(str(source_id), duplicate=True)
                     if source.import_status == "processing":
-                        metadata = merge_progress_metadata(
-                            source.metadata,
-                            _progress_from_dict(progress),
-                        )
-                        self.store.update_source_import(
+                        self._mark_source_terminal(
                             str(source_id),
-                            import_status="failed",
-                            metadata=metadata,
-                            parser_warnings=source.parser_warnings,
+                            reason="failed",
+                            progress=progress,
                         )
                 except NotFoundError:
                     pass
@@ -814,6 +810,7 @@ class ImportOperationService:
         bytes_total = 1
         try:
             current = self.store.get_import_operation(operation_id)
+            terminal_source_id = source_id or current.get("source_id")
             if current["status"] == "cancelled":
                 self._rebind_terminal_operation_source(
                     operation_id,
@@ -821,11 +818,18 @@ class ImportOperationService:
                     source_id=source_id,
                     current=current,
                 )
+                self._mark_source_terminal(
+                    str(terminal_source_id) if terminal_source_id else None,
+                    reason="cancelled",
+                    progress=current.get("progress") or {},
+                )
                 return
             bytes_processed = int(current.get("bytes_committed") or 0)
             bytes_total = max(int(current.get("declared_byte_size") or 1), 1)
+            terminal_source_id = source_id or current.get("source_id")
         except NotFoundError:
             current = {}
+            terminal_source_id = source_id
         percent = min(99, (bytes_processed * 99) // bytes_total if bytes_total else 0)
         progress: dict[str, Any] = {
             "phase": "cancelled",
@@ -846,26 +850,11 @@ class ImportOperationService:
                 progress=progress,
                 completed=True,
             )
-        if source_id:
-            try:
-                source = self.store.get_source(source_id, duplicate=True)
-                # Never cancel an already-complete canonical after a merge rebind;
-                # only non-terminal processing sources are cancelled here.
-                if source.import_status != "processing":
-                    return
-                metadata = merge_progress_metadata(
-                    source.metadata,
-                    _progress_from_dict(progress),
-                )
-                metadata["cancel_requested"] = True
-                self.store.update_source_import(
-                    source_id,
-                    import_status="cancelled",
-                    metadata=metadata,
-                    parser_warnings=source.parser_warnings,
-                )
-            except Exception:
-                pass
+        self._mark_source_terminal(
+            str(terminal_source_id) if terminal_source_id else None,
+            reason="cancelled",
+            progress=progress,
+        )
 
     def _mark_failed(
         self,
@@ -887,6 +876,7 @@ class ImportOperationService:
         }
         try:
             current = self.store.get_import_operation(operation_id)
+            terminal_source_id = source_id or current.get("source_id")
             if current["status"] in TERMINAL_OPERATION_STATUSES:
                 if current["status"] == "failed":
                     self._rebind_terminal_operation_source(
@@ -895,11 +885,18 @@ class ImportOperationService:
                         source_id=source_id,
                         current=current,
                     )
+                    self._mark_source_terminal(
+                        str(terminal_source_id) if terminal_source_id else None,
+                        reason="failed",
+                        progress=current.get("progress") or {},
+                    )
                 return
             progress["bytes_processed"] = int(current.get("bytes_committed") or 0)
             progress["bytes_total"] = max(int(current.get("declared_byte_size") or 1), 1)
+            terminal_source_id = source_id or current.get("source_id")
         except NotFoundError:
             current = {}
+            terminal_source_id = source_id
         with suppress(InvalidStateError):
             self.store.update_import_operation(
                 operation_id,
@@ -910,6 +907,40 @@ class ImportOperationService:
                 error_message=message,
                 completed=True,
             )
+        self._mark_source_terminal(
+            str(terminal_source_id) if terminal_source_id else None,
+            reason="failed",
+            progress=progress,
+        )
+
+    def _mark_source_terminal(
+        self,
+        source_id: str | None,
+        *,
+        reason: Literal["failed", "cancelled"],
+        progress: Mapping[str, Any],
+    ) -> None:
+        """Persist operation-owned source terminal state without losing counts."""
+        if source_id is None:
+            return
+        try:
+            source = self.store.get_source(source_id, duplicate=True)
+        except NotFoundError:
+            return
+        # A parser-owned terminal state or a completed canonical source is
+        # authoritative; an operation cleanup must not downgrade it.
+        if source.import_status != "processing":
+            return
+        metadata = _mark_terminal_status(source.metadata, reason)
+        metadata = merge_progress_metadata(metadata, _progress_from_dict(progress))
+        if reason == "cancelled":
+            metadata["cancel_requested"] = True
+        self.store.update_source_import(
+            source_id,
+            import_status=reason,
+            metadata=metadata,
+            parser_warnings=source.parser_warnings,
+        )
 
     def _handle_cancel_cleanup(
         self,

@@ -50,7 +50,7 @@ owned by Core:
 4. Parse and ingest from the preserved raw blob. Operation telemetry is not a
    second source of canonical context.
 
-ZIP, JSON, JSONL, Markdown, and text importers pass normalized data to a
+ZIP, JSON, JSONL, CSV, Markdown, and text importers pass normalized data to a
 deterministic extractor. ChatGPT conversation graphs, Claude `chat_messages`,
 flexible Grok conversation envelopes, provider memory/profile fields, and
 Grok-style Markdown transcripts have explicit adapters. Imported text is
@@ -80,9 +80,9 @@ read limit, and a 10,000-pair total attachment-link cap. Link scanning is
 bounded to 64 nesting levels and 10,000 nodes per JSON document; truncation is
 reported as incomplete coverage. These are parser limits in addition to the
 2,000,000,000-byte raw import boundary. Path traversal, absolute/drive-relative
-names, encrypted entries, duplicate case-insensitive names, and over-limit
-members fail closed or remain explicitly unavailable; raw source preservation
-is not treated as searchable extraction.
+names, paths deeper than 64 components, encrypted entries, duplicate
+case-insensitive names, and over-limit members fail closed or remain explicitly
+unavailable; raw source preservation is not treated as searchable extraction.
 
 Provider imports use a versioned archive session keyed by source ID and parser
 version. Batches use the source hash, parser version, and stable batch ordinal
@@ -97,8 +97,52 @@ operations into a deterministic failed state with bounded staging cleanup.
 Every provider import result includes detected provider/format, file and
 conversation counts, user/assistant/other message counts, provider-memory item
 and observation counts, skipped/unsupported material, warnings, and a truthful
-coverage report with explicit limitations. Alongside that report, `outcomes`
+coverage report with explicit limitations. `coverage.closed_coverage` is the
+item-level map with exactly `recognized`, `excluded`, `skipped`, `unavailable`,
+`duplicate`, `failed`, and `unparsed` counts. Alongside that report, `outcomes`
 counts the dispositions present and `record_ids` lists affected current records.
+The map accepts only those seven keys and strict non-negative integer counts up
+to 2,147,483,647. `complete=true` is incompatible with unavailable, duplicate,
+failed, or unparsed counts; classifiable excluded/skipped items remain closed
+accounting rather than unknown material. Oversized ZIP text members are one
+`unavailable` item, while malformed manifest-declared text `.dat` attachments
+are one `unparsed` item only. ZIP/member names in diagnostics are bounded and
+control-character escaped.
+
+Provider container members remain structural in the raw-member audit even when
+their bounded parse fails: the applicable logical failure is recorded exactly
+once in `closed_coverage`, and the container is not also placed in a raw
+`unparsed` bucket. Provider-memory/profile values rejected by content policy
+(including secret-like, inert, highly sensitive, or over-limit values) close as
+logical `skipped` items without retaining their text in diagnostics. Ordinary
+standalone text, JSON, and CSV decoding is strict UTF-8; invalid bytes are one
+`unparsed` item and are never replacement-decoded into candidates. Standalone
+CSV is supported through both public archive entrypoints; malformed CSV is one
+atomic `unparsed` item.
+
+Ordinary JSON roots use bounded two-pass validation/consumption, not unbounded
+document-list materialization. A valid prefix followed by trailing data therefore
+publishes no partial candidates, and the two-pass path/ZIP strategy creates no
+temporary raw artifact. Enumerated ZIP safety rejections (entry count, declared
+total/member size, compression ratio, path/depth, or encryption) return a
+content-free member audit with every rejected file member in exactly one
+`unavailable` terminal bucket and a closed raw denominator; no rejected payload
+is read. If ZIP enumeration itself fails, the result carries the distinct
+content-free `zip_enumeration_failed` archive-level contract with no invented
+member closure.
+
+If parsing cannot finish, source metadata instead carries the separate
+`source_terminal_reason` (`failed` or `cancelled`); this lifecycle status is
+not added to item-level coverage totals.
+The logical denominator is path-sensitive: provider containers contribute
+their contained messages, provider-memory items, and malformed list entries;
+manifest/control members are structural and contribute no second item; a
+standalone generic text, CSV, or JSON member contributes one logical item when
+it has no nested provider items. A successful standalone member with no
+candidate closes as intentional `excluded` or `skipped`. ZIP results also carry
+content-free `stats.archive_member_coverage` for the raw-member audit; its
+structural-member count is kept separate from `closed_coverage` so containers
+are not double-counted.
 For a recognized provider conversation list, every non-conversation entry is
 counted as `unparsed`; valid siblings still import, but any such residual keeps
 the coverage report incomplete. Structural warnings never include imported
@@ -154,9 +198,12 @@ batch submission, cancellation, interruption, or policy-evaluation failure
 leaves the prior current records in place; the staged session remains resumable
 from the preserved blob. Rebuild eligibility is limited to current approved
 records whose Core origin is `archive_import`; independently deleted records,
-direct/local user-authored records, user corrections, and user
-privacy/availability changes are excluded. The raw blob and all history remain
-in place.
+direct/local user-authored records, and any record with a typed local mutation
+ledger row are excluded. The raw blob and all history remain in place. Public
+record/source restores retain truthful original source provenance but write a
+durable local mutation row, so a later valid rebuild fails closed without
+replacing that record ID. Internal duplicate-import recovery and rebuild
+reapply do not write local mutation rows.
 
 For this rebuild path, `finish_ingestion` stores coverage while leaving the new
 candidates staged. Core's rebuild-publish transaction then withdraws eligible

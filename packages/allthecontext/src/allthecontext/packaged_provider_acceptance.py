@@ -11,10 +11,9 @@ from typing import Any
 
 from .config import CoreConfig
 from .core.service import CoreService
-from .models import ObservationDisposition
+from .models import CLOSED_COVERAGE_KEYS, CoverageReport, ObservationDisposition
 from .provider_ingestion import PARSER_VERSION, normalize_provider
 from .provider_shapes import (
-    CLOSED_COVERAGE_REASONS,
     PARSER_IDENTITIES,
     reconcile_closed_coverage,
 )
@@ -63,18 +62,13 @@ def _safe_display_name(provider: str, export_path: Path) -> str:
     return f"{provider}-acceptance-export{extension}"
 
 
-def _closed_coverage(value: object) -> dict[str, int]:
+def _coverage_report(value: object, complete: object) -> CoverageReport:
     if not isinstance(value, dict):
         raise ValueError("coverage is not an object")
-    counts: dict[str, int] = {}
-    for key in CLOSED_COVERAGE_REASONS:
-        count = value.get(key, 0)
-        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-            raise ValueError("coverage count is invalid")
-        counts[key] = count
-    if set(value) - set(CLOSED_COVERAGE_REASONS):
-        raise ValueError("coverage contains an unknown reason")
-    return counts
+    # Keep packaged acceptance on the same strict schema and completion
+    # invariant as the Core ingestion contract. In particular, do not coerce
+    # booleans, floats, strings, or out-of-range integers into counts.
+    return CoverageReport.model_validate({"closed_coverage": value, "complete": complete})
 
 
 def _successful_payload(result: dict[str, Any], provider: str) -> dict[str, Any]:
@@ -89,14 +83,18 @@ def _successful_payload(result: dict[str, Any], provider: str) -> dict[str, Any]
         raise ValueError("export format identity is invalid")
 
     coverage_value: object
+    coverage_complete_value: object
     coverage = result.get("coverage")
     if isinstance(coverage, dict):
         coverage_value = coverage.get("closed_coverage")
-        coverage_complete = coverage.get("complete") is True
+        coverage_complete_value = coverage.get("complete")
     else:
         coverage_value = result.get("closed_coverage")
-        coverage_complete = result.get("complete") is True
-    reconciled = reconcile_closed_coverage(_closed_coverage(coverage_value))
+        coverage_complete_value = result.get("complete")
+    coverage_report = _coverage_report(coverage_value, coverage_complete_value)
+    reconciled = reconcile_closed_coverage(
+        {key: coverage_report.closed_coverage.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
+    )
 
     candidate_ids = result.get("candidate_ids")
     if not isinstance(candidate_ids, list) or any(
@@ -121,7 +119,7 @@ def _successful_payload(result: dict[str, Any], provider: str) -> dict[str, Any]
         raise ValueError("staged candidates remain")
     if reconciled["counts"]["recognized"] < candidate_count:
         raise ValueError("coverage undercounts imported candidates")
-    if not coverage_complete or reconciled["truthful_success"] is not True:
+    if not coverage_report.complete or reconciled["truthful_success"] is not True:
         raise ValueError("coverage is incomplete")
 
     return {

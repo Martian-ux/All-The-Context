@@ -48,6 +48,9 @@ class DiagnosticMetricCode(StrEnum):
 
 
 DiagnosticScalar = bool | int | float
+MAX_DIAGNOSTIC_INTEGER = (1 << 63) - 1
+MAX_SELECTION_LIMIT = 10_000
+MAX_SELECTION_BUDGET = 10_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +61,12 @@ class DiagnosticValue:
     value: DiagnosticScalar
 
     def __post_init__(self) -> None:
+        if type(self.value) not in {bool, int, float}:
+            raise ValueError("diagnostic values must be boolean, integer, or float")
         if isinstance(self.value, float) and not math.isfinite(self.value):
             raise ValueError("diagnostic numeric values must be finite")
+        if type(self.value) is int and abs(self.value) > MAX_DIAGNOSTIC_INTEGER:
+            raise ValueError("diagnostic integer values must fit in signed 64 bits")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,10 +148,12 @@ class SetSelectionConstraints:
     budget: int | None = None
 
     def __post_init__(self) -> None:
-        if self.limit < 0:
-            raise ValueError("selection limit must be non-negative")
-        if self.budget is not None and self.budget < 0:
-            raise ValueError("selection budget must be non-negative")
+        if type(self.limit) is not int or not 0 <= self.limit <= MAX_SELECTION_LIMIT:
+            raise ValueError("selection limit must be a bounded non-negative integer")
+        if self.budget is not None and (
+            type(self.budget) is not int or not 0 <= self.budget <= MAX_SELECTION_BUDGET
+        ):
+            raise ValueError("selection budget must be a bounded non-negative integer")
 
 
 @dataclass(frozen=True, slots=True)

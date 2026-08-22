@@ -17,10 +17,23 @@ user must continually curate.
    exports. The dashboard uses the durable import-operation API: it creates an
    opaque operation id, streams the file, shows committed progress, and can
    cancel mid-upload or mid-extraction.
-4. Let extraction complete. The dashboard reports truthful source coverage and
-   the total observations processed. Core's import response also returns
-   per-disposition `outcomes` and affected `record_ids`; the dashboard presents
-   those disposition counts. There is no extracted-memory review queue.
+4. Let extraction complete. Core reports truthful source coverage, the separate
+   source terminal state, and the total observations processed. Core's import
+   response also returns per-disposition `outcomes` and affected `record_ids`;
+   the current dashboard presents the observation disposition counts and a
+   subset of the coverage warnings. Full seven-key coverage and terminal-state
+   rendering are recorded as a follow-up UI/API reconciliation seam. There is
+   no extracted-memory review queue.
+
+The canonical `coverage.closed_coverage` map has exactly seven keys:
+`recognized`, `excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and
+`unparsed`. Counts are logical source items, not a second count of raw ZIP
+members. Provider containers contribute their contained messages or memory
+items; manifest/control members are structural; a standalone generic text,
+CSV, or JSON member is itself one logical item when it has no nested provider
+items. A standalone member that parses successfully but yields no candidate is
+closed intentionally as `excluded` or `skipped`, so it cannot vanish from
+coverage.
 
 The same importer accepts JSON, JSONL, Markdown, and text. A copied provider
 memory summary can therefore be saved as a text or Markdown file, its provider
@@ -44,6 +57,17 @@ treated as direct user statements.
   supported through adaptive field normalization.
 - Non-text attachments remain inside the preserved raw archive. They are
   counted, but are ignored for context maintenance in this slice.
+- Malformed JSON or text is one `unparsed` logical item and cannot publish a
+  valid prefix; line-oriented JSONL retains its per-line behavior.
+- Standalone text, JSON, and CSV use strict UTF-8 decoding; invalid bytes are
+  one `unparsed` item and are never replacement-decoded. CSV is supported by
+  both public archive entrypoints and is parsed atomically, so malformed CSV
+  closes as one `unparsed` item.
+- Provider container/control members remain structural in the raw ZIP audit
+  when malformed. Their applicable logical failure is counted exactly once in
+  `closed_coverage`, never also as a raw-member `unparsed` bucket. Provider
+  memory/profile values rejected by secret, inert, highly-sensitive, or size
+  policy close as logical `skipped` items without exposing their text.
 - The import does not change current context until the extraction session
   finishes successfully. A failed or interrupted session retains recoverable source
   state without partially publishing decisions.
@@ -74,24 +98,34 @@ parser version to reprocess the source.
 ## Safety, scale, and recovery
 
 - Core reads ZIP members in place and never extracts archive paths.
-- Absolute/traversal paths, encrypted text entries, case-insensitive duplicate
-  names, excessive entry counts, compression bombs, and excessive expanded
-  text are rejected or explicitly skipped.
-- JSON conversation arrays are decoded one conversation at a time. The HTTP
+- Absolute/traversal paths, paths deeper than 64 components, encrypted text
+  entries, case-insensitive duplicate names, excessive entry counts,
+  compression bombs, and excessive expanded text are rejected or explicitly
+  skipped.
+- Enumerated ZIP safety failures return a content-free raw-member audit: each
+  rejected file member is in exactly one terminal `unavailable` bucket, and no
+  rejected payload is read. If ZIP enumeration fails, the separate
+  `zip_enumeration_failed` archive-level result has no invented member closure.
+- JSON conversation arrays are decoded one conversation at a time. Ordinary
+  JSON roots use bounded two-pass validation/consumption rather than an
+  unbounded document list, preserving atomic trailing-data rejection without
+  raw temporary artifacts. The HTTP
   upload and Core source write use bounded chunks rather than loading the
   complete archive into memory.
 - The current implementation default and maximum raw-source limit is
   2,000,000,000 bytes, and an operator can lower it with
-  `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the
-  mandatory beta maximum. The inclusive boundary is implemented and tested;
-  exact multi-platform candidate receipts remain acceptance work. The frozen
-  reference floor is 4 logical cores, 8 GiB RAM, local SSD, and 16 GiB free.
+  `ATC_MAX_IMPORT_BYTES`. The lower operator setting does not reduce the local
+  source-boundary contract. The inclusive boundary is implemented in the local
+  code path; no exact multi-platform or packaged-client acceptance is claimed by
+  this documentation. The frozen reference floor is 4 logical cores, 8 GiB RAM,
+  local SSD, and 16 GiB free.
   Core plus import-worker RSS is capped at 1 GiB; incremental import storage is
-  capped at four times raw size plus 1 GiB. The beta acceptance contract
+  capped at four times raw size plus 1 GiB. The local engineering budget
   requires progress to start within 5 seconds and advance every 5 seconds or
   64 MiB, cancellation to be acknowledged within 5 seconds and quiesce safely
   within 30 seconds, and import, source-inclusive export, and isolated restore
-  each to finish within 60 minutes.
+  each to finish within 60 minutes; these are not release or client acceptance
+  evidence.
 - Disk preflight requires the greater of four-times-source-plus-1-GiB or any
   measured durable high-water plus 25 percent on the Core database volume
   before accepting a raw source. A durable opaque **import operation** id is
@@ -142,17 +176,38 @@ parser version to reprocess the source.
   another upload or duplicate decisions.
 - Raw source text and credentials are never logged.
 
-ChatGPT, Claude, and Grok are all mandatory beta provider targets. Each
-provider claim has a parser identity (`chatgpt-archives-v2`,
+ChatGPT, Claude, and Grok are the supported local provider targets for this
+slice. Each provider claim has a parser identity (`chatgpt-archives-v2`,
 `claude-archives-v2`, `grok-archives-v2`) under the aggregate
 `provider-archives-v2` session version. Frozen fictional shapes live in the
 runtime claim manifest. Each import reports closed coverage counts
-(recognized, excluded, skipped, unavailable, failed, unparsed). Unknown or
-unparsed material is a visible coverage warning and keeps coverage incomplete
-rather than counting as parser success. Each provider must still pass a
-privacy-safe nonempty real-export receipt acquired after parser freeze and
-within 30 days of candidate acceptance. Missing real-export evidence keeps
-the beta in draft rather than narrowing the provider list.
+(recognized, excluded, skipped, unavailable, duplicate, failed, unparsed).
+Unknown or unparsed material is a visible coverage warning and keeps coverage
+incomplete rather than counting as parser success. No real-export, exact-client,
+release, or hosted acceptance receipt is claimed by this local integration
+documentation; those remain separate operator work.
+
+Ordinary JSON is parsed through a shared bounded direct/path/ZIP reader: strict
+UTF-8, 512 MiB raw bytes, 128 MiB decoded item/document size, and 128 nesting
+levels. The source is validated before candidates are consumed. Empty generic
+roots are one skipped logical item; provider containers are structural in the
+raw ZIP audit and close only through their semantic coverage. Canonical and
+dated conversation filenames are recognized directly; `chats.json`,
+`history.json`, and `messages.json` require an explicit provider hint or exact
+provider path context, with valid provider-shaped neutral files still
+classified from parser evidence and malformed neutral files left generic.
+
+Provider-shaped empty roots and zero-message conversations still close one
+logical item: known-provider empties are skipped, while identity-free or
+malformed provider entries are unparsed and keep the source incomplete. The
+bounded parser carries explicit root versus root-array-item context beside each
+streamed value, so an empty object or wrapper sibling is unparsed exactly once
+without materializing the root or deriving terminal context from a filename.
+Malformed entries are not order-dependent.
+For ZIPs, a valid ChatGPT content signature in an allowed neutral alternate
+(`messages.json`, `chats.json`, or `history.json`) enables the same attachment
+link inventory as explicit ChatGPT selection; malformed neutral JSON remains
+generic and cannot enable that provider-specific scan.
 
 ## Contributor CLI
 

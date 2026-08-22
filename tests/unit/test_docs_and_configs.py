@@ -157,7 +157,7 @@ def test_release_workflows_are_immutable_and_offline_signing_is_documented() -> 
     }
 
 
-def test_active_release_docs_keep_published_and_historical_identities_distinct() -> None:
+def test_integrated_docs_keep_local_and_historical_release_truth_distinct() -> None:
     status = (REPOSITORY_ROOT / "docs" / "STATUS.md").read_text(encoding="utf-8")
     traceability = (REPOSITORY_ROOT / "docs" / "REQUIREMENTS_TRACEABILITY.md").read_text(
         encoding="utf-8"
@@ -167,8 +167,24 @@ def test_active_release_docs_keep_published_and_historical_identities_distinct()
     ).read_text(encoding="utf-8")
     decisions = (REPOSITORY_ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
 
-    assert "`0.1.0-beta.6` is published as immutable prerelease ID `374723649`" in status
-    assert "all 34" in status and "external ledger" in status
+    current_milestone = status.split("## Current milestone", 1)[1].split("### ", 1)[0]
+    current_and_release = status.split("## Current milestone", 1)[1].split(
+        "## V1 recovery/import/release integration reconciliation", 1
+    )[0]
+    assert "local integration baseline" in current_milestone
+    assert "does not assert release\npublication" in current_milestone
+    assert (
+        "`0.1.0-beta.6` is published as immutable prerelease ID `374723649`"
+        not in current_milestone
+    )
+    assert "public, immutable,\ncurrent downloadable release" in current_and_release
+    assert "ID `374723649`" in current_and_release
+    assert "`d6d51acc5a880e611a65a206b90c6eb68118443d`" in current_and_release
+    assert "`32536391309`" in current_and_release
+    assert (
+        "`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`" in current_and_release
+    )
+    assert "34\nattested assets" in current_and_release
     assert "live unpublished beta.3 identity" not in traceability
     assert "Phase 0 preserves the beta.3 boundary" not in traceability
     assert "Publish and verify beta.3" not in execution

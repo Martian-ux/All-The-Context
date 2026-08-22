@@ -2,83 +2,265 @@
 
 ## Current milestone
 
-As of 2026-08-22 UTC, the unsigned `0.1.0-beta.6` community release is a public,
-immutable GitHub prerelease for Windows 11 x86-64 and Ubuntu 24.04 LTS x86-64.
-Stable `1.0.0` is post-V1. Direct downloads are live; the protected Windows
-beta-channel promotion remains pending. The
-dependency-ordered plan, fixed support/trust decisions, acceptance matrix, and
-work packages are in
-[`ROADMAP_TO_V1.md`](ROADMAP_TO_V1.md). The encrypted `release-2026-b` private
-key exists outside the checkout and synchronized workspace; only its reviewed
-public half is tracked. The predecessor `release-2026-a` remains in the
-keyring as revoked prepublication history.
+As of 2026-08-22 UTC, this document describes the local integration baseline
+only: Import, Memory Truth, Retrieval, and the Context UI are composed on the
+local `codex/truth-foundations-overnight` checkout. It does not assert release
+publication, hosted CI results, exact artifact/client/provider acceptance, or
+inspection of live/private data.
 
-ADR-092 introduces two explicit, machine-enforced publication profiles without
-rewriting evidence. `certification_v1` remains the unchanged 20-gate contract.
-The initial public beta uses `lean_public_beta_v1`: exact Windows 11 and Ubuntu
-24.04 first-run receipts (`BETA-L01`/`BETA-L02`), `BETA-S06`, `BETA-R01`,
-`BETA-R02`, and `BETA-R03`. Approval additionally requires the sole human
-maintainer to acknowledge the incomplete certification matrix, unsupported
-macOS, unsigned community packages, and reviewed known issues. The 20-gate
-ledger remains truthful certification evidence and is not relabeled, waived,
-or treated as lean approval. The exact six-receipt lean bundle and the required
-maintainer acknowledgements authorized beta.6 signing and publication; they do
-not claim completion of the 20-gate certification profile.
+Core remains the authoritative local service and binds to loopback by default.
+The supported posture is Windows and supported Linux source/package work; the
+macOS source, tests, and historical preflight remain retained for portability,
+but macOS is unsupported and creates no support or acceptance claim. Historical
+release and CI notes lower in this file are retained as provenance only, not as
+evidence for this integrated checkout.
 
-The live unpublished `0.1.0-beta.1` four-platform identity is draft ID
-`367337056`, source `563a397d3095f1f45bb5814dfd39d9d7c4fab0bc`,
-release-candidate run `31285545048`, and candidate digest
-`ba17eeec2e82d1ee1b0621f77024a03c78807496e8f1f07bfce38f0c42842ebe` (55
-assets). It is never retargeted, deleted, or published. An earlier episode
-created draft `360008392` from source
-`48815077544f9defb78d0e6b9c8022319888dfed`; that episode remains historical
-and is no longer the live release identity. The unpublished `0.1.0-beta.2`
-Windows/Linux-only identity remains an occupied historical draft; its
-evidence is not rebound, deleted, relabeled, or reused. ADR-086 removes macOS
-from the product support table and consumer release composition while retaining
-the existing Mac source and historical evidence as unsupported portability
-work. Ordinary CI no longer schedules Mac hosted runners, jobs, or preflight;
-no Mac execution or receipt is required for `0.1.0-beta.6`, and no Mac result is
-relabeled as passed, skipped, waived, or unavailable.
+## Privacy ACL boundary repair (2026-08-22)
 
-The unpublished `0.1.0-beta.3` Windows/Linux candidate is draft ID
-`371617909`, source `89f3973f8408ee80a76265b88d13e6fbf5791f6e`,
-release-candidate run `32010253144`, and candidate digest
-`804afcd91b71ea873f86c10e8f30271cd7a63d237674af91b56aae291d77f369` (31
-assets). It remains unsigned, draft, and unpublished. Its version slot is
-occupied and it cannot be retargeted, deleted, reused, or published after the
-prepublication signing-key rotation. Candidate creation and a green
-release-candidate workflow do not satisfy any exact-candidate acceptance
-receipt or authorize publication.
+The canonical observation merge now treats a restrictive allowlist as content-
+scoped. When a winning replacement carries a disjoint restrictive allowlist,
+the canonical record adopts that new boundary instead of retaining the old
+client set and exposing the replacement content to the old client. Overlapping
+allowlists remain intersected, and an omitted observation allowlist still
+cannot loosen an existing restriction. Reinforcement keeps the current
+boundary when its observation is disjoint, so it cannot transfer existing
+content to a different client.
 
-The unpublished `0.1.0-beta.4` Windows/Linux candidate is draft ID
-`374681462`, source `1084abd54d39ecb5be6e33e5dce57cd3d56d3ccb`,
-release-candidate run `32527232813`, and candidate digest
-`79020be27e998725664abe0f20fd27cc1b4e1735f4ea9ff1ae0171252f2dd797` (31
-assets). It remains unsigned, draft, and unpublished. Two live runbook
-sentences contradicted ADR-093's one-backup custody floor, so this occupied
-identity is historical and receives no rebound receipts.
+Principal-scoped Memory Truth detail now applies the same allow/deny check to
+each linked observation before the bounded evidence limit. A correction that
+transfers a restrictive ACL to a disjoint client set also replaces, rather than
+inherits, the canonical structured value, scopes, tags, source provenance,
+evidence, confidence, and validity metadata. Stable kind and slot identity are
+preserved, while the principal-less Core/local-admin path retains the complete
+linked observation history. Unrestricted records remain available to
+authorized principals. Focused synthetic regression tests cover replacement,
+reinforcement, canonical projection, evidence, unrestricted, and local-admin
+cases. Full pytest, hosted CI, release/publication, live/private data,
+network/provider access, and macOS work are not claimed for this repair.
 
-The unpublished `0.1.0-beta.5` Windows/Linux candidate is draft ID
-`374697784`, source `28b46ea192af76233afe41f0d2b287edc2d59a04`,
-release-candidate run `32530830948`, and candidate digest
-`b0303b24164de987de9eab85caeeba4b460441fbe2c32463589269f4279462bd` (31
-assets). Six candidate-bound lean receipts were materialized without a bundle,
-approval, signature, or publication. The candidate source still described
-beta.5 as unbuilt, called beta.3 the live traceability identity, and aligned
-the active product plan to beta.3. Those statements are contradictory current
-release state, so beta.5 remains occupied historical evidence and receives no
-rebound receipts.
+Local validation for this change is six focused pytest nodeids (6 passed),
+`python -m ruff check .` (passed), `python -m mypy packages/allthecontext/src`
+(82 source files, passed), and `git diff --check` (passed). A FastAPI/httpx
+deprecation warning remains in the focused test environment; it is unrelated
+to this repair.
 
-`0.1.0-beta.6` is published as immutable prerelease ID `374723649` from exact
-source `d6d51acc5a880e611a65a206b90c6eb68118443d`, release-candidate run
-`32536391309`, and candidate digest
-`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`.
-The release contains 34 attested assets: Windows/Linux packages and evidence,
-the offline-signed Windows OTA manifest, the lean acceptance bundle, and the
-publication record. GitHub release attestation verification passes for all 34
-assets. No occupied historical draft was retargeted, deleted, reused, signed,
-or published.
+## Complete-source coverage repair (2026-08-22)
+
+The Sources dashboard's retry action now reaches a real bounded repair for the
+specific state `import_status=complete` with `coverage_complete=false`.
+Core routes that state through the existing preserved-blob source-rebuild
+authority: it reparses the retained source, stages candidates, and publishes
+only after complete coverage is proven. The atomic cutover continues to
+preserve user-corrected, local-only, and deletion-barrier-protected records;
+healthy complete sources still return the existing duplicate/no-op receipt.
+
+Focused synthetic regressions cover successful repair, parser failure without
+withdrawing prior current records, concurrent repair idempotency, healthy
+complete-source no-op behavior, and the dashboard's non-`rebuild=true` retry
+request. Full pytest and hosted revalidation remain outside this lane; the
+dashboard dependency install, check, full test suite (55 tests), and production
+build pass in this fresh worktree.
+
+## Generic bounded-failure coverage correction (2026-08-22)
+
+A focused PR 73 review reproduced a slotted-counter defect in the standalone
+CSV boundary: an oversized CSV selected the valid `unavailable` terminal reason,
+but the generic coverage object had no such slot and raised `AttributeError`.
+Generic coverage now declares and merges `unavailable`, and bounded failure
+reasons use explicit assignments for `unavailable`, `failed`, and `unparsed`.
+The oversized CSV therefore returns one honest closed terminal item with no
+candidate, no exception, and incomplete coverage; malformed CSV remains one
+`unparsed` item.
+
+Focused importer regressions cover the synthetic bounded CSV and all three
+generic failure reasons with exact seven-key accounting. This is local source
+evidence only: no full pytest matrix, hosted checks, provider access, private
+data, release action, publication, or macOS execution is claimed.
+
+## Draft-PR formatting and CI-trigger reconciliation (2026-08-22)
+
+Draft PR 73 exposed one deterministic source-check failure: 23 changed Python
+files had passed Ruff lint but not the separate repository-wide Ruff formatting
+gate. Those files are now formatted with the pinned project formatter.
+
+The same feature-branch update also launched two identical CI matrices because
+the canonical workflow listened to every `push` as well as `pull_request`.
+Ordinary CI now runs for pull requests, pushes to `main`, and version tags
+matching `v*`; ordinary feature-branch pushes do not run push CI. The three
+privileged release workflows remain explicit `workflow_dispatch` ceremonies.
+This preserves pre-merge validation, post-merge default-branch evidence, and
+release-tag validation without spending a second full matrix on the same
+feature-branch commit. No CI job, supported platform, release gate, or macOS
+support claim was added or removed.
+
+## Hosted full-suite reconciliation (2026-08-22)
+
+The first formatted PR 73 matrix reached the full Python suite and exposed two
+previously unexercised integration mismatches:
+
+- A newly created vault applied every migration before inserting its `vaults`
+  row, so the row retained schema version 1 until a later migration/verification
+  pass advanced it to 15. New vault insertion now records the latest applied
+  migration immediately. The recovery cutover/crash fingerprints therefore do
+  not change merely because export verification opens the active vault.
+- The frozen B01 expectation still recorded the pre-integration
+  `atc-retrieval-v3` confirmatory score of 1/7. The accepted deterministic
+  retrieval changes now score 3/7; the fixture identity, zero-network/zero-model
+  boundary, external-operation accounting, and final `KILL_MECHANISM` decision
+  remain unchanged.
+
+The new schema-version regression, the B01 twenty-repeat assertion, and the
+complete recovery-admin file pass together (24 tests). Exact hosted
+revalidation of the follow-up commit remains pending.
+
+## Offline product-correctness maintenance (2026-08-22)
+
+A bounded synthetic-data pass closed four integration defects without changing
+release state or provider availability:
+
+- ZIP import now treats Unicode compatibility-equivalent, case-insensitive
+  member names as one logical path. The first member remains deterministic and
+  later equivalents close as duplicates instead of being imported twice.
+- Continuous Capture accepts only signed-64-bit generation, page-order, and
+  payload integers. Unexpected local runtime/storage failures now close the
+  durable run as `failed`, degrade the source with the content-free
+  `capture_failed` code, and do not leave a running job behind.
+- Context-search `limit` and `offset` require strict bounded integers; JSON
+  booleans are no longer coerced into pagination values.
+- Direct record/truth lookup and registered-client authentication/management
+  are scoped to Core's authoritative vault. Synthetic rows assigned to another
+  vault are not returned or granted authority.
+
+Focused regressions use temporary databases and in-memory ZIP fixtures only.
+No network/provider access, private data, full pytest matrix, hosted checks,
+release action, publication, or macOS work is included or claimed.
+
+## Adversarial boundary sweep (2026-08-22)
+
+A focused post-integration sweep reproduced and closed four boundary defects:
+
+- Direct-secret detector v3 normalizes Unicode compatibility forms and removes
+  zero-width/combining obfuscation before applying the existing high-confidence
+  credential rules. Refused content still receives only an opaque replayable
+  receipt and never enters Core, Relay, SQLite/WAL/FTS, or diagnostics.
+- Canonical `supersedes` writes now reject missing, cross-vault, overlong, and
+  cyclic chains transactionally. Self- and two-record-cycle regressions prove a
+  local correction cannot poison the temporal sidecar or make retrieval fail.
+- ZIP members with names beyond the 1,000-character diagnostic/identity bound,
+  or with non-printable names, close as unavailable with bounded escaped
+  diagnostics. Distinct long paths can no longer collapse after truncation and
+  silently discard one member.
+- Continuous Capture now rejects implicit identifier/integer coercion and
+  Unicode-obfuscated credential markers. An injected sink must echo the exact
+  deterministic source/item lineage; a mismatched first-event receipt fails
+  before `capture_items` or checkpoints can advance. Retrieval experiment
+  diagnostics and selection constraints are strictly finite and bounded, and
+  malformed/nonfinite lexical scores are neutralized before usefulness ranking.
+
+This is local focused evidence only. The long full pytest matrix, hosted CI,
+exact artifacts, live/private data, publication, release acceptance, and macOS
+work were not run or claimed; beta.6 and the unsupported-macOS posture are
+unchanged.
+
+## Sources/Context dashboard contract reconciliation (2026-08-22)
+
+- The beta.6 dashboard keeps source item accounting separate from terminal
+  import processing, normalizes the exact seven-key closed-coverage shape, and
+  preserves cancelled/failed terminal reasons without fabricating counts.
+- Dashboard wire reads now construct record and selected-truth values
+  field-by-field with bounded strings, arrays, enums, timestamps, hashes,
+  confidence, versions, and counts. Malformed detail envelopes fail with a
+  content-free API error; malformed list rows are omitted while valid siblings
+  remain usable. Import IDs and displayed stats count only valid bounded
+  values, including mixed legacy `candidate_ids` responses.
+- Context uses the existing bounded current-only search plus typed Core reads for
+  content-free coverage and selected truth. The accounting view shows real
+  state counts, conflict groups, and incomplete ingestion sessions; the
+  inspector renders selected truth status, provenance, evidence, and history
+  without per-row truth requests. A coverage failure clears cached truth
+  metrics while retaining search results, and sequence guards prevent stale
+  concurrent coverage responses from changing a newer refresh.
+- Focused dashboard tests cover normalization, terminal/item split, coverage
+  fallback, truth races, mutation refresh, and rendered statuses. Adversarial
+  normalization and coverage recovery/race checks bring the suite to 54 tests
+  across 2 files. Fresh independent API/DOM review accepted the exact local
+  hardening commit. Synthetic loopback browser checks remain local evidence
+  only, and fresh visual Product Design acceptance is still pending because the
+  required in-app browser verifier was unavailable. No release, publish, or
+  live/private Core/data work is claimed here.
+
+The integrated truth boundary is explicit: import `closed_coverage` counts
+logical source items; source terminal failure/cancellation is separate; Memory
+Truth coverage counts durable Core entities; and Retrieval `pack_metadata`
+describes one bounded transient bootstrap selection. These dimensions are not
+combined or presented as release evidence.
+
+## Stage 4 Continuous Capture foundation (2026-08-22)
+
+This isolated first slice adds migration 015 and provider-neutral Core contracts
+for a bounded Continuous Capture ledger: source lifecycle, checkpoints,
+durable staged events, source-scoped item lineage, and foreground run telemetry.
+The coordinator is local-only and opt-in, requires explicit acknowledgement,
+has no scheduler, and makes no adapter call for disabled, paused, or revoked
+sources. Focused synthetic tests cover migration repair, lifecycle guards,
+ordered multi-page upsert/update/delete, duplicate replay, idempotent sink
+recovery, gaps/cursors/limits/backoff/leases, API authentication, CLI output,
+and secret-marker absence.
+
+Fresh independent security/correctness review accepted the exact cumulative
+foundation after reproducing and closing schema-repair and stale-lease authority
+defects. The review passed 17 capture tests, 14 migration regressions, Ruff,
+mypy, diff checks, and independent temporary-database probes. The whole
+`test_client_witness.py` file passes 19/19 after bounded canonical relay-reason
+reconciliation. Full pytest and release acceptance are not claimed.
+
+This is infrastructure, not a claim that a provider supports continuous
+capture. No real connector, network implementation, OAuth/credential handling,
+dashboard or package-startup change, live/private Core/data inspection, current
+product availability, release, publication, beta acceptance, or macOS work is
+claimed. The beta.6 identity and unsupported-macOS posture remain unchanged.
+Full snapshot/rescan deletion is deferred until a provider-specific snapshot
+contract exists.
+
+The separately published `0.1.0-beta.6` remains the public, immutable,
+current downloadable release; this local integration neither publishes nor
+alters it. Its exact release identity is ID `374723649`, source
+`d6d51acc5a880e611a65a206b90c6eb68118443d`, release-candidate run
+`32536391309`, candidate digest
+`afa9036b4df5aca85975e9f3fdf475ac85e589a4ad0937d3ca1c440287b78647`, and 34
+attested assets. Occupied beta.1 through beta.5 draft/candidate identities
+remain historical and are not rebound or reused.
+
+### 2026-08-22 Memory Truth foundation
+
+Core now has an additive canonical Memory Truth projection for authorized
+clients and providers. It exposes current, tentative, superseded, conflicted,
+and deleted semantics; deterministic observation evidence; source identity;
+decision reason and policy metadata; effective, observed, and recorded times;
+confidence and sensitivity; bounded version-history counts; and content-free
+coverage/accounting. `GET /v1/context/truth/{record_id}` and
+`GET /v1/context/coverage` are the smallest read contracts for authorized
+clients. Admin-only list/detail endpoints include non-current records and
+detached tentative observations.
+
+Source rebuild withdrawal now records the exact rebuild source on its tombstone.
+Only an untouched automatic archive record with that matching internal
+source-rebuild tombstone may be re-applied under its stable identity. An
+ordinary user deletion is a hard automatic reappearance barrier: matching
+archive evidence is retained as ignored and linked to the deleted record, with
+no replacement current record. Stable record identity includes source address
+and value identity, so repeated source references with different values remain
+distinct.
+
+Migrations `010`–`014` are the Memory Truth foundation. Migration `015` is the
+additive Continuous Capture contracts/ledger foundation described below.
+
+This is a Memory Truth foundation, not a complete memory-audit product. A
+replayable append-only decision event stream, configurable tentative expiry or
+decay, source-content history/purge presentation, provider extraction changes,
+retrieval/ranking changes, and dashboard wiring remain outside this slice.
+Focused truth, storage, policy, migration, and API checks are local engineering
+evidence only; this slice makes no hosted-CI or release-state claim.
 
 ### 2026-08-22 source-rebuild safety correction
 
@@ -91,13 +273,15 @@ idempotent session when source finalization is interrupted; a generation/session
 publish marker written in the cutover transaction prevents a retry from
 withdrawing the replacement a second time.
 
-Only current approved records with Core origin `archive_import` and no detected
-correction, user edit, availability/privacy change, or deletion are replacement
-targets. Direct/local-admin records that retain the source ID remain in place.
-Synthetic focused coverage passes for parse failure, injected policy-ingestion
-rollback, cancellation, corrected records, and local-authored records. Full
-Ruff passes; mypy reports no issues across 81 source files; and pytest passes
-1,065 tests with 4 Windows symlink-capability skips and 3 dependency warnings.
+Only current approved records with Core origin `archive_import` and no typed
+local mutation, ordinary deletion, or invalid identity are replacement targets.
+Direct/local-admin records that retain the source ID remain in place; public
+restore retains their truthful source provenance while the ledger blocks later
+replacement.
+Synthetic focused coverage covers parse failure, injected policy-ingestion
+rollback, cancellation, corrected records, and local-authored records. This
+integration lane reports only the scoped local checks run below; it makes no
+full-pytest, hosted-CI, release, or exact-client acceptance claim.
 
 ### 2026-08-22 bounded ChatGPT attachment ingestion slice
 
@@ -113,6 +297,42 @@ are searchable. Synthetic tests cover identity, linkage, supported text,
 unsupported binaries, traversal, member/total expansion, and text read bounds.
 Real-export structural inspection was content-free; no real export bytes or
 personal values enter the repository, tests, logs, or receipts.
+
+### 2026-08-22 neutral alternate promotion correction
+
+Auto provider detection now buffers only bounded structural-signature
+observations until the complete JSON iterator succeeds. A neutral alternate
+such as `messages.json` with valid ChatGPT-shaped content followed by trailing
+data or a later depth, item, byte, or parser-limit failure remains generic and
+incomplete, closes once as `unparsed`, and cannot enable ChatGPT attachment
+inventory or links. Direct, path, and ZIP entrypoints share this boundary; a
+valid named provider member remains independent of a malformed neutral sibling.
+This is synthetic local engineering evidence only, does not inspect live/private
+Core or exports, and grants no acceptance credit.
+
+### 2026-08-22 Import Truth accounting closure
+
+Provider and ZIP results now expose a dimensionally bounded
+`coverage.closed_coverage` map with the item-level keys `recognized`,
+`excluded`, `skipped`, `unavailable`, `duplicate`, `failed`, and `unparsed`.
+The public schema rejects unknown keys and non-strict, negative, or
+out-of-bound counts; `complete=true` is rejected when unavailable, duplicate,
+failed, or unparsed counts are nonzero. Oversized ZIP `.txt`/`.md` members close as
+`unavailable`, and malformed manifest-declared text `.dat` attachments close
+as `unparsed` only. ZIP/member diagnostic names are bounded and control-escaped.
+Case-insensitive duplicate ZIP members increment `duplicate`; bounded member
+parser failures increment `failed` and force incomplete coverage. A fatal
+source failure or cancellation never inflates those item counts: the preserved
+source keeps known counts, sets `coverage_complete=false`, and records the
+separate source-level `source_terminal_reason` (`failed` or `cancelled`) in
+source metadata; durable import operations retain their terminal status too.
+The same closed map is carried in the public ingestion coverage report and
+CLI/API import result. Synthetic regressions cover duplicate members,
+malformed CSV, pre-parse failure, partial member failure, and cancellation.
+
+UI handoff contract: render `coverage.closed_coverage` as item accounting and
+render `source.metadata.source_terminal_reason` or the operation `status` as a
+source-level terminal state. These dimensions must not be added together.
 
 ### 2026-08-22 attachment review-boundary corrections
 
@@ -1249,6 +1469,12 @@ state is already noncurrent and creates no user queue.
 - Weighted BM25 runs only over authorized and temporally eligible candidate
   IDs. Prefix fallback, candidate count, tokens, channel results, query length,
   and result count are hard bounded; FTS5 secure-delete is feature-detected.
+- Default V3 search now applies a deterministic local-usefulness rerank after
+  those hard boundaries: salient query tokens and bounded intent aliases are
+  combined with field coverage, recency, confidence, availability, sensitivity,
+  conflict, provenance, and actionability. A 32-record bootstrap pack cap and
+  optional `pack_metadata` envelope report budget, omission, provenance, and
+  truncation accounting without exposing ranking diagnostics.
 - Task admissibility uses only upstream numeric factors after hard policy and
   time filtering. Sparse/underspecified evidence fails open; learned authority
   remains shadow-only.
@@ -1264,6 +1490,13 @@ state is already noncurrent and creates no user queue.
   exact character budgets. Its standalone benchmark passes all 11 gates with
   semantic coverage `1.0`, zero set violations, and deterministic input-order
   behavior.
+- Edge forwarding now reconciles context-pack metadata to the final returned
+  items after scope filtering or envelope trimming: selected, omitted, used,
+  and provenance counts are recomputed; duplicate/conflict aggregates are
+  explicitly Core-selection-scoped and bounded by final omissions; and the
+  public schema rejects contradictory count relationships. Focused synthetic
+  filter/trim regressions cover the former provenance contradiction. This is
+  local correctness evidence only.
 - The optional 384-dimensional float32 dense shadow remains disabled,
   in-memory, nonauthoritative, and outside default packaging. Synthetic exact scan
   is deterministic but misses its 10k target: `400.294955 ms` warm p95 versus
@@ -1278,13 +1511,34 @@ state is already noncurrent and creates no user queue.
   stale/conflict exclusion, withdrawn exclusion, sensitivity, provenance,
   budget compliance, and provider-facing packaging through public
   observation/search/bootstrap/get APIs on an isolated vault. It refuses the
-  live Core data directory, does not change production ranking or MCP behavior,
-  and grants no beta-acceptance credit. The checked-in baseline is
-  `bench/baselines/retrieval_usefulness_v1.json`.
-- Historical integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
-  macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
-  Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local
-  measurements rather than cross-platform performance claims.
+  live Core data directory, verifies that the checkout-local runtime is loaded,
+  exercises sparse intent and truthful budget metadata cases, and grants no
+  beta-acceptance credit. The checked-in baseline is
+  `bench/baselines/retrieval_usefulness_v1.json` (17 cases; all scorecard gates
+  pass locally).
+- This integration did not rerun hosted Python/dashboard/native matrices or
+  exact client acceptance. The retained macOS source and historical evidence
+  remain unsupported portability material; local retrieval measurements are not
+  cross-platform performance claims.
+
+## Post-merge Sources/Context contract gaps
+
+The backend and dashboard contracts were inspected after the ordered merge. The
+next dedicated reconciliation task should address these observed mismatches:
+
+- Core `SourceOut.import_status` includes `cancelled`, and source metadata can
+  carry the seven-key `closed_coverage` map plus the separate
+  `source_terminal_reason`; dashboard `SourceRecord` omits `cancelled`,
+  `IngestionCoverage` omits `closed_coverage`, and the Sources view currently
+  renders only selected warnings rather than the full item/terminal split.
+- Core exposes `/v1/context/truth/{record_id}` and `/v1/context/coverage` with
+  Memory Truth status, conflict, evidence, and durable coverage fields. The
+  Context UI currently calls legacy `/v1/context/search`, maps to its narrower
+  `ContextRecord` type, and hard-codes returned rows as “Current”; it does not
+  consume the truth projection or render those additional states.
+
+These are recorded as contract gaps only. No backend or UI feature is invented
+or papered over in this integration.
 
 ## V1 recovery/import/release integration reconciliation
 
@@ -1480,6 +1734,85 @@ state is already noncurrent and creates no user queue.
   contain no entry IDs, titles, or imported text; all-malformed provider lists
   remain recognized but incomplete.
 
+## Final import-truth contract hardening (2026-08-22)
+
+- Manifest-declared JSON `.dat` attachments now validate the complete bounded
+  member before publishing candidates. A valid JSON array followed by trailing
+  malformed bytes is therefore one `unparsed` item with zero recognized items
+  and no partial candidate; valid JSON and line-oriented JSONL attachment
+  extraction remain supported.
+- Ordinary bounded ZIP `.json` members now use the same atomic validation
+  boundary. A generic standalone text/CSV/JSON member that yields no candidate
+  closes as intentional `excluded`/`skipped` logical coverage instead of
+  disappearing. Provider containers and manifest/control members remain
+  structural; the separate content-free `stats.archive_member_coverage` audit
+  records its raw-member denominator without adding containers to item counts.
+- Malformed JSON/text is one `unparsed` logical item; malformed CSV follows
+  the same rule, while JSONL remains line-oriented.
+- Provider container/control members remain structural in the raw-member audit
+  when malformed, while their logical `unparsed`/`failed` outcome is counted
+  exactly once in `closed_coverage`. Rejected provider-memory/profile values
+  close as logical `skipped` items, including content-policy, inert,
+  highly-sensitive, and over-limit rejection, without exposing their text.
+- Standalone text, JSON, and CSV decoding is strict UTF-8; invalid bytes never
+  become replacement-decoded candidates. CSV is supported atomically through
+  both public archive entrypoints.
+- Ordinary JSON roots now use bounded two-pass validation and consumption, so
+  no unbounded document list or raw temporary artifact is retained. Enumerated
+  ZIP safety failures return content-free member closure with each rejected
+  file member in exactly one `unavailable` bucket and no rejected payload read;
+  an unenumerable ZIP returns `zip_enumeration_failed` without fabricated
+  member closure.
+- Packaged-provider acceptance now validates its dict-level coverage through
+  `CoverageReport`, preserving the closed seven-key schema, strict bounded
+  integer counts, and fail-closed completion semantics for unavailable,
+  duplicate, failed, or unparsed items.
+- Direct bytes, filesystem JSON, and ordinary ZIP JSON members now share one
+  bounded incremental UTF-8/raw-decoder contract: a 512 MiB JSON byte ceiling,
+  128 MiB decoded item/document ceiling, and 128-level quote/escape-aware
+  nesting ceiling. Validation completes before candidate consumption, so depth,
+  recursion, or trailing-data rejection cannot publish partial candidates.
+  Empty ordinary `[]`/`{}` roots remain one skipped logical item across all
+  three entrypoints; empty provider containers remain structural and contribute
+  no invented semantic item.
+- Provider raw-container classification uses the canonical
+  `conversations.json`/dated `conversations-YYYY[-MM[-DD]].json` names plus the
+  frozen alternate basenames `chats.json`, `history.json`, and `messages.json`.
+  Alternates require an explicit provider hint or an exact provider path
+  component (`chatgpt`, `openai`, `claude`, `anthropic`, `grok`, `xai`, `x.ai`);
+  valid provider-shaped neutral alternates can still become structural from
+  parser statistics, while malformed neutral JSON remains an ordinary item.
+- `CoverageReport.closed_coverage` normalizes omitted or partial input to the
+  exact seven-key zero-filled map and still rejects unknown keys, non-integer,
+  negative, and overflowing counts. This preserves older partial callers while
+  making model validation and serialization exact.
+- Focused synthetic regressions cover the atomic malformed-JSON attachment,
+  valid attachment behavior, reconciler coercion/unknown/bounds cases, and
+  completion consistency, bounded direct/path/ZIP JSON, depth/escape handling,
+  alternate provider names, empty roots, and exact API/model coverage maps. No
+  live or private export/Core data was inspected.
+
+## Import Truth provider-terminal follow-up (2026-08-22)
+
+- Provider-shaped empty roots and zero-message conversations now close exactly
+  one logical item. A known provider closes an empty root or conversation as
+  `skipped`; an identity-free provider-shaped empty or malformed entry closes
+  as `unparsed` and keeps coverage incomplete. Structural provider containers
+  remain outside the raw-member terminal buckets.
+- The bounded JSON iterator carries explicit root versus root-array-item context
+  with each streamed value. An empty object or provider wrapper inside a
+  non-empty root array is therefore one `unparsed` terminal in either sibling
+  order, while a standalone known-provider root remains one `skipped` terminal.
+  This context is not filename-derived and does not materialize the root;
+  direct bytes, filesystem paths, and ZIP members use the same accounting.
+- Auto ZIP attachment discovery scans the allowed neutral alternate basenames
+  for a bounded ChatGPT content signature before link inventory. Valid
+  `messages.json`, `chats.json`, `history.json`, and `conversations.json`
+  content matches explicit ChatGPT attachment links; malformed neutral content
+  stays generic and cannot enable provider-specific attachment parsing.
+- These are bounded synthetic corrections only. No live/private Core or real
+  export was inspected, and no acceptance credit is claimed.
+
 ## Repository security convergence
 
 - Exact-candidate tree scans now read committed blobs at the bound source SHA,
@@ -1493,3 +1826,117 @@ state is already noncurrent and creates no user queue.
   `v1-engineering-1b894dd` Windows engineering set also scans clean. It is not
   built from this scanner commit or the still-unfrozen exact candidate; Linux
   tar.gz and macOS DMG contents are not claimed as inspected by this scanner.
+
+## Memory Truth review-fix amendment (2026-08-22)
+
+- Core migrations 010/011/012 are restart-safe after an interrupted `ALTER TABLE`,
+  including statements preceded by SQL comments; the focused probe covers an
+  unrecorded partial application and a second restart. Migration 012
+  downgrades legacy/unbound rebuild rows to ordinary deletion barriers.
+- Observation, correction, historical-restore, and portable-restore paths now
+  recompute source/value identity keys from their durable identity-bearing
+  fields. A V1-to-V2 update therefore cannot bypass an ordinary deletion
+  barrier on matching archive reimport.
+- Source-rebuild tombstones are minted only by the validated atomic
+  `publish_source_rebuild` ceremony. The public withdrawal compatibility path
+  fails closed; trusted rows bind the exact finished archive session,
+  generation, and content-hash marker, while reapply checks source/session
+  accessibility, in-progress metadata, stable identity, tombstone hash/version,
+  and user-edit absence. Imported or copied markers remain ordinary barriers.
+- Manual approval recomputes the candidate and canonical record key from every
+  final identity-bearing override, including content, slot, source reference,
+  kind, and structured value. Delete/reimport and retry/evidence regressions
+  prove no replacement current record or duplicate link is created.
+- Truth list/count projections page and count at SQL level without rebuilding
+  global integrity state on reads. Page-scoped set queries use SQL row limits
+  for superseded IDs, conflict IDs, and evidence; a query-count regression
+  stays near-constant as the database grows. Focused Memory Truth, storage,
+  migration, export/restore, Core API, provider-rebuild, purge, and relay
+  checks pass locally; full-suite and hosted CI evidence remain outside this
+  lane.
+
+## Memory Truth restore-boundary correction (2026-08-22)
+
+- Core migration `013_user_mutation_boundary.sql` adds an append-only,
+  constraint-backed `context_user_mutations` ledger. Public/local restore,
+  correction, availability, and explicit deletion paths write typed
+  `local_user` rows; source rebuild checks the ledger instead of inferring
+  edits from free-form version reasons. Original `archive_import` provenance
+  remains truthful.
+- Internal duplicate-import recovery and source-rebuild reapply paths do not
+  write user-mutation rows. The ledger survives restart, portable export/restore,
+  and purge; imported rebuild tombstones remain ordinary barriers. Legacy
+  databases and pre-013 exports infer one deterministic `legacy_user_edit` row
+  per affected record at most, and repeated restores remain idempotent.
+- Focused Memory Truth/storage/migration/export checks cover benign and
+  internal-looking restore reasons, restart/portable restore, append-only and
+  tamper barriers, legacy/partial migration, and stable-ID rebuild behavior.
+  This is an isolated review candidate; final acceptance, full-suite, hosted
+  CI, live Core, and private-export inspection remain outside this lane.
+
+## Memory Truth ledger-authority closure (2026-08-22)
+
+- The 013 ledger now carries typed version evidence, bounded normalized actor
+  material, canonical reason codes, and deterministic intent keys. Export
+  restore validates those fields against same-package record history and exact
+  vault/record/source relationships; a syntactically valid forged row is
+  ignored and cannot block a valid source rebuild.
+- Isolated recovery carries verified active destination-local mutation barriers
+  transactionally with purge tombstones before import, idempotently covering
+  ordinary, missing-record, and purged-record cases. An explicit restore of an
+  already-current record creates one stable version-backed barrier per retry
+  contract.
+- Legacy inference uses source-backed typed state/version relationships and
+  excludes source-free manual records and validated automatic reapplications.
+  Version/source/tombstone reasons and persisted actor fields are content-free;
+  focused adversarial probes cover secret-marker absence in SQLite, exports,
+  and returned durable structures. Fresh reviewer acceptance remains pending.
+
+## Memory Truth final-authority repair (2026-08-22)
+
+- Schema 014 adds typed canonical user-action kind/key evidence to record
+  history. New portable mutation rows require that evidence and a matching
+  typed digest; a generic same-package `record_restored` version cannot grant a
+  forged restore barrier. Legacy generic rows remain compatibility-only
+  `legacy_user_edit` facts, and old packages are handled explicitly rather than
+  treated as typed action proof.
+- Migration repair recreates both append-only mutation triggers on every pass,
+  including databases where migration 013 is already marked applied. The same
+  restart/migrate pass repairs any missing schema-014 typed-action columns and
+  recreates its partial unique index idempotently when migration 014 is already
+  marked applied. Restore and isolated recovery counters now report only actual
+  inserts, so repeated imports are ignored rather than reported accepted.
+- Focused adversarial coverage includes zero-source-ledger evidence-only
+  forgery with stable-ID rebuild reuse, genuine typed mutation round-trip and
+  rebuild blocking, trigger loss/restart/idempotence, schema-014 partial-column
+  and index repair, all typed local action paths, and duplicate import counts.
+  This remains local review evidence only; encrypted package possession is not
+  an external signature over a fully rewritten and re-encrypted archive.
+
+## Continuous Capture repair and lease-authority correction (2026-08-22)
+
+- Marker-present migration-015 repair now reads the packaged migration SQL and
+  executes its complete statements transactionally, so interrupted startup
+  repair and fresh migration share the exact capture table, constraint, and
+  index definitions. Focused damage/restart probes cover every capture table
+  and index plus representative malformed-row rejection.
+- Run-owned writes now require an opaque typed run handle with exact source and
+  lease-token binding, a live strictly-future lease, and a source still in
+  `reconciling`. Renewal uses the same guard. Complete event identity is
+  revalidated before application commit; stale, paused, revoked, abandoned, or
+  replaced runs cannot write events, items, checkpoints, or lifecycle state.
+- Leaving `reconciling` abandons active runs atomically, and expiry recovery
+  degrades only a source that remains reconciling. Sink-expiry replay retains
+  the same idempotency key. This is local beta.6 review evidence only; fresh
+  independent acceptance remains required.
+
+## Continuous Capture adapter-availability ownership correction (2026-08-22)
+
+- An adapter-missing probe now checks the source and live run lease in one
+  serialized transaction. If another coordinator owns a future-expiring run,
+  the probe returns the same content-free `capture_adapter_unavailable` result
+  without changing `reconciling`, retry metadata, or operator state.
+- Focused shared-SQLite coverage proves the owning coordinator can renew and
+  finish after the probe, while sources without a live run retain the existing
+  degradation behavior. This remains local beta.6 review evidence only; fresh
+  independent acceptance remains required.

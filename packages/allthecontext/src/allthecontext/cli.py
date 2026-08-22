@@ -12,6 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from allthecontext.capture import CaptureCoordinator
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
 from allthecontext.credentials import (
@@ -488,6 +489,40 @@ def _cmd_client_revoke(args: argparse.Namespace) -> None:
 
 def _cmd_status(args: argparse.Namespace) -> None:
     _dump(_store(args).status())
+
+
+def _capture(args: argparse.Namespace) -> CaptureCoordinator:
+    return CaptureCoordinator(_store(args))
+
+
+def _cmd_capture_create(args: argparse.Namespace) -> None:
+    source = _capture(args).create_source(
+        provider=args.provider,
+        account_label=args.account_label,
+        account_fingerprint=args.account_fingerprint,
+        requested_scopes=args.scope,
+        local_only_acknowledged=args.local_only_acknowledged,
+    )
+    _dump(source)
+
+
+def _cmd_capture_status(args: argparse.Namespace) -> None:
+    coordinator = _capture(args)
+    if args.source_id:
+        _dump(coordinator.status(args.source_id))
+        return
+    items, total = coordinator.list_sources()
+    _dump({"items": [item.model_dump(mode="json") for item in items], "total": total})
+
+
+def _cmd_capture_run(args: argparse.Namespace) -> None:
+    _dump(_capture(args).run(args.source_id))
+
+
+def _cmd_capture_transition(args: argparse.Namespace) -> None:
+    coordinator = _capture(args)
+    operation = getattr(coordinator, args.capture_action)
+    _dump(operation(args.source_id))
 
 
 def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
@@ -1001,6 +1036,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _common_data(status)
     status.set_defaults(handler=_cmd_status)
+
+    capture = commands.add_parser(
+        "capture",
+        help="Administer the local, provider-neutral Continuous Capture ledger",
+    )
+    capture_commands = capture.add_subparsers(dest="capture_action", required=True)
+
+    capture_create = capture_commands.add_parser(
+        "create",
+        help="Create a disabled local-only capture source without accepting secrets",
+    )
+    _common_data(capture_create)
+    capture_create.add_argument("provider")
+    capture_create.add_argument("account_label")
+    capture_create.add_argument("--account-fingerprint")
+    capture_create.add_argument("--scope", action="append", default=[])
+    capture_create.add_argument("--local-only-acknowledged", action="store_true")
+    capture_create.set_defaults(handler=_cmd_capture_create)
+
+    capture_status = capture_commands.add_parser("status", help="Show capture status")
+    _common_data(capture_status)
+    capture_status.add_argument("source_id", nargs="?")
+    capture_status.set_defaults(handler=_cmd_capture_status)
+
+    capture_run = capture_commands.add_parser("run", help="Run one foreground capture pass")
+    _common_data(capture_run)
+    capture_run.add_argument("source_id")
+    capture_run.set_defaults(handler=_cmd_capture_run)
+
+    for action in ("enable", "pause", "resume", "disable", "revoke"):
+        transition = capture_commands.add_parser(action, help=f"{action.title()} a capture source")
+        _common_data(transition)
+        transition.add_argument("source_id")
+        transition.set_defaults(handler=_cmd_capture_transition, capture_action=action)
 
     export = commands.add_parser("export", help="Create an encrypted portable export")
     _common_data(export)

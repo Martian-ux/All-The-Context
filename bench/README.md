@@ -211,13 +211,15 @@ python -m bench.retrieval_usefulness --output tmp/retrieval-usefulness.json --ma
 
 The command creates an isolated vault under a temporary directory, or under
 `--work-dir` when supplied. It refuses the live Core data directory and any
-folder that already contains `core.sqlite3`. It never opens operator context.
+folder that already contains `core.sqlite3`, and fails closed if
+`allthecontext` resolves outside this checkout. It never opens operator context.
 
 The compact scorecard covers current-fact recall, stale/conflict exclusion,
 withdrawn exclusion, sensitivity respect, provenance completeness, budget
-compliance, and provider-facing packaging. Hard gates require every case to
-pass, zero forbidden leaks, zero budget or packaging violations, and repeat
-determinism. The checked-in baseline is
+compliance, truthful bootstrap truncation metadata, and provider-facing
+packaging. The 17 synthetic cases include sparse location/latest intent and
+budget-accounting checks. Hard gates require every case to pass, zero forbidden
+leaks, zero budget or packaging violations, and repeat determinism. The checked-in baseline is
 [`baselines/retrieval_usefulness_v1.json`](baselines/retrieval_usefulness_v1.json).
 A nonzero exit means a gate failed. This result is not implementation
 acceptance and grants no beta credit.

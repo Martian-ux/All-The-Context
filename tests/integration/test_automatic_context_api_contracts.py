@@ -120,6 +120,61 @@ def test_authenticated_clients_cannot_submit_or_finish_each_others_session(
         )
         assert accepted_finish.status_code == 200, accepted_finish.text
         assert accepted_finish.json()["status"] == "finished"
+        assert set(accepted_finish.json()["coverage"]["closed_coverage"]) == {
+            "recognized",
+            "excluded",
+            "skipped",
+            "unavailable",
+            "duplicate",
+            "failed",
+            "unparsed",
+        }
+
+
+def test_ingestion_finish_rejects_inconsistent_coverage_and_propagates_closed_map(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with TestClient(create_app(config)) as client:
+        begun = client.post(
+            "/v1/ingestion/begin",
+            json={"mode": "archive_import", "accessible_sources": ["synthetic.zip"]},
+        )
+        assert begun.status_code == 200, begun.text
+        session_id = str(begun.json()["session_id"])
+
+        inconsistent = client.post(
+            "/v1/ingestion/finish",
+            json={
+                "session_id": session_id,
+                "coverage_report": {
+                    "closed_coverage": {"failed": 1},
+                    "complete": True,
+                },
+            },
+        )
+        assert inconsistent.status_code == 422
+
+        finished = client.post(
+            "/v1/ingestion/finish",
+            json={
+                "session_id": session_id,
+                "coverage_report": {
+                    "closed_coverage": {"recognized": 1, "unavailable": 1},
+                    "complete": False,
+                },
+            },
+        )
+        assert finished.status_code == 200, finished.text
+        assert finished.json()["coverage"]["closed_coverage"] == {
+            "recognized": 1,
+            "excluded": 0,
+            "skipped": 0,
+            "unavailable": 1,
+            "duplicate": 0,
+            "failed": 0,
+            "unparsed": 0,
+        }
 
 
 def test_denied_client_cannot_mutate_target_through_any_observation_endpoint(

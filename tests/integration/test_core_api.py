@@ -151,6 +151,13 @@ def test_context_search_cursor_validation_and_request_binding(tmp_path: Path) ->
             )
             assert overflow.status_code == 422
 
+            for field in ("limit", "offset"):
+                malformed = client.post(
+                    "/v1/context/search",
+                    json={"query": "", field: True},
+                )
+                assert malformed.status_code == 422
+
 
 def test_context_search_cursor_is_principal_bound(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=True)

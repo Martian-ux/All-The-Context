@@ -21,14 +21,31 @@ from allthecontext.models import (
 from allthecontext.storage import (
     SOURCE_BLOB_CHUNK_BYTES,
     ConflictError,
+    CoreStore,
     InvalidStateError,
     NotFoundError,
 )
+from pydantic import ValidationError
 
 
 @pytest.fixture
 def core(tmp_path: Path) -> CoreService:
     return CoreService.in_directory(tmp_path)
+
+
+def test_new_vault_schema_version_matches_applied_migrations(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "core.sqlite3")
+    vault_id = store.initialize_vault("Current schema")
+    with store.connect() as connection:
+        vault_version = int(
+            connection.execute(
+                "SELECT schema_version FROM vaults WHERE id=?", (vault_id,)
+            ).fetchone()[0]
+        )
+        latest_migration = int(
+            connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        )
+    assert vault_version == latest_migration
 
 
 def test_ingestion_is_resumable_and_batches_are_idempotent(core: CoreService) -> None:
@@ -67,6 +84,91 @@ def test_ingestion_is_resumable_and_batches_are_idempotent(core: CoreService) ->
     )
     assert finished["status"] == "finished"
     assert finished["coverage"]["unavailable"] == ["deleted chats"]
+
+
+@pytest.mark.parametrize(
+    "closed_coverage",
+    [
+        {"unexpected": 1},
+        {"recognized": True},
+        {"recognized": 1.0},
+        {"recognized": 2_147_483_648},
+    ],
+)
+def test_coverage_report_closed_counts_are_strict_and_closed(
+    closed_coverage: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        CoverageReport(closed_coverage=closed_coverage)
+
+
+@pytest.mark.parametrize("reason", ["unavailable", "duplicate", "failed", "unparsed"])
+def test_coverage_report_complete_rejects_incomplete_item_counts(reason: str) -> None:
+    with pytest.raises(ValidationError, match="complete cannot be true"):
+        CoverageReport(
+            closed_coverage={"recognized": 1, reason: 1},
+            complete=True,
+        )
+
+    # Omitted and partial maps are normalized for honest backward compatibility.
+    report = CoverageReport(available=["synthetic source"], complete=True)
+    assert set(report.closed_coverage) == {
+        "recognized",
+        "excluded",
+        "skipped",
+        "unavailable",
+        "duplicate",
+        "failed",
+        "unparsed",
+    }
+    assert all(value == 0 for value in report.closed_coverage.values())
+    partial = CoverageReport(closed_coverage={"recognized": 2})
+    assert partial.closed_coverage["recognized"] == 2
+    assert sum(partial.closed_coverage.values()) == 2
+
+
+def test_record_lookup_is_scoped_to_the_authoritative_vault(core: CoreService) -> None:
+    candidate = core.store.add_candidate(
+        CandidateInput(kind="fact", content="Synthetic foreign-vault record")
+    )
+    record = core.store.approve_candidate(candidate.id)
+    with core.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vaults(id,name,display_timezone,created_at) VALUES(?,?,?,?)",
+            ("foreign-vault", "Foreign", "UTC", "9999-01-01T00:00:00Z"),
+        )
+        connection.execute(
+            "UPDATE context_records SET vault_id=? WHERE id=?",
+            ("foreign-vault", record.id),
+        )
+
+    assert core.retrieval.get(record.id) is None
+    with pytest.raises(NotFoundError, match="context record not found"):
+        core.store.get_memory_truth(record.id)
+
+
+def test_registered_client_lookup_is_scoped_to_the_authoritative_vault(
+    core: CoreService,
+) -> None:
+    principal, token = core.store.create_client(
+        ClientCreate(name="synthetic-foreign-reader", scopes=["context:read"])
+    )
+    with core.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO vaults(id,name,display_timezone,created_at) VALUES(?,?,?,?)",
+            ("foreign-vault", "Foreign", "UTC", "9999-01-01T00:00:00Z"),
+        )
+        connection.execute(
+            "UPDATE client_registrations SET vault_id=? WHERE id=?",
+            ("foreign-vault", principal.id),
+        )
+
+    assert core.store.authenticate(token) is None
+    assert core.store.authenticate_import_operation_observer(token, "missing") is None
+    assert core.store.client_count() == 0
+    assert core.store.list_clients() == []
+    with pytest.raises(NotFoundError, match="client not found"):
+        core.store.revoke_client(principal.id)
 
 
 def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> None:

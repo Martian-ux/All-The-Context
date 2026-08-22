@@ -21,6 +21,7 @@ from allthecontext.relay.service import (
     SecretLikeProposalRefused,
     SQLiteRelayStore,
 )
+from allthecontext.secret_boundary import contains_secret_like_text, contains_secret_like_value
 from fastapi.testclient import TestClient
 
 PASSPHRASE = "synthetic boundary passphrase"
@@ -87,7 +88,7 @@ def test_direct_secret_refusal_is_content_free_and_replayable(tmp_path: Path) ->
             "refused": True,
             "disposition": "ignored",
             "reason_code": "direct_secret_like_content",
-            "detector_version": "direct-secret-v2",
+            "detector_version": "direct-secret-v3",
             "created_at": first.json()["created_at"],
             "replayed": False,
             "user_action_required": True,
@@ -220,6 +221,45 @@ def test_secret_batch_rejects_content_derived_retry_verifier_before_storage(
         tmp_path,
         (CANARY.encode(), content_derived_key.encode()),
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        f"\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44\uff1a {CANARY}",
+        f"pass\u200bword: {CANARY}",
+        f"pa\u0301ssword: {CANARY}",
+        {"client_\u200bsecret": CANARY},
+    ),
+)
+def test_unicode_credential_obfuscations_fail_closed_before_storage(
+    tmp_path: Path, payload: object
+) -> None:
+    assert (
+        contains_secret_like_text(payload)
+        if isinstance(payload, str)
+        else contains_secret_like_value(payload)
+    )
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    content = payload if isinstance(payload, str) else "Synthetic credential metadata."
+    structured = payload if isinstance(payload, dict) else None
+    with TestClient(create_app(config)) as client:
+        response = client.post(
+            "/v1/ingestion/propose",
+            json={
+                "kind": "fact",
+                "content": content,
+                "structured_value": structured,
+                "explicit_user_statement": True,
+                "idempotency_key": str(uuid.uuid4()),
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["refused"] is True
+        assert response.json()["detector_version"] == "direct-secret-v3"
+        assert client.get("/v1/admin/observations").json()["total"] == 0
+
+    _assert_absent_from_paths(tmp_path, (CANARY.encode(),))
 
 
 def test_startup_repair_compacts_legacy_sqlite_wal_fts_and_export_restore(

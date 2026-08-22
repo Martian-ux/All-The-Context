@@ -7,13 +7,73 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    Strict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
+MAX_CLOSED_COVERAGE_COUNT = 2_147_483_647
+CLOSED_COVERAGE_KEYS = (
+    "recognized",
+    "excluded",
+    "skipped",
+    "unavailable",
+    "duplicate",
+    "failed",
+    "unparsed",
+)
+CLOSED_COVERAGE_INCOMPLETE_KEYS = frozenset({"unavailable", "duplicate", "failed", "unparsed"})
+
+ClosedCoverageCount = Annotated[
+    StrictInt,
+    Field(ge=0, le=MAX_CLOSED_COVERAGE_COUNT),
+]
+MAX_TRUTH_CONFLICT_GROUPS = 64
+MAX_TRUTH_SUPERSEDED_BY = 64
+MAX_TRUTH_EVIDENCE = 512
+
+# These bounds mirror the production retrieval and bootstrap contracts. The
+# candidate count may represent the complete bounded eligible pool rather than
+# only the 100-record retrieval page; the selected pack remains capped at 32
+# items and the public bootstrap budget at 100,000 characters.
+MAX_CONTEXT_PACK_CANDIDATE_COUNT = 50_000
+MAX_CONTEXT_PACK_SELECTED_COUNT = 32
+MAX_CONTEXT_PACK_OMITTED_COUNT = MAX_CONTEXT_PACK_CANDIDATE_COUNT
+MAX_CONTEXT_PACK_BUDGET_CHARS = 100_000
+MAX_CONTEXT_PACK_USED_CHARS = MAX_CONTEXT_PACK_BUDGET_CHARS
+MAX_CONTEXT_PACK_PROVENANCE_COUNT = MAX_CONTEXT_PACK_SELECTED_COUNT
+MAX_CONTEXT_PACK_SUPPRESSED_COUNT = MAX_CONTEXT_PACK_CANDIDATE_COUNT
+
+ContextPackTruncationReason = Literal[
+    "candidate_pool",
+    "budget",
+    "record_limit",
+    "edge_filter",
+    "edge_envelope",
+]
+CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST = frozenset(
+    {
+        "candidate_pool",
+        "budget",
+        "record_limit",
+        "edge_filter",
+        "edge_envelope",
+    }
+)
+EDGE_CONTEXT_PACK_TRUNCATION_REASONS = frozenset({"edge_filter", "edge_envelope"})
+MAX_CONTEXT_PACK_TRUNCATION_REASONS = len(CONTEXT_PACK_TRUNCATION_REASON_ALLOWLIST)
 
 RecordListItem = Annotated[
     str,
@@ -81,6 +141,24 @@ class ObservationDisposition(StrEnum):
     REINFORCED = "reinforced"
     TENTATIVE = "tentative"
     IGNORED = "ignored"
+
+
+class MemoryTruthStatus(StrEnum):
+    """The canonical state of a record or detached observation."""
+
+    CURRENT = "current"
+    TENTATIVE = "tentative"
+    SUPERSEDED = "superseded"
+    CONFLICTED = "conflicted"
+    DELETED = "deleted"
+
+
+class TruthConflictState(StrEnum):
+    """Conflict state is separate from record status so resolved history is visible."""
+
+    NONE = "none"
+    ACTIVE = "active"
+    RESOLVED = "resolved"
 
 
 class IngestionMode(StrEnum):
@@ -182,7 +260,32 @@ class CoverageReport(StrictModel):
     unavailable: list[str] = Field(default_factory=list, max_length=512)
     limitations: list[str] = Field(default_factory=list, max_length=512)
     warnings: list[str] = Field(default_factory=list, max_length=512)
-    complete: bool = True
+    closed_coverage: dict[StrictStr, ClosedCoverageCount] = Field(
+        default_factory=lambda: {key: 0 for key in CLOSED_COVERAGE_KEYS},
+        max_length=16,
+    )
+    complete: StrictBool = True
+
+    @field_validator("closed_coverage")
+    @classmethod
+    def validate_closed_coverage_keys(
+        cls,
+        value: dict[str, int],
+    ) -> dict[str, int]:
+        unknown = sorted(set(value).difference(CLOSED_COVERAGE_KEYS))
+        if unknown:
+            raise ValueError("closed_coverage contains unknown reason(s): " + ", ".join(unknown))
+        return {key: value.get(key, 0) for key in CLOSED_COVERAGE_KEYS}
+
+    @model_validator(mode="after")
+    def validate_completion_consistency(self) -> Self:
+        if self.complete and any(
+            self.closed_coverage.get(key, 0) > 0 for key in CLOSED_COVERAGE_INCOMPLETE_KEYS
+        ):
+            raise ValueError(
+                "complete cannot be true when closed_coverage contains incomplete items"
+            )
+        return self
 
 
 class FinishIngestionRequest(StrictModel):
@@ -192,14 +295,32 @@ class FinishIngestionRequest(StrictModel):
 
 class ApprovalRequest(StrictModel):
     content: str | None = Field(default=None, min_length=1, max_length=MAX_CONTEXT_CHARS)
+    kind: str | None = Field(default=None, min_length=1, max_length=128)
+    structured_value: dict[str, Any] | None = None
     entity_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
     attribute_key: str | None = Field(default=None, min_length=1, max_length=MAX_SLOT_KEY_CHARS)
+    source_reference: str | None = Field(default=None, min_length=1, max_length=2_000)
     availability: Availability | None = None
     sensitivity: Sensitivity | None = None
     allowed_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     denied_clients: list[RecordListItem] | None = Field(default=None, max_length=256)
     reason: str | None = Field(default=None, max_length=2_000)
     explicit_sensitive_replication: bool = False
+
+    @field_validator("kind")
+    @classmethod
+    def normalize_kind(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("kind must contain non-whitespace text")
+        return normalized
+
+    @field_validator("structured_value")
+    @classmethod
+    def bound_structured_value(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _bounded_structured_value(value)
 
     @model_validator(mode="after")
     def validate_slot(self) -> Self:
@@ -259,8 +380,8 @@ class SearchRequest(StrictModel):
     source_ids: list[str] = Field(default_factory=list, max_length=64)
     as_of: str | None = Field(default=None, max_length=100)
     current_project: str | None = Field(default=None, max_length=512)
-    limit: int = Field(default=20, ge=1, le=100)
-    offset: int = Field(default=0, ge=0, le=100_000)
+    limit: StrictInt = Field(default=20, ge=1, le=100)
+    offset: StrictInt = Field(default=0, ge=0, le=100_000)
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
     @field_validator("as_of")
@@ -362,8 +483,100 @@ class ContextRecordOut(CandidateInput):
     content_hash: str
     created_at: str
     updated_at: str
+    deleted_at: str | None = None
+    status: MemoryTruthStatus = MemoryTruthStatus.CURRENT
     observation_origin: str | None = None
     policy_version: str | None = None
+
+
+class TruthSourceOut(StrictModel):
+    """Content-free source identity and lifecycle metadata for a memory."""
+
+    id: str
+    content_hash: str
+    source_service: str
+    source_type: str
+    filename: str | None = None
+    media_type: str
+    created_at: str
+    import_status: Literal["processing", "complete", "failed", "cancelled"]
+    deleted_at: str | None = None
+    deleted_reason: str | None = None
+
+
+class TruthEvidenceOut(StrictModel):
+    """One durable observation link explaining a canonical record."""
+
+    observation_id: str
+    record_id: str
+    relationship: str
+    link_created_at: str
+    disposition: ObservationDisposition
+    decision_reason: str | None = None
+    decided_at: str | None = None
+    observation_origin: str | None = None
+    policy_version: str | None = None
+    content: str
+    evidence: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    sensitivity: Sensitivity
+    source_id: str | None = None
+    source_reference: str | None = None
+    source_service: str | None = None
+    source_type: str | None = None
+    effective_at: str | None = None
+    observed_at: str | None = None
+    recorded_at: str
+    content_hash: str
+
+
+class MemoryTruthRecordOut(StrictModel):
+    """Canonical record plus the bounded, deterministic explanation for it."""
+
+    record: ContextRecordOut
+    status: MemoryTruthStatus
+    status_reason: str
+    conflict_state: TruthConflictState = TruthConflictState.NONE
+    conflict_group_ids: list[str] = Field(
+        default_factory=list, max_length=MAX_TRUTH_CONFLICT_GROUPS
+    )
+    superseded_by: list[str] = Field(default_factory=list, max_length=MAX_TRUTH_SUPERSEDED_BY)
+    source: TruthSourceOut | None = None
+    evidence: list[TruthEvidenceOut] = Field(default_factory=list, max_length=MAX_TRUTH_EVIDENCE)
+    history_count: int = Field(ge=0)
+
+
+class MemoryTruthObservationOut(StrictModel):
+    """A non-current observation retained so policy outcomes are not hidden."""
+
+    observation: ObservationOut
+    status: MemoryTruthStatus
+    status_reason: str
+
+
+class TruthCoverageOut(StrictModel):
+    """Content-free accounting for clients that need to report import truthfully."""
+
+    source_count: int = Field(ge=0)
+    deleted_source_count: int = Field(ge=0)
+    observation_count: int = Field(ge=0)
+    observations_by_disposition: dict[str, int] = Field(default_factory=dict)
+    record_count: int = Field(ge=0)
+    records_by_status: dict[str, int] = Field(default_factory=dict)
+    conflict_group_count: int = Field(ge=0)
+    ingestion_session_count: int = Field(ge=0)
+    incomplete_ingestion_session_count: int = Field(ge=0)
+    sessions_with_unavailable_sources: int = Field(ge=0)
+
+
+class MemoryTruthResponse(StrictModel):
+    """Administrative truth view; memory text is present only in authorized items."""
+
+    items: list[MemoryTruthRecordOut]
+    tentative_observations: list[MemoryTruthObservationOut] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    counts: dict[str, int] = Field(default_factory=dict)
+    coverage: TruthCoverageOut
 
 
 class SearchResponse(StrictModel):
@@ -372,12 +585,73 @@ class SearchResponse(StrictModel):
     trace_id: str
 
 
+class ContextPackMetadata(StrictModel):
+    """Strict, content-free accounting for a bounded provider context pack.
+
+    Truncation reasons are intentionally closed: Core may emit the first three
+    values and Edge may append only ``edge_filter`` or ``edge_envelope``.
+    Selection and provenance counts describe the items in the final forwarded
+    pack. Duplicate/conflict suppression counts remain explicitly scoped to
+    Core's selection and are bounded by the final omitted population because
+    Edge does not receive Core's suppression-group identities.
+    """
+
+    pack_schema: Literal["atc.context-pack.v1"] = Field(
+        default="atc.context-pack.v1", alias="schema"
+    )
+    candidate_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_CANDIDATE_COUNT)
+    selected_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_SELECTED_COUNT)
+    omitted_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_OMITTED_COUNT)
+    budget_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_BUDGET_CHARS)
+    used_chars: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_USED_CHARS)
+    provenance_backed_count: StrictInt = Field(ge=0, le=MAX_CONTEXT_PACK_PROVENANCE_COUNT)
+    candidate_pool_truncated: StrictBool = False
+    truncated: StrictBool = False
+    # Core emits up to three reasons; Edge may add filtering and envelope
+    # trimming while preserving those upstream reasons. Every value is an
+    # explicit allowlisted literal, and duplicates are rejected.
+    truncation_reasons: Annotated[list[ContextPackTruncationReason], Strict()] = Field(
+        default_factory=list, max_length=MAX_CONTEXT_PACK_TRUNCATION_REASONS
+    )
+    duplicate_suppressed_count: StrictInt = Field(
+        default=0, ge=0, le=MAX_CONTEXT_PACK_SUPPRESSED_COUNT
+    )
+    conflict_suppressed_count: StrictInt = Field(
+        default=0, ge=0, le=MAX_CONTEXT_PACK_SUPPRESSED_COUNT
+    )
+    selection_policy: Literal["deterministic_usefulness_v1"] = "deterministic_usefulness_v1"
+
+    @field_validator("truncation_reasons")
+    @classmethod
+    def reject_duplicate_truncation_reasons(
+        cls, value: list[ContextPackTruncationReason]
+    ) -> list[ContextPackTruncationReason]:
+        if len(value) != len(set(value)):
+            raise ValueError("truncation_reasons must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_accounting_invariants(self) -> Self:
+        if self.selected_count > self.candidate_count:
+            raise ValueError("selected_count must not exceed candidate_count")
+        if self.omitted_count != self.candidate_count - self.selected_count:
+            raise ValueError("omitted_count must equal candidate_count - selected_count")
+        if self.provenance_backed_count > self.selected_count:
+            raise ValueError("provenance_backed_count must not exceed selected_count")
+        if self.duplicate_suppressed_count > self.omitted_count:
+            raise ValueError("duplicate_suppressed_count must not exceed omitted_count")
+        if self.conflict_suppressed_count > self.omitted_count:
+            raise ValueError("conflict_suppressed_count must not exceed omitted_count")
+        return self
+
+
 class BootstrapResponse(StrictModel):
     items: list[ContextRecordOut]
     context_mode: Literal["local_core"] = "local_core"
     omitted_scopes: list[str]
     audit_trace_id: str
     used_chars: int
+    pack_metadata: ContextPackMetadata | None = None
 
 
 class ContextErrorRequest(StrictModel):

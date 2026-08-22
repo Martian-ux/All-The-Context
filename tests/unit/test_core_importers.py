@@ -270,13 +270,21 @@ def test_zip_bundle_is_read_without_extracting_and_rejects_traversal() -> None:
     unsafe = io.BytesIO()
     with zipfile.ZipFile(unsafe, "w") as archive:
         archive.writestr("../escape.txt", "Fact: must not extract")
-    with pytest.raises(InvalidStateError, match="unsafe member path"):
-        parse_zip_bundle(unsafe.getvalue())
+    parsed = parse_zip_bundle(unsafe.getvalue())
+    audit = parsed.stats["archive_member_coverage"]
+    assert parsed.complete is False
+    assert parsed.closed_coverage["unavailable"] == 1
+    assert audit["terminal_member_buckets"]["unavailable"] == 1
+    assert audit["unaccounted_members"] == 0
 
 
 def test_zip_bundle_enforces_uncompressed_limit() -> None:
     bundle = io.BytesIO()
     with zipfile.ZipFile(bundle, "w") as archive:
         archive.writestr("large.txt", "Goal: " + "x" * 100)
-    with pytest.raises(InvalidStateError, match="uncompressed-size"):
-        parse_zip_bundle(bundle.getvalue(), max_uncompressed_bytes=8)
+    parsed = parse_zip_bundle(bundle.getvalue(), max_uncompressed_bytes=8)
+    audit = parsed.stats["archive_member_coverage"]
+    assert parsed.complete is False
+    assert audit["archive_level_failure"] == "zip_total_size_limit"
+    assert audit["terminal_member_buckets"]["unavailable"] == 1
+    assert audit["unaccounted_members"] == 0

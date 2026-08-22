@@ -344,6 +344,71 @@ def test_automatic_slot_update_never_loosens_security_or_acl(tmp_path: Path) -> 
     assert updated.denied_clients == ["blocked-client"]
 
 
+def test_disjoint_replacement_and_reinforcement_keep_acl_boundaries(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    original = store.add_candidate(
+        CandidateInput(
+            kind="slot_value",
+            content="old slot value",
+            entity_key="user",
+            attribute_key="private_slot",
+            allowed_clients=["old-client", "shared-client"],
+            explicit_user_statement=True,
+            observed_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+    assert original.record_id is not None
+
+    replacement = store.add_candidate(
+        CandidateInput(
+            kind="slot_value",
+            content="new slot value",
+            entity_key="user",
+            attribute_key="private_slot",
+            allowed_clients=["new-client", "shared-client"],
+            explicit_user_statement=True,
+            observed_at="2026-02-01T00:00:00+00:00",
+        )
+    )
+    assert replacement.disposition == ObservationDisposition.APPLIED
+    assert store.get_record(original.record_id).content == "new slot value"
+    assert store.get_record(original.record_id).allowed_clients == ["shared-client"]
+
+    omitted_allowlist = store.add_candidate(
+        CandidateInput(
+            kind="slot_value",
+            content="newer slot value",
+            entity_key="user",
+            attribute_key="private_slot",
+            explicit_user_statement=True,
+            observed_at="2026-03-01T00:00:00+00:00",
+        )
+    )
+    assert omitted_allowlist.disposition == ObservationDisposition.APPLIED
+    assert store.get_record(original.record_id).allowed_clients == ["shared-client"]
+
+    reinforced_record = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="existing private value",
+            allowed_clients=["old-client"],
+            explicit_user_statement=True,
+        )
+    )
+    reinforcement = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="existing private value",
+            allowed_clients=["new-client"],
+            explicit_user_statement=True,
+            idempotency_key="disjoint-reinforcement",
+        )
+    )
+    assert reinforcement.disposition == ObservationDisposition.REINFORCED
+    assert reinforced_record.record_id is not None
+    assert store.get_record(reinforced_record.record_id).allowed_clients == ["old-client"]
+
+
 def test_corroborated_inference_cannot_overwrite_explicit_target(tmp_path: Path) -> None:
     store = _store(tmp_path)
     original = store.add_candidate(
