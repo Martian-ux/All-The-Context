@@ -1,6 +1,6 @@
 {
-  "case_count": 15,
-  "fixture_sha256": "dd84421d23573cd96f1fd310cbf4975efbafa0a32df881f086c73723232edfad",
+  "case_count": 17,
+  "fixture_sha256": "910e85defe71305f5554f4730b02e4261d0cf806da96bed8f1bfc8185c031022",
   "gates": {
     "all_cases_passed": true,
     "isolated_synthetic_vault": true,

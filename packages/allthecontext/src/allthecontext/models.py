@@ -372,12 +372,35 @@ class SearchResponse(StrictModel):
     trace_id: str
 
 
+class ContextPackMetadata(StrictModel):
+    """Content-free accounting for a bounded provider context pack."""
+
+    pack_schema: Literal["atc.context-pack.v1"] = Field(
+        default="atc.context-pack.v1", alias="schema"
+    )
+    candidate_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    omitted_count: int = Field(ge=0)
+    budget_chars: int = Field(ge=0)
+    used_chars: int = Field(ge=0)
+    provenance_backed_count: int = Field(ge=0)
+    candidate_pool_truncated: bool = False
+    truncated: bool = False
+    truncation_reasons: list[str] = Field(default_factory=list, max_length=4)
+    duplicate_suppressed_count: int = Field(default=0, ge=0)
+    conflict_suppressed_count: int = Field(default=0, ge=0)
+    selection_policy: Literal["deterministic_usefulness_v1"] = (
+        "deterministic_usefulness_v1"
+    )
+
+
 class BootstrapResponse(StrictModel):
     items: list[ContextRecordOut]
     context_mode: Literal["local_core"] = "local_core"
     omitted_scopes: list[str]
     audit_trace_id: str
     used_chars: int
+    pack_metadata: ContextPackMetadata | None = None
 
 
 class ContextErrorRequest(StrictModel):

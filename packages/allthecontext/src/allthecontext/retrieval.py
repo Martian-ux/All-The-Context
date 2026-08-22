@@ -7,10 +7,11 @@ import json
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from .admissibility import (
     AdmissibilityBatch,
@@ -26,6 +27,7 @@ from .lexical_v3 import LexicalSearchResult, LexicalV3, VocabularyDiagnostics
 from .models import (
     BootstrapRequest,
     BootstrapResponse,
+    ContextPackMetadata,
     ContextRecordOut,
     SearchRequest,
     SearchResponse,
@@ -56,7 +58,42 @@ _LEXICAL_ALIASES: dict[str, tuple[str, ...]] = {
     # Deliberately small, inspectable lexical equivalences. These are not learned
     # from vault content and cannot create a canonical record or authority.
     "eviction": ("cache",),
+    "latest": ("current", "recent"),
+    "now": ("current", "recent"),
+    "where": ("location", "city"),
+    "procedure": ("workflow", "runbook"),
+    "rollback": ("restore",),
 }
+_QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "about",
+        "an",
+        "and",
+        "can",
+        "do",
+        "does",
+        "for",
+        "how",
+        "in",
+        "is",
+        "me",
+        "of",
+        "on",
+        "or",
+        "please",
+        "tell",
+        "the",
+        "to",
+        "what",
+        "when",
+        "where",
+        "who",
+        "why",
+        "with",
+    }
+)
+_MAX_CONTEXT_PACK_ITEMS = 32
 _WORD_RE = re.compile(r"[\w@.]+", flags=re.UNICODE)
 
 
@@ -71,6 +108,42 @@ def _fts_terms(tokens: Sequence[str], operator: str) -> str:
 def _fts_query(value: str) -> str:
     """Produce a literal-token broad FTS query, not raw FTS syntax."""
     return _fts_terms(_tokens(value), "OR")
+
+
+@dataclass(frozen=True, slots=True)
+class QueryIntent:
+    """Small deterministic intent projection used only for local ranking."""
+
+    raw_tokens: tuple[str, ...]
+    focus_tokens: tuple[str, ...]
+    expanded_tokens: tuple[str, ...]
+    asks_current: bool
+    asks_location: bool
+    asks_procedure: bool
+
+
+def parse_query_intent(value: str) -> QueryIntent:
+    """Extract bounded query features without a model, network, or vault lookup."""
+
+    raw = tuple(_tokens(value))
+    focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
+    if not focus:
+        focus = raw
+    expanded = tuple(
+        dict.fromkeys(
+            token
+            for original in focus
+            for token in (original, *_LEXICAL_ALIASES.get(original, ()))
+        )
+    )
+    return QueryIntent(
+        raw_tokens=raw,
+        focus_tokens=focus,
+        expanded_tokens=expanded,
+        asks_current=bool(set(raw) & {"active", "current", "latest", "now", "recent", "today"}),
+        asks_location=bool(set(raw) & {"where", "location", "city", "address", "based"}),
+        asks_procedure=bool(set(raw) & {"how", "procedure", "workflow", "runbook", "rollback"}),
+    )
 
 
 def _json_set(value: str) -> set[str]:
@@ -544,6 +617,178 @@ class LexicalV3CandidateRanker:
         )
 
 
+class DeterministicUsefulnessReranker:
+    """Rerank an already-authorized lexical set with bounded local signals."""
+
+    _AVAILABILITY_SCORE: ClassVar[dict[str, float]] = {
+        "always_available": 1.0,
+        "core_available": 0.8,
+        "local_only": 0.6,
+    }
+    _SENSITIVITY_SCORE: ClassVar[dict[str, float]] = {
+        "normal": 1.0,
+        "sensitive": 0.75,
+        "highly_sensitive": 0.4,
+    }
+    _CONFLICT_SCORE: ClassVar[dict[ConflictState, float]] = {
+        ConflictState.CLEAR: 1.0,
+        ConflictState.RESOLVED: 0.8,
+        ConflictState.UNKNOWN: 0.5,
+        ConflictState.POSSIBLE: 0.2,
+        ConflictState.ACTIVE: 0.0,
+    }
+
+    @staticmethod
+    def _timestamp(row: sqlite3.Row) -> float:
+        for field_name in ("observed_at", "updated_at", "created_at"):
+            value = row[field_name]
+            if value is None:
+                continue
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(
+                    UTC
+                ).timestamp()
+            except ValueError:
+                continue
+        return 0.0
+
+    @staticmethod
+    def _row_tokens(row: sqlite3.Row) -> tuple[set[str], set[str], set[str]]:
+        content = set(_tokens(str(row["content"])))
+        fields = set(
+            _tokens(
+                " ".join(
+                    (
+                        str(row["kind"]),
+                        " ".join(sorted(_json_set(str(row["tags_json"]))),),
+                        " ".join(sorted(_json_set(str(row["scopes_json"]))),),
+                    )
+                )
+            )
+        )
+        searchable = content | fields
+        return content, fields, searchable
+
+    def rerank(
+        self,
+        rows: Sequence[sqlite3.Row],
+        explanations: Sequence[RankingExplanation],
+        query: str,
+        *,
+        current_project: str | None = None,
+        conflicts: Mapping[str, ConflictState] | None = None,
+    ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...]]:
+        if not rows:
+            return [], ()
+        intent = parse_query_intent(query)
+        focus = set(intent.focus_tokens)
+        expanded = set(intent.expanded_tokens)
+        explanation_by_id = {item.record_id: item for item in explanations}
+        ordered_ids = [str(row["id"]) for row in rows]
+        lexical_scores = {
+            record_id: max(0.0, explanation_by_id[record_id].score)
+            for record_id in ordered_ids
+            if record_id in explanation_by_id
+        }
+        maximum_lexical = max(lexical_scores.values(), default=0.0)
+        timestamps = [self._timestamp(row) for row in rows]
+        oldest = min(timestamps, default=0.0)
+        newest = max(timestamps, default=0.0)
+        timestamp_span = newest - oldest
+        scored: list[tuple[float, str, sqlite3.Row, RankingExplanation]] = []
+        for lexical_rank, (row, timestamp) in enumerate(zip(rows, timestamps, strict=True)):
+            record_id = str(row["id"])
+            _content_tokens, field_tokens, searchable_tokens = self._row_tokens(row)
+            direct_matches = focus & searchable_tokens
+            expanded_matches = expanded & searchable_tokens
+            coverage = len(direct_matches) / len(focus) if focus else 0.0
+            alias_coverage = (
+                len(expanded_matches - focus) / max(1, len(expanded - focus))
+                if expanded - focus
+                else 0.0
+            )
+            field_match = len(focus & field_tokens) / len(focus) if focus else 0.0
+            phrase = " ".join(intent.focus_tokens)
+            exact_phrase = float(bool(phrase and phrase in _normalized_text(str(row["content"]))))
+            project_fit = float(
+                current_project is not None
+                and f"project:{current_project.casefold()}"
+                in {scope.casefold() for scope in _json_set(str(row["scopes_json"]))}
+            )
+            recency = (
+                1.0 if timestamp_span == 0.0 else round((timestamp - oldest) / timestamp_span, 6)
+            )
+            lexical_strength = (
+                lexical_scores.get(record_id, 0.0) / maximum_lexical
+                if maximum_lexical > 0.0
+                else (1.0 - lexical_rank / max(1, len(rows) - 1))
+            )
+            availability = self._AVAILABILITY_SCORE.get(str(row["availability"]), 0.0)
+            sensitivity = self._SENSITIVITY_SCORE.get(str(row["sensitivity"]), 0.0)
+            conflict = self._CONFLICT_SCORE.get(
+                (conflicts or {}).get(record_id, ConflictState.CLEAR), 0.0
+            )
+            provenance = float(
+                bool(
+                    row["source_reference"]
+                    or row["source_id"]
+                    or row["source_service"]
+                    or row["source_type"]
+                    or row["evidence"]
+                )
+            )
+            actionability = float(bool(row["entity_key"] and row["attribute_key"]))
+            intent_match = float(
+                (intent.asks_location and bool({"location", "city", "address"} & searchable_tokens))
+                or (
+                    intent.asks_procedure
+                    and bool({"workflow", "runbook", "procedure", "rollback"} & searchable_tokens)
+                )
+            )
+            score = (
+                lexical_strength * 1_000.0
+                + coverage * 160.0
+                + alias_coverage * 35.0
+                + field_match * 50.0
+                + exact_phrase * 100.0
+                + project_fit * 90.0
+                + recency * (30.0 if intent.asks_current else 12.0)
+                + float(row["confidence"]) * 25.0
+                + availability * 12.0
+                + sensitivity * 8.0
+                + conflict * 24.0
+                + provenance * 16.0
+                + actionability * 12.0
+                + intent_match * 30.0
+            )
+            previous = explanation_by_id.get(record_id)
+            explanation = RankingExplanation(
+                record_id=record_id,
+                score=round(score, 9),
+                channel_ranks={} if previous is None else dict(previous.channel_ranks),
+                signals={
+                    "lexical_strength": round(lexical_strength, 6),
+                    "query_coverage": round(coverage, 6),
+                    "alias_coverage": round(alias_coverage, 6),
+                    "field_match": round(field_match, 6),
+                    "exact_phrase": exact_phrase,
+                    "project_fit": project_fit,
+                    "recency": recency,
+                    "confidence": round(float(row["confidence"]), 6),
+                    "availability": availability,
+                    "sensitivity": sensitivity,
+                    "conflict_state": conflict,
+                    "provenance": provenance,
+                    "actionability": actionability,
+                    "intent_match": intent_match,
+                    "intent_current": float(intent.asks_current),
+                },
+            )
+            scored.append((score, record_id, row, explanation))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [item[2] for item in scored], tuple(item[3] for item in scored)
+
+
 def _dedupe_tokens(value: str) -> set[str]:
     suffixes = ("ing", "ed", "es", "s")
     result: set[str] = set()
@@ -566,6 +811,28 @@ class ContextCompiler:
     @staticmethod
     def _cost(item: ContextRecordOut) -> int:
         return len(item.content) + 64
+
+    @staticmethod
+    def _base_utility(item: ContextRecordOut, index: int, count: int) -> int:
+        """Keep ranked relevance primary while preferring usable, evidenced items."""
+
+        availability = {
+            "always_available": 30,
+            "core_available": 20,
+            "local_only": 10,
+        }.get(item.availability.value, 0)
+        sensitivity = {"normal": 20, "sensitive": 10, "highly_sensitive": 0}.get(
+            item.sensitivity.value, 0
+        )
+        provenance = 25 if item.source_reference or item.evidence else 0
+        return (
+            (count - index) * 1_000
+            + round(item.confidence * 100)
+            + (35 if item.explicit_user_statement else 0)
+            + availability
+            + sensitivity
+            + provenance
+        )
 
     @staticmethod
     def _is_supporting(item: ContextRecordOut) -> bool:
@@ -666,6 +933,23 @@ class ContextCompiler:
         relevant: Sequence[ContextRecordOut],
         budget_chars: int,
     ) -> tuple[list[ContextRecordOut], int]:
+        selected, used, _metadata = self.compile_with_diagnostics(
+            mandatory,
+            relevant,
+            budget_chars,
+        )
+        return selected, used
+
+    def compile_with_diagnostics(
+        self,
+        mandatory: Sequence[ContextRecordOut],
+        relevant: Sequence[ContextRecordOut],
+        budget_chars: int,
+        *,
+        candidate_pool_truncated: bool = False,
+    ) -> tuple[list[ContextRecordOut], int, ContextPackMetadata]:
+        """Compile a pack and return truthful content-free selection accounting."""
+
         from .retrieval_contracts import SetSelectionConstraints
 
         ordered: list[ContextRecordOut] = []
@@ -706,7 +990,7 @@ class ContextCompiler:
                 SetSelectionCandidate(
                     key=item.id,
                     budget_cost=self._cost(item),
-                    base_utility=(count - index) * 1_000,
+                    base_utility=self._base_utility(item, index, count),
                     semantic_facets=self._semantic_facets(item),
                     diversity_dimensions=self._diversity_dimensions(item),
                     redundancy_groups=redundancy[item.id],
@@ -720,11 +1004,66 @@ class ContextCompiler:
             )
         selection = self.selector.select(
             candidates,
-            SetSelectionConstraints(limit=len(candidates), budget=budget_chars),
+            SetSelectionConstraints(
+                limit=min(len(candidates), _MAX_CONTEXT_PACK_ITEMS),
+                budget=budget_chars,
+            ),
         )
         by_id = {item.id: item for item in ordered}
         selected = [by_id[candidate.key] for candidate in selection.candidates]
-        return selected, total_budget_cost(selection.candidates)
+        used = total_budget_cost(selection.candidates)
+        selected_ids = {item.id for item in selected}
+        omitted = [item for item in ordered if item.id not in selected_ids]
+        selected_redundancy = set().union(
+            *(redundancy[item.id] for item in selected),
+        )
+        selected_conflicts = set().union(
+            *(self._conflict_groups(item) for item in selected),
+        )
+        duplicate_suppressed_count = sum(
+            bool(redundancy[item.id] & selected_redundancy) for item in omitted
+        )
+        conflict_suppressed_count = sum(
+            bool(self._conflict_groups(item) & selected_conflicts) for item in omitted
+        )
+        budget_limited = bool(
+            omitted and any(self._cost(item) > max(0, budget_chars - used) for item in omitted)
+        )
+        record_limit_reached = len(selected) >= _MAX_CONTEXT_PACK_ITEMS and bool(omitted)
+        reasons = list(
+            dict.fromkeys(
+                reason
+                for reason, enabled in (
+                    ("candidate_pool", candidate_pool_truncated),
+                    ("budget", budget_limited),
+                    ("record_limit", record_limit_reached),
+                )
+                if enabled
+            )
+        )
+        metadata = ContextPackMetadata(
+            candidate_count=len(ordered),
+            selected_count=len(selected),
+            omitted_count=len(omitted),
+            budget_chars=budget_chars,
+            used_chars=used,
+            provenance_backed_count=sum(
+                bool(
+                    item.source_reference
+                    or item.source_id
+                    or item.source_service
+                    or item.source_type
+                    or item.evidence
+                )
+                for item in selected
+            ),
+            candidate_pool_truncated=candidate_pool_truncated,
+            truncated=bool(reasons),
+            truncation_reasons=reasons,
+            duplicate_suppressed_count=duplicate_suppressed_count,
+            conflict_suppressed_count=conflict_suppressed_count,
+        )
+        return selected, used, metadata
 
 
 def _temporal_sidecar_path(database_path: Path) -> Path:
@@ -911,10 +1250,9 @@ def _admissibility_inputs(
     request: SearchRequest,
     conflicts: dict[str, ConflictState],
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
-    raw_query_tokens = set(_tokens(request.query))
-    query_tokens = set(raw_query_tokens)
-    for token in raw_query_tokens:
-        query_tokens.update(_LEXICAL_ALIASES.get(token, ()))
+    intent = parse_query_intent(request.query)
+    raw_query_tokens = set(intent.focus_tokens)
+    query_tokens = set(intent.expanded_tokens)
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -980,7 +1318,7 @@ def _admissibility_inputs(
         )
     specificity = (
         0.0
-        if len(rows) == 1 or any(token in _LEXICAL_ALIASES for token in raw_query_tokens)
+        if len(rows) == 1
         else _specificity(raw_query_tokens)
     )
     return candidates, AdmissibilityContext(
@@ -995,11 +1333,17 @@ class _PipelineDiagnostics:
     temporal: tuple[TemporalDiagnostic, ...] = ()
     lexical: VocabularyDiagnostics | None = None
     admissibility: AdmissibilityBatch | None = None
+    candidate_pool_count: int = 0
+    candidate_pool_truncated: bool = False
 
     def safe_dict(self) -> dict[str, Any]:
         lexical = self.lexical
         admissibility = self.admissibility
         return {
+            "candidate_pool": {
+                "count": self.candidate_pool_count,
+                "truncated": self.candidate_pool_truncated,
+            },
             "temporal": {
                 "maintenance_reason": (
                     self.temporal_maintenance.reason_code.value
@@ -1068,6 +1412,7 @@ class RetrievalEngine:
         self.admissibility_gate = admissibility_gate or DeterministicAdmissibilityGate(
             AdmissibilityConfig(rejection_threshold=0.70)
         )
+        self.usefulness_reranker = DeterministicUsefulnessReranker()
         self._frozen_pipeline = bool(getattr(self.ranker, "frozen_pipeline", False))
         self._temporal_marker: tuple[int, int, str, int, str] | None = None
         self._current_temporal_special: frozenset[str] = frozenset()
@@ -1155,6 +1500,19 @@ class RetrievalEngine:
         admissibility = self.admissibility_gate.evaluate_many(gate_inputs, gate_context)
         admitted = {decision.key for decision in admissibility.decisions if decision.admitted}
         gated = [row for row in ranked if str(row["id"]) in admitted]
+        candidate_pool_count = len(ranked)
+        candidate_pool_truncated = False
+        if lexical is not None:
+            candidate_pool_count = max(candidate_pool_count, lexical.indexed_candidate_count)
+            candidate_pool_truncated = lexical.indexed_candidate_count > len(ranked)
+        if isinstance(self.ranker, LexicalV3CandidateRanker):
+            gated, explanations = self.usefulness_reranker.rerank(
+                gated,
+                explanations,
+                request.query,
+                current_project=request.current_project,
+                conflicts=conflicts,
+            )
         return (
             gated,
             explanations,
@@ -1166,6 +1524,8 @@ class RetrievalEngine:
                 ),
                 lexical=lexical,
                 admissibility=admissibility,
+                candidate_pool_count=candidate_pool_count,
+                candidate_pool_truncated=candidate_pool_truncated,
             ),
         )
 
@@ -1286,10 +1646,12 @@ class RetrievalEngine:
         query_parts = [request.query]
         if request.current_project:
             query_parts.append(request.current_project)
-        mandatory_search = self._bounded_search(
-            SearchRequest(query="", kinds=["interaction_preference"], limit=100), principal
+        mandatory_search, _mandatory_explanations, mandatory_diagnostics = self._search(
+            SearchRequest(query="", kinds=["interaction_preference"], limit=100),
+            principal,
+            bounded=True,
         )
-        relevant_search = self._bounded_search(
+        relevant_search, _relevant_explanations, relevant_diagnostics = self._search(
             SearchRequest(
                 query=" ".join(part for part in query_parts if part),
                 scopes=request.requested_scopes,
@@ -1297,9 +1659,16 @@ class RetrievalEngine:
                 limit=100,
             ),
             principal,
+            bounded=True,
         )
-        selected, used = self.compiler.compile(
-            mandatory_search.items, relevant_search.items, request.budget_chars
+        selected, used, pack_metadata = self.compiler.compile_with_diagnostics(
+            mandatory_search.items,
+            relevant_search.items,
+            request.budget_chars,
+            candidate_pool_truncated=(
+                mandatory_diagnostics.candidate_pool_truncated
+                or relevant_diagnostics.candidate_pool_truncated
+            ),
         )
         granted = set(principal.scopes) if principal else set(request.requested_scopes)
         omitted = sorted(set(request.requested_scopes) - granted) if principal else []
@@ -1316,6 +1685,7 @@ class RetrievalEngine:
             omitted_scopes=omitted,
             audit_trace_id=trace_id,
             used_chars=used,
+            pack_metadata=pack_metadata,
         )
 
 

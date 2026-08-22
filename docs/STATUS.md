@@ -1249,6 +1249,12 @@ state is already noncurrent and creates no user queue.
 - Weighted BM25 runs only over authorized and temporally eligible candidate
   IDs. Prefix fallback, candidate count, tokens, channel results, query length,
   and result count are hard bounded; FTS5 secure-delete is feature-detected.
+- Default V3 search now applies a deterministic local-usefulness rerank after
+  those hard boundaries: salient query tokens and bounded intent aliases are
+  combined with field coverage, recency, confidence, availability, sensitivity,
+  conflict, provenance, and actionability. A 32-record bootstrap pack cap and
+  optional `pack_metadata` envelope report budget, omission, provenance, and
+  truncation accounting without exposing ranking diagnostics.
 - Task admissibility uses only upstream numeric factors after hard policy and
   time filtering. Sparse/underspecified evidence fails open; learned authority
   remains shadow-only.
@@ -1278,9 +1284,11 @@ state is already noncurrent and creates no user queue.
   stale/conflict exclusion, withdrawn exclusion, sensitivity, provenance,
   budget compliance, and provider-facing packaging through public
   observation/search/bootstrap/get APIs on an isolated vault. It refuses the
-  live Core data directory, does not change production ranking or MCP behavior,
-  and grants no beta-acceptance credit. The checked-in baseline is
-  `bench/baselines/retrieval_usefulness_v1.json`.
+  live Core data directory, verifies that the checkout-local runtime is loaded,
+  exercises sparse intent and truthful budget metadata cases, and grants no
+  beta-acceptance credit. The checked-in baseline is
+  `bench/baselines/retrieval_usefulness_v1.json` (17 cases; all scorecard gates
+  pass locally).
 - Historical integrated commit `67dd11c` passed the hosted Python 3.12 matrix on Windows,
   macOS, and Ubuntu, dashboard Node 20/22, and native package acceptance on
   Windows, Ubuntu, macOS ARM, and macOS Intel. Latency numbers remain local

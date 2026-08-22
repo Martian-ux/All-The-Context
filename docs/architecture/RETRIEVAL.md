@@ -17,8 +17,11 @@ The production pipeline has six ordered boundaries:
    containing only temporally eligible IDs. The bounded evidence path used by
    context compilation uses a 100-record result pool; phrase/all-term channels
    precede a bounded exact-OR fallback, and prefix fallback is limited to four
-   tokens of at least four characters. The production evidence-pool threshold
-   is two hits.
+   tokens of at least four characters. `DeterministicUsefulnessReranker` then
+   applies bounded local query-intent, field-coverage, recency, confidence,
+   availability, sensitivity, conflict, provenance, and actionability signals
+   without weakening the preceding gates. The production evidence-pool
+   threshold is two hits.
 4. `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
    scope/project fit, requested-kind compatibility, confidence/explicitness,
    and conflict state. Sparse or underspecified evidence fails open. An optional
@@ -28,7 +31,10 @@ The production pipeline has six ordered boundaries:
    `DeterministicSetSelector` then maximizes exact rational marginal utility per
    character while prioritizing mandatory preferences and enforcing transitive
    duplicate groups, same-slot conflict exclusion, supporting-evidence
-   relationships, and the exact budget. It cannot weaken an upstream gate.
+   relationships, a 32-record pack cap, and the exact budget. Bootstrap returns
+   optional content-free `pack_metadata` accounting for candidate-pool caps,
+   omissions, provenance-backed items, and truthful truncation reasons. It
+   cannot weaken an upstream gate.
 6. Administrator-only diagnostics expose authorized returned record IDs plus
    numeric values, aggregate counts, and closed reason codes. They never include
    raw query/context text, denied IDs, or unauthorized-derived vocabulary.
@@ -79,7 +85,9 @@ untrusted or unauthorized corpus rows.
 `RetrievalEngine.bootstrap()` uses the separate bounded evidence path and keeps
 its 100-record retrieval pool before `ContextCompiler` performs budgeted set
 selection. This preserves bounded MCP context compilation; it is not the source
-of the catalog API's `total`.
+of the catalog API's `total`. Its optional `pack_metadata` envelope is
+provider-facing accounting, not ranking diagnostics, and does not expose query
+text or record IDs beyond the selected items already returned.
 
 ## Reproducible V1 baseline
 
@@ -140,14 +148,14 @@ redundancy, and budget scenarios; all 11 local gates pass.
 ## Synthetic retrieval usefulness
 
 `python -m bench.retrieval_usefulness` is a developer-facing eval of whether
-current search, bootstrap, and get packaging return the right current facts,
+the production search, bootstrap, and get paths return the right current facts,
 exclude stale, conflicting, withdrawn, tentative, and denied items, keep
 sensitive records within client allow/deny and sensitivity labels, preserve
 provenance fields, stay inside character budgets, and emit the provider JSON
 shape used by Core HTTP/MCP. It uses public observation APIs and an isolated
-synthetic vault only. It does not change production ranking, ingestion, schema,
-MCP behavior, or live user data, and it is not a beta-acceptance gate. Usage
-and the compact baseline scorecard are in
+synthetic vault only; its runner self-checks that the checkout-local package is
+being exercised. It is not a beta-acceptance gate. Usage and the compact
+baseline scorecard are in
 [`bench/README.md`](../../bench/README.md).
 
 ## Optional shadow research

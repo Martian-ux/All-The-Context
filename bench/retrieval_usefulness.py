@@ -3,10 +3,15 @@
 The harness builds an isolated vault through public observation, deletion, and
 forget APIs, then scores search, bootstrap, and get packaging. It never opens
 the operator Core database, never logs raw personal context, and does not
-change production ranking, ingestion, schema, or MCP behavior.
+change ingestion, storage schema, or live user data. It exercises the
+checkout-local production retrieval facade and grants no acceptance credit.
 """
 
 from __future__ import annotations
+
+# The repository-local source path is intentionally inserted before imports;
+# E402 is expected for this standalone, cross-checking benchmark entry point.
+# ruff: noqa: E402, I001
 
 import argparse
 import hashlib
@@ -18,6 +23,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
+
+# Make the standalone benchmark self-contained when another checkout has been
+# installed into the interpreter.  The benchmark must never silently measure
+# a different source tree than the fixture and report being green.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_LOCAL_SOURCE = _REPO_ROOT / "packages" / "allthecontext" / "src"
+if not (_LOCAL_SOURCE / "allthecontext" / "__init__.py").is_file():
+    raise RuntimeError("retrieval usefulness benchmark requires the repository source tree")
+if str(_LOCAL_SOURCE) not in sys.path:
+    sys.path.insert(0, str(_LOCAL_SOURCE))
+
+import allthecontext
 
 from allthecontext.config import CoreConfig
 from allthecontext.models import (
@@ -33,6 +50,13 @@ from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
 from platformdirs import user_data_path
+
+try:
+    Path(allthecontext.__file__ or "").resolve().relative_to(_LOCAL_SOURCE / "allthecontext")
+except ValueError as error:
+    raise RuntimeError(
+        "retrieval usefulness benchmark resolved allthecontext outside this checkout"
+    ) from error
 
 FIXTURES = Path(__file__).with_name("retrieval_usefulness_fixtures.json")
 DEFAULT_BASELINE = Path(__file__).parent / "baselines" / "retrieval_usefulness_v1.json"
@@ -514,11 +538,48 @@ def _evaluate_case(
                     "omitted_scopes",
                     "audit_trace_id",
                     "used_chars",
+                    "pack_metadata",
                 } <= set(packaging) and packaging.get("context_mode") == "local_core"
             if has_envelope:
                 packaging_hits += 1
             else:
                 reasons.append("missing_provider_envelope")
+            if surface == "bootstrap":
+                metadata = packaging.get("pack_metadata")
+                packaging_total += 1
+                required_metadata = {
+                    "pack_schema",
+                    "candidate_count",
+                    "selected_count",
+                    "omitted_count",
+                    "budget_chars",
+                    "used_chars",
+                    "provenance_backed_count",
+                    "candidate_pool_truncated",
+                    "truncated",
+                    "truncation_reasons",
+                    "duplicate_suppressed_count",
+                    "conflict_suppressed_count",
+                    "selection_policy",
+                }
+                if isinstance(metadata, dict) and required_metadata <= set(metadata):
+                    packaging_hits += 1
+                else:
+                    reasons.append("missing_pack_metadata")
+                expectations = expect.get("pack_metadata_expectations", {})
+                if not isinstance(expectations, dict):
+                    raise UsefulnessError(
+                        f"{case_id}.pack_metadata_expectations must be an object"
+                    )
+                if expectations:
+                    if not isinstance(metadata, dict):
+                        reasons.append("missing_pack_metadata")
+                    for field, expected in expectations.items():
+                        packaging_total += 1
+                        if isinstance(metadata, dict) and metadata.get(str(field)) == expected:
+                            packaging_hits += 1
+                        else:
+                            reasons.append("pack_metadata_mismatch")
         for item in item_payloads:
             for field in PROVIDER_ITEM_FIELDS:
                 packaging_total += 1

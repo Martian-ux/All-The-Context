@@ -430,6 +430,10 @@
           "withdrawn_constraint",
           "forgotten_goal"
         ],
+        "pack_metadata_expectations": {
+          "truncated": true,
+          "truncation_reasons": ["budget"]
+        },
         "require_provider_packaging": true
       }
     },
@@ -482,6 +486,36 @@
           "policy_version"
         ],
         "require_provider_packaging": true
+      }
+    },
+    {
+      "id": "sparse_location_intent",
+      "dimensions": ["current_facts", "stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "where is the Helios operator based",
+        "limit": 5
+      },
+      "expect": {
+        "required_aliases": ["current_home_city"],
+        "required_content_aliases": ["current_home_city"],
+        "forbidden_content_aliases": ["stale_home_city"]
+      }
+    },
+    {
+      "id": "latest_retention_intent",
+      "dimensions": ["current_facts", "stale_conflict_exclusion"],
+      "surface": "search",
+      "principal": "reader",
+      "request": {
+        "query": "latest Orion archive retention",
+        "limit": 5
+      },
+      "expect": {
+        "required_aliases": ["current_retention"],
+        "required_content_aliases": ["current_retention"],
+        "forbidden_content_aliases": ["expired_retention"]
       }
     }
   ]

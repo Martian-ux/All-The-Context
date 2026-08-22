@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 from allthecontext.config import CoreConfig
+from allthecontext.retrieval import RetrievalEngine, parse_query_intent
+from allthecontext.storage import CoreStore
 
 from bench.retrieval_usefulness import (
     DIMENSIONS,
@@ -15,6 +17,9 @@ from bench.retrieval_usefulness import (
     SCORECARD_SCHEMA,
     CaseOutcome,
     UsefulnessError,
+    _apply_corpus,
+    _bootstrap_request,
+    _principal,
     _scorecard,
     assert_isolated_work_dir,
     compare_to_baseline,
@@ -27,7 +32,7 @@ from bench.retrieval_usefulness import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "bench" / "baselines" / "retrieval_usefulness_v1.json"
-FIXTURE_SHA256 = "dd84421d23573cd96f1fd310cbf4975efbafa0a32df881f086c73723232edfad"
+FIXTURE_SHA256 = "910e85defe71305f5554f4730b02e4261d0cf806da96bed8f1bfc8185c031022"
 
 
 def _fixture() -> dict[str, object]:
@@ -120,6 +125,37 @@ def test_repeat_runs_are_deterministic(tmp_path: Path) -> None:
     assert first["scorecard"] == second["scorecard"]
     assert first["cases"] == second["cases"]
     assert first["fixture_sha256"] == second["fixture_sha256"]
+
+
+def test_query_intent_uses_bounded_local_features() -> None:
+    intent = parse_query_intent("Where is the latest Helios rollback runbook?")
+
+    assert intent.raw_tokens == ("where", "is", "the", "latest", "helios", "rollback", "runbook")
+    assert intent.focus_tokens == ("latest", "helios", "rollback", "runbook")
+    assert {"current", "recent", "restore"} <= set(intent.expanded_tokens)
+    assert intent.asks_current is True
+    assert intent.asks_location is True
+    assert intent.asks_procedure is True
+
+
+def test_bootstrap_pack_metadata_is_truthful_for_budget_truncation(tmp_path: Path) -> None:
+    fixture = _fixture()
+    assert isinstance(fixture["vault"], dict)
+    assert isinstance(fixture["principals"], dict)
+
+    store = CoreStore(tmp_path / "pack.sqlite3")
+    store.initialize_vault(str(fixture["vault"]["name"]), str(fixture["vault"]["display_timezone"]))
+    _apply_corpus(store, fixture)
+    principal = _principal(fixture["principals"]["reader"])
+    request = _bootstrap_request(fixture["cases"][12]["request"])
+
+    response = RetrievalEngine(store).bootstrap(request, principal)
+    assert response.pack_metadata is not None
+    assert response.pack_metadata.truncated is True
+    assert response.pack_metadata.truncation_reasons == ["budget"]
+    assert response.pack_metadata.used_chars == response.used_chars
+    assert response.pack_metadata.omitted_count > 0
+    store.close()
 
 
 def test_scorecard_fails_closed_on_leaks_and_budget() -> None:

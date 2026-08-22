@@ -8,7 +8,7 @@ HTTP; the adapter is pinned below the pending v2 major release.
 
 | Tool | Purpose | Required client scope |
 |---|---|---|
-| `bootstrap_context` | Compile mandatory and task-relevant current context within a character budget | `context:read` |
+| `bootstrap_context` | Compile mandatory and task-relevant current context within a character budget; return optional bounded `pack_metadata` accounting | `context:read` |
 | `search_context` | Structured/FTS catalog search with exact post-policy totals and offset pagination | `context:read` |
 | `get_context_item` | Retrieve one permitted current record and provenance | `context:read` |
 | `context_status` | Report mode, connectivity, and freshness without private content | `context:status` |
@@ -53,7 +53,11 @@ tools remain absent from the model-facing MCP surface.
 `search_context` reports the exact count after authorization, request filters,
 temporal selection, and admissibility; its cursor can page through every
 permitted match. `bootstrap_context` remains a separate bounded retrieval and
-budgeted compilation contract.
+budgeted compilation contract. A Core bootstrap response may include the
+backward-compatible `pack_metadata` envelope with candidate/selected/omitted
+counts, budget usage, provenance-backed selected-item count, and explicit
+candidate-pool, budget, or record-limit truncation reasons. It contains no raw
+query or ranking diagnostics.
 
 ## One-time local configuration
 
