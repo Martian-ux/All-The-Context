@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from allthecontext.memory_policy import archive_lineage_key, classify_sensitivity
 from allthecontext.models import (
     CandidateInput,
@@ -495,6 +496,38 @@ def test_classify_sensitivity_is_conservative_for_health_and_location() -> None:
     assert classify_sensitivity("My social security number is 123-45-6789.") == (
         Sensitivity.HIGHLY_SENSITIVE
     )
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "My partner lives in Seattle.",
+        "My significant other resides in Seattle.",
+        "I reside in Boston.",
+        "I am residing in Boston.",
+        "I currently reside in Boston.",
+        "I have HIV.",
+        "I live with HIV.",
+        "I have a medical condition.",
+        "My mortgage is with a bank.",
+        "I have a mortgage with a credit union.",
+    ),
+)
+def test_personally_framed_sensitivity_gaps_are_localized(content: str) -> None:
+    assert classify_sensitivity(content) == Sensitivity.SENSITIVE
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        "The partner function is used by the parser.",
+        "Mortgage rates are included in the technical example.",
+        "HIV is discussed in the medical training material.",
+        "A fictional character resides in Boston.",
+    ),
+)
+def test_unframed_technical_and_general_text_is_not_promoted(content: str) -> None:
+    assert classify_sensitivity(content) == Sensitivity.NORMAL
 
 
 def test_unattested_unkeyed_client_contradictions_do_not_become_current(

@@ -2733,3 +2733,27 @@ candidate/session history, record versions, independently deleted records, and
 local-only policy outcomes remain preserved. This supersedes ADR-097's rebuild
 wording only; it does not change archive extraction eligibility or conflict
 resolution.
+
+## ADR-102: Personally framed sensitivity is fail-local
+
+**Status:** accepted 2026-08-22. Post-beta privacy correction. Does not retarget,
+relabel, or grant acceptance credit to `0.1.0-beta.6`.
+
+The deterministic `automatic-v1` sensitivity classifier now recognizes narrowly
+personally framed health, relationship, location, and financial statements that
+were previously easy to miss. This includes first-person residence and health
+assertions such as HIV status, possessive relationship statements such as a
+partner living somewhere, and possessive mortgage/loan statements. A detected
+`sensitive` value remains monotonic: Core forces the resulting record to
+`local_only`, regardless of a requested `core_available` or legacy
+`always_available` value, and the Core forwarding boundary admits only
+`core_available` records.
+
+The rules are intentionally phrase-based rather than a general semantic
+classifier. Unframed technical or general text such as a partner function,
+mortgage rates, or a medical reference is not promoted by these additions.
+This is not an exhaustive privacy detector: wording without a recognized
+personal frame can remain `normal`, while an explicit first-person fictional
+statement can still be conservatively localized. Secret-like content and
+identifier rules remain higher precedence and highly sensitive content remains
+excluded from automatic current context.

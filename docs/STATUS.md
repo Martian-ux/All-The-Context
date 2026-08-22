@@ -851,6 +851,14 @@ identity, while broader certification-profile browser evidence remains open:
   `staged` until session completion. Secret-like and highly sensitive content
   is ignored, sensitive applied context is forced to `local_only`, and
   non-explicit/inferred context requires corroboration.
+- The deterministic sensitivity classifier now covers personally framed
+  partner/residence, health (including HIV), and mortgage/loan statements while
+  leaving unframed technical/general examples at `normal`. Unit, Core policy,
+  and Core-forwarding regressions prove that detected sensitivity remains
+  `local_only` and cannot cross the forwarding boundary. This phrase-based
+  detector is conservative but not exhaustive; explicit first-person fictional
+  text may still be localized, and unrecognized personal wording is not a
+  guarantee of privacy classification.
 - Direct observations are evaluated in the same Core transaction. Exact matches
   reinforce current context; explicitness and `observed_at` resolve same-slot
   replacement, and explicit targeted corrections apply automatically while

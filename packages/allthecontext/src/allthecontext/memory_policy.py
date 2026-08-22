@@ -80,20 +80,40 @@ _HIGHLY_SENSITIVE_HINT = re.compile(
     r")",
     flags=re.IGNORECASE,
 )
+
+_HEALTH_CONDITION = (
+    r"(?:hiv|aids|cancer|diabetes|asthma|depression|anxiety(?: disorder)?|"
+    r"epilepsy|bipolar disorder|ptsd|autism|adhd|a (?:medical )?(?:condition|"
+    r"illness|disease|disorder|disability))"
+)
+_PERSONAL_HEALTH_HINT = (
+    rf"(?:"
+    rf"\b(?:i (?:was|am) diagnosed with|i (?:have|had|live with|am living with))\s+"
+    rf"{_HEALTH_CONDITION}\b|"
+    rf"\b(?:i (?:take|use|need|am on)\s+(?:medication|a prescription|"
+    rf"chemotherapy|an inhaler)|"
+    rf"my (?:diagnosis|condition|medication|prescription|therapist|doctor)\b|"
+    rf"i am pregnant\b"
+    rf"))"
+)
 _SENSITIVE_HINT = re.compile(
-    r"(?:"
+    rf"(?:"
     r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|"
     r"\b(?:phone|mobile)\s+number\b|"
     r"\b(?:date of birth|dob|birthday)\b|"
-    r"\b(?:diagnos(?:is|ed)|medication|prescription|therapist|chemotherapy|"
-    r"pregnant|cancer|diabetes|asthma|depression|anxiety disorder|inhaler|"
-    r"my doctor)\b|"
-    r"\b(?:my (?:wife|husband|spouse|girlfriend|boyfriend|ex|kids?|children|"
-    r"son|daughter)|divorced from)\b|"
-    r"\b(?:i live (?:in|at)|i am based in|i'm based in|my home is in)\b|"
+    rf"{_PERSONAL_HEALTH_HINT}|"
+    r"\b(?:my (?:wife|husband|spouse|girlfriend|boyfriend|partner|"
+    r"significant other|fiancé|fiance|fiancée|ex|kids?|children|son|daughter)|"
+    r"divorced from)\b|"
+    r"\b(?:(?:i )(?:(?:currently|presently) )?(?:live|reside) (?:in|at)|"
+    r"i(?: am|'m) based in|i am residing (?:in|at)|i(?: am|'m) located in|"
+    r"my (?:home|residence) is (?:located )?in|my address is)\b|"
     r"\b\d{1,6}\s+\w+(?:\s\w+){0,3}\s+(?:street|st\.?|avenue|ave\.?|road|rd\.?|"
     r"boulevard|blvd\.?|lane|ln\.?|drive|dr\.?)\b|"
-    r"\b(?:salary|annual income|bank account|credit card|make \$?\d)\b|"
+    r"\b(?:my (?:salary|annual income|bank account|mortgage|home loan|"
+    r"student loan|car loan|debt|lender)|i (?:have|owe|pay|hold)\s+"
+    r"(?:a|an|my)?\s*(?:mortgage|home loan|student loan|car loan|debt)|"
+    r"i (?:make|earn) \$?\d)\b|"
     r"\bmy name is\b"
     r")",
     flags=re.IGNORECASE,

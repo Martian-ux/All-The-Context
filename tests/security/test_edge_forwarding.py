@@ -8,7 +8,7 @@ from allthecontext.config import CoreConfig
 from allthecontext.core.service import CoreService
 from allthecontext.edge_claim import generate_claim
 from allthecontext.edge_connection import EdgeConnectionStore, EdgeSyncManager
-from allthecontext.models import ApprovalRequest, Availability, CandidateInput
+from allthecontext.models import ApprovalRequest, Availability, CandidateInput, Sensitivity
 from allthecontext.relay.forwarding import EdgeForwardingBroker, ForwardingError
 from allthecontext.relay.service import SQLiteRelayStore
 
@@ -155,6 +155,20 @@ def test_core_executes_only_authorized_core_available_records(
         context_scopes=["*"],
     )
 
+    sensitive_observation = core.store.add_candidate(
+        CandidateInput(
+            kind="personal_context",
+            content="My mortgage is with a bank.",
+            availability=Availability.CORE,
+            explicit_user_statement=True,
+            idempotency_key="sensitive-mortgage-forwarding-boundary",
+        )
+    )
+    assert sensitive_observation.record_id is not None
+    sensitive_record = core.store.get_record(sensitive_observation.record_id)
+    assert sensitive_record.sensitivity == Sensitivity.SENSITIVE
+    assert sensitive_record.availability == Availability.LOCAL
+
     def envelope(
         client_id: str,
         *,
@@ -219,6 +233,17 @@ def test_core_executes_only_authorized_core_available_records(
     )
     assert fetched["found"] is True
     assert fetched["item"]["id"] == records[Availability.CORE].id
+    all_context = execute(
+        "edge:allowed",
+        payload={"query": "", "limit": 20},
+    )
+    assert sensitive_record.id not in {item["id"] for item in all_context["items"]}
+    sensitive_fetch = execute(
+        "edge:allowed",
+        operation="get_context_item",
+        payload={"record_id": sensitive_record.id},
+    )
+    assert sensitive_fetch == {"state": "available", "found": False}
 
     scoped_atlas_candidate = core.store.add_candidate(
         CandidateInput(
