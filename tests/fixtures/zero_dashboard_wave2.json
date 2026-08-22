@@ -69,7 +69,7 @@
           "generation": 1,
           "payload": {
             "kind": "project_decision",
-            "content": "Neptune uses a separate source.",
+            "content": "Atlas uses a separate Neptune source.",
             "entity_key": "neptune",
             "attribute_key": "retrieval_mode",
             "scopes": ["project:neptune"],

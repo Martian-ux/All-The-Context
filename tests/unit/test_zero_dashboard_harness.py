@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,7 +40,7 @@ def test_zero_dashboard_wave2_journey_passes_every_non_compensable_gate(
     assert "Atlas uses deterministic local retrieval." in receipt.viewer_before_context
     assert "Atlas uses bounded local retrieval." not in receipt.viewer_context
     assert "Terminal purge fixture for Atlas." in receipt.pre_purge_context
-    assert "Neptune uses a separate source." not in receipt.final_context
+    assert "Atlas uses a separate Neptune source." not in receipt.final_context
     assert "Expired Atlas working-state fixture." not in receipt.final_context
     assert "Temporary deletion fixture for Atlas." not in receipt.final_context
     assert "Terminal purge fixture for Atlas." not in receipt.final_context
@@ -68,6 +69,14 @@ def test_default_zero_dashboard_fixture_is_deterministic_and_sanitized() -> None
     )
 
     assert fixture == json_fixture
+    wrong_project_event = next(
+        event
+        for page in fixture.pages
+        for event in page.events
+        if event.provider_event_id == "capture-other-project"
+    )
+    assert "Atlas" in wrong_project_event.payload["content"]
+    assert wrong_project_event.payload["scopes"] == ["project:neptune"]
     assert [event.provider_event_id for page in fixture.pages for event in page.events] == [
         "capture-project",
         "capture-private",
@@ -94,7 +103,9 @@ def test_scorecard_rejects_poisoned_first_context(monkeypatch, tmp_path: Path) -
         if calls == 1:
             items = (
                 *items,
-                SimpleNamespace(id="poison-neptune", content="Neptune uses a separate source."),
+                SimpleNamespace(
+                    id="poison-neptune", content="Atlas uses a separate Neptune source."
+                ),
             )
         return items, latency
 
@@ -103,7 +114,7 @@ def test_scorecard_rejects_poisoned_first_context(monkeypatch, tmp_path: Path) -
 
     assert receipt.scorecard.passed is False
     assert receipt.scorecard.context_correctness is False
-    assert "Neptune uses a separate source." in receipt.first_context
+    assert "Atlas uses a separate Neptune source." in receipt.first_context
 
 
 def test_scorecard_rejects_poisoned_final_import(monkeypatch, tmp_path: Path) -> None:
@@ -129,6 +140,27 @@ def test_scorecard_rejects_poisoned_final_import(monkeypatch, tmp_path: Path) ->
     assert receipt.scorecard.passed is False
     assert receipt.scorecard.context_correctness is False
     assert "Imported fixture text is inert evidence data." in receipt.final_context
+
+
+def test_scorecard_rejects_formation_that_drops_supersedes_ref(monkeypatch, tmp_path: Path) -> None:
+    original = harness.form_observation
+
+    def dropping_supersedes(*args: object, **kwargs: object) -> object:
+        result = original(*args, **kwargs)  # type: ignore[arg-type]
+        formation_input = args[0]
+        if (
+            getattr(formation_input, "supersedes_observation_ref", None) is not None
+            and getattr(result, "proposal", None) is not None
+        ):
+            proposal = replace(result.proposal, supersedes_observation_ref=None)
+            return replace(result, proposal=proposal)
+        return result
+
+    monkeypatch.setattr(harness, "form_observation", dropping_supersedes)
+    receipt = run_zero_dashboard_journey(tmp_path / "dropped-supersedes.sqlite3")
+
+    assert receipt.scorecard.passed is False
+    assert receipt.scorecard.correction_propagation is False
 
 
 def test_altered_lifecycle_request_parameters_are_not_ignored(monkeypatch, tmp_path: Path) -> None:

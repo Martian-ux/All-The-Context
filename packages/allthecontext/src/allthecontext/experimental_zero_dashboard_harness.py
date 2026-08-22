@@ -42,6 +42,7 @@ from .client_runtime import (
     DeterministicFakeClientRuntimeHost,
     DirectUserTurnPayload,
     PayloadReference,
+    UnsupportedHookReport,
 )
 from .experimental_event_observation import (
     AuthorizationApplicability,
@@ -89,6 +90,7 @@ from .models import (
     CandidateInput,
     CandidateOut,
     ContextRecordOut,
+    MemoryTruthStatus,
     Sensitivity,
 )
 from .retrieval import RetrievalEngine
@@ -362,7 +364,7 @@ def default_zero_dashboard_fixture() -> ZeroDashboardFixture:
                         generation=1,
                         payload={
                             "kind": "project_decision",
-                            "content": "Neptune uses a separate source.",
+                            "content": "Atlas uses a separate Neptune source.",
                             "entity_key": "neptune",
                             "attribute_key": "retrieval_mode",
                             "scopes": ["project:neptune"],
@@ -697,6 +699,10 @@ def run_zero_dashboard_journey(
         runtime = DeterministicFakeClientRuntimeHost.for_level(
             "L2", client_id=principal.id, session_id="synthetic-session-1"
         )
+        unsupported_consequence_report = runtime.record_consequence_checkpoint(
+            checkpoint_kind="response_emitted",
+            status="not_observed",
+        )
         retrieval = RetrievalEngine(restarted_store)
         first_context, first_latency = _compile_before_generation(
             runtime,
@@ -884,6 +890,9 @@ def run_zero_dashboard_journey(
             and capabilities.for_hook("restart_session_transition").status == "supported"
             and capabilities.for_hook("manual_context_request").status == "best_effort"
             and capabilities.for_hook("consequence_checkpoint").status == "unsupported"
+            and isinstance(unsupported_consequence_report, UnsupportedHookReport)
+            and unsupported_consequence_report.hook == "consequence_checkpoint"
+            and unsupported_consequence_report.status == "unsupported"
             and replay_coordinator.capability_conformance(source.id).valid
             and replay_coordinator.capability_manifest(source.id).network_access == "denied"
             and replay_coordinator.capability_manifest(source.id).data_egress == ()
@@ -950,7 +959,9 @@ def run_zero_dashboard_journey(
                 and all(item.accepted for item in formation_results)
                 and retention_lineage_ok
             ),
-            secret_refusal=secret_ok,
+            secret_refusal=(
+                secret_ok and all("never-store" not in content for content in final_contents)
+            ),
             retention_and_expiry=(
                 retention_lineage_ok
                 and "Expired Atlas working-state fixture." in first_contents
@@ -1227,7 +1238,7 @@ def _add_direct_turn(
     )
     return _DirectTurnResult(
         candidate=store.add_candidate(candidate, client=principal),
-        formation_supersedes_observation_ref=supersedes_observation_ref,
+        formation_supersedes_observation_ref=formation.proposal.supersedes_observation_ref,
     )
 
 
@@ -1304,7 +1315,7 @@ def _phase_contexts_are_safe(
 ) -> bool:
     """Apply phase-aware, non-compensable content safety gates."""
 
-    wrong_project = "Neptune uses a separate source."
+    wrong_project = "Atlas uses a separate Neptune source."
     secret_like = "Synthetic password=never-store"
     inert_import = "Imported fixture text is inert evidence data."
     old_content = "Atlas uses deterministic local retrieval."
@@ -1442,15 +1453,21 @@ def _exercise_secret_boundary(
         operation_id="secret-fixture-operation",
         client=principal,
     )
-    with store.connect() as connection:
-        leaked = connection.execute(
-            "SELECT COUNT(*) FROM context_candidates WHERE content LIKE '%never-store%'"
-        ).fetchone()[0]
+    candidates, _candidate_total = store.list_candidates(status=None, limit=500)
+    all_truth = store.list_memory_truth(status=None, limit=500)
+    current_truth = store.list_memory_truth(status=MemoryTruthStatus.CURRENT, limit=500)
+    candidate_leaks = any("never-store" in candidate.content for candidate in candidates)
+    durable_truth_leaks = any(
+        "never-store" in item.record.content for item in all_truth.items
+    ) or any("never-store" in item.observation.content for item in all_truth.tentative_observations)
+    current_record_leaks = any("never-store" in item.record.content for item in current_truth.items)
     envelope_text = json.dumps(secret_host.events[0].as_dict(), sort_keys=True)
     return (
         not result.accepted
         and refusal is not None
-        and leaked == 0
+        and not candidate_leaks
+        and not durable_truth_leaks
+        and not current_record_leaks
         and "never-store" not in envelope_text
     )
 
