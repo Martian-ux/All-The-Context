@@ -23,12 +23,13 @@ gate. Those files are now formatted with the pinned project formatter.
 
 The same feature-branch update also launched two identical CI matrices because
 the canonical workflow listened to every `push` as well as `pull_request`.
-Ordinary CI now runs for pull requests and for pushes to `main`; the three
+Ordinary CI now runs for pull requests, pushes to `main`, and version tags
+matching `v*`; ordinary feature-branch pushes do not run push CI. The three
 privileged release workflows remain explicit `workflow_dispatch` ceremonies.
-This preserves pre-merge validation and post-merge default-branch evidence
-without spending a second full matrix on the same feature-branch commit. No CI
-job, supported platform, release gate, or macOS support claim was added or
-removed.
+This preserves pre-merge validation, post-merge default-branch evidence, and
+release-tag validation without spending a second full matrix on the same
+feature-branch commit. No CI job, supported platform, release gate, or macOS
+support claim was added or removed.
 
 ## Hosted full-suite reconciliation (2026-08-22)
 

@@ -207,6 +207,15 @@ def test_ci_declares_matrix_security_and_parity_job_names() -> None:
         assert forbidden not in text
 
 
+def test_ci_trigger_is_pr_main_and_version_tag_only() -> None:
+    text = _read(WORKFLOWS / "ci.yml")
+    trigger = re.search(r"(?ms)^on:\n(?P<body>.*?)^permissions:\n", text)
+    assert trigger is not None
+    assert trigger.group("body").rstrip() == (
+        '  push:\n    branches:\n      - main\n    tags:\n      - "v*"\n  pull_request:'
+    )
+
+
 def test_workflows_pin_uv_and_do_not_bootstrap_unversioned_tools() -> None:
     install_script = _read(ROOT / "scripts" / "install_locked_python.py")
     audit_script = _read(ROOT / "scripts" / "dependency_audit.py")
