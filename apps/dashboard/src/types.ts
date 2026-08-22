@@ -7,7 +7,9 @@ export interface ContextRecord {
   content: string;
   scope: string;
   source_service?: string | null;
-  source_record_id?: string | null;
+  source_id?: string | null;
+  source_reference?: string | null;
+  evidence?: string | null;
   confidence: number;
   sensitivity: string;
   availability: Availability;
