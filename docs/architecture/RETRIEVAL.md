@@ -4,7 +4,7 @@
 V3 remains SQLite-first and deterministic; no embedding, graph database, hosted
 service, native extension, or production vector dependency is required.
 
-The production pipeline has six ordered boundaries:
+The production pipeline has seven ordered boundaries:
 
 1. `EligibleRecordSelector.select_authorized` applies vault, applied/current
    state, request filters, and client allow/deny policy. Relevance never receives
@@ -17,16 +17,19 @@ The production pipeline has six ordered boundaries:
    containing only temporally eligible IDs. The bounded evidence path used by
    context compilation uses a 100-record result pool; phrase/all-term channels
    precede a bounded exact-OR fallback, and prefix fallback is limited to four
-   tokens of at least four characters. `DeterministicUsefulnessReranker` then
-   applies bounded local query-intent, field-coverage, recency, confidence,
-   availability, sensitivity, conflict, provenance, and actionability signals
-   without weakening the preceding gates. The production evidence-pool
-   threshold is two hits.
-4. `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
+   tokens of at least four characters. The production evidence-pool threshold
+   is two hits.
+4. Conflict state is joined for the temporally eligible candidates, then
+   `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
    scope/project fit, requested-kind compatibility, confidence/explicitness,
    and conflict state. Sparse or underspecified evidence fails open. An optional
    learned gate can run only in shadow and has no production authority.
-5. `ContextCompiler` maps only the already-authorized, temporally eligible, and
+5. `DeterministicUsefulnessReranker` reranks only the authorized, temporally
+   eligible, conflict-checked, task-admissible candidates. It applies bounded
+   local query-intent, field-coverage, recency, confidence, availability,
+   sensitivity, conflict, provenance, and actionability signals without
+   weakening any preceding gate.
+6. `ContextCompiler` maps only the already-authorized, temporally eligible, and
    task-admitted result set into opaque hashed semantic/diversity labels. A
    `DeterministicSetSelector` then maximizes exact rational marginal utility per
    character while prioritizing mandatory preferences and enforcing transitive
@@ -35,7 +38,7 @@ The production pipeline has six ordered boundaries:
    optional content-free `pack_metadata` accounting for candidate-pool caps,
    omissions, provenance-backed items, and truthful truncation reasons. It
    cannot weaken an upstream gate.
-6. Administrator-only diagnostics expose authorized returned record IDs plus
+7. Administrator-only diagnostics expose authorized returned record IDs plus
    numeric values, aggregate counts, and closed reason codes. They never include
    raw query/context text, denied IDs, or unauthorized-derived vocabulary.
 

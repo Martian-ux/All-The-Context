@@ -386,7 +386,9 @@ class ContextPackMetadata(StrictModel):
     provenance_backed_count: int = Field(ge=0)
     candidate_pool_truncated: bool = False
     truncated: bool = False
-    truncation_reasons: list[str] = Field(default_factory=list, max_length=4)
+    # Core emits up to three reasons; Edge may add filtering and envelope
+    # trimming while preserving those upstream reasons.
+    truncation_reasons: list[str] = Field(default_factory=list, max_length=6)
     duplicate_suppressed_count: int = Field(default=0, ge=0)
     conflict_suppressed_count: int = Field(default=0, ge=0)
     selection_policy: Literal["deterministic_usefulness_v1"] = (

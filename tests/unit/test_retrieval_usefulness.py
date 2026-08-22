@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 
 import pytest
+from allthecontext.admissibility import ConflictState
 from allthecontext.config import CoreConfig
-from allthecontext.retrieval import RetrievalEngine, parse_query_intent
+from allthecontext.models import ApprovalRequest, BootstrapRequest, CandidateInput, SearchRequest
+from allthecontext.retrieval import RetrievalEngine, _admissibility_inputs, parse_query_intent
 from allthecontext.storage import CoreStore
 
 from bench.retrieval_usefulness import (
@@ -136,6 +138,72 @@ def test_query_intent_uses_bounded_local_features() -> None:
     assert intent.asks_current is True
     assert intent.asks_location is True
     assert intent.asks_procedure is True
+
+
+def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    candidate = store.add_candidate(
+        CandidateInput(
+            kind="location",
+            content="Helios",
+            scopes=["project:helios"],
+            idempotency_key="raw-query-admissibility",
+        )
+    )
+    record = store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    try:
+        with store.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record.id,)
+            ).fetchone()
+            assert row is not None
+            inputs, _context = _admissibility_inputs(
+                [row],
+                SearchRequest(query="what is Helios", current_project="helios"),
+                {record.id: ConflictState.CLEAR},
+            )
+            assert inputs[0].signals.task_query_coverage == round(1 / 3, 6)
+
+            alias_inputs, _alias_context = _admissibility_inputs(
+                [row],
+                SearchRequest(query="where", current_project="helios"),
+                {record.id: ConflictState.CLEAR},
+            )
+            assert alias_inputs[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
+
+
+def test_empty_query_bootstrap_reports_omitted_bounded_pool(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "empty-pool.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    for index in range(101):
+        candidate = store.add_candidate(
+            CandidateInput(
+                kind="fact",
+                content=f"empty pool record {index}",
+                idempotency_key=f"empty-pool-{index}",
+            )
+        )
+        store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
+    principal = _principal(
+        {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+    )
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(query="", requested_scopes=[], budget_chars=50_000), principal
+        )
+        metadata = response.pack_metadata
+        assert metadata is not None
+        assert metadata.candidate_pool_truncated is True
+        assert metadata.candidate_count == 101
+        assert metadata.selected_count == len(response.items) == 32
+        assert metadata.omitted_count == metadata.candidate_count - metadata.selected_count
+        assert metadata.used_chars == response.used_chars
+        assert "candidate_pool" in metadata.truncation_reasons
+    finally:
+        store.close()
 
 
 def test_bootstrap_pack_metadata_is_truthful_for_budget_truncation(tmp_path: Path) -> None:

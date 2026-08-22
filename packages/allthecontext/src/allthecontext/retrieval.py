@@ -543,7 +543,7 @@ class LexicalV3CandidateRanker:
         limit: int,
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         if not query:
-            return self._empty_query_result(candidates)
+            return self._empty_query_result(candidates, limit=limit)
         result = self.lexical.search(
             connection,
             tuple(str(row["id"]) for row in candidates),
@@ -560,7 +560,7 @@ class LexicalV3CandidateRanker:
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         """Return the complete deterministic match set for catalog pagination."""
         if not query:
-            return self._empty_query_result(candidates)
+            return self._empty_query_result(candidates, limit=None)
         result = self.lexical.search_catalog(
             connection,
             tuple(str(row["id"]) for row in candidates),
@@ -571,12 +571,16 @@ class LexicalV3CandidateRanker:
     @staticmethod
     def _empty_query_result(
         candidates: Sequence[sqlite3.Row],
+        *,
+        limit: int | None,
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         ordered = sorted(
             candidates,
             key=lambda row: (str(row["updated_at"]), str(row["id"])),
             reverse=True,
         )
+        if limit is not None:
+            ordered = ordered[:limit]
         explanations = tuple(
             RankingExplanation(str(row["id"]), 0.0, {}, {"recency_tiebreak": 1.0})
             for row in ordered
@@ -947,6 +951,7 @@ class ContextCompiler:
         budget_chars: int,
         *,
         candidate_pool_truncated: bool = False,
+        candidate_pool_count: int | None = None,
     ) -> tuple[list[ContextRecordOut], int, ContextPackMetadata]:
         """Compile a pack and return truthful content-free selection accounting."""
 
@@ -1030,6 +1035,8 @@ class ContextCompiler:
             omitted and any(self._cost(item) > max(0, budget_chars - used) for item in omitted)
         )
         record_limit_reached = len(selected) >= _MAX_CONTEXT_PACK_ITEMS and bool(omitted)
+        candidate_count = max(len(ordered), candidate_pool_count or 0)
+        pool_omitted_count = candidate_count - len(ordered)
         reasons = list(
             dict.fromkeys(
                 reason
@@ -1042,9 +1049,9 @@ class ContextCompiler:
             )
         )
         metadata = ContextPackMetadata(
-            candidate_count=len(ordered),
+            candidate_count=candidate_count,
             selected_count=len(selected),
-            omitted_count=len(omitted),
+            omitted_count=len(omitted) + pool_omitted_count,
             budget_chars=budget_chars,
             used_chars=used,
             provenance_backed_count=sum(
@@ -1251,8 +1258,12 @@ def _admissibility_inputs(
     conflicts: dict[str, ConflictState],
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
     intent = parse_query_intent(request.query)
-    raw_query_tokens = set(intent.focus_tokens)
-    query_tokens = set(intent.expanded_tokens)
+    # Hard admissibility uses only the raw normalized query vocabulary. The
+    # usefulness reranker may remove stopwords and apply bounded aliases, but
+    # those ranking conveniences must not make a candidate appear to cover the
+    # whole task or satisfy a requested kind.
+    raw_query_tokens = set(intent.raw_tokens)
+    query_tokens = raw_query_tokens
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -1505,6 +1516,12 @@ class RetrievalEngine:
         if lexical is not None:
             candidate_pool_count = max(candidate_pool_count, lexical.indexed_candidate_count)
             candidate_pool_truncated = lexical.indexed_candidate_count > len(ranked)
+        elif bounded and isinstance(self.ranker, LexicalV3CandidateRanker):
+            # Empty-query ranking has no lexical result object, but it still
+            # has the bounded evidence-pool contract. Count the complete
+            # policy-safe pool so bootstrap metadata can report omitted rows.
+            candidate_pool_count = len(temporally_eligible)
+            candidate_pool_truncated = candidate_pool_count > len(ranked)
         if isinstance(self.ranker, LexicalV3CandidateRanker):
             gated, explanations = self.usefulness_reranker.rerank(
                 gated,
@@ -1668,6 +1685,13 @@ class RetrievalEngine:
             candidate_pool_truncated=(
                 mandatory_diagnostics.candidate_pool_truncated
                 or relevant_diagnostics.candidate_pool_truncated
+            ),
+            candidate_pool_count=max(
+                len({
+                    item.id for item in (*mandatory_search.items, *relevant_search.items)
+                }),
+                mandatory_diagnostics.candidate_pool_count,
+                relevant_diagnostics.candidate_pool_count,
             ),
         )
         granted = set(principal.scopes) if principal else set(request.requested_scopes)
