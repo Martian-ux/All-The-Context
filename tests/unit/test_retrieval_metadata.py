@@ -65,9 +65,7 @@ def test_context_pack_metadata_accepts_each_explicit_count_boundary(
         payload["conflict_suppressed_count"] = 0
     elif field == "selected_count":
         payload["omitted_count"] = MAX_CONTEXT_PACK_CANDIDATE_COUNT - maximum
-        payload["provenance_backed_count"] = min(
-            int(payload["provenance_backed_count"]), maximum
-        )
+        payload["provenance_backed_count"] = min(int(payload["provenance_backed_count"]), maximum)
     elif field == "provenance_backed_count":
         payload["selected_count"] = maximum
         payload["omitted_count"] = MAX_CONTEXT_PACK_CANDIDATE_COUNT - maximum
