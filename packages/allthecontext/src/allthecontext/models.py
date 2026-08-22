@@ -83,6 +83,24 @@ class ObservationDisposition(StrEnum):
     IGNORED = "ignored"
 
 
+class MemoryTruthStatus(StrEnum):
+    """The canonical state of a record or detached observation."""
+
+    CURRENT = "current"
+    TENTATIVE = "tentative"
+    SUPERSEDED = "superseded"
+    CONFLICTED = "conflicted"
+    DELETED = "deleted"
+
+
+class TruthConflictState(StrEnum):
+    """Conflict state is separate from record status so resolved history is visible."""
+
+    NONE = "none"
+    ACTIVE = "active"
+    RESOLVED = "resolved"
+
+
 class IngestionMode(StrEnum):
     BOOTSTRAP = "model_assisted_bootstrap"
     ARCHIVE = "archive_import"
@@ -362,8 +380,98 @@ class ContextRecordOut(CandidateInput):
     content_hash: str
     created_at: str
     updated_at: str
+    deleted_at: str | None = None
+    status: MemoryTruthStatus = MemoryTruthStatus.CURRENT
     observation_origin: str | None = None
     policy_version: str | None = None
+
+
+class TruthSourceOut(StrictModel):
+    """Content-free source identity and lifecycle metadata for a memory."""
+
+    id: str
+    content_hash: str
+    source_service: str
+    source_type: str
+    filename: str | None = None
+    media_type: str
+    created_at: str
+    import_status: Literal["processing", "complete", "failed", "cancelled"]
+    deleted_at: str | None = None
+    deleted_reason: str | None = None
+
+
+class TruthEvidenceOut(StrictModel):
+    """One durable observation link explaining a canonical record."""
+
+    observation_id: str
+    record_id: str
+    relationship: str
+    link_created_at: str
+    disposition: ObservationDisposition
+    decision_reason: str | None = None
+    decided_at: str | None = None
+    observation_origin: str | None = None
+    policy_version: str | None = None
+    content: str
+    evidence: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    sensitivity: Sensitivity
+    source_id: str | None = None
+    source_reference: str | None = None
+    source_service: str | None = None
+    source_type: str | None = None
+    effective_at: str | None = None
+    observed_at: str | None = None
+    recorded_at: str
+    content_hash: str
+
+
+class MemoryTruthRecordOut(StrictModel):
+    """Canonical record plus the bounded, deterministic explanation for it."""
+
+    record: ContextRecordOut
+    status: MemoryTruthStatus
+    status_reason: str
+    conflict_state: TruthConflictState = TruthConflictState.NONE
+    conflict_group_ids: list[str] = Field(default_factory=list, max_length=64)
+    superseded_by: list[str] = Field(default_factory=list, max_length=64)
+    source: TruthSourceOut | None = None
+    evidence: list[TruthEvidenceOut] = Field(default_factory=list, max_length=512)
+    history_count: int = Field(ge=0)
+
+
+class MemoryTruthObservationOut(StrictModel):
+    """A non-current observation retained so policy outcomes are not hidden."""
+
+    observation: ObservationOut
+    status: MemoryTruthStatus
+    status_reason: str
+
+
+class TruthCoverageOut(StrictModel):
+    """Content-free accounting for clients that need to report import truthfully."""
+
+    source_count: int = Field(ge=0)
+    deleted_source_count: int = Field(ge=0)
+    observation_count: int = Field(ge=0)
+    observations_by_disposition: dict[str, int] = Field(default_factory=dict)
+    record_count: int = Field(ge=0)
+    records_by_status: dict[str, int] = Field(default_factory=dict)
+    conflict_group_count: int = Field(ge=0)
+    ingestion_session_count: int = Field(ge=0)
+    incomplete_ingestion_session_count: int = Field(ge=0)
+    sessions_with_unavailable_sources: int = Field(ge=0)
+
+
+class MemoryTruthResponse(StrictModel):
+    """Administrative truth view; memory text is present only in authorized items."""
+
+    items: list[MemoryTruthRecordOut]
+    tentative_observations: list[MemoryTruthObservationOut] = Field(default_factory=list)
+    total: int = Field(ge=0)
+    counts: dict[str, int] = Field(default_factory=dict)
+    coverage: TruthCoverageOut
 
 
 class SearchResponse(StrictModel):

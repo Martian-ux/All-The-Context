@@ -14,6 +14,7 @@ Schemas carry `schema_version`; mutable current records also carry a monotonic
 | observation | Immutable proposed, extracted, corrected, or inferred durable-context evidence |
 | observation decision | Core-derived `applied`, `reinforced`, `tentative`, or `ignored` disposition, reason, policy version, origin class, and decision time |
 | `context_record` | Current applied context selected by Core policy |
+| Memory Truth projection | Canonical status, provenance/evidence, source metadata, decision timing, conflict state, and content-free coverage over the durable entities above |
 | `context_record_version` | Immutable correction, replacement, deletion, and restoration history |
 | observation/record evidence link | Why an observation created, changed, or reinforced a current record |
 | `client_registration` / `permission_grant` | Identity, credential hash, scopes, and server-known client origin |
@@ -45,6 +46,26 @@ value, scopes, tags, provenance/evidence links, confidence, sensitivity,
 availability, allow/deny clients, validity, version, replacement/supersession,
 timestamps, content hash, and schema version. Only current applied records are
 retrieval-eligible.
+
+## Memory Truth semantics
+
+The Core truth projection distinguishes `current`, `tentative`, `superseded`,
+`conflicted`, and `deleted`. A record's evidence links retain the observation,
+relationship, disposition, decision reason, policy version, confidence,
+sensitivity, source identity, and three different clocks: `effective_at` is
+the asserted validity time, `observed_at` is when the source observation was
+made, and `recorded_at` is when Core stored it. `deleted` is a reversible
+tombstoned state; `superseded` and resolved conflict history remain inspectable
+rather than being silently discarded. Coverage counts are intentionally
+content-free.
+
+Archive rebuild identity uses a source-scoped, value-aware key containing the
+source ID/reference, kind and slot keys, and a canonical value fingerprint.
+Only an untouched automatic record with a matching internal source-rebuild
+tombstone can reuse its record ID. An ordinary user deletion blocks matching
+archive evidence from creating any replacement current record until an
+authorized restore. Distinct values that reuse one source reference remain
+distinct records.
 
 ## Slots, conflicts, and reinforcement
 

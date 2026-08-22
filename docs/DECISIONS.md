@@ -2843,3 +2843,32 @@ pairs; a colliding stem produces no inferred link. MIME conflicts persist as
 source. Total link accumulation is bounded at 10,000 pairs, with per-document
 link scanning bounded to 64 levels and 10,000 nodes; either truncation is
 visible and leaves coverage incomplete.
+
+## ADR-106: Core owns the Memory Truth projection and deletion barriers
+
+**Status:** accepted 2026-08-22.
+
+Memory Truth is an additive Core projection over existing observations,
+current-record versions, evidence links, source metadata, integrity groups, and
+tombstones. It gives authorized clients a canonical record status (`current`,
+`tentative`, `superseded`, `conflicted`, or `deleted`), bounded evidence and
+history, source identity, decision metadata, confidence, sensitivity, and
+separate effective/observed/recorded times. Content-free coverage is exposed
+separately so a client can report source and decision accounting without
+revealing memory text. The public record endpoint remains authorization-first;
+admin list/detail endpoints are the inspection surface for deleted records and
+detached tentative observations. No new model-facing MCP tool is added.
+
+Reprocessing identity is source-scoped and value-aware. A stable key includes
+the source ID and reference, kind/slot keys, and a canonical value fingerprint;
+the source reference alone is never an identity. Complete-source rebuild
+withdrawal marks its tombstone with the exact internal source and origin. Core
+may reapply only an untouched automatic archive record whose tombstone proves
+that same source-rebuild removal. Ordinary user or source deletion is not
+eligible: matching archive evidence receives an explicit ignored disposition
+linked to the deleted record, and cannot create a replacement current record.
+An authorized restore is required before that lineage can become current again.
+
+This slice does not add a replayable append-only decision event stream,
+tentative expiration/decay, provider extraction changes, retrieval/ranking
+changes, dashboard wiring, or source-content history/purge presentation.

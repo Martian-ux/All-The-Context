@@ -80,6 +80,34 @@ publication record. GitHub release attestation verification passes for all 34
 assets. No occupied historical draft was retargeted, deleted, reused, signed,
 or published.
 
+### 2026-08-22 Memory Truth foundation
+
+Core now has an additive canonical Memory Truth projection for authorized
+clients and providers. It exposes current, tentative, superseded, conflicted,
+and deleted semantics; deterministic observation evidence; source identity;
+decision reason and policy metadata; effective, observed, and recorded times;
+confidence and sensitivity; bounded version-history counts; and content-free
+coverage/accounting. `GET /v1/context/truth/{record_id}` and
+`GET /v1/context/coverage` are the smallest read contracts for authorized
+clients. Admin-only list/detail endpoints include non-current records and
+detached tentative observations.
+
+Source rebuild withdrawal now records the exact rebuild source on its tombstone.
+Only an untouched automatic archive record with that matching internal
+source-rebuild tombstone may be re-applied under its stable identity. An
+ordinary user deletion is a hard automatic reappearance barrier: matching
+archive evidence is retained as ignored and linked to the deleted record, with
+no replacement current record. Stable record identity includes source address
+and value identity, so repeated source references with different values remain
+distinct.
+
+This is a Memory Truth foundation, not a complete memory-audit product. A
+replayable append-only decision event stream, configurable tentative expiry or
+decay, source-content history/purge presentation, provider extraction changes,
+retrieval/ranking changes, and dashboard wiring remain outside this slice.
+Focused truth, storage, policy, migration, and API tests pass locally; hosted
+CI and release state are unchanged.
+
 ### 2026-08-22 source-rebuild safety correction
 
 Complete-source rebuild now stages its parser-versioned candidates while the

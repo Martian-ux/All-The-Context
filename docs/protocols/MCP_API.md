@@ -55,6 +55,21 @@ temporal selection, and admissibility; its cursor can page through every
 permitted match. `bootstrap_context` remains a separate bounded retrieval and
 budgeted compilation contract.
 
+## Core HTTP truth endpoints
+
+These additive HTTP endpoints are for authorized provider/admin integrations;
+they are not model-facing MCP tools. `GET /v1/context/truth/{record_id}`
+requires `context:read` and returns the authorized canonical record with its
+bounded evidence, source metadata, status, conflict state, and distinct
+effective/observed/recorded times. `GET /v1/context/coverage` requires
+`context:status` and returns content-free source, observation, record, conflict,
+and ingestion accounting. `GET /v1/admin/memory-truth` and
+`GET /v1/admin/memory-truth/{record_id}` require `admin`; they include deleted
+records and detached tentative observations for inspection. Archive evidence
+blocked by an ordinary deletion is returned as an explicit `ignored`
+disposition with a deletion-barrier reason and never as a replacement current
+record.
+
 ## One-time local configuration
 
 The desktop wizard detects installed AI clients, creates a distinct

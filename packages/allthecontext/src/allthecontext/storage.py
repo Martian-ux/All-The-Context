@@ -38,11 +38,19 @@ from .models import (
     ContextRecordOut,
     CoverageReport,
     IngestionMode,
+    MemoryTruthObservationOut,
+    MemoryTruthRecordOut,
+    MemoryTruthResponse,
+    MemoryTruthStatus,
     ObservationDisposition,
     ObservationOut,
     SecretRefusalOut,
     Sensitivity,
     SourceOut,
+    TruthConflictState,
+    TruthCoverageOut,
+    TruthEvidenceOut,
+    TruthSourceOut,
 )
 from .replication import MAX_REPLICATION_PAYLOAD_BYTES
 from .secret_boundary import (
@@ -119,6 +127,38 @@ def _normalized_slot_key(value: str | None) -> str | None:
     if not normalized:
         raise InvalidStateError("memory slot keys must not normalize to an empty value")
     return normalized
+
+
+def _stable_record_key(candidate: CandidateInput) -> str | None:
+    """Derive identity from durable source addressing and value identity.
+
+    Source references are necessary but not sufficient: a malformed or
+    provider-specific export can repeat one reference for distinct memories.
+    Including the canonical value fingerprint prevents those collisions from
+    collapsing records during a rebuild.
+    """
+
+    if candidate.source_id is None or candidate.source_reference is None:
+        return None
+    structured = candidate.structured_value
+    if structured is not None:
+        value_material = "structured:" + _json(structured)
+    else:
+        normalized = unicodedata.normalize("NFKC", candidate.content).casefold()
+        value_material = "content:" + " ".join(re.findall(r"\w+", normalized))
+    return _hash_text(
+        _json(
+            [
+                "source-reference-v1",
+                candidate.source_id,
+                candidate.source_reference,
+                candidate.kind.casefold(),
+                _normalized_slot_key(candidate.entity_key),
+                _normalized_slot_key(candidate.attribute_key),
+                _hash_text(value_material),
+            ]
+        )
+    )
 
 
 def _value_fingerprint(row: sqlite3.Row) -> str:
@@ -2064,6 +2104,8 @@ class CoreStore:
                 reason=reason,
                 actor=actor,
                 recompute_integrity=False,
+                deletion_origin="source_rebuild",
+                deletion_source_id=source_id,
             )
             withdrawn.append(record_id)
         return withdrawn
@@ -2961,8 +3003,8 @@ class CoreStore:
             "structured_value_json,entity_key,attribute_key,scopes_json,tags_json,source_service,source_type,evidence,"
             "confidence,sensitivity,availability,allowed_clients_json,denied_clients_json,"
             "valid_from,expires_at,supersedes,explicit_user_statement,idempotency_key,approval_status,"
-            "content_hash,schema_version,created_at,observed_at,disposition) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "content_hash,schema_version,created_at,observed_at,disposition,record_key) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 candidate_id,
                 self.vault_id(),
@@ -2998,6 +3040,7 @@ class CoreStore:
                 created_at,
                 candidate.observed_at or created_at,
                 ObservationDisposition.STAGED.value,
+                _stable_record_key(candidate),
             ),
         )
         return candidate_id
@@ -3496,6 +3539,131 @@ class CoreStore:
             and normalized_observation_text(str(row["content"])) == target
         ]
 
+    def _reapply_deleted_record_from_observation_tx(
+        self,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+        *,
+        availability: Availability,
+        policy_version: str,
+        origin: ObservationOrigin,
+        reason: str,
+        actor: str,
+    ) -> sqlite3.Row | None:
+        """Reopen an untouched archive record while preserving its stable ID.
+
+        Source rebuilds soft-delete automatic records before publishing their
+        replacement observations. Reusing only a deleted record with the same
+        source address, and only when it has no user edit, keeps record identity
+        stable without allowing parser output to overwrite a user's work.
+        """
+
+        record_key = cast(str | None, observation["record_key"])
+        if origin != ObservationOrigin.ARCHIVE_IMPORT or record_key is None:
+            return None
+        prior = connection.execute(
+            "SELECT * FROM context_records WHERE vault_id=? AND record_key=? "
+            "AND deleted_at IS NOT NULL AND source_id=? "
+            "AND EXISTS (SELECT 1 FROM deletion_tombstones t "
+            "WHERE t.record_id=context_records.id AND t.deletion_origin='source_rebuild' "
+            "AND t.deletion_source_id=?) ORDER BY version DESC,id LIMIT 1",
+            (
+                observation["vault_id"],
+                record_key,
+                observation["source_id"],
+                observation["source_id"],
+            ),
+        ).fetchone()
+        if prior is None or self._record_has_user_edit_tx(connection, str(prior["id"])):
+            return None
+
+        record_id = str(prior["id"])
+        now = utc_now()
+        version = int(prior["version"]) + 1
+        connection.execute(
+            "UPDATE context_records SET candidate_id=?,source_id=?,source_reference=?,kind=?,"
+            "content=?,structured_value_json=?,entity_key=?,attribute_key=?,scopes_json=?,"
+            "tags_json=?,source_service=?,source_type=?,evidence=?,confidence=?,sensitivity=?,"
+            "availability=?,allowed_clients_json=?,denied_clients_json=?,valid_from=?,"
+            "expires_at=?,supersedes=?,explicit_user_statement=?,approval_status=?,version=?,"
+            "content_hash=?,schema_version=?,updated_at=?,deleted_at=NULL,observed_at=?,"
+            "observation_origin=?,policy_version=? WHERE id=?",
+            (
+                observation["id"],
+                observation["source_id"],
+                observation["source_reference"],
+                observation["kind"],
+                observation["content"],
+                observation["structured_value_json"],
+                observation["entity_key"],
+                observation["attribute_key"],
+                observation["scopes_json"],
+                observation["tags_json"],
+                observation["source_service"],
+                observation["source_type"],
+                observation["evidence"],
+                observation["confidence"],
+                observation["sensitivity"],
+                availability.value,
+                observation["allowed_clients_json"],
+                observation["denied_clients_json"],
+                observation["valid_from"],
+                observation["expires_at"],
+                observation["supersedes"],
+                observation["explicit_user_statement"],
+                ApprovalStatus.APPROVED.value,
+                version,
+                _hash_text(str(observation["content"])),
+                observation["schema_version"],
+                now,
+                observation["observed_at"] or observation["created_at"],
+                origin.value,
+                policy_version,
+                record_id,
+            ),
+        )
+        connection.execute("DELETE FROM deletion_tombstones WHERE record_id=?", (record_id,))
+        restored = connection.execute(
+            "SELECT * FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()
+        assert restored is not None
+        self._set_observation_decision_tx(
+            connection,
+            str(observation["id"]),
+            disposition=ObservationDisposition.APPLIED,
+            reason=reason,
+            policy_version=policy_version,
+            origin=origin,
+            record_id=record_id,
+            actor=actor,
+        )
+        self._link_observation_tx(connection, str(observation["id"]), record_id, "reapplied")
+        self._insert_version(connection, restored, reason)
+        self._replace_fts(connection, restored)
+        if availability == Availability.ALWAYS:
+            self._emit_event(connection, restored, "record_upserted", self._relay_payload(restored))
+        self._audit(connection, actor, "observation_reapplied", [record_id])
+        return cast(sqlite3.Row, restored)
+
+    @staticmethod
+    def _ordinary_deletion_for_observation_tx(
+        connection: sqlite3.Connection, observation: sqlite3.Row
+    ) -> sqlite3.Row | None:
+        """Find an explicit deletion that blocks automatic resurrection."""
+
+        record_key = cast(str | None, observation["record_key"])
+        source_id = cast(str | None, observation["source_id"])
+        if record_key is None or source_id is None:
+            return None
+        return cast(sqlite3.Row, connection.execute(
+            "SELECT r.id,t.reason FROM context_records r "
+            "JOIN deletion_tombstones t ON t.record_id=r.id "
+            "WHERE r.vault_id=? AND r.record_key=? AND r.source_id=? "
+            "AND r.deleted_at IS NOT NULL AND t.deletion_origin='ordinary' "
+            "ORDER BY t.deleted_at DESC,r.id LIMIT 1",
+            (observation["vault_id"], record_key, source_id),
+        ).fetchone())
+
     def _create_record_from_observation_tx(
         self,
         connection: sqlite3.Connection,
@@ -3507,12 +3675,25 @@ class CoreStore:
         reason: str,
         actor: str,
     ) -> sqlite3.Row:
+        reused = self._reapply_deleted_record_from_observation_tx(
+            connection,
+            observation,
+            availability=availability,
+            policy_version=policy_version,
+            origin=origin,
+            reason=reason,
+            actor=actor,
+        )
+        if reused is not None:
+            return reused
+
         record_id = new_id()
         now = utc_now()
         values = (
             record_id,
             observation["vault_id"],
             observation["id"],
+            observation["record_key"],
             observation["source_id"],
             observation["source_reference"],
             observation["kind"],
@@ -3546,13 +3727,13 @@ class CoreStore:
         )
         connection.execute(
             "INSERT INTO context_records"
-            "(id,vault_id,candidate_id,source_id,source_reference,kind,content,"
+            "(id,vault_id,candidate_id,record_key,source_id,source_reference,kind,content,"
             "structured_value_json,entity_key,attribute_key,scopes_json,tags_json,"
             "source_service,source_type,evidence,confidence,sensitivity,availability,"
             "allowed_clients_json,denied_clients_json,valid_from,expires_at,supersedes,"
             "explicit_user_statement,approval_status,version,content_hash,schema_version,"
             "created_at,updated_at,observed_at,observation_origin,policy_version) VALUES("
-            + ",".join("?" * 33)
+            + ",".join("?" * 34)
             + ")",
             values,
         )
@@ -3861,6 +4042,33 @@ class CoreStore:
                 actor=actor,
             )
             self._audit(connection, actor, "observation_ignored", [])
+        elif (
+            origin == ObservationOrigin.ARCHIVE_IMPORT
+            and decision.disposition == ObservationDisposition.APPLIED
+            and (
+                blocked := self._ordinary_deletion_for_observation_tx(
+                    connection, observation
+                )
+            )
+            is not None
+        ):
+            blocked_id = str(blocked["id"])
+            reason = (
+                "matching archive evidence was blocked by an explicit deletion; "
+                "restore the deleted record before it can become current"
+            )
+            self._set_observation_decision_tx(
+                connection,
+                observation_id,
+                disposition=ObservationDisposition.IGNORED,
+                reason=reason,
+                policy_version=policy.policy_version,
+                origin=origin,
+                record_id=blocked_id,
+                actor=actor,
+            )
+            self._link_observation_tx(connection, observation_id, blocked_id, "blocked_by_deletion")
+            self._audit(connection, actor, "observation_ignored", [blocked_id])
         else:
             exact = self._exact_record_tx(connection, observation, principal)
             if exact is not None:
@@ -4088,6 +4296,7 @@ class CoreStore:
                 record_id,
                 row["vault_id"],
                 candidate_id,
+                row["record_key"],
                 row["source_id"],
                 row["source_reference"],
                 row["kind"],
@@ -4122,11 +4331,11 @@ class CoreStore:
             )
             connection.execute(
                 "INSERT INTO context_records"
-                "(id,vault_id,candidate_id,source_id,source_reference,kind,content,structured_value_json,"
+                "(id,vault_id,candidate_id,record_key,source_id,source_reference,kind,content,structured_value_json,"
                 "entity_key,attribute_key,scopes_json,tags_json,source_service,source_type,evidence,confidence,sensitivity,"
                 "availability,allowed_clients_json,denied_clients_json,valid_from,expires_at,"
                 "supersedes,explicit_user_statement,approval_status,version,content_hash,"
-                "schema_version,created_at,updated_at) VALUES(" + ",".join("?" * 30) + ")",
+                "schema_version,created_at,updated_at) VALUES(" + ",".join("?" * 31) + ")",
                 record_values,
             )
             connection.execute(
@@ -4223,6 +4432,17 @@ class CoreStore:
         return self._record_out(row)
 
     def _record_out(self, row: sqlite3.Row) -> ContextRecordOut:
+        keys = set(row.keys())
+        raw_status = row["truth_status"] if "truth_status" in keys else None
+        status = (
+            MemoryTruthStatus(str(raw_status))
+            if raw_status is not None
+            else (
+                MemoryTruthStatus.DELETED
+                if row["deleted_at"] is not None
+                else MemoryTruthStatus.CURRENT
+            )
+        )
         return ContextRecordOut(
             id=str(row["id"]),
             kind=str(row["kind"]),
@@ -4252,6 +4472,8 @@ class CoreStore:
             schema_version=int(row["schema_version"]),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
+            deleted_at=cast(str | None, row["deleted_at"]),
+            status=status,
             observation_origin=cast(str | None, row["observation_origin"]),
             policy_version=cast(str | None, row["policy_version"]),
         )
@@ -4391,6 +4613,8 @@ class CoreStore:
         reason: str,
         actor: str,
         recompute_integrity: bool = True,
+        deletion_origin: str = "ordinary",
+        deletion_source_id: str | None = None,
     ) -> dict[str, Any]:
         record = connection.execute(
             "SELECT * FROM context_records WHERE id=? AND deleted_at IS NULL", (record_id,)
@@ -4418,9 +4642,18 @@ class CoreStore:
         connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
         connection.execute(
             "INSERT INTO deletion_tombstones"
-            "(record_id,vault_id,deleted_version,reason,content_hash,deleted_at) "
-            "VALUES(?,?,?,?,?,?)",
-            (record_id, record["vault_id"], version, safe_reason, tombstone_hash, now),
+            "(record_id,vault_id,deleted_version,reason,content_hash,deleted_at,"
+            "deletion_origin,deletion_source_id) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                record_id,
+                record["vault_id"],
+                version,
+                safe_reason,
+                tombstone_hash,
+                now,
+                deletion_origin,
+                deletion_source_id,
+            ),
         )
         self._emit_event(
             connection,
@@ -4978,6 +5211,316 @@ class CoreStore:
             for row in rows
         ]
 
+    def _truth_status_tx(
+        self, connection: sqlite3.Connection, record: sqlite3.Row
+    ) -> tuple[MemoryTruthStatus, str, TruthConflictState, list[str], list[str]]:
+        if record["deleted_at"] is not None:
+            tombstone = connection.execute(
+                "SELECT reason FROM deletion_tombstones WHERE record_id=?", (record["id"],)
+            ).fetchone()
+            return (
+                MemoryTruthStatus.DELETED,
+                str(tombstone["reason"] if tombstone is not None else "record is soft-deleted"),
+                TruthConflictState.NONE,
+                [],
+                [],
+            )
+
+        superseded_rows = connection.execute(
+            "SELECT id FROM context_records WHERE supersedes=? "
+            "AND approval_status='approved' AND deleted_at IS NULL ORDER BY id",
+            (record["id"],),
+        ).fetchall()
+        superseded_by = [str(row["id"]) for row in superseded_rows]
+        if superseded_by:
+            return (
+                MemoryTruthStatus.SUPERSEDED,
+                "replaced by a newer canonical record",
+                TruthConflictState.NONE,
+                [],
+                superseded_by,
+            )
+
+        active_groups = connection.execute(
+            "SELECT g.id FROM integrity_groups g "
+            "JOIN integrity_group_members m ON m.group_id=g.id "
+            "WHERE m.record_id=? AND g.group_type='conflict' AND g.status='open' "
+            "ORDER BY g.id",
+            (record["id"],),
+        ).fetchall()
+        resolved_groups = connection.execute(
+            "SELECT g.id FROM integrity_groups g "
+            "JOIN integrity_group_members m ON m.group_id=g.id "
+            "WHERE m.record_id=? AND g.group_type='conflict' AND g.status='resolved' "
+            "ORDER BY g.id",
+            (record["id"],),
+        ).fetchall()
+        active_ids = [str(row["id"]) for row in active_groups]
+        resolved_ids = [str(row["id"]) for row in resolved_groups]
+        if active_ids:
+            return (
+                MemoryTruthStatus.CONFLICTED,
+                "multiple current values remain for the same memory slot",
+                TruthConflictState.ACTIVE,
+                active_ids,
+                [],
+            )
+        if resolved_ids:
+            return (
+                MemoryTruthStatus.CURRENT,
+                "current value; an earlier slot conflict was resolved",
+                TruthConflictState.RESOLVED,
+                resolved_ids,
+                [],
+            )
+        return (
+            MemoryTruthStatus.CURRENT,
+            "current applied record",
+            TruthConflictState.NONE,
+            [],
+            [],
+        )
+
+    def _truth_source_tx(
+        self, connection: sqlite3.Connection, source_id: str | None
+    ) -> TruthSourceOut | None:
+        if source_id is None:
+            return None
+        row = connection.execute(
+            "SELECT sr.*,sb.byte_size,sb.media_type,"
+            "(SELECT COUNT(*) FROM context_candidates cc WHERE cc.source_id=sr.id) "
+            "AS candidate_count FROM source_records sr "
+            "JOIN source_blobs sb ON sb.content_hash=sr.content_hash WHERE sr.id=?",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return TruthSourceOut(
+            id=str(row["id"]),
+            content_hash=str(row["content_hash"]),
+            source_service=str(row["source_service"]),
+            source_type=str(row["source_type"]),
+            filename=cast(str | None, row["filename"]),
+            media_type=str(row["media_type"]),
+            created_at=str(row["created_at"]),
+            import_status=cast(
+                Literal["processing", "complete", "failed", "cancelled"],
+                row["import_status"],
+            ),
+            deleted_at=cast(str | None, row["deleted_at"]),
+            deleted_reason=cast(str | None, row["deleted_reason"]),
+        )
+
+    def _truth_evidence_tx(
+        self, connection: sqlite3.Connection, record_id: str
+    ) -> list[TruthEvidenceOut]:
+        rows = connection.execute(
+            "SELECT l.relationship,l.created_at AS link_created_at,c.* "
+            "FROM context_observation_links l "
+            "JOIN context_candidates c ON c.id=l.observation_id "
+            "WHERE l.record_id=? ORDER BY c.observed_at,c.created_at,c.id LIMIT 512",
+            (record_id,),
+        ).fetchall()
+        return [
+            TruthEvidenceOut(
+                observation_id=str(row["id"]),
+                record_id=record_id,
+                relationship=str(row["relationship"]),
+                link_created_at=str(row["link_created_at"]),
+                disposition=ObservationDisposition(str(row["disposition"])),
+                decision_reason=cast(str | None, row["decision_reason"]),
+                decided_at=cast(str | None, row["decided_at"]),
+                observation_origin=cast(str | None, row["observation_origin"]),
+                policy_version=cast(str | None, row["policy_version"]),
+                content=str(row["content"]),
+                evidence=cast(str | None, row["evidence"]),
+                confidence=float(row["confidence"]),
+                sensitivity=Sensitivity(str(row["sensitivity"])),
+                source_id=cast(str | None, row["source_id"]),
+                source_reference=cast(str | None, row["source_reference"]),
+                source_service=cast(str | None, row["source_service"]),
+                source_type=cast(str | None, row["source_type"]),
+                effective_at=cast(str | None, row["valid_from"]),
+                observed_at=cast(str | None, row["observed_at"]),
+                recorded_at=str(row["created_at"]),
+                content_hash=str(row["content_hash"]),
+            )
+            for row in rows
+        ]
+
+    def _truth_record_tx(
+        self, connection: sqlite3.Connection, record: sqlite3.Row
+    ) -> MemoryTruthRecordOut:
+        status, reason, conflict_state, group_ids, superseded_by = self._truth_status_tx(
+            connection, record
+        )
+        record_out = self._record_out(record).model_copy(update={"status": status})
+        history_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM context_record_versions WHERE record_id=?",
+                (record["id"],),
+            ).fetchone()[0]
+        )
+        return MemoryTruthRecordOut(
+            record=record_out,
+            status=status,
+            status_reason=reason,
+            conflict_state=conflict_state,
+            conflict_group_ids=group_ids,
+            superseded_by=superseded_by,
+            source=self._truth_source_tx(connection, cast(str | None, record["source_id"])),
+            evidence=self._truth_evidence_tx(connection, str(record["id"])),
+            history_count=history_count,
+        )
+
+    def _truth_coverage_tx(self, connection: sqlite3.Connection) -> TruthCoverageOut:
+        source_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM source_records WHERE deleted_at IS NULL"
+            ).fetchone()[0]
+        )
+        deleted_source_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM source_records WHERE deleted_at IS NOT NULL"
+            ).fetchone()[0]
+        )
+        observations_by_disposition = {
+            str(row["disposition"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT disposition,COUNT(*) AS count FROM context_candidates GROUP BY disposition"
+            ).fetchall()
+        }
+        all_dispositions = {
+            item.value: observations_by_disposition.get(item.value, 0)
+            for item in ObservationDisposition
+        }
+        records_by_status = {item.value: 0 for item in MemoryTruthStatus}
+        records = connection.execute("SELECT * FROM context_records ORDER BY id").fetchall()
+        for record in records:
+            status = self._truth_status_tx(connection, record)[0]
+            records_by_status[status.value] += 1
+        session_rows = connection.execute(
+            "SELECT status,coverage_json,unavailable_sources_json "
+            "FROM ingestion_sessions"
+        ).fetchall()
+        incomplete = 0
+        unavailable = 0
+        for row in session_rows:
+            coverage = _loads(cast(str | None, row["coverage_json"]), {})
+            coverage_complete = (
+                bool(coverage.get("complete", False))
+                if isinstance(coverage, dict)
+                else False
+            )
+            if str(row["status"]) != "finished" or not coverage_complete:
+                incomplete += 1
+            unavailable_sources = _loads(row["unavailable_sources_json"], [])
+            coverage_unavailable = (
+                coverage.get("unavailable", []) if isinstance(coverage, dict) else []
+            )
+            if unavailable_sources or coverage_unavailable:
+                unavailable += 1
+        conflict_group_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM integrity_groups "
+                "WHERE status='open' AND group_type='conflict'"
+            ).fetchone()[0]
+        )
+        return TruthCoverageOut(
+            source_count=source_count,
+            deleted_source_count=deleted_source_count,
+            observation_count=sum(all_dispositions.values()),
+            observations_by_disposition=all_dispositions,
+            record_count=len(records),
+            records_by_status=records_by_status,
+            conflict_group_count=conflict_group_count,
+            ingestion_session_count=len(session_rows),
+            incomplete_ingestion_session_count=incomplete,
+            sessions_with_unavailable_sources=unavailable,
+        )
+
+    def memory_truth_coverage(self) -> TruthCoverageOut:
+        self.rebuild_integrity_groups()
+        with self.connect() as connection:
+            return self._truth_coverage_tx(connection)
+
+    def get_memory_truth(
+        self,
+        record_id: str,
+        *,
+        include_deleted: bool = True,
+        principal: ClientPrincipal | None = None,
+    ) -> MemoryTruthRecordOut:
+        self.rebuild_integrity_groups()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()
+            if row is None or (not include_deleted and row["deleted_at"] is not None):
+                raise NotFoundError("context record not found")
+            if principal is not None and not self._record_is_allowed(row, principal):
+                raise NotFoundError("context record not found")
+            return self._truth_record_tx(connection, row)
+
+    def list_memory_truth(
+        self,
+        *,
+        status: MemoryTruthStatus | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> MemoryTruthResponse:
+        self.rebuild_integrity_groups()
+        bounded_limit = min(max(limit, 1), 500)
+        bounded_offset = max(offset, 0)
+        with self.connect() as connection:
+            conditions = ["vault_id=?"]
+            parameters: list[Any] = [self.vault_id()]
+            if source_id is not None:
+                conditions.append("source_id=?")
+                parameters.append(source_id)
+            rows = connection.execute(
+                "SELECT * FROM context_records WHERE "
+                + " AND ".join(conditions)
+                + " ORDER BY updated_at DESC,id",
+                parameters,
+            ).fetchall()
+            truth_records = [self._truth_record_tx(connection, row) for row in rows]
+            if status is not None:
+                truth_records = [item for item in truth_records if item.status == status]
+            total_records = len(truth_records)
+            page = truth_records[bounded_offset : bounded_offset + bounded_limit]
+            tentative_rows = []
+            if status is None or status == MemoryTruthStatus.TENTATIVE:
+                tentative_rows = connection.execute(
+                    "SELECT * FROM context_candidates WHERE vault_id=? "
+                    "AND disposition='tentative' "
+                    + ("AND source_id=? " if source_id is not None else "")
+                    + "ORDER BY created_at DESC,id LIMIT ? OFFSET ?",
+                    [
+                        self.vault_id(),
+                        *([source_id] if source_id is not None else []),
+                        bounded_limit,
+                        bounded_offset,
+                    ],
+                ).fetchall()
+            tentative = [
+                MemoryTruthObservationOut(
+                    observation=self._observation_out(row),
+                    status=MemoryTruthStatus.TENTATIVE,
+                    status_reason=str(row["decision_reason"] or "retained as non-current evidence"),
+                )
+                for row in tentative_rows
+            ]
+            coverage = self._truth_coverage_tx(connection)
+        return MemoryTruthResponse(
+            items=page,
+            tentative_observations=tentative,
+            total=total_records,
+            counts=coverage.records_by_status,
+            coverage=coverage,
+        )
+
     def _insert_version(
         self, connection: sqlite3.Connection, row: sqlite3.Row, reason: str
     ) -> None:
@@ -5303,6 +5846,7 @@ class CoreStore:
                     ).fetchone()[0]
                 ),
             }
+        truth_coverage = self.memory_truth_coverage()
         return {
             "core_online": True,
             "vault_id": str(vault["id"]),
@@ -5310,6 +5854,7 @@ class CoreStore:
             "schema_version": int(vault["schema_version"]),
             "database_size_bytes": durable_sqlite_footprint(self.database_path),
             "counts": counts,
+            "truth_coverage": truth_coverage.model_dump(mode="json"),
         }
 
     def pending_replication_events(self, limit: int = 100) -> list[dict[str, Any]]:

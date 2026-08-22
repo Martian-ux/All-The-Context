@@ -21,6 +21,18 @@ tests with 4 host-limited symlink skips. The existing exact-candidate
 interruption and provider-export receipts remain separate release evidence
 requirements.
 
+### 2026-08-22 Memory Truth foundation
+
+This slice adds a Core-owned canonical truth projection after records exist. It
+is locally exercised by focused synthetic tests and does not change provider
+extraction, retrieval/ranking, dashboard behavior, MCP tools, or release state.
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Canonical memory truth with provenance, reason, time, confidence, sensitivity, status, and conflict visibility | `models.py`; `CoreStore.get_memory_truth`; `GET /v1/context/truth/{record_id}`; `GET /v1/admin/memory-truth`; `tests/unit/test_memory_truth.py` | Implemented locally for current, tentative, superseded, conflicted, and deleted record views. Evidence exposes source/record links, decision metadata, effective/observed/recorded times, confidence, sensitivity, and bounded version history. Public detail remains authorization-first; admin surfaces include non-current records. A replayable append-only decision stream remains partial/deferred |
+| Content-free source/observation accounting | `TruthCoverageOut`; `CoreStore.memory_truth_coverage`; `GET /v1/context/coverage`; status projection; focused coverage regression | Implemented locally for source, observation disposition, record status, conflict-group, ingestion completion, and unavailable-source counts. It intentionally does not claim that raw source bytes or provider extraction are complete |
+| Stable reprocessing identity without deletion resurrection | migrations `010_memory_truth.sql` and `011_rebuild_tombstone_provenance.sql`; source-rebuild cutover; deletion-barrier regressions | Implemented locally: matching internal source-rebuild tombstones can reapply an untouched automatic archive record under the same ID; ordinary user tombstones block matching archive evidence from becoming current under any new ID; source-reference collisions with different values remain distinct |
+
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
 | Frozen Python dependency audit | `pyproject.toml`; `uv.lock`; `scripts/dependency_audit.py`; ADR-091 | The dev-and-packaging export fails closed on newly published advisories. The 2026-08-21 response to PYSEC-2026-3721 / CVE-2026-13346 requires fixed `pip>=26.2,<27` while keeping pip outside runtime dependencies. Both hosted PR 66 matrices and CodeQL passed before merge at `088485d`; this source repair grants no beta acceptance credit |
