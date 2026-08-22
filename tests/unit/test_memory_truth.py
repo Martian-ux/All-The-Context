@@ -1332,6 +1332,7 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
             source_type="old-private-type",
             allowed_clients=["old-client"],
             evidence="old disjoint-private evidence",
+            confidence=0.9,
             valid_from="2026-01-01T00:00:00+00:00",
             expires_at="2027-01-01T00:00:00+00:00",
             explicit_user_statement=True,
@@ -1345,6 +1346,7 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
             supersedes=original.record_id,
             allowed_clients=["new-client"],
             evidence="new disjoint-private evidence",
+            confidence=0.4,
             explicit_user_statement=True,
         )
     )
@@ -1359,6 +1361,7 @@ def test_truth_detail_filters_disjoint_canonical_and_evidence_acl(tmp_path: Path
     authorized_truth = store.get_memory_truth(original.record_id, principal=new_principal)
     assert authorized_truth.record.content == "new disjoint-private value"
     assert authorized_truth.record.evidence == "new disjoint-private evidence"
+    assert authorized_truth.record.confidence == 0.4
     assert authorized_truth.record.structured_value is None
     assert authorized_truth.record.scopes == []
     assert authorized_truth.record.tags == []
