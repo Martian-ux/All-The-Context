@@ -15,6 +15,30 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## ZF-004 Wave 1 event reconciliation (2026-08-22)
+
+The integration-owned Wave 1 slice now has a bounded pure reference boundary in
+`experimental_event_reconciliation.py` with isolated synthetic tests. It
+accepts the exact existing `CaptureEvent` and `ClientLifecycleEnvelope`
+contracts, preserves the capture operation and lifecycle hook/session alongside
+stable IDs, source generation/order/cursor/idempotency, payload commitment/size,
+lifecycle references, timestamps, retention, sensitivity, authorization,
+version, ownership, and dependency withdrawal metadata without copying raw
+payload content.
+
+The boundary normalizes capture and lifecycle inputs independently; because the
+existing lifecycle envelope declares no linkage to a capture event, supplying
+both is rejected. It fails closed for malformed operation/generation/
+normalization, lookalike or mutated lifecycle envelopes, secret-like direct
+metadata, wrong nested withdrawal types, unmatched capture deletes, and
+non-`ERASE` terminal purges. It preserves lifecycle payload-reference
+commitment/size and lifecycle idempotency material, while retaining both
+allow/deny authorization and retention expiry metadata. It does not persist,
+advance a cursor/checkpoint, replay, mint an observation or current ID, or
+mutate an input. The module has no direct storage, network, or provider-SDK
+imports and makes no provider support, stable SDK, or MCP lifecycle claim.
+Wave 2 harness integration remains separate.
+
 ## MCP v2 and HTTPX2 compatibility lane (2026-08-22)
 
 The bounded MCP lane now uses the stable official Python SDK v2 line
@@ -254,16 +278,18 @@ remain historical and are not rebound or reused.
 ## Zero-friction execution frontier (2026-08-22)
 
 The accepted post-V1 plan now starts from the merged capture ledger instead of
-proposing a parallel connector or event substrate. The next evidence sequence is
-contract reconciliation, a disposable zero-dashboard harness, then one
-explicit-root local Git/workspace connector plus a controlled lifecycle-aware
-reference host. Stable project identity and deterministic Project Context
-Capsules precede graph shadow evaluation.
+proposing a parallel connector or event substrate. Packet D's sanitized
+synthetic composition is locally complete, and the next frontier is the
+Core-owned source-fact admission contract needed before Packet H can compose
+the locally complete Wave 3 E/F/G component seams. Stable project identity and
+deterministic Project Context Capsules precede graph shadow evaluation.
 
-This is planning state only. It adds no provider, scheduler, background capture,
-client lifecycle support, graph, stable SDK, or release claim. Implementation
-packets use sanitized synthetic fixtures and disposable Core state; private data
-and publication actions remain outside their boundary.
+Wave 3 component evidence remains experimental. It adds no provider support,
+production startup wiring, durable scheduler/notification state, stable SDK,
+release, or support claim. Implementation packets use sanitized synthetic
+fixtures and disposable Core state; private data, publication actions, and
+macOS support remain outside their boundary. Packet H was attempted and
+correctly stopped/removed at the missing source-fact admission seam.
 
 ### 2026-08-22 Memory Truth foundation
 
@@ -1998,3 +2024,82 @@ or papered over in this integration.
   finish after the probe, while sources without a live run retain the existing
   degradation behavior. This remains local beta.6 review evidence only; fresh
   independent acceptance remains required.
+
+## Wave 2 Packet D synthetic zero-dashboard harness (2026-08-22)
+
+- `experimental_zero_dashboard_harness.py` and its focused fixture/test
+  compose the existing deterministic capture adapter, capture
+  ledger/coordinator, idempotent sink boundary, exact L2 fake lifecycle host,
+  event reconciliation, formation contracts, Core observation policy, and
+  authorized Retrieval V3 bootstrap path over one temporary local Core
+  database. A separate content-free projection-contract check is component
+  evidence only; it is not Memory Lab M3/Core/Retrieval integration.
+- The disposable journey passes the non-compensable synthetic scorecard for
+  phase-aware context safety across first/corrected/pre-purge/final/viewer
+  packs, direct evidence, correction propagation, permission narrowing,
+  retention/expiry, ordinary deletion, terminal purge, genuine restart/cursor
+  recovery, replay idempotency, duplicate absence, capability truth, a bounded
+  scripted action guard, and bounded compile plus post-restart time-to-first
+  context. It independently closes supersedes-output, query-adversarial
+  wrong-project, unsupported-hook, and durable secret-absence checks.
+  Secret-like content is resolved through a direct-user reference and refused
+  before a candidate is retained; imported fixture text is inert and remains
+  tentative.
+- This is Wave 2 developer evidence only. It adds no scheduler, provider or
+  network connector, OAuth/client SDK claim, dashboard dependency, operator
+  vault access, stable export, migration, package, release, or production
+  readiness claim. Full repository pytest/mypy and hosted acceptance remain
+  outside this focused lane.
+
+## Wave 3 component handoffs (2026-08-22)
+
+- Packet E (`capture_scheduler.py`) is locally component-complete with its
+  original 25-test component handoff. The disabled-by-default seam wraps the existing
+  `CaptureCoordinator`, reuses its persisted retry/backoff and bounded
+  `Retry-After`, limits concurrency/resources, rotates source-page selection,
+  degrades explicitly when health inspection is truncated, and deduplicates
+  reauthorization notification actions in process. It owns no durable
+  scheduler/notification state, cursor, event ledger, lease, or checkpoint,
+  and has no production startup wiring.
+- Packet F (`experimental_local_git_workspace_connector.py`) is locally
+  component-complete with its original 25-test component handoff; corrected
+  F/capture-capability evidence is 27 tests. It requires explicit
+  non-overlapping roots, binds provider and `source.account_fingerprint` to
+  `adapter.source_identity` before scanning, is read-only and network-free,
+  reports partial coverage, treats workspace text as inert, omits AWS
+  `AKIA`/`ASIA`-shaped content, excludes Git/dependency/credential paths and
+  symlink/reparse points, fails closed on incomplete scans, and bounds its
+  metadata cursor, samples, excerpts, and tracked files at 20. It is an
+  experimental local adapter, not a general connector or provider-support
+  claim, and is not wired into install or Core startup.
+- Packet G (`experimental_reference_host.py`) is locally component-complete
+  with its original 27-test component handoff; corrected G/client-runtime
+  evidence is 32 tests. The controlled in-process host caps at L2;
+  ordinary MCP remains L0 and L3 is downgraded truthfully. It routes
+  pre-generation through injected Core Retrieval V3, captures direct-user
+  references, auto-checkpoints typed lifecycle snapshots on checkpoint,
+  session-transition, and completion hooks, and restores events, trace,
+  pending/delivered context, started-generation IDs, and sequencing state.
+  Its digest is integrity validation only; the sink receives a stable retry
+  idempotency key. L0/ordinary MCP resumes started IDs without fabricated
+  context, L1+ retains request/delivery ordering, empty Core context fails
+  closed, and forged resume sessions and secret-like payloads are rejected.
+  There is no client-principal binding or production persistence, provider
+  integration, general persistence format, or stable SDK.
+- Integrated corrected F/G-adjacent union at head
+  `719bdd9030e32ac34eb12184c35e1e47cf99cc37` passed 59 tests; Ruff,
+  format-check, and `git diff --check` passed. The previous pushed head
+  `dcf5de50b633ff00638c1396ddfcfb8ba04070e6` was fully hosted-green, but the
+  corrected head has not yet run hosted CI. Full repository pytest/mypy for
+  the corrected head remain open.
+- Packet H's disposable proof was attempted and correctly stopped/removed:
+  Core has no genuine registered-source-authoritative admission seam binding
+  Packet F continuous-capture evidence to deterministic source-fact
+  promotion. `add_candidate` enters ongoing-client policy and non-witness
+  workspace facts remain tentative; archive importer is a distinct lifecycle.
+  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected. The
+  next narrow frontier is designing/reviewing that Core-owned source-fact
+  admission contract in a successor PR. ZF-007/ZF-008/ZF-009 product
+  acceptance, ZF-010, Packet H, the Phase 2 journey, the first real
+  source/client pair, production wiring, and any release/support claim remain
+  OPEN. macOS remains unsupported/absent/deferred.

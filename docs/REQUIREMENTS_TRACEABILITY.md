@@ -1,10 +1,79 @@
 # Requirements traceability
 
 "Implemented" means exercised locally. This integrated traceability matrix is
-for the local Import → Memory Truth → Retrieval → Context UI baseline only; it
-does not claim hosted CI, release publication, exact artifact/client/provider
-acceptance, or live/private data inspection. Earlier evidence is retained only
-as historical context and does not become evidence for this checkout.
+for the local Import → Memory Truth → Retrieval → Context UI baseline and the
+separately bounded Wave 3 component handoffs; it does not claim hosted CI,
+release publication, exact artifact/client/provider acceptance, or live/private
+data inspection. Earlier evidence is retained only as historical context and
+does not become evidence for this checkout.
+
+### 2026-08-22 ZF-004 Wave 1 event reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Exact capture and lifecycle envelopes normalize independently into one bounded reference-only input | `experimental_event_reconciliation.py`; `tests/unit/test_experimental_event_reconciliation.py` | Implemented locally: capture operation and existing IDs/source generation/order/cursor/idempotency, lifecycle hook/session and exact payload/ownership/version validation, capture and payload-reference commitment/size, lifecycle `(client_id, event_id, sequence)` idempotency, context references, timestamps, retention/expiry, sensitivity, allow/deny authorization, and typed dependency withdrawals are retained without raw content; unlinked capture+lifecycle composition is rejected |
+| Secret-like metadata and malformed evidence fail before a normalized input | `ReconciliationViolation`; isolated secret, exact-type, operation/generation, normalizer, payload-pairing, cursor-bound, and content-free error tests | Implemented locally with code-only failures; `as_dict()` exposes metadata and references only |
+| Correction, delete, expiry, and purge dependencies withdraw safely | `DependencyWithdrawal`; delete-match and purge-action tests | Implemented locally: ordinary delete requires an authorized matching provider-item withdrawal, and terminal purge requires explicit `ERASE` |
+| The slice does not create a second authority or persistence path | AST structural test; no direct storage/SQLite/network/provider SDK imports; no mutation, persistence, replay, cursor-advance, or observation/current-ID APIs | Implemented locally; Wave 2 Core/harness integration and provider capability claims remain out of scope |
+
+Evidence is limited to deterministic synthetic unit tests and static structural
+checks. Full repository pytest/mypy, hosted CI, provider access, private data,
+release acceptance, and stable SDK/MCP lifecycle claims are not implied.
+
+### 2026-08-22 ZF-006 Wave 2 Packet D zero-dashboard harness
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| One disposable journey composes capture, lifecycle, reconciliation, formation, Core policy, and authorized Retrieval V3 | `experimental_zero_dashboard_harness.py`; `tests/unit/test_zero_dashboard_harness.py`; sanitized `tests/fixtures/zero_dashboard_wave2.json` | Implemented locally as synthetic evidence: the existing deterministic fake adapter/ledger/coordinator and idempotent sink form five source observations through Core, an L2 fake host supplies pre-generation/direct-user/restart hooks, and Retrieval V3 compiles only authorized Core records. The projection closure check is separate content-free component evidence, not M3/Core/Retrieval integration. |
+| First useful context and correction propagation are automatic | `run_zero_dashboard_journey`; `ZeroDashboardScorecard` | Implemented locally: phase-aware raw pack checks reject wrong-project, secret-like, inert-import, stale, expired, deleted, and purged facts in their applicable post-transition packs; direct evidence and a direct correction reach Core, and the next eligible compile contains the corrected value without the displaced value. Supersedes-output, query-adversarial wrong-project, unsupported-hook, and durable secret-absence checks close independently. The no-action claim is limited to the scripted fake-host trace, not operator telemetry. |
+| Restart, cursor recovery, replay, authorization, retention, expiry, delete, purge, and zero future influence fail closed | retry/replay journey and scorecard gates; existing Core deletion/purge and Retrieval V3 selector/temporal boundaries | Implemented locally on a temporary SQLite database: a nonterminal checkpoint is resumed after Core close/reopen by a fresh coordinator/sink/adapter whose first call uses `cursor-1`; a later fresh completed replay directly compares equal Core counts with zero new capture events/observations/current records; the narrowed corrected record is absent for another principal; expiry is active at formation and absent from the later pack; ordinary delete and terminal purge have durable before/after proofs; post-restart time-to-first context is separately bounded. |
+| Secret-like and imported material remain safe | direct-user reference resolver, formation refusal, Core opaque refusal receipt; inert imported fixture candidate | Implemented locally: the synthetic secret is held only in the test resolver, commitment-checked against the exact lifecycle `turn_ref`, refused before candidate persistence, absent from lifecycle envelope text and Core context state, and imported fixture text is retained only as tentative evidence with no current record. |
+
+This is Wave 2 synthetic developer evidence only. It does not claim a real provider,
+client/product acceptance, Memory Lab M3 integration, network/OAuth/client SDK,
+scheduler, dashboard production behavior,
+operator-vault access, private/live data, stable export, package/release
+readiness, hosted CI, or full repository pytest/mypy acceptance.
+
+### 2026-08-22 ZF-007 Wave 3 Packet E scheduler and health component
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Schedule capture around the existing Core coordinator with bounded retry and resource policy | `capture_scheduler.py`; existing `capture.py` capability/retry contracts; `tests/unit/test_capture_scheduler.py`; `tests/unit/test_capture_capabilities.py` | Component complete locally: disabled by default, reuses coordinator leases/checkpoints/cursors/event idempotency, honors bounded `Retry-After` or existing backoff, and applies per-connector concurrency/resource limits |
+| Rotate bounded source selection and report truthful health | `CaptureScheduler._sources`; `CaptureScheduler._health_from_sources`; focused scheduler handoff tests | Component complete locally: source-page selection rotates in process, truncated health is explicitly `degraded`, and reauthorization actions are deduplicated in process; no durable scheduler or notification state |
+
+### 2026-08-22 ZF-008 Wave 3 Packet F local Git/workspace component
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Read an explicitly authorized local root through the existing capture contract | `experimental_local_git_workspace_connector.py`; `tests/fixtures/local_git_workspace.py`; `tests/unit/test_local_git_workspace_connector.py` | Component complete locally: `fetch_page` fails closed before scanning unless the provider and `source.account_fingerprint` match `adapter.source_identity`; non-overlapping explicit roots only; deterministic snapshot/incremental events and Core coordinator replay reuse; partial coverage and network denial are declared |
+| Fail closed at the local safety boundary | bounded scan/cursor constants and `CaptureScanReport`; provider/source-binding, AWS-shaped-secret, missing-root, secret-like, symlink/reparse, deletion, and over-20-file tests | Component complete locally: Git/dependency/credential paths and symlink/reparse paths are excluded, AWS `AKIA`/`ASIA`-shaped content is omitted, workspace text is inert, incomplete scans produce no partial page, and metadata cursors/samples/excerpts track at most 20 files |
+
+### 2026-08-22 ZF-009 Wave 3 Packet G controlled reference host component
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Negotiate lifecycle capability truthfully and deliver context before generation | `experimental_reference_host.py`; `client_runtime.py`; `tests/unit/test_experimental_reference_host.py`; `tests/unit/test_client_runtime.py` | Component complete locally: in-process reference host accepts at most L2, ordinary MCP remains L0, L3 downgrades to L2, and pre-generation calls injected Core Retrieval V3 before delivery/generation; empty Core context fails closed before delivery or generation |
+| Capture direct-user evidence and typed lifecycle checkpoints without overstating persistence | controlled-host fixture `tests/fixtures/reference_host_wave3.json`; typed checkpoint restore, ordering, retry-idempotency, integrity, L0, forged-session, and secret-refusal tests | Component complete locally: direct-user references are distinct from model self-attestation; typed snapshots restore events, trace, pending/delivered context, started-generation IDs, and sequencing state; the digest validates integrity only, the sink receives a stable retry idempotency key, L0/ordinary MCP resumes started IDs without fabricated context, L1+ retains request/delivery ordering, and no client-principal binding or production persistence is added |
+
+### 2026-08-22 Packet H disposable proof stopped at source-fact admission
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Bind continuous Packet F evidence to deterministic source-fact promotion through Core | Stopped/removed Packet H disposable proof; current `CoreStore.add_candidate`/ongoing-client policy; archive importer lifecycle remains separate | Open at the contract boundary: Core has no genuine registered-source-authoritative admission seam; non-witness workspace facts remain tentative, and a hardcoded allowlist or `explicit_user_statement` relabeling was rejected |
+| Advance to the next narrow frontier without overstating acceptance | ADR-132; successor-PR design/review frontier | ZF-010, Packet H, Phase 2 acceptance, ZF-007/ZF-008/ZF-009 product acceptance, the first real source/client journey, production wiring, hosted CI for corrected head, release, and support remain open; macOS remains absent/deferred |
+
+The original component handoff counts were E: 25 tests, F: 25 tests, and G: 27
+tests. Corrected focused counts are F/capture-capability: 27 tests and
+G/client-runtime: 32 tests. The integrated F/G-adjacent union at corrected head
+`719bdd9030e32ac34eb12184c35e1e47cf99cc37` passed 59 tests; Ruff,
+format-check, and `git diff --check` passed. The previous pushed head
+`dcf5de50b633ff00638c1396ddfcfb8ba04070e6` was fully hosted-green, but the
+corrected head has not yet run hosted CI; full repository pytest/mypy also
+remain open. These rows do not close ZF-007/ZF-008/ZF-009 product acceptance,
+the first real continuous source/client pair, ZF-010, Packet H, the Phase 2
+acceptance journey, production wiring, release, or support status. macOS
+remains unsupported/absent/deferred under the current project truth.
 
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 

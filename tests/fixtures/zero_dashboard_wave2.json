@@ -1,0 +1,121 @@
+{
+  "pages": [
+    {
+      "generation": 1,
+      "page_order": 0,
+      "done": false,
+      "next_cursor": "cursor-1",
+      "events": [
+        {
+          "provider_event_id": "capture-project",
+          "provider_item_id": "item-project",
+          "order_key": "1",
+          "generation": 1,
+          "payload": {
+            "kind": "project_decision",
+            "content": "Atlas uses deterministic local retrieval.",
+            "entity_key": "atlas",
+            "attribute_key": "retrieval_mode",
+            "scopes": ["project:atlas"],
+            "source_reference": "fixture-project",
+            "explicit_user_statement": true,
+            "project_ref": "project:atlas"
+          }
+        },
+        {
+          "provider_event_id": "capture-private",
+          "provider_item_id": "item-private",
+          "order_key": "2",
+          "generation": 1,
+          "payload": {
+            "kind": "project_decision",
+            "content": "Atlas private staging uses a bounded fixture.",
+            "entity_key": "atlas",
+            "attribute_key": "private_fixture",
+            "scopes": ["project:atlas"],
+            "source_reference": "fixture-private",
+            "explicit_user_statement": true,
+            "restrict_to_client": true,
+            "project_ref": "project:atlas"
+          }
+        },
+        {
+          "provider_event_id": "capture-delete-target",
+          "provider_item_id": "item-delete-target",
+          "order_key": "3",
+          "generation": 1,
+          "payload": {
+            "kind": "working_state",
+            "content": "Temporary deletion fixture for Atlas.",
+            "entity_key": "atlas",
+            "attribute_key": "delete_fixture",
+            "scopes": ["project:atlas"],
+            "source_reference": "fixture-delete-target",
+            "explicit_user_statement": true,
+            "project_ref": "project:atlas"
+          }
+        }
+      ]
+    },
+    {
+      "generation": 1,
+      "page_order": 1,
+      "done": true,
+      "events": [
+        {
+          "provider_event_id": "capture-other-project",
+          "provider_item_id": "item-other-project",
+          "order_key": "4",
+          "generation": 1,
+          "payload": {
+            "kind": "project_decision",
+            "content": "Atlas uses a separate Neptune source.",
+            "entity_key": "neptune",
+            "attribute_key": "retrieval_mode",
+            "scopes": ["project:neptune"],
+            "source_reference": "fixture-other-project",
+            "explicit_user_statement": true,
+            "project_ref": "project:neptune"
+          }
+        },
+        {
+          "provider_event_id": "capture-expired",
+          "provider_item_id": "item-expired",
+          "order_key": "5",
+          "generation": 1,
+          "payload": {
+            "kind": "working_state",
+            "content": "Expired Atlas working-state fixture.",
+            "entity_key": "atlas",
+            "attribute_key": "expired_fixture",
+            "scopes": ["project:atlas"],
+            "source_reference": "fixture-expired",
+            "expires_at": "2026-08-22T13:00:00+00:00",
+            "explicit_user_statement": true,
+            "project_ref": "project:atlas"
+          }
+        },
+        {
+          "provider_event_id": "capture-delete",
+          "provider_item_id": "item-delete-target",
+          "order_key": "6",
+          "generation": 1,
+          "operation": "delete",
+          "payload": {}
+        }
+      ]
+    }
+  ],
+  "direct_turns": [
+    {
+      "reference": "turn-preference-1",
+      "kind": "interaction_preference",
+      "content": "I prefer concise context packs."
+    },
+    {
+      "reference": "turn-correction-1",
+      "kind": "correction",
+      "content": "Atlas uses bounded local retrieval."
+    }
+  ]
+}

@@ -1,5 +1,96 @@
 # Architecture decisions
 
+## ADR-132: Packet H stops pending Core source-fact admission
+
+**Status:** accepted locally on 2026-08-22 after a stopped disposable proof;
+this is not ZF-010, Packet H, Phase 2, product, hosted-CI, release, or support
+acceptance.
+
+Packet H was attempted as a disposable integration of the Wave 3 components and
+was correctly stopped and removed. The blocker is a missing Core-owned
+registered-source-authoritative admission seam: current Core policy has no
+genuine contract that binds Packet F continuous-capture evidence to
+deterministic source-fact promotion. `add_candidate` enters the ongoing-client
+policy, so non-witness workspace facts remain tentative; the archive importer
+is a distinct lifecycle and cannot be relabeled as this source path.
+
+A hardcoded allowlist or `explicit_user_statement` relabeling was rejected as
+false authority rather than a source-fact admission contract. The next narrow
+frontier is to design and review the Core-owned admission contract in a
+successor PR. No production wiring, stable SDK, provider/client support,
+release state, or macOS support follows from this stopped proof.
+
+## ADR-131: Wave 3 components remain experimental until Packet H
+
+**Status:** accepted locally on 2026-08-22 from focused component handoffs;
+this is not ZF-007/ZF-008/ZF-009 product acceptance, a real integration pair,
+production wiring, hosted/full-matrix acceptance, release evidence, or a
+support claim.
+
+Wave 3 keeps the three component seams narrow until Packet H composes them in a
+disposable Core and runs the Phase 2 journey. Packet E's
+`capture_scheduler.py` is disabled by default and orchestrates the existing
+`CaptureCoordinator`; it owns no cursor, event ledger, lease, checkpoint,
+durable scheduler state, or durable notification state. Its focused contract
+uses the existing persisted retry/backoff path, bounded `Retry-After`, source
+rotation, concurrency/resource limits, truncated-health degradation, and
+in-process reauthorization notification deduplication.
+
+Packet F's `experimental_local_git_workspace_connector.py` is an explicit-root,
+read-only local adapter. Before scanning, `fetch_page` requires both the local
+provider identity and `source.account_fingerprint == adapter.source_identity`;
+a mismatch fails closed without scanning. It executes no Git command or other
+process, uses no network, declares partial coverage, fails closed on incomplete
+scans, omits AWS `AKIA`/`ASIA`-shaped content, and excludes Git/dependency/
+credential paths plus symlink/reparse paths. Its metadata-only cursor and
+bounded samples track at most 20 files. It is not a general connector or
+provider-support claim and is not wired into install or Core startup.
+
+Packet G's `experimental_reference_host.py` is a controlled in-process host
+capped at L2; ordinary MCP remains L0 and an L3 request is truthfully
+downgraded. It routes pre-generation through injected Core Retrieval V3,
+captures direct-user references, and sends typed lifecycle snapshots to an
+injected checkpoint sink on checkpoint, session-transition, and completion
+hooks. A typed restore includes events, trace, pending and delivered context,
+started-generation IDs, and sequencing state. Its deterministic digest is
+integrity validation only, never authentication, and the sink receives a stable
+idempotency key for retries. L0/ordinary MCP resumes started IDs without
+fabricating context; L1+ restores request/delivery ordering, and empty Core
+context fails closed. It rejects forged resume sessions and secret-like
+payloads, has no client-principal binding or production persistence, and adds
+no provider integration, general persistence format, or stable SDK.
+
+These component boundaries do not close the first real continuous source/client
+pair, automatic formation ZF-010, Packet H, the Phase 2 acceptance journey,
+production startup wiring, or any release/support state. macOS remains absent
+and deferred exactly as recorded by the current project truth.
+
+## ADR-130: Wave 1 reconciliation is an opaque metadata boundary
+
+**Status:** accepted locally on 2026-08-22 after isolated synthetic contract
+tests; this is not provider, SDK, MCP lifecycle, release, or hosted acceptance.
+
+ZF-004 Wave 1 normalizes either the existing `CaptureEvent` or the exact
+`ClientLifecycleEnvelope` into one immutable `EventReconciliationInput` for a
+later formation step. The existing lifecycle envelope declares no linkage to a
+capture event, so the composed call is rejected until a real link contract
+exists. The slice reuses source/event IDs, capture generation and order, the
+existing capture normalizer's operation, commitment, and bounded byte size,
+source cursor and idempotency material, lifecycle hook/session and payload
+references with optional commitment/size, lifecycle idempotency
+`(client_id, event_id, sequence)`, and bounded
+account/client/conversation/task/workspace/project/artifact references. Raw
+source text is never copied or returned by `as_dict()`.
+
+Dependency withdrawals are actual immutable tuples of typed Packet C
+cause/action declarations. Authorized ordinary-delete withdrawals must match
+the deleted provider item; terminal purge is allowed only with `ERASE`.
+Secret-like direct metadata and malformed exact-contract evidence fail with
+codes only. The module has no persistence, replay, cursor advancement, ID
+minting, or mutation, and has no direct storage, network, or provider-SDK
+imports or stable integration claim. Any formation, Core policy, storage, and
+harness wiring belongs to the later integration-owned seam.
+
 ## ADR-001: Core is the sole authority
 
 Relay stores a projection and proposal queue only. Application events, not
@@ -3514,3 +3605,34 @@ synthetic only: 77 preferences, 20 relevant records, ten generic queries, a
 4,000-character budget, a no-match query, and negative ACL/temporal/sensitivity
 records. It does not touch private/live data, GitHub, release state, Figma, or
 macOS acceptance.
+
+## ADR-130: Packet D remains a disposable zero-dashboard composition
+
+**Status:** accepted locally on 2026-08-22 as Wave 2 synthetic evidence; this
+is not provider, client, release, or production acceptance.
+
+Packet D composes the existing capture ledger/coordinator and idempotent sink
+with the Wave 1 lifecycle, reconciliation, formation, and dependency contracts.
+Formation writes only through `CoreStore.add_candidate`, where the existing
+Core policy decides whether evidence becomes current context; the harness never
+creates a parallel observation, current-record, cursor, checkpoint, or
+retrieval store. A delete after restart resolves its observation/record
+correlation through durable public Core candidate APIs; no in-memory item map is
+carried across restart.
+
+The fixture is sanitized, deterministic, local-only, and inert. A deliberate
+retry after the first capture page closes the first CoreStore, then a fresh
+coordinator/sink/cursor-semantic adapter resumes from persisted `cursor-1` and
+applies the correct page. A later fresh completed replay is compared directly
+before/after for Core counts and creates no new capture events, observations, or
+current records. Retrieval V3 is called with an authorized Core principal; the
+L2 host declares every hook, exercises pre-generation, direct-user, and restart
+hooks, and leaves its unsupported consequence hook explicitly unsupported.
+Correction, permission narrowing, expiry, ordinary delete, and terminal purge
+are checked by their existing Core/Retrieval boundaries. The bounded projection
+closure result is separate content-free component evidence, not M3/Core/Retrieval
+production integration; scripted host trace checks are not operator telemetry.
+
+The receipt is developer evidence only. It does not imply a real connector,
+provider integration, network/OAuth behavior, stable SDK/export contract,
+dashboard independence in production, or acceptance against private/live data.
