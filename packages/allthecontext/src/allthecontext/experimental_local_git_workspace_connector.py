@@ -40,7 +40,6 @@ MAX_SCAN_DEPTH = 16
 MAX_DISCOVERED_FILES = 512
 MAX_TRACKED_ITEMS = 20
 MAX_FILE_BYTES = 256 * 1024
-MAX_TEXT_CHARS = 1_800
 MAX_RELATIVE_PATH_CHARS = 512
 
 _CURSOR_VERSION = "v0"
@@ -97,7 +96,6 @@ class _ScannedItem:
     content_sha256: str
     content_truncated: bool
     content_kind: str
-    text_excerpt: str | None
     state_token: bytes
 
 
@@ -399,7 +397,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             report.credential_like_paths += 1
             return None
         content_kind = "text" if decoded is not None else "binary"
-        text_excerpt = _safe_text_excerpt(decoded) if decoded is not None else None
         content_sha256 = hashlib.sha256(sample).hexdigest()
         path_token = hashlib.sha256(relative_path.encode("utf-8")).digest()[:12].hex()
         item_id = f"item:{root_token}:{path_token}"
@@ -413,7 +410,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             content_sha256=content_sha256,
             content_truncated=truncated,
             content_kind=content_kind,
-            text_excerpt=text_excerpt,
             state_token=state_token,
         )
 
@@ -444,8 +440,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 "content_truncated": item.content_truncated,
                 "hash_scope": "sample" if item.content_truncated else "full",
             }
-            if item.text_excerpt:
-                payload["text"] = item.text_excerpt
             events.append(
                 CaptureEvent(
                     provider_event_id=f"upsert:g{generation}:{item.item_id}:{state_token}",
@@ -618,16 +612,6 @@ def _secret_like_content(value: str) -> bool:
     return _SECRET_CONTENT_RE.search(compact) is not None
 
 
-def _safe_text_excerpt(value: str | None) -> str | None:
-    if value is None:
-        return None
-    safe = "".join(" " if unicodedata.category(char).startswith("C") else char for char in value)
-    safe = " ".join(safe.split())
-    if not safe:
-        return None
-    return safe[:MAX_TEXT_CHARS]
-
-
 def _state_token_text(value: bytes) -> str:
     return value.hex()
 
@@ -641,7 +625,6 @@ __all__ = [
     "MAX_DISCOVERED_FILES",
     "MAX_FILE_BYTES",
     "MAX_SCAN_DEPTH",
-    "MAX_TEXT_CHARS",
     "MAX_TRACKED_ITEMS",
     "CaptureScanReport",
     "LocalGitWorkspaceCaptureProviderAdapter",

@@ -165,6 +165,70 @@ def test_registered_source_never_promotes_workspace_path_text_root_or_fingerprin
     assert not any(value in serialized for value in forbidden)
 
 
+def test_registered_source_payloads_are_metadata_only_for_admitted_and_no_fact_files(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    private_fixture = "PRIVATE_JSON_SECRET_FIXTURE"
+    source_fixture = "SOURCE_SECRET_FIXTURE"
+    (root / "private.json").write_text(
+        '{"fixture": "PRIVATE_JSON_SECRET_FIXTURE"}\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    (root / "src/app.py").write_text(
+        f"SOURCE_SECRET_FIXTURE = {source_fixture!r}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = coordinator.run(source_id)
+    assert result.status == "completed"
+    assert result.applied_events == 5
+
+    with store.connect() as connection:
+        events = connection.execute(
+            "SELECT normalized_payload_json,application_receipt "
+            "FROM capture_events WHERE source_id=? ORDER BY id",
+            (source_id,),
+        ).fetchall()
+        records = connection.execute(
+            "SELECT content,structured_value_json,evidence FROM context_candidates "
+            "UNION ALL SELECT content,structured_value_json,evidence FROM context_records"
+        ).fetchall()
+    payloads = [json.loads(str(row["normalized_payload_json"])) for row in events]
+    upserts = [payload for payload in payloads if payload]
+    assert len(events) == len(payloads) == 5
+    assert all("text" not in payload for payload in upserts)
+    assert all(
+        set(payload)
+        == {
+            "relative_path",
+            "root_id",
+            "kind",
+            "size",
+            "content_sha256",
+            "content_truncated",
+            "hash_scope",
+        }
+        for payload in upserts
+    )
+    private_event = next(
+        (
+            row
+            for row, payload in zip(events, payloads, strict=True)
+            if payload["relative_path"] == "private.json"
+        ),
+        None,
+    )
+    assert private_event is not None
+    assert private_event["application_receipt"] == "registered-source-no-fact"
+    serialized = " ".join(repr(tuple(row)) for row in events + records)
+    assert private_fixture not in serialized
+    assert source_fixture not in serialized
+    assert len(records) == 8
+
+
 def test_registered_source_raw_provider_item_id_stays_in_capture_ledger_only(
     tmp_path: Path,
 ) -> None:

@@ -155,6 +155,18 @@ def test_snapshot_is_deterministic_and_excludes_git_credentials_and_outside_path
         "src/app.py",
     }
     assert all("outside" not in path for path in relative_paths)
+    metadata_keys = {
+        "relative_path",
+        "root_id",
+        "kind",
+        "size",
+        "content_sha256",
+        "content_truncated",
+        "hash_scope",
+    }
+    assert all(
+        set(event.payload) == metadata_keys for event in first.events if event.operation == "upsert"
+    )
     if symlink is not None:
         assert "outside-link.txt" not in relative_paths
     report = second_adapter.last_scan_report
@@ -207,7 +219,7 @@ def test_incremental_cursor_detects_change_and_deletion_after_restart(tmp_path: 
         if event.payload.get("relative_path") == "docs/decision.md"
     )
     assert len(changed) == 1
-    assert changed[0].payload["text"] == "def answer() -> str: return 'changed fixture'"
+    assert "text" not in changed[0].payload
     assert f"g{incremental.generation}" in changed[0].provider_event_id
     assert len(deleted) == 1
     assert deleted[0].payload == {}
