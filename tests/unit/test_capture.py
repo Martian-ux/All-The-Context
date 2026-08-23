@@ -669,6 +669,86 @@ def test_atomic_page_staging_rolls_back_partial_event_state(tmp_path: Path) -> N
     assert checkpoint is not None and tuple(checkpoint) == (None, None, None)
 
 
+def test_applied_duplicate_page_leaves_recovery_state_untouched_and_can_resume(
+    tmp_path: Path,
+) -> None:
+    sink = IdempotentFakeSink()
+    coordinator = _coordinator(tmp_path, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    first_page = CapturePage(
+        generation=1,
+        page_order=0,
+        events=(_event("e1", "item-1", "1"),),
+        next_cursor="after-e1",
+        done=False,
+    )
+    duplicate_page = CapturePage(
+        generation=1,
+        page_order=1,
+        events=(_event("e1", "item-1", "1"), _event("e1", "item-1", "1")),
+        next_cursor="after-duplicate",
+        done=False,
+    )
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([first_page, duplicate_page]))
+
+    failed = coordinator.run(source_id)
+
+    assert failed.status == "failed"
+    assert failed.error_code == "capture_event_payload_conflict"
+    assert len(sink.calls) == 1
+    checkpoint = coordinator.ledger._checkpoint(source_id)
+    assert checkpoint["cursor"] == "after-e1"
+    assert checkpoint["pending_generation"] is None
+    assert checkpoint["pending_cursor"] is None
+    assert checkpoint["pending_event_ids_json"] is None
+
+    coordinator.resume(source_id)
+    valid_page = CapturePage(
+        generation=1,
+        page_order=0,
+        events=(_event("e2", "item-2", "2"),),
+        done=True,
+    )
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([valid_page]))
+    resumed = coordinator.run(source_id)
+
+    assert resumed.status == "completed"
+    assert resumed.applied_events == 1
+    assert resumed.duplicate_events == 0
+    assert len(sink.calls) == 2
+    assert coordinator.ledger._checkpoint(source_id)["pending_generation"] is None
+
+
+def test_new_duplicate_page_event_ids_roll_back_atomically(tmp_path: Path) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    handle = _begin(coordinator, source_id)
+    duplicate_page = CapturePage(
+        generation=1,
+        next_cursor="after-duplicate",
+        done=False,
+        events=(_event("new", "item-1", "1"), _event("new", "item-1", "1")),
+    )
+
+    with pytest.raises(CaptureError, match="capture_event_payload_conflict"):
+        coordinator.ledger.stage_page(handle, duplicate_page)
+
+    with coordinator.ledger.store.connect() as connection:
+        events = connection.execute(
+            "SELECT provider_event_id,status FROM capture_events WHERE source_id=?",
+            (source_id,),
+        ).fetchall()
+        checkpoint = connection.execute(
+            "SELECT generation,cursor,last_order_key,last_event_id,pending_generation,"
+            "pending_cursor,pending_event_ids_json FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert events == []
+    assert checkpoint is not None and tuple(checkpoint) == (0, None, None, None, None, None, None)
+
+
 def test_out_of_order_malformed_and_oversize_inputs_degrade_without_checkpoint_advance(
     tmp_path: Path,
 ) -> None:

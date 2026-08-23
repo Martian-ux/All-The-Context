@@ -1385,6 +1385,9 @@ class CaptureLedger:
 
         if not isinstance(page, CapturePage):
             raise CaptureError("capture_page_malformed")
+        provider_event_ids = tuple(event.provider_event_id for event in page.events)
+        if len(set(provider_event_ids)) != len(provider_event_ids):
+            raise CaptureError("capture_event_payload_conflict")
         now = self.clock()
         with self.store.transaction() as connection:
             self._require_active_run(connection, handle, now)
@@ -1407,6 +1410,8 @@ class CaptureLedger:
                 for event in page.events
             )
             event_ids = tuple(item[0] for item in staged)
+            if len(set(event_ids)) != len(event_ids):
+                raise CaptureError("capture_event_payload_conflict")
             pending_event_ids_json = json.dumps(event_ids, separators=(",", ":"))
             if len(pending_event_ids_json.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
                 raise CaptureError("capture_event_limit_exceeded")
@@ -2314,6 +2319,7 @@ class CaptureCoordinator:
     def _validate_page_events(self, source_id: str, page: CapturePage) -> None:
         """Validate a complete page before any event in it can advance state."""
 
+        provider_event_ids: set[str] = set()
         checkpoint = self.ledger._checkpoint(source_id)
         current_generation = int(checkpoint["generation"])
         baseline = (
@@ -2322,6 +2328,9 @@ class CaptureCoordinator:
             else None
         )
         for event in page.events:
+            if event.provider_event_id in provider_event_ids:
+                raise CaptureError("capture_event_payload_conflict")
+            provider_event_ids.add(event.provider_event_id)
             if event.generation != page.generation:
                 raise CaptureError("capture_event_generation_mismatch")
             _payload_json(event.payload)
