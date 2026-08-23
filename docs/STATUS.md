@@ -301,12 +301,14 @@ run handle from `CaptureCoordinator`, validates the existing ledger/source
 authority in one Core transaction, and admits only code-owned structural facts
 from the closed `local-git-workspace` extractor registry. Candidate content and
 evidence are fixed safe sentences plus a versioned extractor/fact schema and
-content-free binding hash; workspace paths, text, roots, labels, fingerprints,
-and provider authority fields remain inert.
+content-free binding hash. A registered memory uses an opaque hash reference
+derived from the capture source and provider item; raw provider item IDs remain
+only in the machine-local capture ledger. Workspace paths, text, roots, labels,
+fingerprints, and provider authority fields remain inert.
 
 Focused sanitized tests cover coordinator admission, deterministic item/record
 lineage, replay after a Core-commit/capture-commit crash, withdrawal and exact
-ID revival, mutation/delete/purge barriers, migration/restart, export omission
+ID revival, mutation/delete/purge/no-linkage barriers, migration/restart, export omission
 and restore compatibility, no-fact handling, and forged lineage rejection.
 The sink is explicitly injected only in focused tests. CoreService, package
 startup, the experimental scheduler, and reference host remain unwired.

@@ -32,14 +32,16 @@ Core-owned `REGISTERED_SOURCE` policy origin and an explicitly injected
 internal sink. The sink accepts only the durable source/event/run projection
 from `CaptureCoordinator`, only the code-owned `local-git-workspace` extractor
 registry, and only bounded structural classes with code-owned sentences. Raw
-workspace text, paths, roots, account labels, and fingerprints never become
-candidate content, evidence, structured memory, errors, receipts, or logs.
+workspace text, paths, roots, account labels, fingerprints, and provider item
+IDs never become candidate content, evidence, structured memory, errors,
+receipts, or logs; the projection uses an opaque source/item hash reference
+while the raw item ID remains in the machine-local capture ledger.
 
 The sink reuses CaptureLedger for ordering, staging, lease, replay, and item
 lineage authority, and uses the existing Memory Truth tables for candidate and
 record truth. Deterministic registered-source record IDs are supplied only by
-the internal evaluation override; user correction, availability, deletion, and
-purge barriers remain authoritative. Capture item deletion is a source
+the internal evaluation override; user correction, availability, deletion, broken
+linkage, and purge barriers remain authoritative. Capture item deletion is a source
 withdrawal without an ordinary tombstone, while a purge scrubs linked staged
 payloads and blocks future influence. Portable exports omit all machine-local
 capture runtime tables and null the new candidate foreign keys; same-database

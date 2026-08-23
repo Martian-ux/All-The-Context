@@ -11,6 +11,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
+from types import MappingProxyType
 
 from .models import (
     Availability,
@@ -50,6 +52,7 @@ class ObservationOrigin(StrEnum):
 
 
 REGISTERED_SOURCE_FACT_KIND = "registered_source_fact"
+REGISTERED_SOURCE_PROVIDER = "local-git-workspace"
 REGISTERED_SOURCE_TYPE = "registered_capture"
 REGISTERED_SOURCE_FACT_SCHEMA = "registered-source-fact-v1"
 REGISTERED_SOURCE_EXTRACTOR_ID = "local-git-workspace-structure"
@@ -64,17 +67,82 @@ REGISTERED_SOURCE_FACT_CLASSES = frozenset(
         "generic_text_file",
     }
 )
+REGISTERED_SOURCE_FACT_SENTENCES = MappingProxyType(
+    {
+        "python_source": "This workspace item is Python source.",
+        "markdown_documentation": "This workspace item is Markdown documentation.",
+        "shell_script": "This workspace item is a shell script.",
+        "powershell_script": "This workspace item is a PowerShell script.",
+        "project_manifest": "This workspace item is a known project manifest.",
+        "generic_text_file": "This workspace item is a generic text file.",
+    }
+)
+REGISTERED_SOURCE_REFERENCE_PREFIX = "registered-source-item-"
+REGISTERED_SOURCE_REFERENCE_RE = re.compile(
+    rf"^{re.escape(REGISTERED_SOURCE_REFERENCE_PREFIX)}[0-9a-f]{{64}}$"
+)
+REGISTERED_SOURCE_IDEMPOTENCY_RE = re.compile(r"^capture-event-[0-9a-f]{64}$")
+REGISTERED_SOURCE_SCOPE_RE = re.compile(r"^[A-Za-z0-9._:@/+-]{1,128}$")
+REGISTERED_SOURCE_MAX_SCOPES = 64
+
+
+def registered_source_reference(source_id: str, provider_item_id: str) -> str:
+    """Return the opaque projection reference for one capture item."""
+
+    digest = sha256(
+        f"registered-source-reference-v1\0{source_id}\0{provider_item_id}".encode()
+    ).hexdigest()
+    return REGISTERED_SOURCE_REFERENCE_PREFIX + digest
+
+
+def registered_source_fact_evidence(fact_class: str, binding_hash: str) -> str:
+    """Return the exact Core-owned evidence string for a structural fact."""
+
+    return (
+        "Core registered-source structural fact; "
+        f"schema={REGISTERED_SOURCE_FACT_SCHEMA}; "
+        f"fact_class={fact_class}; binding={binding_hash}"
+    )
+
+
+def _registered_source_scopes_are_safe(scopes: object) -> bool:
+    return (
+        isinstance(scopes, list)
+        and len(scopes) <= REGISTERED_SOURCE_MAX_SCOPES
+        and all(
+            isinstance(scope, str) and REGISTERED_SOURCE_SCOPE_RE.fullmatch(scope) is not None
+            for scope in scopes
+        )
+    )
 
 
 def is_registered_source_fact(candidate: CandidateInput) -> bool:
     """Return whether a Core-created registered-source projection is closed."""
 
     structured = candidate.structured_value
-    return (
+    if not (
         candidate.kind == REGISTERED_SOURCE_FACT_KIND
+        and candidate.source_service == REGISTERED_SOURCE_PROVIDER
         and candidate.source_type == REGISTERED_SOURCE_TYPE
+        and candidate.source_id is None
         and not candidate.explicit_user_statement
         and candidate.schema_version == REGISTERED_SOURCE_EXTRACTOR_VERSION
+        and candidate.entity_key is None
+        and candidate.attribute_key is None
+        and candidate.valid_from is None
+        and candidate.expires_at is None
+        and candidate.supersedes is None
+        and candidate.confidence == 1.0
+        and candidate.sensitivity == Sensitivity.NORMAL
+        and candidate.availability == Availability.CORE
+        and not candidate.tags
+        and not candidate.allowed_clients
+        and not candidate.denied_clients
+        and _registered_source_scopes_are_safe(candidate.scopes)
+        and isinstance(candidate.source_reference, str)
+        and REGISTERED_SOURCE_REFERENCE_RE.fullmatch(candidate.source_reference) is not None
+        and isinstance(candidate.idempotency_key, str)
+        and REGISTERED_SOURCE_IDEMPOTENCY_RE.fullmatch(candidate.idempotency_key) is not None
         and isinstance(structured, dict)
         and set(structured)
         == {"binding_hash", "extractor", "extractor_version", "fact_class", "schema"}
@@ -85,7 +153,13 @@ def is_registered_source_fact(candidate: CandidateInput) -> bool:
         and len(structured["binding_hash"]) == 64
         and all(character in "0123456789abcdef" for character in structured["binding_hash"])
         and structured.get("fact_class") in REGISTERED_SOURCE_FACT_CLASSES
-    )
+    ):
+        return False
+    fact_class = str(structured["fact_class"])
+    binding_hash = str(structured["binding_hash"])
+    return candidate.content == REGISTERED_SOURCE_FACT_SENTENCES[
+        fact_class
+    ] and candidate.evidence == registered_source_fact_evidence(fact_class, binding_hash)
 
 
 @dataclass(frozen=True, slots=True)

@@ -448,7 +448,7 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 payload["text"] = item.text_excerpt
             events.append(
                 CaptureEvent(
-                    provider_event_id=f"upsert:{item.item_id}:{state_token}",
+                    provider_event_id=f"upsert:g{generation}:{item.item_id}:{state_token}",
                     provider_item_id=item.item_id,
                     order_key=_order_key(generation, position),
                     operation="upsert",
@@ -461,7 +461,7 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             previous_token = _state_token_text(previous_state[item_id])
             events.append(
                 CaptureEvent(
-                    provider_event_id=f"delete:{item_id}:{previous_token}",
+                    provider_event_id=f"delete:g{generation}:{item_id}:{previous_token}",
                     provider_item_id=item_id,
                     order_key=_order_key(generation, position),
                     operation="delete",

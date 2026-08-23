@@ -208,11 +208,26 @@ def test_incremental_cursor_detects_change_and_deletion_after_restart(tmp_path: 
     )
     assert len(changed) == 1
     assert changed[0].payload["text"] == "def answer() -> str: return 'changed fixture'"
+    assert f"g{incremental.generation}" in changed[0].provider_event_id
     assert len(deleted) == 1
     assert deleted[0].payload == {}
     assert deleted[0].provider_item_id == deleted_item_id
+    assert f"g{incremental.generation}" in deleted[0].provider_event_id
 
-    unchanged = _fetch(_adapter(root), incremental.next_cursor)
+    (root / "docs/decision.md").write_text(
+        "Use deterministic local fixtures for connector tests.\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    recreated = _fetch(_adapter(root), incremental.next_cursor)
+    recreated_upsert = next(
+        event for event in recreated.events if event.provider_item_id == deleted_item_id
+    )
+    assert recreated_upsert.operation == "upsert"
+    assert f"g{recreated.generation}" in recreated_upsert.provider_event_id
+    assert recreated_upsert.provider_event_id != deleted[0].provider_event_id
+
+    unchanged = _fetch(_adapter(root), recreated.next_cursor)
     assert unchanged.events == ()
 
 

@@ -123,14 +123,17 @@ Admitted candidates use `REGISTERED_SOURCE`, `registered_source_fact`,
 `registered_capture`, Core availability, normal sensitivity, empty client ACLs,
 confidence `1.0`, empty explicitness, durable source scopes, and the durable
 event received time. Their evidence and structured value contain only the
-versioned safe schema/fact class and content-free binding hash. The deterministic
-capture-lineage ID is used only by the internal Core evaluation override, and
-public ingestion cannot select this origin.
+versioned safe schema/fact class and content-free binding hash. Their
+`source_reference` is an opaque hash of the capture source and provider item;
+the raw provider item ID remains in the machine-local capture ledger only. The
+deterministic capture-lineage ID is used only by the internal Core evaluation
+override, and public ingestion cannot select this origin.
 
 Replay queries `capture_event_id` in the same write transaction and validates
 the stored projection. A crash before ledger commit therefore replays one
-candidate/record. User correction, availability, ordinary deletion, and purge
-remain authoritative. A capture item delete withdraws only the exact untouched
+candidate/record. User correction, availability, ordinary deletion, purge, and
+broken registered-source linkage remain authoritative and consume later capture
+as no-influence. A capture item delete withdraws only the exact untouched
 registered-source record without minting an ordinary tombstone; a later upsert
 may revive that same ID. Record purge scrubs linked capture payload JSON and
 blocks later influence. This is a local PR1 contract only: Packet H, ZF-010,

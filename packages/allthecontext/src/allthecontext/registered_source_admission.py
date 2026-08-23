@@ -28,36 +28,31 @@ from .capture import (
 )
 from .ids import utc_now
 from .memory_policy import (
+    AUTOMATIC_POLICY_VERSION,
     REGISTERED_SOURCE_EXTRACTOR_ID,
     REGISTERED_SOURCE_EXTRACTOR_VERSION,
     REGISTERED_SOURCE_FACT_CLASSES,
     REGISTERED_SOURCE_FACT_KIND,
     REGISTERED_SOURCE_FACT_SCHEMA,
+    REGISTERED_SOURCE_FACT_SENTENCES,
+    REGISTERED_SOURCE_MAX_SCOPES,
+    REGISTERED_SOURCE_PROVIDER,
+    REGISTERED_SOURCE_SCOPE_RE,
     REGISTERED_SOURCE_TYPE,
     ObservationOrigin,
+    registered_source_fact_evidence,
+    registered_source_reference,
 )
 from .models import Availability, CandidateInput, ObservationDisposition, Sensitivity
 from .storage import CoreStore, _hash_text, _json
 
-REGISTERED_SOURCE_PROVIDER = "local-git-workspace"
 REGISTERED_SOURCE_CAPTURE_SCHEMA_VERSION = 1
-_MAX_SCOPES = 64
-_MAX_SCOPE_CHARS = 128
 _MAX_RELATIVE_PATH_CHARS = 512
 _MAX_FILE_BYTES = 256 * 1024
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_SAFE_ID = re.compile(r"^[A-Za-z0-9._:@/+-]+$")
 _WORKSPACE_FINGERPRINT = re.compile(r"^workspace-source-[0-9a-f]{64}$")
 _RECEIPT = re.compile(r"^registered-source-[a-z-]+(?::[0-9a-f]{64})?$")
 
-_FACT_SENTENCES = {
-    "python_source": "This workspace item is Python source.",
-    "markdown_documentation": "This workspace item is Markdown documentation.",
-    "shell_script": "This workspace item is a shell script.",
-    "powershell_script": "This workspace item is a PowerShell script.",
-    "project_manifest": "This workspace item is a known project manifest.",
-    "generic_text_file": "This workspace item is a generic text file.",
-}
 _PROJECT_MANIFESTS = frozenset(
     {
         "pyproject.toml",
@@ -107,11 +102,9 @@ def _safe_scopes(value: str) -> tuple[str, ...]:
     if (
         not isinstance(raw, list)
         or not raw
-        or len(raw) > _MAX_SCOPES
+        or len(raw) > REGISTERED_SOURCE_MAX_SCOPES
         or any(
-            not isinstance(item, str)
-            or not 1 <= len(item) <= _MAX_SCOPE_CHARS
-            or _SAFE_ID.fullmatch(item) is None
+            not isinstance(item, str) or REGISTERED_SOURCE_SCOPE_RE.fullmatch(item) is None
             for item in raw
         )
     ):
@@ -430,6 +423,37 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                 _reject()
         return CaptureApplicationReceipt(receipt, canonical_record_id)
 
+    def _consume_registered_source_barrier(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        candidate_id: str,
+        canonical_record_id: str,
+        reason: str,
+    ) -> CaptureApplicationReceipt:
+        record_exists = connection.execute(
+            "SELECT 1 FROM context_records WHERE id=?", (canonical_record_id,)
+        ).fetchone()
+        self.store._set_observation_decision_tx(
+            connection,
+            candidate_id,
+            disposition=ObservationDisposition.IGNORED,
+            reason=f"registered source influence blocked: {reason}",
+            policy_version=AUTOMATIC_POLICY_VERSION,
+            origin=ObservationOrigin.REGISTERED_SOURCE,
+            record_id=canonical_record_id if record_exists is not None else None,
+            actor="local-core",
+        )
+        if record_exists is not None:
+            self.store._link_observation_tx(
+                connection,
+                candidate_id,
+                canonical_record_id,
+                "blocked_by_registered_source_barrier",
+            )
+        self.store._recompute_integrity(connection)
+        return CaptureApplicationReceipt("registered-source-no-influence", canonical_record_id)
+
     def apply(
         self,
         event: CaptureEvent,
@@ -541,6 +565,19 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                     (event_id,),
                 ).fetchone()
                 if existing is not None:
+                    barrier = self.store._registered_source_influence_barrier_tx(
+                        connection,
+                        canonical_record_id=canonical_record_id,
+                        capture_source_id=source_id,
+                        source_reference=str(candidate_input.source_reference),
+                    )
+                    if barrier is not None:
+                        return self._consume_registered_source_barrier(
+                            connection,
+                            candidate_id=str(existing["id"]),
+                            canonical_record_id=canonical_record_id,
+                            reason=barrier,
+                        )
                     return self._existing_receipt(
                         connection,
                         event=stored,
@@ -552,12 +589,6 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                         canonical_record_id=canonical_record_id,
                         validate_record_projection=True,
                     )
-                blocked = connection.execute(
-                    "SELECT r.* FROM context_records r JOIN context_candidates c "
-                    "ON c.id=r.candidate_id WHERE r.id=? AND r.source_id IS NULL "
-                    "AND r.source_reference=? AND c.capture_source_id=?",
-                    (canonical_record_id, event.provider_item_id, source_id),
-                ).fetchone()
                 candidate_id = self.store._insert_candidate(
                     connection,
                     candidate_input,
@@ -567,33 +598,6 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                     capture_event_id=event_id,
                     capture_binding_hash=binding_hash,
                 )
-                if blocked is not None and (
-                    self.store._record_has_user_edit_tx(connection, canonical_record_id)
-                    or connection.execute(
-                        "SELECT 1 FROM deletion_tombstones WHERE record_id=?",
-                        (canonical_record_id,),
-                    ).fetchone()
-                    is not None
-                ):
-                    self.store._set_observation_decision_tx(
-                        connection,
-                        candidate_id,
-                        disposition=ObservationDisposition.IGNORED,
-                        reason="registered source influence blocked by local mutation",
-                        policy_version="automatic-v1",
-                        origin=ObservationOrigin.REGISTERED_SOURCE,
-                        record_id=canonical_record_id,
-                        actor="local-core",
-                    )
-                    self.store._link_observation_tx(
-                        connection,
-                        candidate_id,
-                        canonical_record_id,
-                        "blocked_by_user_mutation",
-                    )
-                    return CaptureApplicationReceipt(
-                        "registered-source-no-influence", canonical_record_id
-                    )
                 self.store._evaluate_observation_tx(
                     connection,
                     candidate_id,
@@ -607,6 +611,12 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                 record = connection.execute(
                     "SELECT * FROM context_records WHERE id=?", (canonical_record_id,)
                 ).fetchone()
+                if candidate is not None and (
+                    str(candidate["disposition"]) == ObservationDisposition.IGNORED.value
+                ):
+                    return CaptureApplicationReceipt(
+                        "registered-source-no-influence", canonical_record_id
+                    )
                 if (
                     candidate is None
                     or record is None
@@ -655,19 +665,15 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
         }
         return CandidateInput(
             kind=REGISTERED_SOURCE_FACT_KIND,
-            content=_FACT_SENTENCES[fact_class],
+            content=REGISTERED_SOURCE_FACT_SENTENCES[fact_class],
             structured_value=safe_schema,
             scopes=list(scopes),
             tags=[],
             source_id=None,
-            source_reference=event.provider_item_id,
+            source_reference=registered_source_reference(str(source["id"]), event.provider_item_id),
             source_service=str(source["provider"]),
             source_type=REGISTERED_SOURCE_TYPE,
-            evidence=(
-                "Core registered-source structural fact; "
-                f"schema={REGISTERED_SOURCE_FACT_SCHEMA}; "
-                f"fact_class={fact_class}; binding={binding_hash}"
-            ),
+            evidence=registered_source_fact_evidence(fact_class, binding_hash),
             confidence=1.0,
             sensitivity=Sensitivity.NORMAL,
             availability=Availability.CORE,
