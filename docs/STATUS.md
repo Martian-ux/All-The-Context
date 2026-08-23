@@ -66,7 +66,7 @@ records migration 017 as used and 018 as next.
 
 Historical lane evidence is limited to 58 focused tests for duplicate IDs, 63
 focused tests for metadata-only workspace events, and 8 capture migration tests
-for bounded repair. The integration owner subsequently ran 149 combined
+for bounded repair. The integration owner subsequently ran 152 combined
 focused tests on integrated code. The reported static checks were Ruff lint
 passed, Ruff format-check passed, and `python -m mypy
 packages/allthecontext/src` passed. These are local focused/static reports only;
