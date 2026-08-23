@@ -278,16 +278,17 @@ remain historical and are not rebound or reused.
 ## Zero-friction execution frontier (2026-08-22)
 
 The accepted post-V1 plan now starts from the merged capture ledger instead of
-proposing a parallel connector or event substrate. The next evidence sequence is
-contract reconciliation, a disposable zero-dashboard harness, then one
-explicit-root local Git/workspace connector plus a controlled lifecycle-aware
-reference host. Stable project identity and deterministic Project Context
+proposing a parallel connector or event substrate. Packet D's sanitized
+synthetic composition is locally complete, and the next frontier is the
+Packet H integration of the locally complete Wave 3 E/F/G component seams into
+the Phase 2 journey. Stable project identity and deterministic Project Context
 Capsules precede graph shadow evaluation.
 
-This is planning state only. It adds no provider, scheduler, background capture,
-client lifecycle support, graph, stable SDK, or release claim. Implementation
-packets use sanitized synthetic fixtures and disposable Core state; private data
-and publication actions remain outside their boundary.
+Wave 3 component evidence remains experimental. It adds no provider support,
+production startup wiring, durable scheduler/notification state, stable SDK,
+release, or support claim. Implementation packets use sanitized synthetic
+fixtures and disposable Core state; private data, publication actions, and
+macOS support remain outside their boundary.
 
 ### 2026-08-22 Memory Truth foundation
 
@@ -2038,11 +2039,49 @@ or papered over in this integration.
   retention/expiry, ordinary deletion, terminal purge, genuine restart/cursor
   recovery, replay idempotency, duplicate absence, capability truth, a bounded
   scripted action guard, and bounded compile plus post-restart time-to-first
-  context. Secret-like content is resolved through a direct-user reference and
-  refused before a candidate is retained; imported fixture text is inert and
-  remains tentative.
+  context. It independently closes supersedes-output, query-adversarial
+  wrong-project, unsupported-hook, and durable secret-absence checks.
+  Secret-like content is resolved through a direct-user reference and refused
+  before a candidate is retained; imported fixture text is inert and remains
+  tentative.
 - This is Wave 2 developer evidence only. It adds no scheduler, provider or
   network connector, OAuth/client SDK claim, dashboard dependency, operator
   vault access, stable export, migration, package, release, or production
   readiness claim. Full repository pytest/mypy and hosted acceptance remain
   outside this focused lane.
+
+## Wave 3 component handoffs (2026-08-22)
+
+- Packet E (`capture_scheduler.py`) is locally component-complete with 25
+  focused handoff tests. The disabled-by-default seam wraps the existing
+  `CaptureCoordinator`, reuses its persisted retry/backoff and bounded
+  `Retry-After`, limits concurrency/resources, rotates source-page selection,
+  degrades explicitly when health inspection is truncated, and deduplicates
+  reauthorization notification actions in process. It owns no durable
+  scheduler/notification state, cursor, event ledger, lease, or checkpoint,
+  and has no production startup wiring.
+- Packet F (`experimental_local_git_workspace_connector.py`) is locally
+  component-complete with 25 focused handoff tests. It requires explicit
+  non-overlapping roots, is read-only and network-free, reports partial
+  coverage, treats workspace text as inert, excludes Git/dependency/
+  credential paths and symlink/reparse points, fails closed on incomplete
+  scans, and bounds its metadata cursor, samples, excerpts, and tracked files
+  at 20. It is an experimental local adapter, not a general connector or
+  provider-support claim, and is not wired into install or Core startup.
+- Packet G (`experimental_reference_host.py`) is locally component-complete
+  with 27 focused handoff tests. The controlled in-process host caps at L2;
+  ordinary MCP remains L0 and L3 is downgraded truthfully. It routes
+  pre-generation through injected Core Retrieval V3, captures direct-user
+  references, auto-checkpoints typed lifecycle snapshots on checkpoint,
+  session-transition, and completion hooks, and rejects forged resume
+  sessions and secret-like payloads. It adds no provider integration,
+  general persistence format, or stable SDK.
+- The exact combined Wave 1/2/3 focused command ran at
+  `e2444a4717e179205fc7fac2a4ac279627f162de` and passed 110 tests. Full-tree
+  Ruff format-check, Ruff check, and `git diff --check` also passed. This is
+  focused local evidence only; full repository pytest/mypy and hosted CI for
+  the combined new head remain open. ZF-007/ZF-008/ZF-009 product
+  acceptance, the first real continuous source/client pair, ZF-010 automatic
+  formation, Packet H, the Phase 2 acceptance journey, production wiring, and
+  any release/support claim remain OPEN. macOS remains
+  unsupported/absent/deferred under the current project truth.

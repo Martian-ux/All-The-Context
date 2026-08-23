@@ -1,5 +1,43 @@
 # Architecture decisions
 
+## ADR-131: Wave 3 components remain experimental until Packet H
+
+**Status:** accepted locally on 2026-08-22 from focused component handoffs;
+this is not ZF-007/ZF-008/ZF-009 product acceptance, a real integration pair,
+production wiring, hosted/full-matrix acceptance, release evidence, or a
+support claim.
+
+Wave 3 keeps the three component seams narrow until Packet H composes them in a
+disposable Core and runs the Phase 2 journey. Packet E's
+`capture_scheduler.py` is disabled by default and orchestrates the existing
+`CaptureCoordinator`; it owns no cursor, event ledger, lease, checkpoint,
+durable scheduler state, or durable notification state. Its focused contract
+uses the existing persisted retry/backoff path, bounded `Retry-After`, source
+rotation, concurrency/resource limits, truncated-health degradation, and
+in-process reauthorization notification deduplication.
+
+Packet F's `experimental_local_git_workspace_connector.py` is an explicit-root,
+read-only local adapter. It executes no Git command or other process, uses no
+network, declares partial coverage, fails closed on incomplete scans, and
+excludes Git/dependency/credential paths plus symlink/reparse paths. Its
+metadata-only cursor and bounded samples track at most 20 files. It is not a
+general connector or provider-support claim and is not wired into install or
+Core startup.
+
+Packet G's `experimental_reference_host.py` is a controlled in-process host
+capped at L2; ordinary MCP remains L0 and an L3 request is truthfully
+downgraded. It routes pre-generation through injected Core Retrieval V3,
+captures direct-user references, and sends typed lifecycle snapshots to an
+injected checkpoint sink on checkpoint, session-transition, and completion
+hooks. It rejects forged resume sessions and secret-like payloads before
+lifecycle persistence. It adds no provider integration, general persistence
+format, or stable SDK.
+
+These component boundaries do not close the first real continuous source/client
+pair, automatic formation ZF-010, Packet H, the Phase 2 acceptance journey,
+production startup wiring, or any release/support state. macOS remains absent
+and deferred exactly as recorded by the current project truth.
+
 ## ADR-130: Wave 1 reconciliation is an opaque metadata boundary
 
 **Status:** accepted locally on 2026-08-22 after isolated synthetic contract

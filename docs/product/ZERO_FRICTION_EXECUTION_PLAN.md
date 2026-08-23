@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Reconcile the merged Continuous Capture foundation, then prove the loop in a disposable harness |
-| Early interface status | Experimental v0 until exercised by a fake harness and one real vertical slice |
+| Current execution frontier | Reconcile the locally complete Wave 3 component seams, then run Packet H's disposable Phase 2 integration |
+| Early interface status | Experimental v0; Wave 3 component evidence exists, but no product acceptance or support claim is made |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -28,9 +28,11 @@ Import Truth
 ```
 
 The first three foundations and the provider-neutral capture ledger are merged.
-The immediate product frontier is therefore compositional: extend the existing
-capture contracts, prove automatic formation and pre-generation delivery in a
-disposable zero-dashboard harness, and only then add one real integration pair.
+Packet D has also supplied the disposable synthetic composition, and the Wave 3
+E/F/G component seams are locally complete. The immediate product frontier is
+therefore the integration-owned Packet H: compose those seams with conservative
+automatic formation, then prove one real continuous source/client pair in the
+Phase 2 journey without turning the component seams into support claims.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -678,6 +680,11 @@ access, dashboard dependency, provider claim, or stable SDK promise.
 restart/replay, correction, authorization, retention, expiry, deletion, purge,
 zero duplicates, and zero routine user actions.
 
+**Progress (2026-08-22):** Packet D is locally complete as sanitized synthetic
+developer evidence. Its supersedes-output, wrong-project, unsupported-hook,
+and durable secret-absence checks are independently closed. This does not
+change the Wave 2 boundary or credit a real source/client journey.
+
 ### Wave 3 — parallel real-slice components
 
 Only after Packet D passes:
@@ -687,6 +694,15 @@ Only after Packet D passes:
 | E — scheduler and health | New scheduler module plus isolated tests; minimal reviewed capture integration | Disabled-by-default Core-owned scheduling around existing coordinator leases/checkpoints | Stop if replay, lease, retry, or source lifecycle authority must be duplicated |
 | F — local Git/workspace connector | New connector module and sanitized repository fixtures | Explicit-root, read-only snapshot/incremental adapter with truthful exclusions and coverage | Stop on network/OAuth, implicit root access, instruction execution, or undeclared secret/raw-history retention |
 | G — controlled reference host | New reference-host module and sanitized lifecycle fixtures | Real pre-generation/direct-turn/checkpoint/restart hooks with truthful capability negotiation | Stop if only ordinary MCP hooks are available or a provider-support claim would be required |
+
+**Progress (2026-08-22):** E, F, and G are locally component-complete. E is a
+disabled-by-default orchestration seam around the existing coordinator, F is a
+bounded explicit-root read-only local adapter, and G is a controlled in-process
+reference host capped at L2. ZF-007, ZF-008, and ZF-009 product acceptance;
+the first real continuous integration pair; ZF-010 automatic formation;
+Packet H; the Phase 2 acceptance journey; production wiring; full-matrix or
+hosted acceptance for the combined new head; and release/support claims remain
+open. macOS remains absent/deferred under the current project truth.
 
 ### Wave 4 — serial product-proof integration
 
