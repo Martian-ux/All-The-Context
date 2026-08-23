@@ -77,6 +77,7 @@ REGISTERED_SOURCE_FACT_SENTENCES = MappingProxyType(
         "generic_text_file": "This workspace item is a generic text file.",
     }
 )
+REGISTERED_SOURCE_CODE_OWNED_SCOPES: tuple[str, ...] = ("workspace.structure",)
 REGISTERED_SOURCE_REFERENCE_PREFIX = "registered-source-item-"
 REGISTERED_SOURCE_REFERENCE_RE = re.compile(
     rf"^{re.escape(REGISTERED_SOURCE_REFERENCE_PREFIX)}[0-9a-f]{{64}}$"
@@ -113,6 +114,7 @@ def _registered_source_scopes_are_safe(scopes: object) -> bool:
             isinstance(scope, str) and REGISTERED_SOURCE_SCOPE_RE.fullmatch(scope) is not None
             for scope in scopes
         )
+        and tuple(scopes) == REGISTERED_SOURCE_CODE_OWNED_SCOPES
     )
 
 
@@ -139,6 +141,7 @@ def is_registered_source_fact(candidate: CandidateInput) -> bool:
         and not candidate.allowed_clients
         and not candidate.denied_clients
         and _registered_source_scopes_are_safe(candidate.scopes)
+        and candidate.observed_at is not None
         and isinstance(candidate.source_reference, str)
         and REGISTERED_SOURCE_REFERENCE_RE.fullmatch(candidate.source_reference) is not None
         and isinstance(candidate.idempotency_key, str)
@@ -148,6 +151,7 @@ def is_registered_source_fact(candidate: CandidateInput) -> bool:
         == {"binding_hash", "extractor", "extractor_version", "fact_class", "schema"}
         and structured.get("schema") == REGISTERED_SOURCE_FACT_SCHEMA
         and structured.get("extractor") == REGISTERED_SOURCE_EXTRACTOR_ID
+        and type(structured.get("extractor_version")) is int
         and structured.get("extractor_version") == REGISTERED_SOURCE_EXTRACTOR_VERSION
         and isinstance(structured.get("binding_hash"), str)
         and len(structured["binding_hash"]) == 64

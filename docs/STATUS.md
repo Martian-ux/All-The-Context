@@ -298,8 +298,9 @@ admission seam locally. Migration 016 adds only nullable capture provenance to
 `context_candidates` and a partial unique capture-event index. The internal
 `RegisteredSourceCaptureApplicationSink` accepts the exact durable event ID and
 run handle from `CaptureCoordinator`, validates the existing ledger/source
-authority in one Core transaction, and admits only code-owned structural facts
-from the closed `local-git-workspace` extractor registry. Candidate content and
+authority and exact code-owned `workspace.structure` scope in one Core
+transaction, and admits only code-owned structural facts from the closed
+`local-git-workspace` extractor registry. Candidate content and
 evidence are fixed safe sentences plus a versioned extractor/fact schema and
 content-free binding hash. A registered memory uses an opaque hash reference
 derived from the capture source and provider item; raw provider item IDs remain

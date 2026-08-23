@@ -29,6 +29,7 @@ from .capture import (
 from .ids import utc_now
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
+    REGISTERED_SOURCE_CODE_OWNED_SCOPES,
     REGISTERED_SOURCE_EXTRACTOR_ID,
     REGISTERED_SOURCE_EXTRACTOR_VERSION,
     REGISTERED_SOURCE_FACT_CLASSES,
@@ -107,9 +108,10 @@ def _safe_scopes(value: str) -> tuple[str, ...]:
             not isinstance(item, str) or REGISTERED_SOURCE_SCOPE_RE.fullmatch(item) is None
             for item in raw
         )
+        or tuple(raw) != REGISTERED_SOURCE_CODE_OWNED_SCOPES
     ):
         _reject()
-    return tuple(str(item) for item in raw)
+    return REGISTERED_SOURCE_CODE_OWNED_SCOPES
 
 
 def _fact_class(payload: Mapping[str, Any]) -> str | None:

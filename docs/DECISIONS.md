@@ -30,8 +30,9 @@ PR1 adds migration 016's three nullable provenance columns and one partial
 unique event index to the existing `context_candidates` table. It adds the
 Core-owned `REGISTERED_SOURCE` policy origin and an explicitly injected
 internal sink. The sink accepts only the durable source/event/run projection
-from `CaptureCoordinator`, only the code-owned `local-git-workspace` extractor
-registry, and only bounded structural classes with code-owned sentences. Raw
+from `CaptureCoordinator`, only the exact code-owned `workspace.structure`
+scope, only the code-owned `local-git-workspace` extractor registry, and only
+bounded structural classes with code-owned sentences. Raw
 workspace text, paths, roots, account labels, fingerprints, and provider item
 IDs never become candidate content, evidence, structured memory, errors,
 receipts, or logs; the projection uses an opaque source/item hash reference

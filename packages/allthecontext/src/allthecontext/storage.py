@@ -4524,7 +4524,7 @@ class CoreStore:
 
         if (
             connection.execute(
-                "SELECT 1 FROM purge_tombstones WHERE stable_id=?",
+                "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
                 (canonical_record_id,),
             ).fetchone()
             is not None

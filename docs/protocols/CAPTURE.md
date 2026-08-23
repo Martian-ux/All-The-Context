@@ -112,7 +112,8 @@ absent from one page.
 `RegisteredSourceCaptureApplicationSink` is an internal, explicitly injected
 implementation of `CaptureApplicationSink`. It validates the exact vault,
 registered source, provider/account fingerprint, reconciling lifecycle, local-
-only acknowledgement, durable scopes, staged event projection, provider IDs,
+only acknowledgement, the exact code-owned `workspace.structure` scope,
+staged event projection, provider IDs,
 operation/generation/order/payload hash/idempotency, canonical lineage, and run
 lease inside one Core transaction. Its closed registry currently contains only
 the `local-git-workspace` structural extractor. It derives only fixed classes
@@ -121,7 +122,8 @@ unknown or binary material is a deterministic no-fact.
 
 Admitted candidates use `REGISTERED_SOURCE`, `registered_source_fact`,
 `registered_capture`, Core availability, normal sensitivity, empty client ACLs,
-confidence `1.0`, empty explicitness, durable source scopes, and the durable
+confidence `1.0`, empty explicitness, exactly the code-owned
+`workspace.structure` scope, and the durable
 event received time. Their evidence and structured value contain only the
 versioned safe schema/fact class and content-free binding hash. Their
 `source_reference` is an opaque hash of the capture source and provider item;

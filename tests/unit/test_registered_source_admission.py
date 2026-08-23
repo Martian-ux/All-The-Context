@@ -25,6 +25,7 @@ from allthecontext.experimental_local_git_workspace_connector import (
 )
 from allthecontext.export import create_export, restore_export
 from allthecontext.memory_policy import (
+    REGISTERED_SOURCE_CODE_OWNED_SCOPES,
     AutomaticMemoryPolicy,
     ObservationOrigin,
     is_registered_source_fact,
@@ -53,7 +54,7 @@ def _run(tmp_path: Path) -> tuple[CoreStore, CaptureCoordinator, Path, str]:
         provider=LOCAL_GIT_WORKSPACE_PROVIDER,
         account_label="sanitized-workspace",
         account_fingerprint=adapter.source_identity,
-        requested_scopes=("workspace.structure",),
+        requested_scopes=REGISTERED_SOURCE_CODE_OWNED_SCOPES,
         local_only_acknowledged=True,
     )
     coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
@@ -291,6 +292,110 @@ def test_registered_source_policy_rejects_caller_crafted_projection_fields(
         origin=ObservationOrigin.REGISTERED_SOURCE,
     )
     assert decision.disposition == ObservationDisposition.IGNORED
+
+
+@pytest.mark.parametrize(
+    "scopes",
+    (
+        [],
+        ["secret.credentials"],
+        [*REGISTERED_SOURCE_CODE_OWNED_SCOPES, "workspace.extra"],
+        [*REGISTERED_SOURCE_CODE_OWNED_SCOPES, *REGISTERED_SOURCE_CODE_OWNED_SCOPES],
+    ),
+)
+def test_registered_source_policy_requires_exact_code_owned_scopes(
+    tmp_path: Path, scopes: list[str]
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        candidate_id = connection.execute(
+            "SELECT id FROM context_candidates WHERE capture_source_id=? LIMIT 1",
+            (source_id,),
+        ).fetchone()["id"]
+    observed = store.get_candidate(str(candidate_id))
+    base = CandidateInput.model_validate(
+        {name: observed.model_dump(mode="python")[name] for name in CandidateInput.model_fields}
+    )
+    forged = CandidateInput.model_validate({**base.model_dump(mode="python"), "scopes": scopes})
+    assert is_registered_source_fact(forged) is False
+    decision = AutomaticMemoryPolicy().evaluate(
+        forged,
+        origin=ObservationOrigin.REGISTERED_SOURCE,
+    )
+    assert decision.disposition == ObservationDisposition.IGNORED
+
+
+def test_registered_source_policy_requires_observed_at_and_real_extractor_version(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        candidate_id = connection.execute(
+            "SELECT id FROM context_candidates WHERE capture_source_id=? LIMIT 1",
+            (source_id,),
+        ).fetchone()["id"]
+    observed = store.get_candidate(str(candidate_id))
+    base = CandidateInput.model_validate(
+        {name: observed.model_dump(mode="python")[name] for name in CandidateInput.model_fields}
+    )
+    missing_observed_at = base.model_copy(update={"observed_at": None})
+    assert is_registered_source_fact(missing_observed_at) is False
+    structured = dict(base.structured_value or {})
+    structured["extractor_version"] = True
+    boolean_extractor_version = base.model_copy(update={"structured_value": structured})
+    assert is_registered_source_fact(boolean_extractor_version) is False
+
+
+@pytest.mark.parametrize(
+    "scopes",
+    (
+        [],
+        ["secret.credentials"],
+        [*REGISTERED_SOURCE_CODE_OWNED_SCOPES, "workspace.extra"],
+        [*REGISTERED_SOURCE_CODE_OWNED_SCOPES, *REGISTERED_SOURCE_CODE_OWNED_SCOPES],
+    ),
+)
+def test_registered_source_sink_rejects_malicious_source_scopes_content_free(
+    tmp_path: Path, scopes: list[str]
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    handle, _source, _attempt = coordinator.ledger.begin_run(source_id)
+    event = CaptureEvent(
+        provider_event_id="scope-event",
+        provider_item_id="scope-item",
+        order_key="g00000000000000000001-e00000001",
+        generation=1,
+        payload={
+            "relative_path": "safe.py",
+            "kind": "text",
+            "size": 1,
+            "content_sha256": "0" * 64,
+            "content_truncated": False,
+            "hash_scope": "full",
+        },
+    )
+    event_id, _duplicate, _attempts = coordinator.ledger.stage_event(handle, event)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET requested_scopes_json=? WHERE id=?",
+            (json.dumps(scopes), source_id),
+        )
+    sink = coordinator.sink
+    assert sink is not None
+    with pytest.raises(CaptureError) as error:
+        sink.apply(
+            event,
+            source_id=source_id,
+            event_id=event_id,
+            run_handle=handle,
+            canonical_record_id=_canonical_lineage(source_id, event.provider_item_id),
+            idempotency_key=_idempotency_key(source_id, event.provider_event_id),
+        )
+    assert str(error.value) == "capture_sink_failed"
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM context_candidates").fetchone()[0] == 0
 
 
 def test_registered_source_crash_after_core_admission_replays_one_projection(
@@ -715,6 +820,36 @@ def test_post_purge_registered_event_is_scrubbed_and_cannot_influence(
                 "SELECT COUNT(*) FROM context_records WHERE id=?", (record_id,)
             ).fetchone()[0]
             == 0
+        )
+
+
+def test_registered_source_barrier_only_honors_record_purge_tombstones(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        target = connection.execute(
+            "SELECT r.id,r.vault_id,r.source_reference "
+            "FROM context_records r JOIN context_candidates c ON c.id=r.candidate_id "
+            "WHERE c.capture_source_id=? LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert target is not None
+    with store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO purge_tombstones"
+            "(stable_id,vault_id,target_type,purged_at) VALUES(?,?,?,?)",
+            (target["id"], target["vault_id"], "source", "2026-08-23T00:00:00+00:00"),
+        )
+        assert (
+            store._registered_source_influence_barrier_tx(
+                connection,
+                canonical_record_id=str(target["id"]),
+                capture_source_id=source_id,
+                source_reference=str(target["source_reference"]),
+            )
+            is None
         )
 
 
