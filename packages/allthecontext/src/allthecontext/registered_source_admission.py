@@ -249,18 +249,6 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
         if stored is None:
             _reject()
         payload_json, payload_hash = event.normalized()
-        if (
-            str(stored["provider_event_id"]) != event.provider_event_id
-            or str(stored["provider_item_id"]) != event.provider_item_id
-            or str(stored["operation"]) != event.operation
-            or int(stored["generation"]) != event.generation
-            or str(stored["order_key"]) != event.order_key
-            or str(stored["payload_hash"]) != payload_hash
-            or str(stored["idempotency_key"]) != idempotency_key
-            or idempotency_key != _idempotency_key(source_id, event.provider_event_id)
-            or canonical_record_id != _canonical_lineage(source_id, event.provider_item_id)
-        ):
-            _reject()
         purged = (
             connection.execute(
                 "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
@@ -268,6 +256,18 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
             ).fetchone()
             is not None
         )
+        if (
+            str(stored["provider_event_id"]) != event.provider_event_id
+            or str(stored["provider_item_id"]) != event.provider_item_id
+            or str(stored["operation"]) != event.operation
+            or int(stored["generation"]) != event.generation
+            or str(stored["order_key"]) != event.order_key
+            or (str(stored["payload_hash"]) != payload_hash and not purged)
+            or str(stored["idempotency_key"]) != idempotency_key
+            or idempotency_key != _idempotency_key(source_id, event.provider_event_id)
+            or canonical_record_id != _canonical_lineage(source_id, event.provider_item_id)
+        ):
+            _reject()
         if not purged and str(stored["normalized_payload_json"]) != payload_json:
             _reject()
         return stored, source, str(vault["id"]), payload_json, purged

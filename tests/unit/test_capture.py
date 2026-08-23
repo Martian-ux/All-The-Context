@@ -174,11 +174,20 @@ def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malforme
             kind = "INDEX" if object_name.startswith(("ix_", "uq_")) else "TABLE"
             connection.execute(f'DROP {kind} IF EXISTS "{object_name}"')
             assert (
-                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 17
             )
-        assert candidate.migrate() == 16
+        assert candidate.migrate() == 17
         with candidate.connect() as connection:
             assert _capture_schema_snapshot(connection) == expected
+
+    repaired = _store(tmp_path / "pending-column")
+    with repaired.connect() as connection:
+        expected = _capture_schema_snapshot(connection)
+    with repaired.transaction() as connection:
+        connection.execute("ALTER TABLE capture_checkpoints DROP COLUMN pending_event_ids_json")
+    assert repaired.migrate() == 17
+    with repaired.connect() as connection:
+        assert _capture_schema_snapshot(connection) == expected
 
     coordinator = _coordinator(tmp_path / "malformed")
     source_id = _source(coordinator)
@@ -479,7 +488,7 @@ def test_lease_expiry_during_sink_replays_same_idempotency_key(tmp_path: Path) -
 def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> None:
     store = _store(tmp_path)
     with store.connect() as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 17
         for table in (
             "capture_sources",
             "capture_checkpoints",
@@ -495,7 +504,7 @@ def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> 
             )
     with store.transaction() as connection:
         connection.execute("DROP TABLE capture_items")
-    assert store.migrate() == 16
+    assert store.migrate() == 17
     with store.connect() as connection:
         assert (
             connection.execute(
@@ -504,7 +513,7 @@ def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> 
             is not None
         )
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 16
+    assert restarted.migrate() == 17
 
 
 def test_default_disabled_local_only_lifecycle_and_invalid_transitions(tmp_path: Path) -> None:
@@ -627,6 +636,39 @@ def test_changed_provider_event_payload_is_rejected_without_overwrite(tmp_path: 
     assert row is not None and json.loads(row["normalized_payload_json"]) == {"a": "one"}
 
 
+def test_atomic_page_staging_rolls_back_partial_event_state(tmp_path: Path) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    handle = _begin(coordinator, source_id)
+    existing = _event("existing", "existing-item", "1", payload={"value": "one"})
+    coordinator.ledger.stage_event(handle, existing)
+    page = CapturePage(
+        generation=1,
+        events=(
+            _event("new", "new-item", "2"),
+            _event("existing", "existing-item", "1", payload={"value": "two"}),
+        ),
+    )
+
+    with pytest.raises(CaptureError, match="capture_event_payload_conflict"):
+        coordinator.ledger.stage_page(handle, page)
+
+    with coordinator.ledger.store.connect() as connection:
+        events = connection.execute(
+            "SELECT provider_event_id,status FROM capture_events WHERE source_id=? "
+            "ORDER BY provider_event_id",
+            (source_id,),
+        ).fetchall()
+        checkpoint = connection.execute(
+            "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+            "FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert [tuple(row) for row in events] == [("existing", "staged")]
+    assert checkpoint is not None and tuple(checkpoint) == (None, None, None)
+
+
 def test_out_of_order_malformed_and_oversize_inputs_degrade_without_checkpoint_advance(
     tmp_path: Path,
 ) -> None:
@@ -685,6 +727,177 @@ def test_crash_after_sink_apply_before_commit_replays_idempotently(tmp_path: Pat
             ).fetchone()[0]
             == "applied"
         )
+
+
+def test_crash_after_event_commit_before_page_cursor_recovers_pending_page(tmp_path: Path) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    page = CapturePage(generation=1, events=(_event("commit-crash", "item", "1"),))
+    coordinator.register_adapter("fake", DeterministicFakeAdapter([page]))
+    original_commit_page_cursor = coordinator.ledger.commit_page_cursor
+    crashed = False
+
+    def crash_before_cursor(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise CaptureError("capture_failed")
+        original_commit_page_cursor(*_args, **_kwargs)
+
+    coordinator.ledger.commit_page_cursor = crash_before_cursor  # type: ignore[method-assign]
+    first = coordinator.run(source_id)
+    assert first.status == "failed" and first.error_code == "capture_failed"
+    with coordinator.ledger.store.connect() as connection:
+        pending = connection.execute(
+            "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+            "FROM capture_checkpoints "
+            "WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+        event = connection.execute(
+            "SELECT status FROM capture_events "
+            "WHERE source_id=? AND provider_event_id='commit-crash'",
+            (source_id,),
+        ).fetchone()
+    assert pending is not None and pending["pending_generation"] == 1
+    assert event is not None and event["status"] == "applied"
+
+    coordinator.ledger.commit_page_cursor = original_commit_page_cursor  # type: ignore[method-assign]
+    coordinator.resume(source_id)
+    second = coordinator.run(source_id)
+    assert second.status == "completed" and second.duplicate_events == 1
+    checkpoint = coordinator.ledger._checkpoint(source_id)
+    assert checkpoint["pending_generation"] is None
+    assert checkpoint["cursor"] is None
+
+
+def test_recovery_sink_failure_is_bounded_and_retryable(tmp_path: Path) -> None:
+    class AlwaysFailSink:
+        def apply(self, event: Any, **kwargs: Any) -> str:
+            del event, kwargs
+            raise CaptureError("capture_sink_failed")
+
+    sink = AlwaysFailSink()
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    adapter = DeterministicFakeAdapter(
+        [CapturePage(generation=1, events=(_event("retry", "item", "1"),))]
+    )
+    coordinator.register_adapter("fake", adapter)
+    assert coordinator.run(source_id).error_code == "capture_sink_failed"
+    coordinator.resume(source_id)
+    assert coordinator.run(source_id).error_code == "capture_sink_failed"
+    coordinator.resume(source_id)
+    assert coordinator.run(source_id).error_code == "capture_sink_failed"
+    assert len(adapter.calls) == 1
+    with coordinator.ledger.store.connect() as connection:
+        event = connection.execute(
+            "SELECT attempts FROM capture_events WHERE source_id=?", (source_id,)
+        ).fetchone()
+        assert event is not None and event["attempts"] == 3
+        pending = connection.execute(
+            "SELECT pending_generation,pending_event_ids_json "
+            "FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert pending is not None and pending["pending_generation"] == 1
+    assert json.loads(pending["pending_event_ids_json"])  # type: ignore[arg-type]
+
+
+def test_recovered_page_counts_toward_max_run_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sink = IdempotentFakeSink()
+    sink.fail_once_after_apply = True
+    coordinator = _coordinator(tmp_path, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    first_adapter = DeterministicFakeAdapter(
+        [
+            CapturePage(
+                generation=1, next_cursor="recovered-cursor", events=(_event("limit", "item", "1"),)
+            )
+        ]
+    )
+    coordinator.register_adapter("fake", first_adapter)
+    assert coordinator.run(source_id).error_code == "capture_sink_failed"
+
+    second_adapter = DeterministicFakeAdapter([CapturePage(generation=2)])
+    coordinator.register_adapter("fake", second_adapter)
+    coordinator.resume(source_id)
+    monkeypatch.setattr("allthecontext.capture.MAX_RUN_PAGES", 1)
+    limited = coordinator.run(source_id)
+
+    assert limited.error_code == "capture_page_limit_exceeded"
+    assert limited.pages == 1
+    assert second_adapter.calls == []
+    assert coordinator.ledger._checkpoint(source_id)["pending_generation"] is None
+
+
+def test_pending_page_survives_restart_and_migration_repair(tmp_path: Path) -> None:
+    database_path = tmp_path / "restart.sqlite3"
+    first_store = CoreStore(database_path)
+    first_store.initialize_vault()
+    first = CaptureCoordinator(first_store, sink=IdempotentFakeSink())
+    source_id = _source(first)
+    _enable(first, source_id)
+    handle, _source_projection, _attempt = first.ledger.begin_run(source_id)
+    page = CapturePage(generation=1, next_cursor="cursor-after", done=True, events=())
+    first.ledger.stage_page(handle, page)
+    first_store.close()
+
+    restarted_store = CoreStore(database_path)
+    assert restarted_store.migrate() == 17
+    restarted = CaptureCoordinator(restarted_store, sink=IdempotentFakeSink())
+    restarted.resume(source_id)
+    restarted.register_adapter("fake", DeterministicFakeAdapter([CapturePage(generation=2)]))
+    result = restarted.run(source_id)
+    assert result.status == "completed"
+    assert restarted.ledger._checkpoint(source_id)["pending_generation"] is None
+
+
+def test_empty_new_generation_resets_order_baseline(tmp_path: Path) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    pages = (
+        CapturePage(
+            generation=1,
+            page_order=0,
+            events=(_event("old", "old-item", "5"),),
+            next_cursor="generation-1",
+            done=False,
+        ),
+        CapturePage(
+            generation=2,
+            page_order=1,
+            events=(),
+            next_cursor="generation-2",
+            done=False,
+        ),
+        CapturePage(
+            generation=2,
+            page_order=2,
+            events=(
+                CaptureEvent(
+                    provider_event_id="new",
+                    provider_item_id="new-item",
+                    order_key="1",
+                    generation=2,
+                ),
+            ),
+            done=True,
+        ),
+    )
+    coordinator.register_adapter("fake", DeterministicFakeAdapter(pages))
+    result = coordinator.run(source_id)
+    assert result.status == "completed"
+    checkpoint = coordinator.ledger._checkpoint(source_id)
+    assert checkpoint["generation"] == 2
+    assert checkpoint["last_order_key"] == "1"
+    assert checkpoint["last_event_id"] is not None
 
 
 def test_gap_invalid_cursor_page_limit_backoff_and_lease_recovery(tmp_path: Path) -> None:
@@ -837,7 +1050,7 @@ def test_unexpected_capture_failure_closes_run_and_degrades_source(
     def fail_stage(*_args: Any, **_kwargs: Any) -> Any:
         raise OverflowError("synthetic SQLite integer overflow")
 
-    monkeypatch.setattr(coordinator.ledger, "stage_event", fail_stage)
+    monkeypatch.setattr(coordinator.ledger, "stage_page", fail_stage)
     result = coordinator.run(source_id)
 
     assert result.status == "failed"

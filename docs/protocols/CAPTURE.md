@@ -1,9 +1,9 @@
 # Continuous Capture foundation and registered-source admission PR1
 
-This document describes the Stage 4 first slice in Core migration 015 and the
-bounded registered-source admission contract in migration 016. It is a
-provider-neutral ledger foundation plus a locally injected Core sink contract,
-not evidence that any provider supports continuous capture.
+This document describes the Stage 4 first slice in Core migrations 015 and 017,
+plus the bounded registered-source admission contract in migration 016. It is
+a provider-neutral ledger foundation plus a locally injected Core sink
+contract, not evidence that any provider supports continuous capture.
 
 ## Boundary
 
@@ -27,6 +27,13 @@ Migration `015_continuous_capture.sql` adds five bounded SQLite tables. Migratio
 `context_candidates`, plus a partial unique index allowing at most one
 candidate for each non-null capture event. It adds no capture truth table or
 capture event admission columns.
+
+`017_capture_page_recovery.sql` extends the existing `capture_checkpoints` row
+with only nullable `pending_generation`, `pending_cursor`, and bounded JSON
+ordered pending event IDs. A non-null pending generation marks a staged page,
+including an empty or terminal page; null pending generation means no pending
+page. Migration 016 remains the owner of only its three candidate columns and
+its partial unique index.
 
 The five migration-015 tables are:
 
@@ -52,12 +59,13 @@ The five migration-015 tables are:
   lease token.
 
 The migration runner performs a restart-safe repair probe after every migration
-pass. Missing migration-015 objects and the migration-016 candidate columns or
-index are recreated without advancing an already-recorded schema marker. The
-probe reads and executes the packaged SQL one statement at a time inside the
-caller's transaction, so initial migration and marker-present repair use the
-same bounds, enums, nonnegative counters/generation, hashes, IDs, item/run
-states, foreign keys, unique constraints, and indexes.
+pass. Missing migration-015 objects, migration-016 candidate columns/index,
+and migration-017 pending columns are recreated without advancing an
+already-recorded schema marker. The probe reads and executes the packaged SQL
+one statement at a time inside the caller's transaction, so initial migration
+and marker-present repair use the same bounds, enums, nonnegative counters/
+generation, hashes, IDs, item/run states, foreign keys, unique constraints,
+and indexes.
 
 ## Contracts and replay
 
@@ -69,15 +77,21 @@ registered by Core.
 
 For an explicitly enabled, local-only-acknowledged source, one foreground run:
 
-1. obtains a bounded lease capability and asks the injected adapter for ordered
-   pages;
-2. durably stages each event before calling the injected sink;
+1. obtains a bounded lease capability and replays any durable pending page
+   through the injected sink before asking the adapter for a page;
+2. stages each newly fetched, already-validated page atomically: all event
+   identity/idempotency checks, event rows, ordered durable event IDs, and the
+   pending generation/cursor commit together before any sink call;
 3. calls the sink with the exact durable `event_id`, still-running
    `CaptureRunHandle`, deterministic idempotency key, and source-scoped item
    lineage;
-4. commits the application receipt, capture-item mapping, and checkpoint in
-   one SQLite transaction; and
-5. advances the page cursor only after every event in that page is applied.
+4. commits each application receipt and capture-item mapping in one SQLite
+   transaction, replaying already-applied pending events idempotently; and
+5. atomically advances the real page cursor and clears pending state only after
+   every listed event is applied. After pending recovery, the adapter is asked
+   for the recovered cursor in the same run, so a cursor-diff adapter can emit
+   a real deletion. An empty page that advances generation clears stale order
+   state; same-generation ordering remains strict.
 
 The sink receipt must echo the exact deterministic lineage supplied by Core.
 A different first-event lineage is invalid and cannot create a capture-item
@@ -94,10 +108,12 @@ the newer run or source state. If a sink crosses lease expiry, its result is
 not committed. Replay uses the same idempotency key, so an idempotent sink can
 complete safely on the replacement run.
 
-If the process fails after sink application but before the commit, the staged
-event is replayed with the same idempotency key. If the commit already exists,
-replay is a no-op. A checkpoint never moves beyond a failed, unapplied, or
-out-of-order event. Duplicate event/page replay is therefore safe and stable.
+If the process fails after sink application but before event commit, or after
+event commit but before page-cursor commit, the durable pending page is replayed
+with the same idempotency keys. If an event commit already exists, replay is a
+no-op at the sink and ledger boundaries. A committed cursor never moves beyond
+a failed, unapplied, or out-of-order event. Duplicate event/page replay is
+therefore safe and stable, and an existing pending page is never overwritten.
 Numeric order keys enforce contiguous progression; opaque order keys enforce
 strict deterministic ordering. Invalid cursors, malformed pages, generation
 mismatches, gaps, oversize payloads, page/event limits, sink failures, and

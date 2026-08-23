@@ -15,6 +15,29 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## 2026-08-23 bounded capture page-recovery correctness
+
+The capture ledger now has a migration-017 extension on the existing
+`capture_checkpoints` row: nullable pending generation/cursor state and a
+bounded, JSON-validated ordered list of durable capture-event IDs. No capture
+truth table was added; migration 016 remains limited to its three registered-
+source candidate columns and partial index. Restart repair covers missing
+pending columns as well as the earlier capture objects/indexes.
+
+`CaptureLedger.stage_page` atomically stages a complete validated page and its
+pending marker before any sink call. The coordinator replays pending events at
+run start through the existing injected sink, commits them idempotently, then
+advances/clears the page cursor and fetches from the recovered cursor in the
+same run. Empty newer generations reset stale order state, while same-generation
+ordering and Core correction, availability, ordinary-delete, and purge barriers
+remain authoritative. Focused sanitized capture/admission evidence covers
+atomic rollback, sink/event/cursor crash points, bounded retry, restart repair,
+local-adapter deletion recovery, empty-generation ordering, and barriers.
+
+This remains a local bounded correctness commit. No Packet H, production
+startup wiring, scheduler, provider/product support, full-suite acceptance,
+private-data evidence, or macOS support is claimed.
+
 ## ZF-004 Wave 1 event reconciliation (2026-08-22)
 
 The integration-owned Wave 1 slice now has a bounded pure reference boundary in

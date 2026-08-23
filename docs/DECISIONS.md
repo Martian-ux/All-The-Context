@@ -54,6 +54,31 @@ with focused sanitized evidence. Packet H, production wiring, ZF-010,
 product/provider support, hosted/full-suite acceptance, release work, and
 macOS remain open or deferred.
 
+## ADR-134: Capture recovery stages one bounded page in the existing checkpoint
+
+**Status:** accepted locally on 2026-08-23 as a bounded correctness follow-up
+to ADR-133; this is not Packet H, production support, hosted/full-suite
+acceptance, release readiness, or macOS support.
+
+Migration 017 extends the existing `capture_checkpoints` row with nullable
+pending generation/cursor state and a bounded JSON array of ordered durable
+`capture_events.id` values. It creates no second truth table. `stage_page`
+validates the live run and stages the complete already-validated page plus its
+pending marker in one transaction, preserving the existing provider-event
+identity, idempotency, conflict, and lineage rules. Existing pending state is
+retryable and cannot be overwritten.
+
+CaptureCoordinator recovery runs before provider fetch. It reconstructs events
+only from pending durable event IDs and stored provider payloads, replays each
+through the injected Core sink, commits each event idempotently, verifies all
+events are applied, then atomically advances the real cursor and clears the
+marker. It fetches from the recovered cursor in the same foreground run; an
+empty newer generation resets stale order state while same-generation order is
+preserved. Correction, availability, ordinary-delete, and purge barriers stay
+with the existing Core sink authority. No production startup wiring, scheduler,
+provider support, Packet H, private data, or generic absence-to-delete rule is
+introduced.
+
 ## ADR-131: Wave 3 components remain experimental until Packet H
 
 **Status:** accepted locally on 2026-08-22 from focused component handoffs;

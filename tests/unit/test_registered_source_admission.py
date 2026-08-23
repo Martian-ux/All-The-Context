@@ -443,6 +443,136 @@ def test_registered_source_crash_after_core_admission_replays_one_projection(
         assert connection.execute("SELECT COUNT(*) FROM context_records").fetchone()[0] == 4
 
 
+def test_registered_source_pending_recovery_withdraws_deleted_file_without_tombstone(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = LocalGitWorkspaceCaptureProviderAdapter((root,))
+    real_sink = RegisteredSourceCaptureApplicationSink(store)
+
+    class CrashAfterAdmission:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def apply(self, event: CaptureEvent, **kwargs: Any) -> Any:
+            receipt = real_sink.apply(event, **kwargs)
+            if not self.failed:
+                self.failed = True
+                raise CaptureError("capture_sink_failed")
+            return receipt
+
+    coordinator = CaptureCoordinator(store, sink=CrashAfterAdmission())
+    source = coordinator.create_source(
+        provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+        account_label="sanitized-workspace",
+        account_fingerprint=adapter.source_identity,
+        requested_scopes=("workspace.structure",),
+        local_only_acknowledged=True,
+    )
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
+    coordinator.enable(source.id)
+    assert coordinator.run(source.id).status == "failed"
+    with store.connect() as connection:
+        admitted = connection.execute(
+            "SELECT r.id,json_extract(e.normalized_payload_json,'$.relative_path') AS "
+            "relative_path "
+            "FROM context_records r JOIN context_candidates c ON c.id=r.candidate_id "
+            "JOIN capture_events e ON e.id=c.capture_event_id WHERE c.capture_source_id=? LIMIT 1",
+            (source.id,),
+        ).fetchone()
+        pending = connection.execute(
+            "SELECT pending_generation,pending_event_ids_json "
+            "FROM capture_checkpoints WHERE source_id=?",
+            (source.id,),
+        ).fetchone()
+    assert admitted is not None
+    assert pending is not None and pending["pending_generation"] == 1
+    record_id = str(admitted["id"])
+
+    relative_path = admitted["relative_path"]
+    assert isinstance(relative_path, str)
+    (root / Path(relative_path)).unlink()
+    coordinator.resume(source.id)
+    recovered = coordinator.run(source.id)
+    assert recovered.status == "completed"
+    with pytest.raises(NotFoundError):
+        store.get_record(record_id)
+    with store.connect() as connection:
+        item = connection.execute(
+            "SELECT item_state FROM capture_items WHERE source_id=? AND provider_item_id IN "
+            "(SELECT provider_item_id FROM capture_events "
+            "WHERE source_id=? AND operation='delete')",
+            (source.id, source.id),
+        ).fetchone()
+        tombstone = connection.execute(
+            "SELECT 1 FROM deletion_tombstones WHERE record_id=?", (record_id,)
+        ).fetchone()
+        checkpoint = connection.execute(
+            "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+            "FROM capture_checkpoints "
+            "WHERE source_id=?",
+            (source.id,),
+        ).fetchone()
+    assert item is None or item["item_state"] == "deleted"
+    assert tombstone is None
+    assert checkpoint is not None and tuple(checkpoint) == (None, None, None)
+
+
+def test_registered_source_scrubbed_purge_replays_sink_and_commit_event(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    original_commit_page_cursor = coordinator.ledger.commit_page_cursor
+    crashed = False
+
+    def crash_before_cursor(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise CaptureError("capture_failed")
+        original_commit_page_cursor(*_args, **_kwargs)
+
+    coordinator.ledger.commit_page_cursor = crash_before_cursor  # type: ignore[method-assign]
+    assert coordinator.run(source_id).status == "failed"
+    coordinator.ledger.commit_page_cursor = original_commit_page_cursor  # type: ignore[method-assign]
+    with store.connect() as connection:
+        target = connection.execute(
+            "SELECT r.id,e.id AS event_id FROM context_records r "
+            "JOIN context_candidates c ON c.id=r.candidate_id "
+            "JOIN capture_events e ON e.id=c.capture_event_id WHERE c.capture_source_id=? LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert target is not None
+    record_id = str(target["id"])
+    event_id = str(target["event_id"])
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+
+    coordinator.resume(source_id)
+    recovered = coordinator.run(source_id)
+    assert recovered.status == "completed"
+    with store.connect() as connection:
+        scrubbed = connection.execute(
+            "SELECT status,normalized_payload_json FROM capture_events WHERE id=?",
+            (event_id,),
+        ).fetchone()
+        checkpoint = connection.execute(
+            "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+            "FROM capture_checkpoints "
+            "WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+    assert scrubbed is not None and tuple(scrubbed) == ("applied", "{}")
+    assert checkpoint is not None and tuple(checkpoint) == (None, None, None)
+    with pytest.raises(NotFoundError):
+        store.get_record(record_id)
+
+
 def test_registered_source_staged_replay_after_correction_is_no_influence(
     tmp_path: Path,
 ) -> None:
@@ -770,7 +900,7 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             ).fetchone()
         ) == (4, 4)
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 16
+    assert restarted.migrate() == 17
     with restarted.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
         assert (

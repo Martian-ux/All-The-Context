@@ -83,6 +83,15 @@ remains unsupported/absent/deferred under the current project truth.
 | Keep machine-local capture runtime out of portable archives without losing admitted Core truth | `export.py`; portable export/restore focused test | Implemented locally: all five capture runtime tables are omitted even for source-inclusive exports, registered candidate capture FKs are nulled, legacy capture table entries are ignored on restore, and same-database restart retains capture state |
 | Advance ADR-132 without overstating acceptance | ADR-133; focused local tests only | PR1 closes only this local admission contract. Packet H, ZF-010, product/provider support, hosted/full-suite acceptance, stable SDK, production wiring, release readiness/publication, and macOS remain open, absent, or deferred |
 
+### 2026-08-23 bounded capture page-recovery correctness
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Persist and repair one bounded pending page without adding a truth table | `017_capture_page_recovery.sql`; `ensure_capture_schema`; focused capture migration/restart tests | Implemented locally: migration 017 owns only nullable pending checkpoint fields and a bounded JSON array; marker-present and missing-column repair remain restart-safe; migration 016 remains limited to its three candidate columns and partial index |
+| Stage a complete page atomically before sink admission and recover it before provider fetch | `CaptureLedger.stage_page`; `CaptureCoordinator._recover_pending_page`; focused capture crash/rollback/retry tests | Implemented locally: existing event identity/idempotency/conflict rules are reused, ordered durable event IDs are persisted in the same transaction, applied pending events replay idempotently, all events must apply before cursor advance, and repeated sink failure remains bounded/retryable |
+| Recover registered-source admission and real local deletion without generic absence deletion | existing registered-source sink; sanitized `tests/unit/test_registered_source_admission.py` recovery/delete test | Implemented locally: after sink admission/capture-commit interruption and fixture-file removal, same-run recovered-cursor diff emits the source-scoped delete, capture item is deleted, no ordinary tombstone is minted, and pending state clears; correction, availability, ordinary-delete, and purge barriers remain Core-authoritative |
+| Keep scope truthful | ADR-134; focused local checks only | No Packet H, production startup wiring, scheduler, provider/product support, private data, macOS support, or full-suite acceptance is claimed |
+
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 
 | Requirement | Implementation/evidence | Status |
