@@ -15,7 +15,7 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
-## 2026-08-23 bounded capture page-recovery correctness
+## 2026-08-23 capture admission and repair reconciliation
 
 The capture ledger now has a migration-017 extension on the existing
 `capture_checkpoints` row: nullable pending generation/cursor state and a
@@ -33,6 +33,25 @@ ordering and Core correction, availability, ordinary-delete, and purge barriers
 remain authoritative. Focused sanitized capture/admission evidence covers
 atomic rollback, sink/event/cursor crash points, bounded retry, restart repair,
 local-adapter deletion recovery, empty-generation ordering, and barriers.
+
+Three accepted follow-up fixes further constrain this boundary. Duplicate
+provider event IDs within one fetched page are rejected before staging, and the
+durable pending-event ID list is uniqueness-guarded transactionally. The
+`LocalGitWorkspaceCaptureProviderAdapter` emits metadata-only
+`workspace.structure` events; source text and text excerpts are not durably
+included in capture events or the registered-source projection. Capture schema
+repair is bounded through already-applied capture migration versions inside the
+pending migration transaction before a newer migration is applied, with the
+full post-repair state retained after successful completion. The architecture
+data model already records migration 017 as used and 018 as next.
+
+Historical lane evidence is limited to 58 focused tests for duplicate IDs, 63
+focused tests for metadata-only workspace events, and 8 capture migration tests
+for bounded repair. The integration owner subsequently ran 148 combined
+focused tests on integrated code. The reported static checks were Ruff lint
+passed, Ruff format-check passed, and `python -m mypy
+packages/allthecontext/src` passed. These are local focused/static reports only;
+they do not constitute integrated full-suite acceptance.
 
 This remains a local bounded correctness commit. No Packet H, production
 startup wiring, scheduler, provider/product support, full-suite acceptance,

@@ -92,6 +92,16 @@ remains unsupported/absent/deferred under the current project truth.
 | Recover registered-source admission and real local deletion without generic absence deletion | existing registered-source sink; sanitized `tests/unit/test_registered_source_admission.py` recovery/delete test | Implemented locally: after sink admission/capture-commit interruption and fixture-file removal, same-run recovered-cursor diff emits the source-scoped delete, capture item is deleted, no ordinary tombstone is minted, and pending state clears; correction, availability, ordinary-delete, and purge barriers remain Core-authoritative |
 | Keep scope truthful | ADR-134; focused local checks only | No Packet H, production startup wiring, scheduler, provider/product support, private data, macOS support, or full-suite acceptance is claimed |
 
+### 2026-08-23 capture admission and repair guard reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Reject duplicate provider event IDs before page staging and guard durable pending IDs for uniqueness | `CaptureCoordinator` page validation; `CaptureLedger.stage_page`; duplicate-page focused lane | Implemented locally: duplicate IDs within a page fail before staging, the pending durable ID list is uniqueness-guarded transactionally, and partial pending state cannot survive the rejection. Historical lane evidence: 58 focused tests |
+| Keep local workspace `workspace.structure` events metadata-only | `LocalGitWorkspaceCaptureProviderAdapter`; registered-source projection; metadata-focused lane | Implemented locally: durable payloads contain bounded structural metadata only; source text and text excerpts are not durably retained in capture events or registered-source candidate/evidence projection. Historical lane evidence: 63 focused tests |
+| Bound capture schema repair to already-applied capture migrations before applying a newer migration | `ensure_capture_schema`; `CoreStore.migrate`; capture migration-focused lane | Implemented locally: repair runs through the already-applied capture version inside the pending migration transaction, and successful repair retains the complete repaired state. Historical lane evidence: 8 capture migration tests. `docs/architecture/DATA_MODEL.md` already records 017 as used and 018 as next |
+| Keep validation evidence bounded and accurately scoped | Historical lane reports; integration owner's subsequent combined focused run | The integration owner subsequently ran 148 combined focused tests on integrated code. Reported Ruff lint, Ruff format-check, and mypy checks passed; these local reports do not constitute full-suite acceptance |
+| Preserve the project boundary | ADR-135; focused/static reports only | No Packet H, production startup wiring, scheduler, provider/product support, private-data evidence, macOS support, or integrated full-suite acceptance is claimed |
+
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 
 | Requirement | Implementation/evidence | Status |

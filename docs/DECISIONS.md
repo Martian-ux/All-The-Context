@@ -79,6 +79,36 @@ with the existing Core sink authority. No production startup wiring, scheduler,
 provider support, Packet H, private data, or generic absence-to-delete rule is
 introduced.
 
+## ADR-135: Capture page identity, metadata, and migration repair guards
+
+**Status:** accepted locally on 2026-08-23 as bounded follow-up corrections;
+this is not Packet H, production support, hosted/full-suite acceptance, release
+readiness, or macOS support.
+
+Capture page validation rejects duplicate provider event IDs before any page is
+staged. `CaptureLedger.stage_page` also uniqueness-guards the resulting durable
+pending event IDs in the same transaction, so a duplicate cannot leave partial
+pending state or replace an existing pending page.
+
+The `LocalGitWorkspaceCaptureProviderAdapter` keeps `workspace.structure`
+events metadata-only. Source text and text excerpts do not enter durable capture
+event payloads or the registered-source projection; the bounded structural
+projection remains the only admitted content.
+
+Capture schema repair is limited to capture migration versions already recorded
+as applied, and runs through that version inside the transaction that is about
+to apply a newer migration. Successful repair retains the complete repaired
+state. The architecture data model already records migration 017 as used and
+018 as next; this decision does not renumber migrations.
+
+The historical evidence is 58 focused tests for duplicate IDs, 63 focused tests
+for metadata-only workspace events, and 8 capture migration tests for repair.
+The integration owner subsequently ran 148 combined focused tests on integrated
+code. Reported Ruff lint, Ruff format-check, and mypy checks passed. These are
+bounded local reports only and do not establish full-suite acceptance. No
+production startup wiring, scheduler, provider/product support, Packet H,
+private-data evidence, or macOS support follows from these corrections.
+
 ## ADR-131: Wave 3 components remain experimental until Packet H
 
 **Status:** accepted locally on 2026-08-22 from focused component handoffs;
