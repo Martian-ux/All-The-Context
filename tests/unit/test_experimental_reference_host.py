@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from allthecontext.client_runtime import (
     ClientLifecycleEnvelope,
+    ClientRuntimeContractError,
     EvidenceBoundaryError,
     ModelProviderSelfAttestation,
+    OrderingViolation,
     PayloadReference,
     UnsupportedHookReport,
 )
 from allthecontext.experimental_reference_host import (
     ControlledReferenceHostV0,
     ReferenceHostError,
+    RuntimeCheckpoint,
     SecretLikePayloadRefused,
     negotiate_capabilities,
 )
-from allthecontext.models import BootstrapRequest, CandidateInput, ClientCreate
+from allthecontext.models import BootstrapRequest, BootstrapResponse, CandidateInput, ClientCreate
 from allthecontext.retrieval import RetrievalEngine
 from allthecontext.security import ClientPrincipal
 from allthecontext.storage import CoreStore
@@ -87,7 +91,7 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
     assert isinstance(transition, dict)
     assert isinstance(completion, dict)
 
-    snapshots: list[tuple[tuple[ClientLifecycleEnvelope, ...], str]] = []
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
     store, principal, compiler_calls, compiler = _core_compiler(tmp_path)
     try:
         host = ControlledReferenceHostV0.for_level(
@@ -95,7 +99,7 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
             transport=fixture["transport"],
             client_id=fixture["client_id"],
             session_id=fixture["session_id"],
-            checkpoint_sink=lambda events, session: snapshots.append((events, session)),
+            checkpoint_sink=lambda snapshot, key: snapshots.append((snapshot, key)),
         )
         result = host.compile_before_generation(
             compiler,
@@ -194,21 +198,42 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
         assert isinstance(completion_result, ClientLifecycleEnvelope)
         assert len(host.events) == 9
         assert len(snapshots) == 4
-        assert snapshots[-1] == (host.events, "reference-session-2")
+        last_snapshot, last_key = snapshots[-1]
+        assert last_snapshot.events == host.events
+        assert last_snapshot.session_id == "reference-session-2"
+        assert last_key == last_snapshot.idempotency_key
         resumed = ControlledReferenceHostV0.from_checkpoint(
-            snapshots[-1][0],
-            current_session_id=snapshots[-1][1],
+            last_snapshot,
+            current_session_id=last_snapshot.session_id,
             requested_level=fixture["requested_level"],
             transport=fixture["transport"],
             client_id=fixture["client_id"],
         )
         assert resumed.events == host.events
+        assert resumed.trace == host.trace
+        with pytest.raises(OrderingViolation, match="cannot follow generation start"):
+            resumed.compile_before_generation(
+                compiler,
+                generation_id=pre_generation["generation_id"],
+                requested_scopes=["project:atlas"],
+                project_id="atlas",
+                principal=principal,
+            )
+        resumed_generation = resumed.compile_before_generation(
+            compiler,
+            generation_id="generation-after-restart",
+            requested_scopes=["project:atlas"],
+            project_id="atlas",
+            principal=principal,
+        )
+        assert not isinstance(resumed_generation, UnsupportedHookReport)
+        assert resumed_generation[2].generation_sequence == 14
         after_restart = resumed.observe_direct_user_content(
             reference="turn-after-restart",
             content="The next synthetic session received a direct user turn.",
         )
         assert isinstance(after_restart, ClientLifecycleEnvelope)
-        assert after_restart.sequence == 12
+        assert after_restart.sequence == 15
     finally:
         store.close()
 
@@ -242,9 +267,9 @@ def test_l0_unsupported_hooks_do_not_call_core_or_create_events() -> None:
 
 
 def test_secret_like_direct_content_is_refused_before_checkpoint() -> None:
-    snapshots: list[tuple[tuple[ClientLifecycleEnvelope, ...], str]] = []
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
     host = ControlledReferenceHostV0.for_level(
-        "L2", checkpoint_sink=lambda events, session: snapshots.append((events, session))
+        "L2", checkpoint_sink=lambda snapshot, key: snapshots.append((snapshot, key))
     )
     safe = host.observe_direct_user_content(
         reference="turn-safe", content="A sanitized direct user turn."
@@ -281,12 +306,12 @@ def test_user_text_remains_inert_and_untrusted() -> None:
 
 
 def test_resume_rejects_a_forged_session_and_accepts_a_transition_tail() -> None:
-    snapshots: list[tuple[tuple[ClientLifecycleEnvelope, ...], str]] = []
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
     host = ControlledReferenceHostV0.for_level(
         "L2",
         client_id="reference-client-session",
         session_id="session-1",
-        checkpoint_sink=lambda events, session: snapshots.append((events, session)),
+        checkpoint_sink=lambda snapshot, key: snapshots.append((snapshot, key)),
     )
     transition = host.record_session_transition(
         transition="restart",
@@ -294,8 +319,8 @@ def test_resume_rejects_a_forged_session_and_accepts_a_transition_tail() -> None
         next_session_id="session-2",
     )
     assert isinstance(transition, ClientLifecycleEnvelope)
-    assert snapshots[-1][1] == "session-2"
-    assert snapshots[-1][0][-1].session_id == "session-1"
+    assert snapshots[-1][0].session_id == "session-2"
+    assert snapshots[-1][0].events[-1].session_id == "session-1"
 
     resumed = ControlledReferenceHostV0.from_checkpoint(
         snapshots[-1][0],
@@ -309,3 +334,180 @@ def test_resume_rejects_a_forged_session_and_accepts_a_transition_tail() -> None
             current_session_id="forged-session",
             client_id="reference-client-session",
         )
+
+
+def test_checkpoint_restores_pending_delivery_and_started_generation_state() -> None:
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
+
+    def sink(snapshot: RuntimeCheckpoint, key: str) -> None:
+        snapshots.append((snapshot, key))
+
+    host = ControlledReferenceHostV0.for_level(
+        "L1",
+        client_id="reference-client-sequencing",
+        session_id="session-sequencing",
+        checkpoint_sink=sink,
+    )
+    request = host.request_pre_generation_context(generation_id="generation-pending")
+    assert isinstance(request, ClientLifecycleEnvelope)
+    pending_checkpoint = host.checkpoint()
+    assert pending_checkpoint is not None
+    resumed_pending = ControlledReferenceHostV0.from_checkpoint(
+        pending_checkpoint,
+        current_session_id="session-sequencing",
+        requested_level="L1",
+        client_id="reference-client-sequencing",
+        checkpoint_sink=sink,
+    )
+    with pytest.raises(OrderingViolation, match="pending context request"):
+        resumed_pending.request_pre_generation_context(generation_id="generation-pending")
+
+    delivery = resumed_pending.deliver_context(
+        resumed_pending.events[0],
+        (PayloadReference("context-sequencing", "context_pack"),),
+    )
+    assert not isinstance(delivery, UnsupportedHookReport)
+    delivered_checkpoint = resumed_pending.checkpoint()
+    assert delivered_checkpoint is not None
+    resumed_delivered = ControlledReferenceHostV0.from_checkpoint(
+        delivered_checkpoint,
+        current_session_id="session-sequencing",
+        requested_level="L1",
+        client_id="reference-client-sequencing",
+        checkpoint_sink=sink,
+    )
+    with pytest.raises(OrderingViolation, match="only once"):
+        resumed_delivered.deliver_context(
+            resumed_delivered.events[0],
+            (PayloadReference("context-sequencing", "context_pack"),),
+        )
+    generation = resumed_delivered.begin_generation(generation_id="generation-pending")
+    assert generation.pre_generation_delivery is True
+    started_checkpoint = resumed_delivered.checkpoint()
+    assert started_checkpoint is not None
+    resumed_started = ControlledReferenceHostV0.from_checkpoint(
+        started_checkpoint,
+        current_session_id="session-sequencing",
+        requested_level="L1",
+        client_id="reference-client-sequencing",
+    )
+    with pytest.raises(OrderingViolation, match="start twice"):
+        resumed_started.begin_generation(generation_id="generation-pending")
+
+
+def test_l0_checkpoint_resume_restores_started_generation_without_context() -> None:
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
+
+    def sink(snapshot: RuntimeCheckpoint, key: str) -> None:
+        snapshots.append((snapshot, key))
+
+    host = ControlledReferenceHostV0.for_level(
+        "L0",
+        transport="ordinary_mcp",
+        client_id="reference-client-l0",
+        session_id="session-l0",
+        checkpoint_sink=sink,
+    )
+    generation = host.begin_generation(generation_id="generation-l0")
+    assert generation.pre_generation_delivery is False
+    checkpoint = host.checkpoint()
+    assert checkpoint is not None
+    assert checkpoint.pending_context == ()
+    assert checkpoint.delivered_context == ()
+    resumed = ControlledReferenceHostV0.from_checkpoint(
+        checkpoint,
+        current_session_id="session-l0",
+        requested_level="L0",
+        transport="ordinary_mcp",
+        client_id="reference-client-l0",
+    )
+    with pytest.raises(OrderingViolation, match="start twice"):
+        resumed.begin_generation(generation_id="generation-l0")
+
+
+def test_checkpoint_sink_retry_uses_same_idempotency_key_after_commit_then_raise() -> None:
+    calls: list[tuple[str, RuntimeCheckpoint]] = []
+    committed: dict[str, RuntimeCheckpoint] = {}
+
+    def commit_then_raise(snapshot: RuntimeCheckpoint, key: str) -> None:
+        calls.append((key, snapshot))
+        committed.setdefault(key, snapshot)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic post-commit failure")
+
+    host = ControlledReferenceHostV0.for_level("L2", checkpoint_sink=commit_then_raise)
+    with pytest.raises(RuntimeError, match="post-commit"):
+        host.record_checkpoint(
+            checkpoint_ref=PayloadReference("checkpoint-retry", "working_checkpoint"),
+            checkpoint_kind="task_checkpoint",
+        )
+    retried = host.checkpoint()
+    assert retried is not None
+    assert len(calls) == 2
+    assert calls[0][0] == calls[1][0] == retried.idempotency_key
+    assert len(committed) == 1
+    assert committed[retried.idempotency_key] == retried
+
+
+def test_checkpoint_integrity_and_chain_validation_reject_tampered_state() -> None:
+    snapshots: list[tuple[RuntimeCheckpoint, str]] = []
+    host = ControlledReferenceHostV0.for_level(
+        "L2", checkpoint_sink=lambda snapshot, key: snapshots.append((snapshot, key))
+    )
+    host.record_checkpoint(
+        checkpoint_ref=PayloadReference("checkpoint-integrity", "working_checkpoint"),
+        checkpoint_kind="compaction",
+    )
+    request = host.request_pre_generation_context(generation_id="generation-integrity")
+    assert isinstance(request, ClientLifecycleEnvelope)
+    delivery = host.deliver_context(
+        request,
+        (PayloadReference("context-integrity", "context_pack"),),
+    )
+    assert not isinstance(delivery, UnsupportedHookReport)
+    host.begin_generation(generation_id="generation-integrity")
+    checkpoint = host.checkpoint()
+    assert checkpoint is not None
+    with pytest.raises(ReferenceHostError, match="integrity"):
+        ControlledReferenceHostV0.from_checkpoint(
+            replace(checkpoint, sequence=checkpoint.sequence + 1),
+            current_session_id=checkpoint.session_id,
+        )
+
+    inconsistent = RuntimeCheckpoint.create(
+        sequence=checkpoint.sequence,
+        session_id=checkpoint.session_id,
+        client_id=checkpoint.client_id,
+        capability_level=checkpoint.capability_level,
+        events=checkpoint.events,
+        trace=checkpoint.trace,
+        pending_context=checkpoint.pending_context,
+        delivered_context=checkpoint.delivered_context,
+        started_generations=(),
+    )
+    with pytest.raises(ReferenceHostError, match="generation trace"):
+        ControlledReferenceHostV0.from_checkpoint(
+            inconsistent,
+            current_session_id=checkpoint.session_id,
+            client_id=checkpoint.client_id,
+        )
+
+
+def test_empty_core_context_fails_closed_before_delivery_or_generation() -> None:
+    host = ControlledReferenceHostV0.for_level("L1")
+
+    def empty_compiler(
+        _request: BootstrapRequest,
+        _principal: ClientPrincipal | None = None,
+    ) -> BootstrapResponse:
+        return BootstrapResponse(
+            items=[],
+            omitted_scopes=[],
+            audit_trace_id="trace-empty-context",
+            used_chars=0,
+        )
+
+    with pytest.raises(ClientRuntimeContractError, match="empty Core context"):
+        host.compile_before_generation(empty_compiler, generation_id="generation-empty")
+    assert host.trace == ()
+    assert all(entry.action != "generation_started" for entry in host.trace)
