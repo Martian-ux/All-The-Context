@@ -88,12 +88,20 @@ readiness, or macOS support.
 Capture page validation rejects duplicate provider event IDs before any page is
 staged. `CaptureLedger.stage_page` also uniqueness-guards the resulting durable
 pending event IDs in the same transaction, so a duplicate cannot leave partial
-pending state or replace an existing pending page.
+pending state or replace an existing pending page. When reading a legacy
+pending marker, the bounded raw list and every durable ID are still validated,
+then repeated identical IDs are canonicalized in first-occurrence order for
+one-time recovery; malformed, non-string, or invalid IDs still fail closed.
 
-The `LocalGitWorkspaceCaptureProviderAdapter` keeps `workspace.structure`
-events metadata-only. Source text and text excerpts do not enter durable capture
-event payloads or the registered-source projection; the bounded structural
-projection remains the only admitted content.
+The `LocalGitWorkspaceCaptureProviderAdapter` keeps its adapter-produced,
+coordinator-path `workspace.structure` events metadata-only. This does not
+make the provider-neutral ledger itself metadata-only: it stores the bounded,
+internal caller-supplied payload. The registered-source sink keeps extra
+caller-supplied fields inert and does not project them into Memory Truth; this
+does not weaken the adapter's actual metadata-only guarantee. Source text and
+text excerpts do not enter the adapter's durable capture event payload or the
+registered-source projection; the bounded structural projection remains the
+only admitted content.
 
 Capture schema repair is limited to capture migration versions already recorded
 as applied, and runs through that version inside the transaction that is about

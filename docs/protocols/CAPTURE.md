@@ -103,7 +103,10 @@ For an explicitly enabled, local-only-acknowledged source, one foreground run:
 Page validation rejects duplicate provider event IDs before staging. The ledger
 also uniqueness-checks the durable event IDs that would be written to the
 pending marker, so duplicate page IDs fail closed without partial staged or
-pending state.
+pending state. For an already-persisted legacy marker only, recovery validates
+the raw bounded list and each durable ID, then removes repeated identical IDs
+in first-occurrence order; malformed, non-string, or invalid IDs still fail
+closed before the marker can advance.
 
 The sink receipt must echo the exact deterministic lineage supplied by Core.
 A different first-event lineage is invalid and cannot create a capture-item
@@ -159,11 +162,15 @@ the raw provider item ID remains in the machine-local capture ledger only. The
 deterministic capture-lineage ID is used only by the internal Core evaluation
 override, and public ingestion cannot select this origin.
 
-The `LocalGitWorkspaceCaptureProviderAdapter` emits metadata-only
-`workspace.structure` payloads. Durable upsert payloads contain only bounded
-structural fields such as relative path, root ID, kind, size, content hash,
-truncation state, and hash scope; source text and text excerpts are never
-durably included in capture events, candidate content, or evidence.
+The `LocalGitWorkspaceCaptureProviderAdapter` emits adapter-produced,
+coordinator-path metadata-only `workspace.structure` payloads. The
+provider-neutral ledger stores the bounded payload supplied by its internal
+caller; it is not itself a metadata-only contract. The registered-source sink
+keeps extra caller-supplied fields inert and does not project them into
+candidate content or evidence. The adapter's durable upsert payloads contain
+only bounded structural fields such as relative path, root ID, kind, size,
+content hash, truncation state, and hash scope; source text and text excerpts
+are never durably included in the adapter path, candidate content, or evidence.
 
 Replay queries `capture_event_id` in the same write transaction and validates
 the stored projection. A crash before ledger commit therefore replays one

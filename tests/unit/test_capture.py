@@ -1005,6 +1005,79 @@ def test_crash_after_event_commit_before_page_cursor_recovers_pending_page(tmp_p
     assert checkpoint["cursor"] is None
 
 
+def test_legacy_duplicate_pending_marker_recovers_once_and_continues(tmp_path: Path) -> None:
+    sink = IdempotentFakeSink()
+    coordinator = _coordinator(tmp_path, sink=sink)
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    first_page = CapturePage(
+        generation=1,
+        next_cursor="after-first",
+        done=False,
+        events=(_event("legacy", "item-1", "1"),),
+    )
+    first_adapter = DeterministicFakeAdapter([first_page])
+    coordinator.register_adapter("fake", first_adapter)
+    original_commit_page_cursor = coordinator.ledger.commit_page_cursor
+    crashed = False
+
+    def crash_before_cursor(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise CaptureError("capture_failed")
+        original_commit_page_cursor(*_args, **_kwargs)
+
+    coordinator.ledger.commit_page_cursor = crash_before_cursor  # type: ignore[method-assign]
+    first = coordinator.run(source_id)
+    assert first.status == "failed" and first.error_code == "capture_failed"
+
+    with coordinator.ledger.store.transaction() as connection:
+        event = connection.execute(
+            "SELECT id,status FROM capture_events WHERE source_id=? AND provider_event_id='legacy'",
+            (source_id,),
+        ).fetchone()
+        assert event is not None and event["status"] == "applied"
+        connection.execute(
+            "UPDATE capture_checkpoints SET pending_event_ids_json=? WHERE source_id=?",
+            (json.dumps([event["id"], event["id"]]), source_id),
+        )
+
+    coordinator.ledger.commit_page_cursor = original_commit_page_cursor  # type: ignore[method-assign]
+    coordinator.resume(source_id)
+    continuation = CapturePage(
+        generation=1,
+        page_order=0,
+        next_cursor="after-second",
+        done=True,
+        events=(_event("second", "item-2", "2"),),
+    )
+    continuation_adapter = DeterministicFakeAdapter([continuation])
+    coordinator.register_adapter("fake", continuation_adapter)
+
+    recovered = coordinator.run(source_id)
+
+    assert recovered.status == "completed"
+    assert recovered.pages == 2
+    assert recovered.events == 2
+    assert recovered.applied_events == 1
+    assert recovered.duplicate_events == 1
+    assert len(sink.calls) == 2
+    assert continuation_adapter.calls == [("after-first", 0)]
+    checkpoint = coordinator.ledger._checkpoint(source_id)
+    assert checkpoint["cursor"] == "after-second"
+    assert checkpoint["pending_generation"] is None
+    assert checkpoint["pending_cursor"] is None
+    assert checkpoint["pending_event_ids_json"] is None
+    with coordinator.ledger.store.connect() as connection:
+        run = connection.execute(
+            "SELECT page_count,event_count,applied_event_count,duplicate_event_count "
+            "FROM capture_runs WHERE source_id=? ORDER BY started_at DESC,id DESC LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert run is not None and tuple(run) == (2, 2, 1, 1)
+
+
 def test_recovery_sink_failure_is_bounded_and_retryable(tmp_path: Path) -> None:
     class AlwaysFailSink:
         def apply(self, event: Any, **kwargs: Any) -> str:

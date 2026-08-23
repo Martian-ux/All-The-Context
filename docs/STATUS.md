@@ -37,13 +37,16 @@ local-adapter deletion recovery, empty-generation ordering, and barriers.
 Three accepted follow-up fixes further constrain this boundary. Duplicate
 provider event IDs within one fetched page are rejected before staging, and the
 durable pending-event ID list is uniqueness-guarded transactionally. The
-`LocalGitWorkspaceCaptureProviderAdapter` emits metadata-only
-`workspace.structure` events; source text and text excerpts are not durably
-included in capture events or the registered-source projection. Capture schema
-repair is bounded through already-applied capture migration versions inside the
-pending migration transaction before a newer migration is applied, with the
-full post-repair state retained after successful completion. The architecture
-data model already records migration 017 as used and 018 as next.
+`LocalGitWorkspaceCaptureProviderAdapter` emits adapter-produced,
+coordinator-path metadata-only `workspace.structure` events; the generic
+provider-neutral ledger stores internal caller-supplied payloads, while the
+registered-source sink keeps extra fields inert. Legacy duplicate pending IDs
+are validated and canonicalized in first-occurrence order during recovery;
+malformed marker data still fails closed. Capture schema repair is bounded
+through already-applied capture migration versions inside the pending migration
+transaction before a newer migration is applied, with the full post-repair
+state retained after successful completion. The architecture data model already
+records migration 017 as used and 018 as next.
 
 Historical lane evidence is limited to 58 focused tests for duplicate IDs, 63
 focused tests for metadata-only workspace events, and 8 capture migration tests

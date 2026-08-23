@@ -1261,6 +1261,11 @@ class CaptureLedger:
         if not isinstance(value, str):
             raise CaptureError("capture_failed")
         try:
+            if len(value.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
+                raise CaptureError("capture_failed")
+        except UnicodeError:
+            raise CaptureError("capture_failed") from None
+        try:
             decoded = json.loads(value)
         except (TypeError, ValueError):
             raise CaptureError("capture_failed") from None
@@ -1270,14 +1275,13 @@ class CaptureLedger:
             or any(not isinstance(item, str) for item in decoded)
         ):
             raise CaptureError("capture_failed")
-        event_ids = tuple(decoded)
-        if len(set(event_ids)) != len(event_ids):
-            raise CaptureError("capture_failed")
+        raw_event_ids = tuple(decoded)
         try:
-            for event_id in event_ids:
+            for event_id in raw_event_ids:
                 _bounded_opaque_id(event_id, maximum=MAX_EVENT_ID_CHARS)
         except CaptureError:
             raise CaptureError("capture_failed") from None
+        event_ids = tuple(dict.fromkeys(raw_event_ids))
         encoded = json.dumps(event_ids, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
             raise CaptureError("capture_failed")
