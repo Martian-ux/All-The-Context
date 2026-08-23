@@ -8,12 +8,14 @@ from pathlib import Path
 import pytest
 from allthecontext.client_runtime import (
     ClientLifecycleEnvelope,
+    EvidenceBoundaryError,
     ModelProviderSelfAttestation,
     PayloadReference,
     UnsupportedHookReport,
 )
 from allthecontext.experimental_reference_host import (
     ControlledReferenceHostV0,
+    ReferenceHostError,
     SecretLikePayloadRefused,
     negotiate_capabilities,
 )
@@ -78,10 +80,12 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
     response = next(item for item in actions if item["kind"] == "response")
     checkpoints = [item for item in actions if item["kind"] == "checkpoint"]
     transition = next(item for item in actions if item["kind"] == "session_transition")
+    completion = next(item for item in actions if item["kind"] == "completion")
     assert isinstance(tool, dict)
     assert isinstance(response, dict)
     assert len(checkpoints) == 2
     assert isinstance(transition, dict)
+    assert isinstance(completion, dict)
 
     snapshots: list[tuple[tuple[ClientLifecycleEnvelope, ...], str]] = []
     store, principal, compiler_calls, compiler = _core_compiler(tmp_path)
@@ -182,7 +186,14 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
         assert isinstance(consequence, UnsupportedHookReport)
         assert len(host.events) == 8
 
-        host.checkpoint()
+        completion_result = host.record_completion_or_abandonment(
+            terminal_state=completion["terminal_state"],
+            reason_code=completion["reason_code"],
+            task_id=completion["task_id"],
+        )
+        assert isinstance(completion_result, ClientLifecycleEnvelope)
+        assert len(host.events) == 9
+        assert len(snapshots) == 4
         assert snapshots[-1] == (host.events, "reference-session-2")
         resumed = ControlledReferenceHostV0.from_checkpoint(
             snapshots[-1][0],
@@ -197,7 +208,7 @@ def test_reference_host_proves_lifecycle_order_and_injected_core_compiler(
             content="The next synthetic session received a direct user turn.",
         )
         assert isinstance(after_restart, ClientLifecycleEnvelope)
-        assert after_restart.sequence == 11
+        assert after_restart.sequence == 12
     finally:
         store.close()
 
@@ -245,10 +256,17 @@ def test_secret_like_direct_content_is_refused_before_checkpoint() -> None:
         host.observe_direct_user_content(
             reference="turn-secret", content="Synthetic password=never-store"
         )
-    assert refused.value.reference == "turn-secret"
+    assert not hasattr(refused.value, "reference")
     assert "never-store" not in str(refused.value)
     host.checkpoint()
     assert snapshots[-1] == before
+    assert len(snapshots) == 1
+    with pytest.raises(EvidenceBoundaryError):
+        host.reference_for_content(
+            reference="password=fixture",
+            kind="user_turn",
+            content="A sanitized direct user turn.",
+        )
 
 
 def test_user_text_remains_inert_and_untrusted() -> None:
@@ -260,3 +278,34 @@ def test_user_text_remains_inert_and_untrusted() -> None:
     assert isinstance(event, ClientLifecycleEnvelope)
     assert event.payload.turn_ref.untrusted is True
     assert "ignore all prior instructions" not in json.dumps(event.as_dict(), sort_keys=True)
+
+
+def test_resume_rejects_a_forged_session_and_accepts_a_transition_tail() -> None:
+    snapshots: list[tuple[tuple[ClientLifecycleEnvelope, ...], str]] = []
+    host = ControlledReferenceHostV0.for_level(
+        "L2",
+        client_id="reference-client-session",
+        session_id="session-1",
+        checkpoint_sink=lambda events, session: snapshots.append((events, session)),
+    )
+    transition = host.record_session_transition(
+        transition="restart",
+        previous_session_id="session-1",
+        next_session_id="session-2",
+    )
+    assert isinstance(transition, ClientLifecycleEnvelope)
+    assert snapshots[-1][1] == "session-2"
+    assert snapshots[-1][0][-1].session_id == "session-1"
+
+    resumed = ControlledReferenceHostV0.from_checkpoint(
+        snapshots[-1][0],
+        current_session_id="session-2",
+        client_id="reference-client-session",
+    )
+    assert resumed.current_session_id == "session-2"
+    with pytest.raises(ReferenceHostError, match="checkpoint session"):
+        ControlledReferenceHostV0.from_checkpoint(
+            snapshots[-1][0],
+            current_session_id="forged-session",
+            client_id="reference-client-session",
+        )

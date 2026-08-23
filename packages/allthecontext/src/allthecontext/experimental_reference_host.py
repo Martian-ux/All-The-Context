@@ -24,9 +24,11 @@ from .client_runtime import (
     ContextRequestPayload,
     DeterministicFakeClientRuntimeHost,
     GenerationReceipt,
+    HookResult,
     OrderingViolation,
     PayloadReference,
     ReferenceKind,
+    RestartSessionTransitionPayload,
     UnsupportedHookReport,
 )
 from .models import BootstrapRequest, BootstrapResponse
@@ -49,16 +51,11 @@ class ReferenceHostError(ClientRuntimeContractError):
     """Raised when the controlled host cannot satisfy its bounded contract."""
 
 
-class CapabilityNegotiationError(ReferenceHostError):
-    """Raised when a requested level would overstate the host or transport."""
-
-
 class SecretLikePayloadRefused(ReferenceHostError):
     """Raised without putting secret-like content in a lifecycle envelope."""
 
     def __init__(self, *, reference: str) -> None:
         super().__init__("secret-like payload refused before lifecycle persistence")
-        self.reference = reference
         self.reason_code = "direct_secret_like_content"
 
 
@@ -136,6 +133,7 @@ class ControlledReferenceHostV0(DeterministicFakeClientRuntimeHost):
             session_id=session_id,
         )
         self._checkpoint_sink = checkpoint_sink
+        self._last_checkpoint: tuple[tuple[ClientLifecycleEnvelope, ...], str] | None = None
 
     @classmethod
     def for_level(
@@ -182,9 +180,19 @@ class ControlledReferenceHostV0(DeterministicFakeClientRuntimeHost):
             raise ReferenceHostError("checkpoint client identity does not match the host")
         if restored and any(left.sequence >= right.sequence for left, right in pairwise(restored)):
             raise ReferenceHostError("checkpoint event sequence is not ordered")
+        if restored:
+            last = restored[-1]
+            session_matches = last.session_id == current_session_id
+            if last.hook == "restart_session_transition" and isinstance(
+                last.payload, RestartSessionTransitionPayload
+            ):
+                session_matches = last.payload.next_session_id == current_session_id
+            if not session_matches:
+                raise ReferenceHostError("checkpoint session does not match its envelope chain")
         host._events[:] = restored
         host._sequence = restored[-1].sequence if restored else 0
         host._session_id = current_session_id
+        host._last_checkpoint = (host.events, current_session_id)
         return host
 
     @property
@@ -194,8 +202,68 @@ class ControlledReferenceHostV0(DeterministicFakeClientRuntimeHost):
     def checkpoint(self) -> None:
         """Hand typed lifecycle state to the caller-owned persistence seam."""
 
-        if self._checkpoint_sink is not None:
-            self._checkpoint_sink(self.events, self.current_session_id)
+        if self._checkpoint_sink is None:
+            return
+        state = (self.events, self.current_session_id)
+        if state == self._last_checkpoint:
+            return
+        self._checkpoint_sink(*state)
+        self._last_checkpoint = state
+
+    def record_checkpoint(
+        self,
+        *,
+        checkpoint_ref: PayloadReference,
+        checkpoint_kind: Literal["compaction", "task_checkpoint"],
+        checkpoint_state: Literal["created", "completed"] = "completed",
+        task_id: str | None = None,
+    ) -> HookResult:
+        result = super().record_checkpoint(
+            checkpoint_ref=checkpoint_ref,
+            checkpoint_kind=checkpoint_kind,
+            checkpoint_state=checkpoint_state,
+            task_id=task_id,
+        )
+        return self._checkpoint_after_success(result)
+
+    def record_session_transition(
+        self,
+        *,
+        transition: Literal["restart", "session_transition"],
+        previous_session_id: str | None = None,
+        next_session_id: str | None = None,
+    ) -> HookResult:
+        result = super().record_session_transition(
+            transition=transition,
+            previous_session_id=previous_session_id,
+            next_session_id=next_session_id,
+        )
+        return self._checkpoint_after_success(result)
+
+    def record_completion_or_abandonment(
+        self,
+        *,
+        terminal_state: Literal["completed", "abandoned"],
+        reason_code: Literal[
+            "completed",
+            "user_abandoned",
+            "host_shutdown",
+            "error",
+            "unknown",
+        ] = "completed",
+        task_id: str | None = None,
+    ) -> HookResult:
+        result = super().record_completion_or_abandonment(
+            terminal_state=terminal_state,
+            reason_code=reason_code,
+            task_id=task_id,
+        )
+        return self._checkpoint_after_success(result)
+
+    def _checkpoint_after_success(self, result: HookResult) -> HookResult:
+        if isinstance(result, ClientLifecycleEnvelope):
+            self.checkpoint()
+        return result
 
     def reference_for_content(
         self,
@@ -314,7 +382,6 @@ ReferenceHost = ControlledReferenceHostV0
 __all__ = [
     "REFERENCE_HOST_MAX_LEVEL",
     "CapabilityNegotiation",
-    "CapabilityNegotiationError",
     "CheckpointSink",
     "ControlledReferenceHostV0",
     "CoreContextCompiler",
