@@ -830,12 +830,28 @@ class CoreStore:
                 int(row["version"])
                 for row in connection.execute("SELECT version FROM schema_migrations")
             }
+            capture_migration_versions = (15, 16, 17)
             for migration in migrations:
                 version = int(migration.name.split("_", 1)[0])
                 if version in applied:
                     continue
                 connection.execute("BEGIN IMMEDIATE")
                 try:
+                    prior_capture_version = max(
+                        (
+                            capture_version
+                            for capture_version in capture_migration_versions
+                            if capture_version < version and capture_version in applied
+                        ),
+                        default=None,
+                    )
+                    if prior_capture_version is not None:
+                        from .capture import ensure_capture_schema
+
+                        ensure_capture_schema(
+                            connection,
+                            through_version=prior_capture_version,
+                        )
                     for statement in _migration_statements(migration.read_text(encoding="utf-8")):
                         added_column = _added_column(statement)
                         if added_column is not None:

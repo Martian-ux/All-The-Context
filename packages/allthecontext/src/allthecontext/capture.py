@@ -943,12 +943,21 @@ _CAPTURE_MIGRATION_PATHS = (
     Path(__file__).parent / "migrations" / "core" / "016_registered_source_admission.sql",
     Path(__file__).parent / "migrations" / "core" / "017_capture_page_recovery.sql",
 )
+_CAPTURE_MIGRATION_VERSIONS = frozenset(
+    int(path.name.split("_", 1)[0]) for path in _CAPTURE_MIGRATION_PATHS
+)
 
 
-def ensure_capture_schema(connection: Any) -> None:
-    """Repair capture and registered-source objects after interrupted startup."""
+def ensure_capture_schema(connection: Any, *, through_version: int | None = None) -> None:
+    """Repair capture objects through a known-applied migration version."""
+
+    if through_version is not None and through_version not in _CAPTURE_MIGRATION_VERSIONS:
+        raise ValueError("capture repair version must be an applied capture migration")
 
     for migration_path in _CAPTURE_MIGRATION_PATHS:
+        version = int(migration_path.name.split("_", 1)[0])
+        if through_version is not None and version > through_version:
+            break
         migration = migration_path.read_text(encoding="utf-8")
         for statement in _migration_statements(migration):
             added_column = _added_column(statement)

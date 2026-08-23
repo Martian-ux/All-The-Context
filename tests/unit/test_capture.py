@@ -99,6 +99,21 @@ def _capture_schema_snapshot(connection: Any) -> tuple[tuple[Any, ...], ...]:
     return tuple(tuple(row) for row in rows)
 
 
+_CAPTURE_PAGE_RECOVERY_COLUMNS = (
+    "pending_generation",
+    "pending_cursor",
+    "pending_event_ids_json",
+)
+
+
+def _rewind_capture_page_migration(store: CoreStore) -> None:
+    with store.transaction() as connection:
+        for column in _CAPTURE_PAGE_RECOVERY_COLUMNS:
+            connection.execute(f'ALTER TABLE capture_checkpoints DROP COLUMN "{column}"')
+        connection.execute("DELETE FROM schema_migrations WHERE version=17")
+        connection.execute("UPDATE vaults SET schema_version=16")
+
+
 class _MutableClock:
     def __init__(self, value: str = "2026-01-01T00:00:00.000000Z") -> None:
         self.value = value
@@ -148,6 +163,144 @@ class _ExpiringSink(IdempotentFakeSink):
             self.expire_once = False
             self.clock.value = "2026-01-01T00:01:01.000000Z"
         return receipt
+
+
+def test_pending_capture_migration_repairs_missing_applied_prerequisite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    _rewind_capture_page_migration(store)
+    with store.transaction() as connection:
+        connection.execute("DROP TABLE capture_checkpoints")
+        assert connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version IN (15,16)"
+        ).fetchall()
+        assert (
+            connection.execute("SELECT 1 FROM schema_migrations WHERE version=17").fetchone()
+            is None
+        )
+
+    from allthecontext.capture import ensure_capture_schema
+
+    repair_versions: list[int | None] = []
+
+    def record_repair(connection: Any, *, through_version: int | None = None) -> None:
+        repair_versions.append(through_version)
+        ensure_capture_schema(connection, through_version=through_version)
+
+    monkeypatch.setattr("allthecontext.capture.ensure_capture_schema", record_repair)
+    assert store.migrate() == 17
+    assert repair_versions == [16, None]
+
+    with store.connect() as connection:
+        checkpoint_columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(capture_checkpoints)")
+        }
+        assert set(_CAPTURE_PAGE_RECOVERY_COLUMNS) <= checkpoint_columns
+        assert (
+            connection.execute("SELECT version FROM schema_migrations WHERE version=17").fetchone()
+            is not None
+        )
+
+
+def test_normal_v16_to_v17_capture_upgrade_is_clean(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _rewind_capture_page_migration(store)
+
+    assert store.migrate() == 17
+    with store.connect() as connection:
+        columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(capture_checkpoints)")
+        }
+        assert set(_CAPTURE_PAGE_RECOVERY_COLUMNS) <= columns
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version=17"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_marker_present_missing_capture_page_columns_are_repaired(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with store.transaction() as connection:
+        for column in _CAPTURE_PAGE_RECOVERY_COLUMNS:
+            connection.execute(f'ALTER TABLE capture_checkpoints DROP COLUMN "{column}"')
+        assert (
+            connection.execute("SELECT 1 FROM schema_migrations WHERE version=17").fetchone()
+            is not None
+        )
+
+    assert store.migrate() == 17
+    with store.connect() as connection:
+        columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(capture_checkpoints)")
+        }
+        assert set(_CAPTURE_PAGE_RECOVERY_COLUMNS) <= columns
+
+
+def test_capture_migration_repair_is_restart_idempotent(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _rewind_capture_page_migration(store)
+    with store.transaction() as connection:
+        connection.execute("DROP TABLE capture_checkpoints")
+
+    assert store.migrate() == 17
+    with store.connect() as connection:
+        first_snapshot = _capture_schema_snapshot(connection)
+        first_markers = tuple(
+            tuple(row)
+            for row in connection.execute(
+                "SELECT version,name FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        )
+
+    assert store.migrate() == 17
+    with store.connect() as connection:
+        assert _capture_schema_snapshot(connection) == first_snapshot
+        assert (
+            tuple(
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT version,name FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            )
+            == first_markers
+        )
+
+
+def test_capture_migration_repair_rolls_back_with_pending_migration(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with store.transaction() as connection:
+        connection.execute("DROP TABLE capture_checkpoints")
+        connection.execute("DELETE FROM schema_migrations WHERE version=17")
+        connection.execute("UPDATE vaults SET schema_version=16")
+        connection.execute(
+            "CREATE TRIGGER fail_capture_page_recovery "
+            "BEFORE UPDATE OF schema_version ON vaults "
+            "WHEN NEW.schema_version=17 "
+            "BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced migration failure"):
+        store.migrate()
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='capture_checkpoints'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            connection.execute("SELECT 1 FROM schema_migrations WHERE version=17").fetchone()
+            is None
+        )
+        assert connection.execute("SELECT schema_version FROM vaults").fetchone()[0] == 16
+
+    with store.transaction() as connection:
+        connection.execute("DROP TRIGGER fail_capture_page_recovery")
+    assert store.migrate() == 17
 
 
 def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malformed_rows(
