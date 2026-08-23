@@ -46,26 +46,34 @@ readiness, hosted CI, or full repository pytest/mypy acceptance.
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Read an explicitly authorized local root through the existing capture contract | `experimental_local_git_workspace_connector.py`; `tests/fixtures/local_git_workspace.py`; `tests/unit/test_local_git_workspace_connector.py` | Component complete locally: non-overlapping explicit roots only; deterministic snapshot/incremental events and Core coordinator replay reuse; partial coverage and network denial are declared |
-| Fail closed at the local safety boundary | bounded scan/cursor constants and `CaptureScanReport`; missing-root, secret-like, symlink/reparse, deletion, and over-20-file tests | Component complete locally: Git/dependency/credential paths and symlink/reparse paths are excluded, workspace text is inert, incomplete scans produce no partial page, and metadata cursors/samples/excerpts track at most 20 files |
+| Read an explicitly authorized local root through the existing capture contract | `experimental_local_git_workspace_connector.py`; `tests/fixtures/local_git_workspace.py`; `tests/unit/test_local_git_workspace_connector.py` | Component complete locally: `fetch_page` fails closed before scanning unless the provider and `source.account_fingerprint` match `adapter.source_identity`; non-overlapping explicit roots only; deterministic snapshot/incremental events and Core coordinator replay reuse; partial coverage and network denial are declared |
+| Fail closed at the local safety boundary | bounded scan/cursor constants and `CaptureScanReport`; provider/source-binding, AWS-shaped-secret, missing-root, secret-like, symlink/reparse, deletion, and over-20-file tests | Component complete locally: Git/dependency/credential paths and symlink/reparse paths are excluded, AWS `AKIA`/`ASIA`-shaped content is omitted, workspace text is inert, incomplete scans produce no partial page, and metadata cursors/samples/excerpts track at most 20 files |
 
 ### 2026-08-22 ZF-009 Wave 3 Packet G controlled reference host component
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Negotiate lifecycle capability truthfully and deliver context before generation | `experimental_reference_host.py`; `client_runtime.py`; `tests/unit/test_experimental_reference_host.py`; `tests/unit/test_client_runtime.py` | Component complete locally: in-process reference host accepts at most L2, ordinary MCP remains L0, L3 downgrades to L2, and pre-generation calls injected Core Retrieval V3 before delivery/generation |
-| Capture direct-user evidence and typed lifecycle checkpoints without overstating persistence | controlled-host fixture `tests/fixtures/reference_host_wave3.json`; checkpoint/session/completion hook tests; forged-session and secret-refusal tests | Component complete locally: direct-user references are distinct from model self-attestation, typed snapshots are emitted to an injected sink on checkpoint/session-transition/completion, forged resume sessions and secret-like payloads fail closed, and no provider integration, general persistence format, or stable SDK is added |
+| Negotiate lifecycle capability truthfully and deliver context before generation | `experimental_reference_host.py`; `client_runtime.py`; `tests/unit/test_experimental_reference_host.py`; `tests/unit/test_client_runtime.py` | Component complete locally: in-process reference host accepts at most L2, ordinary MCP remains L0, L3 downgrades to L2, and pre-generation calls injected Core Retrieval V3 before delivery/generation; empty Core context fails closed before delivery or generation |
+| Capture direct-user evidence and typed lifecycle checkpoints without overstating persistence | controlled-host fixture `tests/fixtures/reference_host_wave3.json`; typed checkpoint restore, ordering, retry-idempotency, integrity, L0, forged-session, and secret-refusal tests | Component complete locally: direct-user references are distinct from model self-attestation; typed snapshots restore events, trace, pending/delivered context, started-generation IDs, and sequencing state; the digest validates integrity only, the sink receives a stable retry idempotency key, L0/ordinary MCP resumes started IDs without fabricated context, L1+ retains request/delivery ordering, and no client-principal binding or production persistence is added |
 
-The focused handoff evidence is E: 25 tests, F: 25 tests, and G: 27 tests.
-The exact combined Wave 1/2/3 focused command ran at
-`e2444a4717e179205fc7fac2a4ac279627f162de` and passed 110 tests; full-tree
-Ruff format-check, Ruff check, and `git diff --check` also passed. This remains
-focused local evidence: full repository pytest/mypy and hosted CI for the
-combined new head are open. These rows do not close ZF-007/ZF-008/ZF-009
-product acceptance, the first real continuous source/client pair, ZF-010
-automatic formation, Packet H, the Phase 2 acceptance journey, production
-wiring, or release/support status. macOS remains
-unsupported/absent/deferred under the current project truth.
+### 2026-08-22 Packet H disposable proof stopped at source-fact admission
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Bind continuous Packet F evidence to deterministic source-fact promotion through Core | Stopped/removed Packet H disposable proof; current `CoreStore.add_candidate`/ongoing-client policy; archive importer lifecycle remains separate | Open at the contract boundary: Core has no genuine registered-source-authoritative admission seam; non-witness workspace facts remain tentative, and a hardcoded allowlist or `explicit_user_statement` relabeling was rejected |
+| Advance to the next narrow frontier without overstating acceptance | ADR-132; successor-PR design/review frontier | ZF-010, Packet H, Phase 2 acceptance, ZF-007/ZF-008/ZF-009 product acceptance, the first real source/client journey, production wiring, hosted CI for corrected head, release, and support remain open; macOS remains absent/deferred |
+
+The original component handoff counts were E: 25 tests, F: 25 tests, and G: 27
+tests. Corrected focused counts are F/capture-capability: 27 tests and
+G/client-runtime: 32 tests. The integrated F/G-adjacent union at corrected head
+`719bdd9030e32ac34eb12184c35e1e47cf99cc37` passed 59 tests; Ruff,
+format-check, and `git diff --check` passed. The previous pushed head
+`dcf5de50b633ff00638c1396ddfcfb8ba04070e6` was fully hosted-green, but the
+corrected head has not yet run hosted CI; full repository pytest/mypy also
+remain open. These rows do not close ZF-007/ZF-008/ZF-009 product acceptance,
+the first real continuous source/client pair, ZF-010, Packet H, the Phase 2
+acceptance journey, production wiring, release, or support status. macOS
+remains unsupported/absent/deferred under the current project truth.
 
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 

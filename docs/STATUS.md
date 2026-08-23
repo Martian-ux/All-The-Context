@@ -280,15 +280,16 @@ remain historical and are not rebound or reused.
 The accepted post-V1 plan now starts from the merged capture ledger instead of
 proposing a parallel connector or event substrate. Packet D's sanitized
 synthetic composition is locally complete, and the next frontier is the
-Packet H integration of the locally complete Wave 3 E/F/G component seams into
-the Phase 2 journey. Stable project identity and deterministic Project Context
-Capsules precede graph shadow evaluation.
+Core-owned source-fact admission contract needed before Packet H can compose
+the locally complete Wave 3 E/F/G component seams. Stable project identity and
+deterministic Project Context Capsules precede graph shadow evaluation.
 
 Wave 3 component evidence remains experimental. It adds no provider support,
 production startup wiring, durable scheduler/notification state, stable SDK,
 release, or support claim. Implementation packets use sanitized synthetic
 fixtures and disposable Core state; private data, publication actions, and
-macOS support remain outside their boundary.
+macOS support remain outside their boundary. Packet H was attempted and
+correctly stopped/removed at the missing source-fact admission seam.
 
 ### 2026-08-22 Memory Truth foundation
 
@@ -2052,8 +2053,8 @@ or papered over in this integration.
 
 ## Wave 3 component handoffs (2026-08-22)
 
-- Packet E (`capture_scheduler.py`) is locally component-complete with 25
-  focused handoff tests. The disabled-by-default seam wraps the existing
+- Packet E (`capture_scheduler.py`) is locally component-complete with its
+  original 25-test component handoff. The disabled-by-default seam wraps the existing
   `CaptureCoordinator`, reuses its persisted retry/backoff and bounded
   `Retry-After`, limits concurrency/resources, rotates source-page selection,
   degrades explicitly when health inspection is truncated, and deduplicates
@@ -2061,27 +2062,44 @@ or papered over in this integration.
   scheduler/notification state, cursor, event ledger, lease, or checkpoint,
   and has no production startup wiring.
 - Packet F (`experimental_local_git_workspace_connector.py`) is locally
-  component-complete with 25 focused handoff tests. It requires explicit
-  non-overlapping roots, is read-only and network-free, reports partial
-  coverage, treats workspace text as inert, excludes Git/dependency/
-  credential paths and symlink/reparse points, fails closed on incomplete
-  scans, and bounds its metadata cursor, samples, excerpts, and tracked files
-  at 20. It is an experimental local adapter, not a general connector or
-  provider-support claim, and is not wired into install or Core startup.
+  component-complete with its original 25-test component handoff; corrected
+  F/capture-capability evidence is 27 tests. It requires explicit
+  non-overlapping roots, binds provider and `source.account_fingerprint` to
+  `adapter.source_identity` before scanning, is read-only and network-free,
+  reports partial coverage, treats workspace text as inert, omits AWS
+  `AKIA`/`ASIA`-shaped content, excludes Git/dependency/credential paths and
+  symlink/reparse points, fails closed on incomplete scans, and bounds its
+  metadata cursor, samples, excerpts, and tracked files at 20. It is an
+  experimental local adapter, not a general connector or provider-support
+  claim, and is not wired into install or Core startup.
 - Packet G (`experimental_reference_host.py`) is locally component-complete
-  with 27 focused handoff tests. The controlled in-process host caps at L2;
+  with its original 27-test component handoff; corrected G/client-runtime
+  evidence is 32 tests. The controlled in-process host caps at L2;
   ordinary MCP remains L0 and L3 is downgraded truthfully. It routes
   pre-generation through injected Core Retrieval V3, captures direct-user
   references, auto-checkpoints typed lifecycle snapshots on checkpoint,
-  session-transition, and completion hooks, and rejects forged resume
-  sessions and secret-like payloads. It adds no provider integration,
-  general persistence format, or stable SDK.
-- The exact combined Wave 1/2/3 focused command ran at
-  `e2444a4717e179205fc7fac2a4ac279627f162de` and passed 110 tests. Full-tree
-  Ruff format-check, Ruff check, and `git diff --check` also passed. This is
-  focused local evidence only; full repository pytest/mypy and hosted CI for
-  the combined new head remain open. ZF-007/ZF-008/ZF-009 product
-  acceptance, the first real continuous source/client pair, ZF-010 automatic
-  formation, Packet H, the Phase 2 acceptance journey, production wiring, and
-  any release/support claim remain OPEN. macOS remains
-  unsupported/absent/deferred under the current project truth.
+  session-transition, and completion hooks, and restores events, trace,
+  pending/delivered context, started-generation IDs, and sequencing state.
+  Its digest is integrity validation only; the sink receives a stable retry
+  idempotency key. L0/ordinary MCP resumes started IDs without fabricated
+  context, L1+ retains request/delivery ordering, empty Core context fails
+  closed, and forged resume sessions and secret-like payloads are rejected.
+  There is no client-principal binding or production persistence, provider
+  integration, general persistence format, or stable SDK.
+- Integrated corrected F/G-adjacent union at head
+  `719bdd9030e32ac34eb12184c35e1e47cf99cc37` passed 59 tests; Ruff,
+  format-check, and `git diff --check` passed. The previous pushed head
+  `dcf5de50b633ff00638c1396ddfcfb8ba04070e6` was fully hosted-green, but the
+  corrected head has not yet run hosted CI. Full repository pytest/mypy for
+  the corrected head remain open.
+- Packet H's disposable proof was attempted and correctly stopped/removed:
+  Core has no genuine registered-source-authoritative admission seam binding
+  Packet F continuous-capture evidence to deterministic source-fact
+  promotion. `add_candidate` enters ongoing-client policy and non-witness
+  workspace facts remain tentative; archive importer is a distinct lifecycle.
+  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected. The
+  next narrow frontier is designing/reviewing that Core-owned source-fact
+  admission contract in a successor PR. ZF-007/ZF-008/ZF-009 product
+  acceptance, ZF-010, Packet H, the Phase 2 journey, the first real
+  source/client pair, production wiring, and any release/support claim remain
+  OPEN. macOS remains unsupported/absent/deferred.

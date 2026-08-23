@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Reconcile the locally complete Wave 3 component seams, then run Packet H's disposable Phase 2 integration |
-| Early interface status | Experimental v0; Wave 3 component evidence exists, but no product acceptance or support claim is made |
+| Current execution frontier | Design and review the Core-owned source-fact admission contract in a successor PR |
+| Early interface status | Experimental v0; Wave 3 remains component evidence, and Packet H stopped at the missing admission seam |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -28,11 +28,12 @@ Import Truth
 ```
 
 The first three foundations and the provider-neutral capture ledger are merged.
-Packet D has also supplied the disposable synthetic composition, and the Wave 3
-E/F/G component seams are locally complete. The immediate product frontier is
-therefore the integration-owned Packet H: compose those seams with conservative
-automatic formation, then prove one real continuous source/client pair in the
-Phase 2 journey without turning the component seams into support claims.
+Packet D supplied the disposable synthetic composition, and the Wave 3 E/F/G
+component seams are locally complete. A disposable Packet H proof was attempted
+and correctly stopped because Core has no genuine registered-source-authoritative
+admission seam for deterministic source-fact promotion. The next narrow frontier
+is to design and review that Core-owned contract in a successor PR; this plan
+does not turn the component seams into support or stable-SDK claims.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -695,14 +696,19 @@ Only after Packet D passes:
 | F — local Git/workspace connector | New connector module and sanitized repository fixtures | Explicit-root, read-only snapshot/incremental adapter with truthful exclusions and coverage | Stop on network/OAuth, implicit root access, instruction execution, or undeclared secret/raw-history retention |
 | G — controlled reference host | New reference-host module and sanitized lifecycle fixtures | Real pre-generation/direct-turn/checkpoint/restart hooks with truthful capability negotiation | Stop if only ordinary MCP hooks are available or a provider-support claim would be required |
 
-**Progress (2026-08-22):** E, F, and G are locally component-complete. E is a
-disabled-by-default orchestration seam around the existing coordinator, F is a
-bounded explicit-root read-only local adapter, and G is a controlled in-process
-reference host capped at L2. ZF-007, ZF-008, and ZF-009 product acceptance;
-the first real continuous integration pair; ZF-010 automatic formation;
-Packet H; the Phase 2 acceptance journey; production wiring; full-matrix or
-hosted acceptance for the combined new head; and release/support claims remain
-open. macOS remains absent/deferred under the current project truth.
+**Progress (2026-08-22):** E, F, and G are locally component-complete. F now
+binds provider and source fingerprint before scanning and omits AWS access-key
+shaped content; G restores typed runtime sequencing state, uses its digest only
+for integrity, gives the sink a stable retry idempotency key, keeps L0 semantics
+truthful so generation can proceed without fabricated context, and leaves empty
+L1+ Core context explicitly fail-closed. A Packet H disposable proof was
+attempted and correctly stopped at the missing Core-owned source-fact admission
+seam.
+ZF-007, ZF-008, and ZF-009 product acceptance; the first real continuous
+integration pair; ZF-010 automatic formation; Packet H; the Phase 2 acceptance
+journey; production wiring; hosted acceptance for the corrected head; and
+release/support claims remain open. macOS remains absent/deferred under the
+current project truth.
 
 ### Wave 4 — serial product-proof integration
 
@@ -715,6 +721,12 @@ review of the component handoffs.
 No interface becomes stable and no additional source/client support is claimed
 from this proof. Breadth begins only after the real slice passes and the v0
 contracts are revised from its evidence.
+
+**Current progress (2026-08-22):** Packet H was attempted as a disposable proof
+and stopped/removed when the current Core policy could not bind Packet F capture
+evidence to deterministic source-fact promotion. The next frontier is the
+source-fact admission contract in a successor PR; ZF-010 and the Phase 2
+acceptance journey remain open.
 
 ## 14. Proposed GitHub issue hierarchy
 

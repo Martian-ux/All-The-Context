@@ -1,5 +1,25 @@
 # Architecture decisions
 
+## ADR-132: Packet H stops pending Core source-fact admission
+
+**Status:** accepted locally on 2026-08-22 after a stopped disposable proof;
+this is not ZF-010, Packet H, Phase 2, product, hosted-CI, release, or support
+acceptance.
+
+Packet H was attempted as a disposable integration of the Wave 3 components and
+was correctly stopped and removed. The blocker is a missing Core-owned
+registered-source-authoritative admission seam: current Core policy has no
+genuine contract that binds Packet F continuous-capture evidence to
+deterministic source-fact promotion. `add_candidate` enters the ongoing-client
+policy, so non-witness workspace facts remain tentative; the archive importer
+is a distinct lifecycle and cannot be relabeled as this source path.
+
+A hardcoded allowlist or `explicit_user_statement` relabeling was rejected as
+false authority rather than a source-fact admission contract. The next narrow
+frontier is to design and review the Core-owned admission contract in a
+successor PR. No production wiring, stable SDK, provider/client support,
+release state, or macOS support follows from this stopped proof.
+
 ## ADR-131: Wave 3 components remain experimental until Packet H
 
 **Status:** accepted locally on 2026-08-22 from focused component handoffs;
@@ -17,21 +37,28 @@ rotation, concurrency/resource limits, truncated-health degradation, and
 in-process reauthorization notification deduplication.
 
 Packet F's `experimental_local_git_workspace_connector.py` is an explicit-root,
-read-only local adapter. It executes no Git command or other process, uses no
-network, declares partial coverage, fails closed on incomplete scans, and
-excludes Git/dependency/credential paths plus symlink/reparse paths. Its
-metadata-only cursor and bounded samples track at most 20 files. It is not a
-general connector or provider-support claim and is not wired into install or
-Core startup.
+read-only local adapter. Before scanning, `fetch_page` requires both the local
+provider identity and `source.account_fingerprint == adapter.source_identity`;
+a mismatch fails closed without scanning. It executes no Git command or other
+process, uses no network, declares partial coverage, fails closed on incomplete
+scans, omits AWS `AKIA`/`ASIA`-shaped content, and excludes Git/dependency/
+credential paths plus symlink/reparse paths. Its metadata-only cursor and
+bounded samples track at most 20 files. It is not a general connector or
+provider-support claim and is not wired into install or Core startup.
 
 Packet G's `experimental_reference_host.py` is a controlled in-process host
 capped at L2; ordinary MCP remains L0 and an L3 request is truthfully
 downgraded. It routes pre-generation through injected Core Retrieval V3,
 captures direct-user references, and sends typed lifecycle snapshots to an
 injected checkpoint sink on checkpoint, session-transition, and completion
-hooks. It rejects forged resume sessions and secret-like payloads before
-lifecycle persistence. It adds no provider integration, general persistence
-format, or stable SDK.
+hooks. A typed restore includes events, trace, pending and delivered context,
+started-generation IDs, and sequencing state. Its deterministic digest is
+integrity validation only, never authentication, and the sink receives a stable
+idempotency key for retries. L0/ordinary MCP resumes started IDs without
+fabricating context; L1+ restores request/delivery ordering, and empty Core
+context fails closed. It rejects forged resume sessions and secret-like
+payloads, has no client-principal binding or production persistence, and adds
+no provider integration, general persistence format, or stable SDK.
 
 These component boundaries do not close the first real continuous source/client
 pair, automatic formation ZF-010, Packet H, the Phase 2 acceptance journey,
