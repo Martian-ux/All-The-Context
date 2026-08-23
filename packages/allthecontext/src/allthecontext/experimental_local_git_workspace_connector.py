@@ -279,7 +279,8 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             if not stat.S_ISDIR(root_stat.st_mode) or _is_reparse_or_symlink(root_stat):
                 report.incomplete = True
                 raise CaptureError("capture_adapter_unavailable")
-            self._scan_root(root, root_token, items, report)
+            if self._scan_root(root, root_token, items, report):
+                break
         return items
 
     def _scan_root(
@@ -288,9 +289,12 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
         root_token: str,
         items: dict[str, _ScannedItem],
         report: _MutableScanReport,
-    ) -> None:
+    ) -> bool:
         pending: list[tuple[Path, int]] = [(root, 0)]
         while pending:
+            if report.files_considered >= MAX_DISCOVERED_FILES:
+                report.incomplete = True
+                return True
             directory, depth = pending.pop()
             try:
                 directory_stat = directory.lstat()
@@ -317,6 +321,9 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 report.incomplete = True
                 continue
             for entry in entries:
+                if report.files_considered >= MAX_DISCOVERED_FILES:
+                    report.incomplete = True
+                    return True
                 relative_path = _relative_path(root, entry, report)
                 if relative_path is None:
                     continue
@@ -345,9 +352,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                     report.excluded_paths += 1
                     continue
                 report.files_considered += 1
-                if report.files_considered > MAX_DISCOVERED_FILES:
-                    report.incomplete = True
-                    continue
                 item = self._read_item(
                     entry,
                     entry_stat.st_size,
@@ -358,6 +362,10 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 )
                 if item is not None:
                     items[item.item_id] = item
+                if report.files_considered >= MAX_DISCOVERED_FILES:
+                    report.incomplete = True
+                    return True
+        return False
 
     def _read_item(
         self,

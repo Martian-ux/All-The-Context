@@ -15,6 +15,22 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## 2026-08-23 local workspace traversal bound
+
+The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats
+`MAX_DISCOVERED_FILES` as a deterministic hard cap across all explicitly
+authorized roots. Once the cap is reached, discovery stops before later entries
+are `lstat`-checked or read and before later roots are traversed; the scan is
+marked incomplete and `fetch_page` fails closed as before. Stable ordering,
+credential/Git/dependency exclusions, symlink/reparse handling, and the ordinary
+small-scan result remain unchanged. Focused synthetic coverage instruments both
+metadata checks and content reads to prove the bound without exposing path or
+content diagnostics.
+
+This is local bounded correctness evidence only. It adds no provider support,
+production startup wiring, network behavior, release state, private-data
+evidence, or macOS support claim.
+
 ## 2026-08-23 capture admission and repair reconciliation
 
 The capture ledger now has a migration-017 extension on the existing

@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## ADR-136: Local workspace discovery caps foreground traversal
+
+**Status:** accepted locally on 2026-08-23 after focused synthetic traversal
+regression; this is not provider support, release readiness, hosted/full-suite
+acceptance, or macOS support.
+
+`MAX_DISCOVERED_FILES` is a global hard bound across the adapter's explicitly
+authorized roots, not merely an item-emission limit. The deterministic sorted
+walk counts authorized regular-file candidates before content inspection; when
+the bound is reached, it stops before checking or reading later entries and
+does not begin another authorized root. The report is marked incomplete, so
+the existing `fetch_page` fail-closed behavior remains authoritative. Stable
+ordering, credential/Git/dependency exclusions, symlink/reparse checks, and
+pathlib-based containment remain unchanged for scans below the bound.
+
+The focused regression uses two sanitized roots and instruments `Path.lstat`
+and the adapter's content-read seam to prove that entries after the bound are
+not visited or read, that the report is bounded and incomplete, and that the
+small existing workspace scan is unchanged. No path or content is emitted by
+the adapter diagnostics.
+
 ## ADR-132: Packet H stops pending Core source-fact admission
 
 **Status:** accepted locally on 2026-08-22 after a stopped disposable proof;
