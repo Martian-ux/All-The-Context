@@ -43,7 +43,9 @@ part of canonical Core authority.
 Core migrations `010_memory_truth.sql` through
 `014_typed_user_action_evidence.sql` belong to the Memory Truth foundation. The
 Migration `015_continuous_capture.sql` is the provider-neutral Continuous
-Capture foundation. The next free Core migration number is `016`.
+Capture foundation. Migration `016_registered_source_admission.sql` adds the
+nullable registered-source provenance seam to existing candidates; the next
+free Core migration number is `017`.
 
 The compatibility schema may retain historical table or column names such as
 `context_candidate` and `approval_status` during migration. Those are storage

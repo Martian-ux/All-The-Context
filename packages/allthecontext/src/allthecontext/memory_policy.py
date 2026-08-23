@@ -46,6 +46,46 @@ class ObservationOrigin(StrEnum):
     CONTEXT_ERROR = "context_error"
     LOCAL_ADMIN = "local_admin"
     LEGACY_MIGRATION = "legacy_migration"
+    REGISTERED_SOURCE = "registered_source"
+
+
+REGISTERED_SOURCE_FACT_KIND = "registered_source_fact"
+REGISTERED_SOURCE_TYPE = "registered_capture"
+REGISTERED_SOURCE_FACT_SCHEMA = "registered-source-fact-v1"
+REGISTERED_SOURCE_EXTRACTOR_ID = "local-git-workspace-structure"
+REGISTERED_SOURCE_EXTRACTOR_VERSION = 1
+REGISTERED_SOURCE_FACT_CLASSES = frozenset(
+    {
+        "python_source",
+        "markdown_documentation",
+        "shell_script",
+        "powershell_script",
+        "project_manifest",
+        "generic_text_file",
+    }
+)
+
+
+def is_registered_source_fact(candidate: CandidateInput) -> bool:
+    """Return whether a Core-created registered-source projection is closed."""
+
+    structured = candidate.structured_value
+    return (
+        candidate.kind == REGISTERED_SOURCE_FACT_KIND
+        and candidate.source_type == REGISTERED_SOURCE_TYPE
+        and not candidate.explicit_user_statement
+        and candidate.schema_version == REGISTERED_SOURCE_EXTRACTOR_VERSION
+        and isinstance(structured, dict)
+        and set(structured)
+        == {"binding_hash", "extractor", "extractor_version", "fact_class", "schema"}
+        and structured.get("schema") == REGISTERED_SOURCE_FACT_SCHEMA
+        and structured.get("extractor") == REGISTERED_SOURCE_EXTRACTOR_ID
+        and structured.get("extractor_version") == REGISTERED_SOURCE_EXTRACTOR_VERSION
+        and isinstance(structured.get("binding_hash"), str)
+        and len(structured["binding_hash"]) == 64
+        and all(character in "0123456789abcdef" for character in structured["binding_hash"])
+        and structured.get("fact_class") in REGISTERED_SOURCE_FACT_CLASSES
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +406,18 @@ class AutomaticMemoryPolicy:
                 "automatic context maintenance is disabled",
                 availability,
             )
+        if origin == ObservationOrigin.REGISTERED_SOURCE:
+            if not is_registered_source_fact(candidate):
+                return decide(
+                    ObservationDisposition.IGNORED,
+                    "registered source fact schema is invalid",
+                    Availability.LOCAL,
+                )
+            return decide(
+                ObservationDisposition.APPLIED,
+                "registered source structural fact applied",
+                Availability.CORE,
+            )
         if contains_direct_secret(candidate):
             return decide(
                 ObservationDisposition.IGNORED,
@@ -429,5 +481,6 @@ class AutomaticMemoryPolicy:
             ObservationOrigin.LOCAL_ADMIN: "local administrator observation applied",
             ObservationOrigin.LEGACY_MIGRATION: "legacy explicit observation applied by policy",
             ObservationOrigin.ONGOING_CLIENT: "explicit user observation applied automatically",
+            ObservationOrigin.REGISTERED_SOURCE: "registered source structural fact applied",
         }[origin]
         return decide(ObservationDisposition.APPLIED, reason, availability)

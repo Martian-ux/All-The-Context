@@ -1,0 +1,615 @@
+"""Focused proof for the bounded Core-owned registered-source seam."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import zipfile
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+from allthecontext import export as portable_export
+from allthecontext.capture import (
+    CaptureCoordinator,
+    CaptureError,
+    CaptureEvent,
+    CaptureRunHandle,
+    _canonical_lineage,
+    _idempotency_key,
+)
+from allthecontext.experimental_local_git_workspace_connector import (
+    LOCAL_GIT_WORKSPACE_PROVIDER,
+    LocalGitWorkspaceCaptureProviderAdapter,
+)
+from allthecontext.export import create_export, restore_export
+from allthecontext.models import Availability
+from allthecontext.registered_source_admission import RegisteredSourceCaptureApplicationSink
+from allthecontext.storage import CoreStore, NotFoundError
+
+from tests.fixtures.local_git_workspace import create_sanitized_workspace
+
+
+def _store(path: Path) -> CoreStore:
+    store = CoreStore(path / "core.sqlite3")
+    store.initialize_vault()
+    return store
+
+
+def _run(tmp_path: Path) -> tuple[CoreStore, CaptureCoordinator, Path, str]:
+    store = _store(tmp_path)
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = LocalGitWorkspaceCaptureProviderAdapter((root,))
+    sink = RegisteredSourceCaptureApplicationSink(store)
+    coordinator = CaptureCoordinator(store, sink=sink)
+    source = coordinator.create_source(
+        provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+        account_label="sanitized-workspace",
+        account_fingerprint=adapter.source_identity,
+        requested_scopes=("workspace.structure",),
+        local_only_acknowledged=True,
+    )
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
+    coordinator.enable(source.id)
+    return store, coordinator, root, source.id
+
+
+def test_registered_source_happy_path_uses_core_lineage_and_safe_projection(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    result = coordinator.run(source_id)
+    assert result.status == "completed"
+    assert result.applied_events == 4
+
+    with store.connect() as connection:
+        candidates = connection.execute(
+            "SELECT * FROM context_candidates WHERE capture_source_id=? ORDER BY id",
+            (source_id,),
+        ).fetchall()
+        records = connection.execute(
+            "SELECT r.* FROM context_records r JOIN context_candidates c "
+            "ON c.id=r.candidate_id WHERE c.capture_source_id=? ORDER BY r.id",
+            (source_id,),
+        ).fetchall()
+        items = connection.execute(
+            "SELECT provider_item_id,canonical_record_id FROM capture_items "
+            "WHERE source_id=? ORDER BY provider_item_id",
+            (source_id,),
+        ).fetchall()
+    assert len(candidates) == len(records) == len(items) == 4
+    assert {str(row["observation_origin"]) for row in candidates} == {"registered_source"}
+    assert {bool(row["explicit_user_statement"]) for row in candidates} == {False}
+    assert {str(row["observation_origin"]) for row in records} == {"registered_source"}
+    assert {bool(row["explicit_user_statement"]) for row in records} == {False}
+    assert {str(row["source_type"]) for row in records} == {"registered_capture"}
+    assert {row["source_id"] for row in records} == {None}
+    assert {tuple(json.loads(str(row["scopes_json"]))) for row in records} == {
+        ("workspace.structure",)
+    }
+    assert {str(row["id"]) for row in records} == {str(row["canonical_record_id"]) for row in items}
+
+
+def test_registered_source_never_promotes_workspace_path_text_root_or_fingerprint(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    result = coordinator.run(source_id)
+    assert result.status == "completed"
+    forbidden = {
+        "src/app.py",
+        "def answer()",
+        "fixture",
+        "workspace-source-",
+        str(root),
+    }
+    with store.connect() as connection:
+        rows = connection.execute(
+            "SELECT content,structured_value_json,evidence FROM context_candidates "
+            "UNION ALL SELECT content,structured_value_json,evidence FROM context_records"
+        ).fetchall()
+        audits = connection.execute("SELECT metadata_json FROM audit_events").fetchall()
+    serialized = " ".join(repr(tuple(row)) for row in rows + audits)
+    assert not any(value in serialized for value in forbidden)
+
+
+def test_registered_source_crash_after_core_admission_replays_one_projection(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = LocalGitWorkspaceCaptureProviderAdapter((root,))
+    real_sink = RegisteredSourceCaptureApplicationSink(store)
+
+    class CrashAfterAdmission:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def apply(self, event: CaptureEvent, **kwargs: Any) -> Any:
+            receipt = real_sink.apply(event, **kwargs)
+            if not self.failed:
+                self.failed = True
+                raise CaptureError("capture_sink_failed")
+            return receipt
+
+    coordinator = CaptureCoordinator(store, sink=CrashAfterAdmission())
+    source = coordinator.create_source(
+        provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+        account_label="sanitized-workspace",
+        account_fingerprint=adapter.source_identity,
+        requested_scopes=("workspace.structure",),
+        local_only_acknowledged=True,
+    )
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
+    coordinator.enable(source.id)
+    first = coordinator.run(source.id)
+    assert first.status == "failed"
+    coordinator.resume(source.id)
+    second = coordinator.run(source.id)
+    assert second.status == "completed"
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE capture_source_id=?",
+                (source.id,),
+            ).fetchone()[0]
+            == 4
+        )
+        assert connection.execute("SELECT COUNT(*) FROM context_records").fetchone()[0] == 4
+
+
+def test_registered_source_delete_withdraws_and_reupsert_revives_exact_id(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        item = connection.execute(
+            "SELECT i.provider_item_id,i.canonical_record_id "
+            "FROM capture_items i JOIN capture_events e ON e.id=i.last_event_id "
+            "WHERE i.source_id=? "
+            "AND json_extract(e.normalized_payload_json,'$.relative_path')='README.md'",
+            (source_id,),
+        ).fetchone()
+    assert item is not None
+    target_id = str(item["canonical_record_id"])
+    (root / "README.md").unlink()
+    deleted = coordinator.run(source_id)
+    assert deleted.status == "completed"
+    with pytest.raises(NotFoundError):
+        store.get_record(target_id)
+    with store.connect() as connection:
+        tombstone = connection.execute(
+            "SELECT 1 FROM deletion_tombstones WHERE record_id=?", (target_id,)
+        ).fetchone()
+        deleted_row = connection.execute(
+            "SELECT deleted_at FROM context_records WHERE id=?", (target_id,)
+        ).fetchone()
+    assert tombstone is None
+    assert deleted_row is not None and deleted_row["deleted_at"] is not None
+    (root / "README.md").write_text("# Reappeared fixture\n", encoding="utf-8")
+    revived = coordinator.run(source_id)
+    assert revived.status == "completed"
+    assert store.get_record(target_id).id == target_id
+
+
+def test_registered_source_user_mutation_and_delete_barriers_win(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        target = connection.execute(
+            "SELECT r.id FROM context_records r JOIN context_candidates c ON c.id=r.candidate_id "
+            "JOIN capture_events e ON e.id=c.capture_event_id "
+            "WHERE c.capture_source_id=? "
+            "AND json_extract(e.normalized_payload_json,'$.relative_path')='README.md'",
+            (source_id,),
+        ).fetchone()
+    assert target is not None
+    record_id = str(target["id"])
+
+    corrected = store.correct_record(
+        record_id,
+        content="User correction remains authoritative.",
+        reason="focused fixture correction",
+    )
+    (root / "README.md").write_text("# Changed fixture\n", encoding="utf-8")
+    assert coordinator.run(source_id).status == "completed"
+    assert store.get_record(record_id).content == corrected.content
+    local = store.change_availability(record_id, Availability.LOCAL)
+    (root / "README.md").write_text("# Changed again\n", encoding="utf-8")
+    assert coordinator.run(source_id).status == "completed"
+    current = store.get_record(record_id)
+    assert current.availability == Availability.LOCAL
+    assert current.version == local.version
+
+    store.delete_record(record_id, reason="focused ordinary delete")
+    (root / "README.md").write_text("# Changed after delete\n", encoding="utf-8")
+    assert coordinator.run(source_id).status == "completed"
+    with pytest.raises(NotFoundError):
+        store.get_record(record_id)
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT 1 FROM deletion_tombstones WHERE record_id=?", (record_id,)
+            ).fetchone()
+            is not None
+        )
+
+
+def test_registered_source_delete_cannot_cross_source_item_boundaries(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path / "first")
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        first_item = connection.execute(
+            "SELECT provider_item_id,canonical_record_id FROM capture_items "
+            "WHERE source_id=? ORDER BY provider_item_id LIMIT 1",
+            (source_id,),
+        ).fetchone()
+    assert first_item is not None
+    first_record_id = str(first_item["canonical_record_id"])
+
+    second_root = create_sanitized_workspace(tmp_path / "second" / "workspace")
+    second_adapter = LocalGitWorkspaceCaptureProviderAdapter((second_root,))
+    second_source = coordinator.create_source(
+        provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+        account_label="second-sanitized-workspace",
+        account_fingerprint=second_adapter.source_identity,
+        requested_scopes=("workspace.structure",),
+        local_only_acknowledged=True,
+    )
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, second_adapter)
+    coordinator.enable(second_source.id)
+    handle, _source, _attempt = coordinator.ledger.begin_run(second_source.id)
+    event = CaptureEvent(
+        provider_event_id="cross-source-delete",
+        provider_item_id=str(first_item["provider_item_id"]),
+        order_key="g00000000000000000001-e00000001",
+        operation="delete",
+        generation=1,
+    )
+    event_id, _duplicate, _attempts = coordinator.ledger.stage_event(handle, event)
+    sink = coordinator.sink
+    assert sink is not None
+    receipt = sink.apply(
+        event,
+        source_id=second_source.id,
+        event_id=event_id,
+        run_handle=handle,
+        canonical_record_id=_canonical_lineage(second_source.id, event.provider_item_id),
+        idempotency_key=_idempotency_key(second_source.id, event.provider_event_id),
+    )
+    assert receipt.receipt == "registered-source-withdrawn"
+    coordinator.ledger.commit_event(
+        handle=handle,
+        event=event,
+        event_id=event_id,
+        receipt=receipt.receipt,
+        canonical_record_id=receipt.canonical_record_id,
+    )
+    assert store.get_record(first_record_id).id == first_record_id
+
+
+def test_registered_source_export_is_portable_and_legacy_capture_rows_are_ignored(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    package = tmp_path / "portable.atcexp"
+    passphrase = "registered-source-test-passphrase"
+    manifest = create_export(store.database_path, package, passphrase, include_sources=True)
+    assert not set(manifest["tables"]).intersection(
+        {
+            "capture_sources",
+            "capture_events",
+            "capture_items",
+            "capture_checkpoints",
+            "capture_runs",
+        }
+    )
+    decrypted = tmp_path / "portable.zip"
+    portable_export._decrypt_file(package, decrypted, passphrase)
+    with zipfile.ZipFile(decrypted) as archive:
+        candidate_rows = [
+            json.loads(line)
+            for line in archive.read("tables/context_candidates.jsonl").splitlines()
+        ]
+    assert candidate_rows
+    assert all(row["capture_source_id"] is None for row in candidate_rows)
+    assert all(row["capture_event_id"] is None for row in candidate_rows)
+    assert all(len(str(row["capture_binding_hash"])) == 64 for row in candidate_rows)
+
+    legacy_payload = tmp_path / "legacy-payload.zip"
+    with (
+        zipfile.ZipFile(decrypted) as incoming,
+        zipfile.ZipFile(legacy_payload, "w", compression=zipfile.ZIP_DEFLATED) as outgoing,
+    ):
+        members = {info.filename: incoming.read(info.filename) for info in incoming.infolist()}
+        candidate_name = "tables/context_candidates.jsonl"
+        legacy_candidates = []
+        for line in members[candidate_name].splitlines():
+            row = json.loads(line)
+            row["capture_source_id"] = "legacy-source"
+            row["capture_event_id"] = "legacy-event"
+            legacy_candidates.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
+        members[candidate_name] = ("\n".join(legacy_candidates) + "\n").encode()
+        legacy_names = {
+            "tables/capture_sources.jsonl": b'{"id":"legacy-source"}\n',
+            "tables/capture_events.jsonl": b'{"id":"legacy-event"}\n',
+        }
+        members.update(legacy_names)
+        legacy_manifest = json.loads(members["manifest.json"])
+        for name, content in legacy_names.items():
+            table = name.removeprefix("tables/").removesuffix(".jsonl")
+            legacy_manifest["tables"][table] = 1
+            legacy_manifest["sha256"][name] = hashlib.sha256(content).hexdigest()
+        legacy_manifest["sha256"][candidate_name] = hashlib.sha256(
+            members[candidate_name]
+        ).hexdigest()
+        members["manifest.json"] = json.dumps(legacy_manifest, indent=2, sort_keys=True).encode()
+        for name, content in members.items():
+            outgoing.writestr(name, content)
+    legacy_package = tmp_path / "legacy.atcexp"
+    portable_export._encrypt_file(legacy_payload, legacy_package, passphrase)
+    restored = _store(tmp_path / "restored")
+    restore_export(legacy_package, restored.database_path, passphrase)
+    with restored.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 0
+        restored_candidate = connection.execute(
+            "SELECT capture_source_id,capture_event_id FROM context_candidates LIMIT 1"
+        ).fetchone()
+        assert restored_candidate is not None
+        assert restored_candidate["capture_source_id"] is None
+        assert restored_candidate["capture_event_id"] is None
+
+
+def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        columns = {
+            str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
+        }
+        assert {"capture_source_id", "capture_event_id", "capture_binding_hash"} <= columns
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='uq_context_candidates_capture_event'"
+            ).fetchone()
+            is not None
+        )
+        assert tuple(
+            connection.execute(
+                "SELECT COUNT(*),COUNT(DISTINCT capture_event_id) "
+                "FROM context_candidates WHERE capture_event_id IS NOT NULL"
+            ).fetchone()
+        ) == (4, 4)
+    restarted = CoreStore(store.database_path)
+    assert restarted.migrate() == 16
+    with restarted.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE capture_source_id=?",
+                (source_id,),
+            ).fetchone()[0]
+            == 4
+        )
+
+
+def test_post_purge_registered_event_is_scrubbed_and_cannot_influence(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        target = connection.execute(
+            "SELECT r.id,c.id AS candidate_id,c.capture_event_id "
+            "FROM context_records r JOIN context_candidates c ON c.id=r.candidate_id "
+            "JOIN capture_events e ON e.id=c.capture_event_id "
+            "WHERE c.capture_source_id=? "
+            "AND json_extract(e.normalized_payload_json,'$.relative_path')='README.md'",
+            (source_id,),
+        ).fetchone()
+    assert target is not None
+    record_id = str(target["id"])
+    event_id = str(target["capture_event_id"])
+    store.purge(
+        "record",
+        record_id,
+        confirmation=store.purge_confirmation_phrase("record", record_id),
+        compact=False,
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT normalized_payload_json FROM capture_events WHERE id=?", (event_id,)
+            ).fetchone()[0]
+            == "{}"
+        )
+    (root / "README.md").write_text("# post purge\n", encoding="utf-8")
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_records WHERE id=?", (record_id,)
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_registered_source_rejects_forged_sink_lineage_and_provider_payload_authority(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    handle, _source, _attempt = coordinator.ledger.begin_run(source_id)
+    event = CaptureEvent(
+        provider_event_id="forged-event",
+        provider_item_id="forged-item",
+        order_key="g00000000000000000001-e00000001",
+        generation=1,
+        payload={
+            "relative_path": "safe.py",
+            "root_id": "opaque-root",
+            "kind": "text",
+            "size": 1,
+            "content_sha256": "0" * 64,
+            "content_truncated": False,
+            "hash_scope": "full",
+            "project": "ignored",
+            "authority": "ignored",
+            "acl": ["ignored"],
+            "text": "raw workspace text must not be used",
+        },
+    )
+    event_id, _duplicate, _attempts = coordinator.ledger.stage_event(handle, event)
+    with pytest.raises(CaptureError):
+        coordinator.sink.apply(  # type: ignore[union-attr]
+            event,
+            source_id=source_id,
+            event_id=event_id,
+            run_handle=handle,
+            canonical_record_id="forged-record",
+            idempotency_key="forged-idempotency",
+        )
+    receipt = coordinator.sink.apply(  # type: ignore[union-attr]
+        event,
+        source_id=source_id,
+        event_id=event_id,
+        run_handle=handle,
+        canonical_record_id=_canonical_lineage(source_id, event.provider_item_id),
+        idempotency_key=_idempotency_key(source_id, event.provider_event_id),
+    )
+    assert receipt.receipt.startswith("registered-source-fact:")
+    unknown = CaptureEvent(
+        provider_event_id="unknown-class",
+        provider_item_id="unknown-item",
+        order_key="g00000000000000000001-e00000002",
+        generation=1,
+        payload={
+            "relative_path": "image.bin",
+            "kind": "binary",
+            "size": 1,
+            "content_sha256": "1" * 64,
+            "content_truncated": False,
+            "hash_scope": "full",
+        },
+    )
+    unknown_id, _duplicate, _attempts = coordinator.ledger.stage_event(handle, unknown)
+    no_fact = coordinator.sink.apply(  # type: ignore[union-attr]
+        unknown,
+        source_id=source_id,
+        event_id=unknown_id,
+        run_handle=handle,
+        canonical_record_id=_canonical_lineage(source_id, unknown.provider_item_id),
+        idempotency_key=_idempotency_key(source_id, unknown.provider_event_id),
+    )
+    assert no_fact.receipt == "registered-source-no-fact"
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM context_candidates WHERE capture_event_id IN (?,?)",
+                (event_id, unknown_id),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    (
+        "source",
+        "event",
+        "provider",
+        "fingerprint",
+        "item",
+        "generation",
+        "order",
+        "operation",
+        "payload",
+        "idempotency",
+        "lineage",
+        "run",
+        "lease",
+    ),
+)
+def test_registered_source_exact_durable_projection_fails_closed(
+    tmp_path: Path, forgery: str
+) -> None:
+    store, coordinator, _root, source_id = _run(tmp_path)
+    handle, _source, _attempt = coordinator.ledger.begin_run(source_id)
+    event = CaptureEvent(
+        provider_event_id="exact-event",
+        provider_item_id="exact-item",
+        order_key="g00000000000000000001-e00000001",
+        generation=1,
+        payload={
+            "relative_path": "safe.py",
+            "kind": "text",
+            "size": 1,
+            "content_sha256": "0" * 64,
+            "content_truncated": False,
+            "hash_scope": "full",
+        },
+    )
+    event_id, _duplicate, _attempts = coordinator.ledger.stage_event(handle, event)
+    sink = coordinator.sink
+    assert sink is not None
+    source_argument = source_id
+    event_argument = event_id
+    event_argument_value = event
+    handle_argument = handle
+    canonical_argument = _canonical_lineage(source_id, event.provider_item_id)
+    idempotency_argument = _idempotency_key(source_id, event.provider_event_id)
+    if forgery == "source":
+        source_argument = "forged-source"
+    elif forgery == "event":
+        event_argument = "forged-event"
+    elif forgery == "provider":
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE capture_sources SET provider='forged-provider' WHERE id=?", (source_id,)
+            )
+    elif forgery == "fingerprint":
+        with store.transaction() as connection:
+            connection.execute(
+                "UPDATE capture_sources SET account_fingerprint='forged-fingerprint' WHERE id=?",
+                (source_id,),
+            )
+    elif forgery == "item":
+        event_argument_value = replace(event, provider_item_id="forged-item")
+    elif forgery == "generation":
+        event_argument_value = replace(event, generation=2)
+    elif forgery == "order":
+        event_argument_value = replace(event, order_key="g00000000000000000001-e00000002")
+    elif forgery == "operation":
+        event_argument_value = replace(event, operation="delete", payload={})
+    elif forgery == "payload":
+        event_argument_value = replace(event, payload={**event.payload, "project": "forged"})
+    elif forgery == "idempotency":
+        idempotency_argument = "forged-idempotency"
+    elif forgery == "lineage":
+        canonical_argument = "forged-record"
+    elif forgery == "run":
+        handle_argument = CaptureRunHandle._mint("forged-run", source_id, handle.lease_token)
+    elif forgery == "lease":
+        handle_argument = CaptureRunHandle._mint(handle.run_id, source_id, "forged-lease")
+    else:  # pragma: no cover - pytest supplies only the closed parameter set
+        raise AssertionError(forgery)
+    with pytest.raises(CaptureError):
+        sink.apply(
+            event_argument_value,
+            source_id=source_argument,
+            event_id=event_argument,
+            run_handle=handle_argument,
+            canonical_record_id=canonical_argument,
+            idempotency_key=idempotency_argument,
+        )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM context_candidates").fetchone()[0] == 0

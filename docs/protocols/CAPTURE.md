@@ -1,16 +1,19 @@
-# Continuous Capture foundation
+# Continuous Capture foundation and registered-source admission PR1
 
-This document describes the Stage 4 first slice in Core migration 015. It is a
-provider-neutral contracts and ledger foundation, not evidence that any
-provider supports continuous capture.
+This document describes the Stage 4 first slice in Core migration 015 and the
+bounded registered-source admission contract in migration 016. It is a
+provider-neutral ledger foundation plus a locally injected Core sink contract,
+not evidence that any provider supports continuous capture.
 
 ## Boundary
 
 Capture is local-only, opt-in, and foreground-only. Core remains the sole
-canonical authority. This slice contains no real provider connector, network
-implementation, OAuth flow, token/credential handling, background scheduler,
-dashboard/package-startup change, or macOS work. It does not change current
-product availability, beta.6 identity, release state, or acceptance credit.
+canonical authority. This slice contains no network implementation, OAuth flow,
+token/credential handling, background scheduler, dashboard/package-startup
+change, or macOS work. The experimental local adapter and the new sink are
+explicitly injected only by focused tests; neither is constructed by
+`CoreService` or package startup. It does not change current product
+availability, beta.6 identity, release state, or acceptance credit.
 
 The supported posture remains Windows and supported Linux source/package work.
 macOS source retention remains unsupported and creates no support or acceptance
@@ -18,7 +21,14 @@ claim.
 
 ## Ledger
 
-Migration `015_continuous_capture.sql` adds five bounded SQLite tables:
+Migration `015_continuous_capture.sql` adds five bounded SQLite tables. Migration
+`016_registered_source_admission.sql` adds only nullable `capture_source_id`,
+`capture_event_id`, and bounded 64-character `capture_binding_hash` columns to
+`context_candidates`, plus a partial unique index allowing at most one
+candidate for each non-null capture event. It adds no capture truth table or
+capture event admission columns.
+
+The five migration-015 tables are:
 
 - `capture_sources` stores provider identity, a content-free account label or
   fingerprint, requested scopes, local-only acknowledgement, lifecycle state,
@@ -42,12 +52,12 @@ Migration `015_continuous_capture.sql` adds five bounded SQLite tables:
   lease token.
 
 The migration runner performs a restart-safe repair probe after every migration
-pass. Missing migration-015 tables or indexes are recreated without advancing
-an already-recorded schema marker. The probe reads and executes the packaged
-migration-015 SQL one statement at a time inside the caller's transaction, so
-initial migration and marker-present repair use the same bounds, enums,
-nonnegative counters/generation, hashes, IDs, item/run states, foreign keys,
-unique constraints, and indexes.
+pass. Missing migration-015 objects and the migration-016 candidate columns or
+index are recreated without advancing an already-recorded schema marker. The
+probe reads and executes the packaged SQL one statement at a time inside the
+caller's transaction, so initial migration and marker-present repair use the
+same bounds, enums, nonnegative counters/generation, hashes, IDs, item/run
+states, foreign keys, unique constraints, and indexes.
 
 ## Contracts and replay
 
@@ -62,7 +72,8 @@ For an explicitly enabled, local-only-acknowledged source, one foreground run:
 1. obtains a bounded lease capability and asks the injected adapter for ordered
    pages;
 2. durably stages each event before calling the injected sink;
-3. calls the sink with a deterministic idempotency key and source-scoped item
+3. calls the sink with the exact durable `event_id`, still-running
+   `CaptureRunHandle`, deterministic idempotency key, and source-scoped item
    lineage;
 4. commits the application receipt, capture-item mapping, and checkpoint in
    one SQLite transaction; and
@@ -95,6 +106,36 @@ expired leases produce bounded canonical error codes and retry metadata.
 Full snapshot/rescan deletion is deliberately deferred. The ledger does not
 invent a provider snapshot boundary or delete items merely because they are
 absent from one page.
+
+## Registered-source admission PR1
+
+`RegisteredSourceCaptureApplicationSink` is an internal, explicitly injected
+implementation of `CaptureApplicationSink`. It validates the exact vault,
+registered source, provider/account fingerprint, reconciling lifecycle, local-
+only acknowledgement, durable scopes, staged event projection, provider IDs,
+operation/generation/order/payload hash/idempotency, canonical lineage, and run
+lease inside one Core transaction. Its closed registry currently contains only
+the `local-git-workspace` structural extractor. It derives only fixed classes
+for Python, Markdown, shell/PowerShell, known manifests, and generic text files;
+unknown or binary material is a deterministic no-fact.
+
+Admitted candidates use `REGISTERED_SOURCE`, `registered_source_fact`,
+`registered_capture`, Core availability, normal sensitivity, empty client ACLs,
+confidence `1.0`, empty explicitness, durable source scopes, and the durable
+event received time. Their evidence and structured value contain only the
+versioned safe schema/fact class and content-free binding hash. The deterministic
+capture-lineage ID is used only by the internal Core evaluation override, and
+public ingestion cannot select this origin.
+
+Replay queries `capture_event_id` in the same write transaction and validates
+the stored projection. A crash before ledger commit therefore replays one
+candidate/record. User correction, availability, ordinary deletion, and purge
+remain authoritative. A capture item delete withdraws only the exact untouched
+registered-source record without minting an ordinary tombstone; a later upsert
+may revive that same ID. Record purge scrubs linked capture payload JSON and
+blocks later influence. This is a local PR1 contract only: Packet H, ZF-010,
+provider/product support, production wiring, and release acceptance remain
+outside scope.
 
 ## Lifecycle
 

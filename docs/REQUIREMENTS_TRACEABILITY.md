@@ -60,8 +60,8 @@ readiness, hosted CI, or full repository pytest/mypy acceptance.
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| Bind continuous Packet F evidence to deterministic source-fact promotion through Core | Stopped/removed Packet H disposable proof; current `CoreStore.add_candidate`/ongoing-client policy; archive importer lifecycle remains separate | Open at the contract boundary: Core has no genuine registered-source-authoritative admission seam; non-witness workspace facts remain tentative, and a hardcoded allowlist or `explicit_user_statement` relabeling was rejected |
-| Advance to the next narrow frontier without overstating acceptance | ADR-132; successor-PR design/review frontier | ZF-010, Packet H, Phase 2 acceptance, ZF-007/ZF-008/ZF-009 product acceptance, the first real source/client journey, production wiring, hosted CI for corrected head, release, and support remain open; macOS remains absent/deferred |
+| Bind continuous Packet F evidence to deterministic source-fact promotion through Core | Stopped/removed Packet H disposable proof at the 2026-08-22 head; ADR-133 PR1 `registered_source_admission.py`; archive importer lifecycle remains separate | The stopped proof was open at the contract boundary. PR1 now implements only the local registered-source admission seam; Packet H composition and all product/provider acceptance remain open |
+| Advance to the next narrow frontier without overstating acceptance | ADR-132 and ADR-133; focused successor-PR tests/docs | PR1 closes only the local admission contract. ZF-010, Packet H, Phase 2 acceptance, ZF-007/ZF-008/ZF-009 product acceptance, the first real source/client journey, production wiring, hosted CI for corrected head, release, and support remain open; macOS remains absent/deferred |
 
 The original component handoff counts were E: 25 tests, F: 25 tests, and G: 27
 tests. Corrected focused counts are F/capture-capability: 27 tests and
@@ -74,6 +74,14 @@ remain open. These rows do not close ZF-007/ZF-008/ZF-009 product acceptance,
 the first real continuous source/client pair, ZF-010, Packet H, the Phase 2
 acceptance journey, production wiring, release, or support status. macOS
 remains unsupported/absent/deferred under the current project truth.
+
+### 2026-08-23 registered-source admission PR1 contract
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Admit only a Core-issued registered-source structural fact through the existing capture sink | `registered_source_admission.py`; migration `016_registered_source_admission.sql`; `memory_policy.py`; sanitized `tests/unit/test_registered_source_admission.py` | Implemented locally for the bounded PR1 contract: exact durable event/run/source validation, closed local-workspace extractor registry, safe structural classes, Core availability, normal sensitivity, empty ACLs, explicit false, durable source scopes, deterministic capture-lineage record IDs, replay idempotency, source withdrawal, correction/delete/purge barriers, and content-free receipts. No CoreService, package-startup, scheduler, or reference-host wiring |
+| Keep machine-local capture runtime out of portable archives without losing admitted Core truth | `export.py`; portable export/restore focused test | Implemented locally: all five capture runtime tables are omitted even for source-inclusive exports, registered candidate capture FKs are nulled, legacy capture table entries are ignored on restore, and same-database restart retains capture state |
+| Advance ADR-132 without overstating acceptance | ADR-133; focused local tests only | PR1 closes only this local admission contract. Packet H, ZF-010, product/provider support, hosted/full-suite acceptance, stable SDK, production wiring, release readiness/publication, and macOS remain open, absent, or deferred |
 
 ### 2026-08-22 draft-PR formatting and CI-trigger reconciliation
 

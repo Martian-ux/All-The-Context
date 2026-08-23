@@ -88,6 +88,7 @@ def _capture_schema_snapshot(connection: Any) -> tuple[tuple[Any, ...], ...]:
         "capture_runs",
         "ix_capture_runs_source_time",
         "ix_capture_runs_lease",
+        "uq_context_candidates_capture_event",
     )
     placeholders = ",".join("?" for _ in names)
     rows = connection.execute(
@@ -130,12 +131,16 @@ class _ExpiringSink(IdempotentFakeSink):
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: Any,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str:
         receipt = super().apply(
             event,
             source_id=source_id,
+            event_id=event_id,
+            run_handle=run_handle,
             canonical_record_id=canonical_record_id,
             idempotency_key=idempotency_key,
         )
@@ -145,7 +150,7 @@ class _ExpiringSink(IdempotentFakeSink):
         return receipt
 
 
-def test_migration_015_repair_matches_canonical_schema_and_rejects_malformed_rows(
+def test_capture_migrations_repair_matches_canonical_schema_and_rejects_malformed_rows(
     tmp_path: Path,
 ) -> None:
     object_names = (
@@ -159,18 +164,19 @@ def test_migration_015_repair_matches_canonical_schema_and_rejects_malformed_row
         "ix_capture_events_source_status",
         "ix_capture_runs_source_time",
         "ix_capture_runs_lease",
+        "uq_context_candidates_capture_event",
     )
     for object_name in object_names:
         candidate = _store(tmp_path / object_name)
         with candidate.connect() as connection:
             expected = _capture_schema_snapshot(connection)
         with candidate.transaction() as connection:
-            kind = "INDEX" if object_name.startswith("ix_") else "TABLE"
+            kind = "INDEX" if object_name.startswith(("ix_", "uq_")) else "TABLE"
             connection.execute(f'DROP {kind} IF EXISTS "{object_name}"')
             assert (
-                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 15
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
             )
-        assert candidate.migrate() == 15
+        assert candidate.migrate() == 16
         with candidate.connect() as connection:
             assert _capture_schema_snapshot(connection) == expected
 
@@ -470,10 +476,10 @@ def test_lease_expiry_during_sink_replays_same_idempotency_key(tmp_path: Path) -
     assert item is not None and item["item_state"] == "active"
 
 
-def test_migration_015_restart_and_partial_damage_repair(tmp_path: Path) -> None:
+def test_capture_migration_restart_and_partial_damage_repair(tmp_path: Path) -> None:
     store = _store(tmp_path)
     with store.connect() as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 15
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
         for table in (
             "capture_sources",
             "capture_checkpoints",
@@ -489,7 +495,7 @@ def test_migration_015_restart_and_partial_damage_repair(tmp_path: Path) -> None
             )
     with store.transaction() as connection:
         connection.execute("DROP TABLE capture_items")
-    assert store.migrate() == 15
+    assert store.migrate() == 16
     with store.connect() as connection:
         assert (
             connection.execute(
@@ -498,7 +504,7 @@ def test_migration_015_restart_and_partial_damage_repair(tmp_path: Path) -> None
             is not None
         )
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 15
+    assert restarted.migrate() == 16
 
 
 def test_default_disabled_local_only_lifecycle_and_invalid_transitions(tmp_path: Path) -> None:

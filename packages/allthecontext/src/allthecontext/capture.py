@@ -27,6 +27,7 @@ from .storage import (
     CoreStore,
     NotFoundError,
     StorageError,
+    _added_column,
     _migration_statements,
 )
 
@@ -416,6 +417,8 @@ class CaptureApplicationSink(Protocol):
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: CaptureRunHandle,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str | CaptureApplicationReceipt: ...
@@ -934,17 +937,27 @@ def _idempotency_key(source_id: str, provider_event_id: str) -> str:
     return f"capture-event-{digest}"
 
 
-_CAPTURE_MIGRATION_PATH = (
-    Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql"
+_CAPTURE_MIGRATION_PATHS = (
+    Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql",
+    Path(__file__).parent / "migrations" / "core" / "016_registered_source_admission.sql",
 )
 
 
 def ensure_capture_schema(connection: Any) -> None:
-    """Repair missing migration-015 tables/indexes after an interrupted startup."""
+    """Repair capture and registered-source objects after interrupted startup."""
 
-    migration = _CAPTURE_MIGRATION_PATH.read_text(encoding="utf-8")
-    for statement in _migration_statements(migration):
-        connection.execute(statement)
+    for migration_path in _CAPTURE_MIGRATION_PATHS:
+        migration = migration_path.read_text(encoding="utf-8")
+        for statement in _migration_statements(migration):
+            added_column = _added_column(statement)
+            if added_column is not None:
+                table, column = added_column
+                columns = {
+                    str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')
+                }
+                if column in columns:
+                    continue
+            connection.execute(statement)
 
 
 class CaptureLedger:
@@ -1732,6 +1745,7 @@ class CaptureCoordinator:
         source_id: str,
         event: CaptureEvent,
         event_id: str,
+        run_handle: CaptureRunHandle,
     ) -> tuple[str, str]:
         if self.sink is None:
             raise CaptureError("capture_sink_failed")
@@ -1740,6 +1754,8 @@ class CaptureCoordinator:
             result = self.sink.apply(
                 event,
                 source_id=source_id,
+                event_id=event_id,
+                run_handle=run_handle,
                 canonical_record_id=canonical_record_id,
                 idempotency_key=_idempotency_key(source_id, event.provider_event_id),
             )
@@ -1847,6 +1863,7 @@ class CaptureCoordinator:
                                 source_id=source_id,
                                 event=event,
                                 event_id=event_id,
+                                run_handle=handle,
                             )
                             self.ledger.commit_event(
                                 handle=handle,
@@ -2066,9 +2083,12 @@ class IdempotentFakeSink:
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: CaptureRunHandle,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str:
+        del event_id, run_handle
         if idempotency_key in self.receipts:
             return self.receipts[idempotency_key]
         receipt = f"receipt-{len(self.receipts) + 1}"

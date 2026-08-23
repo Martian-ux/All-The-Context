@@ -20,6 +20,37 @@ frontier is to design and review the Core-owned admission contract in a
 successor PR. No production wiring, stable SDK, provider/client support,
 release state, or macOS support follows from this stopped proof.
 
+## ADR-133: PR1 admits only closed registered-source structural facts
+
+**Status:** accepted locally on 2026-08-23 as a bounded successor contract to
+ADR-132; this is not Packet H, ZF-010, product/provider support, hosted/full-
+suite acceptance, release readiness, or macOS support.
+
+PR1 adds migration 016's three nullable provenance columns and one partial
+unique event index to the existing `context_candidates` table. It adds the
+Core-owned `REGISTERED_SOURCE` policy origin and an explicitly injected
+internal sink. The sink accepts only the durable source/event/run projection
+from `CaptureCoordinator`, only the code-owned `local-git-workspace` extractor
+registry, and only bounded structural classes with code-owned sentences. Raw
+workspace text, paths, roots, account labels, and fingerprints never become
+candidate content, evidence, structured memory, errors, receipts, or logs.
+
+The sink reuses CaptureLedger for ordering, staging, lease, replay, and item
+lineage authority, and uses the existing Memory Truth tables for candidate and
+record truth. Deterministic registered-source record IDs are supplied only by
+the internal evaluation override; user correction, availability, deletion, and
+purge barriers remain authoritative. Capture item deletion is a source
+withdrawal without an ordinary tombstone, while a purge scrubs linked staged
+payloads and blocks future influence. Portable exports omit all machine-local
+capture runtime tables and null the new candidate foreign keys; same-database
+restart retains capture state.
+
+This PR1 does not construct the sink from `CoreService`, package startup, the
+scheduler, or a reference host. It closes only the local admission contract
+with focused sanitized evidence. Packet H, production wiring, ZF-010,
+product/provider support, hosted/full-suite acceptance, release work, and
+macOS remain open or deferred.
+
 ## ADR-131: Wave 3 components remain experimental until Packet H
 
 **Status:** accepted locally on 2026-08-22 from focused component handoffs;

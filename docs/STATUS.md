@@ -291,6 +291,31 @@ fixtures and disposable Core state; private data, publication actions, and
 macOS support remain outside their boundary. Packet H was attempted and
 correctly stopped/removed at the missing source-fact admission seam.
 
+## Registered-source admission PR1 contract (2026-08-23)
+
+The bounded successor to ADR-132 now closes the Core-owned registered-source
+admission seam locally. Migration 016 adds only nullable capture provenance to
+`context_candidates` and a partial unique capture-event index. The internal
+`RegisteredSourceCaptureApplicationSink` accepts the exact durable event ID and
+run handle from `CaptureCoordinator`, validates the existing ledger/source
+authority in one Core transaction, and admits only code-owned structural facts
+from the closed `local-git-workspace` extractor registry. Candidate content and
+evidence are fixed safe sentences plus a versioned extractor/fact schema and
+content-free binding hash; workspace paths, text, roots, labels, fingerprints,
+and provider authority fields remain inert.
+
+Focused sanitized tests cover coordinator admission, deterministic item/record
+lineage, replay after a Core-commit/capture-commit crash, withdrawal and exact
+ID revival, mutation/delete/purge barriers, migration/restart, export omission
+and restore compatibility, no-fact handling, and forged lineage rejection.
+The sink is explicitly injected only in focused tests. CoreService, package
+startup, the experimental scheduler, and reference host remain unwired.
+
+This closes only the PR1 admission contract locally. It does not claim Packet H,
+ZF-010, product/provider support, hosted or full-suite acceptance, stable SDK,
+release readiness, publication, or macOS support; those remain open, absent, or
+deferred.
+
 ### 2026-08-22 Memory Truth foundation
 
 Core now has an additive canonical Memory Truth projection for authorized

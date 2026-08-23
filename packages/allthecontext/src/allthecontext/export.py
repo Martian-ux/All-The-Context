@@ -44,6 +44,15 @@ EXCLUDED_TABLES = {
     "integrity_group_members",
     "source_blob_chunks",
 }
+CAPTURE_RUNTIME_TABLES = frozenset(
+    {
+        "capture_sources",
+        "capture_events",
+        "capture_items",
+        "capture_checkpoints",
+        "capture_runs",
+    }
+)
 
 
 def _derive_key(passphrase: str, salt: bytes) -> bytes:
@@ -143,6 +152,16 @@ def _without_source_reference(
     return document
 
 
+def _without_capture_runtime_reference(document: dict[str, Any]) -> dict[str, Any]:
+    """Keep admitted facts portable without dangling machine-local FKs."""
+
+    if "capture_source_id" in document:
+        document["capture_source_id"] = None
+    if "capture_event_id" in document:
+        document["capture_event_id"] = None
+    return document
+
+
 def _write_source_chunks(
     connection: sqlite3.Connection,
     archive: zipfile.ZipFile,
@@ -210,6 +229,8 @@ def _database_to_zip(
             _validate_source_blob_storage(connection, source_tables, source_columns)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for table in _table_names(connection):
+                if table in CAPTURE_RUNTIME_TABLES:
+                    continue
                 lowered = table.casefold()
                 if not include_sources and ("source" in lowered or "blob" in lowered):
                     continue
@@ -225,6 +246,7 @@ def _database_to_zip(
                         document = {column: _json_value(row[column]) for column in columns}
                         if not include_sources:
                             document = _without_source_reference(table, document)
+                        document = _without_capture_runtime_reference(document)
                         encoded = (
                             json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
                         ).encode("utf-8")
@@ -979,6 +1001,11 @@ def restore_export(
                                 blocked_source_hashes.add(str(row.get("content_hash")))
                 with connection:
                     for table in manifest_tables:
+                        if table in CAPTURE_RUNTIME_TABLES:
+                            # Portable archives never rehydrate machine-local
+                            # capture state, including legacy archives that
+                            # predate this explicit exclusion.
+                            continue
                         if table not in existing:
                             continue
                         name = f"tables/{table}.jsonl"
@@ -1049,6 +1076,7 @@ def restore_export(
                                     row["request_hash"] = secrets.token_hex(16)
                                 if not include_sources:
                                     row = _without_source_reference(table, row)
+                                row = _without_capture_runtime_reference(row)
                                 if table == "deletion_tombstones":
                                     _normalize_deletion_tombstone_row(row)
                                 if table == "context_candidates":
