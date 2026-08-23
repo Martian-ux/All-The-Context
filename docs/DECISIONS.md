@@ -111,7 +111,7 @@ state. The architecture data model already records migration 017 as used and
 
 The historical evidence is 58 focused tests for duplicate IDs, 63 focused tests
 for metadata-only workspace events, and 8 capture migration tests for repair.
-The integration owner subsequently ran 148 combined focused tests on integrated
+The integration owner subsequently ran 149 combined focused tests on integrated
 code. Reported Ruff lint, Ruff format-check, and mypy checks passed. These are
 bounded local reports only and do not establish full-suite acceptance. No
 production startup wiring, scheduler, provider/product support, Packet H,
