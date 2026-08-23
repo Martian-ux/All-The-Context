@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from allthecontext.capture import CaptureCoordinator, CaptureError, IdempotentFakeSink
+from allthecontext.capture import (
+    CaptureCoordinator,
+    CaptureError,
+    CaptureSource,
+    IdempotentFakeSink,
+)
 from allthecontext.experimental_local_git_workspace_connector import (
     LOCAL_GIT_WORKSPACE_PROVIDER,
     LocalGitWorkspaceCaptureProviderAdapter,
@@ -24,8 +30,37 @@ def _fetch(
     adapter: LocalGitWorkspaceCaptureProviderAdapter,
     cursor: str | None = None,
     page_order: int = 0,
+    source: CaptureSource | None = None,
 ) -> Any:
-    return adapter.fetch_page(cast(Any, object()), cursor, page_order)
+    return adapter.fetch_page(source or _bound_source(adapter), cursor, page_order)
+
+
+def _bound_source(
+    adapter: LocalGitWorkspaceCaptureProviderAdapter,
+    *,
+    provider: str = LOCAL_GIT_WORKSPACE_PROVIDER,
+    fingerprint: str | None = None,
+) -> CaptureSource:
+    timestamp = "2026-01-01T00:00:00.000000Z"
+    return CaptureSource(
+        id="synthetic-source",
+        provider=provider,
+        account_label="sanitized-local-workspace",
+        account_fingerprint=adapter.source_identity if fingerprint is None else fingerprint,
+        requested_scopes=(),
+        local_only=True,
+        local_only_acknowledged=True,
+        lifecycle_state="enabled",
+        retry_count=0,
+        next_retry_at=None,
+        last_error_code=None,
+        last_error_at=None,
+        lag_events=0,
+        lag_pages=0,
+        created_at=timestamp,
+        updated_at=timestamp,
+        last_run_at=None,
+    )
 
 
 def _store(tmp_path: Path) -> CoreStore:
@@ -69,6 +104,26 @@ def test_manifest_declares_local_partial_and_bounded_posture(tmp_path: Path) -> 
     assert len(adapter.source_identity) == len("workspace-source-") + 64
 
 
+def test_fetch_requires_correct_provider_and_root_fingerprint_before_scan(
+    tmp_path: Path,
+) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = _adapter(root)
+    bound = _bound_source(adapter)
+
+    wrong_provider = replace(bound, provider="other-local-provider")
+    wrong_fingerprint = replace(bound, account_fingerprint="workspace-source-wrong")
+    for wrong_source in (wrong_provider, wrong_fingerprint):
+        with pytest.raises(CaptureError, match="capture_capability_invalid") as raised:
+            _fetch(adapter, source=wrong_source)
+        assert raised.value.code == "capture_capability_invalid"
+        assert adapter.last_scan_report is None
+
+    page = _fetch(adapter, source=bound)
+    assert page.events
+    assert adapter.last_scan_report is not None
+
+
 def test_snapshot_is_deterministic_and_excludes_git_credentials_and_outside_paths(
     tmp_path: Path,
 ) -> None:
@@ -107,6 +162,20 @@ def test_snapshot_is_deterministic_and_excludes_git_credentials_and_outside_path
     assert report.excluded_paths >= 2  # Git metadata and dependency directory.
     assert report.credential_like_paths >= 2  # .env and secret-like content.
     assert report.symlinks_or_reparse_points_skipped >= (1 if symlink is not None else 0)
+
+
+def test_aws_access_key_shaped_config_is_omitted(tmp_path: Path) -> None:
+    root = create_sanitized_workspace(tmp_path / "workspace")
+    adapter = _adapter(root)
+    page = _fetch(adapter)
+
+    relative_paths = {
+        str(event.payload["relative_path"]) for event in page.events if event.operation == "upsert"
+    }
+    assert "config/aws-shaped.ini" not in relative_paths
+    report = adapter.last_scan_report
+    assert report is not None
+    assert report.credential_like_paths >= 3
 
 
 def test_incremental_cursor_detects_change_and_deletion_after_restart(tmp_path: Path) -> None:
@@ -153,12 +222,14 @@ def test_coordinator_replay_uses_existing_capture_idempotency_and_lineage(
     root = create_sanitized_workspace(tmp_path / "workspace")
     sink = IdempotentFakeSink()
     coordinator = CaptureCoordinator(_store(tmp_path), sink=sink)
+    adapter = _adapter(root)
     source = coordinator.create_source(
         provider=LOCAL_GIT_WORKSPACE_PROVIDER,
         account_label="sanitized-local-workspace",
+        account_fingerprint=adapter.source_identity,
         local_only_acknowledged=True,
     )
-    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, _adapter(root))
+    coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
     coordinator.enable(source.id)
 
     first = coordinator.run(source.id)

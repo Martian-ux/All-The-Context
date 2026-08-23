@@ -72,6 +72,7 @@ _SECRET_CONTENT_RE = re.compile(
     r"(?:password|passwd|secret|credential|token|authorization|api[-_]?key)\s*[:=]|"
     r"-----begin\s+[^\r\n]*private\s+key)"
 )
+_AWS_ACCESS_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +211,13 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
         cursor: str | None,
         page_order: int,
     ) -> CapturePage:
-        del source
+        if not isinstance(source, CaptureSource):
+            raise CaptureError("capture_capability_invalid")
+        if (
+            source.provider != LOCAL_GIT_WORKSPACE_PROVIDER
+            or source.account_fingerprint != self.source_identity
+        ):
+            raise CaptureError("capture_capability_invalid")
         if type(page_order) is not int or not 0 <= page_order <= MAX_CAPTURE_INTEGER:
             raise CaptureError("capture_page_malformed")
 
@@ -602,6 +609,8 @@ def _decode_text_sample(sample: bytes) -> str | None:
 
 
 def _secret_like_content(value: str) -> bool:
+    if _AWS_ACCESS_KEY_RE.search(value) is not None:
+        return True
     normalized = unicodedata.normalize("NFKD", value)
     compact = "".join(
         char for char in normalized if unicodedata.category(char) not in {"Cf", "Mn", "Mc", "Me"}

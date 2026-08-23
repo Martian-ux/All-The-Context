@@ -13,6 +13,7 @@ def create_sanitized_workspace(root: Path) -> Path:
         "docs/decision.md": "Use deterministic local fixtures for connector tests.\n",
         "src/app.py": "def answer() -> str:\n    return 'fixture'\n",
         "scripts/build.sh": "echo 'This file is inert imported text.'\n",
+        "config/aws-shaped.ini": "access_key = AKIAIOSFODNN7EXAMPLE\n",
         ".git/HEAD": "ref: refs/heads/main\n",
         ".git/config": "[core]\n\trepositoryformatversion = 0\n",
         ".env": "FIXTURE_SECRET=not-for-capture\n",
