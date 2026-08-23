@@ -730,6 +730,136 @@ def test_registered_source_delete_withdraws_and_reupsert_revives_exact_id(
     assert store.get_record(target_id).id == target_id
 
 
+def test_registered_source_text_to_binary_withdraws_exact_record_and_replays(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    with store.connect() as connection:
+        target = connection.execute(
+            "SELECT r.id FROM context_records r "
+            "JOIN context_candidates c ON c.id=r.candidate_id "
+            "JOIN capture_events e ON e.id=c.capture_event_id "
+            "WHERE c.capture_source_id=? "
+            "AND json_extract(e.normalized_payload_json,'$.relative_path')='README.md'",
+            (source_id,),
+        ).fetchone()
+    assert target is not None
+    record_id = str(target["id"])
+    (root / "README.md").write_bytes(b"\x80\x81\x82")
+
+    real_sink = coordinator.sink
+    assert real_sink is not None
+
+    class CrashAfterNoFact:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def apply(self, event: CaptureEvent, **kwargs: Any) -> Any:
+            receipt = real_sink.apply(event, **kwargs)
+            if not self.failed and receipt.receipt == "registered-source-no-fact":
+                self.failed = True
+                raise CaptureError("capture_sink_failed")
+            return receipt
+
+    coordinator.sink = CrashAfterNoFact()  # type: ignore[assignment]
+    failed = coordinator.run(source_id)
+    assert failed.status == "failed"
+    with store.connect() as connection:
+        withdrawn = connection.execute(
+            "SELECT deleted_at FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()
+        tombstone = connection.execute(
+            "SELECT 1 FROM deletion_tombstones WHERE record_id=?", (record_id,)
+        ).fetchone()
+    assert withdrawn is not None and withdrawn["deleted_at"] is not None
+    assert tombstone is None
+
+    coordinator.resume(source_id)
+    replayed = coordinator.run(source_id)
+    assert replayed.status == "completed"
+    with store.connect() as connection:
+        event = connection.execute(
+            "SELECT e.application_receipt,c.id AS candidate_id "
+            "FROM capture_events e LEFT JOIN context_candidates c ON c.capture_event_id=e.id "
+            "WHERE e.source_id=? AND e.generation=2 "
+            "AND json_extract(e.normalized_payload_json,'$.relative_path')='README.md'",
+            (source_id,),
+        ).fetchone()
+        candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM context_candidates WHERE capture_source_id=?",
+            (source_id,),
+        ).fetchone()[0]
+        item = connection.execute(
+            "SELECT item_state FROM capture_items WHERE source_id=? AND canonical_record_id=?",
+            (source_id, record_id),
+        ).fetchone()
+    assert event is not None
+    assert event["application_receipt"] == "registered-source-no-fact"
+    assert event["candidate_id"] is None
+    assert candidate_count == 4
+    assert item is not None and item["item_state"] == "active"
+
+
+def test_registered_source_no_fact_does_not_cross_user_barriers(
+    tmp_path: Path,
+) -> None:
+    store, coordinator, root, source_id = _run(tmp_path)
+    assert coordinator.run(source_id).status == "completed"
+    record_ids: dict[str, str] = {}
+    for relative_path in ("README.md", "docs/decision.md", "src/app.py"):
+        with store.connect() as connection:
+            target = connection.execute(
+                "SELECT r.id FROM context_records r "
+                "JOIN context_candidates c ON c.id=r.candidate_id "
+                "JOIN capture_events e ON e.id=c.capture_event_id "
+                "WHERE c.capture_source_id=? "
+                "AND json_extract(e.normalized_payload_json,'$.relative_path')=?",
+                (source_id, relative_path),
+            ).fetchone()
+        assert target is not None
+        record_ids[relative_path] = str(target["id"])
+
+    corrected = store.correct_record(
+        record_ids["README.md"],
+        content="User correction remains authoritative.",
+        reason="no-fact correction barrier fixture",
+    )
+    local = store.change_availability(record_ids["docs/decision.md"], Availability.LOCAL)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE context_records SET source_type='unlinked-source' WHERE id=?",
+            (record_ids["src/app.py"],),
+        )
+
+    for relative_path in ("README.md", "docs/decision.md", "src/app.py"):
+        (root / Path(relative_path)).write_bytes(b"\x80\x81\x82")
+    result = coordinator.run(source_id)
+    assert result.status == "completed"
+    with store.connect() as connection:
+        receipts = connection.execute(
+            "SELECT e.application_receipt FROM capture_events e "
+            "WHERE e.source_id=? AND e.generation=2 ORDER BY e.id",
+            (source_id,),
+        ).fetchall()
+        candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM context_candidates WHERE capture_source_id=?",
+            (source_id,),
+        ).fetchone()[0]
+        unlinked = connection.execute(
+            "SELECT source_type FROM context_records WHERE id=?",
+            (record_ids["src/app.py"],),
+        ).fetchone()
+    assert len(receipts) == 3
+    assert {row["application_receipt"] for row in receipts} == {"registered-source-no-fact"}
+    assert candidate_count == 4
+    assert store.get_record(record_ids["README.md"]).content == corrected.content
+    current = store.get_record(record_ids["docs/decision.md"])
+    assert current.availability == Availability.LOCAL
+    assert current.version == local.version
+    assert unlinked is not None and unlinked["source_type"] == "unlinked-source"
+
+
 def test_registered_source_user_mutation_and_delete_barriers_win(
     tmp_path: Path,
 ) -> None:
@@ -1114,6 +1244,22 @@ def test_registered_source_rejects_forged_sink_lineage_and_provider_payload_auth
         idempotency_key=_idempotency_key(source_id, unknown.provider_event_id),
     )
     assert no_fact.receipt == "registered-source-no-fact"
+    coordinator.ledger.commit_event(
+        handle=handle,
+        event=unknown,
+        event_id=unknown_id,
+        receipt=no_fact.receipt,
+        canonical_record_id=no_fact.canonical_record_id,
+    )
+    replayed_no_fact = coordinator.sink.apply(  # type: ignore[union-attr]
+        unknown,
+        source_id=source_id,
+        event_id=unknown_id,
+        run_handle=handle,
+        canonical_record_id=_canonical_lineage(source_id, unknown.provider_item_id),
+        idempotency_key=_idempotency_key(source_id, unknown.provider_event_id),
+    )
+    assert replayed_no_fact == no_fact
     unknown_text = CaptureEvent(
         provider_event_id="unknown-json",
         provider_item_id="unknown-json-item",

@@ -176,12 +176,13 @@ Replay queries `capture_event_id` in the same write transaction and validates
 the stored projection. A crash before ledger commit therefore replays one
 candidate/record. User correction, availability, ordinary deletion, purge, and
 broken registered-source linkage remain authoritative and consume later capture
-as no-influence. A capture item delete withdraws only the exact untouched
-registered-source record without minting an ordinary tombstone; a later upsert
-may revive that same ID. Record purge scrubs linked capture payload JSON and
-blocks later influence. This is a local PR1 contract only: Packet H, ZF-010,
-provider/product support, production wiring, and release acceptance remain
-outside scope.
+as no-influence. A capture item delete, or a later upsert that deterministically
+produces no fact for the same exact source/item, withdraws only the exact
+untouched registered-source record without minting an ordinary tombstone; a
+first-ever no-fact is harmless, and a later valid upsert may revive that same
+ID. Record purge scrubs linked capture payload JSON and blocks later influence.
+This is a local PR1 contract only: Packet H, ZF-010, provider/product support,
+production wiring, and release acceptance remain outside scope.
 
 ## Lifecycle
 

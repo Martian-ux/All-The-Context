@@ -542,6 +542,13 @@ class RegisteredSourceCaptureApplicationSink(CaptureApplicationSink):
                         "registered-source-withdrawn", canonical_record_id
                     )
                 if fact_class is None or fact_class not in REGISTERED_SOURCE_FACT_CLASSES:
+                    self.store._withdraw_registered_source_record_tx(
+                        connection,
+                        record_id=canonical_record_id,
+                        capture_source_id=source_id,
+                        provider_item_id=event.provider_item_id,
+                        received_at=str(stored["received_at"]),
+                    )
                     return CaptureApplicationReceipt(
                         "registered-source-no-fact", canonical_record_id
                     )
