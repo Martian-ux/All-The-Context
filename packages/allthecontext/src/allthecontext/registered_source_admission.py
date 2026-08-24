@@ -1,9 +1,9 @@
 """Core-owned admission for the closed registered-source fact seam.
 
-This module is intentionally an internal sink.  It is explicitly injected by
-focused tests or future foreground composition; CoreService and package
-startup do not construct it.  Workspace payloads are treated as untrusted
-metadata and never become fact text, evidence, or structured values.
+This module is intentionally an internal sink.  CoreService and the
+contributor CLI inject it through ``capture_runtime`` composition.  Workspace
+payloads are treated as untrusted metadata and never become fact text,
+evidence, or structured values.
 """
 
 from __future__ import annotations

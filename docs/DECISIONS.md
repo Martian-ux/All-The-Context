@@ -27,6 +27,39 @@ format `--check` on touched Python files, mypy on package source (92 files),
 `scripts/check_docs.py`, and `git diff --check`. Full repository pytest, hosted
 CI, private data, and macOS work were not run.
 
+## ADR-139: Shared foreground capture runtime authorizes one local workspace
+
+**Status:** accepted locally on 2026-08-24 as the first productized E/F
+foundation slice; this is not Packet E scheduling, complete Packet H, ZF-010,
+provider/product support, hosted/full-suite acceptance, release, or macOS
+support.
+
+`capture_runtime` is the single composition module for `CaptureCoordinator`.
+`CoreService` and the contributor CLI must use it and must not construct
+divergent coordinators. The composition always injects
+`RegisteredSourceCaptureApplicationSink` and registers
+`LocalGitWorkspaceCaptureProviderAdapter` only when a valid machine-local
+authorization sidecar exists under `CoreConfig.data_dir`.
+
+The sidecar stores exactly one explicitly authorized canonical workspace root
+using pathlib and the existing cross-platform atomic/private-file pattern
+(temporary file plus replace, with an adjacent lock). It does not assume POSIX
+permissions. Missing, non-directory, symlink, reparse, implicit-home (`~`), and
+implicit-cwd (relative) roots fail closed. A changed root is a new adapter
+identity; silent retargeting is refused. Core starts if the sidecar is absent
+or invalid: capture fails closed and the vault remains available. Path and raw
+errors do not cross public status, receipts, logs, or portable export. The root
+is never stored in `capture_sources.account_label`.
+
+`atc capture authorize-workspace --root PATH --local-only-acknowledged` is the
+opt-in command. It computes the adapter identity and creates or reconciles
+exactly one disabled `local-git-workspace` source with scopes exactly
+`workspace.structure`. Existing create/enable/run remain the lifecycle and
+execution authority. After enable, foreground CLI run and admin run share the
+same adapter and sink. No scheduler loop, scheduler table/config, health UI, or
+20-file cap change is introduced. Continuous scheduling remains a separate
+Packet E PR.
+
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 
 **Status:** accepted on 2026-08-24 after reconstructing the Packet H-only

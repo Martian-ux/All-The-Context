@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from allthecontext.capture import CaptureCoordinator
+from allthecontext.capture_runtime import (
+    authorize_local_workspace,
+    compose_capture_coordinator,
+)
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
 from allthecontext.credentials import (
@@ -491,8 +495,28 @@ def _cmd_status(args: argparse.Namespace) -> None:
     _dump(_store(args).status())
 
 
+def _explicit_absolute_workspace_root(value: str) -> Path:
+    if not value or value.startswith("~"):
+        raise argparse.ArgumentTypeError("workspace root must be an explicit absolute path")
+    path = Path(value)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("workspace root must be an explicit absolute path")
+    return path
+
+
 def _capture(args: argparse.Namespace) -> CaptureCoordinator:
-    return CaptureCoordinator(_store(args))
+    return compose_capture_coordinator(_store(args), _config(args))
+
+
+def _cmd_capture_authorize_workspace(args: argparse.Namespace) -> None:
+    _dump(
+        authorize_local_workspace(
+            _store(args),
+            _config(args),
+            args.root,
+            local_only_acknowledged=args.local_only_acknowledged,
+        )
+    )
 
 
 def _cmd_capture_create(args: argparse.Namespace) -> None:
@@ -1054,6 +1078,24 @@ def build_parser() -> argparse.ArgumentParser:
     capture_create.add_argument("--scope", action="append", default=[])
     capture_create.add_argument("--local-only-acknowledged", action="store_true")
     capture_create.set_defaults(handler=_cmd_capture_create)
+
+    capture_authorize = capture_commands.add_parser(
+        "authorize-workspace",
+        help="Authorize exactly one explicit local workspace root for foreground capture",
+    )
+    _common_data(capture_authorize)
+    capture_authorize.add_argument(
+        "--root",
+        required=True,
+        type=_explicit_absolute_workspace_root,
+        help="Explicit absolute workspace root; home, cwd, and relative paths are refused",
+    )
+    capture_authorize.add_argument(
+        "--local-only-acknowledged",
+        action="store_true",
+        help="Acknowledge that this workspace capture stays on this machine",
+    )
+    capture_authorize.set_defaults(handler=_cmd_capture_authorize_workspace)
 
     capture_status = capture_commands.add_parser("status", help="Show capture status")
     _common_data(capture_status)

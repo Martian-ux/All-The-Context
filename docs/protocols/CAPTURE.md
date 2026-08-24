@@ -212,3 +212,28 @@ The contributor CLI uses `atc capture status [source_id]`, `run`, `enable`,
 `pause`, `resume`, `disable`, and `revoke`. `atc capture create` accepts only
 provider/account metadata and an explicit local-only acknowledgement; it has no
 secret argument.
+
+## Productized foreground local-workspace composition
+
+`capture_runtime` is the shared composition used by `CoreService` and the
+contributor CLI. Both inject `RegisteredSourceCaptureApplicationSink`. The
+local Git workspace adapter is registered only when a valid machine-local
+authorization sidecar exists under Core's data directory. If that sidecar is
+absent or invalid, Core still starts, the vault remains available, and `run`
+returns `capture_adapter_unavailable` without path or raw error leaks.
+
+`atc capture authorize-workspace --root PATH --local-only-acknowledged`
+authorizes exactly one explicit absolute workspace root. Home, cwd, relative,
+missing, non-directory, symlink, reparse, and redirecting roots are refused.
+The command computes the adapter source identity and creates or reconciles
+exactly one disabled `local-git-workspace` source with scopes exactly
+`workspace.structure`. The canonical root is stored only in the private sidecar
+and is never copied into `capture_sources.account_label`, public status, logs,
+receipts, portable export, or committed fixtures. A later different root is a
+new identity and is refused rather than silently retargeted.
+
+Existing `create`, `enable`, and `run` remain the lifecycle and execution
+authority. After enable, a foreground CLI run and an admin run use the same
+composed adapter and sink. This is manual opt-in foreground capture only. It
+does not start a scheduler thread, add scheduler tables or health UI, change
+the 20-file discovery cap, or productize Packet E continuous scheduling.

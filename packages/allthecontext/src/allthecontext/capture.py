@@ -2,8 +2,9 @@
 """Content-free Continuous Capture contracts and the local capture ledger.
 
 This module deliberately stops at a provider-neutral, foreground-only ledger.
-Adapters are injected by tests or a future connector package; this repository
-does not contain a network implementation or a credential-bearing adapter.
+Adapters are injected by tests or by ``capture_runtime`` when a valid
+machine-local workspace authorization exists. This repository does not contain
+a network implementation or a credential-bearing adapter.
 """
 
 from __future__ import annotations

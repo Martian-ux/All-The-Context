@@ -119,6 +119,18 @@ schema changes, checkpoint persistence, hosted CI, full pytest, release, or
 macOS. Empty-pack refusal remains covered separately by the existing Packet G
 empty-context test.
 
+### 2026-08-24 productized foreground local-workspace capture runtime
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Compose CoreService and CLI through one capture runtime | `capture_runtime.py`; `core/service.py`; `cli.py`; `tests/unit/test_capture_runtime.py` | Implemented locally: both surfaces construct `CaptureCoordinator` only through `compose_capture_coordinator`; the registered-source sink is always injected; the local-workspace adapter is registered only for a valid machine-local sidecar |
+| Authorize exactly one canonical local workspace root without leaking the path | `authorize_local_workspace`; `atc capture authorize-workspace`; private sidecar under `CoreConfig.data_dir` | Implemented locally: explicit absolute `--root` plus local-only acknowledgement; identity-bound disabled `local-git-workspace` source with scopes exactly `workspace.structure`; root stays out of account labels, public status, logs, receipts, portable export, and fixtures; changed roots are a new identity and are refused |
+| Keep Core available when authorization is absent or invalid | CoreService composition fail-closed adapter registration | Implemented locally: missing/invalid sidecar, missing/non-directory/symlink/reparse/implicit home/cwd/redirecting roots, and retargeted sidecar identity leave the vault available and capture skipped as `capture_adapter_unavailable` |
+| Produce Memory Truth / Retrieval V3 records from one foreground run | existing capture coordinator, registered-source sink, and retrieval engine through the shared runtime | Implemented locally for manual opt-in foreground capture after enable: structural facts and a deterministic no-fact, restart identity rebuild with idempotent replay, exact file-deletion withdrawal, and Core-authoritative correction/delete/purge barriers. Continuous Packet E scheduling remains open |
+
+This slice is not Packet E productization, complete Packet H, ZF-010, provider
+or network support, hosted/full-suite acceptance, release, or macOS support.
+
 ### 2026-08-23 registered-source admission PR1 contract
 
 | Requirement | Implementation/evidence | Status |

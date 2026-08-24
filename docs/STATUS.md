@@ -129,6 +129,42 @@ passed. `python -m mypy packages/allthecontext/src` passed (92 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
 was intentionally not run.
 
+## 2026-08-24 productized foreground local-workspace capture runtime
+
+This checkout adds a shared `capture_runtime` composition used by both
+`CoreService` and the contributor CLI. The registered-source sink is always
+injected. The experimental `LocalGitWorkspaceCaptureProviderAdapter` is
+registered only when a valid machine-local authorization sidecar exists under
+`CoreConfig.data_dir`. Core still starts if that sidecar is absent or invalid:
+capture degrades closed with `capture_adapter_unavailable`, and the vault
+remains available. No scheduler thread, scheduler table, health UI, dashboard,
+Packet G, ZF-010, provider/network/OAuth, migration, release, or file-cap
+change is included.
+
+Authorization is an explicit CLI command, `atc capture authorize-workspace`,
+with a required absolute `--root` and `--local-only-acknowledged`. It computes
+the adapter source identity, creates or reconciles exactly one disabled
+`local-git-workspace` source with scopes exactly `workspace.structure`, and
+returns content-free identifiers/status. The canonical workspace root stays in
+the private sidecar only; it is never written to `capture_sources.account_label`,
+public status, logs, receipts, portable export, or committed fixtures. A changed
+root is a new identity and is refused rather than silently retargeted. Existing
+`create` / `enable` / `run` remain authoritative. After enable, a foreground CLI
+run and an admin run use the same adapter and sink. This is manual opt-in
+foreground capture only; continuous Packet E scheduling remains open.
+
+Focused sanitized tests cover no-authorization adapter unavailability without
+Core failure; authorize to one disabled exact source; enable/run admitting
+structural facts and a deterministic no-fact; restart identity rebuild and
+idempotent replay; CLI/Core composition parity; exact file-deletion withdrawal;
+Core-authoritative correction/delete/purge barriers; sidecar/path exclusion from
+public projections and export; and invalid, redirecting, and reparse roots
+failing closed.
+
+This does not claim complete Packet H, Packet E productization, provider
+support, hosted/full-suite acceptance, release, private-data evidence, or macOS
+support.
+
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats
