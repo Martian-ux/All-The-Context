@@ -201,7 +201,7 @@ run on comparable hardware.
 
 Packet H-D is a local evidence reconciliation for Packet F local workspace
 capture, the PR #78 registered-source admission contract, public Memory Truth,
-and Retrieval V3. It is branch-local, not on protected main, and not released.
+and Retrieval V3. PR #79 merged it to protected main; it is not released.
 It is not production wiring, a release gate, complete Packet H, or Phase 2
 acceptance. It does not exercise Packet E scheduler, Packet G reference host,
 ZF-010 automatic formation, or the full Wave 4 E–G composition, and it does not
@@ -263,15 +263,21 @@ so the checkout-source `sys.path` guard is active: `python -m bench.packet_h`
 Ruff check and Ruff format `--check` passed for the six Packet H Python files.
 `python -m mypy packages/allthecontext/src` passed (91 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
-was intentionally not run.
+was intentionally not run in that reconstruction. The exact PR #79 pre-merge
+head `34a0f96` had all 12 hosted required checks green, including 1,693 tests
+on Windows and 1,693 on Ubuntu, CodeQL, security, dashboards, and desktop
+artifacts.
 
 These are reproducible disposable proof reports, not frozen benchmark baselines,
 so no Packet H receipt is checked in under `baselines/`.
 
 The lane does not claim scheduled/continuous capture, startup integration,
-installed-provider/client support, archive import, OAuth/network support, hosted
-evidence, ranking/schema changes, release readiness, full-suite coverage, or
-native macOS support. macOS remains unsupported/deferred.
+installed-provider/client support, archive import, OAuth/network support,
+ranking/schema changes, release readiness, or native macOS support. It is not
+complete Packet H, Phase 2, production/CoreService/startup wiring, scheduled or
+continuous Packet F product acceptance, provider/client support, release
+acceptance, private-data evidence, or macOS support. macOS remains
+unsupported/deferred.
 
 ## Synthetic retrieval usefulness
 

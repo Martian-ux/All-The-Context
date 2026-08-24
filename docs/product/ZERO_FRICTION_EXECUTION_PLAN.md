@@ -6,7 +6,7 @@
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
 | Current execution frontier | Packet E/G composition and product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; Packet H-D is a branch-local disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -31,7 +31,7 @@ The first three foundations and the provider-neutral capture ledger are merged.
 Packet D supplied the disposable synthetic composition, and the Wave 3 E/F/G
 component seams are locally complete. PR #78 merged the Core-owned
 registered-source admission contract, so that seam is no longer missing. Packet
-H-D is a branch-local disposable proof over Packet F local workspace, that
+H-D is a merged disposable proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3; it does not exercise
 Packet E scheduler, Packet G reference host, ZF-010 automatic formation, the
 full Wave 4 E–G composition, or the Phase 2 journey. Remaining work is Packet
@@ -706,14 +706,14 @@ shaped content; G restores typed runtime sequencing state, uses its digest only
 for integrity, gives the sink a stable retry idempotency key, keeps L0 semantics
 truthful so generation can proceed without fabricated context, and leaves empty
 L1+ Core context explicitly fail-closed. PR #78 merged the Core-owned
-registered-source admission contract, so that seam is no longer missing. Packet
-H-D later records a disposable foreground proof over Packet F, that admission
+registered-source admission contract, so that seam is no longer missing. PR #79
+merged a disposable Packet H-D foreground proof over Packet F, that admission
 contract, public Memory Truth, and Retrieval V3; it does not compose Packet E
 or Packet G and does not satisfy continuous/scheduled Packet F acceptance.
 Remaining work is Packet E/G composition and product acceptance, ZF-010,
 complete Wave 4 E–G, and Phase 2. ZF-007, ZF-008, and ZF-009 product
 acceptance; the first real continuous integration pair; production wiring;
-hosted acceptance; and release/support claims remain open. macOS remains
+and release/support claims remain open. macOS remains
 absent/deferred under the current project truth.
 
 ### Wave 4 — serial product-proof integration
@@ -729,7 +729,7 @@ from this proof. Breadth begins only after the real slice passes and the v0
 contracts are revised from its evidence.
 
 **Current progress (2026-08-24):** PR #78 merged the local registered-source
-admission contract. Packet H-D is a branch-local disposable proof that
+admission contract. Packet H-D is a merged disposable proof that
 exercises Packet F local workspace, that admission contract, public Memory
 Truth, and Retrieval V3 against a throwaway Core. It does not exercise Packet E
 scheduler, Packet G reference host, ZF-010 automatic formation, the full Wave 4
