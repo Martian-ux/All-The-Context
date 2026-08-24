@@ -168,6 +168,7 @@ def test_packet_h_capability_requires_internal_token_and_is_immutable() -> None:
         assert not any(root.iterdir())
 
     with packet_h._runner_owned_temporary_root("atc-packet-h-") as (root, ownership):
+        assert root == root.resolve()
         for field, value in (
             ("_root", root / "retargeted"),
             ("_temporary_name", "retargeted"),

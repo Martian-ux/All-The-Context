@@ -281,7 +281,7 @@ def _build_disposable_root_helpers() -> tuple[
 
         temporary_directory = TemporaryDirectory(prefix=prefix)
         with temporary_directory:
-            root = Path(temporary_directory.name)
+            root = Path(temporary_directory.name).resolve()
             ownership = _DisposableRootCapability(
                 temporary_directory,
                 runner_token=construction_sentinel,
