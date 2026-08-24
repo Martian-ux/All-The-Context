@@ -106,6 +106,19 @@ state on exit. The CLI modules insert this checkout's repository root and
 `packages/allthecontext/src` at the front of `sys.path` and fail closed if
 imported `allthecontext` does not resolve under that checkout source.
 
+### 2026-08-24 Packet G + Core Retrieval V3 lifecycle visibility
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Accepted L1+ pre-generation compilation fails closed without a Core principal | `experimental_reference_host.py::MissingCorePrincipal`; `compile_before_generation`; `tests/unit/test_experimental_reference_host.py` | Implemented locally: L1+ refuses before request/retrieval/delivery/generation when no `ClientPrincipal` is supplied. Ordinary MCP/L0 still returns `UnsupportedHookReport` and does not call the compiler |
+| Next compile reflects Core lifecycle through the controlled host only | `experimental_reference_host_lifecycle.py`; `tests/unit/test_reference_host_retrieval_lifecycle.py` | Implemented locally as sanitized composition evidence: `ControlledReferenceHostV0` is the only compiler; authorized current decision and preference are visible; an ACL-private record is excluded for another principal; missing principal refuses before retrieval; correction includes the replacement and excludes the displaced value; ordinary delete, expiry, and terminal purge stay absent; one authorized record survives purge; restart/checkpoint restores host ordering/integrity only and does not duplicate Core truth; imported instruction-like direct text remains untrusted; secret-like input is refused content-free. Truth is seeded only through authenticated Core candidate/lifecycle APIs |
+
+This slice does not close ZF-010, Packet E/F, complete Packet H, Phase 2,
+CoreService/startup wiring, MCP lifecycle support, provider support, ranking or
+schema changes, checkpoint persistence, hosted CI, full pytest, release, or
+macOS. Empty-pack refusal remains covered separately by the existing Packet G
+empty-context test.
+
 ### 2026-08-23 registered-source admission PR1 contract
 
 | Requirement | Implementation/evidence | Status |

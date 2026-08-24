@@ -61,6 +61,14 @@ class SecretLikePayloadRefused(ReferenceHostError):
         self.reason_code = "direct_secret_like_content"
 
 
+class MissingCorePrincipal(ReferenceHostError):
+    """Raised when accepted L1+ compilation has no Core ClientPrincipal."""
+
+    def __init__(self) -> None:
+        super().__init__("accepted L1+ compilation requires a Core ClientPrincipal")
+        self.reason_code = "missing_core_principal"
+
+
 @dataclass(frozen=True, slots=True)
 class CapabilityNegotiation:
     """Requested versus actually accepted capability, without provider claims."""
@@ -467,6 +475,12 @@ class ControlledReferenceHostV0(DeterministicFakeClientRuntimeHost):
     ):
         """Run request → existing Core compiler → delivery → generation."""
 
+        if self.capabilities.supports("pre_generation_context_request") and not isinstance(
+            principal, ClientPrincipal
+        ):
+            # L1+ compilation is authorization-first. Ordinary MCP/L0 still
+            # returns UnsupportedHookReport and never reaches retrieval.
+            raise MissingCorePrincipal()
         request = self.request_pre_generation_context(
             generation_id=generation_id,
             requested_scopes=requested_scopes,
@@ -706,6 +720,7 @@ __all__ = [
     "CheckpointSink",
     "ControlledReferenceHostV0",
     "CoreContextCompiler",
+    "MissingCorePrincipal",
     "ReferenceHost",
     "ReferenceHostError",
     "ReferenceHostTransport",
