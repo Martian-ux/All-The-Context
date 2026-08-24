@@ -14,6 +14,7 @@ import pytest
 from allthecontext import cli
 from allthecontext.capture import (
     CaptureCoordinator,
+    CaptureError,
     CaptureEvent,
     CapturePage,
     DeterministicFakeAdapter,
@@ -31,6 +32,7 @@ from allthecontext.capture_scheduler import (
     UPDATE_HEALTH_OPERATION_ENV,
     CoreCaptureScheduler,
     SchedulerConfig,
+    scheduler_update_health_forced_off,
 )
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
@@ -104,6 +106,51 @@ def _event(event_id: str = "scheduler-product-event") -> CaptureEvent:
 def _open_process_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
     monkeypatch.delenv(UPDATE_HEALTH_OPERATION_ENV, raising=False)
+
+
+def _wait_until(predicate: Any, *, timeout: float = 5.0, interval: float = 0.01) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(interval)
+    raise AssertionError("condition was not met before timeout")
+
+
+def _blocking_core_scheduler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    join_timeout_seconds: float = 0.2,
+    poll_interval_seconds: int = 1,
+) -> tuple[CoreCaptureScheduler, threading.Event, threading.Event, CoreStore]:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    source_id = _source(coordinator)
+    coordinator.enable(source_id)
+    started = threading.Event()
+    release = threading.Event()
+
+    class _BlockingAdapter(DeterministicFakeAdapter):
+        def fetch_page(self, source: Any, cursor: str | None, page_order: int) -> CapturePage:
+            started.set()
+            assert release.wait(timeout=5)
+            return super().fetch_page(source, cursor, page_order)
+
+    coordinator.register_adapter("fake", _BlockingAdapter((_page(_event()),)))
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=poll_interval_seconds),
+        clock=clock,
+        join_timeout_seconds=join_timeout_seconds,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    return scheduler, started, release, store
 
 
 def test_scheduler_disabled_by_default_without_env_or_sidecar(tmp_path: Path) -> None:
@@ -443,17 +490,19 @@ def test_authenticated_scheduler_endpoints_and_cli_status_enable_disable(
         capsys,
     )
     assert cli_status["durable_enabled"] is False
+    assert "running" not in cli_status
     cli_enabled = _cli(
         ["atc", "capture", "scheduler", "enable", "--data-dir", str(config.data_dir)],
         capsys,
     )
     assert cli_enabled["durable_enabled"] is True
-    assert cli_enabled["running"] is False
+    assert "running" not in cli_enabled
     cli_disabled = _cli(
         ["atc", "capture", "scheduler", "disable", "--data-dir", str(config.data_dir)],
         capsys,
     )
     assert cli_disabled["durable_enabled"] is False
+    assert "running" not in cli_disabled
     help_text = cli.build_parser().format_help()
     assert "run_forever" not in help_text
     with pytest.raises(SystemExit):
@@ -524,7 +573,7 @@ def test_bounded_join_returns_during_in_flight_cycle(
         assert time.monotonic() - began < 1.0
     finally:
         release.set()
-        scheduler.stop()
+        scheduler.shutdown()
         store.close()
 
 
@@ -580,3 +629,354 @@ def test_cli_has_no_capture_scheduler_run_forever_entrypoint() -> None:
     assert "run_forever" not in capture_help
     assert "run_forever" not in scheduler_help
     assert "never a daemon" in capture_help.lower()
+
+
+def test_shutdown_waits_until_worker_is_dead(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        finished = threading.Event()
+
+        def do_shutdown() -> None:
+            scheduler.shutdown()
+            finished.set()
+
+        worker = threading.Thread(target=do_shutdown)
+        worker.start()
+        assert finished.wait(timeout=0.3) is False
+        assert scheduler.status()["running"] is True
+        release.set()
+        assert finished.wait(timeout=5) is True
+        worker.join(timeout=5)
+        assert worker.is_alive() is False
+        assert scheduler.status()["running"] is False
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+        scheduler.shutdown()
+        assert scheduler.status()["running"] is False
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_core_service_close_waits_until_scheduler_thread_is_dead(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    service = CoreService(config)
+    started = threading.Event()
+    release = threading.Event()
+    original = service.capture_scheduler.run_cycle
+
+    def blocking_cycle() -> Any:
+        started.set()
+        assert release.wait(timeout=5)
+        return original()
+
+    try:
+        service.capture_scheduler.run_cycle = blocking_cycle  # type: ignore[method-assign]
+        service.capture_scheduler.enable()
+        service.capture_scheduler._wakeup.set()
+        assert started.wait(timeout=5)
+        finished = threading.Event()
+
+        def do_close() -> None:
+            service.close()
+            finished.set()
+
+        closer = threading.Thread(target=do_close)
+        closer.start()
+        assert finished.wait(timeout=0.3) is False
+        assert service.capture_scheduler.status()["running"] is True
+        release.set()
+        assert finished.wait(timeout=5) is True
+        closer.join(timeout=5)
+        assert closer.is_alive() is False
+        assert service.capture_scheduler.status()["running"] is False
+    finally:
+        release.set()
+        service.close()
+
+
+def test_disable_during_in_flight_then_enable_eventually_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        began = time.monotonic()
+        disabled = scheduler.disable()
+        assert time.monotonic() - began < 1.0
+        assert disabled["durable_enabled"] is False
+        enabled = scheduler.enable()
+        assert enabled["durable_enabled"] is True
+        assert enabled["dispatch_allowed"] is True
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        release.set()
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        assert scheduler.status()["reason_code"] == "enabled"
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_ordered_last_writer_enable_then_disable_is_coherent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        enabled = scheduler.enable()
+        assert enabled["durable_enabled"] is True
+        began = time.monotonic()
+        disabled = scheduler.disable()
+        assert time.monotonic() - began < 1.0
+        assert disabled["durable_enabled"] is False
+        assert disabled["dispatch_allowed"] is False
+        release.set()
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler.status()["durable_enabled"] is False
+        assert scheduler.status()["reason_code"] == "disabled"
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_concurrent_last_writer_sidecar_and_lifecycle_are_coherent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        barrier = threading.Barrier(2)
+
+        def do_enable() -> None:
+            barrier.wait()
+            scheduler.enable()
+
+        def do_disable() -> None:
+            barrier.wait()
+            scheduler.disable()
+
+        enable_thread = threading.Thread(target=do_enable)
+        disable_thread = threading.Thread(target=do_disable)
+        enable_thread.start()
+        disable_thread.start()
+        enable_thread.join(timeout=5)
+        disable_thread.join(timeout=5)
+        assert enable_thread.is_alive() is False
+        assert disable_thread.is_alive() is False
+        status = scheduler.status()
+        if status["durable_enabled"]:
+            assert status["dispatch_allowed"] is True
+            _wait_until(lambda: scheduler.status()["running"] is True)
+            assert scheduler.status()["reason_code"] == "enabled"
+        else:
+            assert status["dispatch_allowed"] is False
+            assert status["reason_code"] == "disabled"
+            release.set()
+            _wait_until(lambda: scheduler.status()["running"] is False)
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
+def test_update_health_empty_string_force_disables_including_lifespan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
+    monkeypatch.delenv(UPDATE_HEALTH_OPERATION_ENV, raising=False)
+    assert scheduler_update_health_forced_off() is False
+    monkeypatch.setenv(UPDATE_HEALTH_OPERATION_ENV, "")
+    assert scheduler_update_health_forced_off() is True
+    config = _config(tmp_path)
+    with CoreService(config) as service:
+        enabled = service.capture_scheduler.enable()
+        assert enabled["durable_enabled"] is True
+        assert enabled["update_health_forced_off"] is True
+        assert enabled["dispatch_allowed"] is False
+        assert enabled["running"] is False
+        assert enabled["reason_code"] == "forced_off"
+        service.capture_scheduler.start()
+        assert service.capture_scheduler.status()["running"] is False
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            assert client.get("/health").json() == {"status": "ok", "component": "core"}
+            assert service.capture_scheduler.status()["running"] is False
+
+
+def test_cli_scheduler_status_does_not_claim_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    config.prepare()
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    payload = _cli(
+        ["atc", "capture", "scheduler", "status", "--data-dir", str(config.data_dir)],
+        capsys,
+    )
+    assert payload["durable_enabled"] is True
+    assert payload["dispatch_allowed"] is True
+    assert "running" not in payload
+    assert payload.get("running") is not False
+
+
+def test_run_cycle_expected_errors_are_content_free_not_fake_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    secret = tmp_path / "scheduler-oserror-do-not-leak"
+    secret.write_text("secret-path\n", encoding="utf-8")
+    with CoreService(config) as service:
+        write_scheduler_enabled(config.data_dir, enabled=True)
+
+        def raise_capture(*_args: object, **_kwargs: object) -> None:
+            raise CaptureError("capture_failed")
+
+        monkeypatch.setattr(
+            "allthecontext.capture_scheduler.refresh_local_workspace_adapter",
+            raise_capture,
+        )
+        capture_report = service.capture_scheduler.run_cycle()
+        assert capture_report.dispatched == ()
+        assert capture_report.results == ()
+        assert capture_report.health.state == "unavailable"
+        assert capture_report.health.reason_codes == ("capture_failed",)
+        assert capture_report.plan.enabled is True
+
+        def raise_oserror(*_args: object, **_kwargs: object) -> None:
+            raise OSError(22, "invalid argument", str(secret))
+
+        monkeypatch.setattr(
+            "allthecontext.capture_scheduler.refresh_local_workspace_adapter",
+            raise_oserror,
+        )
+        os_report = service.capture_scheduler.run_cycle()
+        assert os_report.dispatched == ()
+        assert os_report.results == ()
+        assert os_report.health.state == "unavailable"
+        assert os_report.health.reason_codes == ("capture_failed",)
+        rendered = json.dumps(
+            {
+                "enabled": os_report.plan.enabled,
+                "reason_codes": list(os_report.health.reason_codes),
+                "state": os_report.health.state,
+            }
+        )
+        _assert_no_root_leak(rendered, secret)
+        assert str(secret) not in rendered
+        status = service.capture_scheduler.status()
+        _assert_no_root_leak(status, secret)
+
+        def raise_programmer(*_args: object, **_kwargs: object) -> None:
+            raise TypeError("internal-scheduler-bug")
+
+        monkeypatch.setattr(
+            "allthecontext.capture_scheduler.refresh_local_workspace_adapter",
+            raise_programmer,
+        )
+        with pytest.raises(TypeError, match="internal-scheduler-bug"):
+            service.capture_scheduler.run_cycle()
+
+
+def test_loop_keeps_running_after_expected_capture_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+    raised = threading.Event()
+    original = scheduler.dispatch_allowed
+
+    def flaky() -> bool:
+        if not raised.is_set():
+            raised.set()
+            raise CaptureError("capture_failed")
+        return original()
+
+    try:
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        scheduler.dispatch_allowed = flaky  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: raised.is_set() and scheduler.status()["running"] is True)
+        assert scheduler.status()["running"] is True
+    finally:
+        scheduler.shutdown()
+        store.close()
+
+
+def test_loop_does_not_swallow_programmer_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _open_process_gate(monkeypatch)
+    config = _config(tmp_path)
+    clock = _MutableClock()
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    coordinator = CaptureCoordinator(store, clock=clock, sink=IdempotentFakeSink())
+    scheduler = CoreCaptureScheduler(
+        coordinator,
+        config,
+        scheduler_config=SchedulerConfig(poll_interval_seconds=1),
+        clock=clock,
+    )
+    write_scheduler_enabled(config.data_dir, enabled=True)
+
+    def boom() -> bool:
+        raise TypeError("internal-scheduler-bug")
+
+    observed: list[BaseException | None] = []
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is TypeError:
+            observed.append(args.exc_value)
+            return
+        threading.__excepthook__(args)
+
+    monkeypatch.setattr(threading, "excepthook", hook)
+    try:
+        scheduler.start()
+        _wait_until(lambda: scheduler.status()["running"] is True)
+        scheduler.dispatch_allowed = boom  # type: ignore[method-assign]
+        scheduler._wakeup.set()
+        _wait_until(lambda: scheduler.status()["running"] is False)
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+        assert observed
+        assert isinstance(observed[0], TypeError)
+    finally:
+        scheduler.shutdown()
+        store.close()

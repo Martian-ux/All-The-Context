@@ -46,9 +46,9 @@ class CoreService:
         return cls(CoreConfig.in_directory(data_dir, require_auth=require_auth))
 
     def close(self) -> None:
-        """Stop the capture scheduler then release store resources."""
+        """Wait for the capture scheduler worker to die, then release store resources."""
         try:
-            self.capture_scheduler.stop()
+            self.capture_scheduler.shutdown()
         finally:
             self.store.close()
 

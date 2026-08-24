@@ -288,26 +288,39 @@ Dispatch requires all of:
 - the exact process gate `ATC_CAPTURE_SCHEDULER_ENABLED=1`
 - a valid machine-local sidecar `capture-scheduler.json` under
   `CoreConfig.data_dir` with `version` 1 and `enabled` true
-- no `ATC_UPDATE_HEALTH_OPERATION` value
+- no `ATC_UPDATE_HEALTH_OPERATION` variable in the process environment
 
-Any nonempty update-health operation environment value force-disables the
-scheduler so installer/update probes cannot start it. Missing sidecars are
-disabled. Invalid sidecar bodies fail closed as disabled without preventing
+Any presence of the update-health operation environment variable, including
+the empty string, force-disables the scheduler so installer/update probes
+cannot start it. Lifespan uses the same helper as dispatch. Missing sidecars
+are disabled. Invalid sidecar bodies fail closed as disabled without preventing
 Core start. The sidecar is content-free: only version and the boolean
 enablement flag, written through the same atomic bounded private-file pattern
-as workspace authorization.
+as workspace authorization, and therefore inherits the Windows residual that
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable so a blocking named-pipe sidecar can
+stall the read.
 
 The FastAPI lifespan starts at most one non-daemon scheduler thread after Core
-is ready, and only when those gates pass. The loop waits on an interruptible
-`threading.Event` rather than an unbounded sleep. Lifespan `finally` and
-`CoreService.close` set the event and join with a bound; both stops are
-idempotent. At most one worker/run executes; overlapping cycles are refused.
-Expired and other nonterminal capture runs are recovered on Core start and at
-the start of each enabled cycle before due evaluation, so an expired
-reconciling source can become due through the existing resume/run path.
-Local-workspace source lifecycle remains explicit. The scheduler runs only due
-enabled sources and recovered retry paths, fail-closed and content-free per
-source, without killing Core.
+is ready, and only when those gates pass. Authenticated admin enable can start
+or revive that worker. The loop waits on an interruptible `threading.Event`
+rather than an unbounded sleep. Admin disable and prompt stop join with a
+bound; an in-flight cycle is allowed to complete and is not cancelled. Lifespan
+`finally` and `CoreService.close` wait until the worker is dead before store
+and instance-lock release. Both stop and shutdown are idempotent. The worker
+is never a daemon. At most one worker/run executes in process; overlapping
+cycles are refused by an in-process global cycle lock. Cross-process exclusion
+remains the coordinator's per-source lease. Sidecar write plus the start/stop
+decision are serialized by a control mutex, and joins do not run while that
+mutex or the lifecycle mutex is held. Disable during an in-flight cycle
+followed by enable keeps or revives the same loop, or otherwise leaves the
+worker eventually running while every gate stays enabled. Expired and other
+nonterminal capture runs are recovered on Core start and at the start of each
+enabled cycle before due evaluation, so an expired reconciling source can
+become due through the existing resume/run path. Local-workspace source
+lifecycle remains explicit. The scheduler runs only due enabled sources and
+recovered retry paths. Expected `CaptureError` and `OSError` stay content-free
+per source or cycle; internal programmer failures are not turned into a fake
+successful-empty report.
 
 Authenticated admin surfaces:
 
@@ -317,7 +330,8 @@ Authenticated admin surfaces:
 
 `GET /v1/admin/capture/status` includes the same content-free scheduler object.
 Contributor CLI supports only `atc capture scheduler status`, `enable`, and
-`disable`. There is no CLI `run_forever` or daemon. `/health` remains exactly
+`disable`. CLI status does not emit `running` because it cannot observe the
+Core process. There is no CLI `run_forever` or daemon. `/health` remains exactly
 `{"status":"ok","component":"core"}` plus the existing optional proof field;
 scheduler partial or disabled state is not a readiness signal. Status and
 health reads do not consume one-shot reauthorization actions or mutate

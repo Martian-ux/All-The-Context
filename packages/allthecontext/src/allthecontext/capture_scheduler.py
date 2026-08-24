@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from typing import Any, Literal
 
 from .capture import (
@@ -49,6 +49,7 @@ HealthState = Literal["healthy", "degraded", "unavailable"]
 CAPTURE_SCHEDULER_ENABLED_ENV = "ATC_CAPTURE_SCHEDULER_ENABLED"
 UPDATE_HEALTH_OPERATION_ENV = "ATC_UPDATE_HEALTH_OPERATION"
 _CORE_SCHEDULER_JOIN_TIMEOUT_SECONDS = 8.0
+_CORE_SCHEDULER_JOIN_POLL_SECONDS = 0.05
 _CORE_SCHEDULER_THREAD_NAME = "atc-capture-scheduler"
 
 
@@ -625,17 +626,25 @@ def scheduler_process_gate_open() -> bool:
 
 
 def scheduler_update_health_forced_off() -> bool:
-    """Installer/update health probes must not start capture scheduling."""
+    """Installer/update health probes must not start capture scheduling.
 
-    return bool(os.environ.get(UPDATE_HEALTH_OPERATION_ENV))
+    Any presence of ``ATC_UPDATE_HEALTH_OPERATION``, including the empty string,
+    force-disables the scheduler.
+    """
+
+    return UPDATE_HEALTH_OPERATION_ENV in os.environ
 
 
 def capture_scheduler_status_payload(
     data_dir: Path,
     *,
-    running: bool = False,
+    running: bool | None = None,
 ) -> dict[str, Any]:
-    """Content-free scheduler status from env gates and the durable sidecar."""
+    """Content-free scheduler status from env gates and the durable sidecar.
+
+    ``running`` is included only when the caller can observe the Core worker.
+    Contributor CLI must omit it rather than report a false stopped state.
+    """
 
     durable = read_scheduler_durable_state(data_dir)
     process_gate = scheduler_process_gate_open()
@@ -651,7 +660,7 @@ def capture_scheduler_status_payload(
         reason_code = "disabled"
     else:
         reason_code = "enabled"
-    return {
+    payload: dict[str, Any] = {
         "config_valid": durable.valid,
         "dispatch_allowed": dispatch_allowed,
         "durable_enabled": durable.enabled and durable.valid,
@@ -659,9 +668,11 @@ def capture_scheduler_status_payload(
         "max_workers": 1,
         "process_gate": process_gate,
         "reason_code": reason_code,
-        "running": running,
         "update_health_forced_off": forced_off,
     }
+    if running is not None:
+        payload["running"] = running
+    return payload
 
 
 class CoreCaptureScheduler:
@@ -694,6 +705,7 @@ class CoreCaptureScheduler:
             clock=clock or coordinator.clock,
         )
         self._join_timeout_seconds = float(join_timeout_seconds)
+        self._control_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._cycle_lock = threading.Lock()
         self._stop = threading.Event()
@@ -709,35 +721,61 @@ class CoreCaptureScheduler:
     def status(self) -> dict[str, Any]:
         """Content-free scheduler status that does not mutate scheduling state."""
 
-        thread = self._thread
+        with self._lifecycle_lock:
+            thread = self._thread
+            running = thread is not None and thread.is_alive()
         return capture_scheduler_status_payload(
             self.config.data_dir,
-            running=thread is not None and thread.is_alive(),
+            running=running,
         )
 
     def enable(self) -> dict[str, Any]:
-        write_scheduler_enabled(self.config.data_dir, enabled=True)
-        self.start()
-        self._wakeup.set()
+        with self._control_lock:
+            write_scheduler_enabled(self.config.data_dir, enabled=True)
+            self._start_unlocked()
         return self.status()
 
     def disable(self) -> dict[str, Any]:
-        write_scheduler_enabled(self.config.data_dir, enabled=False)
-        self.stop()
+        with self._control_lock:
+            write_scheduler_enabled(self.config.data_dir, enabled=False)
+            thread = self._signal_stop_unlocked()
+        self._join_worker(thread, timeout=self._join_timeout_seconds)
         return self.status()
 
     def start(self) -> None:
         """Start the non-daemon loop after Core is ready. Idempotent."""
 
+        with self._control_lock:
+            self._start_unlocked()
+
+    def stop(self) -> None:
+        """Signal stop and join with a bound. In-flight work completes. Idempotent."""
+
+        with self._control_lock:
+            thread = self._signal_stop_unlocked()
+        self._join_worker(thread, timeout=self._join_timeout_seconds)
+
+    def shutdown(self) -> None:
+        """Signal stop and wait until the non-daemon worker is dead. Idempotent.
+
+        This does not cancel in-flight coordinator work. Prompt admin disable
+        stays on ``stop`` / ``disable``.
+        """
+
+        with self._control_lock:
+            thread = self._signal_stop_unlocked()
+        self._join_worker(thread, timeout=None)
+
+    def _start_unlocked(self) -> None:
+        if scheduler_update_health_forced_off() or not self.dispatch_allowed():
+            return
+        spawned: threading.Thread | None = None
         with self._lifecycle_lock:
-            if scheduler_update_health_forced_off() or not self.dispatch_allowed():
-                return
             thread = self._thread
             if thread is not None and thread.is_alive():
-                if self._stop.is_set():
-                    thread.join(timeout=self._join_timeout_seconds)
-                if thread.is_alive():
-                    return
+                self._stop.clear()
+                self._wakeup.set()
+                return
             self._stop.clear()
             self._wakeup.clear()
             spawned = threading.Thread(
@@ -746,21 +784,59 @@ class CoreCaptureScheduler:
                 daemon=False,
             )
             self._thread = spawned
+        if spawned is not None:
             spawned.start()
 
-    def stop(self) -> None:
-        """Set the wait event and join with a bound. Idempotent."""
-
+    def _signal_stop_unlocked(self) -> threading.Thread | None:
         with self._lifecycle_lock:
             self._stop.set()
             self._wakeup.set()
             thread = self._thread
         if thread is not None and thread.is_alive():
-            thread.join(timeout=self._join_timeout_seconds)
+            return thread
+        return None
+
+    def _join_worker(
+        self,
+        thread: threading.Thread | None,
+        *,
+        timeout: float | None,
+    ) -> None:
+        if thread is not None and thread.is_alive():
+            if timeout is None:
+                while thread.is_alive() and self._stop.is_set():
+                    thread.join(timeout=_CORE_SCHEDULER_JOIN_POLL_SECONDS)
+            else:
+                deadline = monotonic() + timeout
+                while thread.is_alive() and self._stop.is_set():
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        break
+                    thread.join(timeout=min(remaining, _CORE_SCHEDULER_JOIN_POLL_SECONDS))
+        self._clear_dead_thread()
+
+    def _clear_dead_thread(self) -> None:
         with self._lifecycle_lock:
             current = self._thread
             if current is not None and not current.is_alive():
                 self._thread = None
+
+    def _try_exit(self, current: threading.Thread) -> bool:
+        with self._lifecycle_lock:
+            if not self._stop.is_set():
+                return False
+            if self._thread is current:
+                self._thread = None
+            return True
+
+    def _content_free_cycle_failure(self, error_code: str) -> SchedulerRunReport:
+        allowed = self.dispatch_allowed()
+        if not allowed:
+            self._scheduler.disable()
+        return SchedulerRunReport(
+            plan=SchedulePlan(enabled=allowed),
+            health=HealthSnapshot("unavailable", reason_codes=(error_code,)),
+        )
 
     def run_cycle(self) -> SchedulerRunReport:
         """Run one scheduled cycle without waiting. Fail closed per source."""
@@ -775,22 +851,32 @@ class CoreCaptureScheduler:
             refresh_local_workspace_adapter(self.coordinator, self.config)
             self._scheduler.enable()
             return self._scheduler.run_once()
-        except Exception:
-            return SchedulerRunReport(plan=SchedulePlan(enabled=True))
+        except CaptureError as error:
+            return self._content_free_cycle_failure(error.code)
+        except OSError:
+            return self._content_free_cycle_failure("capture_failed")
         finally:
             self._cycle_lock.release()
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                if self.dispatch_allowed():
-                    self.run_cycle()
-            except Exception:
-                pass
-            if self._stop.is_set():
-                break
-            self._wakeup.wait(timeout=float(self._scheduler.config.poll_interval_seconds))
-            self._wakeup.clear()
+        current = threading.current_thread()
+        try:
+            while True:
+                if self._try_exit(current):
+                    return
+                try:
+                    if self.dispatch_allowed():
+                        self.run_cycle()
+                except (CaptureError, OSError):
+                    pass
+                if self._try_exit(current):
+                    return
+                self._wakeup.wait(timeout=float(self._scheduler.config.poll_interval_seconds))
+                self._wakeup.clear()
+        finally:
+            with self._lifecycle_lock:
+                if self._thread is current:
+                    self._thread = None
 
 
 __all__ = [

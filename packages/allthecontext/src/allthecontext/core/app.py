@@ -55,7 +55,7 @@ from ..capture_runtime import (
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
-from ..capture_scheduler import UPDATE_HEALTH_OPERATION_ENV
+from ..capture_scheduler import scheduler_update_health_forced_off
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -296,8 +296,7 @@ def create_app(
         observer_executor = get_operation_observer_executor()
         try:
             await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
-            update_health_process = bool(os.environ.get(UPDATE_HEALTH_OPERATION_ENV))
-            if not update_health_process:
+            if not scheduler_update_health_forced_off():
                 await run_in_threadpool(core.capture_scheduler.start)
                 if (
                     updates.preferences.enabled
@@ -314,7 +313,7 @@ def create_app(
             yield
         finally:
             try:
-                await run_in_threadpool(core.capture_scheduler.stop)
+                await run_in_threadpool(core.capture_scheduler.shutdown)
             finally:
                 try:
                     await asyncio.get_running_loop().run_in_executor(

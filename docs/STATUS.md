@@ -182,36 +182,63 @@ work.
 
 Durable enablement is a content-free sidecar under `CoreConfig.data_dir`.
 Dispatch requires `ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid sidecar
-`enabled: true`, and no `ATC_UPDATE_HEALTH_OPERATION` value. Update-health
-probes force the scheduler off. Invalid sidecar bodies fail closed. The
-lifespan starts at most one non-daemon thread after Core is ready, waits with
-an interruptible `threading.Event`, and stops/joins with a bound in lifespan
-`finally` and `CoreService.close`. Cycles recover expired/nonterminal runs
-before due evaluation, refresh the local-workspace adapter the same way admin
-`run` does, and execute at most one worker without overlapping capture. Source
-failures stay per-source and content-free.
+`enabled: true`, and no `ATC_UPDATE_HEALTH_OPERATION` variable present.
+Any presence of that variable, including the empty string, force-disables the
+scheduler; lifespan uses the same helper. Invalid sidecar bodies fail closed.
+The scheduler sidecar inherits the authorization-sidecar Windows residual that
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable. The lifespan starts at most one
+non-daemon thread after Core is ready, waits with an interruptible
+`threading.Event`, and shuts down by waiting for worker death in lifespan
+`finally` and `CoreService.close` before store/instance-lock release. Admin
+disable and prompt stop remain bounded; in-flight cycles complete and are not
+cancelled. Admin enable can start or revive the worker. Sidecar write and the
+lifecycle decision are serialized by a control mutex; joins do not hold that
+mutex. In-process overlapping cycles are refused globally; cross-process
+exclusion remains the per-source coordinator lease. Cycles recover
+expired/nonterminal runs before due evaluation, refresh the local-workspace
+adapter the same way admin `run` does, and execute at most one worker without
+overlapping capture. Expected `CaptureError`/`OSError` stay content-free;
+programmer failures are not converted into a fake successful-empty report.
 
 Authenticated admin scheduler status/enable/disable and contributor CLI
 `atc capture scheduler status|enable|disable` are the only new surfaces. CLI
-has no `run_forever` or daemon. `/health` is unchanged; scheduler state is
+has no `run_forever` or daemon and does not emit `running` because it cannot
+observe the Core process. `/health` is unchanged; scheduler state is
 visible only on authenticated capture/admin status. Status reads do not consume
 one-shot reauthorization or mutate scheduling state.
 
 Focused sanitized tests cover disabled default, enable surviving restart,
 disable, due execution, no overlap, expired-run recovery, refresh after
-authorization, invalid config fail-closed, update-health force-off, prompt
-stop/join/idempotent close, exact `/health`, authenticated endpoints, CLI
-status/enable/disable, and no secret/path leakage. Local validation: 25 focused
-scheduler tests passed; `python -m ruff check .` and Ruff format `--check` on
-touched Python files passed; `python -m mypy packages/allthecontext/src`
-passed (93 source files); `git diff --check`, `scripts/check_docs.py`, and
-`python scripts/repository_security_scan.py --scope tree` passed (487 files, 0
-findings). Full repository pytest, hosted CI, private data, and macOS work
-were not run.
+authorization, invalid config fail-closed, update-health force-off including
+empty string and lifespan prevention, prompt bounded stop, shutdown waiting for
+a dead thread, disable-then-enable in-flight eventual running, ordered and
+concurrent last-writer coherence, exact `/health`, authenticated endpoints,
+CLI status/enable/disable without a false `running` claim, truthful
+content-free exception behavior, and no secret/path leakage. Full
+repository pytest, hosted CI, private data, and macOS work were not run.
 
 This does not claim complete Packet E product acceptance, complete Packet H,
 ZF-010, provider support, hosted/full-suite acceptance, release, private-data
 evidence, or macOS support.
+
+## 2026-08-24 Packet E scheduler hardening
+
+This checkout splits bounded admin/prompt stop from safe Core shutdown, keeps
+last-writer enable/disable coherent across in-flight cycles, treats empty
+`ATC_UPDATE_HEALTH_OPERATION` as forced off, stops swallowing programmer
+failures as successful-empty cycle reports, and stops CLI sidecar status from
+claiming `running: false`. `/health` is unchanged. The scheduler sidecar still
+inherits the Windows named-pipe `O_NONBLOCK`/`O_NOFOLLOW` residual.
+
+Local validation: 35 focused scheduler tests passed in 10.51 seconds
+(`tests/unit/test_capture_scheduler.py` and
+`tests/unit/test_capture_scheduler_productization.py`).
+`python -m ruff check .` and Ruff format `--check` on the touched Python files
+passed. `python -m mypy packages/allthecontext/src` passed (93 source files).
+`git diff --check` and `scripts/check_docs.py` passed.
+`python scripts/repository_security_scan.py --scope tree` passed (487 files, 0
+findings). Full repository pytest, hosted CI, private data, and macOS work
+were not run.
 
 ## 2026-08-24 productized foreground local-workspace capture runtime
 

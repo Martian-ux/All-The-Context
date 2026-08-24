@@ -561,7 +561,7 @@ def _cmd_capture_scheduler(args: argparse.Namespace) -> None:
         write_scheduler_enabled(config.data_dir, enabled=True)
     elif action == "disable":
         write_scheduler_enabled(config.data_dir, enabled=False)
-    _dump(capture_scheduler_status_payload(config.data_dir, running=False))
+    _dump(capture_scheduler_status_payload(config.data_dir))
 
 
 def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
@@ -1134,7 +1134,10 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     for scheduler_action, scheduler_help in (
-        ("status", "Show content-free capture scheduler gates and durable enablement"),
+        (
+            "status",
+            "Show content-free scheduler sidecar gates; does not observe Core",
+        ),
         ("enable", "Persist explicit scheduler enablement for the next Core start"),
         ("disable", "Persist scheduler disablement without running a capture loop"),
     ):
