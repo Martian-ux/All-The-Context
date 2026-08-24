@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Literal
@@ -9,6 +10,7 @@ from typing import Literal
 from ..capture_runtime import compose_capture_coordinator
 from ..capture_scheduler import CoreCaptureScheduler
 from ..config import CoreConfig
+from ..ids import utc_now
 from ..import_operations import ImportOperationService
 from ..importers import ArchiveImportService
 from ..ingestion import IngestionService
@@ -17,14 +19,28 @@ from ..storage import CoreStore
 
 
 class CoreService:
-    def __init__(self, config: CoreConfig) -> None:
+    def __init__(
+        self,
+        config: CoreConfig,
+        *,
+        clock: Callable[[], str] | None = None,
+    ) -> None:
         self.config = config
         self.config.prepare()
+        capture_clock = utc_now if clock is None else clock
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
-        self.capture = compose_capture_coordinator(self.store, self.config)
+        self.capture = compose_capture_coordinator(
+            self.store,
+            self.config,
+            clock=capture_clock,
+        )
         self.capture.ledger.recover_expired_runs()
-        self.capture_scheduler = CoreCaptureScheduler(self.capture, self.config)
+        self.capture_scheduler = CoreCaptureScheduler(
+            self.capture,
+            self.config,
+            clock=capture_clock,
+        )
         self.store.repair_preledger_secrets()
         while self.store.evaluate_staged_observations():
             pass

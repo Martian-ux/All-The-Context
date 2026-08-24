@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Packet E/G composition and product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance |
+| Current execution frontier | Packet G composition and product acceptance, complete Packet E product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), and Phase 2 |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F scheduled composition evidence now exists over that scheduler and is not ZF-007/ZF-008 product exit or complete Packet E/H acceptance; continuous/scheduled Packet F acceptance remains open |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -34,10 +34,17 @@ registered-source admission contract, so that seam is no longer missing. Packet
 H-D is a merged disposable proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3; it does not exercise
 Packet E scheduler, Packet G reference host, ZF-010 automatic formation, the
-full Wave 4 E–G composition, or the Phase 2 journey. Remaining work is Packet
-E/G composition and product acceptance, ZF-010, complete Wave 4 E–G, and Phase
-2. This plan does not turn the component seams or that partial proof into
-support, stable-SDK, or complete Packet H acceptance.
+full Wave 4 E–G composition, or the Phase 2 journey. Packet E x Packet F
+scheduled composition evidence now proves the opt-in Packet E scheduler can
+drive that local-workspace source through public Memory Truth and Retrieval
+V3 via two focused tests that call `capture_scheduler.run_cycle()`, the same
+method used by the background loop, without starting that thread; it is not
+ZF-007/ZF-008 product exit, complete Packet E product acceptance, complete
+Packet H, or Phase 2. Continuous/scheduled Packet F acceptance remains open.
+Remaining work is Packet G composition and product acceptance, complete
+Packet E product acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. This
+plan does not turn the component seams or those partial proofs into support,
+stable-SDK, or complete Packet H acceptance.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -710,11 +717,19 @@ registered-source admission contract, so that seam is no longer missing. PR #79
 merged a disposable Packet H-D foreground proof over Packet F, that admission
 contract, public Memory Truth, and Retrieval V3; it does not compose Packet E
 or Packet G and does not satisfy continuous/scheduled Packet F acceptance.
-Remaining work is Packet E/G composition and product acceptance, ZF-010,
-complete Wave 4 E–G, and Phase 2. ZF-007, ZF-008, and ZF-009 product
-acceptance; the first real continuous integration pair; production wiring;
-and release/support claims remain open. macOS remains
-absent/deferred under the current project truth.
+Packet E x Packet F scheduled composition evidence now proves the opt-in
+Packet E scheduler can drive Packet F local-workspace ingestion through public
+Memory Truth and Retrieval V3 via two focused tests that call
+`capture_scheduler.run_cycle()`, the same method used by the background loop,
+without starting that thread; that is not ZF-007/ZF-008 product exit,
+complete Packet E product acceptance, or complete Packet H.
+Continuous/scheduled Packet F acceptance remains open. Remaining work is
+Packet G composition and product acceptance, complete Packet E product
+acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. ZF-007, ZF-008, and
+ZF-009 product acceptance; the first real continuous integration pair; and
+release/support claims remain open. PRs #82 and #84 already wired
+CoreService/startup capture-runtime composition and the opt-in Packet E
+scheduler. macOS remains absent/deferred under the current project truth.
 
 ### Wave 4 — serial product-proof integration
 
@@ -733,11 +748,15 @@ admission contract. Packet H-D is a merged disposable proof that
 exercises Packet F local workspace, that admission contract, public Memory
 Truth, and Retrieval V3 against a throwaway Core. It does not exercise Packet E
 scheduler, Packet G reference host, ZF-010 automatic formation, the full Wave 4
-E–G composition described above, or the Phase 2 journey. Packet E and Packet G
-remain component-complete; remaining work is their composition and product
-acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. Packet H-D is not
-complete Packet H or Phase 2 acceptance and does not satisfy continuous or
-scheduled Packet F acceptance.
+E–G composition described above, or the Phase 2 journey. Packet E x Packet F
+scheduled composition evidence now proves the opt-in Packet E scheduler can
+drive that local-workspace source through public Memory Truth and Retrieval
+V3; it is not ZF-007/ZF-008 product exit, complete Packet E product
+acceptance, complete Packet H, or Phase 2. Continuous/scheduled Packet F
+acceptance remains open. Packet E and Packet G remain component-complete;
+remaining work is Packet G composition and product acceptance, complete
+Packet E product acceptance, ZF-010, complete Wave 4 E–G, and Phase 2.
+Packet H-D is not complete Packet H or Phase 2 acceptance.
 
 ## 14. Proposed GitHub issue hierarchy
 
