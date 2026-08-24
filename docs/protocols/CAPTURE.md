@@ -228,14 +228,17 @@ missing, non-directory, symlink, reparse, parent/intermediate redirecting,
 UNC/`//` network-style, and Windows remote-volume roots are refused. The
 command holds the sidecar lock across read, identity, complete source
 inventory, reconcile/create, and write. It computes the adapter source identity
-and creates or reconciles exactly one disabled `local-git-workspace` source
-with scopes exactly `workspace.structure`, account label `local-workspace`,
-local-only acknowledgement, and a non-revoked lifecycle. Inventory walks every
-bounded `list_sources` page rather than stopping at 100 rows. The canonical
-root is stored only in the private sidecar and is never copied into
-`capture_sources.account_label`, public status, logs, receipts, portable
-export, or committed fixtures. A later different root is a new identity and is
-refused rather than silently retargeted.
+and creates exactly one disabled `local-git-workspace` source with scopes
+exactly `workspace.structure`, account label `local-workspace`, local-only
+acknowledgement, and a non-revoked lifecycle. Reconciliation preserves the
+existing acceptable non-revoked lifecycle rather than resetting enabled, paused,
+degraded, or reconciling to disabled. Inventory walks every bounded
+`list_sources` page rather than stopping at 100 rows and fail-closes on any
+unreadable or malformed capture row, including invalid `requested_scopes_json`,
+without crashing Core. The canonical root is stored only in the private sidecar
+and is never copied into `capture_sources.account_label`, public status, logs,
+receipts, portable export, or committed fixtures. A later different root is a
+new identity and is refused rather than silently retargeted.
 
 Generic `atc capture create` and `POST /v1/admin/capture/sources` reject
 `local-git-workspace` with `capture_authorize_workspace_required` and require
@@ -244,9 +247,12 @@ the lifecycle and execution authority after authorization. After enable, a
 foreground CLI run and an admin run use the same composed adapter and sink.
 
 Sidecar files that are not regular, are symlink or reparse points, or exceed 16
-KiB are ignored so Core still starts. Revoked or pre-existing malformed
-workspace-source rows are terminal in this slice: they are not deleted, not
-un-revoked, and not auto-repaired. Durable uniqueness is later hardening.
+KiB are ignored so Core still starts. Sidecar bodies are read with a 16 KiB+1
+byte bound after lstat. Authorization fail-closed errors suppress exception
+context so path-bearing OSError context does not leak. Revoked or pre-existing
+malformed workspace-source rows are terminal in this slice: they are not
+deleted, not un-revoked, and not auto-repaired. Durable uniqueness is later
+hardening.
 
 This is manual opt-in foreground capture only. It does not start a scheduler
 thread, add scheduler tables or health UI, change the 20-file discovery cap, or

@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 import threading
+import traceback
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,11 +16,13 @@ from typing import Any, cast
 
 import pytest
 from allthecontext import cli
-from allthecontext.capture import CaptureError
+from allthecontext.capture import CaptureError, CaptureSource
 from allthecontext.capture_runtime import (
+    _SOURCE_PAGE_SIZE,
     AUTHORIZATION_FILENAME,
     LOCAL_WORKSPACE_ACCOUNT_LABEL,
     MAX_AUTHORIZATION_SIDECAR_BYTES,
+    _complete_source_inventory,
     authorization_lock_path,
     authorization_path,
     authorize_local_workspace,
@@ -113,6 +116,25 @@ def _assert_no_root_leak(material: Any, *roots: Path) -> None:
             assert form not in rendered
 
 
+def _assert_content_free_capture_error(
+    error: BaseException,
+    *roots: Path,
+    code: str,
+    forbidden: tuple[str, ...] = (),
+) -> None:
+    assert isinstance(error, CaptureError)
+    assert error.code == code
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert error.__suppress_context__ is True
+    rendered = "".join(traceback.format_exception(error))
+    _assert_no_root_leak(str(error), *roots)
+    _assert_no_root_leak(rendered, *roots)
+    for marker in forbidden:
+        assert marker not in str(error)
+        assert marker not in rendered
+
+
 def _write_sidecar(config: CoreConfig, workspace: Path, identity: str) -> None:
     authorization_path(config.data_dir).write_text(
         json.dumps(
@@ -138,6 +160,29 @@ def _seed_fake_sources(config: CoreConfig, count: int) -> None:
                 account_label=f"bulk-{index:03d}",
                 local_only_acknowledged=True,
             )
+
+
+def _paged_source(index: int) -> CaptureSource:
+    stamp = "2026-08-24T00:00:00.000000Z"
+    return CaptureSource(
+        id=f"source-{index:04d}",
+        provider="fake",
+        account_label=f"bulk-{index:04d}",
+        account_fingerprint=None,
+        requested_scopes=(),
+        local_only=True,
+        local_only_acknowledged=True,
+        lifecycle_state="disabled",
+        retry_count=0,
+        next_retry_at=None,
+        last_error_code=None,
+        last_error_at=None,
+        lag_events=0,
+        lag_pages=0,
+        created_at=stamp,
+        updated_at=stamp,
+        last_run_at=None,
+    )
 
 
 def _cli(argv: list[str], capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
@@ -628,17 +673,34 @@ def test_missing_non_directory_home_and_cwd_roots_fail_closed(tmp_path: Path) ->
     file_root.write_text("nope\n", encoding="utf-8")
     with CoreService(config) as service:
         for root in (missing, file_root, Path("~"), Path("."), Path("workspace")):
-            with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+            with pytest.raises(CaptureError, match="capture_authorization_unavailable") as raised:
                 authorize_local_workspace(
                     service.store,
                     config,
                     root,
                     local_only_acknowledged=True,
                 )
-        with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+            _assert_content_free_capture_error(
+                raised.value,
+                missing,
+                file_root,
+                config.data_dir,
+                code="capture_authorization_unavailable",
+            )
+        with pytest.raises(CaptureError, match="capture_authorization_unavailable") as home_raised:
             canonical_workspace_root(Path("~"))
-        with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+        _assert_content_free_capture_error(
+            home_raised.value,
+            config.data_dir,
+            code="capture_authorization_unavailable",
+        )
+        with pytest.raises(CaptureError, match="capture_authorization_unavailable") as cwd_raised:
             canonical_workspace_root(Path("."))
+        _assert_content_free_capture_error(
+            cwd_raised.value,
+            config.data_dir,
+            code="capture_authorization_unavailable",
+        )
         with pytest.raises(CaptureError, match="capture_local_only_required"):
             authorize_local_workspace(
                 service.store,
@@ -646,6 +708,92 @@ def test_missing_non_directory_home_and_cwd_roots_fail_closed(tmp_path: Path) ->
                 _workspace(tmp_path),
                 local_only_acknowledged=False,
             )
+    assert not authorization_path(config.data_dir).exists()
+
+
+def test_fail_closed_suppresses_oserror_context_on_lstat_and_resolve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    _init_vault(config)
+    leaked_lstat = os.fspath(workspace / "leaked-lstat-name")
+    leaked_resolve = os.fspath(workspace / "leaked-resolve-name")
+    original_lstat = Path.lstat
+    original_resolve = Path.resolve
+
+    def fail_lstat(self: Path) -> Any:
+        if self == workspace:
+            raise OSError(2, "lstat refused", leaked_lstat)
+        return original_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", fail_lstat)
+    with CoreService(config) as service:
+        with pytest.raises(CaptureError, match="capture_authorization_unavailable") as lstat_raised:
+            authorize_local_workspace(
+                service.store,
+                config,
+                workspace,
+                local_only_acknowledged=True,
+            )
+        with pytest.raises(
+            CaptureError, match="capture_authorization_unavailable"
+        ) as canonical_lstat:
+            canonical_workspace_root(workspace)
+    _assert_content_free_capture_error(
+        lstat_raised.value,
+        workspace,
+        config.data_dir,
+        code="capture_authorization_unavailable",
+        forbidden=(leaked_lstat, "lstat refused"),
+    )
+    _assert_content_free_capture_error(
+        canonical_lstat.value,
+        workspace,
+        config.data_dir,
+        code="capture_authorization_unavailable",
+        forbidden=(leaked_lstat, "lstat refused"),
+    )
+    monkeypatch.undo()
+
+    def fail_resolve(self: Path, strict: bool = False) -> Path:
+        if self == workspace:
+            raise OSError(2, "resolve refused", leaked_resolve)
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+    with CoreService(config) as service:
+        with pytest.raises(
+            CaptureError, match="capture_authorization_unavailable"
+        ) as resolve_raised:
+            authorize_local_workspace(
+                service.store,
+                config,
+                workspace,
+                local_only_acknowledged=True,
+            )
+        with pytest.raises(
+            CaptureError, match="capture_authorization_unavailable"
+        ) as canonical_resolve:
+            canonical_workspace_root(workspace)
+        resolve_error = resolve_raised.value
+        canonical_error = canonical_resolve.value
+    monkeypatch.undo()
+    _assert_content_free_capture_error(
+        resolve_error,
+        workspace,
+        config.data_dir,
+        code="capture_authorization_unavailable",
+        forbidden=(leaked_resolve, "resolve refused"),
+    )
+    _assert_content_free_capture_error(
+        canonical_error,
+        workspace,
+        config.data_dir,
+        code="capture_authorization_unavailable",
+        forbidden=(leaked_resolve, "resolve refused"),
+    )
     assert not authorization_path(config.data_dir).exists()
 
 
@@ -811,6 +959,53 @@ def test_malformed_workspace_source_beyond_100_rows_does_not_register_adapter(
     assert total == 111
     assert len(workspace_sources) == 1
     assert workspace_sources[0].account_label == "wrong-label"
+
+
+def test_unreadable_requested_scopes_json_fail_closes_core_and_authorize(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    authorized = _authorize(config, workspace)
+    poison = "{not-json"
+    with CoreService(config) as service, service.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET requested_scopes_json=? WHERE id=?",
+            (poison, authorized["id"]),
+        )
+    with CoreService(config) as service:
+        assert service.store.status()["vault_id"]
+        assert service.capture.adapters == {}
+        with pytest.raises(CaptureError, match="capture_failed") as raised:
+            authorize_local_workspace(
+                service.store,
+                config,
+                workspace,
+                local_only_acknowledged=True,
+            )
+    _assert_content_free_capture_error(
+        raised.value,
+        workspace,
+        config.data_dir,
+        code="capture_failed",
+        forbidden=(poison, "JSONDecodeError", "Expecting property name"),
+    )
+
+
+def test_complete_source_inventory_crosses_source_page_boundary() -> None:
+    total = _SOURCE_PAGE_SIZE + 1
+    sources = [_paged_source(index) for index in range(total)]
+    calls: list[tuple[int, int]] = []
+
+    class PagedCoordinator:
+        def list_sources(self, *, limit: int, offset: int) -> tuple[list[CaptureSource], int]:
+            calls.append((limit, offset))
+            return sources[offset : offset + limit], total
+
+    inventory = _complete_source_inventory(cast(Any, PagedCoordinator()))
+    assert inventory is not None
+    assert [source.id for source in inventory] == [source.id for source in sources]
+    assert calls == [(_SOURCE_PAGE_SIZE, 0), (_SOURCE_PAGE_SIZE, _SOURCE_PAGE_SIZE)]
 
 
 def test_duplicate_workspace_sources_do_not_register_or_authorize(
@@ -1150,10 +1345,49 @@ def test_sidecar_symlink_reparse_directory_and_oversize_do_not_fail_core(
     try:
         os.symlink(target, sidecar)
     except OSError:
-        return
+        pytest.skip("sidecar symlink creation is unavailable")
     with CoreService(config) as service:
         assert service.store.status()["vault_id"]
         assert service.capture.adapters == {}
+
+
+def test_sidecar_read_is_bounded_to_max_plus_one_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _init_vault(config)
+    sidecar = authorization_path(config.data_dir)
+    sidecar.write_text("{}\n", encoding="utf-8")
+    requested: list[int] = []
+    original_open = Path.open
+    original_read_bytes = Path.read_bytes
+
+    def fail_unbounded(self: Path) -> bytes:
+        if self == sidecar:
+            raise AssertionError("unbounded sidecar read_bytes")
+        return original_read_bytes(self)
+
+    def tracking_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = original_open(self, *args, **kwargs)
+        if self != sidecar:
+            return handle
+        inner = handle.read
+
+        def tracked(size: int = -1) -> bytes:
+            requested.append(size)
+            return inner(size)
+
+        handle.read = tracked  # type: ignore[method-assign]
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", fail_unbounded)
+    monkeypatch.setattr(Path, "open", tracking_open)
+    with CoreService(config) as service:
+        assert service.store.status()["vault_id"]
+        assert service.capture.adapters == {}
+    assert requested
+    assert all(size == MAX_AUTHORIZATION_SIDECAR_BYTES + 1 for size in requested)
 
 
 def test_unc_and_network_style_roots_fail_closed(tmp_path: Path) -> None:

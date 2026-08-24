@@ -55,7 +55,7 @@ _ACCEPTABLE_WORKSPACE_LIFECYCLES = frozenset(
 def _fail_closed() -> NoReturn:
     """Raise a bounded authorization error without path or raw context."""
 
-    raise CaptureError("capture_authorization_unavailable")
+    raise CaptureError("capture_authorization_unavailable") from None
 
 
 def _fail_identity() -> NoReturn:
@@ -116,6 +116,8 @@ def _reject_redirecting_ancestors(root: Path) -> None:
         try:
             current_stat = current.lstat()
         except (OSError, RuntimeError):
+            current_stat = None
+        if current_stat is None:
             _fail_closed()
         if not stat.S_ISDIR(current_stat.st_mode) or _is_reparse_or_symlink(current_stat):
             _fail_closed()
@@ -141,6 +143,8 @@ def canonical_workspace_root(root: Path) -> Path:
     try:
         resolved = root.resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
+        resolved = None
+    if resolved is None:
         _fail_closed()
     if type(resolved) is not _PLAIN_PATH_TYPE:
         _fail_closed()
@@ -153,6 +157,9 @@ def canonical_workspace_root(root: Path) -> Path:
         resolved_stat = resolved.lstat()
         same_directory = root.samefile(resolved)
     except (OSError, RuntimeError):
+        resolved_stat = None
+        same_directory = False
+    if resolved_stat is None:
         _fail_closed()
     if (
         not same_directory
@@ -189,10 +196,11 @@ def _read_sidecar_document(data_dir: Path) -> dict[str, str] | None:
     if sidecar_stat.st_size <= 0 or sidecar_stat.st_size > MAX_AUTHORIZATION_SIDECAR_BYTES:
         return None
     try:
-        payload = path.read_bytes()
+        with path.open("rb") as handle:
+            payload = handle.read(MAX_AUTHORIZATION_SIDECAR_BYTES + 1)
     except (OSError, RuntimeError):
         return None
-    if len(payload) > MAX_AUTHORIZATION_SIDECAR_BYTES:
+    if not payload or len(payload) > MAX_AUTHORIZATION_SIDECAR_BYTES:
         return None
     try:
         loaded = json.loads(payload.decode("utf-8"))
@@ -265,6 +273,8 @@ def _build_adapter(root: Path) -> LocalGitWorkspaceCaptureProviderAdapter:
     try:
         adapter = LocalGitWorkspaceCaptureProviderAdapter((root,))
     except (TypeError, ValueError, OSError, RuntimeError):
+        adapter = None
+    if adapter is None:
         _fail_closed()
     if _WORKSPACE_IDENTITY.fullmatch(adapter.source_identity) is None:
         _fail_closed()
@@ -276,29 +286,29 @@ def _complete_source_inventory(coordinator: CaptureCoordinator) -> list[CaptureS
     seen: set[str] = set()
     offset = 0
     reported_total: int | None = None
-    while True:
-        try:
+    try:
+        while True:
             page, total = coordinator.list_sources(limit=_SOURCE_PAGE_SIZE, offset=offset)
-        except CaptureError:
-            return None
-        if reported_total is None:
-            reported_total = total
-            if reported_total > _MAX_SOURCE_INVENTORY:
+            if reported_total is None:
+                reported_total = total
+                if reported_total > _MAX_SOURCE_INVENTORY:
+                    return None
+            if total != reported_total or total > _MAX_SOURCE_INVENTORY:
                 return None
-        if total != reported_total or total > _MAX_SOURCE_INVENTORY:
-            return None
-        if not page:
-            break
-        for source in page:
-            if source.id in seen:
-                continue
-            seen.add(source.id)
-            collected.append(source)
-        offset += len(page)
-        if len(page) < _SOURCE_PAGE_SIZE or offset >= total:
-            break
-        if offset > _MAX_SOURCE_INVENTORY:
-            return None
+            if not page:
+                break
+            for source in page:
+                if source.id in seen:
+                    continue
+                seen.add(source.id)
+                collected.append(source)
+            offset += len(page)
+            if len(page) < _SOURCE_PAGE_SIZE or offset >= total:
+                break
+            if offset > _MAX_SOURCE_INVENTORY:
+                return None
+    except (CaptureError, json.JSONDecodeError, TypeError, ValueError, KeyError, UnicodeError):
+        return None
     if reported_total is None or len(collected) != reported_total:
         return None
     return collected
@@ -423,7 +433,7 @@ def _authorize_unlocked(
     coordinator = _new_coordinator(store)
     workspace_sources = _workspace_source_rows(coordinator)
     if workspace_sources is None:
-        raise CaptureError("capture_failed")
+        raise CaptureError("capture_failed") from None
     matching = [
         source for source in workspace_sources if _canonical_workspace_source(source, identity)
     ]

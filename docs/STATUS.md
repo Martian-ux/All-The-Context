@@ -143,15 +143,18 @@ change is included.
 
 Authorization is an explicit CLI command, `atc capture authorize-workspace`,
 with a required absolute `--root` and `--local-only-acknowledged`. It computes
-the adapter source identity, creates or reconciles exactly one disabled
-`local-git-workspace` source with scopes exactly `workspace.structure`, and
-returns content-free identifiers/status. The canonical workspace root stays in
-the private sidecar only; it is never written to `capture_sources.account_label`,
-public status, logs, receipts, portable export, or committed fixtures. A changed
-root is a new identity and is refused rather than silently retargeted. Existing
-`create` / `enable` / `run` remain authoritative. After enable, a foreground CLI
-run and an admin run use the same adapter and sink. This is manual opt-in
-foreground capture only; continuous Packet E scheduling remains open.
+the adapter source identity and creates exactly one disabled
+`local-git-workspace` source with scopes exactly `workspace.structure`.
+Reconciliation preserves the existing acceptable non-revoked lifecycle rather
+than resetting enabled, paused, degraded, or reconciling to disabled. The
+command returns content-free identifiers/status. The canonical workspace root
+stays in the private sidecar only; it is never written to
+`capture_sources.account_label`, public status, logs, receipts, portable export,
+or committed fixtures. A changed root is a new identity and is refused rather
+than silently retargeted. Existing `create` / `enable` / `run` remain
+authoritative. After enable, a foreground CLI run and an admin run use the same
+adapter and sink. This is manual opt-in foreground capture only; continuous
+Packet E scheduling remains open.
 
 Focused sanitized tests cover no-authorization adapter unavailability without
 Core failure; authorize to one disabled exact source; enable/run admitting
@@ -174,17 +177,24 @@ milestone work.
 Authorize holds the sidecar FileLock across read, identity, complete
 workspace-source inventory, reconcile/create, and write. Lock timeout and
 lock/write/unlink OS errors become content-free `capture_failed` without path
-cause. Core composition stays nonblocking and fail-closed: a held lock, invalid
-sidecar, or incomplete/malformed inventory leaves the vault available and does
-not register the adapter.
+cause. Authorization fail-closed errors suppress exception context so OSError
+filenames do not survive on `__context__` or tracebacks. Core composition stays
+nonblocking and fail-closed: a held lock, invalid sidecar, incomplete inventory,
+or any unreadable/malformed capture row (including invalid
+`requested_scopes_json`) leaves the vault available and does not register the
+adapter. Authorize on that vault returns a bounded content-free `CaptureError`
+rather than a decoder exception or raw row/path.
 
-Workspace-source inventory paginates beyond the first 100 `list_sources` rows.
-Registration and reconciliation require exactly one matching canonical row:
-provider `local-git-workspace`, account label `local-workspace`, exact
-fingerprint, exact `workspace.structure` scope, local-only acknowledgement, and
-a non-revoked lifecycle. Malformed, duplicate, mismatched, or revoked rows never
-register the adapter. Simultaneous authorize calls serialize so the same root
-yields one source and different roots yield one winner plus bounded refusal.
+Workspace-source inventory paginates beyond the first 100 `list_sources` rows
+and walks every 500-row page. Registration and reconciliation require exactly
+one matching canonical row: provider `local-git-workspace`, account label
+`local-workspace`, exact fingerprint, exact `workspace.structure` scope,
+local-only acknowledgement, and a non-revoked lifecycle. A newly created
+authorized source is disabled. Reconciliation preserves the existing acceptable
+lifecycle rather than resetting enabled, paused, degraded, or reconciling to
+disabled. Malformed, duplicate, mismatched, or revoked rows never register the
+adapter. Simultaneous authorize calls serialize so the same root yields one
+source and different roots yield one winner plus bounded refusal.
 
 Generic CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
 reject the reserved provider with `capture_authorize_workspace_required` and
@@ -192,11 +202,12 @@ direct operators to `authorize-workspace`. Other providers and the
 provider-neutral `CaptureCoordinator.create_source` test seam are unchanged.
 
 Sidecar reads lstat and refuses symlink/reparse/non-regular/oversize files (16
-KiB cap) without blocking Core startup. Plain Path roots walk every lexical
-ancestor and refuse parent/intermediate reparse or symlink directories, UNC/`//`
-network-style roots, and Windows remote volumes. Implicit cwd/home remain
-refused. Linux remote filesystems that are not `//` prefixes are not classified
-here.
+KiB cap) without blocking Core startup. The sidecar body is read with a MAX+1
+byte bound rather than an unbounded read between lstat and the size recheck.
+Plain Path roots walk every lexical ancestor and refuse parent/intermediate
+reparse or symlink directories, UNC/`//` network-style roots, and Windows remote
+volumes. Implicit cwd/home remain refused. Linux remote filesystems that are not
+`//` prefixes are not classified here.
 
 Revoked and pre-existing malformed workspace-source rows are a documented
 terminal recovery boundary: this slice does not delete ledger rows, un-revoke,

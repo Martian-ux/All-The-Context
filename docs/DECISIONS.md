@@ -46,29 +46,38 @@ using pathlib and the existing cross-platform atomic/private-file pattern
 (temporary file plus replace). The adjacent FileLock is held across the entire
 authorize read/identity/source-reconcile/write critical section. Ordinary Core
 composition uses a nonblocking lock attempt and fail-closes adapter
-registration if the lock is busy, the sidecar is invalid, or inventory cannot
-be completed. `filelock.Timeout` and lock/write/unlink `OSError` paths map to a
-content-free `CaptureError` with `__cause__` cleared. It does not assume POSIX
-permissions. Sidecar reads `lstat` first and refuses symlink, reparse,
-non-regular, empty, and oversize files using a 16 KiB cap; invalid sidecars do
-not prevent Core startup. Missing, non-directory, symlink, reparse, parent or
-intermediate redirecting, UNC/`//` network-style, Windows remote-volume,
-implicit-home (`~`), and implicit-cwd (relative) roots fail closed. A changed
-root is a new adapter identity; silent retargeting is refused. Path and raw
-errors do not cross public status, receipts, logs, or portable export. The root
-is never stored in `capture_sources.account_label`. Linux remote filesystems
-that are not `//` UNC-style prefixes are not classified in this slice.
+registration if the lock is busy, the sidecar is invalid, inventory cannot be
+completed, or any capture row is unreadable or malformed, including invalid
+`requested_scopes_json`. Core still starts with the vault available and without
+the adapter. Authorize on that vault returns a bounded content-free
+`CaptureError` rather than a decoder exception or raw row/path.
+`filelock.Timeout` and lock/write/unlink `OSError` paths map to a content-free
+`CaptureError` with `__cause__` cleared. Authorization fail-closed errors also
+suppress exception context (`from None`) so OSError filenames do not survive on
+`__context__` or tracebacks. It does not assume POSIX permissions. Sidecar
+reads `lstat` first and refuses symlink, reparse, non-regular, empty, and
+oversize files using a 16 KiB cap; the body is then read with a MAX+1 byte bound
+rather than an unbounded read. Invalid sidecars do not prevent Core startup.
+Missing, non-directory, symlink, reparse, parent or intermediate redirecting,
+UNC/`//` network-style, Windows remote-volume, implicit-home (`~`), and
+implicit-cwd (relative) roots fail closed. A changed root is a new adapter
+identity; silent retargeting is refused. Path and raw errors do not cross public
+status, receipts, logs, or portable export. The root is never stored in
+`capture_sources.account_label`. Linux remote filesystems that are not `//`
+UNC-style prefixes are not classified in this slice.
 
 `atc capture authorize-workspace --root PATH --local-only-acknowledged` is the
-opt-in command. It computes the adapter identity and creates or reconciles
-exactly one disabled `local-git-workspace` source with scopes exactly
-`workspace.structure`, constant account label `local-workspace`, local-only
-acknowledgement, and a non-revoked lifecycle. Workspace-source inventory walks
-the existing bounded `list_sources` pages to completion rather than the first
-100 rows. The adapter is registered only when exactly one matching canonical
-source exists. Generic contributor CLI `atc capture create` and admin
-`POST /v1/admin/capture/sources` reject the reserved `local-git-workspace`
-provider with `capture_authorize_workspace_required` and direct operators to
+opt-in command. It computes the adapter identity and creates exactly one
+disabled `local-git-workspace` source with scopes exactly `workspace.structure`,
+constant account label `local-workspace`, local-only acknowledgement, and a
+non-revoked lifecycle. Reconciliation preserves the existing acceptable
+non-revoked lifecycle rather than resetting enabled, paused, degraded, or
+reconciling to disabled. Workspace-source inventory walks the existing bounded
+`list_sources` pages to completion rather than the first 100 rows. The adapter
+is registered only when exactly one matching canonical source exists. Generic
+contributor CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
+reject the reserved `local-git-workspace` provider with
+`capture_authorize_workspace_required` and direct operators to
 `authorize-workspace`; other providers are unchanged. The
 `CaptureCoordinator.create_source` test seam stays provider-neutral.
 
