@@ -3,8 +3,10 @@
 This is local composition evidence for one conservative ZF-010 class, not a
 product runtime. It maps only accepted in-process Packet G L1+
 ``direct_user_turn`` envelopes through ``normalize_lifecycle_event``,
-``form_observation``, and authenticated ``add_candidate``. It does not own
-canonical records, infer kind, scan event logs, or compile context.
+``form_observation``, and authenticated ``add_candidate``. Envelope membership
+is in-memory object identity in ``host.events``, including after typed
+checkpoint restore; restore is not Core persistence. It does not own canonical
+records, infer kind, scan event logs, or compile context.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, cast
+from uuid import UUID
 
 from .client_runtime import (
     MAX_REFERENCE_BYTES,
@@ -28,6 +31,7 @@ from .experimental_event_observation import (
     MAX_REFERENCE_CHARS,
     AuthorizationApplicability,
     ContentInterpretation,
+    ContractViolation,
     EventLineage,
     EventObservationInput,
     EvidenceClass,
@@ -35,7 +39,6 @@ from .experimental_event_observation import (
     FormationStatus,
     ItemLineage,
     PayloadKind,
-    RetentionClass,
     SourceLineage,
     WitnessClass,
     form_observation,
@@ -110,6 +113,7 @@ def form_direct_user_turn(
     denied_clients: Sequence[str] = (),
     entity_key: str | None = None,
     attribute_key: str | None = None,
+    observed_at: datetime | None = None,
 ) -> DirectUserFormationResult:
     """Admit one caller-declared direct-user claim, correction, or forget."""
 
@@ -118,10 +122,15 @@ def form_direct_user_turn(
     accepted = _require_accepted_direct_user_envelope(host, envelope)
     durable = _require_durable_principal(store, principal, accepted)
     declared_kind = _require_declared_kind(kind, supersedes)
-    _require_optional_slot(entity_key, attribute_key)
+    _reject_slots(entity_key, attribute_key)
     _require_content_commitment(accepted, content)
-    authorization = _caller_authorization(allowed_clients, denied_clients)
-    observed_at = _observed_at(accepted)
+    scope_values = _require_label_sequence(scopes)
+    allowed = _require_label_sequence(allowed_clients)
+    denied = _require_label_sequence(denied_clients)
+    authorization = _caller_authorization(allowed, denied)
+    if accepted.retention_class != "bounded":
+        raise DirectUserFormationError("ephemeral_retention")
+    observed = _observed_at(accepted, observed_at)
     normalized = normalize_lifecycle_event(
         accepted,
         client_ref=durable.id,
@@ -129,15 +138,10 @@ def form_direct_user_turn(
         task_ref=accepted.task_id,
         workspace_ref=accepted.workspace_id,
         project_ref=accepted.project_id,
-        event_time=observed_at,
-        observed_time=observed_at,
+        event_time=observed,
+        observed_time=observed,
         authorization=authorization,
     )
-    if (
-        accepted.retention_class == "ephemeral"
-        or normalized.retention.retention_class is RetentionClass.SESSION
-    ):
-        raise DirectUserFormationError("ephemeral_retention")
     source_id = f"lifecycle:{durable.id}"
     payload = accepted.payload
     if type(payload) is not DirectUserTurnPayload:
@@ -165,30 +169,32 @@ def form_direct_user_turn(
         as_of=normalized.observed_time,
         refusal_ref=f"formation-{accepted.event_id}",
     )
+    operation_id = _idempotency_key(normalized.idempotency_material)
     if formation.status is FormationStatus.REFUSED and formation.refusal is not None:
         return _content_free_refusal(
             store,
             durable,
             content=content,
             reason=_formation_refusal_code(formation.refusal.reason_code),
-            idempotency_key=_idempotency_key(normalized.idempotency_material),
+            idempotency_key=operation_id,
         )
     if not formation.accepted or formation.proposal is None or formation.proposal.content is None:
         raise DirectUserFormationError("invalid_field")
     candidate = CandidateInput(
         kind=declared_kind,
         content=formation.proposal.content,
-        entity_key=entity_key,
-        attribute_key=attribute_key,
-        scopes=list(scopes),
+        entity_key=None,
+        attribute_key=None,
+        scopes=list(scope_values),
         source_id=None,
         source_reference=turn_ref.reference,
-        supersedes=supersedes,
+        supersedes=supersedes if declared_kind in _KINDS_REQUIRING_SUPERSEDES else None,
         explicit_user_statement=True,
         confidence=1.0,
-        allowed_clients=list(allowed_clients),
-        denied_clients=list(denied_clients),
-        idempotency_key=_idempotency_key(normalized.idempotency_material),
+        allowed_clients=list(allowed),
+        denied_clients=list(denied),
+        observed_at=observed.isoformat(),
+        idempotency_key=operation_id,
     )
     if contains_direct_secret(candidate):
         receipt = store.refuse_direct_candidate(
@@ -268,19 +274,18 @@ def _require_declared_kind(kind: object, supersedes: object) -> str:
     declared = kind.strip()
     if declared not in DIRECT_USER_FORMATION_KINDS:
         raise DirectUserFormationError("undeclared_kind")
-    if declared in _KINDS_REQUIRING_SUPERSEDES and (
-        type(supersedes) is not str or not supersedes.strip()
-    ):
-        raise DirectUserFormationError("missing_supersedes")
+    if declared in _KINDS_REQUIRING_SUPERSEDES:
+        if type(supersedes) is not str or not supersedes.strip():
+            raise DirectUserFormationError("missing_supersedes")
+        return declared
+    if supersedes is not None:
+        raise DirectUserFormationError("invalid_field")
     return declared
 
 
-def _require_optional_slot(entity_key: object, attribute_key: object) -> None:
-    if (entity_key is None) != (attribute_key is None):
+def _reject_slots(entity_key: object, attribute_key: object) -> None:
+    if entity_key is not None or attribute_key is not None:
         raise DirectUserFormationError("invalid_field")
-    for value in (entity_key, attribute_key):
-        if value is not None and (type(value) is not str or not value.strip()):
-            raise DirectUserFormationError("invalid_field")
 
 
 def _require_content_commitment(envelope: ClientLifecycleEnvelope, content: object) -> None:
@@ -307,26 +312,48 @@ def _require_content_commitment(envelope: ClientLifecycleEnvelope, content: obje
         raise DirectUserFormationError("commitment_mismatch")
 
 
+def _require_label_sequence(values: object) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise DirectUserFormationError("invalid_field")
+    items = tuple(values)
+    if any(type(item) is not str or not item.strip() for item in items):
+        raise DirectUserFormationError("invalid_field")
+    return items
+
+
 def _caller_authorization(
     allowed_clients: Sequence[str],
     denied_clients: Sequence[str],
 ) -> AuthorizationApplicability:
-    if isinstance(allowed_clients, (str, bytes)) or isinstance(denied_clients, (str, bytes)):
+    allowed = _require_label_sequence(allowed_clients)
+    denied = _require_label_sequence(denied_clients)
+    if frozenset(allowed) & frozenset(denied):
         raise DirectUserFormationError("invalid_field")
-    allowed = tuple(allowed_clients)
-    denied = tuple(denied_clients)
-    if any(type(item) is not str or not item.strip() for item in (*allowed, *denied)):
-        raise DirectUserFormationError("invalid_field")
-    return AuthorizationApplicability(
-        allowed_principals=frozenset(allowed) if allowed else None,
-        denied_principals=frozenset(denied),
-    )
+    try:
+        return AuthorizationApplicability(
+            allowed_principals=frozenset(allowed) if allowed else None,
+            denied_principals=frozenset(denied),
+        )
+    except ContractViolation:
+        raise DirectUserFormationError("invalid_field") from None
 
 
-def _observed_at(envelope: ClientLifecycleEnvelope) -> datetime:
-    if envelope.observed_at is None:
-        return datetime.now(UTC)
-    parsed = datetime.fromisoformat(envelope.observed_at.replace("Z", "+00:00"))
+def _observed_at(envelope: ClientLifecycleEnvelope, supplied: object) -> datetime:
+    if envelope.observed_at is not None:
+        return _aware_datetime(envelope.observed_at)
+    return _aware_datetime(supplied)
+
+
+def _aware_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif type(value) is str:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise DirectUserFormationError("invalid_field") from None
+    else:
+        raise DirectUserFormationError("invalid_field")
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise DirectUserFormationError("invalid_field")
     return parsed.astimezone(UTC)
@@ -336,7 +363,13 @@ def _idempotency_key(material: tuple[str | int, ...]) -> str:
     if len(material) != 3:
         raise DirectUserFormationError("invalid_field")
     client_id, event_id, sequence = material
-    return f"direct-user:{client_id}:{event_id}:{sequence}"
+    if type(client_id) is not str or type(event_id) is not str or type(sequence) is not int:
+        raise DirectUserFormationError("invalid_field")
+    digest = hashlib.sha256(f"{client_id}:{event_id}:{sequence}".encode()).digest()
+    packed = bytearray(digest[:16])
+    packed[6] = (packed[6] & 0x0F) | 0x40
+    packed[8] = (packed[8] & 0x3F) | 0x80
+    return str(UUID(bytes=bytes(packed)))
 
 
 def _formation_refusal_code(code: FormationRefusalCode) -> str:

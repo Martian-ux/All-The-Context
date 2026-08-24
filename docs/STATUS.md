@@ -25,10 +25,21 @@ in-process Packet G L1+ `direct_user_turn` envelopes. The mapper recomputes
 UTF-8 byte length and SHA-256 against the envelope `turn_ref`, then uses
 existing `normalize_lifecycle_event`, `form_observation`, and authenticated
 `add_candidate(..., client=principal)` only. Caller-declared kinds are closed:
-`interaction_preference`, `correction` with `supersedes`, and `context_forget`
-with `supersedes`. Kind is never inferred. `CandidateInput.source_id` stays
-`None`. Core rebinds registered principal scopes. ACL is an optional caller
-request and is not writer identity by default.
+`interaction_preference` with `supersedes=None` (any non-None supersedes,
+including empty or whitespace, is rejected before `add_candidate`),
+`correction` with a required nonblank `supersedes`, and `context_forget` with a
+required nonblank `supersedes`. Kind is never inferred. Preference cannot
+supersede a preference or `project_decision` target. `CandidateInput.source_id`
+stays `None`. Entity/attribute slots are rejected. Only `bounded` retention is
+admitted. Core rebinds registered principal scopes. ACL is an optional caller
+request and is not writer identity by default; allowed/denied overlap is a
+mapper `DirectUserFormationError`. Observation time is the envelope timestamp
+when valid, otherwise an explicit caller-supplied aware observation time for
+this composition seam; missing or naive timestamps are rejected and
+`datetime.now` is not synthesized. Secret-refusal replay uses a stable
+content-free UUIDv4-shaped operation id derived from `client_id+event_id+sequence`.
+Packet G checkpoint restore retries through the restored `host.events` object
+identity only; that restore is in-memory membership, not Core persistence.
 
 This is local composition evidence, not ZF-010 product exit, Packet E/F/H,
 Phase 2, CoreService or startup wiring, MCP lifecycle support, provider
@@ -37,14 +48,15 @@ ADR-138 Packet G compilation remains authorization-first and compile-only.
 ADR-139 is reserved for the foreground capture runtime now in a separate PR.
 
 Local validation on this worktree: focused new plus existing Packet G / client
-/ lifecycle tests passed 42 tests in 4.60 seconds
+/ lifecycle tests passed 46 tests in 6.02 seconds
 (`test_reference_host_formation.py`, `test_experimental_reference_host.py`,
 `test_client_runtime.py`, `test_reference_host_retrieval_lifecycle.py`).
 `python -m ruff check .` and Ruff format `--check` on the touched Python files
 passed. `python -m mypy packages/allthecontext/src` passed (93 source files).
 `git diff --check` and `scripts/check_docs.py` passed.
 `python scripts/repository_security_scan.py --scope tree` passed (486 files, 0
-findings). Full repository pytest was intentionally not run.
+findings). The Packet G compile helper is unchanged. Full repository pytest was
+intentionally not run.
 
 ## 2026-08-24 Packet H-D disposable registered-source context proof
 
