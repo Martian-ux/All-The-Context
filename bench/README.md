@@ -197,6 +197,82 @@ latency evidence. The warm p95 gate remains fail-closed in this command at the
 unchanged 150 ms boundary; claim latency acceptance only from the 1k/10k CLI
 run on comparable hardware.
 
+## Packet H-D disposable integration proof
+
+Packet H-D is a local evidence reconciliation for Packet F local workspace
+capture, the PR #78 registered-source admission contract, public Memory Truth,
+and Retrieval V3. It is branch-local, not on protected main, and not released.
+It is not production wiring, a release gate, complete Packet H, or Phase 2
+acceptance. It does not exercise Packet E scheduler, Packet G reference host,
+ZF-010 automatic formation, or the full Wave 4 E–G composition, and it does not
+satisfy continuous or scheduled Packet F acceptance. Each public H-A/H-B/H-C
+run path obtains its root and capability only from the shared fresh
+runner-owned temporary-root context. Its lexical construction authority is not
+exposed by the modules; this is a construction/ownership rule, not a hostile
+in-process security boundary. The context builds a sanitized fixture in a
+fresh temporary Core vault, prints bounded content-free aggregate JSON, and
+removes its state on exit.
+
+Run the four documented forms from the checkout root:
+
+```text
+python -m bench.packet_h
+python bench/packet_h.py
+python -m bench.packet_h_truth
+python -m bench.packet_h_retrieval
+```
+
+The three CLI modules insert this checkout's repository root and
+`packages/allthecontext/src` at the front of `sys.path` and fail closed if
+imported `allthecontext` does not resolve under that checkout source.
+
+H-A (`packet_h`) rejects fake temporary ownership, redirecting `Path` subclasses,
+mutated or mismatched roots, nonempty roots, and symlink/reparse roots; it
+returns only capability-owned canonical roots. The lstat/reparse branch is
+covered by a focused synthetic-stat test; live privileged symlink/reparse
+creation is not separately exercised. It gates the local-only posture (partial
+coverage and partial availability, denied network, and empty egress), then
+processes four fact-bearing upserts plus one deterministic no-fact upsert,
+yielding four structural records whose candidate/record evidence must match the
+code-owned registered-source string. It also checks crash/restart/replay
+idempotency and fail-closed overflow with zero candidate or record output, and
+closes every CoreStore in a `finally` block before teardown. H-B
+(`packet_h_truth`) observes Core through public Memory Truth; it gates the same
+local-only posture and all-applied evidence, compares complete public state plus
+stable identities across list/detail and replay, binds exact withdrawal to the
+public source-reference identity of the deleted provider item, requires deleted
+listing/status and stable restart/replay, scans public string fields in native,
+resolved, POSIX, and JSON-escaped path forms, and exposes bounded content-free
+aggregate JSON. H-C (`packet_h_retrieval`) calls the shared authoritative H-A
+validator before retrieval. It recomputes the required acceptance semantics,
+verifies the identifier digest, cleanly rejects malformed object trees, and
+permits additional true boolean predicates only when digest-bound and never as
+a bypass for required predicates. Returned search and bootstrap items used for
+acceptance must be structural, and adapter deletion refuses absolute or `..`
+relative paths before unlink. It then checks 4/4 structural
+recall/provenance/exact-get consistency, a 256-character bootstrap budget,
+three negative-query exclusions, real adapter deletion exclusion, and
+deterministic repeats.
+
+Reconstruction base is protected main after PR #78
+(`e735d0dde301c64500acd1d404a2bbb6aab6724a`). The three Packet H test files
+passed 61 tests in 32.15 seconds. Four CLIs passed with `PYTHONPATH` removed
+so the checkout-source `sys.path` guard is active: `python -m bench.packet_h`
+(0.86s), `python bench/packet_h.py` (0.91s), `python -m bench.packet_h_truth`
+(1.01s), and `python -m bench.packet_h_retrieval` (1.62s).
+Ruff check and Ruff format `--check` passed for the six Packet H Python files.
+`python -m mypy packages/allthecontext/src` passed (91 source files).
+`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
+was intentionally not run.
+
+These are reproducible disposable proof reports, not frozen benchmark baselines,
+so no Packet H receipt is checked in under `baselines/`.
+
+The lane does not claim scheduled/continuous capture, startup integration,
+installed-provider/client support, archive import, OAuth/network support, hosted
+evidence, ranking/schema changes, release readiness, full-suite coverage, or
+native macOS support. macOS remains unsupported/deferred.
+
 ## Synthetic retrieval usefulness
 
 This developer-facing harness measures whether production search, bootstrap, and

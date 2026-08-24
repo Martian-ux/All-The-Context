@@ -2,10 +2,13 @@
 
 ## Current milestone
 
-As of 2026-08-22 UTC, protected main contains the merged Import Truth, Memory
-Truth, Retrieval, Context UI, and provider-neutral Continuous Capture
-foundations. The separately published immutable `0.1.0-beta.6` remains the
-current downloadable release. Development evidence after that release does not
+As of 2026-08-24 UTC, protected main contains the merged Import Truth, Memory
+Truth, Retrieval, Context UI, provider-neutral Continuous Capture foundations,
+and the PR #78 registered-source admission contract
+(`e735d0dde301c64500acd1d404a2bbb6aab6724a`). The separately published immutable
+`0.1.0-beta.6` remains the current downloadable release. Packet H-D is
+branch-local disposable proof on this checkout; it is not on protected main and
+is not released. Development evidence after beta.6 does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
@@ -14,6 +17,81 @@ macOS source, tests, and historical preflight remain retained for portability,
 but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
+
+## 2026-08-24 Packet H-D disposable registered-source context proof
+
+This checkout reconstructs the historical Packet H-only proof delta onto
+protected main after merged PR #78
+(`e735d0dde301c64500acd1d404a2bbb6aab6724a`). Packet H-D exercises Packet F
+local workspace capture, the PR #78 registered-source admission contract,
+public Memory Truth, and Retrieval V3 over runner-owned disposable Core vaults.
+The Core-owned admission contract is no longer missing. Packet H-D remains
+branch-local on this checkout; it is not on protected main and is not released.
+
+It does not exercise Packet E scheduler, Packet G reference host, ZF-010
+automatic formation, the full Wave 4 E–G composition, the Phase 2 journey,
+production/CoreService/startup wiring, provider or client support, release
+acceptance, private data, or macOS. This is not complete Packet H or Phase 2
+acceptance. Packet H-D is a foreground disposable proof and does not satisfy
+continuous or scheduled Packet F acceptance.
+
+H-A proves bounded local-workspace source admission: fake temporary ownership,
+redirecting `Path` subclasses, mutated or mismatched roots, nonempty roots, and
+symlink/reparse roots fail closed, and only capability-owned canonical roots
+are returned. The lstat/reparse fail-closed branch is implemented and covered
+by a focused synthetic-stat test; live privileged symlink/reparse creation is
+not separately exercised. The local-only posture is gated by partial coverage
+and partial availability, denied network, and empty egress. Four fact-bearing
+upserts plus one deterministic no-fact upsert are processed, yielding four
+structural records; incomplete overflow fails closed with no candidate or
+record, and crash/restart/replay is idempotent. Candidate and record evidence
+must match the code-owned registered-source evidence string for the fact class
+and binding, and path/fixture/raw text in content, evidence, or structured
+values fails closed. Every CoreStore is closed in a `finally` block before
+temporary-root teardown. H-A works through both module and direct-file CLIs.
+H-B observes Core through public Memory Truth: local-only posture and
+all-applied evidence are gated; complete public state plus stable identities
+are compared across list/detail/replay; exact withdrawal is bound to the public
+source-reference identity derived from the source ID and target provider item;
+deleted listing/status are required; public string fields are scanned in
+native, resolved, POSIX, and JSON-escaped path forms; and the report exposes
+bounded content-free aggregate JSON. H-C calls the shared authoritative H-A
+validator before retrieval. It recomputes the required acceptance semantics,
+verifies the identifier digest, cleanly rejects malformed object trees, and
+permits additional true boolean predicates only when digest-bound and never as
+a bypass for required predicates. Returned search and bootstrap items used for
+acceptance must be structural. Adapter deletion refuses absolute or `..`
+relative paths before unlink. It then checks 4/4 structural recall, provenance
+packaging, and exact-get consistency; the 256-character bootstrap budget; three
+negative-query exclusions; adapter deletion exclusion; and repeat determinism.
+
+Each public H-A/H-B/H-C run path obtains its root and capability only from the
+shared fresh runner-owned temporary-root context. Its lexical construction
+authority is not exposed by the modules; this is a construction/ownership rule,
+not a hostile in-process security boundary. The context removes its temporary
+state on exit. The three CLI modules insert this checkout's repository root and
+`packages/allthecontext/src` at the front of `sys.path` and fail closed if
+imported `allthecontext` does not resolve under that checkout source. Run the
+lanes from the checkout root with `python -m bench.packet_h`,
+`python bench/packet_h.py`, `python -m bench.packet_h_truth`, and
+`python -m bench.packet_h_retrieval`.
+
+Local reconstruction validation on this worktree: the three Packet H test files
+passed 61 tests in 32.15 seconds. Four CLIs passed with `PYTHONPATH` removed
+so the checkout-source `sys.path` guard is active: `python -m bench.packet_h`
+(0.86s), `python bench/packet_h.py` (0.91s), `python -m bench.packet_h_truth`
+(1.01s), and `python -m bench.packet_h_retrieval` (1.62s).
+Ruff check and Ruff format `--check` passed for the six Packet H Python files.
+`python -m mypy packages/allthecontext/src` passed (91 source files).
+`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest,
+desktop/dashboard/release/private/macOS work, and hosted CI were intentionally
+not run.
+
+This is disposable proof/lab evidence only. It does not claim production or
+startup wiring, a scheduler, provider or client support, archive import, OAuth
+or network support, hosted evidence, ranking or schema changes, release
+readiness, or support status. Full-suite coverage is not claimed. macOS remains
+unsupported/deferred.
 
 ## 2026-08-23 local workspace traversal bound
 
@@ -72,9 +150,10 @@ passed, Ruff format-check passed, and `python -m mypy
 packages/allthecontext/src` passed. These are local focused/static reports only;
 they do not constitute integrated full-suite acceptance.
 
-This remains a local bounded correctness commit. No Packet H, production
-startup wiring, scheduler, provider/product support, full-suite acceptance,
-private-data evidence, or macOS support is claimed.
+This remains a local bounded correctness commit. That capture-correctness work
+claimed no complete Packet H, production startup wiring, scheduler,
+provider/product support, full-suite acceptance, private-data evidence, or
+macOS support.
 
 ## ZF-004 Wave 1 event reconciliation (2026-08-22)
 
@@ -336,21 +415,27 @@ alters it. Its exact release identity is ID `374723649`, source
 attested assets. Occupied beta.1 through beta.5 draft/candidate identities
 remain historical and are not rebound or reused.
 
-## Zero-friction execution frontier (2026-08-22)
+## Zero-friction execution frontier (2026-08-24)
 
 The accepted post-V1 plan now starts from the merged capture ledger instead of
 proposing a parallel connector or event substrate. Packet D's sanitized
-synthetic composition is locally complete, and the next frontier is the
-Core-owned source-fact admission contract needed before Packet H can compose
-the locally complete Wave 3 E/F/G component seams. Stable project identity and
-deterministic Project Context Capsules precede graph shadow evaluation.
+synthetic composition is locally complete. PR #78 merged the Core-owned
+registered-source admission contract, so that seam is no longer missing. This
+checkout records a disposable proof over Packet F local workspace, that
+admission contract, public Memory Truth, and Retrieval V3. It is not complete
+Packet H or Phase 2 acceptance.
+
+Packet E and Packet G remain component-complete. The remaining frontier is
+their composition and product acceptance, ZF-010 automatic formation, complete
+Wave 4 E–G (complete Packet H), and the Phase 2 journey. Stable project
+identity and deterministic Project Context Capsules still precede graph shadow
+evaluation.
 
 Wave 3 component evidence remains experimental. It adds no provider support,
 production startup wiring, durable scheduler/notification state, stable SDK,
 release, or support claim. Implementation packets use sanitized synthetic
 fixtures and disposable Core state; private data, publication actions, and
-macOS support remain outside their boundary. Packet H was attempted and
-correctly stopped/removed at the missing source-fact admission seam.
+macOS support remain outside their boundary.
 
 ## Registered-source admission PR1 contract (2026-08-23)
 
@@ -375,10 +460,12 @@ and restore compatibility, no-fact handling, and forged lineage rejection.
 The sink is explicitly injected only in focused tests. CoreService, package
 startup, the experimental scheduler, and reference host remain unwired.
 
-This closes only the PR1 admission contract locally. It does not claim Packet H,
-ZF-010, product/provider support, hosted or full-suite acceptance, stable SDK,
-release readiness, publication, or macOS support; those remain open, absent, or
-deferred.
+This closes only the PR1 admission contract locally. A later disposable proof
+on this checkout exercises that contract with Packet F, public Memory Truth,
+and Retrieval V3; it still does not claim complete Packet H, ZF-010, Phase 2
+acceptance, product/provider support, hosted or full-suite acceptance, stable
+SDK, release readiness, publication, or macOS support. Those remain open,
+absent, or deferred.
 
 ### 2026-08-22 Memory Truth foundation
 
@@ -2181,14 +2268,20 @@ or papered over in this integration.
   `dcf5de50b633ff00638c1396ddfcfb8ba04070e6` was fully hosted-green, but the
   corrected head has not yet run hosted CI. Full repository pytest/mypy for
   the corrected head remain open.
-- Packet H's disposable proof was attempted and correctly stopped/removed:
-  Core has no genuine registered-source-authoritative admission seam binding
-  Packet F continuous-capture evidence to deterministic source-fact
-  promotion. `add_candidate` enters ongoing-client policy and non-witness
-  workspace facts remain tentative; archive importer is a distinct lifecycle.
-  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected. The
-  next narrow frontier is designing/reviewing that Core-owned source-fact
-  admission contract in a successor PR. ZF-007/ZF-008/ZF-009 product
-  acceptance, ZF-010, Packet H, the Phase 2 journey, the first real
-  source/client pair, production wiring, and any release/support claim remain
-  OPEN. macOS remains unsupported/absent/deferred.
+- Historical 2026-08-22 note: Packet H's first disposable proof was attempted
+  and correctly stopped/removed because Core then had no genuine
+  registered-source-authoritative admission seam binding Packet F
+  continuous-capture evidence to deterministic source-fact promotion.
+  `add_candidate` entered ongoing-client policy and non-witness workspace
+  facts remained tentative; archive importer is a distinct lifecycle.
+  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected. PR #78
+  later merged that Core-owned admission contract, so the live frontier is no
+  longer "design the missing admission seam." Packet E/G are
+  component-complete; remaining work is their composition/product acceptance,
+  ZF-010, complete Wave 4 E–G, and Phase 2. ZF-007/ZF-008/ZF-009 product
+  acceptance, the first real source/client pair, production wiring, and any
+  release/support claim remain OPEN. Continuous/scheduled Packet F acceptance
+  remains open. macOS remains unsupported/absent/deferred. See the 2026-08-24
+  Packet H-D reconstruction note above for the foreground disposable proof that
+  now exercises Packet F, PR #78 admission, public Memory Truth, and Retrieval
+  V3 without composing Packet E or Packet G.

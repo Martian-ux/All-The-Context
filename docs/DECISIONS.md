@@ -1,5 +1,82 @@
 # Architecture decisions
 
+## ADR-137: Packet H-D records disposable composition evidence without acceptance
+
+**Status:** accepted locally on 2026-08-24 after reconstructing the Packet H-only
+proof delta onto merged PR #78; this is not ZF-010, complete Packet H, Phase 2,
+product/provider, hosted/full-suite, release, or support acceptance.
+
+Packet H-D reconciles three runner-owned disposable proof lanes without creating
+a new authority. The reconstruction base is protected main after PR #78
+(`e735d0dde301c64500acd1d404a2bbb6aab6724a`). The proof as written exercises
+Packet F local workspace capture, the PR #78 registered-source admission
+contract, public Memory Truth, and Retrieval V3. It does not exercise Packet E
+scheduler, Packet G reference host, ZF-010 automatic formation, the full Wave 4
+E–G composition, the Phase 2 journey, production/CoreService/startup wiring,
+provider/client support, release acceptance, private data, or macOS.
+
+H-A fail-closes fake temporary ownership, redirecting `Path` subclasses, mutated
+or mismatched roots, nonempty roots, and symlink/reparse roots, returning only
+capability-owned canonical roots. The lstat/reparse branch is implemented and
+covered by a focused synthetic-stat test; live privileged symlink/reparse
+creation is not separately exercised. It gates partial coverage and partial
+availability, denied network, and empty egress, then exercises sanitized
+local-workspace source admission with four fact-bearing upserts plus one
+deterministic no-fact upsert that yields no candidate or record, overflow
+fail-closed behavior, and crash/restart/replay. Candidate and record evidence
+must be the exact code-owned registered-source evidence for the fact class and
+binding. Every CoreStore is closed in a `finally` block before temporary-root
+teardown. Its module and direct-file CLIs insert this checkout's repository
+root and `packages/allthecontext/src` at the front of `sys.path` and fail closed
+if imported `allthecontext` does not resolve under that checkout source. H-B
+observes Core through public Memory Truth rather than private capture helpers,
+gates local-only posture and all-applied evidence, compares complete public
+state plus stable identities across list/detail/replay, binds exact withdrawal
+to the public source-reference identity derived from the source ID and target
+provider item, requires deleted listing/status, scans public string fields in
+native/resolved/POSIX/JSON-escaped path forms, and publishes bounded
+content-free aggregate JSON. H-C calls the shared authoritative H-A validator
+before retrieval. It recomputes the required acceptance semantics, verifies the
+identifier digest, cleanly rejects malformed object trees, and permits
+additional true boolean predicates only when digest-bound and never as a bypass
+for required predicates. Returned search and bootstrap items used for
+acceptance must be structural, and adapter deletion refuses absolute or `..`
+relative paths before unlink. It then exercises public Retrieval V3 search,
+bootstrap, and get packaging with 4/4 structural recall/provenance/exact-get
+checks, a 256-character budget, negative-query exclusions, adapter deletion
+exclusion, and deterministic repeats.
+
+Local reconstruction validation: the three Packet H test files passed 61 tests
+in 32.15 seconds. Four CLIs passed with `PYTHONPATH` removed so the
+checkout-source `sys.path` guard is active: `python -m bench.packet_h`
+(0.86s), `python bench/packet_h.py` (0.91s), `python -m bench.packet_h_truth`
+(1.01s), and `python -m bench.packet_h_retrieval` (1.62s).
+Ruff check and Ruff format `--check` passed for the six Packet H Python files.
+`python -m mypy packages/allthecontext/src` passed (91 source files).
+`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
+was intentionally not run.
+
+Each public H-A/H-B/H-C run path obtains its root and capability only from the
+shared fresh runner-owned temporary-root context. Its lexical construction
+authority is not exposed by the modules; this is a construction/ownership rule,
+not a hostile in-process security boundary. The context removes its temporary
+state on exit and emits only bounded content-free aggregate JSON. The exact
+commands are recorded in `bench/README.md`. No receipt is added under
+`bench/baselines/`: that directory is reserved for frozen benchmark baselines,
+while these outputs are disposable proof reports that remain reproducible from
+the commands.
+
+This decision does not claim production or startup wiring, a scheduler, provider
+or client support, archive import, OAuth or network support, hosted evidence,
+ranking or schema changes, release state, or support status. It adds no baseline
+receipt under `bench/baselines/`; Packet H-D outputs remain disposable proof
+reports. It does not relabel this partial proof as complete Packet H or Phase 2
+acceptance. macOS remains unsupported/deferred.
+
+Historical ADR-132 records the 2026-08-22 stop at the then-missing admission
+seam. That blocker is closed locally by ADR-133 / PR #78; ADR-132 remains
+historical provenance and is not the live frontier.
+
 ## ADR-136: Local workspace discovery caps foreground traversal
 
 **Status:** accepted locally on 2026-08-23 after focused synthetic traversal
@@ -28,24 +105,29 @@ this is not ZF-010, Packet H, Phase 2, product, hosted-CI, release, or support
 acceptance.
 
 Packet H was attempted as a disposable integration of the Wave 3 components and
-was correctly stopped and removed. The blocker is a missing Core-owned
-registered-source-authoritative admission seam: current Core policy has no
-genuine contract that binds Packet F continuous-capture evidence to
-deterministic source-fact promotion. `add_candidate` enters the ongoing-client
-policy, so non-witness workspace facts remain tentative; the archive importer
-is a distinct lifecycle and cannot be relabeled as this source path.
+was correctly stopped and removed. The blocker at that time was a missing
+Core-owned registered-source-authoritative admission seam: Core policy then had
+no genuine contract that bound Packet F continuous-capture evidence to
+deterministic source-fact promotion. `add_candidate` entered the ongoing-client
+policy, so non-witness workspace facts remained tentative; the archive importer
+was a distinct lifecycle and could not be relabeled as this source path.
 
 A hardcoded allowlist or `explicit_user_statement` relabeling was rejected as
 false authority rather than a source-fact admission contract. The next narrow
-frontier is to design and review the Core-owned admission contract in a
-successor PR. No production wiring, stable SDK, provider/client support,
-release state, or macOS support follows from this stopped proof.
+frontier at that date was to design and review the Core-owned admission
+contract in a successor PR. No production wiring, stable SDK, provider/client
+support, release state, or macOS support followed from this stopped proof.
+
+This decision remains historical provenance for the 2026-08-22 stop. ADR-133 /
+PR #78 later closed the local admission contract; ADR-137 records a later
+Packet H-D disposable proof over Packet F, that contract, public Memory Truth,
+and Retrieval V3 without complete Packet H or Phase 2 acceptance.
 
 ## ADR-133: PR1 admits only closed registered-source structural facts
 
 **Status:** accepted locally on 2026-08-23 as a bounded successor contract to
-ADR-132; this is not Packet H, ZF-010, product/provider support, hosted/full-
-suite acceptance, release readiness, or macOS support.
+ADR-132; this is not complete Packet H, ZF-010, product/provider support,
+hosted/full-suite acceptance, release readiness, or macOS support.
 
 PR1 adds migration 016's three nullable provenance columns and one partial
 unique event index to the existing `context_candidates` table. It adds the
@@ -71,9 +153,10 @@ restart retains capture state.
 
 This PR1 does not construct the sink from `CoreService`, package startup, the
 scheduler, or a reference host. It closes only the local admission contract
-with focused sanitized evidence. Packet H, production wiring, ZF-010,
+with focused sanitized evidence. Complete Packet H, production wiring, ZF-010,
 product/provider support, hosted/full-suite acceptance, release work, and
-macOS remain open or deferred.
+macOS remain open or deferred. Packet H-D later records a disposable
+foreground proof over this contract without composing Packet E or Packet G.
 
 ## ADR-134: Capture recovery stages one bounded page in the existing checkpoint
 
@@ -145,8 +228,8 @@ this is not ZF-007/ZF-008/ZF-009 product acceptance, a real integration pair,
 production wiring, hosted/full-matrix acceptance, release evidence, or a
 support claim.
 
-Wave 3 keeps the three component seams narrow until Packet H composes them in a
-disposable Core and runs the Phase 2 journey. Packet E's
+Wave 3 keeps the three component seams narrow until complete Packet H composes
+them in a disposable Core and runs the Phase 2 journey. Packet E's
 `capture_scheduler.py` is disabled by default and orchestrates the existing
 `CaptureCoordinator`; it owns no cursor, event ledger, lease, checkpoint,
 durable scheduler state, or durable notification state. Its focused contract
@@ -179,9 +262,14 @@ payloads, has no client-principal binding or production persistence, and adds
 no provider integration, general persistence format, or stable SDK.
 
 These component boundaries do not close the first real continuous source/client
-pair, automatic formation ZF-010, Packet H, the Phase 2 acceptance journey,
-production startup wiring, or any release/support state. macOS remains absent
-and deferred exactly as recorded by the current project truth.
+pair, automatic formation ZF-010, complete Packet H, the Phase 2 acceptance
+journey, production startup wiring, or any release/support state. Packet E and
+Packet G remain component-complete; remaining work is their composition and
+product acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. Packet H-D later
+records a disposable foreground proof over Packet F, the PR #78 admission
+contract, public Memory Truth, and Retrieval V3; it does not compose Packet E
+or Packet G and is not complete Packet H. macOS remains absent and deferred
+exactly as recorded by the current project truth.
 
 ## ADR-130: Wave 1 reconciliation is an opaque metadata boundary
 
