@@ -1,5 +1,41 @@
 # Architecture decisions
 
+## ADR-140: Direct-user formation maps only declared Packet G L1+ turns
+
+**Status:** accepted locally on 2026-08-24 as composition evidence for one
+conservative ZF-010 class; this is not ZF-010 product exit, Packet E/F/H,
+Phase 2, CoreService/startup, MCP lifecycle, provider, hosted/full-suite,
+release, or support acceptance. ADR-138 remains the Packet G compile contract.
+ADR-139 is reserved for the foreground capture runtime now in a separate PR
+and is not occupied here.
+
+The mapper accepts only in-process Packet G L1+ `direct_user_turn` envelopes
+that the controlled host actually accepted. L0, ordinary MCP, unsupported-hook
+reports, other hooks, and lookalike envelopes fail closed. The caller supplies
+raw content; the mapper recomputes exact UTF-8 byte length and SHA-256 against
+`turn_ref` and never stores content in envelopes. A durable Core
+`ClientPrincipal` is required, `envelope.client_id` must equal `principal.id`,
+and Core rebinds registered scopes. Formation uses `normalize_lifecycle_event`
+then `form_observation`. Closed caller-declared kinds are
+`interaction_preference`, `correction` with `supersedes`, and `context_forget`
+with `supersedes`. Kind is never inferred. `CandidateInput.source_id` stays
+`None`. Admission is `add_candidate(..., client=principal)` only; `client=None`
+and `LOCAL_ADMIN` are refused. Direct candidate/value secret checks run before
+add. Secret and expiry refusals are content-free. There are no direct current-
+record writes, `delete_record`, `purge`, `correct_record`,
+`IngestionService.forget`, or event-log scans. Idempotency binds
+`client_id+event_id+sequence`. ACL is an optional caller request, not writer
+identity by default. Ephemeral/session retention and over-bound content are
+refused; content is never truncated. The existing compile helper remains
+compile-only.
+
+Evidence is the focused new plus existing Packet G/client/lifecycle tests (42
+passed), Ruff check and format `--check` on touched Python files, mypy on
+package source (93 files), `scripts/check_docs.py`, `git diff --check`, and
+`python scripts/repository_security_scan.py --scope tree` (486 files, 0
+findings). Full repository pytest, hosted CI, private data, and macOS work were
+not run.
+
 ## ADR-138: Packet G L1+ compilation is authorization-first
 
 **Status:** accepted locally on 2026-08-24 for the Packet G + Core Retrieval V3
