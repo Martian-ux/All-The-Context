@@ -8,8 +8,8 @@ and the PR #78 registered-source admission contract
 (`e735d0dde301c64500acd1d404a2bbb6aab6724a`). The separately published immutable
 `0.1.0-beta.6` remains the current downloadable release. Packet H-D is
 branch-local disposable proof on this checkout; it is not on protected main and
-is not released. Development evidence after beta.6 does not become release,
-exact-artifact, client/provider, or private-data acceptance.
+is not released. Development evidence after beta.6 does not
+become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
 The supported posture is Windows and supported Linux source/package work; the
