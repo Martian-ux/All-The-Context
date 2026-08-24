@@ -30,6 +30,7 @@ from .capture import (
     CaptureEvent,
     CapturePage,
     CaptureRetryableError,
+    CaptureRunHandle,
     CaptureSource,
     DeterministicFakeAdapter,
     IdempotentFakeSink,
@@ -508,6 +509,8 @@ class _FormationCaptureSink:
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: CaptureRunHandle,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str | CaptureApplicationReceipt:
@@ -602,6 +605,8 @@ class _FormationCaptureSink:
             receipt = self.delegate.apply(
                 event,
                 source_id=source_id,
+                event_id=event_id,
+                run_handle=run_handle,
                 canonical_record_id=canonical_record_id,
                 idempotency_key=idempotency_key,
             )
@@ -609,6 +614,8 @@ class _FormationCaptureSink:
             receipt = self.delegate.apply(
                 event,
                 source_id=source_id,
+                event_id=event_id,
+                run_handle=run_handle,
                 canonical_record_id=canonical_record_id,
                 idempotency_key=idempotency_key,
             )

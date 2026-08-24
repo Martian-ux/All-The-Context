@@ -40,7 +40,6 @@ MAX_SCAN_DEPTH = 16
 MAX_DISCOVERED_FILES = 512
 MAX_TRACKED_ITEMS = 20
 MAX_FILE_BYTES = 256 * 1024
-MAX_TEXT_CHARS = 1_800
 MAX_RELATIVE_PATH_CHARS = 512
 
 _CURSOR_VERSION = "v0"
@@ -97,7 +96,6 @@ class _ScannedItem:
     content_sha256: str
     content_truncated: bool
     content_kind: str
-    text_excerpt: str | None
     state_token: bytes
 
 
@@ -281,7 +279,8 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             if not stat.S_ISDIR(root_stat.st_mode) or _is_reparse_or_symlink(root_stat):
                 report.incomplete = True
                 raise CaptureError("capture_adapter_unavailable")
-            self._scan_root(root, root_token, items, report)
+            if self._scan_root(root, root_token, items, report):
+                break
         return items
 
     def _scan_root(
@@ -290,9 +289,12 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
         root_token: str,
         items: dict[str, _ScannedItem],
         report: _MutableScanReport,
-    ) -> None:
+    ) -> bool:
         pending: list[tuple[Path, int]] = [(root, 0)]
         while pending:
+            if report.files_considered >= MAX_DISCOVERED_FILES:
+                report.incomplete = True
+                return True
             directory, depth = pending.pop()
             try:
                 directory_stat = directory.lstat()
@@ -319,6 +321,9 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 report.incomplete = True
                 continue
             for entry in entries:
+                if report.files_considered >= MAX_DISCOVERED_FILES:
+                    report.incomplete = True
+                    return True
                 relative_path = _relative_path(root, entry, report)
                 if relative_path is None:
                     continue
@@ -347,9 +352,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                     report.excluded_paths += 1
                     continue
                 report.files_considered += 1
-                if report.files_considered > MAX_DISCOVERED_FILES:
-                    report.incomplete = True
-                    continue
                 item = self._read_item(
                     entry,
                     entry_stat.st_size,
@@ -360,6 +362,10 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 )
                 if item is not None:
                     items[item.item_id] = item
+                if report.files_considered >= MAX_DISCOVERED_FILES:
+                    report.incomplete = True
+                    return True
+        return False
 
     def _read_item(
         self,
@@ -399,7 +405,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             report.credential_like_paths += 1
             return None
         content_kind = "text" if decoded is not None else "binary"
-        text_excerpt = _safe_text_excerpt(decoded) if decoded is not None else None
         content_sha256 = hashlib.sha256(sample).hexdigest()
         path_token = hashlib.sha256(relative_path.encode("utf-8")).digest()[:12].hex()
         item_id = f"item:{root_token}:{path_token}"
@@ -413,7 +418,6 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             content_sha256=content_sha256,
             content_truncated=truncated,
             content_kind=content_kind,
-            text_excerpt=text_excerpt,
             state_token=state_token,
         )
 
@@ -444,11 +448,9 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
                 "content_truncated": item.content_truncated,
                 "hash_scope": "sample" if item.content_truncated else "full",
             }
-            if item.text_excerpt:
-                payload["text"] = item.text_excerpt
             events.append(
                 CaptureEvent(
-                    provider_event_id=f"upsert:{item.item_id}:{state_token}",
+                    provider_event_id=f"upsert:g{generation}:{item.item_id}:{state_token}",
                     provider_item_id=item.item_id,
                     order_key=_order_key(generation, position),
                     operation="upsert",
@@ -461,7 +463,7 @@ class LocalGitWorkspaceCaptureProviderAdapter(CaptureProviderAdapter):
             previous_token = _state_token_text(previous_state[item_id])
             events.append(
                 CaptureEvent(
-                    provider_event_id=f"delete:{item_id}:{previous_token}",
+                    provider_event_id=f"delete:g{generation}:{item_id}:{previous_token}",
                     provider_item_id=item_id,
                     order_key=_order_key(generation, position),
                     operation="delete",
@@ -618,16 +620,6 @@ def _secret_like_content(value: str) -> bool:
     return _SECRET_CONTENT_RE.search(compact) is not None
 
 
-def _safe_text_excerpt(value: str | None) -> str | None:
-    if value is None:
-        return None
-    safe = "".join(" " if unicodedata.category(char).startswith("C") else char for char in value)
-    safe = " ".join(safe.split())
-    if not safe:
-        return None
-    return safe[:MAX_TEXT_CHARS]
-
-
 def _state_token_text(value: bytes) -> str:
     return value.hex()
 
@@ -641,7 +633,6 @@ __all__ = [
     "MAX_DISCOVERED_FILES",
     "MAX_FILE_BYTES",
     "MAX_SCAN_DEPTH",
-    "MAX_TEXT_CHARS",
     "MAX_TRACKED_ITEMS",
     "CaptureScanReport",
     "LocalGitWorkspaceCaptureProviderAdapter",

@@ -15,6 +15,67 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## 2026-08-23 local workspace traversal bound
+
+The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats
+`MAX_DISCOVERED_FILES` as a deterministic hard cap across all explicitly
+authorized roots. Once the cap is reached, discovery stops before later entries
+are `lstat`-checked or read and before later roots are traversed; the scan is
+marked incomplete and `fetch_page` fails closed as before. Stable ordering,
+credential/Git/dependency exclusions, symlink/reparse handling, and the ordinary
+small-scan result remain unchanged. Focused synthetic coverage instruments both
+metadata checks and content reads to prove the bound without exposing path or
+content diagnostics.
+
+This is local bounded correctness evidence only. It adds no provider support,
+production startup wiring, network behavior, release state, private-data
+evidence, or macOS support claim.
+
+## 2026-08-23 capture admission and repair reconciliation
+
+The capture ledger now has a migration-017 extension on the existing
+`capture_checkpoints` row: nullable pending generation/cursor state and a
+bounded, JSON-validated ordered list of durable capture-event IDs. No capture
+truth table was added; migration 016 remains limited to its three registered-
+source candidate columns and partial index. Restart repair covers missing
+pending columns as well as the earlier capture objects/indexes.
+
+`CaptureLedger.stage_page` atomically stages a complete validated page and its
+pending marker before any sink call. The coordinator replays pending events at
+run start through the existing injected sink, commits them idempotently, then
+advances/clears the page cursor and fetches from the recovered cursor in the
+same run. Empty newer generations reset stale order state, while same-generation
+ordering and Core correction, availability, ordinary-delete, and purge barriers
+remain authoritative. Focused sanitized capture/admission evidence covers
+atomic rollback, sink/event/cursor crash points, bounded retry, restart repair,
+local-adapter deletion recovery, empty-generation ordering, and barriers.
+
+Three accepted follow-up fixes further constrain this boundary. Duplicate
+provider event IDs within one fetched page are rejected before staging, and the
+durable pending-event ID list is uniqueness-guarded transactionally. The
+`LocalGitWorkspaceCaptureProviderAdapter` emits adapter-produced,
+coordinator-path metadata-only `workspace.structure` events; the generic
+provider-neutral ledger stores internal caller-supplied payloads, while the
+registered-source sink keeps extra fields inert. Legacy duplicate pending IDs
+are validated and canonicalized in first-occurrence order during recovery;
+malformed marker data still fails closed. Capture schema repair is bounded
+through already-applied capture migration versions inside the pending migration
+transaction before a newer migration is applied, with the full post-repair
+state retained after successful completion. The architecture data model already
+records migration 017 as used and 018 as next.
+
+Historical lane evidence is limited to 58 focused tests for duplicate IDs, 63
+focused tests for metadata-only workspace events, and 8 capture migration tests
+for bounded repair. The integration owner subsequently ran 152 combined
+focused tests on integrated code. The reported static checks were Ruff lint
+passed, Ruff format-check passed, and `python -m mypy
+packages/allthecontext/src` passed. These are local focused/static reports only;
+they do not constitute integrated full-suite acceptance.
+
+This remains a local bounded correctness commit. No Packet H, production
+startup wiring, scheduler, provider/product support, full-suite acceptance,
+private-data evidence, or macOS support is claimed.
+
 ## ZF-004 Wave 1 event reconciliation (2026-08-22)
 
 The integration-owned Wave 1 slice now has a bounded pure reference boundary in
@@ -290,6 +351,34 @@ release, or support claim. Implementation packets use sanitized synthetic
 fixtures and disposable Core state; private data, publication actions, and
 macOS support remain outside their boundary. Packet H was attempted and
 correctly stopped/removed at the missing source-fact admission seam.
+
+## Registered-source admission PR1 contract (2026-08-23)
+
+The bounded successor to ADR-132 now closes the Core-owned registered-source
+admission seam locally. Migration 016 adds only nullable capture provenance to
+`context_candidates` and a partial unique capture-event index. The internal
+`RegisteredSourceCaptureApplicationSink` accepts the exact durable event ID and
+run handle from `CaptureCoordinator`, validates the existing ledger/source
+authority and exact code-owned `workspace.structure` scope in one Core
+transaction, and admits only code-owned structural facts from the closed
+`local-git-workspace` extractor registry. Candidate content and
+evidence are fixed safe sentences plus a versioned extractor/fact schema and
+content-free binding hash. A registered memory uses an opaque hash reference
+derived from the capture source and provider item; raw provider item IDs remain
+only in the machine-local capture ledger. Workspace paths, text, roots, labels,
+fingerprints, and provider authority fields remain inert.
+
+Focused sanitized tests cover coordinator admission, deterministic item/record
+lineage, replay after a Core-commit/capture-commit crash, withdrawal and exact
+ID revival, mutation/delete/purge/no-linkage barriers, migration/restart, export omission
+and restore compatibility, no-fact handling, and forged lineage rejection.
+The sink is explicitly injected only in focused tests. CoreService, package
+startup, the experimental scheduler, and reference host remain unwired.
+
+This closes only the PR1 admission contract locally. It does not claim Packet H,
+ZF-010, product/provider support, hosted or full-suite acceptance, stable SDK,
+release readiness, publication, or macOS support; those remain open, absent, or
+deferred.
 
 ### 2026-08-22 Memory Truth foundation
 

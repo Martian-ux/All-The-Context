@@ -27,6 +27,7 @@ from .storage import (
     CoreStore,
     NotFoundError,
     StorageError,
+    _added_column,
     _migration_statements,
 )
 
@@ -83,6 +84,7 @@ MAX_PAGE_EVENTS = 256
 MAX_RUN_PAGES = 100
 MAX_RUN_EVENTS = 10_000
 MAX_ERROR_CHARS = 96
+MAX_PENDING_EVENT_IDS_BYTES = MAX_PAGE_EVENTS * (MAX_EVENT_ID_CHARS + 3) + 2
 LEASE_SECONDS = 60
 MAX_CAPTURE_INTEGER = (1 << 63) - 1
 
@@ -416,6 +418,8 @@ class CaptureApplicationSink(Protocol):
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: CaptureRunHandle,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str | CaptureApplicationReceipt: ...
@@ -934,17 +938,37 @@ def _idempotency_key(source_id: str, provider_event_id: str) -> str:
     return f"capture-event-{digest}"
 
 
-_CAPTURE_MIGRATION_PATH = (
-    Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql"
+_CAPTURE_MIGRATION_PATHS = (
+    Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql",
+    Path(__file__).parent / "migrations" / "core" / "016_registered_source_admission.sql",
+    Path(__file__).parent / "migrations" / "core" / "017_capture_page_recovery.sql",
+)
+_CAPTURE_MIGRATION_VERSIONS = frozenset(
+    int(path.name.split("_", 1)[0]) for path in _CAPTURE_MIGRATION_PATHS
 )
 
 
-def ensure_capture_schema(connection: Any) -> None:
-    """Repair missing migration-015 tables/indexes after an interrupted startup."""
+def ensure_capture_schema(connection: Any, *, through_version: int | None = None) -> None:
+    """Repair capture objects through a known-applied migration version."""
 
-    migration = _CAPTURE_MIGRATION_PATH.read_text(encoding="utf-8")
-    for statement in _migration_statements(migration):
-        connection.execute(statement)
+    if through_version is not None and through_version not in _CAPTURE_MIGRATION_VERSIONS:
+        raise ValueError("capture repair version must be an applied capture migration")
+
+    for migration_path in _CAPTURE_MIGRATION_PATHS:
+        version = int(migration_path.name.split("_", 1)[0])
+        if through_version is not None and version > through_version:
+            break
+        migration = migration_path.read_text(encoding="utf-8")
+        for statement in _migration_statements(migration):
+            added_column = _added_column(statement)
+            if added_column is not None:
+                table, column = added_column
+                columns = {
+                    str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')
+                }
+                if column in columns:
+                    continue
+            connection.execute(statement)
 
 
 class CaptureLedger:
@@ -1104,7 +1128,8 @@ class CaptureLedger:
     def _checkpoint(self, source_id: str) -> dict[str, Any]:
         with self.store.connect() as connection:
             row = connection.execute(
-                "SELECT generation,last_order_key,last_event_id,cursor,updated_at "
+                "SELECT generation,last_order_key,last_event_id,cursor,updated_at,"
+                "pending_generation,pending_cursor,pending_event_ids_json "
                 "FROM capture_checkpoints WHERE source_id=?",
                 (source_id,),
             ).fetchone()
@@ -1112,7 +1137,16 @@ class CaptureLedger:
             raise NotFoundError("capture checkpoint not found")
         return {
             key: row[key]
-            for key in ("generation", "last_order_key", "last_event_id", "cursor", "updated_at")
+            for key in (
+                "generation",
+                "last_order_key",
+                "last_event_id",
+                "cursor",
+                "updated_at",
+                "pending_generation",
+                "pending_cursor",
+                "pending_event_ids_json",
+            )
         }
 
     @staticmethod
@@ -1220,56 +1254,213 @@ class CaptureLedger:
                 raise CaptureError("capture_lease_expired")
         return handle
 
-    def stage_event(self, handle: CaptureRunHandle, event: CaptureEvent) -> tuple[str, bool, int]:
+    @staticmethod
+    def _pending_event_ids(value: Any) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise CaptureError("capture_failed")
+        try:
+            if len(value.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
+                raise CaptureError("capture_failed")
+        except UnicodeError:
+            raise CaptureError("capture_failed") from None
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            raise CaptureError("capture_failed") from None
+        if (
+            not isinstance(decoded, list)
+            or len(decoded) > MAX_PAGE_EVENTS
+            or any(not isinstance(item, str) for item in decoded)
+        ):
+            raise CaptureError("capture_failed")
+        raw_event_ids = tuple(decoded)
+        try:
+            for event_id in raw_event_ids:
+                _bounded_opaque_id(event_id, maximum=MAX_EVENT_ID_CHARS)
+        except CaptureError:
+            raise CaptureError("capture_failed") from None
+        event_ids = tuple(dict.fromkeys(raw_event_ids))
+        encoded = json.dumps(event_ids, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
+            raise CaptureError("capture_failed")
+        return event_ids
+
+    @classmethod
+    def _pending_from_checkpoint(
+        cls, checkpoint: Mapping[str, Any]
+    ) -> tuple[int, str | None, tuple[str, ...]] | None:
+        generation = checkpoint["pending_generation"]
+        cursor = checkpoint["pending_cursor"]
+        event_ids_json = checkpoint["pending_event_ids_json"]
+        if generation is None:
+            if cursor is not None or event_ids_json is not None:
+                raise CaptureError("capture_failed")
+            return None
+        if type(generation) is not int or not 0 <= generation <= MAX_CAPTURE_INTEGER:
+            raise CaptureError("capture_failed")
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise CaptureError("capture_failed")
+            try:
+                cursor = _bounded_cursor(cursor)
+            except CaptureError:
+                raise CaptureError("capture_failed") from None
+        event_ids = cls._pending_event_ids(event_ids_json)
+        if event_ids is None:
+            raise CaptureError("capture_failed")
+        return generation, cast(str | None, cursor), event_ids
+
+    @staticmethod
+    def _stage_event_tx(
+        connection: Any,
+        *,
+        source_id: str,
+        event: CaptureEvent,
+        now: str,
+    ) -> tuple[str, bool, int]:
         payload_json, payload_hash = event.normalized()
-        idempotency_key = _idempotency_key(handle.source_id, event.provider_event_id)
+        idempotency_key = _idempotency_key(source_id, event.provider_event_id)
+        existing = connection.execute(
+            "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts "
+            "FROM capture_events "
+            "WHERE source_id=? AND provider_event_id=?",
+            (source_id, event.provider_event_id),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["payload_hash"]) != payload_hash
+                or str(existing["provider_item_id"]) != event.provider_item_id
+                or str(existing["operation"]) != event.operation
+                or int(existing["generation"]) != event.generation
+                or str(existing["order_key"]) != event.order_key
+            ):
+                raise CaptureError("capture_event_payload_conflict")
+            if str(existing["status"]) == "applied":
+                return str(existing["id"]), True, int(existing["attempts"])
+            attempts = int(existing["attempts"]) + 1
+            connection.execute(
+                "UPDATE capture_events SET status='staged',attempts=?,error_code=NULL WHERE id=?",
+                (attempts, existing["id"]),
+            )
+            return str(existing["id"]), False, attempts
+        event_id = new_id()
+        connection.execute(
+            "INSERT INTO capture_events"
+            "(id,source_id,provider_event_id,provider_item_id,generation,order_key,operation,"
+            "normalized_payload_json,payload_hash,status,attempts,idempotency_key,received_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,'staged',1,?,?)",
+            (
+                event_id,
+                source_id,
+                event.provider_event_id,
+                event.provider_item_id,
+                event.generation,
+                event.order_key,
+                event.operation,
+                payload_json,
+                payload_hash,
+                idempotency_key,
+                now,
+            ),
+        )
+        return event_id, False, 1
+
+    def stage_event(self, handle: CaptureRunHandle, event: CaptureEvent) -> tuple[str, bool, int]:
+        """Stage one event for compatibility with existing callers."""
+
         now = self.clock()
         with self.store.transaction() as connection:
             self._require_active_run(connection, handle, now)
-            existing = connection.execute(
-                "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts "
-                "FROM capture_events "
-                "WHERE source_id=? AND provider_event_id=?",
-                (handle.source_id, event.provider_event_id),
+            checkpoint = connection.execute(
+                "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+                "FROM capture_checkpoints WHERE source_id=?",
+                (handle.source_id,),
             ).fetchone()
-            if existing is not None:
-                if (
-                    str(existing["payload_hash"]) != payload_hash
-                    or str(existing["provider_item_id"]) != event.provider_item_id
-                    or str(existing["operation"]) != event.operation
-                    or int(existing["generation"]) != event.generation
-                    or str(existing["order_key"]) != event.order_key
-                ):
-                    raise CaptureError("capture_event_payload_conflict")
-                if str(existing["status"]) == "applied":
-                    return str(existing["id"]), True, int(existing["attempts"])
-                attempts = int(existing["attempts"]) + 1
-                connection.execute(
-                    "UPDATE capture_events SET status='staged',attempts=?,error_code=NULL WHERE id=?",
-                    (attempts, existing["id"]),
+            if checkpoint is None:
+                raise ConflictError("capture checkpoint disappeared before event staging")
+            if self._pending_from_checkpoint(checkpoint) is not None:
+                raise CaptureError("capture_retryable_failure")
+            return self._stage_event_tx(
+                connection,
+                source_id=handle.source_id,
+                event=event,
+                now=now,
+            )
+
+    def stage_page(
+        self,
+        handle: CaptureRunHandle,
+        page: CapturePage,
+    ) -> tuple[tuple[str, bool, int], ...]:
+        """Atomically stage a complete validated page and its recovery marker."""
+
+        if not isinstance(page, CapturePage):
+            raise CaptureError("capture_page_malformed")
+        provider_event_ids = tuple(event.provider_event_id for event in page.events)
+        if len(set(provider_event_ids)) != len(provider_event_ids):
+            raise CaptureError("capture_event_payload_conflict")
+        now = self.clock()
+        with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
+            checkpoint = connection.execute(
+                "SELECT pending_generation,pending_cursor,pending_event_ids_json "
+                "FROM capture_checkpoints WHERE source_id=?",
+                (handle.source_id,),
+            ).fetchone()
+            if checkpoint is None:
+                raise ConflictError("capture checkpoint disappeared before page staging")
+            if self._pending_from_checkpoint(checkpoint) is not None:
+                raise CaptureError("capture_retryable_failure")
+            staged = tuple(
+                self._stage_event_tx(
+                    connection,
+                    source_id=handle.source_id,
+                    event=event,
+                    now=now,
                 )
-                return str(existing["id"]), False, attempts
-            event_id = new_id()
+                for event in page.events
+            )
+            event_ids = tuple(item[0] for item in staged)
+            if len(set(event_ids)) != len(event_ids):
+                raise CaptureError("capture_event_payload_conflict")
+            pending_event_ids_json = json.dumps(event_ids, separators=(",", ":"))
+            if len(pending_event_ids_json.encode("utf-8")) > MAX_PENDING_EVENT_IDS_BYTES:
+                raise CaptureError("capture_event_limit_exceeded")
             connection.execute(
-                "INSERT INTO capture_events"
-                "(id,source_id,provider_event_id,provider_item_id,generation,order_key,operation,"
-                "normalized_payload_json,payload_hash,status,attempts,idempotency_key,received_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,'staged',1,?,?)",
+                "UPDATE capture_checkpoints SET pending_generation=?,pending_cursor=?,"
+                "pending_event_ids_json=?,updated_at=? WHERE source_id=?",
                 (
-                    event_id,
-                    handle.source_id,
-                    event.provider_event_id,
-                    event.provider_item_id,
-                    event.generation,
-                    event.order_key,
-                    event.operation,
-                    payload_json,
-                    payload_hash,
-                    idempotency_key,
+                    page.generation,
+                    page.next_cursor,
+                    pending_event_ids_json,
                     now,
+                    handle.source_id,
                 ),
             )
-            return event_id, False, 1
+            return staged
+
+    def _retry_pending_event(self, handle: CaptureRunHandle, event_id: str) -> bool:
+        """Prepare one durable pending event and report whether it was applied."""
+
+        now = self.clock()
+        with self.store.transaction() as connection:
+            self._require_active_run(connection, handle, now)
+            row = connection.execute(
+                "SELECT status,attempts FROM capture_events WHERE id=? AND source_id=?",
+                (event_id, handle.source_id),
+            ).fetchone()
+            if row is None:
+                raise ConflictError("capture event unavailable for pending retry")
+            if str(row["status"]) == "applied":
+                return True
+            connection.execute(
+                "UPDATE capture_events SET status='staged',attempts=?,error_code=NULL "
+                "WHERE id=? AND source_id=?",
+                (int(row["attempts"]) + 1, event_id, handle.source_id),
+            )
+            return False
 
     def commit_event(
         self,
@@ -1292,14 +1483,22 @@ class CaptureLedger:
             ).fetchone()
             if stored is None:
                 raise ConflictError("capture event disappeared before commit")
-            if (
-                str(stored["provider_event_id"]) != event.provider_event_id
-                or str(stored["provider_item_id"]) != event.provider_item_id
-                or str(stored["operation"]) != event.operation
-                or int(stored["generation"]) != event.generation
-                or str(stored["order_key"]) != event.order_key
-                or str(stored["payload_hash"]) != event.normalized()[1]
-            ):
+            identity_matches = (
+                str(stored["provider_event_id"]) == event.provider_event_id
+                and str(stored["provider_item_id"]) == event.provider_item_id
+                and str(stored["operation"]) == event.operation
+                and int(stored["generation"]) == event.generation
+                and str(stored["order_key"]) == event.order_key
+            )
+            payload_matches = str(stored["payload_hash"]) == event.normalized()[1]
+            purged = (
+                connection.execute(
+                    "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
+                    (canonical_record_id,),
+                ).fetchone()
+                is not None
+            )
+            if not identity_matches or (not payload_matches and not purged):
                 raise CaptureError("capture_event_payload_conflict")
             prior_item = connection.execute(
                 "SELECT canonical_record_id FROM capture_items WHERE source_id=? AND provider_item_id=?",
@@ -1349,12 +1548,71 @@ class CaptureLedger:
                     (event.generation, event.order_key, event_id, now, handle.source_id),
                 )
 
+    def _commit_pending_page_tx(
+        self,
+        connection: Any,
+        *,
+        handle: CaptureRunHandle,
+        page: CapturePage,
+        now: str,
+    ) -> bool:
+        checkpoint = connection.execute(
+            "SELECT generation,cursor,last_order_key,pending_generation,pending_cursor,"
+            "pending_event_ids_json FROM capture_checkpoints WHERE source_id=?",
+            (handle.source_id,),
+        ).fetchone()
+        if checkpoint is None:
+            raise ConflictError("capture checkpoint disappeared before page commit")
+        pending = self._pending_from_checkpoint(checkpoint)
+        if pending is None:
+            return False
+        pending_generation, pending_cursor, event_ids = pending
+        if pending_generation != page.generation or pending_cursor != page.next_cursor:
+            raise CaptureError("capture_event_generation_mismatch")
+        for event_id in event_ids:
+            event_row = connection.execute(
+                "SELECT status FROM capture_events WHERE id=? AND source_id=?",
+                (event_id, handle.source_id),
+            ).fetchone()
+            if event_row is None:
+                raise ConflictError("capture event disappeared before page commit")
+            if str(event_row["status"]) != "applied":
+                raise CaptureError("capture_retryable_failure")
+        current_generation = int(checkpoint["generation"])
+        if page.generation < current_generation:
+            raise CaptureError("capture_event_generation_mismatch")
+        previous_cursor = cast(str | None, checkpoint["cursor"])
+        if previous_cursor == page.next_cursor and not page.done:
+            raise CaptureError("capture_invalid_cursor")
+        if page.generation > current_generation and not event_ids:
+            connection.execute(
+                "UPDATE capture_checkpoints SET generation=?,cursor=?,last_order_key=NULL,"
+                "last_event_id=NULL,pending_generation=NULL,pending_cursor=NULL,"
+                "pending_event_ids_json=NULL,updated_at=? WHERE source_id=?",
+                (page.generation, page.next_cursor, now, handle.source_id),
+            )
+        else:
+            connection.execute(
+                "UPDATE capture_checkpoints SET generation=?,cursor=?,pending_generation=NULL,"
+                "pending_cursor=NULL,pending_event_ids_json=NULL,updated_at=? WHERE source_id=?",
+                (page.generation, page.next_cursor, now, handle.source_id),
+            )
+        return True
+
     def commit_page_cursor(self, handle: CaptureRunHandle, page: CapturePage) -> None:
         now = self.clock()
         with self.store.transaction() as connection:
             self._require_active_run(connection, handle, now)
+            if self._commit_pending_page_tx(
+                connection,
+                handle=handle,
+                page=page,
+                now=now,
+            ):
+                return
             row = connection.execute(
-                "SELECT generation,cursor FROM capture_checkpoints WHERE source_id=?",
+                "SELECT generation,cursor,last_order_key,last_event_id FROM capture_checkpoints "
+                "WHERE source_id=?",
                 (handle.source_id,),
             ).fetchone()
             if row is None:
@@ -1364,10 +1622,18 @@ class CaptureLedger:
             previous_cursor = cast(str | None, row["cursor"])
             if previous_cursor == page.next_cursor and not page.done:
                 raise CaptureError("capture_invalid_cursor")
-            connection.execute(
-                "UPDATE capture_checkpoints SET generation=?,cursor=?,updated_at=? WHERE source_id=?",
-                (page.generation, page.next_cursor, now, handle.source_id),
-            )
+            if page.generation > int(row["generation"]) and not page.events:
+                connection.execute(
+                    "UPDATE capture_checkpoints SET generation=?,cursor=?,last_order_key=NULL,"
+                    "last_event_id=NULL,updated_at=? WHERE source_id=?",
+                    (page.generation, page.next_cursor, now, handle.source_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE capture_checkpoints SET generation=?,cursor=?,updated_at=? "
+                    "WHERE source_id=?",
+                    (page.generation, page.next_cursor, now, handle.source_id),
+                )
 
     def mark_event_failure(self, handle: CaptureRunHandle, event_id: str, code: str) -> None:
         now = self.clock()
@@ -1423,7 +1689,13 @@ class CaptureLedger:
                     (handle.source_id,),
                 ).fetchone()[0]
             )
-            lag_pages = 1 if lag_events else 0
+            pending_page = connection.execute(
+                "SELECT pending_generation FROM capture_checkpoints WHERE source_id=?",
+                (handle.source_id,),
+            ).fetchone()
+            lag_pages = (
+                1 if lag_events or (pending_page is not None and pending_page[0] is not None) else 0
+            )
             run_state: CaptureRunState = "completed" if status == "completed" else "failed"
             updated_run = connection.execute(
                 "UPDATE capture_runs SET state=?,page_count=?,event_count=?,applied_event_count=?,"
@@ -1732,6 +2004,7 @@ class CaptureCoordinator:
         source_id: str,
         event: CaptureEvent,
         event_id: str,
+        run_handle: CaptureRunHandle,
     ) -> tuple[str, str]:
         if self.sink is None:
             raise CaptureError("capture_sink_failed")
@@ -1740,6 +2013,8 @@ class CaptureCoordinator:
             result = self.sink.apply(
                 event,
                 source_id=source_id,
+                event_id=event_id,
+                run_handle=run_handle,
                 canonical_record_id=canonical_record_id,
                 idempotency_key=_idempotency_key(source_id, event.provider_event_id),
             )
@@ -1763,6 +2038,94 @@ class CaptureCoordinator:
         ):
             raise CaptureError("capture_sink_receipt_invalid")
         return receipt, returned_lineage
+
+    @staticmethod
+    def _event_from_row(row: Any) -> CaptureEvent:
+        try:
+            payload = json.loads(str(row["normalized_payload_json"]))
+        except (TypeError, ValueError):
+            raise CaptureError("capture_failed") from None
+        if not isinstance(payload, Mapping):
+            raise CaptureError("capture_failed")
+        try:
+            return CaptureEvent(
+                provider_event_id=str(row["provider_event_id"]),
+                provider_item_id=str(row["provider_item_id"]),
+                order_key=str(row["order_key"]),
+                operation=cast(Literal["upsert", "delete"], str(row["operation"])),
+                payload=payload,
+                generation=int(row["generation"]),
+            )
+        except (CaptureError, TypeError, ValueError):
+            raise CaptureError("capture_failed") from None
+
+    def _recover_pending_page(
+        self,
+        handle: CaptureRunHandle,
+    ) -> tuple[int, int, int, str | None] | None:
+        checkpoint = self.ledger._checkpoint(handle.source_id)
+        pending = self.ledger._pending_from_checkpoint(checkpoint)
+        if pending is None:
+            return None
+        pending_generation, pending_cursor, event_ids = pending
+        with self.ledger.store.connect() as connection:
+            rows: dict[str, Any] = {}
+            for event_id in event_ids:
+                row = connection.execute(
+                    "SELECT id,source_id,provider_event_id,provider_item_id,generation,order_key,"
+                    "operation,normalized_payload_json,payload_hash,status FROM capture_events "
+                    "WHERE id=? AND source_id=?",
+                    (event_id, handle.source_id),
+                ).fetchone()
+                if row is None:
+                    raise CaptureError("capture_failed")
+                rows[event_id] = row
+
+        applied = 0
+        duplicates = 0
+        for event_id in event_ids:
+            row = rows[event_id]
+            if int(row["generation"]) != pending_generation:
+                raise CaptureError("capture_event_generation_mismatch")
+            event = self._event_from_row(row)
+            already_applied = self.ledger._retry_pending_event(handle, event_id)
+            try:
+                receipt, lineage = self._apply(
+                    source_id=handle.source_id,
+                    event=event,
+                    event_id=event_id,
+                    run_handle=handle,
+                )
+                self.ledger.commit_event(
+                    handle=handle,
+                    event=event,
+                    event_id=event_id,
+                    receipt=receipt,
+                    canonical_record_id=lineage,
+                )
+            except CaptureError as error:
+                try:
+                    self.ledger.mark_event_failure(handle, event_id, error.code)
+                except CaptureError as ownership_error:
+                    if ownership_error.code != "capture_lease_expired":
+                        raise
+                    raise ownership_error from error
+                raise
+            if already_applied:
+                duplicates += 1
+            else:
+                applied += 1
+
+        self.ledger.commit_page_cursor(
+            handle,
+            CapturePage(
+                generation=pending_generation,
+                next_cursor=pending_cursor,
+                done=True,
+                events=(),
+            ),
+        )
+        return len(event_ids), applied, duplicates, pending_cursor
 
     def run(self, source_id: str) -> CaptureRunResult:
         source = self.get_source(source_id)
@@ -1814,7 +2177,31 @@ class CaptureCoordinator:
             expected_page_order: int | None = None
             last_error: str | None = None
             try:
-                for page_index in range(MAX_RUN_PAGES):
+                self.ledger.renew_run(handle)
+                recovered = self._recover_pending_page(handle)
+                if recovered is not None:
+                    recovered_events, recovered_applied, recovered_duplicates, cursor = recovered
+                    pages += 1
+                    events += recovered_events
+                    applied += recovered_applied
+                    duplicates += recovered_duplicates
+                    if cursor is None:
+                        return self.ledger.finish_run(
+                            handle=handle,
+                            status="completed",
+                            error_code=None,
+                            pages=pages,
+                            events=events,
+                            applied_events=applied,
+                            duplicate_events=duplicates,
+                            failures=failures,
+                            attempts=attempt,
+                            backoff=self._retry_backoff(manifest),
+                        )
+                remaining_pages = MAX_RUN_PAGES - pages
+                if remaining_pages <= 0:
+                    raise CaptureError("capture_page_limit_exceeded")
+                for page_index in range(remaining_pages):
                     self.ledger.renew_run(handle)
                     page = self._adapter_page(
                         adapter,
@@ -1834,10 +2221,10 @@ class CaptureCoordinator:
                         raise CaptureError("capture_event_limit_exceeded")
                     self._validate_page_capabilities(page, manifest)
                     self._validate_page_events(source_id, page)
-                    for event in page.events:
-                        event_id, already_applied, _attempts = self.ledger.stage_event(
-                            handle, event
-                        )
+                    staged = self.ledger.stage_page(handle, page)
+                    for event, (event_id, already_applied, _attempts) in zip(
+                        page.events, staged, strict=True
+                    ):
                         events += 1
                         if already_applied:
                             duplicates += 1
@@ -1847,6 +2234,7 @@ class CaptureCoordinator:
                                 source_id=source_id,
                                 event=event,
                                 event_id=event_id,
+                                run_handle=handle,
                             )
                             self.ledger.commit_event(
                                 handle=handle,
@@ -1944,6 +2332,7 @@ class CaptureCoordinator:
     def _validate_page_events(self, source_id: str, page: CapturePage) -> None:
         """Validate a complete page before any event in it can advance state."""
 
+        provider_event_ids: set[str] = set()
         checkpoint = self.ledger._checkpoint(source_id)
         current_generation = int(checkpoint["generation"])
         baseline = (
@@ -1952,6 +2341,9 @@ class CaptureCoordinator:
             else None
         )
         for event in page.events:
+            if event.provider_event_id in provider_event_ids:
+                raise CaptureError("capture_event_payload_conflict")
+            provider_event_ids.add(event.provider_event_id)
             if event.generation != page.generation:
                 raise CaptureError("capture_event_generation_mismatch")
             _payload_json(event.payload)
@@ -2066,9 +2458,12 @@ class IdempotentFakeSink:
         event: CaptureEvent,
         *,
         source_id: str,
+        event_id: str,
+        run_handle: CaptureRunHandle,
         canonical_record_id: str,
         idempotency_key: str,
     ) -> str:
+        del event_id, run_handle
         if idempotency_key in self.receipts:
             return self.receipts[idempotency_key]
         receipt = f"receipt-{len(self.receipts) + 1}"

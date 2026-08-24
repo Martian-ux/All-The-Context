@@ -572,7 +572,7 @@ def test_relay_and_provider_memory_cannot_become_witnessed_user_evidence(
     assert relay.record_id is None
 
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 15
+    assert restarted.migrate() == 17
     repaired_relay = restarted.get_candidate(relay.id)
     assert repaired_relay.decision_reason == "explicit_user_statement_witness_required"
     assert repaired_relay.observation_origin == ObservationOrigin.RELAY_QUEUE.value

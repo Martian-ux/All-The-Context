@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from allthecontext import experimental_local_git_workspace_connector as local_git_connector
 from allthecontext.capture import (
     CaptureCoordinator,
     CaptureError,
@@ -155,10 +156,23 @@ def test_snapshot_is_deterministic_and_excludes_git_credentials_and_outside_path
         "src/app.py",
     }
     assert all("outside" not in path for path in relative_paths)
+    metadata_keys = {
+        "relative_path",
+        "root_id",
+        "kind",
+        "size",
+        "content_sha256",
+        "content_truncated",
+        "hash_scope",
+    }
+    assert all(
+        set(event.payload) == metadata_keys for event in first.events if event.operation == "upsert"
+    )
     if symlink is not None:
         assert "outside-link.txt" not in relative_paths
     report = second_adapter.last_scan_report
     assert report is not None
+    assert report.incomplete is False
     assert report.excluded_paths >= 2  # Git metadata and dependency directory.
     assert report.credential_like_paths >= 2  # .env and secret-like content.
     assert report.symlinks_or_reparse_points_skipped >= (1 if symlink is not None else 0)
@@ -207,12 +221,27 @@ def test_incremental_cursor_detects_change_and_deletion_after_restart(tmp_path: 
         if event.payload.get("relative_path") == "docs/decision.md"
     )
     assert len(changed) == 1
-    assert changed[0].payload["text"] == "def answer() -> str: return 'changed fixture'"
+    assert "text" not in changed[0].payload
+    assert f"g{incremental.generation}" in changed[0].provider_event_id
     assert len(deleted) == 1
     assert deleted[0].payload == {}
     assert deleted[0].provider_item_id == deleted_item_id
+    assert f"g{incremental.generation}" in deleted[0].provider_event_id
 
-    unchanged = _fetch(_adapter(root), incremental.next_cursor)
+    (root / "docs/decision.md").write_text(
+        "Use deterministic local fixtures for connector tests.\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    recreated = _fetch(_adapter(root), incremental.next_cursor)
+    recreated_upsert = next(
+        event for event in recreated.events if event.provider_item_id == deleted_item_id
+    )
+    assert recreated_upsert.operation == "upsert"
+    assert f"g{recreated.generation}" in recreated_upsert.provider_event_id
+    assert recreated_upsert.provider_event_id != deleted[0].provider_event_id
+
+    unchanged = _fetch(_adapter(root), recreated.next_cursor)
     assert unchanged.events == ()
 
 
@@ -296,3 +325,64 @@ def test_bounded_cursor_reports_incomplete_state_without_partial_events(tmp_path
     assert report is not None
     assert report.incomplete is True
     assert report.items_emitted == 0
+
+
+def test_discovery_cap_stops_before_lstat_or_reading_later_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cap = 3
+    monkeypatch.setattr(local_git_connector, "MAX_DISCOVERED_FILES", cap)
+    first_root = tmp_path / "a-root"
+    second_root = tmp_path / "b-root"
+    first_root.mkdir()
+    second_root.mkdir()
+    for index in range(cap + 1):
+        (first_root / f"file-{index:02d}.txt").write_text(
+            f"first root {index}\n", encoding="utf-8", newline="\n"
+        )
+    (second_root / "file-00.txt").write_text(
+        "second root must not be read\n", encoding="utf-8", newline="\n"
+    )
+
+    read_entries: list[Path] = []
+    original_read_item = LocalGitWorkspaceCaptureProviderAdapter._read_item
+
+    def tracking_read_item(
+        adapter: LocalGitWorkspaceCaptureProviderAdapter,
+        entry: Path,
+        size: int,
+        root: Path,
+        root_token: str,
+        relative_path: str,
+        report: Any,
+    ) -> Any:
+        read_entries.append(entry)
+        return original_read_item(adapter, entry, size, root, root_token, relative_path, report)
+
+    lstat_entries: list[Path] = []
+    original_lstat = Path.lstat
+
+    def tracking_lstat(entry: Path) -> Any:
+        lstat_entries.append(entry)
+        return original_lstat(entry)
+
+    monkeypatch.setattr(LocalGitWorkspaceCaptureProviderAdapter, "_read_item", tracking_read_item)
+    monkeypatch.setattr(Path, "lstat", tracking_lstat)
+
+    adapter = LocalGitWorkspaceCaptureProviderAdapter((first_root, second_root))
+    with pytest.raises(CaptureError, match="capture_adapter_unavailable"):
+        _fetch(adapter)
+
+    expected_read_entries = [first_root / f"file-{index:02d}.txt" for index in range(cap)]
+    beyond_cap = {
+        first_root / f"file-{cap:02d}.txt",
+        second_root / "file-00.txt",
+    }
+    assert read_entries == expected_read_entries
+    assert beyond_cap.isdisjoint(lstat_entries)
+    report = adapter.last_scan_report
+    assert report is not None
+    assert report.authorized_root_count == 2
+    assert report.files_considered == cap
+    assert report.items_emitted == 0
+    assert report.incomplete is True

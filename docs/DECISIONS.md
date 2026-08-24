@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## ADR-136: Local workspace discovery caps foreground traversal
+
+**Status:** accepted locally on 2026-08-23 after focused synthetic traversal
+regression; this is not provider support, release readiness, hosted/full-suite
+acceptance, or macOS support.
+
+`MAX_DISCOVERED_FILES` is a global hard bound across the adapter's explicitly
+authorized roots, not merely an item-emission limit. The deterministic sorted
+walk counts authorized regular-file candidates before content inspection; when
+the bound is reached, it stops before checking or reading later entries and
+does not begin another authorized root. The report is marked incomplete, so
+the existing `fetch_page` fail-closed behavior remains authoritative. Stable
+ordering, credential/Git/dependency exclusions, symlink/reparse checks, and
+pathlib-based containment remain unchanged for scans below the bound.
+
+The focused regression uses two sanitized roots and instruments `Path.lstat`
+and the adapter's content-read seam to prove that entries after the bound are
+not visited or read, that the report is bounded and incomplete, and that the
+small existing workspace scan is unchanged. No path or content is emitted by
+the adapter diagnostics.
+
 ## ADR-132: Packet H stops pending Core source-fact admission
 
 **Status:** accepted locally on 2026-08-22 after a stopped disposable proof;
@@ -19,6 +40,103 @@ false authority rather than a source-fact admission contract. The next narrow
 frontier is to design and review the Core-owned admission contract in a
 successor PR. No production wiring, stable SDK, provider/client support,
 release state, or macOS support follows from this stopped proof.
+
+## ADR-133: PR1 admits only closed registered-source structural facts
+
+**Status:** accepted locally on 2026-08-23 as a bounded successor contract to
+ADR-132; this is not Packet H, ZF-010, product/provider support, hosted/full-
+suite acceptance, release readiness, or macOS support.
+
+PR1 adds migration 016's three nullable provenance columns and one partial
+unique event index to the existing `context_candidates` table. It adds the
+Core-owned `REGISTERED_SOURCE` policy origin and an explicitly injected
+internal sink. The sink accepts only the durable source/event/run projection
+from `CaptureCoordinator`, only the exact code-owned `workspace.structure`
+scope, only the code-owned `local-git-workspace` extractor registry, and only
+bounded structural classes with code-owned sentences. Raw
+workspace text, paths, roots, account labels, fingerprints, and provider item
+IDs never become candidate content, evidence, structured memory, errors,
+receipts, or logs; the projection uses an opaque source/item hash reference
+while the raw item ID remains in the machine-local capture ledger.
+
+The sink reuses CaptureLedger for ordering, staging, lease, replay, and item
+lineage authority, and uses the existing Memory Truth tables for candidate and
+record truth. Deterministic registered-source record IDs are supplied only by
+the internal evaluation override; user correction, availability, deletion, broken
+linkage, and purge barriers remain authoritative. Capture item deletion is a source
+withdrawal without an ordinary tombstone, while a purge scrubs linked staged
+payloads and blocks future influence. Portable exports omit all machine-local
+capture runtime tables and null the new candidate foreign keys; same-database
+restart retains capture state.
+
+This PR1 does not construct the sink from `CoreService`, package startup, the
+scheduler, or a reference host. It closes only the local admission contract
+with focused sanitized evidence. Packet H, production wiring, ZF-010,
+product/provider support, hosted/full-suite acceptance, release work, and
+macOS remain open or deferred.
+
+## ADR-134: Capture recovery stages one bounded page in the existing checkpoint
+
+**Status:** accepted locally on 2026-08-23 as a bounded correctness follow-up
+to ADR-133; this is not Packet H, production support, hosted/full-suite
+acceptance, release readiness, or macOS support.
+
+Migration 017 extends the existing `capture_checkpoints` row with nullable
+pending generation/cursor state and a bounded JSON array of ordered durable
+`capture_events.id` values. It creates no second truth table. `stage_page`
+validates the live run and stages the complete already-validated page plus its
+pending marker in one transaction, preserving the existing provider-event
+identity, idempotency, conflict, and lineage rules. Existing pending state is
+retryable and cannot be overwritten.
+
+CaptureCoordinator recovery runs before provider fetch. It reconstructs events
+only from pending durable event IDs and stored provider payloads, replays each
+through the injected Core sink, commits each event idempotently, verifies all
+events are applied, then atomically advances the real cursor and clears the
+marker. It fetches from the recovered cursor in the same foreground run; an
+empty newer generation resets stale order state while same-generation order is
+preserved. Correction, availability, ordinary-delete, and purge barriers stay
+with the existing Core sink authority. No production startup wiring, scheduler,
+provider support, Packet H, private data, or generic absence-to-delete rule is
+introduced.
+
+## ADR-135: Capture page identity, metadata, and migration repair guards
+
+**Status:** accepted locally on 2026-08-23 as bounded follow-up corrections;
+this is not Packet H, production support, hosted/full-suite acceptance, release
+readiness, or macOS support.
+
+Capture page validation rejects duplicate provider event IDs before any page is
+staged. `CaptureLedger.stage_page` also uniqueness-guards the resulting durable
+pending event IDs in the same transaction, so a duplicate cannot leave partial
+pending state or replace an existing pending page. When reading a legacy
+pending marker, the bounded raw list and every durable ID are still validated,
+then repeated identical IDs are canonicalized in first-occurrence order for
+one-time recovery; malformed, non-string, or invalid IDs still fail closed.
+
+The `LocalGitWorkspaceCaptureProviderAdapter` keeps its adapter-produced,
+coordinator-path `workspace.structure` events metadata-only. This does not
+make the provider-neutral ledger itself metadata-only: it stores the bounded,
+internal caller-supplied payload. The registered-source sink keeps extra
+caller-supplied fields inert and does not project them into Memory Truth; this
+does not weaken the adapter's actual metadata-only guarantee. Source text and
+text excerpts do not enter the adapter's durable capture event payload or the
+registered-source projection; the bounded structural projection remains the
+only admitted content.
+
+Capture schema repair is limited to capture migration versions already recorded
+as applied, and runs through that version inside the transaction that is about
+to apply a newer migration. Successful repair retains the complete repaired
+state. The architecture data model already records migration 017 as used and
+018 as next; this decision does not renumber migrations.
+
+The historical evidence is 58 focused tests for duplicate IDs, 63 focused tests
+for metadata-only workspace events, and 8 capture migration tests for repair.
+The integration owner subsequently ran 152 combined focused tests on integrated
+code. Reported Ruff lint, Ruff format-check, and mypy checks passed. These are
+bounded local reports only and do not establish full-suite acceptance. No
+production startup wiring, scheduler, provider/product support, Packet H,
+private-data evidence, or macOS support follows from these corrections.
 
 ## ADR-131: Wave 3 components remain experimental until Packet H
 

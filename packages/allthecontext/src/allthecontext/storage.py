@@ -22,12 +22,14 @@ from .config import MAX_IMPORT_BYTES
 from .ids import new_id, utc_now
 from .memory_policy import (
     AUTOMATIC_POLICY_VERSION,
+    REGISTERED_SOURCE_TYPE,
     UNKEYED_CONFLICT_KINDS,
     AutomaticMemoryPolicy,
     MemoryPolicy,
     ObservationOrigin,
     archive_lineage_key,
     normalized_observation_text,
+    registered_source_reference,
 )
 from .models import (
     MAX_TRUTH_CONFLICT_GROUPS,
@@ -828,12 +830,28 @@ class CoreStore:
                 int(row["version"])
                 for row in connection.execute("SELECT version FROM schema_migrations")
             }
+            capture_migration_versions = (15, 16, 17)
             for migration in migrations:
                 version = int(migration.name.split("_", 1)[0])
                 if version in applied:
                     continue
                 connection.execute("BEGIN IMMEDIATE")
                 try:
+                    prior_capture_version = max(
+                        (
+                            capture_version
+                            for capture_version in capture_migration_versions
+                            if capture_version < version and capture_version in applied
+                        ),
+                        default=None,
+                    )
+                    if prior_capture_version is not None:
+                        from .capture import ensure_capture_schema
+
+                        ensure_capture_schema(
+                            connection,
+                            through_version=prior_capture_version,
+                        )
                     for statement in _migration_statements(migration.read_text(encoding="utf-8")):
                         added_column = _added_column(statement)
                         if added_column is not None:
@@ -3719,6 +3737,10 @@ class CoreStore:
         candidate: CandidateInput,
         session_id: str | None,
         client: ClientPrincipal | None,
+        *,
+        capture_source_id: str | None = None,
+        capture_event_id: str | None = None,
+        capture_binding_hash: str | None = None,
     ) -> str:
         data = candidate.model_dump(mode="json")
         content_hash = _hash_text(_json(data))
@@ -3742,8 +3764,9 @@ class CoreStore:
             "structured_value_json,entity_key,attribute_key,scopes_json,tags_json,source_service,source_type,evidence,"
             "confidence,sensitivity,availability,allowed_clients_json,denied_clients_json,"
             "valid_from,expires_at,supersedes,explicit_user_statement,idempotency_key,approval_status,"
-            "content_hash,schema_version,created_at,observed_at,disposition,record_key) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "content_hash,schema_version,created_at,observed_at,disposition,record_key,"
+            "capture_source_id,capture_event_id,capture_binding_hash) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 candidate_id,
                 self.vault_id(),
@@ -3780,6 +3803,9 @@ class CoreStore:
                 candidate.observed_at or created_at,
                 ObservationDisposition.STAGED.value,
                 _stable_record_key(candidate),
+                capture_source_id,
+                capture_event_id,
+                capture_binding_hash,
             ),
         )
         return candidate_id
@@ -4502,6 +4528,218 @@ class CoreStore:
             ).fetchone(),
         )
 
+    def _registered_source_influence_barrier_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        canonical_record_id: str,
+        capture_source_id: str,
+        source_reference: str,
+    ) -> str | None:
+        """Return the bounded reason a capture item may not influence a record."""
+
+        if (
+            connection.execute(
+                "SELECT 1 FROM purge_tombstones WHERE stable_id=? AND target_type='record'",
+                (canonical_record_id,),
+            ).fetchone()
+            is not None
+        ):
+            return "canonical record was purged"
+        record = connection.execute(
+            "SELECT r.* FROM context_records r JOIN context_candidates c "
+            "ON c.id=r.candidate_id WHERE r.id=?",
+            (canonical_record_id,),
+        ).fetchone()
+        if record is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM context_records WHERE id=?", (canonical_record_id,)
+                ).fetchone()
+                is not None
+            ):
+                return "canonical record is not provably linked to the capture item"
+            return None
+        if self._record_has_user_edit_tx(connection, canonical_record_id):
+            return "canonical record has a local mutation"
+        if (
+            connection.execute(
+                "SELECT 1 FROM deletion_tombstones WHERE record_id=?",
+                (canonical_record_id,),
+            ).fetchone()
+            is not None
+        ):
+            return "canonical record was ordinarily deleted"
+        if (
+            record["source_id"] is not None
+            or record["source_reference"] != source_reference
+            or record["source_type"] != REGISTERED_SOURCE_TYPE
+            or record["observation_origin"] != ObservationOrigin.REGISTERED_SOURCE.value
+            or record["explicit_user_statement"]
+            or str(record["kind"]).casefold() == "correction"
+            or connection.execute(
+                "SELECT capture_source_id FROM context_candidates WHERE id=?",
+                (record["candidate_id"],),
+            ).fetchone()["capture_source_id"]
+            != capture_source_id
+        ):
+            return "canonical record is not provably linked to the capture item"
+        # A deleted record with this exact untouched registered-source lineage
+        # is an automatic withdrawal and remains eligible for revival.
+        return None
+
+    def _registered_source_target_tx(
+        self,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+        canonical_record_id: str,
+    ) -> sqlite3.Row | None:
+        """Resolve only the exact internal registered-source record lineage."""
+
+        row = connection.execute(
+            "SELECT r.* FROM context_records r JOIN context_candidates c "
+            "ON c.id=r.candidate_id WHERE r.id=? AND r.vault_id=? "
+            "AND r.deleted_at IS NULL AND r.source_id IS NULL "
+            "AND r.source_type=? AND r.observation_origin=? "
+            "AND r.source_reference=? AND c.capture_source_id=?",
+            (
+                canonical_record_id,
+                observation["vault_id"],
+                REGISTERED_SOURCE_TYPE,
+                ObservationOrigin.REGISTERED_SOURCE.value,
+                observation["source_reference"],
+                observation["capture_source_id"],
+            ),
+        ).fetchone()
+        if (
+            row is None
+            or self._registered_source_influence_barrier_tx(
+                connection,
+                canonical_record_id=canonical_record_id,
+                capture_source_id=str(observation["capture_source_id"]),
+                source_reference=str(observation["source_reference"]),
+            )
+            is not None
+        ):
+            return None
+        return cast(sqlite3.Row, row)
+
+    def _reapply_registered_source_record_tx(
+        self,
+        connection: sqlite3.Connection,
+        observation: sqlite3.Row,
+        *,
+        canonical_record_id: str,
+        availability: Availability,
+        policy_version: str,
+        origin: ObservationOrigin,
+        reason: str,
+        actor: str,
+    ) -> sqlite3.Row | None:
+        """Revive an automatic capture withdrawal without creating a tombstone."""
+
+        if origin != ObservationOrigin.REGISTERED_SOURCE:
+            return None
+        prior = connection.execute(
+            "SELECT r.* FROM context_records r JOIN context_candidates c "
+            "ON c.id=r.candidate_id WHERE r.id=? AND r.vault_id=? "
+            "AND r.deleted_at IS NOT NULL AND r.source_id IS NULL "
+            "AND r.source_type=? AND r.observation_origin=? "
+            "AND r.source_reference=? AND c.capture_source_id=?",
+            (
+                canonical_record_id,
+                observation["vault_id"],
+                REGISTERED_SOURCE_TYPE,
+                ObservationOrigin.REGISTERED_SOURCE.value,
+                observation["source_reference"],
+                observation["capture_source_id"],
+            ),
+        ).fetchone()
+        if (
+            prior is None
+            or self._registered_source_influence_barrier_tx(
+                connection,
+                canonical_record_id=canonical_record_id,
+                capture_source_id=str(observation["capture_source_id"]),
+                source_reference=str(observation["source_reference"]),
+            )
+            is not None
+        ):
+            return None
+        version = int(prior["version"]) + 1
+        now = utc_now()
+        self._validate_supersedes_tx(
+            connection,
+            record_id=canonical_record_id,
+            vault_id=str(prior["vault_id"]),
+            supersedes=cast(str | None, observation["supersedes"]),
+        )
+        connection.execute(
+            "UPDATE context_records SET candidate_id=?,record_key=?,source_id=?,"
+            "source_reference=?,kind=?,content=?,structured_value_json=?,entity_key=?,"
+            "attribute_key=?,scopes_json=?,tags_json=?,source_service=?,source_type=?,"
+            "evidence=?,confidence=?,sensitivity=?,availability=?,allowed_clients_json=?,"
+            "denied_clients_json=?,valid_from=?,expires_at=?,supersedes=?,"
+            "explicit_user_statement=?,approval_status=?,version=?,content_hash=?,"
+            "schema_version=?,updated_at=?,deleted_at=NULL,observed_at=?,"
+            "observation_origin=?,policy_version=? WHERE id=?",
+            (
+                observation["id"],
+                observation["record_key"],
+                observation["source_id"],
+                observation["source_reference"],
+                observation["kind"],
+                observation["content"],
+                observation["structured_value_json"],
+                observation["entity_key"],
+                observation["attribute_key"],
+                observation["scopes_json"],
+                observation["tags_json"],
+                observation["source_service"],
+                observation["source_type"],
+                observation["evidence"],
+                observation["confidence"],
+                observation["sensitivity"],
+                availability.value,
+                observation["allowed_clients_json"],
+                observation["denied_clients_json"],
+                observation["valid_from"],
+                observation["expires_at"],
+                observation["supersedes"],
+                observation["explicit_user_statement"],
+                ApprovalStatus.APPROVED.value,
+                version,
+                _hash_text(str(observation["content"])),
+                observation["schema_version"],
+                now,
+                observation["observed_at"] or observation["created_at"],
+                origin.value,
+                policy_version,
+                canonical_record_id,
+            ),
+        )
+        restored = connection.execute(
+            "SELECT * FROM context_records WHERE id=?", (canonical_record_id,)
+        ).fetchone()
+        assert restored is not None
+        self._set_observation_decision_tx(
+            connection,
+            str(observation["id"]),
+            disposition=ObservationDisposition.APPLIED,
+            reason=reason,
+            policy_version=policy_version,
+            origin=origin,
+            record_id=canonical_record_id,
+            actor=actor,
+        )
+        self._link_observation_tx(
+            connection, str(observation["id"]), canonical_record_id, "reapplied"
+        )
+        self._insert_version(connection, restored, reason)
+        self._replace_fts(connection, restored)
+        self._audit(connection, actor, "registered_source_reapplied", [canonical_record_id])
+        return cast(sqlite3.Row, restored)
+
     def _create_record_from_observation_tx(
         self,
         connection: sqlite3.Connection,
@@ -4512,7 +4750,21 @@ class CoreStore:
         origin: ObservationOrigin,
         reason: str,
         actor: str,
+        canonical_record_id: str | None = None,
     ) -> sqlite3.Row:
+        if canonical_record_id is not None:
+            reused_registered = self._reapply_registered_source_record_tx(
+                connection,
+                observation,
+                canonical_record_id=canonical_record_id,
+                availability=availability,
+                policy_version=policy_version,
+                origin=origin,
+                reason=reason,
+                actor=actor,
+            )
+            if reused_registered is not None:
+                return reused_registered
         reused = self._reapply_deleted_record_from_observation_tx(
             connection,
             observation,
@@ -4525,7 +4777,15 @@ class CoreStore:
         if reused is not None:
             return reused
 
-        record_id = new_id()
+        record_id = canonical_record_id or new_id()
+        if (
+            canonical_record_id is not None
+            and connection.execute(
+                "SELECT 1 FROM context_records WHERE id=?", (canonical_record_id,)
+            ).fetchone()
+            is not None
+        ):
+            raise InvalidStateError("canonical registered-source record is unavailable")
         now = utc_now()
         self._validate_supersedes_tx(
             connection,
@@ -4673,14 +4933,21 @@ class CoreStore:
             content=str(observation["content"]),
             structured_value=_loads(cast(str | None, structured_value), None),
         )
+        candidate_id = (
+            observation["id"]
+            if origin == ObservationOrigin.REGISTERED_SOURCE
+            else record["candidate_id"]
+        )
         connection.execute(
-            "UPDATE context_records SET source_id=?,source_reference=?,kind=?,content=?,"
+            "UPDATE context_records SET candidate_id=?,source_id=?,source_reference=?,kind=?,"
+            "content=?,"
             "structured_value_json=?,entity_key=?,attribute_key=?,scopes_json=?,tags_json=?,"
             "source_service=?,source_type=?,evidence=?,confidence=?,sensitivity=?,"
             "availability=?,allowed_clients_json=?,denied_clients_json=?,valid_from=?,"
             "expires_at=?,explicit_user_statement=?,record_key=?,content_hash=?,version=?,updated_at=?,"
             "observed_at=?,observation_origin=?,policy_version=? WHERE id=?",
             (
+                candidate_id,
                 source_id,
                 source_reference,
                 kind,
@@ -4824,6 +5091,7 @@ class CoreStore:
         origin: ObservationOrigin,
         actor: str,
         principal: ClientPrincipal | None = None,
+        canonical_record_id: str | None = None,
     ) -> CandidateOut:
         observation = connection.execute(
             "SELECT * FROM context_candidates WHERE id=?", (observation_id,)
@@ -4911,6 +5179,40 @@ class CoreStore:
                         None if origin == ObservationOrigin.ARCHIVE_IMPORT else "delete"
                     ),
                 )
+        elif (
+            origin == ObservationOrigin.REGISTERED_SOURCE
+            and canonical_record_id is not None
+            and (
+                barrier := self._registered_source_influence_barrier_tx(
+                    connection,
+                    canonical_record_id=canonical_record_id,
+                    capture_source_id=str(observation["capture_source_id"]),
+                    source_reference=str(observation["source_reference"]),
+                )
+            )
+            is not None
+        ):
+            record_exists = connection.execute(
+                "SELECT 1 FROM context_records WHERE id=?", (canonical_record_id,)
+            ).fetchone()
+            self._set_observation_decision_tx(
+                connection,
+                observation_id,
+                disposition=ObservationDisposition.IGNORED,
+                reason=f"registered source influence blocked: {barrier}",
+                policy_version=policy.policy_version,
+                origin=origin,
+                record_id=canonical_record_id if record_exists is not None else None,
+                actor=actor,
+            )
+            if record_exists is not None:
+                self._link_observation_tx(
+                    connection,
+                    observation_id,
+                    canonical_record_id,
+                    "blocked_by_registered_source_barrier",
+                )
+            self._audit(connection, actor, "observation_ignored", [])
         elif decision.disposition == ObservationDisposition.IGNORED:
             self._set_observation_decision_tx(
                 connection,
@@ -4982,8 +5284,14 @@ class CoreStore:
                     )
                     self._audit(connection, actor, "observation_tentative", [])
                 else:
-                    target = self._target_record_tx(
-                        connection, observation, principal, origin=origin
+                    target = (
+                        self._registered_source_target_tx(
+                            connection, observation, canonical_record_id
+                        )
+                        if canonical_record_id is not None
+                        else self._target_record_tx(
+                            connection, observation, principal, origin=origin
+                        )
                     )
                     if target is not None and not self._observation_wins(observation, target):
                         reason = (
@@ -5043,6 +5351,7 @@ class CoreStore:
                                 origin=origin,
                                 reason=applied_reason,
                                 actor=actor,
+                                canonical_record_id=canonical_record_id,
                             )
                         )
                         for prior in corroborating:
@@ -5579,6 +5888,65 @@ class CoreStore:
                 user_mutation="delete",
             )
 
+    def _withdraw_registered_source_record_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        record_id: str,
+        capture_source_id: str,
+        provider_item_id: str,
+        received_at: str,
+        actor: str = "local-core",
+    ) -> bool:
+        """Withdraw exactly one untouched registered-source item without a tombstone."""
+
+        source_reference = registered_source_reference(capture_source_id, provider_item_id)
+        if (
+            self._registered_source_influence_barrier_tx(
+                connection,
+                canonical_record_id=record_id,
+                capture_source_id=capture_source_id,
+                source_reference=source_reference,
+            )
+            is not None
+        ):
+            return False
+        record = connection.execute(
+            "SELECT r.* FROM context_records r JOIN context_candidates c "
+            "ON c.id=r.candidate_id WHERE r.id=? AND r.source_id IS NULL "
+            "AND r.source_reference=? AND r.source_type=? "
+            "AND r.observation_origin=? AND c.capture_source_id=?",
+            (
+                record_id,
+                source_reference,
+                REGISTERED_SOURCE_TYPE,
+                ObservationOrigin.REGISTERED_SOURCE.value,
+                capture_source_id,
+            ),
+        ).fetchone()
+        if record is None or record["deleted_at"] is not None:
+            return False
+        version = int(record["version"]) + 1
+        connection.execute(
+            "UPDATE context_records SET deleted_at=?,expires_at=?,updated_at=?,version=? "
+            "WHERE id=? AND deleted_at IS NULL",
+            (received_at, received_at, received_at, version, record_id),
+        )
+        withdrawn = connection.execute(
+            "SELECT * FROM context_records WHERE id=?", (record_id,)
+        ).fetchone()
+        assert withdrawn is not None
+        self._insert_version(
+            connection,
+            withdrawn,
+            "capture_item_withdrawn",
+            reason_code="capture_item_withdrawn",
+        )
+        connection.execute("DELETE FROM context_fts WHERE record_id=?", (record_id,))
+        self._audit(connection, actor, "registered_source_withdrawn", [record_id])
+        self._recompute_integrity(connection)
+        return True
+
     def _delete_record_tx(
         self,
         connection: sqlite3.Connection,
@@ -6038,6 +6406,22 @@ class CoreStore:
         )
         if candidate_id is not None:
             observation_ids.add(candidate_id)
+        capture_event_ids = {
+            str(row["capture_event_id"])
+            for row in connection.execute(
+                "SELECT capture_event_id FROM context_candidates "
+                "WHERE id IN (SELECT value FROM json_each(?)) "
+                "AND capture_event_id IS NOT NULL",
+                (_json(sorted(observation_ids)),),
+            ).fetchall()
+        }
+        if capture_event_ids:
+            placeholders = ",".join("?" for _ in capture_event_ids)
+            connection.execute(
+                "UPDATE capture_events SET normalized_payload_json='{}' "
+                f"WHERE id IN ({placeholders})",
+                sorted(capture_event_ids),
+            )
         slot = (cast(str | None, record["entity_key"]), cast(str | None, record["attribute_key"]))
         purge_payload = {
             "record_id": record_id,
