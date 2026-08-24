@@ -212,3 +212,61 @@ The contributor CLI uses `atc capture status [source_id]`, `run`, `enable`,
 `pause`, `resume`, `disable`, and `revoke`. `atc capture create` accepts only
 provider/account metadata and an explicit local-only acknowledgement; it has no
 secret argument.
+
+## Productized foreground local-workspace composition
+
+`capture_runtime` is the shared composition used by `CoreService` and the
+contributor CLI. Both inject `RegisteredSourceCaptureApplicationSink`. The
+local Git workspace adapter is registered only when a valid machine-local
+authorization sidecar exists under Core's data directory. If that sidecar is
+absent or invalid, Core still starts, the vault remains available, and `run`
+returns `capture_adapter_unavailable` without path or raw error leaks.
+
+`atc capture authorize-workspace --root PATH --local-only-acknowledged`
+authorizes exactly one explicit absolute workspace root. Home, cwd, relative,
+missing, non-directory, symlink, reparse, parent/intermediate redirecting,
+UNC/`//` network-style, and Windows remote-volume roots are refused. The
+command holds the sidecar lock across read, identity, complete source
+inventory, reconcile/create, and write. It computes the adapter source identity
+and creates exactly one disabled `local-git-workspace` source with scopes
+exactly `workspace.structure`, account label `local-workspace`, local-only
+acknowledgement, and a non-revoked lifecycle. Reconciliation preserves the
+existing acceptable non-revoked lifecycle rather than resetting enabled, paused,
+degraded, or reconciling to disabled. Inventory walks every bounded
+`list_sources` page rather than stopping at 100 rows and fail-closes on any
+unreadable or malformed capture row, including invalid `requested_scopes_json`
+shapes, without crashing Core. The canonical root is stored only in the private sidecar
+and is never copied into `capture_sources.account_label`, public status, logs,
+receipts, portable export, or committed fixtures. A later different root is a
+new identity and is refused rather than silently retargeted.
+
+Generic `atc capture create` and `POST /v1/admin/capture/sources` reject
+`local-git-workspace` with `capture_authorize_workspace_required` after the same
+Unicode `str.strip` normalization as the capture ledger, so
+leading/trailing/tab whitespace cannot become that provider. Other providers
+remain creatable. Enable and run remain the lifecycle and execution authority
+after authorization. After enable, a foreground CLI run composes a fresh
+coordinator. An admin run on a long-lived Core removes any stale
+local-workspace adapter, revalidates sidecar/root/inventory under the
+nonblocking lock, and then registers or leaves the adapter unavailable.
+
+Sidecar files that are not regular, are symlink or reparse points, or exceed 16
+KiB are ignored so Core still starts. Sidecar bodies are read through a
+descriptor: available close-on-exec/no-inherit/nonblocking/nofollow open flags,
+`fstat`, a 1..16 KiB regular-file check, a 16 KiB+1 bounded complete read, then
+post-open `lstat`/`os.path.samestat` and reparse/symlink refusal. After
+`resolve`, root and resolved are compared with `os.path.samestat` rather than
+`Path.samefile`. Explicit Windows extended local-drive prefixes unwrap to the
+ordinary drive form; UNC, extended UNC, volume, and device prefixes stay
+rejected. `requested_scopes_json` object/string/number/null shapes fail closed
+instead of coercing to an empty tuple, without leaking raw JSON. Authorization
+fail-closed errors suppress exception context so path-bearing OSError context
+does not leak. Revoked or pre-existing malformed workspace-source rows are
+terminal in this slice: they are not deleted, not un-revoked, and not
+auto-repaired. Durable uniqueness is later hardening. On Windows,
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable, so a blocking named-pipe sidecar can
+stall composition.
+
+This is manual opt-in foreground capture only. It does not start a scheduler
+thread, add scheduler tables or health UI, change the 20-file discovery cap, or
+productize Packet E continuous scheduling.

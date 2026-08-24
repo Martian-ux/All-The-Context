@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -1436,6 +1437,43 @@ def test_capture_api_is_authenticated_and_content_free(tmp_path: Path) -> None:
         assert unavailable.json()["error_code"] == "capture_adapter_unavailable"
         assert "cursor" not in unavailable.text
         assert "payload" not in unavailable.text
+
+
+def test_malformed_requested_scopes_json_shapes_fail_closed_without_raw_leak(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    source_id = _source(coordinator)
+    restored = coordinator.get_source(source_id)
+    assert restored.requested_scopes == ("items.read",)
+    poisons = (
+        json.dumps({"secret": "do-not-leak-scope-payload"}),
+        json.dumps("do-not-leak-scope-payload"),
+        json.dumps([1, 2]),
+        json.dumps([{"secret": "do-not-leak-scope-payload"}]),
+        "null",
+        "1",
+    )
+    for poison in poisons:
+        with coordinator.ledger.store.transaction() as connection:
+            connection.execute(
+                "UPDATE capture_sources SET requested_scopes_json=? WHERE id=?",
+                (poison, source_id),
+            )
+        with pytest.raises(CaptureError, match="capture_page_malformed") as raised:
+            coordinator.get_source(source_id)
+        assert raised.value.__cause__ is None
+        rendered = "".join(traceback.format_exception(raised.value))
+        assert "do-not-leak-scope-payload" not in str(raised.value)
+        assert "do-not-leak-scope-payload" not in rendered
+        with pytest.raises(CaptureError, match="capture_page_malformed"):
+            coordinator.list_sources()
+    with coordinator.ledger.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET requested_scopes_json=? WHERE id=?",
+            (json.dumps(["items.read"]), source_id),
+        )
+    assert coordinator.get_source(source_id).requested_scopes == ("items.read",)
 
 
 def test_cli_capture_commands_are_content_free(

@@ -2,8 +2,9 @@
 """Content-free Continuous Capture contracts and the local capture ledger.
 
 This module deliberately stops at a provider-neutral, foreground-only ledger.
-Adapters are injected by tests or a future connector package; this repository
-does not contain a network implementation or a credential-bearing adapter.
+Adapters are injected by tests or by ``capture_runtime`` when a valid
+machine-local workspace authorization exists. This repository does not contain
+a network implementation or a credential-bearing adapter.
 """
 
 from __future__ import annotations
@@ -114,6 +115,7 @@ CAPTURE_ERROR_CODES = frozenset(
         "capture_sink_receipt_invalid",
         "capture_lineage_conflict",
         "capture_local_only_required",
+        "capture_authorize_workspace_required",
         "capture_invalid_transition",
         "capture_failed",
     }
@@ -979,9 +981,21 @@ class CaptureLedger:
         self.clock = clock
 
     @staticmethod
+    def _scopes_from_row(row: Any) -> tuple[str, ...]:
+        try:
+            raw_scopes = json.loads(str(row["requested_scopes_json"]))
+        except (TypeError, UnicodeError, ValueError):
+            raise CaptureError("capture_page_malformed") from None
+        if not isinstance(raw_scopes, list) or len(raw_scopes) > MAX_SCOPE_COUNT:
+            raise CaptureError("capture_page_malformed") from None
+        try:
+            return tuple(_bounded_opaque_id(item, maximum=MAX_SCOPE_CHARS) for item in raw_scopes)
+        except CaptureError:
+            raise CaptureError("capture_page_malformed") from None
+
+    @staticmethod
     def _source_from_row(row: Any) -> CaptureSource:
-        raw_scopes = json.loads(str(row["requested_scopes_json"]))
-        scopes = tuple(str(item) for item in raw_scopes) if isinstance(raw_scopes, list) else ()
+        scopes = CaptureLedger._scopes_from_row(row)
         return CaptureSource(
             id=str(row["id"]),
             provider=str(row["provider"]),

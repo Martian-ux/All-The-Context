@@ -129,6 +129,105 @@ passed. `python -m mypy packages/allthecontext/src` passed (92 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
 was intentionally not run.
 
+## 2026-08-24 productized foreground local-workspace capture runtime
+
+This checkout adds a shared `capture_runtime` composition used by both
+`CoreService` and the contributor CLI. The registered-source sink is always
+injected. The experimental `LocalGitWorkspaceCaptureProviderAdapter` is
+registered only when a valid machine-local authorization sidecar exists under
+`CoreConfig.data_dir`. Core still starts if that sidecar is absent or invalid:
+capture degrades closed with `capture_adapter_unavailable`, and the vault
+remains available. No scheduler thread, scheduler table, health UI, dashboard,
+Packet G, ZF-010, provider/network/OAuth, migration, release, or file-cap
+change is included.
+
+Authorization is an explicit CLI command, `atc capture authorize-workspace`,
+with a required absolute `--root` and `--local-only-acknowledged`. It computes
+the adapter source identity and creates exactly one disabled
+`local-git-workspace` source with scopes exactly `workspace.structure`.
+Reconciliation preserves the existing acceptable non-revoked lifecycle rather
+than resetting enabled, paused, degraded, or reconciling to disabled. The
+command returns content-free identifiers/status. The canonical workspace root
+stays in the private sidecar only; it is never written to
+`capture_sources.account_label`, public status, logs, receipts, portable export,
+or committed fixtures. A changed root is a new identity and is refused rather
+than silently retargeted. Existing `create` / `enable` / `run` remain
+authoritative. After enable, a foreground CLI run composes a fresh coordinator
+and an admin run refreshes the local-workspace adapter fail-closed immediately
+before execution. This is manual opt-in foreground capture only; continuous
+Packet E scheduling remains open.
+
+Focused sanitized tests cover no-authorization adapter unavailability without
+Core failure; authorize to one disabled exact source; enable/run admitting
+structural facts and a deterministic no-fact; restart identity rebuild and
+idempotent replay; CLI/Core composition parity; exact file-deletion withdrawal;
+Core-authoritative correction/delete/purge barriers; sidecar/path exclusion from
+public projections and export; and invalid, redirecting, and reparse roots
+failing closed.
+
+This does not claim complete Packet H, Packet E productization, provider
+support, hosted/full-suite acceptance, release, private-data evidence, or macOS
+support.
+
+## 2026-08-24 local-workspace authorization hardening
+
+This checkout hardens the productized foreground local-workspace authorization
+path without scheduler, dashboard, migration, network-provider, or Packet H
+milestone work.
+
+Authorize holds the sidecar FileLock across read, identity, complete
+workspace-source inventory, reconcile/create, and write. Lock timeout and
+lock/write/unlink OS errors become content-free `capture_failed` without path
+cause. Authorization fail-closed errors suppress exception context so OSError
+filenames do not survive on `__context__` or tracebacks. Core composition stays
+nonblocking and fail-closed: a held lock, invalid sidecar, incomplete inventory,
+or any unreadable/malformed capture row (including invalid
+`requested_scopes_json` shapes) leaves the vault available and does not register
+the adapter. Authorize on that vault returns a bounded content-free
+`CaptureError` rather than a decoder exception or raw row/path. Object, string,
+number, null, and non-string scope items fail closed instead of coercing to an
+empty tuple, without leaking raw JSON.
+
+Workspace-source inventory paginates beyond the first 100 `list_sources` rows
+and walks every 500-row page. Registration and reconciliation require exactly
+one matching canonical row: provider `local-git-workspace`, account label
+`local-workspace`, exact fingerprint, exact `workspace.structure` scope,
+local-only acknowledgement, and a non-revoked lifecycle. A newly created
+authorized source is disabled. Reconciliation preserves the existing acceptable
+lifecycle rather than resetting enabled, paused, degraded, or reconciling to
+disabled. Malformed, duplicate, mismatched, or revoked rows never register the
+adapter. Simultaneous authorize calls serialize so the same root yields one
+source and different roots yield one winner plus bounded refusal.
+
+Generic CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
+reject the reserved provider with `capture_authorize_workspace_required` after
+the same Unicode `str.strip` normalization as the capture ledger, so
+leading/trailing/tab whitespace cannot become `local-git-workspace`. Other
+providers and the provider-neutral `CaptureCoordinator.create_source` test seam
+are unchanged.
+
+Sidecar reads open a descriptor with available close-on-exec/no-inherit,
+nonblocking, and nofollow flags, `fstat` it, require a regular 1..16 KiB file,
+read at most 16 KiB+1 bytes, then post-open `lstat`/`os.path.samestat` and
+refuse symlink/reparse so a Windows followed reparse fails closed. Core still
+starts. After `resolve`, root and resolved are compared with `os.path.samestat`
+rather than `Path.samefile`. Explicit Windows extended local-drive prefixes
+unwrap to the ordinary drive form; UNC, extended UNC, volume, and device
+prefixes stay rejected. Implicit cwd/home remain refused. Linux remote
+filesystems that are not `//` prefixes are not classified here. On Windows,
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable, so a blocking named-pipe sidecar can
+stall composition.
+
+Admin `POST /v1/admin/capture/sources/{id}/run` removes any stale
+local-workspace adapter, takes the nonblocking lock, revalidates
+sidecar/root/inventory, and then registers or leaves the adapter unavailable.
+A sidecar authorized after Core startup can run without restart; a later
+invalid sidecar fail-closes. CLI run still composes a fresh coordinator.
+
+Revoked and pre-existing malformed workspace-source rows are a documented
+terminal recovery boundary: this slice does not delete ledger rows, un-revoke,
+or add a unique index. Durable database uniqueness remains later hardening.
+
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats

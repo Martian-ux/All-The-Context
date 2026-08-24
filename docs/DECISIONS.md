@@ -27,6 +27,92 @@ format `--check` on touched Python files, mypy on package source (92 files),
 `scripts/check_docs.py`, and `git diff --check`. Full repository pytest, hosted
 CI, private data, and macOS work were not run.
 
+## ADR-139: Shared foreground capture runtime authorizes one local workspace
+
+**Status:** accepted locally on 2026-08-24 as the first productized E/F
+foundation slice; this is not Packet E scheduling, complete Packet H, ZF-010,
+provider/product support, hosted/full-suite acceptance, release, or macOS
+support.
+
+`capture_runtime` is the single composition module for `CaptureCoordinator`.
+`CoreService` and the contributor CLI must use it and must not construct
+divergent coordinators. The composition always injects
+`RegisteredSourceCaptureApplicationSink` and registers
+`LocalGitWorkspaceCaptureProviderAdapter` only when a valid machine-local
+authorization sidecar exists under `CoreConfig.data_dir`.
+
+The sidecar stores exactly one explicitly authorized canonical workspace root
+using pathlib and the existing cross-platform atomic/private-file pattern
+(temporary file plus replace). The adjacent FileLock is held across the entire
+authorize read/identity/source-reconcile/write critical section. Ordinary Core
+composition uses a nonblocking lock attempt and fail-closes adapter
+registration if the lock is busy, the sidecar is invalid, inventory cannot be
+completed, or any capture row is unreadable or malformed, including invalid
+`requested_scopes_json` shapes. Core still starts with the vault available and
+without the adapter. Authorize on that vault returns a bounded content-free
+`CaptureError` rather than a decoder exception or raw row/path.
+`filelock.Timeout` and lock/write/unlink `OSError` paths map to a content-free
+`CaptureError` with `__cause__` cleared. Authorization fail-closed errors also
+suppress exception context (`from None`) so OSError filenames do not survive on
+`__context__` or tracebacks. It does not assume POSIX permissions.
+
+Sidecar reads use a descriptor-based bounded path: `os.open` with available
+close-on-exec/no-inherit, nonblocking, and nofollow flags, `fstat` of that
+descriptor, a regular-file 1..16 KiB size check, a bounded complete read, then
+post-open `lstat` plus `os.path.samestat` and symlink/reparse refusal so a
+Windows followed reparse still fails closed. The descriptor is always closed
+and failures return `None` without content. Invalid sidecars do not prevent
+Core startup. Missing, non-directory, symlink, reparse, parent or intermediate
+redirecting, UNC/`//` network-style, Windows remote-volume, implicit-home
+(`~`), and implicit-cwd (relative) roots fail closed. After `resolve`, the
+implementation `lstat`s the original root again and compares root/resolved with
+`os.path.samestat` rather than `Path.samefile`, refusing symlink, reparse, and
+non-directory results. Explicit Windows extended local-drive prefixes
+(`\\?\X:\...` and `//?/X:/...`) unwrap to the ordinary drive form before those
+checks; UNC, extended UNC, volume, and device prefixes stay rejected. A changed
+root is a new adapter identity; silent retargeting is refused. Path and raw
+errors do not cross public status, receipts, logs, or portable export. The root
+is never stored in `capture_sources.account_label`. Linux remote filesystems
+that are not `//` UNC-style prefixes are not classified in this slice. On
+Windows, `O_NONBLOCK` and `O_NOFOLLOW` are unavailable, so a sidecar path that
+is already a blocking named pipe can stall composition.
+
+`atc capture authorize-workspace --root PATH --local-only-acknowledged` is the
+opt-in command. It computes the adapter identity and creates exactly one
+disabled `local-git-workspace` source with scopes exactly `workspace.structure`,
+constant account label `local-workspace`, local-only acknowledgement, and a
+non-revoked lifecycle. Reconciliation preserves the existing acceptable
+non-revoked lifecycle rather than resetting enabled, paused, degraded, or
+reconciling to disabled. Workspace-source inventory walks the existing bounded
+`list_sources` pages to completion rather than the first 100 rows. The adapter
+is registered only when exactly one matching canonical source exists. Generic
+contributor CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
+reject the reserved `local-git-workspace` provider with
+`capture_authorize_workspace_required` after the same Unicode `str.strip`
+normalization `CaptureLedger` applies, so leading, trailing, and tab whitespace
+cannot become that provider. Other providers are unchanged. The
+`CaptureCoordinator.create_source` test seam stays provider-neutral.
+
+Ledger `requested_scopes_json` must decode as a JSON array of opaque scope
+strings. Object, string, number, null, and non-string-item shapes fail closed
+as `capture_page_malformed` without coercing to an empty tuple and without
+leaking the raw JSON. Rows written by `create_source` remain arrays and are
+unaffected.
+
+Revoked or pre-existing malformed workspace-source rows are a terminal recovery
+boundary in this slice: authorize refuses, the adapter is not registered, ledger
+rows are not deleted, and revocation is not weakened. No migration or unique
+index is added here; durable database uniqueness for this provider remains a
+later hardening. Existing create/enable/run remain the lifecycle and execution
+authority for non-reserved providers and for enable/run after authorization.
+After enable, a foreground CLI run composes a fresh coordinator. An admin run
+on a long-lived Core process removes any stale local-workspace adapter, takes
+the nonblocking authorization lock, revalidates sidecar/root/inventory, and
+then registers or leaves the adapter unavailable so a sidecar written after
+startup can run without restart and a later invalid sidecar fail-closes.
+No scheduler loop, scheduler table/config, health UI, or 20-file cap change is
+introduced. Continuous scheduling remains a separate Packet E PR.
+
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 
 **Status:** accepted on 2026-08-24 after reconstructing the Packet H-only

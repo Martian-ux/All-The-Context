@@ -50,7 +50,11 @@ from ..browser_session import (
     BrowserSessions,
     BrowserSessionTickets,
 )
-from ..capture import CaptureError
+from ..capture import CaptureError, CaptureRunResult
+from ..capture_runtime import (
+    refresh_local_workspace_adapter,
+    reject_reserved_workspace_provider,
+)
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -950,6 +954,7 @@ def create_app(
         request: CaptureCreateRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        reject_reserved_workspace_provider(request.provider)
         source = core.capture.create_source(
             provider=request.provider,
             account_label=request.account_label,
@@ -1014,7 +1019,12 @@ def create_app(
     @app.post("/v1/admin/capture/sources/{source_id}/run")
     async def run_capture_source(source_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        result = await run_in_threadpool(core.capture.run, source_id)
+
+        def run_now() -> CaptureRunResult:
+            refresh_local_workspace_adapter(core.capture, active_config)
+            return core.capture.run(source_id)
+
+        result = await run_in_threadpool(run_now)
         return result.model_dump(mode="json")
 
     @app.post("/v1/admin/sources/{source_id}/reprocess")
