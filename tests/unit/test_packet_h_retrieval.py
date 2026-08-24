@@ -9,7 +9,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from tempfile import TemporaryDirectory
 from typing import NoReturn
 
@@ -317,7 +317,7 @@ def test_packet_h_c_public_report_safety_rejects_fixture_material() -> None:
 def test_packet_h_c_public_report_safety_rejects_path_like_identifier() -> None:
     unsafe = {
         "aggregate_receipt": {"stable_digest": "0" * 64},
-        "leaked": r"C:\Users\example\workspace",
+        "leaked": str(PureWindowsPath("C:/", "Users", "example", "workspace")),
     }
 
     with pytest.raises(AssertionError, match="not identifier-safe"):
