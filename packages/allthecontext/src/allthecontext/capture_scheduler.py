@@ -710,6 +710,7 @@ class CoreCaptureScheduler:
         self._cycle_lock = threading.Lock()
         self._stop = threading.Event()
         self._wakeup = threading.Event()
+        self._closing = threading.Event()
         self._thread: threading.Thread | None = None
 
     def dispatch_allowed(self) -> bool:
@@ -756,21 +757,26 @@ class CoreCaptureScheduler:
         self._join_worker(thread, timeout=self._join_timeout_seconds)
 
     def shutdown(self) -> None:
-        """Signal stop and wait until the non-daemon worker is dead. Idempotent.
+        """Signal stop and wait until the captured worker is dead. Idempotent.
 
-        This does not cancel in-flight coordinator work. Prompt admin disable
-        stays on ``stop`` / ``disable``.
+        Sets a permanent closing fence for this instance. Later enable/start
+        cannot clear stop or revive the worker. This does not cancel in-flight
+        coordinator work. Prompt admin disable stays on ``stop`` / ``disable``.
         """
 
         with self._control_lock:
-            thread = self._signal_stop_unlocked()
-        self._join_worker(thread, timeout=None)
+            thread = self._begin_shutdown_unlocked()
+        if thread is not None:
+            thread.join()
+        self._clear_dead_thread()
 
     def _start_unlocked(self) -> None:
         if scheduler_update_health_forced_off() or not self.dispatch_allowed():
             return
         spawned: threading.Thread | None = None
         with self._lifecycle_lock:
+            if self._closing.is_set():
+                return
             thread = self._thread
             if thread is not None and thread.is_alive():
                 self._stop.clear()
@@ -796,23 +802,24 @@ class CoreCaptureScheduler:
             return thread
         return None
 
-    def _join_worker(
-        self,
-        thread: threading.Thread | None,
-        *,
-        timeout: float | None,
-    ) -> None:
+    def _begin_shutdown_unlocked(self) -> threading.Thread | None:
+        with self._lifecycle_lock:
+            self._closing.set()
+            self._stop.set()
+            self._wakeup.set()
+            thread = self._thread
         if thread is not None and thread.is_alive():
-            if timeout is None:
-                while thread.is_alive() and self._stop.is_set():
-                    thread.join(timeout=_CORE_SCHEDULER_JOIN_POLL_SECONDS)
-            else:
-                deadline = monotonic() + timeout
-                while thread.is_alive() and self._stop.is_set():
-                    remaining = deadline - monotonic()
-                    if remaining <= 0:
-                        break
-                    thread.join(timeout=min(remaining, _CORE_SCHEDULER_JOIN_POLL_SECONDS))
+            return thread
+        return None
+
+    def _join_worker(self, thread: threading.Thread | None, *, timeout: float) -> None:
+        if thread is not None and thread.is_alive():
+            deadline = monotonic() + timeout
+            while thread.is_alive() and self._stop.is_set() and not self._closing.is_set():
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    break
+                thread.join(timeout=min(remaining, _CORE_SCHEDULER_JOIN_POLL_SECONDS))
         self._clear_dead_thread()
 
     def _clear_dead_thread(self) -> None:
@@ -823,7 +830,7 @@ class CoreCaptureScheduler:
 
     def _try_exit(self, current: threading.Thread) -> bool:
         with self._lifecycle_lock:
-            if not self._stop.is_set():
+            if not self._closing.is_set() and not self._stop.is_set():
                 return False
             if self._thread is current:
                 self._thread = None

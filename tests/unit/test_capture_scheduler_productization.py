@@ -663,6 +663,47 @@ def test_shutdown_waits_until_worker_is_dead(
         store.close()
 
 
+def test_shutdown_fence_blocks_enable_start_from_reviving_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, started, release, store = _blocking_core_scheduler(tmp_path, monkeypatch)
+    try:
+        scheduler.start()
+        assert started.wait(timeout=5)
+        finished = threading.Event()
+
+        def do_shutdown() -> None:
+            scheduler.shutdown()
+            finished.set()
+
+        worker = threading.Thread(target=do_shutdown)
+        worker.start()
+        assert finished.wait(timeout=0.3) is False
+        assert scheduler.status()["running"] is True
+        enabled = scheduler.enable()
+        assert enabled["durable_enabled"] is True
+        scheduler.start()
+        assert finished.wait(timeout=0.3) is False
+        assert scheduler.status()["running"] is True
+        assert scheduler._closing.is_set() is True
+        release.set()
+        assert finished.wait(timeout=5) is True
+        worker.join(timeout=5)
+        assert worker.is_alive() is False
+        assert scheduler.status()["running"] is False
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+        revived = scheduler.enable()
+        scheduler.start()
+        assert revived["durable_enabled"] is True
+        assert scheduler.status()["running"] is False
+        assert scheduler._thread is None or scheduler._thread.is_alive() is False
+    finally:
+        release.set()
+        scheduler.shutdown()
+        store.close()
+
+
 def test_core_service_close_waits_until_scheduler_thread_is_dead(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

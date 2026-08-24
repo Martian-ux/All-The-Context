@@ -79,16 +79,21 @@ when those gates pass. Authenticated admin enable can also start or revive the
 worker. Admin disable and prompt `stop` set an interruptible
 `threading.Event` and join with a bound; an in-flight cycle completes rather
 than being cancelled. Lifespan `finally` and `CoreService.close` use a
-distinct `shutdown` path that signals stop and waits unbounded until the
-non-daemon worker is dead, before store and instance-lock release. The loop
-thread is never daemonized, and this slice does not claim cancellation. At
-most one worker runs at a time: overlapping cycles are refused by an
-in-process global cycle lock. That is not the coordinator's cross-process
-per-source lease. Sidecar write and the start/stop decision are serialized by
-an in-process control mutex; joins never run while holding the control or
-lifecycle mutexes. Disable during an in-flight cycle followed by enable
-revives the same loop or otherwise leaves the worker eventually running while
-all gates stay enabled. Waits use `Event.wait` rather than unbounded `sleep`.
+distinct `shutdown` path that sets a permanent closing fence for that
+`CoreService` instance, signals stop, and joins the captured worker until it
+is dead, without holding the control or lifecycle mutexes, before store and
+instance-lock release. After shutdown begins, `enable`/`start` must not clear
+stop or revive or spawn a worker in that closing instance. Durable sidecar
+enablement may remain for a later Core process, but the closing instance does
+not run it. Admin disable-then-enable last-writer revival remains valid only
+before shutdown begins. The loop thread is never daemonized, and this slice
+does not claim cancellation. At most one worker runs at a time: overlapping
+cycles are refused by an in-process global cycle lock. That is not the
+coordinator's cross-process per-source lease. Sidecar write and the
+start/stop decision are serialized by an in-process control mutex; joins never
+run while holding the control or lifecycle mutexes. Disable during an
+in-flight cycle followed by enable, before shutdown, revives the same loop or
+otherwise leaves the worker eventually running while all gates stay enabled. Waits use `Event.wait` rather than unbounded `sleep`.
 Expired and nonterminal capture runs are recovered on Core start and again at
 the start of each enabled cycle before due evaluation, so an expired
 reconciling source can become retry-due through the existing resume/run
@@ -107,7 +112,7 @@ capture/admin status. CLI sidecar status omits `running` because it cannot
 observe the Core process. Status and health reads do not consume one-shot
 reauthorization actions or mutate rotation/scheduling state.
 
-Evidence is the focused scheduler and productization tests (35 passed), Ruff
+Evidence is the focused scheduler and productization tests (36 passed), Ruff
 check and format `--check` on touched Python files, mypy on package source
 (93 files),
 `scripts/check_docs.py`, `git diff --check`, and

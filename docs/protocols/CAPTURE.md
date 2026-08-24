@@ -305,14 +305,19 @@ is ready, and only when those gates pass. Authenticated admin enable can start
 or revive that worker. The loop waits on an interruptible `threading.Event`
 rather than an unbounded sleep. Admin disable and prompt stop join with a
 bound; an in-flight cycle is allowed to complete and is not cancelled. Lifespan
-`finally` and `CoreService.close` wait until the worker is dead before store
-and instance-lock release. Both stop and shutdown are idempotent. The worker
-is never a daemon. At most one worker/run executes in process; overlapping
-cycles are refused by an in-process global cycle lock. Cross-process exclusion
-remains the coordinator's per-source lease. Sidecar write plus the start/stop
-decision are serialized by a control mutex, and joins do not run while that
-mutex or the lifecycle mutex is held. Disable during an in-flight cycle
-followed by enable keeps or revives the same loop, or otherwise leaves the
+`finally` and `CoreService.close` set a permanent closing fence for that
+instance and wait until the captured worker is dead before store and
+instance-lock release. After shutdown begins, admin enable/start cannot clear
+stop or revive or spawn a worker in that closing instance. Durable sidecar
+enablement may remain for the next Core process, but the closing instance does
+not run it. Last-writer disable-then-enable revival remains valid only before
+shutdown. Both stop and shutdown are idempotent. The worker is never a daemon.
+At most one worker/run executes in process; overlapping cycles are refused by
+an in-process global cycle lock. Cross-process exclusion remains the
+coordinator's per-source lease. Sidecar write plus the start/stop decision are
+serialized by a control mutex, and joins do not run while that mutex or the
+lifecycle mutex is held. Disable during an in-flight cycle followed by enable,
+before shutdown, keeps or revives the same loop, or otherwise leaves the
 worker eventually running while every gate stays enabled. Expired and other
 nonterminal capture runs are recovered on Core start and at the start of each
 enabled cycle before due evaluation, so an expired reconciling source can
