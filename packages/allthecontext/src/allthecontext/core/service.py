@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Literal
 
 from ..capture_runtime import compose_capture_coordinator
+from ..capture_scheduler import CoreCaptureScheduler
 from ..config import CoreConfig
 from ..import_operations import ImportOperationService
 from ..importers import ArchiveImportService
@@ -22,6 +23,8 @@ class CoreService:
         self.store = CoreStore(config.database_path)
         self.store.initialize_vault()
         self.capture = compose_capture_coordinator(self.store, self.config)
+        self.capture.ledger.recover_expired_runs()
+        self.capture_scheduler = CoreCaptureScheduler(self.capture, self.config)
         self.store.repair_preledger_secrets()
         while self.store.evaluate_staged_observations():
             pass
@@ -43,8 +46,11 @@ class CoreService:
         return cls(CoreConfig.in_directory(data_dir, require_auth=require_auth))
 
     def close(self) -> None:
-        """Release store resources owned by this Core instance."""
-        self.store.close()
+        """Wait for the capture scheduler worker to die, then release store resources."""
+        try:
+            self.capture_scheduler.shutdown()
+        finally:
+            self.store.close()
 
     def __enter__(self) -> CoreService:
         return self

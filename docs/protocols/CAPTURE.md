@@ -190,8 +190,9 @@ The states are `disabled`, `enabled`, `paused`, `degraded`, `revoked`, and
 `reconciling`. New sources are disabled. Enable/resume/reconciliation require
 the local-only acknowledgement and a non-revoked source. Disabled, paused, and
 revoked sources make zero adapter calls. Revoke is terminal and clears the
-reserved credential reference. There is no scheduler and only one foreground
-run can hold a live lease.
+reserved credential reference. Only one live lease can be held per source.
+The optional Core-owned Packet E scheduler is disabled by default, never
+overlaps a live lease, and is described below.
 
 ## Admin API and CLI
 
@@ -202,6 +203,8 @@ the existing loopback Core defaults:
 - `GET /v1/admin/capture/sources/{source_id}` and `/status`
 - `POST /v1/admin/capture/sources/{source_id}/{enable,pause,resume,disable,revoke,run}`
 - `GET /v1/admin/capture/status`
+- `GET /v1/admin/capture/scheduler`
+- `POST /v1/admin/capture/scheduler/{enable,disable}`
 
 Responses contain source state, bounded telemetry, canonical error codes, and
 generation only. They do not contain cursors, payloads, provider tokens,
@@ -209,9 +212,10 @@ credential references, or raw provider errors. If no adapter is registered,
 `run` returns `capture_adapter_unavailable` without making a network call.
 
 The contributor CLI uses `atc capture status [source_id]`, `run`, `enable`,
-`pause`, `resume`, `disable`, and `revoke`. `atc capture create` accepts only
-provider/account metadata and an explicit local-only acknowledgement; it has no
-secret argument.
+`pause`, `resume`, `disable`, and `revoke`. Scheduler control is only
+`atc capture scheduler status`, `enable`, and `disable`; there is no CLI
+`run_forever` or daemon. `atc capture create` accepts only provider/account
+metadata and an explicit local-only acknowledgement; it has no secret argument.
 
 ## Productized foreground local-workspace composition
 
@@ -267,6 +271,78 @@ auto-repaired. Durable uniqueness is later hardening. On Windows,
 `O_NONBLOCK`/`O_NOFOLLOW` are unavailable, so a blocking named-pipe sidecar can
 stall composition.
 
-This is manual opt-in foreground capture only. It does not start a scheduler
-thread, add scheduler tables or health UI, change the 20-file discovery cap, or
-productize Packet E continuous scheduling.
+This remains manual opt-in foreground capture for authorization, enable, and
+operator `run`. It does not change the 20-file discovery cap, add a scheduler
+table or health UI, or auto-enable from dashboard or desktop startup.
+
+## Productized Packet E scheduler
+
+Core may run one disabled-by-default capture scheduler around the existing
+coordinator. The scheduler is Core-owned, opt-in, and fail-closed. It reuses
+`CaptureScheduler` for due selection and `refresh_local_workspace_adapter`
+before every cycle, exactly as admin `run` does. It does not fork coordinator,
+sink, or adapter logic and does not create a scheduler table or migration.
+
+Dispatch requires all of:
+
+- the exact process gate `ATC_CAPTURE_SCHEDULER_ENABLED=1`
+- a valid machine-local sidecar `capture-scheduler.json` under
+  `CoreConfig.data_dir` with `version` 1 and `enabled` true
+- no `ATC_UPDATE_HEALTH_OPERATION` variable in the process environment
+
+Any presence of the update-health operation environment variable, including
+the empty string, force-disables the scheduler so installer/update probes
+cannot start it. Lifespan uses the same helper as dispatch. Missing sidecars
+are disabled. Invalid sidecar bodies fail closed as disabled without preventing
+Core start. The sidecar is content-free: only version and the boolean
+enablement flag, written through the same atomic bounded private-file pattern
+as workspace authorization, and therefore inherits the Windows residual that
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable so a blocking named-pipe sidecar can
+stall the read.
+
+The FastAPI lifespan starts at most one non-daemon scheduler thread after Core
+is ready, and only when those gates pass. Authenticated admin enable can start
+or revive that worker. The loop waits on an interruptible `threading.Event`
+rather than an unbounded sleep. Admin disable and prompt stop join with a
+bound; an in-flight cycle is allowed to complete and is not cancelled. Lifespan
+`finally` and `CoreService.close` set a permanent closing fence for that
+instance and wait until the captured worker is dead before store and
+instance-lock release. After shutdown begins, admin enable/start cannot clear
+stop or revive or spawn a worker in that closing instance. Durable sidecar
+enablement may remain for the next Core process, but the closing instance does
+not run it. Last-writer disable-then-enable revival remains valid only before
+shutdown. Both stop and shutdown are idempotent. The worker is never a daemon.
+At most one worker/run executes in process; overlapping cycles are refused by
+an in-process global cycle lock. Cross-process exclusion remains the
+coordinator's per-source lease. Sidecar write plus the start/stop decision are
+serialized by a control mutex, and joins do not run while that mutex or the
+lifecycle mutex is held. Disable during an in-flight cycle followed by enable,
+before shutdown, keeps or revives the same loop, or otherwise leaves the
+worker eventually running while every gate stays enabled. Expired and other
+nonterminal capture runs are recovered on Core start and at the start of each
+enabled cycle before due evaluation, so an expired reconciling source can
+become due through the existing resume/run path. Local-workspace source
+lifecycle remains explicit. The scheduler runs only due enabled sources and
+recovered retry paths. Expected `CaptureError` and `OSError` stay content-free
+per source or cycle; internal programmer failures are not turned into a fake
+successful-empty report.
+
+Authenticated admin surfaces:
+
+- `GET /v1/admin/capture/scheduler`
+- `POST /v1/admin/capture/scheduler/enable`
+- `POST /v1/admin/capture/scheduler/disable`
+
+`GET /v1/admin/capture/status` includes the same content-free scheduler object.
+Contributor CLI supports only `atc capture scheduler status`, `enable`, and
+`disable`. CLI status does not emit `running` because it cannot observe the
+Core process. There is no CLI `run_forever` or daemon. `/health` remains exactly
+`{"status":"ok","component":"core"}` plus the existing optional proof field;
+scheduler partial or disabled state is not a readiness signal. Status and
+health reads do not consume one-shot reauthorization actions or mutate
+scheduling state. Paths, sidecar filenames, and secrets do not appear in
+scheduler status.
+
+This slice does not claim complete Packet E product acceptance, provider or
+network/OAuth support, dashboard enablement, ZF-010, ranking/schema changes,
+release, or macOS support.

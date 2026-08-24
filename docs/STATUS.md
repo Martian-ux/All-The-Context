@@ -45,7 +45,8 @@ This is local composition evidence, not ZF-010 product exit, Packet E/F/H,
 Phase 2, CoreService or startup wiring, MCP lifecycle support, provider
 support, ranking/schema or checkpoint persistence, release, or macOS work.
 ADR-138 Packet G compilation remains authorization-first and compile-only.
-ADR-139 is reserved for the foreground capture runtime now in a separate PR.
+ADR-139 records the merged foreground capture runtime; ADR-141 records the
+separately bounded Packet E scheduler productization.
 
 Local validation on this worktree: focused new plus existing Packet G / client
 / lifecycle tests passed 46 tests in 6.02 seconds
@@ -169,6 +170,65 @@ passed. `python -m mypy packages/allthecontext/src` passed (92 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
 was intentionally not run.
 
+## 2026-08-24 productized Packet E capture scheduler
+
+This checkout adds an isolated Core-owned Packet E scheduler on the shared
+foreground capture runtime. Scheduling stays disabled by default and is
+explicit opt-in. Core remains the authority. The existing `capture_scheduler.py`
+planner still chooses due work and invokes `CaptureCoordinator`; it does not
+own cursors, events, leases, checkpoints, or a scheduler table. There is no
+coordinator/sink/adapter fork, dashboard or desktop auto-enable, provider or
+network/OAuth path, ZF-010 mapper, ranking/schema/migration, release, or macOS
+work.
+
+Durable enablement is a content-free sidecar under `CoreConfig.data_dir`.
+Dispatch requires `ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid sidecar
+`enabled: true`, and no `ATC_UPDATE_HEALTH_OPERATION` variable present.
+Any presence of that variable, including the empty string, force-disables the
+scheduler; lifespan uses the same helper. Invalid sidecar bodies fail closed.
+The scheduler sidecar inherits the authorization-sidecar Windows residual that
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable. The lifespan starts at most one
+non-daemon thread after Core is ready, waits with an interruptible
+`threading.Event`, and shuts down by setting a permanent closing fence and
+waiting for captured-worker death in lifespan `finally` and `CoreService.close`
+before store/instance-lock release. After shutdown begins, enable/start cannot
+revive that instance. Admin disable and prompt stop remain bounded; in-flight
+cycles complete and are not cancelled. Admin enable can start or revive the
+worker only before shutdown. Sidecar write and the
+lifecycle decision are serialized by a control mutex; joins do not hold that
+mutex. In-process overlapping cycles are refused globally; cross-process
+exclusion remains the per-source coordinator lease. Cycles recover
+expired/nonterminal runs before due evaluation, refresh the local-workspace
+adapter the same way admin `run` does, and execute at most one worker without
+overlapping capture. Expected `CaptureError`/`OSError` stay content-free;
+programmer failures are not converted into a fake successful-empty report.
+
+Authenticated admin scheduler status/enable/disable and contributor CLI
+`atc capture scheduler status|enable|disable` are the only new surfaces. CLI
+has no `run_forever` or daemon and does not emit `running` because it cannot
+observe the Core process. `/health` is unchanged; scheduler state is
+visible only on authenticated capture/admin status. Status reads do not consume
+one-shot reauthorization or mutate scheduling state.
+
+Focused sanitized tests cover disabled default, enable surviving restart,
+disable, due execution, no overlap, expired-run recovery, refresh after
+authorization, invalid config fail-closed, update-health force-off including
+empty string and lifespan prevention, prompt bounded stop, shutdown waiting for
+a dead thread, irrevocable shutdown against concurrent enable/start,
+disable-then-enable in-flight eventual running, ordered and concurrent
+last-writer coherence, exact `/health`, authenticated endpoints,
+CLI status/enable/disable without a false `running` claim, truthful
+content-free exception behavior, and no secret/path leakage. Local validation
+on the rebased scheduler head passed 36 focused tests in 11.49 seconds, Ruff
+check and format `--check`, mypy on 94 source files, `scripts/check_docs.py`,
+and `git diff --check`; the tree security scan covered 489 files with 0
+findings. Full repository pytest, hosted CI, private data, and macOS work were
+not run.
+
+This does not claim complete Packet E product acceptance, complete Packet H,
+ZF-010, provider support, hosted/full-suite acceptance, release, private-data
+evidence, or macOS support.
+
 ## 2026-08-24 productized foreground local-workspace capture runtime
 
 This checkout adds a shared `capture_runtime` composition used by both
@@ -194,8 +254,9 @@ or committed fixtures. A changed root is a new identity and is refused rather
 than silently retargeted. Existing `create` / `enable` / `run` remain
 authoritative. After enable, a foreground CLI run composes a fresh coordinator
 and an admin run refreshes the local-workspace adapter fail-closed immediately
-before execution. This is manual opt-in foreground capture only; continuous
-Packet E scheduling remains open.
+before execution. Manual opt-in foreground capture remains the adapter
+authorization path; the later Packet E scheduler slice is a separate explicit
+Core opt-in and is not implied by authorization or enable.
 
 Focused sanitized tests cover no-authorization adapter unavailability without
 Core failure; authorize to one disabled exact source; enable/run admitting

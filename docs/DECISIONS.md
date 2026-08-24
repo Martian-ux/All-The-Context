@@ -6,8 +6,8 @@
 conservative ZF-010 class; this is not ZF-010 product exit, Packet E/F/H,
 Phase 2, CoreService/startup, MCP lifecycle, provider, hosted/full-suite,
 release, or support acceptance. ADR-138 remains the Packet G compile contract.
-ADR-139 is reserved for the foreground capture runtime now in a separate PR
-and is not occupied here.
+ADR-139 records the separately merged foreground capture runtime; ADR-141
+records the separately bounded Packet E scheduler productization.
 
 The mapper accepts only in-process Packet G L1+ `direct_user_turn` envelopes
 that the controlled host actually accepted. Membership is object identity in
@@ -48,6 +48,78 @@ package source (93 files), `scripts/check_docs.py`, `git diff --check`, and
 `python scripts/repository_security_scan.py --scope tree` (486 files, 0
 findings). Full repository pytest, hosted CI, private data, and macOS work were
 not run. This is not ZF-010 product exit.
+
+## ADR-141: Core-owned Packet E scheduler is explicit opt-in and fail-closed
+
+**Status:** accepted locally on 2026-08-24 as the isolated Packet E
+productization slice on the shared foreground capture runtime; this is not
+complete Packet E product acceptance, complete Packet H, ZF-010, provider or
+network support, hosted/full-suite acceptance, release, or macOS support.
+ADR-138 remains the Packet G compile contract. ADR-139 remains the shared
+foreground capture runtime and adapter-refresh authority. ADR-140 remains the
+separate Packet G direct-user formation mapper and is not this scheduler work.
+
+Core owns one disabled-by-default capture scheduler around the existing
+`CaptureScheduler` planner and `CaptureCoordinator`. It does not fork
+coordinator, sink, or adapter logic and does not add a scheduler table or
+migration. Durable enablement is a content-free machine-local sidecar under
+`CoreConfig.data_dir` using the same atomic bounded private-file pattern as
+workspace authorization. Dispatch requires the exact process gate
+`ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid sidecar `enabled: true`, and the
+absence of `ATC_UPDATE_HEALTH_OPERATION`. Any presence of that update-health
+environment variable, including the empty string, force-disables the thread so
+installer/update probes cannot start capture. FastAPI lifespan uses the same
+`scheduler_update_health_forced_off` helper. Invalid sidecars fail closed as
+disabled without killing Core. The scheduler sidecar is read through the same
+descriptor-based bounded private-file helper as workspace authorization, so it
+inherits the Windows residual that `O_NONBLOCK` and `O_NOFOLLOW` are
+unavailable and a blocking named-pipe sidecar can stall the read.
+
+The FastAPI lifespan starts the scheduler only after Core is ready and only
+when those gates pass. Authenticated admin enable can also start or revive the
+worker. Admin disable and prompt `stop` set an interruptible
+`threading.Event` and join with a bound; an in-flight cycle completes rather
+than being cancelled. Lifespan `finally` and `CoreService.close` use a
+distinct `shutdown` path that sets a permanent closing fence for that
+`CoreService` instance, signals stop, and joins the captured worker until it
+is dead, without holding the control or lifecycle mutexes, before store and
+instance-lock release. After shutdown begins, `enable`/`start` must not clear
+stop or revive or spawn a worker in that closing instance. Durable sidecar
+enablement may remain for a later Core process, but the closing instance does
+not run it. Admin disable-then-enable last-writer revival remains valid only
+before shutdown begins. The loop thread is never daemonized, and this slice
+does not claim cancellation. At most one worker runs at a time: overlapping
+cycles are refused by an in-process global cycle lock. That is not the
+coordinator's cross-process per-source lease. Sidecar write and the
+start/stop decision are serialized by an in-process control mutex; joins never
+run while holding the control or lifecycle mutexes. Disable during an
+in-flight cycle followed by enable, before shutdown, revives the same loop or
+otherwise leaves the worker eventually running while all gates stay enabled. Waits use `Event.wait` rather than unbounded `sleep`.
+Expired and nonterminal capture runs are recovered on Core start and again at
+the start of each enabled cycle before due evaluation, so an expired
+reconciling source can become retry-due through the existing resume/run
+contracts. Every scheduled cycle calls `refresh_local_workspace_adapter`
+exactly as admin `run` does. Source lifecycle remains explicit: only due
+enabled sources and recovered lease-expired retry paths execute. Expected
+`CaptureError` and `OSError` stay content-free; internal programmer failures
+are not converted into a fake successful-empty report.
+
+Authenticated admin `GET/POST /v1/admin/capture/scheduler` and contributor CLI
+`atc capture scheduler status|enable|disable` are the only control surfaces.
+There is no CLI `run_forever` or daemon, no dashboard or desktop auto-enable,
+and `/health` keeps the exact `{"status":"ok","component":"core"}` body.
+Scheduler partial or disabled state is exposed only through authenticated
+capture/admin status. CLI sidecar status omits `running` because it cannot
+observe the Core process. Status and health reads do not consume one-shot
+reauthorization actions or mutate rotation/scheduling state.
+
+Evidence is the focused scheduler and productization tests (36 passed), Ruff
+check and format `--check` on touched Python files, mypy on package source
+(94 files),
+`scripts/check_docs.py`, `git diff --check`, and
+`python scripts/repository_security_scan.py --scope tree` (489 files, 0
+findings). Full repository pytest, hosted CI, private data, and macOS work
+were not run.
 
 ## ADR-138: Packet G L1+ compilation is authorization-first
 

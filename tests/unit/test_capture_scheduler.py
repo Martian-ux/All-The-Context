@@ -321,6 +321,64 @@ def test_scheduler_honors_retry_after_and_existing_bounded_exponential_backoff(
     assert coordinator.get_source(second_source).next_retry_at is None
 
 
+def test_run_once_recovers_expired_reconciling_before_due_evaluation(tmp_path: Path) -> None:
+    clock = _MutableClock()
+    coordinator = CaptureCoordinator(
+        _store(tmp_path),
+        clock=clock,
+        sink=IdempotentFakeSink(),
+    )
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    adapter = DeterministicFakeAdapter((_page(_event("recovered-event")),))
+    coordinator.register_adapter("fake", adapter)
+    handle, _source_row, _attempt = coordinator.ledger.begin_run(source_id)
+    assert coordinator.get_source(source_id).lifecycle_state == "reconciling"
+    with coordinator.ledger.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_runs SET lease_expires_at=? WHERE id=?",
+            ("2000-01-01T00:00:00.000000Z", handle.run_id),
+        )
+    scheduler = CaptureScheduler(
+        coordinator,
+        config=SchedulerConfig(enabled=True),
+        clock=clock,
+    )
+    assert scheduler.plan().entries == ()
+    recovered = scheduler.run_once()
+    assert recovered.dispatched[0].kind == "retry"
+    assert recovered.results[0].status == "completed"
+    assert coordinator.get_source(source_id).lifecycle_state == "enabled"
+
+
+def test_health_status_read_does_not_consume_reauthorization_actions(tmp_path: Path) -> None:
+    coordinator = CaptureCoordinator(_store(tmp_path), sink=IdempotentFakeSink())
+    source_id = _source(coordinator)
+    _enable(coordinator, source_id)
+    adapter = _RetryAdapter(
+        CaptureCapabilityManifest(
+            provider="fake",
+            availability="partial",
+            coverage="partial",
+            coverage_reason="reauthorization_fixture",
+            authorization="reauthorization_required",
+            health="degraded",
+        ),
+        _page(),
+    )
+    coordinator.register_adapter("fake", adapter)
+    scheduler = CaptureScheduler(coordinator, config=SchedulerConfig(enabled=True))
+    observed = scheduler.health(consume_actions=False)
+    again = scheduler.health(consume_actions=False)
+    assert observed.reauthorization_required
+    assert observed.actions == ()
+    assert again.actions == ()
+    consumed = scheduler.health()
+    assert len(consumed.actions) == 1
+    assert scheduler.health(consume_actions=False).actions == ()
+    assert scheduler.health().actions == ()
+
+
 def test_health_deduplicates_reauthorization_and_is_silent_when_healthy(
     tmp_path: Path,
 ) -> None:
