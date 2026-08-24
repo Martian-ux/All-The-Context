@@ -1,5 +1,32 @@
 # Architecture decisions
 
+## ADR-138: Packet G L1+ compilation is authorization-first
+
+**Status:** accepted locally on 2026-08-24 for the Packet G + Core Retrieval V3
+lifecycle-visibility slice; this is not ZF-010, Packet E/F, complete Packet H,
+Phase 2, CoreService/startup, MCP lifecycle, provider, hosted/full-suite,
+release, or support acceptance.
+
+Accepted in-process L1+ pre-generation compilation must receive a Core
+`ClientPrincipal` before it may call the injected Retrieval V3 compiler.
+Missing or non-principal callers fail closed with `MissingCorePrincipal` and
+create no request, retrieval, delivery, or generation. Ordinary MCP remains L0:
+unsupported pre-generation still returns `UnsupportedHookReport` without that
+principal check. Core Retrieval V3 `bootstrap()` continues to accept an
+optional principal for its existing CLI/local-admin path.
+
+Canonical memory is seeded only through authenticated Core candidate and
+lifecycle APIs. Packet G envelopes are untrusted references and are not current
+memory. Host checkpoint restore remains typed ordering/integrity validation, not
+client-to-principal binding or a second Core truth. Empty-pack refusal stays a
+separate fail-closed path; a surviving authorized record is kept after purge so
+that path is not conflated with lifecycle absence.
+
+Evidence is the focused G/client/lifecycle tests (36 passed), Ruff check and
+format `--check` on touched Python files, mypy on package source (92 files),
+`scripts/check_docs.py`, and `git diff --check`. Full repository pytest, hosted
+CI, private data, and macOS work were not run.
+
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 
 **Status:** accepted on 2026-08-24 after reconstructing the Packet H-only

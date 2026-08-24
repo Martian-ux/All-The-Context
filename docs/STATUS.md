@@ -97,6 +97,38 @@ wiring, scheduled or continuous Packet F product acceptance, provider/client
 support, release acceptance, private-data evidence, or macOS support. macOS
 remains unsupported/deferred.
 
+## 2026-08-24 Packet G + Core Retrieval V3 lifecycle visibility
+
+This checkout adds a narrow Packet G composition slice over the existing
+controlled reference host and Core Retrieval V3. Accepted L1+ pre-generation
+compilation now fails closed with `MissingCorePrincipal` when no Core
+`ClientPrincipal` is supplied, before retrieval, delivery, or generation.
+Ordinary MCP remains L0 and still returns `UnsupportedHookReport` without
+requiring a principal. RetrievalEngine bootstrap itself is unchanged.
+
+A small helper, `experimental_reference_host_lifecycle.py`, compiles only
+through `ControlledReferenceHostV0`. The focused composition test seeds
+sanitized truth only through authenticated Core candidate and lifecycle APIs,
+then checks that the next compile shows the authorized current decision and
+preference, excludes an ACL-private record from another principal, includes a
+correction replacement without the displaced value, and keeps ordinary delete,
+expiry, and terminal purge absent. One authorized record survives purge so
+empty-pack refusal stays a separate test. Restart restores host ordering and
+integrity only and does not duplicate Core truth. Imported instruction-like
+direct text remains untrusted, and secret-like input is refused content-free.
+
+This is not ZF-010, Packet E/F, complete Packet H, Phase 2, CoreService or
+startup wiring, MCP lifecycle support, provider support, ranking/schema or
+checkpoint persistence, release, or macOS work.
+
+Local validation on this worktree: focused G/client/lifecycle tests passed 36
+tests in 1.94 seconds (`test_experimental_reference_host.py`,
+`test_client_runtime.py`, `test_reference_host_retrieval_lifecycle.py`).
+`python -m ruff check .` and Ruff format `--check` on the touched Python files
+passed. `python -m mypy packages/allthecontext/src` passed (92 source files).
+`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
+was intentionally not run.
+
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats

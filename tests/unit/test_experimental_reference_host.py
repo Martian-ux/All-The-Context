@@ -18,6 +18,7 @@ from allthecontext.client_runtime import (
 )
 from allthecontext.experimental_reference_host import (
     ControlledReferenceHostV0,
+    MissingCorePrincipal,
     ReferenceHostError,
     RuntimeCheckpoint,
     SecretLikePayloadRefused,
@@ -495,6 +496,11 @@ def test_checkpoint_integrity_and_chain_validation_reject_tampered_state() -> No
 
 def test_empty_core_context_fails_closed_before_delivery_or_generation() -> None:
     host = ControlledReferenceHostV0.for_level("L1")
+    principal = ClientPrincipal(
+        "synthetic-empty-pack",
+        "Synthetic empty pack",
+        frozenset({"context:read"}),
+    )
 
     def empty_compiler(
         _request: BootstrapRequest,
@@ -508,6 +514,44 @@ def test_empty_core_context_fails_closed_before_delivery_or_generation() -> None
         )
 
     with pytest.raises(ClientRuntimeContractError, match="empty Core context"):
-        host.compile_before_generation(empty_compiler, generation_id="generation-empty")
+        host.compile_before_generation(
+            empty_compiler,
+            generation_id="generation-empty",
+            principal=principal,
+        )
     assert host.trace == ()
     assert all(entry.action != "generation_started" for entry in host.trace)
+
+
+def test_accepted_l1_compilation_fails_closed_without_core_principal() -> None:
+    host = ControlledReferenceHostV0.for_level("L1")
+    called = False
+
+    def compiler(_request: BootstrapRequest, _principal: ClientPrincipal | None = None):
+        nonlocal called
+        called = True
+        raise AssertionError("missing principal must not retrieve or compile")
+
+    with pytest.raises(MissingCorePrincipal, match="ClientPrincipal") as refused:
+        host.compile_before_generation(compiler, generation_id="generation-missing-principal")
+    assert refused.value.reason_code == "missing_core_principal"
+    assert called is False
+    assert host.events == ()
+    assert host.trace == ()
+
+
+def test_ordinary_mcp_compilation_stays_unsupported_without_principal() -> None:
+    host = ControlledReferenceHostV0.for_level("L3", transport="ordinary_mcp")
+    called = False
+
+    def compiler(_request: BootstrapRequest, _principal: ClientPrincipal | None = None):
+        nonlocal called
+        called = True
+        raise AssertionError("ordinary MCP must not invoke the Core compiler")
+
+    result = host.compile_before_generation(compiler, generation_id="generation-mcp")
+    assert isinstance(result, UnsupportedHookReport)
+    assert result.required_level == "L1"
+    assert called is False
+    assert host.events == ()
+    assert host.trace == ()
