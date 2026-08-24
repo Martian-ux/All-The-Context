@@ -45,7 +45,8 @@ This is local composition evidence, not ZF-010 product exit, Packet E/F/H,
 Phase 2, CoreService or startup wiring, MCP lifecycle support, provider
 support, ranking/schema or checkpoint persistence, release, or macOS work.
 ADR-138 Packet G compilation remains authorization-first and compile-only.
-ADR-139 is reserved for the foreground capture runtime now in a separate PR.
+ADR-139 records the merged foreground capture runtime; ADR-141 records the
+separately bounded Packet E scheduler productization.
 
 Local validation on this worktree: focused new plus existing Packet G / client
 / lifecycle tests passed 46 tests in 6.02 seconds
@@ -217,35 +218,16 @@ a dead thread, irrevocable shutdown against concurrent enable/start,
 disable-then-enable in-flight eventual running, ordered and concurrent
 last-writer coherence, exact `/health`, authenticated endpoints,
 CLI status/enable/disable without a false `running` claim, truthful
-content-free exception behavior, and no secret/path leakage. Full
-repository pytest, hosted CI, private data, and macOS work were not run.
+content-free exception behavior, and no secret/path leakage. Local validation
+on the rebased scheduler head passed 36 focused tests in 11.49 seconds, Ruff
+check and format `--check`, mypy on 94 source files, `scripts/check_docs.py`,
+and `git diff --check`; the tree security scan covered 489 files with 0
+findings. Full repository pytest, hosted CI, private data, and macOS work were
+not run.
 
 This does not claim complete Packet E product acceptance, complete Packet H,
 ZF-010, provider support, hosted/full-suite acceptance, release, private-data
 evidence, or macOS support.
-
-## 2026-08-24 Packet E scheduler hardening
-
-This checkout splits bounded admin/prompt stop from safe Core shutdown, keeps
-last-writer enable/disable coherent across in-flight cycles before shutdown,
-treats empty `ATC_UPDATE_HEALTH_OPERATION` as forced off, stops swallowing
-programmer failures as successful-empty cycle reports, and stops CLI sidecar
-status from claiming `running: false`. Shutdown is irrevocable for that
-`CoreService` instance: a permanent closing fence is set, the captured worker
-is joined until dead, and later enable/start cannot revive it. Durable sidecar
-enablement may remain for the next process. `/health` is unchanged. The
-scheduler sidecar still inherits the Windows named-pipe
-`O_NONBLOCK`/`O_NOFOLLOW` residual.
-
-Local validation: 36 focused scheduler tests passed in 11.16 seconds
-(`tests/unit/test_capture_scheduler.py` and
-`tests/unit/test_capture_scheduler_productization.py`).
-`python -m ruff check .` and Ruff format `--check` on the touched Python files
-passed. `python -m mypy packages/allthecontext/src` passed (93 source files).
-`git diff --check` and `scripts/check_docs.py` passed.
-`python scripts/repository_security_scan.py --scope tree` passed (487 files, 0
-findings). Full repository pytest, hosted CI, private data, and macOS work
-were not run.
 
 ## 2026-08-24 productized foreground local-workspace capture runtime
 

@@ -48,6 +48,7 @@ package source (93 files), `scripts/check_docs.py`, `git diff --check`, and
 `python scripts/repository_security_scan.py --scope tree` (486 files, 0
 findings). Full repository pytest, hosted CI, private data, and macOS work were
 not run. This is not ZF-010 product exit.
+
 ## ADR-141: Core-owned Packet E scheduler is explicit opt-in and fail-closed
 
 **Status:** accepted locally on 2026-08-24 as the isolated Packet E
@@ -114,9 +115,9 @@ reauthorization actions or mutate rotation/scheduling state.
 
 Evidence is the focused scheduler and productization tests (36 passed), Ruff
 check and format `--check` on touched Python files, mypy on package source
-(93 files),
+(94 files),
 `scripts/check_docs.py`, `git diff --check`, and
-`python scripts/repository_security_scan.py --scope tree` (487 files, 0
+`python scripts/repository_security_scan.py --scope tree` (489 files, 0
 findings). Full repository pytest, hosted CI, private data, and macOS work
 were not run.
 
