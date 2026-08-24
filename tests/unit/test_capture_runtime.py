@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -23,11 +24,14 @@ from allthecontext.capture_runtime import (
     LOCAL_WORKSPACE_ACCOUNT_LABEL,
     MAX_AUTHORIZATION_SIDECAR_BYTES,
     _complete_source_inventory,
+    _read_sidecar_bytes,
+    _sidecar_open_flags,
     authorization_lock_path,
     authorization_path,
     authorize_local_workspace,
     canonical_workspace_root,
     compose_capture_coordinator,
+    refresh_local_workspace_adapter,
 )
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
@@ -1301,7 +1305,7 @@ def test_authorize_maps_unlink_oserror_without_path_leak(
     _assert_no_root_leak(str(raised.value), workspace, config.data_dir)
 
 
-def test_sidecar_symlink_reparse_directory_and_oversize_do_not_fail_core(
+def test_sidecar_oversize_directory_and_synthetic_reparse_do_not_fail_core(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1319,29 +1323,33 @@ def test_sidecar_symlink_reparse_directory_and_oversize_do_not_fail_core(
         assert service.capture.adapters == {}
     sidecar.rmdir()
     sidecar.write_text("{}\n", encoding="utf-8")
-    original_lstat = Path.lstat
+    original_lstat = os.lstat
 
-    def fake_lstat(self: Path) -> Any:
-        if self == sidecar:
+    def fake_lstat(path: str | os.PathLike[str], *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == os.fspath(sidecar):
             return SimpleNamespace(
                 st_mode=stat.S_IFLNK | 0o777,
                 st_file_attributes=_REPARSE_POINT,
                 st_size=32,
+                st_dev=1,
+                st_ino=2,
             )
-        return original_lstat(self)
+        return original_lstat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    monkeypatch.setattr(os, "lstat", fake_lstat)
     with CoreService(config) as service:
         assert service.store.status()["vault_id"]
         assert service.capture.adapters == {}
-    monkeypatch.undo()
+
+
+def test_live_sidecar_symlink_does_not_fail_core(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    _init_vault(config)
+    sidecar = authorization_path(config.data_dir)
     target = tmp_path / "sidecar-target.json"
     target.write_text("{}\n", encoding="utf-8")
     if sidecar.exists():
-        if sidecar.is_dir():
-            sidecar.rmdir()
-        else:
-            sidecar.unlink()
+        sidecar.unlink()
     try:
         os.symlink(target, sidecar)
     except OSError:
@@ -1351,7 +1359,7 @@ def test_sidecar_symlink_reparse_directory_and_oversize_do_not_fail_core(
         assert service.capture.adapters == {}
 
 
-def test_sidecar_read_is_bounded_to_max_plus_one_bytes(
+def test_sidecar_read_uses_descriptor_api_and_forbids_path_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1360,34 +1368,48 @@ def test_sidecar_read_is_bounded_to_max_plus_one_bytes(
     sidecar = authorization_path(config.data_dir)
     sidecar.write_text("{}\n", encoding="utf-8")
     requested: list[int] = []
-    original_open = Path.open
-    original_read_bytes = Path.read_bytes
+    opened_flags: list[int] = []
+    original_os_open = os.open
+    original_os_read = os.read
+    original_path_open = Path.open
+    sidecar_fds: set[int] = set()
 
-    def fail_unbounded(self: Path) -> bytes:
-        if self == sidecar:
-            raise AssertionError("unbounded sidecar read_bytes")
-        return original_read_bytes(self)
+    def fail_path_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == sidecar or os.fspath(self) == os.fspath(sidecar):
+            raise AssertionError("sidecar Path.open is forbidden")
+        return original_path_open(self, *args, **kwargs)
 
-    def tracking_open(self: Path, *args: Any, **kwargs: Any) -> Any:
-        handle = original_open(self, *args, **kwargs)
-        if self != sidecar:
-            return handle
-        inner = handle.read
+    def tracking_os_open(
+        path: str | os.PathLike[str], flags: int, *args: Any, **kwargs: Any
+    ) -> int:
+        fd = original_os_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(sidecar):
+            opened_flags.append(flags)
+            sidecar_fds.add(fd)
+        return fd
 
-        def tracked(size: int = -1) -> bytes:
+    def tracking_os_read(fd: int, size: int, *args: Any, **kwargs: Any) -> bytes:
+        if fd in sidecar_fds:
             requested.append(size)
-            return inner(size)
+        return original_os_read(fd, size, *args, **kwargs)
 
-        handle.read = tracked  # type: ignore[method-assign]
-        return handle
-
-    monkeypatch.setattr(Path, "read_bytes", fail_unbounded)
-    monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr(Path, "open", fail_path_open)
+    monkeypatch.setattr(os, "open", tracking_os_open)
+    monkeypatch.setattr(os, "read", tracking_os_read)
     with CoreService(config) as service:
         assert service.store.status()["vault_id"]
         assert service.capture.adapters == {}
+    assert opened_flags
+    assert opened_flags[0] == _sidecar_open_flags()
     assert requested
-    assert all(size == MAX_AUTHORIZATION_SIDECAR_BYTES + 1 for size in requested)
+    assert requested[0] == MAX_AUTHORIZATION_SIDECAR_BYTES + 1
+    source = inspect.getsource(_read_sidecar_bytes)
+    assert "os.open" in source
+    assert "path.open" not in source
+    assert "read_bytes" not in source
+    root_source = inspect.getsource(canonical_workspace_root)
+    assert "samefile" not in root_source
+    assert "os.path.samestat" in root_source
 
 
 def test_unc_and_network_style_roots_fail_closed(tmp_path: Path) -> None:
@@ -1397,6 +1419,8 @@ def test_unc_and_network_style_roots_fail_closed(tmp_path: Path) -> None:
         Path("//server/share/workspace"),
         Path("\\\\server\\share\\workspace"),
         Path("//?/UNC/server/share/workspace"),
+        Path("\\\\?\\UNC\\server\\share\\workspace"),
+        Path("\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\workspace"),
     )
     with CoreService(config) as service:
         for root in roots:
@@ -1561,3 +1585,396 @@ def test_cli_and_admin_reject_reserved_workspace_provider_and_preserve_fake(
         sources, total = service.capture.list_sources()
     assert total == 2
     assert {source.provider for source in sources} == {"fake"}
+
+
+def test_cli_and_admin_reject_reserved_provider_whitespace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
+    workspace = _workspace(tmp_path)
+    _init_vault(config)
+    variants = (
+        " local-git-workspace",
+        "local-git-workspace ",
+        "\tlocal-git-workspace",
+        "local-git-workspace\t",
+        "\u00a0local-git-workspace",
+    )
+    for provider in variants:
+        original = sys.argv
+        try:
+            sys.argv = [
+                "atc",
+                "capture",
+                "create",
+                "--data-dir",
+                str(config.data_dir),
+                provider,
+                "reserved",
+                "--local-only-acknowledged",
+            ]
+            with pytest.raises(SystemExit):
+                cli.main()
+        finally:
+            sys.argv = original
+        reserved_output = capsys.readouterr().out
+        reserved_body = json.loads(reserved_output)
+        assert reserved_body["ok"] is False
+        assert reserved_body["error"]["message"] == "capture_authorize_workspace_required"
+        _assert_no_root_leak(reserved_output, workspace, config.data_dir)
+    with CoreService(config) as service:
+        principal, token = service.store.create_client(
+            ClientCreate(name="capture-admin", scopes=["admin"], auto_approve=False)
+        )
+        assert principal.id
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            for provider in variants:
+                refused = client.post(
+                    "/v1/admin/capture/sources",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={
+                        "provider": provider,
+                        "account_label": "reserved",
+                        "local_only_acknowledged": True,
+                    },
+                )
+                assert refused.status_code == 422
+                assert refused.json()["error"]["code"] == "capture_authorize_workspace_required"
+                _assert_no_root_leak(refused.json(), workspace, config.data_dir)
+        created = service.capture.create_source(
+            provider=LOCAL_GIT_WORKSPACE_PROVIDER,
+            account_label="internal-seam",
+            local_only_acknowledged=True,
+        )
+        sources, total = service.capture.list_sources()
+    assert created.provider == LOCAL_GIT_WORKSPACE_PROVIDER
+    assert total == 1
+    assert sources[0].id == created.id
+
+
+def test_sidecar_nonregular_fstat_fail_closes_without_path_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _init_vault(config)
+    sidecar = authorization_path(config.data_dir)
+    sidecar.write_text("{}\n", encoding="utf-8")
+    original_os_open = os.open
+    original_fstat = os.fstat
+    original_path_open = Path.open
+    sidecar_fds: set[int] = set()
+
+    def tracking_open(path: str | os.PathLike[str], flags: int, *args: Any, **kwargs: Any) -> int:
+        fd = original_os_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(sidecar):
+            sidecar_fds.add(fd)
+        return fd
+
+    def fifo_fstat(fd: int) -> Any:
+        result = original_fstat(fd)
+        if fd in sidecar_fds:
+            return SimpleNamespace(
+                st_mode=stat.S_IFIFO | 0o666,
+                st_size=8,
+                st_dev=result.st_dev,
+                st_ino=result.st_ino,
+                st_file_attributes=0,
+            )
+        return result
+
+    def fail_path_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(self) == os.fspath(sidecar):
+            raise AssertionError("sidecar Path.open is forbidden")
+        return original_path_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(os, "fstat", fifo_fstat)
+    monkeypatch.setattr(Path, "open", fail_path_open)
+    with CoreService(config) as service:
+        assert service.store.status()["vault_id"]
+        assert service.capture.adapters == {}
+
+
+def test_sidecar_identity_swap_after_open_fail_closes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    authorized = _authorize(config, workspace)
+    sidecar = authorization_path(config.data_dir)
+    original_os_open = os.open
+    original_lstat = os.lstat
+    opened = False
+
+    def tracking_open(path: str | os.PathLike[str], flags: int, *args: Any, **kwargs: Any) -> int:
+        nonlocal opened
+        fd = original_os_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(sidecar):
+            opened = True
+        return fd
+
+    def swapped_lstat(path: str | os.PathLike[str], *args: Any, **kwargs: Any) -> Any:
+        result = original_lstat(path, *args, **kwargs)
+        if opened and os.fspath(path) == os.fspath(sidecar):
+            return SimpleNamespace(
+                st_mode=result.st_mode,
+                st_size=result.st_size,
+                st_dev=result.st_dev,
+                st_ino=result.st_ino + 1,
+                st_file_attributes=getattr(result, "st_file_attributes", 0),
+            )
+        return result
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(os, "lstat", swapped_lstat)
+    with CoreService(config) as service:
+        assert service.store.status()["vault_id"]
+        assert service.capture.adapters == {}
+        sources, total = service.capture.list_sources()
+    assert total == 1
+    assert sources[0].id == authorized["id"]
+
+
+def test_sidecar_fifo_fail_closes_without_hanging(tmp_path: Path) -> None:
+    mkfifo = getattr(os, "mkfifo", None)
+    if not callable(mkfifo):
+        pytest.skip("FIFO is unavailable")
+    config = _config(tmp_path)
+    _init_vault(config)
+    sidecar = authorization_path(config.data_dir)
+    if sidecar.exists():
+        sidecar.unlink()
+    mkfifo(sidecar)
+    finished: list[object] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            with CoreService(config) as service:
+                finished.append(service.store.status()["vault_id"])
+                finished.append(dict(service.capture.adapters))
+        except BaseException as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(5.0)
+    assert not worker.is_alive()
+    assert errors == []
+    assert finished[1] == {}
+
+
+def test_post_resolve_root_reparse_race_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    original_resolve = Path.resolve
+    original_lstat = Path.lstat
+    resolved_seen = False
+
+    def tracking_resolve(self: Path, strict: bool = False) -> Path:
+        nonlocal resolved_seen
+        result = original_resolve(self, strict=strict)
+        if os.fspath(self) == os.fspath(workspace):
+            resolved_seen = True
+        return result
+
+    def racing_lstat(self: Path) -> Any:
+        result = original_lstat(self)
+        if resolved_seen and os.fspath(self) == os.fspath(workspace):
+            return SimpleNamespace(
+                st_mode=stat.S_IFLNK | 0o777,
+                st_file_attributes=_REPARSE_POINT,
+                st_dev=result.st_dev,
+                st_ino=result.st_ino,
+                st_nlink=getattr(result, "st_nlink", 1),
+            )
+        return result
+
+    monkeypatch.setattr(Path, "resolve", tracking_resolve)
+    monkeypatch.setattr(Path, "lstat", racing_lstat)
+    with pytest.raises(CaptureError, match="capture_authorization_unavailable") as raised:
+        canonical_workspace_root(workspace)
+    _assert_content_free_capture_error(
+        raised.value,
+        workspace,
+        code="capture_authorization_unavailable",
+    )
+
+
+def test_post_resolve_samestat_mismatch_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    other = create_sanitized_workspace(tmp_path / "other")
+    original_resolve = Path.resolve
+
+    def fake_resolve(self: Path, strict: bool = False) -> Path:
+        if os.fspath(self) == os.fspath(workspace):
+            return original_resolve(other, strict=strict)
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+        canonical_workspace_root(workspace)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows extended local prefix")
+def test_windows_extended_local_drive_prefix_is_accepted_and_unc_remains_rejected(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    raw = os.fspath(workspace.resolve())
+    assert len(raw) >= 2 and raw[1] == ":"
+    canonical = canonical_workspace_root(Path("\\\\?\\" + raw))
+    assert canonical == workspace.resolve()
+    mixed = Path("//?/" + raw.replace("\\", "/"))
+    assert canonical_workspace_root(mixed) == workspace.resolve()
+    with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+        canonical_workspace_root(Path("\\\\?\\UNC\\server\\share\\workspace"))
+    with pytest.raises(CaptureError, match="capture_authorization_unavailable"):
+        canonical_workspace_root(Path("\\\\.\\C:\\Windows"))
+
+
+def test_malformed_requested_scopes_json_shapes_fail_close_core_and_authorize(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    authorized = _authorize(config, workspace)
+    poison = json.dumps({"secret": "do-not-leak-scope-payload"})
+    with CoreService(config) as service, service.store.transaction() as connection:
+        connection.execute(
+            "UPDATE capture_sources SET requested_scopes_json=? WHERE id=?",
+            (poison, authorized["id"]),
+        )
+    with CoreService(config) as service:
+        assert service.store.status()["vault_id"]
+        assert service.capture.adapters == {}
+        with pytest.raises(CaptureError, match="capture_page_malformed") as listed:
+            service.capture.list_sources()
+        with pytest.raises(CaptureError, match="capture_failed") as raised:
+            authorize_local_workspace(
+                service.store,
+                config,
+                workspace,
+                local_only_acknowledged=True,
+            )
+    _assert_content_free_capture_error(
+        listed.value,
+        workspace,
+        config.data_dir,
+        code="capture_page_malformed",
+        forbidden=(poison, "do-not-leak-scope-payload"),
+    )
+    _assert_content_free_capture_error(
+        raised.value,
+        workspace,
+        config.data_dir,
+        code="capture_failed",
+        forbidden=(poison, "do-not-leak-scope-payload"),
+    )
+
+
+def test_admin_run_refreshes_adapter_after_late_authorization(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        assert service.capture.adapters == {}
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        assert service.capture.adapters == {}
+        principal, token = service.store.create_client(
+            ClientCreate(name="capture-admin", scopes=["admin"], auto_approve=False)
+        )
+        assert principal.id
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            enabled = client.post(
+                f"/v1/admin/capture/sources/{source_id}/enable",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            ran = client.post(
+                f"/v1/admin/capture/sources/{source_id}/run",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+        assert enabled.status_code == 200
+        assert ran.status_code == 200
+        body = ran.json()
+        assert body["status"] == "completed"
+        assert body["applied_events"] == 5
+        _assert_no_root_leak(body, workspace, config.data_dir)
+
+
+def test_admin_run_fail_closes_after_sidecar_invalidation(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
+    workspace = _workspace(tmp_path)
+    authorized = _authorize(config, workspace)
+    source_id = str(authorized["id"])
+    with CoreService(config) as service:
+        assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+        enabled = service.capture.enable(source_id)
+        assert enabled.lifecycle_state == "enabled"
+        authorization_path(config.data_dir).write_text("{not-json", encoding="utf-8")
+        principal, token = service.store.create_client(
+            ClientCreate(name="capture-admin", scopes=["admin"], auto_approve=False)
+        )
+        assert principal.id
+        app = create_app(config, service=service)
+        with TestClient(app) as client:
+            ran = client.post(
+                f"/v1/admin/capture/sources/{source_id}/run",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert ran.status_code == 200
+        body = ran.json()
+        assert body["error_code"] == "capture_adapter_unavailable"
+        assert LOCAL_GIT_WORKSPACE_PROVIDER not in service.capture.adapters
+        _assert_no_root_leak(body, workspace, config.data_dir)
+        refresh_local_workspace_adapter(service.capture, config)
+        assert LOCAL_GIT_WORKSPACE_PROVIDER not in service.capture.adapters
+
+
+def test_cli_run_uses_fresh_composition_after_late_authorization(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        assert service.capture.adapters == {}
+        authorized = authorize_local_workspace(
+            service.store,
+            config,
+            workspace,
+            local_only_acknowledged=True,
+        )
+        source_id = str(authorized["id"])
+        service.capture.enable(source_id)
+        assert service.capture.adapters == {}
+    ran = _cli(
+        [
+            "atc",
+            "capture",
+            "run",
+            "--data-dir",
+            str(config.data_dir),
+            source_id,
+        ],
+        capsys,
+    )
+    assert ran["status"] == "completed"
+    assert ran["applied_events"] == 5
+    _assert_no_root_leak(ran, workspace, config.data_dir)

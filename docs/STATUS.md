@@ -152,8 +152,9 @@ stays in the private sidecar only; it is never written to
 `capture_sources.account_label`, public status, logs, receipts, portable export,
 or committed fixtures. A changed root is a new identity and is refused rather
 than silently retargeted. Existing `create` / `enable` / `run` remain
-authoritative. After enable, a foreground CLI run and an admin run use the same
-adapter and sink. This is manual opt-in foreground capture only; continuous
+authoritative. After enable, a foreground CLI run composes a fresh coordinator
+and an admin run refreshes the local-workspace adapter fail-closed immediately
+before execution. This is manual opt-in foreground capture only; continuous
 Packet E scheduling remains open.
 
 Focused sanitized tests cover no-authorization adapter unavailability without
@@ -181,9 +182,11 @@ cause. Authorization fail-closed errors suppress exception context so OSError
 filenames do not survive on `__context__` or tracebacks. Core composition stays
 nonblocking and fail-closed: a held lock, invalid sidecar, incomplete inventory,
 or any unreadable/malformed capture row (including invalid
-`requested_scopes_json`) leaves the vault available and does not register the
-adapter. Authorize on that vault returns a bounded content-free `CaptureError`
-rather than a decoder exception or raw row/path.
+`requested_scopes_json` shapes) leaves the vault available and does not register
+the adapter. Authorize on that vault returns a bounded content-free
+`CaptureError` rather than a decoder exception or raw row/path. Object, string,
+number, null, and non-string scope items fail closed instead of coercing to an
+empty tuple, without leaking raw JSON.
 
 Workspace-source inventory paginates beyond the first 100 `list_sources` rows
 and walks every 500-row page. Registration and reconciliation require exactly
@@ -197,21 +200,34 @@ adapter. Simultaneous authorize calls serialize so the same root yields one
 source and different roots yield one winner plus bounded refusal.
 
 Generic CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
-reject the reserved provider with `capture_authorize_workspace_required` and
-direct operators to `authorize-workspace`. Other providers and the
-provider-neutral `CaptureCoordinator.create_source` test seam are unchanged.
+reject the reserved provider with `capture_authorize_workspace_required` after
+the same Unicode `str.strip` normalization as the capture ledger, so
+leading/trailing/tab whitespace cannot become `local-git-workspace`. Other
+providers and the provider-neutral `CaptureCoordinator.create_source` test seam
+are unchanged.
 
-Sidecar reads lstat and refuses symlink/reparse/non-regular/oversize files (16
-KiB cap) without blocking Core startup. The sidecar body is read with a MAX+1
-byte bound rather than an unbounded read between lstat and the size recheck.
-Plain Path roots walk every lexical ancestor and refuse parent/intermediate
-reparse or symlink directories, UNC/`//` network-style roots, and Windows remote
-volumes. Implicit cwd/home remain refused. Linux remote filesystems that are not
-`//` prefixes are not classified here.
+Sidecar reads open a descriptor with available close-on-exec/no-inherit,
+nonblocking, and nofollow flags, `fstat` it, require a regular 1..16 KiB file,
+read at most 16 KiB+1 bytes, then post-open `lstat`/`os.path.samestat` and
+refuse symlink/reparse so a Windows followed reparse fails closed. Core still
+starts. After `resolve`, root and resolved are compared with `os.path.samestat`
+rather than `Path.samefile`. Explicit Windows extended local-drive prefixes
+unwrap to the ordinary drive form; UNC, extended UNC, volume, and device
+prefixes stay rejected. Implicit cwd/home remain refused. Linux remote
+filesystems that are not `//` prefixes are not classified here. On Windows,
+`O_NONBLOCK`/`O_NOFOLLOW` are unavailable, so a blocking named-pipe sidecar can
+stall composition.
+
+Admin `POST /v1/admin/capture/sources/{id}/run` removes any stale
+local-workspace adapter, takes the nonblocking lock, revalidates
+sidecar/root/inventory, and then registers or leaves the adapter unavailable.
+A sidecar authorized after Core startup can run without restart; a later
+invalid sidecar fail-closes. CLI run still composes a fresh coordinator.
 
 Revoked and pre-existing malformed workspace-source rows are a documented
 terminal recovery boundary: this slice does not delete ledger rows, un-revoke,
 or add a unique index. Durable database uniqueness remains later hardening.
+
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats

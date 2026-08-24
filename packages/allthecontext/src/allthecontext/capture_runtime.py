@@ -17,6 +17,7 @@ import re
 import secrets
 import stat
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -76,10 +77,30 @@ def _implicit_home_text(value: str) -> bool:
     return value[:2] in {"/~", "\\~"}
 
 
-def _non_local_root_text(value: str) -> bool:
-    if not value or "\x00" in value or _implicit_home_text(value):
-        return True
-    return len(value) >= 2 and value[0] in "\\/" and value[1] in "\\/"
+def _unwrap_windows_extended_local_drive(value: str) -> str:
+    """Unwrap only ``\\\\?\\X:\\...`` / ``//?/X:/...`` to the ordinary drive form."""
+
+    if os.name != "nt" or not isinstance(value, str):
+        return value
+    if not value.startswith(("\\\\?\\", "//?/")):
+        return value
+    remainder = value[4:]
+    if len(remainder) < 3 or remainder[1] != ":" or not remainder[0].isalpha():
+        return value
+    if remainder[2] not in "\\/":
+        return value
+    return remainder
+
+
+def _normalized_local_root_text(value: str) -> str | None:
+    if not value or "\x00" in value:
+        return None
+    candidate = _unwrap_windows_extended_local_drive(value)
+    if _implicit_home_text(candidate):
+        return None
+    if len(candidate) >= 2 and candidate[0] in "\\/" and candidate[1] in "\\/":
+        return None
+    return candidate
 
 
 def _windows_drive_type(root: Path) -> int | None:
@@ -87,7 +108,7 @@ def _windows_drive_type(root: Path) -> int | None:
 
     import ctypes
 
-    drive, _rest = os.path.splitdrive(os.fspath(root))
+    drive, _rest = os.path.splitdrive(_unwrap_windows_extended_local_drive(os.fspath(root)))
     if len(drive) != 2 or drive[1] != ":":
         return None
     windll = getattr(ctypes, "windll", None)
@@ -134,8 +155,15 @@ def canonical_workspace_root(root: Path) -> Path:
     if type(root) is not _PLAIN_PATH_TYPE:
         _fail_closed()
     raw = os.fspath(root)
-    if not isinstance(raw, str) or _non_local_root_text(raw):
+    if not isinstance(raw, str):
         _fail_closed()
+    normalized = _normalized_local_root_text(raw)
+    if normalized is None:
+        _fail_closed()
+    if normalized != raw:
+        root = Path(normalized)
+        if type(root) is not _PLAIN_PATH_TYPE:
+            _fail_closed()
     if not root.is_absolute():
         _fail_closed()
     _reject_non_local_volume(root)
@@ -149,21 +177,21 @@ def canonical_workspace_root(root: Path) -> Path:
     if type(resolved) is not _PLAIN_PATH_TYPE:
         _fail_closed()
     resolved_raw = os.fspath(resolved)
-    if not isinstance(resolved_raw, str) or _non_local_root_text(resolved_raw):
+    if not isinstance(resolved_raw, str) or _normalized_local_root_text(resolved_raw) is None:
         _fail_closed()
     _reject_non_local_volume(resolved)
     _reject_redirecting_ancestors(resolved)
     try:
+        root_stat = root.lstat()
         resolved_stat = resolved.lstat()
-        same_directory = root.samefile(resolved)
     except (OSError, RuntimeError):
-        resolved_stat = None
-        same_directory = False
-    if resolved_stat is None:
+        _fail_closed()
+    if not os.path.samestat(root_stat, resolved_stat):
         _fail_closed()
     if (
-        not same_directory
+        not stat.S_ISDIR(root_stat.st_mode)
         or not stat.S_ISDIR(resolved_stat.st_mode)
+        or _is_reparse_or_symlink(root_stat)
         or _is_reparse_or_symlink(resolved_stat)
     ):
         _fail_closed()
@@ -183,24 +211,72 @@ def _authorization_lock(data_dir: Path, *, timeout: float) -> FileLock:
     return FileLock(str(authorization_lock_path(data_dir)), timeout=timeout)
 
 
+def _sidecar_open_flags() -> int:
+    flags = os.O_RDONLY
+    flags |= int(getattr(os, "O_CLOEXEC", 0))
+    flags |= int(getattr(os, "O_NOINHERIT", 0))
+    flags |= int(getattr(os, "O_NONBLOCK", 0))
+    flags |= int(getattr(os, "O_NOFOLLOW", 0))
+    flags |= int(getattr(os, "O_BINARY", 0))
+    return flags
+
+
+def _read_fd_bounded(fd: int, maximum: int) -> bytes | None:
+    chunks: list[bytes] = []
+    remaining = maximum
+    while remaining > 0:
+        try:
+            chunk = os.read(fd, remaining)
+        except (BlockingIOError, OSError, RuntimeError):
+            return None
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _read_sidecar_bytes(path: Path) -> bytes | None:
+    flags = _sidecar_open_flags()
+    fd: int | None = None
+    try:
+        fd = os.open(os.fspath(path), flags)
+        with suppress(OSError, RuntimeError):
+            os.set_inheritable(fd, False)
+        try:
+            opened_stat = os.fstat(fd)
+        except (OSError, RuntimeError):
+            return None
+        if not stat.S_ISREG(opened_stat.st_mode) or _is_reparse_or_symlink(opened_stat):
+            return None
+        size = int(opened_stat.st_size)
+        if size <= 0 or size > MAX_AUTHORIZATION_SIDECAR_BYTES:
+            return None
+        payload = _read_fd_bounded(fd, MAX_AUTHORIZATION_SIDECAR_BYTES + 1)
+        if payload is None or not payload or len(payload) > MAX_AUTHORIZATION_SIDECAR_BYTES:
+            return None
+        if len(payload) != size:
+            return None
+        try:
+            path_stat = os.lstat(os.fspath(path))
+        except (OSError, RuntimeError):
+            return None
+        if not os.path.samestat(opened_stat, path_stat):
+            return None
+        if not stat.S_ISREG(path_stat.st_mode) or _is_reparse_or_symlink(path_stat):
+            return None
+        return payload
+    except (OSError, RuntimeError):
+        return None
+    finally:
+        if fd is not None:
+            with suppress(OSError):
+                os.close(fd)
+
+
 def _read_sidecar_document(data_dir: Path) -> dict[str, str] | None:
-    path = authorization_path(data_dir)
-    try:
-        sidecar_stat = path.lstat()
-    except FileNotFoundError:
-        return None
-    except (OSError, RuntimeError):
-        return None
-    if not stat.S_ISREG(sidecar_stat.st_mode) or _is_reparse_or_symlink(sidecar_stat):
-        return None
-    if sidecar_stat.st_size <= 0 or sidecar_stat.st_size > MAX_AUTHORIZATION_SIDECAR_BYTES:
-        return None
-    try:
-        with path.open("rb") as handle:
-            payload = handle.read(MAX_AUTHORIZATION_SIDECAR_BYTES + 1)
-    except (OSError, RuntimeError):
-        return None
-    if not payload or len(payload) > MAX_AUTHORIZATION_SIDECAR_BYTES:
+    payload = _read_sidecar_bytes(authorization_path(data_dir))
+    if payload is None:
         return None
     try:
         loaded = json.loads(payload.decode("utf-8"))
@@ -217,10 +293,12 @@ def _read_sidecar_document(data_dir: Path) -> dict[str, str] | None:
         or not isinstance(identity, str)
         or _WORKSPACE_IDENTITY.fullmatch(identity) is None
         or not isinstance(canonical_root, str)
-        or _non_local_root_text(canonical_root)
     ):
         return None
-    return {"source_identity": identity, "canonical_root": canonical_root}
+    normalized_root = _normalized_local_root_text(canonical_root)
+    if normalized_root is None:
+        return None
+    return {"source_identity": identity, "canonical_root": normalized_root}
 
 
 def _write_sidecar_unlocked(data_dir: Path, *, canonical_root: Path, source_identity: str) -> None:
@@ -387,6 +465,19 @@ def _register_authorized_adapter_unlocked(
     coordinator.register_adapter(LOCAL_GIT_WORKSPACE_PROVIDER, adapter)
 
 
+def _try_register_authorized_adapter(
+    coordinator: CaptureCoordinator,
+    config: CoreConfig,
+) -> None:
+    try:
+        with _authorization_lock(config.data_dir, timeout=0):
+            _register_authorized_adapter_unlocked(coordinator, config)
+    except FileLockTimeout:
+        return
+    except OSError:
+        return
+
+
 def compose_capture_coordinator(
     store: CoreStore,
     config: CoreConfig,
@@ -402,20 +493,36 @@ def compose_capture_coordinator(
     """
 
     coordinator = _new_coordinator(store, clock=clock)
-    try:
-        with _authorization_lock(config.data_dir, timeout=0):
-            _register_authorized_adapter_unlocked(coordinator, config)
-    except FileLockTimeout:
-        return coordinator
-    except OSError:
-        return coordinator
+    _try_register_authorized_adapter(coordinator, config)
     return coordinator
 
 
-def reject_reserved_workspace_provider(provider: str) -> None:
-    """Refuse generic public creation of the reserved local-workspace provider."""
+def refresh_local_workspace_adapter(
+    coordinator: CaptureCoordinator,
+    config: CoreConfig,
+) -> None:
+    """Revalidate the local-workspace adapter on a long-lived coordinator.
 
-    if provider == LOCAL_GIT_WORKSPACE_PROVIDER:
+    The stale adapter is removed first. A nonblocking lock then revalidates the
+    sidecar, canonical root, and complete inventory before registration. Failure
+    leaves the adapter unavailable. CLI composition is unchanged: each CLI
+    command still constructs a fresh coordinator.
+    """
+
+    coordinator.adapters.pop(LOCAL_GIT_WORKSPACE_PROVIDER, None)
+    _try_register_authorized_adapter(coordinator, config)
+
+
+def reject_reserved_workspace_provider(provider: str) -> None:
+    """Refuse generic public creation of the reserved local-workspace provider.
+
+    Comparison uses the same Unicode ``str.strip`` normalization as
+    ``CaptureLedger.create_source`` so leading, trailing, and tab whitespace
+    cannot bypass the reserved-provider gate. The internal coordinator seam
+    stays provider-neutral.
+    """
+
+    if isinstance(provider, str) and provider.strip() == LOCAL_GIT_WORKSPACE_PROVIDER:
         raise CaptureError("capture_authorize_workspace_required")
 
 
@@ -499,5 +606,6 @@ __all__ = [
     "authorize_local_workspace",
     "canonical_workspace_root",
     "compose_capture_coordinator",
+    "refresh_local_workspace_adapter",
     "reject_reserved_workspace_provider",
 ]

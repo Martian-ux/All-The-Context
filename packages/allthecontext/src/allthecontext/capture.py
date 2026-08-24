@@ -981,9 +981,21 @@ class CaptureLedger:
         self.clock = clock
 
     @staticmethod
+    def _scopes_from_row(row: Any) -> tuple[str, ...]:
+        try:
+            raw_scopes = json.loads(str(row["requested_scopes_json"]))
+        except (TypeError, UnicodeError, ValueError):
+            raise CaptureError("capture_page_malformed") from None
+        if not isinstance(raw_scopes, list) or len(raw_scopes) > MAX_SCOPE_COUNT:
+            raise CaptureError("capture_page_malformed") from None
+        try:
+            return tuple(_bounded_opaque_id(item, maximum=MAX_SCOPE_CHARS) for item in raw_scopes)
+        except CaptureError:
+            raise CaptureError("capture_page_malformed") from None
+
+    @staticmethod
     def _source_from_row(row: Any) -> CaptureSource:
-        raw_scopes = json.loads(str(row["requested_scopes_json"]))
-        scopes = tuple(str(item) for item in raw_scopes) if isinstance(raw_scopes, list) else ()
+        scopes = CaptureLedger._scopes_from_row(row)
         return CaptureSource(
             id=str(row["id"]),
             provider=str(row["provider"]),
