@@ -133,8 +133,7 @@ empty-context test.
 This slice is not Packet E productization, complete Packet H, ZF-010, provider
 or network support, hosted/full-suite acceptance, release, or macOS support.
 Revoked and pre-existing malformed workspace-source rows have no product
-recovery here; durable database uniqueness remains later hardening. ADR-138 is
-kept on this branch for the integration owner to renumber after Packet G lands.
+recovery here; durable database uniqueness remains later hardening.
 
 ### 2026-08-23 registered-source admission PR1 contract
 

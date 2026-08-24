@@ -91,10 +91,6 @@ After enable, foreground CLI run and admin run share the same adapter and sink.
 No scheduler loop, scheduler table/config, health UI, or 20-file cap change is
 introduced. Continuous scheduling remains a separate Packet E PR.
 
-This branch keeps the ADR-138 number. If Packet G lands another ADR-138 on the
-integration branch, the integration owner will renumber this decision after that
-merge. This note does not change Packet H current-milestone merge wording.
-
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 
 **Status:** accepted on 2026-08-24 after reconstructing the Packet H-only

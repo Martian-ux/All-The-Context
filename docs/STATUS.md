@@ -212,9 +212,6 @@ volumes. Implicit cwd/home remain refused. Linux remote filesystems that are not
 Revoked and pre-existing malformed workspace-source rows are a documented
 terminal recovery boundary: this slice does not delete ledger rows, un-revoke,
 or add a unique index. Durable database uniqueness remains later hardening.
-ADR-138 is kept on this branch; the integration owner will renumber it after
-Packet G lands if that merge also claims ADR-138.
-
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats
