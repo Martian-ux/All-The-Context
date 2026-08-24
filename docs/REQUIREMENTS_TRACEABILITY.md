@@ -135,6 +135,19 @@ or network support, hosted/full-suite acceptance, release, or macOS support.
 Revoked and pre-existing malformed workspace-source rows have no product
 recovery here; durable database uniqueness remains later hardening.
 
+### 2026-08-24 ZF-010 direct-user formation mapper (local composition evidence)
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Map only accepted in-process Packet G L1+ `direct_user_turn` envelopes into Core through existing contracts | `experimental_reference_host_formation.py`; `tests/unit/test_reference_host_formation.py`; existing Packet G compile helper remains compile-only | Implemented locally as sanitized composition evidence: L0, ordinary MCP, unsupported-hook reports, other hooks, and lookalike envelopes are refused; membership is in-memory object identity in `host.events`, including after typed checkpoint restore of those same objects; restore is not Core persistence; caller-supplied content is commitment-checked as exact UTF-8 length plus SHA-256 against `turn_ref`; envelopes never store content; durable Core `ClientPrincipal` is required with `envelope.client_id == principal.id`; Core rebinds registered scopes; `normalize_lifecycle_event` then `form_observation`; closed caller-declared kinds are `interaction_preference` with `supersedes=None`, `correction` with required nonblank `supersedes`, and `context_forget` with required nonblank `supersedes`; preference rejects any non-None supersedes before `add_candidate` and cannot mutate preference or `project_decision` targets; kind is never inferred; `CandidateInput.source_id` stays `None`; entity/attribute slots are rejected; `add_candidate(..., client=principal)` only |
+| Keep formation fail-closed for authorization, secrets, retention, observation time, and replay | focused formation tests plus existing G/client/lifecycle tests | Implemented locally: missing/wrong principal and forged scopes fail closed; a different witness correction/forget against owner-private truth is `IGNORED` and does not mutate it; scopes that are `str`/`bytes` or invalid items are refused; allowed/denied overlap is `DirectUserFormationError`; commitment mismatch, missing targets, any retention class except `bounded`, and over-bound content are refused without truncation; missing/naive observation time is refused and `datetime.now` is not synthesized; when the envelope lacks a valid timestamp the caller supplies an aware observation time that is stamped deterministically; secret-like content is absent from envelopes, candidates, records, and refusals; secret-refusal retry in-process and after CoreStore reopen returns the same receipt id with `replayed=true` using a UUIDv4-shaped operation id derived from `client_id+event_id+sequence`; instruction-like imported text is not auto-formed; public versus caller-requested private ACL; idempotent retry/restart/checkpoint-restore does not duplicate; AST/import boundaries forbid `delete_record` / `purge` / `correct_record` / `IngestionService` / `LOCAL_ADMIN` / event-log scanning / `datetime.now` |
+
+This mapper is local composition evidence, not ZF-010 product exit, Packet E/F/H,
+Phase 2, CoreService/startup wiring, MCP lifecycle support, provider support,
+ranking or schema changes, checkpoint persistence, hosted CI, full pytest,
+release, or macOS. Packet G checkpoint restore is in-memory identity membership
+only. ADR-139 is the foreground capture runtime decision.
+
 ### 2026-08-23 registered-source admission PR1 contract
 
 | Requirement | Implementation/evidence | Status |

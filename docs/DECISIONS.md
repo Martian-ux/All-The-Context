@@ -1,5 +1,54 @@
 # Architecture decisions
 
+## ADR-140: Direct-user formation maps only declared Packet G L1+ turns
+
+**Status:** accepted locally on 2026-08-24 as composition evidence for one
+conservative ZF-010 class; this is not ZF-010 product exit, Packet E/F/H,
+Phase 2, CoreService/startup, MCP lifecycle, provider, hosted/full-suite,
+release, or support acceptance. ADR-138 remains the Packet G compile contract.
+ADR-139 is reserved for the foreground capture runtime now in a separate PR
+and is not occupied here.
+
+The mapper accepts only in-process Packet G L1+ `direct_user_turn` envelopes
+that the controlled host actually accepted. Membership is object identity in
+`host.events`, including after in-memory Packet G checkpoint restore of those
+same envelope objects. Restore is identity membership only and is not Core
+persistence or a second truth. L0, ordinary MCP, unsupported-hook reports,
+other hooks, and lookalike envelopes fail closed. The caller supplies raw
+content; the mapper recomputes exact UTF-8 byte length and SHA-256 against
+`turn_ref` and never stores content in envelopes. A durable Core
+`ClientPrincipal` is required, `envelope.client_id` must equal `principal.id`,
+and Core rebinds registered scopes. Formation uses `normalize_lifecycle_event`
+then `form_observation`. Closed caller-declared kinds are
+`interaction_preference` with `supersedes=None` (any non-None supersedes,
+including empty or whitespace, is rejected before `add_candidate`),
+`correction` with a required nonblank `supersedes`, and `context_forget` with a
+required nonblank `supersedes`. Preference cannot supersede. Kind is never
+inferred. `CandidateInput.source_id` stays `None`. Entity/attribute slots are
+rejected entirely. Admission is `add_candidate(..., client=principal)` only;
+`client=None` and `LOCAL_ADMIN` are refused. Direct candidate/value secret
+checks run before add. Secret and expiry refusals are content-free. Secret-
+refusal replay uses a stable UUIDv4-shaped operation id derived from hash
+bytes of `client_id+event_id+sequence` with UUID version 4 and RFC 4122
+variant bits set. There are no direct current-record writes, `delete_record`,
+`purge`, `correct_record`, `IngestionService.forget`, or event-log scans.
+ACL is an optional caller request, not writer identity by default; scopes that
+are `str`/`bytes` are rejected, items are validated, and allowed/denied
+overlap is `DirectUserFormationError` rather than `ContractViolation`. Only
+`bounded` retention is admitted. Observation time is the envelope timestamp
+when it is a valid aware value; otherwise this composition seam requires an
+explicit caller-supplied aware observation time and stamps it deterministically.
+Missing or naive timestamps are rejected; `datetime.now` is not synthesized.
+Over-bound content is refused and never truncated. The existing compile helper
+remains compile-only.
+
+Evidence is the focused new plus existing Packet G/client/lifecycle tests (46
+passed), Ruff check and format `--check` on touched Python files, mypy on
+package source (93 files), `scripts/check_docs.py`, `git diff --check`, and
+`python scripts/repository_security_scan.py --scope tree` (486 files, 0
+findings). Full repository pytest, hosted CI, private data, and macOS work were
+not run. This is not ZF-010 product exit.
+
 ## ADR-138: Packet G L1+ compilation is authorization-first
 
 **Status:** accepted locally on 2026-08-24 for the Packet G + Core Retrieval V3
