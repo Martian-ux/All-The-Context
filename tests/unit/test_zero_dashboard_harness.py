@@ -285,7 +285,9 @@ def test_idempotent_sink_commit_failure_window_has_no_duplicate_core_state(
         assert after_retry["current_record_count"] == after_retry["distinct_record_key_count"]
         assert len(fresh_sink.delegate.calls) == 1
         assert len(fresh_sink.delegate.receipts) == 1
-        assert fresh_adapter.calls == [(None, 0)]
+        # The terminal pending page is replayed from durable capture_events
+        # before provider fetch, so retry performs no adapter refetch.
+        assert fresh_adapter.calls == []
     finally:
         store.close()
         if reopened is not None:
