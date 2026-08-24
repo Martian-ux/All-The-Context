@@ -4,11 +4,11 @@
 
 As of 2026-08-24 UTC, protected main contains the merged Import Truth, Memory
 Truth, Retrieval, Context UI, provider-neutral Continuous Capture foundations,
-and the PR #78 registered-source admission contract
-(`e735d0dde301c64500acd1d404a2bbb6aab6724a`). The separately published immutable
-`0.1.0-beta.6` remains the current downloadable release. Packet H-D is
-branch-local disposable proof on this checkout; it is not on protected main and
-is not released. Development evidence after beta.6 does not
+the PR #78 registered-source admission contract, and the PR #79 Packet H-D
+disposable proof (`034d995d99802651537d91206c10c0018390dcd9`). The separately
+published immutable `0.1.0-beta.6` remains the current downloadable release.
+Packet H-D remains disposable proof/lab evidence only; it is not released.
+Development evidence after beta.6 does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
@@ -20,13 +20,13 @@ evidence for this integrated checkout.
 
 ## 2026-08-24 Packet H-D disposable registered-source context proof
 
-This checkout reconstructs the historical Packet H-only proof delta onto
-protected main after merged PR #78
+PR #79 merged this reconstruction of the historical Packet H-only proof delta
+onto protected main after merged PR #78
 (`e735d0dde301c64500acd1d404a2bbb6aab6724a`). Packet H-D exercises Packet F
 local workspace capture, the PR #78 registered-source admission contract,
 public Memory Truth, and Retrieval V3 over runner-owned disposable Core vaults.
-The Core-owned admission contract is no longer missing. Packet H-D remains
-branch-local on this checkout; it is not on protected main and is not released.
+The Core-owned admission contract is no longer missing. Packet H-D is on
+protected main as disposable proof/lab evidence only; it is not released.
 
 It does not exercise Packet E scheduler, Packet G reference host, ZF-010
 automatic formation, the full Wave 4 E–G composition, the Phase 2 journey,
@@ -83,15 +83,19 @@ so the checkout-source `sys.path` guard is active: `python -m bench.packet_h`
 (1.01s), and `python -m bench.packet_h_retrieval` (1.62s).
 Ruff check and Ruff format `--check` passed for the six Packet H Python files.
 `python -m mypy packages/allthecontext/src` passed (91 source files).
-`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest,
-desktop/dashboard/release/private/macOS work, and hosted CI were intentionally
-not run.
+`git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
+was intentionally not run in that reconstruction. The exact PR #79 pre-merge
+head `34a0f96` had all 12 hosted required checks green, including 1,693 tests
+on Windows and 1,693 on Ubuntu, CodeQL, security, dashboards, and desktop
+artifacts. Release, private-data, and macOS work were not run.
 
 This is disposable proof/lab evidence only. It does not claim production or
 startup wiring, a scheduler, provider or client support, archive import, OAuth
-or network support, hosted evidence, ranking or schema changes, release
-readiness, or support status. Full-suite coverage is not claimed. macOS remains
-unsupported/deferred.
+or network support, ranking or schema changes, release readiness, or support
+status. It is not complete Packet H, Phase 2, production/CoreService/startup
+wiring, scheduled or continuous Packet F product acceptance, provider/client
+support, release acceptance, private-data evidence, or macOS support. macOS
+remains unsupported/deferred.
 
 ## 2026-08-23 local workspace traversal bound
 
@@ -420,8 +424,8 @@ remain historical and are not rebound or reused.
 The accepted post-V1 plan now starts from the merged capture ledger instead of
 proposing a parallel connector or event substrate. Packet D's sanitized
 synthetic composition is locally complete. PR #78 merged the Core-owned
-registered-source admission contract, so that seam is no longer missing. This
-checkout records a disposable proof over Packet F local workspace, that
+registered-source admission contract, so that seam is no longer missing. PR #79
+merged a disposable Packet H-D proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3. It is not complete
 Packet H or Phase 2 acceptance.
 
@@ -461,11 +465,10 @@ The sink is explicitly injected only in focused tests. CoreService, package
 startup, the experimental scheduler, and reference host remain unwired.
 
 This closes only the PR1 admission contract locally. A later disposable proof
-on this checkout exercises that contract with Packet F, public Memory Truth,
-and Retrieval V3; it still does not claim complete Packet H, ZF-010, Phase 2
-acceptance, product/provider support, hosted or full-suite acceptance, stable
-SDK, release readiness, publication, or macOS support. Those remain open,
-absent, or deferred.
+(PR #79) exercises that contract with Packet F, public Memory Truth, and
+Retrieval V3; it still does not claim complete Packet H, ZF-010, Phase 2
+acceptance, product/provider support, stable SDK, release readiness,
+publication, or macOS support. Those remain open, absent, or deferred.
 
 ### 2026-08-22 Memory Truth foundation
 

@@ -2,9 +2,10 @@
 
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 
-**Status:** accepted locally on 2026-08-24 after reconstructing the Packet H-only
-proof delta onto merged PR #78; this is not ZF-010, complete Packet H, Phase 2,
-product/provider, hosted/full-suite, release, or support acceptance.
+**Status:** accepted on 2026-08-24 after reconstructing the Packet H-only
+proof delta onto merged PR #78 and landing PR #79 on protected main; this is
+not ZF-010, complete Packet H, Phase 2, product/provider, release, or support
+acceptance.
 
 Packet H-D reconciles three runner-owned disposable proof lanes without creating
 a new authority. The reconstruction base is protected main after PR #78
@@ -54,7 +55,10 @@ checkout-source `sys.path` guard is active: `python -m bench.packet_h`
 Ruff check and Ruff format `--check` passed for the six Packet H Python files.
 `python -m mypy packages/allthecontext/src` passed (91 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
-was intentionally not run.
+was intentionally not run in that reconstruction. The exact PR #79 pre-merge
+head `34a0f96` had all 12 hosted required checks green, including 1,693 tests
+on Windows and 1,693 on Ubuntu, CodeQL, security, dashboards, and desktop
+artifacts.
 
 Each public H-A/H-B/H-C run path obtains its root and capability only from the
 shared fresh runner-owned temporary-root context. Its lexical construction
@@ -67,11 +71,13 @@ while these outputs are disposable proof reports that remain reproducible from
 the commands.
 
 This decision does not claim production or startup wiring, a scheduler, provider
-or client support, archive import, OAuth or network support, hosted evidence,
-ranking or schema changes, release state, or support status. It adds no baseline
-receipt under `bench/baselines/`; Packet H-D outputs remain disposable proof
-reports. It does not relabel this partial proof as complete Packet H or Phase 2
-acceptance. macOS remains unsupported/deferred.
+or client support, archive import, OAuth or network support, ranking or schema
+changes, release state, or support status. It adds no baseline receipt under
+`bench/baselines/`; Packet H-D outputs remain disposable proof reports. It does
+not relabel this partial proof as complete Packet H, Phase 2, scheduled or
+continuous Packet F product acceptance, provider/client support, release
+acceptance, private-data evidence, or macOS support. macOS remains
+unsupported/deferred.
 
 Historical ADR-132 records the 2026-08-22 stop at the then-missing admission
 seam. That blocker is closed locally by ADR-133 / PR #78; ADR-132 remains
