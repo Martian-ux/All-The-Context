@@ -17,7 +17,9 @@ from allthecontext.capture_runtime import (
     authorize_local_workspace,
     compose_capture_coordinator,
     reject_reserved_workspace_provider,
+    write_scheduler_enabled,
 )
+from allthecontext.capture_scheduler import capture_scheduler_status_payload
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
 from allthecontext.credentials import (
@@ -549,6 +551,17 @@ def _cmd_capture_transition(args: argparse.Namespace) -> None:
     coordinator = _capture(args)
     operation = getattr(coordinator, args.capture_action)
     _dump(operation(args.source_id))
+
+
+def _cmd_capture_scheduler(args: argparse.Namespace) -> None:
+    config = _config(args)
+    config.prepare()
+    action = args.scheduler_action
+    if action == "enable":
+        write_scheduler_enabled(config.data_dir, enabled=True)
+    elif action == "disable":
+        write_scheduler_enabled(config.data_dir, enabled=False)
+    _dump(capture_scheduler_status_payload(config.data_dir, running=False))
 
 
 def _cmd_legacy_edge_status(args: argparse.Namespace) -> None:
@@ -1111,6 +1124,26 @@ def build_parser() -> argparse.ArgumentParser:
     _common_data(capture_run)
     capture_run.add_argument("source_id")
     capture_run.set_defaults(handler=_cmd_capture_run)
+
+    capture_scheduler = capture_commands.add_parser(
+        "scheduler",
+        help="Show or change the opt-in Core capture scheduler sidecar; never a daemon",
+    )
+    scheduler_commands = capture_scheduler.add_subparsers(
+        dest="scheduler_action",
+        required=True,
+    )
+    for scheduler_action, scheduler_help in (
+        ("status", "Show content-free capture scheduler gates and durable enablement"),
+        ("enable", "Persist explicit scheduler enablement for the next Core start"),
+        ("disable", "Persist scheduler disablement without running a capture loop"),
+    ):
+        scheduler_command = scheduler_commands.add_parser(
+            scheduler_action,
+            help=scheduler_help,
+        )
+        _common_data(scheduler_command)
+        scheduler_command.set_defaults(handler=_cmd_capture_scheduler)
 
     for action in ("enable", "pause", "resume", "disable", "revoke"):
         transition = capture_commands.add_parser(action, help=f"{action.title()} a capture source")

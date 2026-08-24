@@ -6,8 +6,8 @@
 conservative ZF-010 class; this is not ZF-010 product exit, Packet E/F/H,
 Phase 2, CoreService/startup, MCP lifecycle, provider, hosted/full-suite,
 release, or support acceptance. ADR-138 remains the Packet G compile contract.
-ADR-139 is reserved for the foreground capture runtime now in a separate PR
-and is not occupied here.
+ADR-139 records the separately merged foreground capture runtime; ADR-141
+records the separately bounded Packet E scheduler productization.
 
 The mapper accepts only in-process Packet G L1+ `direct_user_turn` envelopes
 that the controlled host actually accepted. Membership is object identity in
@@ -48,6 +48,55 @@ package source (93 files), `scripts/check_docs.py`, `git diff --check`, and
 `python scripts/repository_security_scan.py --scope tree` (486 files, 0
 findings). Full repository pytest, hosted CI, private data, and macOS work were
 not run. This is not ZF-010 product exit.
+## ADR-141: Core-owned Packet E scheduler is explicit opt-in and fail-closed
+
+**Status:** accepted locally on 2026-08-24 as the isolated Packet E
+productization slice on the shared foreground capture runtime; this is not
+complete Packet E product acceptance, complete Packet H, ZF-010, provider or
+network support, hosted/full-suite acceptance, release, or macOS support.
+ADR-138 remains the Packet G compile contract. ADR-139 remains the shared
+foreground capture runtime and adapter-refresh authority. ADR-140 remains the
+separate Packet G direct-user formation mapper and is not this scheduler work.
+
+Core owns one disabled-by-default capture scheduler around the existing
+`CaptureScheduler` planner and `CaptureCoordinator`. It does not fork
+coordinator, sink, or adapter logic and does not add a scheduler table or
+migration. Durable enablement is a content-free machine-local sidecar under
+`CoreConfig.data_dir` using the same atomic bounded private-file pattern as
+workspace authorization. Dispatch requires the exact process gate
+`ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid sidecar `enabled: true`, and the
+absence of `ATC_UPDATE_HEALTH_OPERATION`. Any nonempty update-health
+operation environment value force-disables the thread so installer/update
+probes cannot start capture. Invalid sidecars fail closed as disabled without
+killing Core.
+
+The FastAPI lifespan starts the scheduler only after Core is ready and only
+when those gates pass. Stop sets an interruptible `threading.Event`, then
+joins with a bound, in both lifespan `finally` and `CoreService.close`. The
+loop thread is non-daemon, at most one worker runs at a time, and overlapping
+cycles are refused. Waits use `Event.wait` rather than unbounded `sleep`.
+Expired and nonterminal capture runs are recovered on Core start and again at
+the start of each enabled cycle before due evaluation, so an expired
+reconciling source can become retry-due through the existing resume/run
+contracts. Every scheduled cycle calls `refresh_local_workspace_adapter`
+exactly as admin `run` does. Source lifecycle remains explicit: only due
+enabled sources and recovered lease-expired retry paths execute, and
+per-source failures stay content-free.
+
+Authenticated admin `GET/POST /v1/admin/capture/scheduler` and contributor CLI
+`atc capture scheduler status|enable|disable` are the only control surfaces.
+There is no CLI `run_forever` or daemon, no dashboard or desktop auto-enable,
+and `/health` keeps the exact `{"status":"ok","component":"core"}` body.
+Scheduler partial or disabled state is exposed only through authenticated
+capture/admin status. Status and health reads do not consume one-shot
+reauthorization actions or mutate rotation/scheduling state.
+
+Evidence is the focused scheduler and productization tests (25 passed), Ruff
+check and format `--check` on touched Python files, mypy on package source
+(93 files),
+`scripts/check_docs.py`, `git diff --check`, and
+`python scripts/repository_security_scan.py --scope tree`. Full repository
+pytest, hosted CI, private data, and macOS work were not run.
 
 ## ADR-138: Packet G L1+ compilation is authorization-first
 

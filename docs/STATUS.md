@@ -169,6 +169,50 @@ passed. `python -m mypy packages/allthecontext/src` passed (92 source files).
 `git diff --check` and `scripts/check_docs.py` passed. Full repository pytest
 was intentionally not run.
 
+## 2026-08-24 productized Packet E capture scheduler
+
+This checkout adds an isolated Core-owned Packet E scheduler on the shared
+foreground capture runtime. Scheduling stays disabled by default and is
+explicit opt-in. Core remains the authority. The existing `capture_scheduler.py`
+planner still chooses due work and invokes `CaptureCoordinator`; it does not
+own cursors, events, leases, checkpoints, or a scheduler table. There is no
+coordinator/sink/adapter fork, dashboard or desktop auto-enable, provider or
+network/OAuth path, ZF-010 mapper, ranking/schema/migration, release, or macOS
+work.
+
+Durable enablement is a content-free sidecar under `CoreConfig.data_dir`.
+Dispatch requires `ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid sidecar
+`enabled: true`, and no `ATC_UPDATE_HEALTH_OPERATION` value. Update-health
+probes force the scheduler off. Invalid sidecar bodies fail closed. The
+lifespan starts at most one non-daemon thread after Core is ready, waits with
+an interruptible `threading.Event`, and stops/joins with a bound in lifespan
+`finally` and `CoreService.close`. Cycles recover expired/nonterminal runs
+before due evaluation, refresh the local-workspace adapter the same way admin
+`run` does, and execute at most one worker without overlapping capture. Source
+failures stay per-source and content-free.
+
+Authenticated admin scheduler status/enable/disable and contributor CLI
+`atc capture scheduler status|enable|disable` are the only new surfaces. CLI
+has no `run_forever` or daemon. `/health` is unchanged; scheduler state is
+visible only on authenticated capture/admin status. Status reads do not consume
+one-shot reauthorization or mutate scheduling state.
+
+Focused sanitized tests cover disabled default, enable surviving restart,
+disable, due execution, no overlap, expired-run recovery, refresh after
+authorization, invalid config fail-closed, update-health force-off, prompt
+stop/join/idempotent close, exact `/health`, authenticated endpoints, CLI
+status/enable/disable, and no secret/path leakage. Local validation: 25 focused
+scheduler tests passed; `python -m ruff check .` and Ruff format `--check` on
+touched Python files passed; `python -m mypy packages/allthecontext/src`
+passed (93 source files); `git diff --check`, `scripts/check_docs.py`, and
+`python scripts/repository_security_scan.py --scope tree` passed (487 files, 0
+findings). Full repository pytest, hosted CI, private data, and macOS work
+were not run.
+
+This does not claim complete Packet E product acceptance, complete Packet H,
+ZF-010, provider support, hosted/full-suite acceptance, release, private-data
+evidence, or macOS support.
+
 ## 2026-08-24 productized foreground local-workspace capture runtime
 
 This checkout adds a shared `capture_runtime` composition used by both
@@ -194,8 +238,9 @@ or committed fixtures. A changed root is a new identity and is refused rather
 than silently retargeted. Existing `create` / `enable` / `run` remain
 authoritative. After enable, a foreground CLI run composes a fresh coordinator
 and an admin run refreshes the local-workspace adapter fail-closed immediately
-before execution. This is manual opt-in foreground capture only; continuous
-Packet E scheduling remains open.
+before execution. Manual opt-in foreground capture remains the adapter
+authorization path; the later Packet E scheduler slice is a separate explicit
+Core opt-in and is not implied by authorization or enable.
 
 Focused sanitized tests cover no-authorization adapter unavailability without
 Core failure; authorize to one disabled exact source; enable/run admitting

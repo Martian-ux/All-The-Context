@@ -55,6 +55,7 @@ from ..capture_runtime import (
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
+from ..capture_scheduler import UPDATE_HEALTH_OPERATION_ENV
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -295,8 +296,9 @@ def create_app(
         observer_executor = get_operation_observer_executor()
         try:
             await run_in_threadpool(core.store.resume_purge_jobs, limit=1)
-            update_health_process = bool(os.environ.get("ATC_UPDATE_HEALTH_OPERATION"))
+            update_health_process = bool(os.environ.get(UPDATE_HEALTH_OPERATION_ENV))
             if not update_health_process:
+                await run_in_threadpool(core.capture_scheduler.start)
                 if (
                     updates.preferences.enabled
                     and updates.preferences.channel in updates.config.manifest_urls
@@ -312,17 +314,20 @@ def create_app(
             yield
         finally:
             try:
-                await asyncio.get_running_loop().run_in_executor(
-                    observer_executor,
-                    core.store.close_import_operation_observer,
-                )
+                await run_in_threadpool(core.capture_scheduler.stop)
             finally:
                 try:
-                    observer_executor.shutdown(wait=True, cancel_futures=True)
+                    await asyncio.get_running_loop().run_in_executor(
+                        observer_executor,
+                        core.store.close_import_operation_observer,
+                    )
                 finally:
-                    with operation_observer_executor_lock:
-                        if operation_observer_executor is observer_executor:
-                            operation_observer_executor = None
+                    try:
+                        observer_executor.shutdown(wait=True, cancel_futures=True)
+                    finally:
+                        with operation_observer_executor_lock:
+                            if operation_observer_executor is observer_executor:
+                                operation_observer_executor = None
 
     app = FastAPI(
         title="All The Context Core",
@@ -978,8 +983,24 @@ def create_app(
         items, total = core.capture.list_sources()
         return {
             "items": [core.capture.status(item.id) for item in items],
+            "scheduler": core.capture_scheduler.status(),
             "total": total,
         }
+
+    @app.get("/v1/admin/capture/scheduler")
+    def capture_scheduler_status(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture_scheduler.status()
+
+    @app.post("/v1/admin/capture/scheduler/enable")
+    def enable_capture_scheduler(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture_scheduler.enable()
+
+    @app.post("/v1/admin/capture/scheduler/disable")
+    def disable_capture_scheduler(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        return core.capture_scheduler.disable()
 
     @app.get("/v1/admin/capture/sources/{source_id}/status")
     def capture_source_status(source_id: str, principal: Principal) -> dict[str, Any]:

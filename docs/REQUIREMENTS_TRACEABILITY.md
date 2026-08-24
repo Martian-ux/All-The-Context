@@ -119,6 +119,19 @@ schema changes, checkpoint persistence, hosted CI, full pytest, release, or
 macOS. Empty-pack refusal remains covered separately by the existing Packet G
 empty-context test.
 
+### 2026-08-24 productized Packet E capture scheduler
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Keep scheduling explicit, Core-owned, and disabled by default | `CoreCaptureScheduler`; sidecar `capture-scheduler.json`; `ATC_CAPTURE_SCHEDULER_ENABLED=1`; `tests/unit/test_capture_scheduler_productization.py` | Implemented locally: missing sidecar and unset env do not dispatch; enable writes a content-free sidecar that survives restart when the process gate stays open; disable persists off and stops the thread; `ATC_UPDATE_HEALTH_OPERATION` force-disables even when the sidecar is enabled |
+| Start one interruptible non-daemon thread after Core is ready and stop it on close | FastAPI lifespan; `CoreService.close`; bounded `Event.wait` / join | Implemented locally: start is lifespan-only after Core ready and only when gates pass; stop/set/join run in lifespan `finally` and `CoreService.close` and are idempotent; join is bounded; overlapping cycles are refused; `max_workers` is 1 |
+| Recover expired runs and refresh the local-workspace adapter before due work | `recover_expired_runs` on Core start and each enabled `run_once`; `refresh_local_workspace_adapter` before each scheduled cycle | Implemented locally: expired reconciling sources become retry-due after recovery; adapter refresh matches admin `run`; due enabled/retry paths use existing coordinator/sink/adapter contracts and fail closed per source |
+| Preserve `/health` and keep scheduler state authenticated and content-free | `GET /health`; `GET/POST /v1/admin/capture/scheduler`; `GET /v1/admin/capture/status`; `atc capture scheduler status`, `enable`, and `disable` | Implemented locally: `/health` remains exactly `{"status":"ok","component":"core"}`; scheduler status is admin-authenticated; CLI has status/enable/disable only and no `run_forever`/daemon; status/health reads do not consume one-shot reauthorization or mutate rotation; invalid config and public payloads stay path/secret free |
+
+This slice is not complete Packet E product acceptance, complete Packet H,
+ZF-010, provider or network support, hosted/full-suite acceptance, release, or
+macOS support. Local-workspace source lifecycle remains explicit.
+
 ### 2026-08-24 productized foreground local-workspace capture runtime
 
 | Requirement | Implementation/evidence | Status |
@@ -128,10 +141,11 @@ empty-context test.
 | Keep Core available when authorization is absent or invalid | CoreService composition fail-closed adapter registration | Implemented locally: missing/invalid/symlink/reparse/non-regular/oversize sidecar; descriptor-based sidecar read (`os.open` with available close-on-exec/no-inherit/nonblocking/nofollow flags, `fstat`, 1..16 KiB regular file, MAX+1 bounded complete read, post-open `lstat`/`os.path.samestat`/reparse refusal); missing/non-directory/symlink/reparse/parent-redirecting/UNC/extended-UNC/Windows-remote/implicit home/cwd roots; post-resolve `os.path.samestat` rather than `Path.samefile`; held authorization lock; incomplete inventory; unreadable/malformed capture rows including object/string `requested_scopes_json` shapes; and retargeted sidecar identity leave the vault available and capture skipped as `capture_adapter_unavailable`; authorize returns a bounded content-free `CaptureError` rather than decoder exceptions or raw row/path. Explicit Windows extended local-drive prefixes unwrap to the ordinary drive form. Windows named-pipe sidecar hang without `O_NONBLOCK` remains a residual |
 | Inventory and validate every workspace source before register/reconcile | bounded `list_sources` pagination in `capture_runtime`; focused >100-source, 500-row page-boundary, and metadata tests | Implemented locally: inventory is not truncated at 100 rows and crosses the 500-row page boundary; unreadable or malformed rows fail closed without crashing Core; adapter registration and authorize reconciliation require exactly one canonical matching row and refuse malformed, duplicate, mismatched, and revoked rows without deleting ledger state |
 | Keep generic create from racing the reserved workspace provider | CLI `atc capture create`; admin `POST /v1/admin/capture/sources`; `reject_reserved_workspace_provider` | Implemented locally: public generic create rejects `local-git-workspace` after the same Unicode `str.strip` normalization as `CaptureLedger`, including leading/trailing/tab whitespace, with `capture_authorize_workspace_required`, and preserves other providers; `CaptureCoordinator.create_source` remains the provider-neutral test seam |
-| Produce Memory Truth / Retrieval V3 records from one foreground run | existing capture coordinator, registered-source sink, and retrieval engine through the shared runtime | Implemented locally for manual opt-in foreground capture after enable: structural facts and a deterministic no-fact, restart identity rebuild with idempotent replay, exact file-deletion withdrawal, and Core-authoritative correction/delete/purge barriers. Admin run refreshes the local-workspace adapter fail-closed immediately before execution so a sidecar authorized after Core startup can run without restart and a later invalid sidecar is unavailable. CLI run still composes a fresh coordinator. Continuous Packet E scheduling remains open |
+| Produce Memory Truth / Retrieval V3 records from one foreground run | existing capture coordinator, registered-source sink, and retrieval engine through the shared runtime | Implemented locally for manual opt-in foreground capture after enable: structural facts and a deterministic no-fact, restart identity rebuild with idempotent replay, exact file-deletion withdrawal, and Core-authoritative correction/delete/purge barriers. Admin run refreshes the local-workspace adapter fail-closed immediately before execution so a sidecar authorized after Core startup can run without restart and a later invalid sidecar is unavailable. CLI run still composes a fresh coordinator. The later Packet E scheduler slice is a separate explicit Core opt-in |
 
-This slice is not Packet E productization, complete Packet H, ZF-010, provider
-or network support, hosted/full-suite acceptance, release, or macOS support.
+The runtime slice is not complete Packet H, ZF-010, provider or network
+support, hosted/full-suite acceptance, release, or macOS support. Packet E
+scheduling is a later isolated Core opt-in documented above.
 Revoked and pre-existing malformed workspace-source rows have no product
 recovery here; durable database uniqueness remains later hardening.
 

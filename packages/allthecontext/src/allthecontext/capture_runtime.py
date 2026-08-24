@@ -5,8 +5,10 @@ through this module so they cannot diverge. The registered-source sink is
 always injected. The local Git workspace adapter is registered only when a
 valid machine-local authorization sidecar exists under Core's data directory.
 
-This slice is manual, opt-in, and foreground-only. It does not start a
-scheduler, persist scheduler state, or change file-discovery caps.
+This slice is manual, opt-in, and foreground-only for adapter authorization.
+Core-owned Packet E scheduling is a separate explicit opt-in that reuses this
+composition and the existing coordinator; it does not fork sink or adapter
+logic or change file-discovery caps.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import secrets
 import stat
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -37,8 +40,11 @@ from .storage import CoreStore
 
 AUTHORIZATION_FILENAME = "local-workspace-authorization.json"
 AUTHORIZATION_VERSION = 1
+SCHEDULER_CONFIG_FILENAME = "capture-scheduler.json"
+SCHEDULER_CONFIG_VERSION = 1
 LOCAL_WORKSPACE_ACCOUNT_LABEL = "local-workspace"
 MAX_AUTHORIZATION_SIDECAR_BYTES = 16_384
+MAX_SCHEDULER_SIDECAR_BYTES = MAX_AUTHORIZATION_SIDECAR_BYTES
 _SOURCE_PAGE_SIZE = 500
 _MAX_SOURCE_INVENTORY = 10_000
 _AUTHORIZATION_LOCK_TIMEOUT_SECONDS = 5.0
@@ -48,9 +54,19 @@ _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _WINDOWS_LOCAL_DRIVE_TYPES = frozenset({2, 3, 6})  # removable, fixed, ramdisk
 _WORKSPACE_IDENTITY = re.compile(r"^workspace-source-[0-9a-f]{64}$")
 _SIDECAR_KEYS = frozenset({"version", "source_identity", "canonical_root"})
+_SCHEDULER_SIDECAR_KEYS = frozenset({"version", "enabled"})
 _ACCEPTABLE_WORKSPACE_LIFECYCLES = frozenset(
     {"disabled", "enabled", "paused", "degraded", "reconciling"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureSchedulerDurableState:
+    """Content-free machine-local scheduler sidecar projection."""
+
+    present: bool
+    valid: bool
+    enabled: bool
 
 
 def _fail_closed() -> NoReturn:
@@ -207,6 +223,15 @@ def authorization_lock_path(data_dir: Path) -> Path:
     return path.with_suffix(path.suffix + ".lock")
 
 
+def scheduler_config_path(data_dir: Path) -> Path:
+    return data_dir / SCHEDULER_CONFIG_FILENAME
+
+
+def scheduler_config_lock_path(data_dir: Path) -> Path:
+    path = scheduler_config_path(data_dir)
+    return path.with_suffix(path.suffix + ".lock")
+
+
 def _authorization_lock(data_dir: Path, *, timeout: float) -> FileLock:
     return FileLock(str(authorization_lock_path(data_dir)), timeout=timeout)
 
@@ -236,7 +261,11 @@ def _read_fd_bounded(fd: int, maximum: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def _read_sidecar_bytes(path: Path) -> bytes | None:
+def _read_sidecar_bytes(
+    path: Path,
+    *,
+    maximum: int = MAX_AUTHORIZATION_SIDECAR_BYTES,
+) -> bytes | None:
     flags = _sidecar_open_flags()
     fd: int | None = None
     try:
@@ -250,10 +279,10 @@ def _read_sidecar_bytes(path: Path) -> bytes | None:
         if not stat.S_ISREG(opened_stat.st_mode) or _is_reparse_or_symlink(opened_stat):
             return None
         size = int(opened_stat.st_size)
-        if size <= 0 or size > MAX_AUTHORIZATION_SIDECAR_BYTES:
+        if size <= 0 or size > maximum:
             return None
-        payload = _read_fd_bounded(fd, MAX_AUTHORIZATION_SIDECAR_BYTES + 1)
-        if payload is None or not payload or len(payload) > MAX_AUTHORIZATION_SIDECAR_BYTES:
+        payload = _read_fd_bounded(fd, maximum + 1)
+        if payload is None or not payload or len(payload) > maximum:
             return None
         if len(payload) != size:
             return None
@@ -301,12 +330,7 @@ def _read_sidecar_document(data_dir: Path) -> dict[str, str] | None:
     return {"source_identity": identity, "canonical_root": normalized_root}
 
 
-def _write_sidecar_unlocked(data_dir: Path, *, canonical_root: Path, source_identity: str) -> None:
-    try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        raise CaptureError("capture_failed") from None
-    path = authorization_path(data_dir)
+def _replace_text_sidecar(path: Path, payload: str, *, maximum: int) -> None:
     try:
         existing_stat = path.lstat()
     except FileNotFoundError:
@@ -317,19 +341,8 @@ def _write_sidecar_unlocked(data_dir: Path, *, canonical_root: Path, source_iden
         not stat.S_ISREG(existing_stat.st_mode) or _is_reparse_or_symlink(existing_stat)
     ):
         raise CaptureError("capture_failed") from None
-    payload = (
-        json.dumps(
-            {
-                "canonical_root": os.fspath(canonical_root),
-                "source_identity": source_identity,
-                "version": AUTHORIZATION_VERSION,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
-    if len(payload.encode("utf-8")) > MAX_AUTHORIZATION_SIDECAR_BYTES:
+    encoded = payload.encode("utf-8")
+    if len(encoded) > maximum:
         raise CaptureError("capture_failed") from None
     temporary = path.with_name(f"{path.name}.{secrets.token_hex(6)}.atc-new")
     try:
@@ -345,6 +358,99 @@ def _write_sidecar_unlocked(data_dir: Path, *, canonical_root: Path, source_iden
         temporary.unlink(missing_ok=True)
     except OSError:
         raise CaptureError("capture_failed") from None
+
+
+def _write_sidecar_unlocked(data_dir: Path, *, canonical_root: Path, source_identity: str) -> None:
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise CaptureError("capture_failed") from None
+    payload = (
+        json.dumps(
+            {
+                "canonical_root": os.fspath(canonical_root),
+                "source_identity": source_identity,
+                "version": AUTHORIZATION_VERSION,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    _replace_text_sidecar(
+        authorization_path(data_dir),
+        payload,
+        maximum=MAX_AUTHORIZATION_SIDECAR_BYTES,
+    )
+
+
+def _missing_or_unreadable_scheduler_state(path: Path) -> CaptureSchedulerDurableState:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return CaptureSchedulerDurableState(present=False, valid=True, enabled=False)
+    except OSError:
+        return CaptureSchedulerDurableState(present=True, valid=False, enabled=False)
+    return CaptureSchedulerDurableState(present=True, valid=False, enabled=False)
+
+
+def read_scheduler_durable_state(data_dir: Path) -> CaptureSchedulerDurableState:
+    """Read the scheduler sidecar fail-closed without mutating scheduling state."""
+
+    path = scheduler_config_path(data_dir)
+    payload = _read_sidecar_bytes(path, maximum=MAX_SCHEDULER_SIDECAR_BYTES)
+    if payload is None:
+        return _missing_or_unreadable_scheduler_state(path)
+    try:
+        loaded = json.loads(payload.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeError):
+        return CaptureSchedulerDurableState(present=True, valid=False, enabled=False)
+    if not isinstance(loaded, dict) or set(loaded) != _SCHEDULER_SIDECAR_KEYS:
+        return CaptureSchedulerDurableState(present=True, valid=False, enabled=False)
+    version = loaded.get("version")
+    enabled = loaded.get("enabled")
+    if type(version) is not int or version != SCHEDULER_CONFIG_VERSION or type(enabled) is not bool:
+        return CaptureSchedulerDurableState(present=True, valid=False, enabled=False)
+    return CaptureSchedulerDurableState(present=True, valid=True, enabled=enabled)
+
+
+def _write_scheduler_sidecar_unlocked(data_dir: Path, *, enabled: bool) -> None:
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise CaptureError("capture_failed") from None
+    payload = (
+        json.dumps(
+            {"enabled": enabled, "version": SCHEDULER_CONFIG_VERSION},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    _replace_text_sidecar(
+        scheduler_config_path(data_dir),
+        payload,
+        maximum=MAX_SCHEDULER_SIDECAR_BYTES,
+    )
+
+
+def _scheduler_config_lock(data_dir: Path, *, timeout: float) -> FileLock:
+    return FileLock(str(scheduler_config_lock_path(data_dir)), timeout=timeout)
+
+
+def write_scheduler_enabled(data_dir: Path, *, enabled: bool) -> CaptureSchedulerDurableState:
+    """Atomically persist the content-free scheduler enablement sidecar."""
+
+    if type(enabled) is not bool:
+        raise CaptureError("capture_failed") from None
+    try:
+        with _scheduler_config_lock(data_dir, timeout=_AUTHORIZATION_LOCK_TIMEOUT_SECONDS):
+            _write_scheduler_sidecar_unlocked(data_dir, enabled=enabled)
+    except FileLockTimeout:
+        raise CaptureError("capture_failed") from None
+    except OSError:
+        raise CaptureError("capture_failed") from None
+    return read_scheduler_durable_state(data_dir)
 
 
 def _build_adapter(root: Path) -> LocalGitWorkspaceCaptureProviderAdapter:
@@ -601,11 +707,19 @@ __all__ = [
     "AUTHORIZATION_VERSION",
     "LOCAL_WORKSPACE_ACCOUNT_LABEL",
     "MAX_AUTHORIZATION_SIDECAR_BYTES",
+    "MAX_SCHEDULER_SIDECAR_BYTES",
+    "SCHEDULER_CONFIG_FILENAME",
+    "SCHEDULER_CONFIG_VERSION",
+    "CaptureSchedulerDurableState",
     "authorization_lock_path",
     "authorization_path",
     "authorize_local_workspace",
     "canonical_workspace_root",
     "compose_capture_coordinator",
+    "read_scheduler_durable_state",
     "refresh_local_workspace_adapter",
     "reject_reserved_workspace_provider",
+    "scheduler_config_lock_path",
+    "scheduler_config_path",
+    "write_scheduler_enabled",
 ]
