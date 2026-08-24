@@ -43,22 +43,48 @@ authorization sidecar exists under `CoreConfig.data_dir`.
 
 The sidecar stores exactly one explicitly authorized canonical workspace root
 using pathlib and the existing cross-platform atomic/private-file pattern
-(temporary file plus replace, with an adjacent lock). It does not assume POSIX
-permissions. Missing, non-directory, symlink, reparse, implicit-home (`~`), and
-implicit-cwd (relative) roots fail closed. A changed root is a new adapter
-identity; silent retargeting is refused. Core starts if the sidecar is absent
-or invalid: capture fails closed and the vault remains available. Path and raw
+(temporary file plus replace). The adjacent FileLock is held across the entire
+authorize read/identity/source-reconcile/write critical section. Ordinary Core
+composition uses a nonblocking lock attempt and fail-closes adapter
+registration if the lock is busy, the sidecar is invalid, or inventory cannot
+be completed. `filelock.Timeout` and lock/write/unlink `OSError` paths map to a
+content-free `CaptureError` with `__cause__` cleared. It does not assume POSIX
+permissions. Sidecar reads `lstat` first and refuses symlink, reparse,
+non-regular, empty, and oversize files using a 16 KiB cap; invalid sidecars do
+not prevent Core startup. Missing, non-directory, symlink, reparse, parent or
+intermediate redirecting, UNC/`//` network-style, Windows remote-volume,
+implicit-home (`~`), and implicit-cwd (relative) roots fail closed. A changed
+root is a new adapter identity; silent retargeting is refused. Path and raw
 errors do not cross public status, receipts, logs, or portable export. The root
-is never stored in `capture_sources.account_label`.
+is never stored in `capture_sources.account_label`. Linux remote filesystems
+that are not `//` UNC-style prefixes are not classified in this slice.
 
 `atc capture authorize-workspace --root PATH --local-only-acknowledged` is the
 opt-in command. It computes the adapter identity and creates or reconciles
 exactly one disabled `local-git-workspace` source with scopes exactly
-`workspace.structure`. Existing create/enable/run remain the lifecycle and
-execution authority. After enable, foreground CLI run and admin run share the
-same adapter and sink. No scheduler loop, scheduler table/config, health UI, or
-20-file cap change is introduced. Continuous scheduling remains a separate
-Packet E PR.
+`workspace.structure`, constant account label `local-workspace`, local-only
+acknowledgement, and a non-revoked lifecycle. Workspace-source inventory walks
+the existing bounded `list_sources` pages to completion rather than the first
+100 rows. The adapter is registered only when exactly one matching canonical
+source exists. Generic contributor CLI `atc capture create` and admin
+`POST /v1/admin/capture/sources` reject the reserved `local-git-workspace`
+provider with `capture_authorize_workspace_required` and direct operators to
+`authorize-workspace`; other providers are unchanged. The
+`CaptureCoordinator.create_source` test seam stays provider-neutral.
+
+Revoked or pre-existing malformed workspace-source rows are a terminal recovery
+boundary in this slice: authorize refuses, the adapter is not registered, ledger
+rows are not deleted, and revocation is not weakened. No migration or unique
+index is added here; durable database uniqueness for this provider remains a
+later hardening. Existing create/enable/run remain the lifecycle and execution
+authority for non-reserved providers and for enable/run after authorization.
+After enable, foreground CLI run and admin run share the same adapter and sink.
+No scheduler loop, scheduler table/config, health UI, or 20-file cap change is
+introduced. Continuous scheduling remains a separate Packet E PR.
+
+This branch keeps the ADR-138 number. If Packet G lands another ADR-138 on the
+integration branch, the integration owner will renumber this decision after that
+merge. This note does not change Packet H current-milestone merge wording.
 
 ## ADR-137: Packet H-D records disposable composition evidence without acceptance
 

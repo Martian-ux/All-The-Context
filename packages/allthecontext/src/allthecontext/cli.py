@@ -16,6 +16,7 @@ from allthecontext.capture import CaptureCoordinator
 from allthecontext.capture_runtime import (
     authorize_local_workspace,
     compose_capture_coordinator,
+    reject_reserved_workspace_provider,
 )
 from allthecontext.client_config import repair_managed_runtime_bindings
 from allthecontext.config import DEFAULT_MAX_IMPORT_BYTES, MAX_IMPORT_BYTES, CoreConfig
@@ -520,6 +521,7 @@ def _cmd_capture_authorize_workspace(args: argparse.Namespace) -> None:
 
 
 def _cmd_capture_create(args: argparse.Namespace) -> None:
+    reject_reserved_workspace_provider(args.provider)
     source = _capture(args).create_source(
         provider=args.provider,
         account_label=args.account_label,
@@ -1069,7 +1071,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     capture_create = capture_commands.add_parser(
         "create",
-        help="Create a disabled local-only capture source without accepting secrets",
+        help=(
+            "Create a disabled local-only capture source without accepting secrets; "
+            "local-git-workspace requires authorize-workspace"
+        ),
     )
     _common_data(capture_create)
     capture_create.add_argument("provider")

@@ -51,6 +51,7 @@ from ..browser_session import (
     BrowserSessionTickets,
 )
 from ..capture import CaptureError
+from ..capture_runtime import reject_reserved_workspace_provider
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -950,6 +951,7 @@ def create_app(
         request: CaptureCreateRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
+        reject_reserved_workspace_provider(request.provider)
         source = core.capture.create_source(
             provider=request.provider,
             account_label=request.account_label,

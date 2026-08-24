@@ -224,16 +224,30 @@ returns `capture_adapter_unavailable` without path or raw error leaks.
 
 `atc capture authorize-workspace --root PATH --local-only-acknowledged`
 authorizes exactly one explicit absolute workspace root. Home, cwd, relative,
-missing, non-directory, symlink, reparse, and redirecting roots are refused.
-The command computes the adapter source identity and creates or reconciles
-exactly one disabled `local-git-workspace` source with scopes exactly
-`workspace.structure`. The canonical root is stored only in the private sidecar
-and is never copied into `capture_sources.account_label`, public status, logs,
-receipts, portable export, or committed fixtures. A later different root is a
-new identity and is refused rather than silently retargeted.
+missing, non-directory, symlink, reparse, parent/intermediate redirecting,
+UNC/`//` network-style, and Windows remote-volume roots are refused. The
+command holds the sidecar lock across read, identity, complete source
+inventory, reconcile/create, and write. It computes the adapter source identity
+and creates or reconciles exactly one disabled `local-git-workspace` source
+with scopes exactly `workspace.structure`, account label `local-workspace`,
+local-only acknowledgement, and a non-revoked lifecycle. Inventory walks every
+bounded `list_sources` page rather than stopping at 100 rows. The canonical
+root is stored only in the private sidecar and is never copied into
+`capture_sources.account_label`, public status, logs, receipts, portable
+export, or committed fixtures. A later different root is a new identity and is
+refused rather than silently retargeted.
 
-Existing `create`, `enable`, and `run` remain the lifecycle and execution
-authority. After enable, a foreground CLI run and an admin run use the same
-composed adapter and sink. This is manual opt-in foreground capture only. It
-does not start a scheduler thread, add scheduler tables or health UI, change
-the 20-file discovery cap, or productize Packet E continuous scheduling.
+Generic `atc capture create` and `POST /v1/admin/capture/sources` reject
+`local-git-workspace` with `capture_authorize_workspace_required` and require
+`authorize-workspace`. Other providers remain creatable. Enable and run remain
+the lifecycle and execution authority after authorization. After enable, a
+foreground CLI run and an admin run use the same composed adapter and sink.
+
+Sidecar files that are not regular, are symlink or reparse points, or exceed 16
+KiB are ignored so Core still starts. Revoked or pre-existing malformed
+workspace-source rows are terminal in this slice: they are not deleted, not
+un-revoked, and not auto-repaired. Durable uniqueness is later hardening.
+
+This is manual opt-in foreground capture only. It does not start a scheduler
+thread, add scheduler tables or health UI, change the 20-file discovery cap, or
+productize Packet E continuous scheduling.

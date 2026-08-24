@@ -165,6 +165,45 @@ This does not claim complete Packet H, Packet E productization, provider
 support, hosted/full-suite acceptance, release, private-data evidence, or macOS
 support.
 
+## 2026-08-24 local-workspace authorization hardening
+
+This checkout hardens the productized foreground local-workspace authorization
+path without scheduler, dashboard, migration, network-provider, or Packet H
+milestone work.
+
+Authorize holds the sidecar FileLock across read, identity, complete
+workspace-source inventory, reconcile/create, and write. Lock timeout and
+lock/write/unlink OS errors become content-free `capture_failed` without path
+cause. Core composition stays nonblocking and fail-closed: a held lock, invalid
+sidecar, or incomplete/malformed inventory leaves the vault available and does
+not register the adapter.
+
+Workspace-source inventory paginates beyond the first 100 `list_sources` rows.
+Registration and reconciliation require exactly one matching canonical row:
+provider `local-git-workspace`, account label `local-workspace`, exact
+fingerprint, exact `workspace.structure` scope, local-only acknowledgement, and
+a non-revoked lifecycle. Malformed, duplicate, mismatched, or revoked rows never
+register the adapter. Simultaneous authorize calls serialize so the same root
+yields one source and different roots yield one winner plus bounded refusal.
+
+Generic CLI `atc capture create` and admin `POST /v1/admin/capture/sources`
+reject the reserved provider with `capture_authorize_workspace_required` and
+direct operators to `authorize-workspace`. Other providers and the
+provider-neutral `CaptureCoordinator.create_source` test seam are unchanged.
+
+Sidecar reads lstat and refuses symlink/reparse/non-regular/oversize files (16
+KiB cap) without blocking Core startup. Plain Path roots walk every lexical
+ancestor and refuse parent/intermediate reparse or symlink directories, UNC/`//`
+network-style roots, and Windows remote volumes. Implicit cwd/home remain
+refused. Linux remote filesystems that are not `//` prefixes are not classified
+here.
+
+Revoked and pre-existing malformed workspace-source rows are a documented
+terminal recovery boundary: this slice does not delete ledger rows, un-revoke,
+or add a unique index. Durable database uniqueness remains later hardening.
+ADR-138 is kept on this branch; the integration owner will renumber it after
+Packet G lands if that merge also claims ADR-138.
+
 ## 2026-08-23 local workspace traversal bound
 
 The experimental `LocalGitWorkspaceCaptureProviderAdapter` now treats

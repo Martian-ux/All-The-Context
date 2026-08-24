@@ -115,6 +115,7 @@ CAPTURE_ERROR_CODES = frozenset(
         "capture_sink_receipt_invalid",
         "capture_lineage_conflict",
         "capture_local_only_required",
+        "capture_authorize_workspace_required",
         "capture_invalid_transition",
         "capture_failed",
     }
