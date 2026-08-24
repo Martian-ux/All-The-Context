@@ -1,11 +1,47 @@
 # Architecture decisions
 
+## ADR-143: Packet G compiles scheduled Packet E x Packet F public references in-process
+
+**Status:** accepted locally on 2026-08-24 as Packet G compilation/composition
+evidence stacked on merged PR #85 at protected main
+`15d313f8bee33717e3e59f2583599df5305ca4fd`; this candidate remains a local
+checkout until pushed and merged. This is not ZF-009 product exit, ZF-010,
+complete Packet H, Phase 2, provider or client support, hosted/full-suite
+acceptance, release, private-data evidence, or macOS support. ADR-138 remains
+the Packet G compile contract. ADR-140 remains the separate direct-user
+formation mapper and is not this compile work. ADR-142 remains the Packet E x
+Packet F scheduled composition evidence merged by PR #85.
+
+Packet G compilation over scheduled capture records reuses the existing
+in-process L2 host, `compile_authorized_pack`, and injected Core Retrieval V3.
+The vault is populated only by the Packet E scheduler driving one authorized
+Packet F local-workspace source through `capture_scheduler.run_cycle()`
+without starting the worker thread. Compiled items must be current public
+Memory Truth identities, structural registered-source facts, provenance
+packaged, and delivered as `context_pack` references whose SHA-256 matches
+pack content. L1+ compilation remains authorization-first:
+`MissingCorePrincipal` before retrieval, L0/ordinary MCP
+`UnsupportedHookReport` without invoking the compiler. Direct-user
+instruction-like text stays an untrusted envelope and is not pack content;
+secret-like input is refused content-free. The compile is bounded along two
+distinct existing paths: the 256-character bootstrap budget truncates with
+`budget` as a truncation reason, and a 4000-character compile omits the
+duplicate Markdown structural sentence through Retrieval V3 duplicate
+suppression without treating that omission as a truncation reason. Neither
+path is a 1:1 Memory Truth dump. No Packet G, scheduler, retrieval, or
+formation production behavior is added.
+
+Evidence is the focused Packet G composition tests in
+`tests/unit/test_scheduled_packet_g_composition.py` plus the extracted
+Packet F journey helpers and existing scheduled Packet F tests, Ruff check
+and format `--check` on touched Python files, `scripts/check_docs.py`, and
+`git diff --check`. Full repository pytest, mypy (no production source
+touched), hosted CI, private data, and macOS work were not run.
+
 ## ADR-142: Packet E x Packet F scheduled composition is opt-in scheduler evidence, not Packet H
 
-**Status:** accepted locally on 2026-08-24 as Packet E x Packet F scheduled
-composition evidence on top of protected main
-`27d4ff397aff822bc5e3a14b72a7458f8604ab5a`; this candidate remains a local
-checkout until pushed and merged. This is not ZF-007/ZF-008 product exit,
+**Status:** accepted on protected main on 2026-08-24 through merged PR #85 at
+`15d313f8bee33717e3e59f2583599df5305ca4fd`. This is not ZF-007/ZF-008 product exit,
 complete Packet E product acceptance, complete Packet H, Phase 2, real
 provider or client support, hosted/full-suite acceptance, release, or macOS
 support. Continuous/scheduled Packet F acceptance remains open. ADR-139
