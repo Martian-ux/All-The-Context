@@ -7,14 +7,15 @@ Truth, Retrieval, Context UI, provider-neutral Continuous
 Capture foundations, the PR #78 registered-source admission contract, the
 PR #79 Packet H-D disposable proof
 (`034d995d99802651537d91206c10c0018390dcd9`), the PR #82 CoreService/startup
-capture-runtime wiring, and the PR #84 opt-in Packet E scheduler. The exact
-protected-main SHA is `27d4ff397aff822bc5e3a14b72a7458f8604ab5a`. This local
-checkout, which has not been pushed or merged, adds Packet E x Packet F
-scheduled composition evidence over that scheduler. It is not ZF-007/ZF-008
-product exit; continuous/scheduled Packet F acceptance remains open. The
-separately published immutable `0.1.0-beta.6` remains the current
-downloadable release. Packet H-D remains disposable proof/lab evidence only;
-it is not released. Development evidence after beta.6 does not
+capture-runtime wiring, the PR #84 opt-in Packet E scheduler, and the PR #85
+Packet E x Packet F scheduled composition evidence. The exact protected-main
+SHA is `15d313f8bee33717e3e59f2583599df5305ca4fd`. This local checkout, which
+has not been pushed or merged, stacks Packet G compilation over that merged
+journey. It is not ZF-007/ZF-008/ZF-009 product exit;
+continuous/scheduled Packet F acceptance remains open. The separately
+published immutable `0.1.0-beta.6` remains the current downloadable release.
+Packet H-D remains disposable proof/lab evidence only; it is not released.
+Development evidence after beta.6 does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
@@ -23,6 +24,66 @@ macOS source, tests, and historical preflight remain retained for portability,
 but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
+
+## 2026-08-24 Packet G compilation over scheduled Packet E x Packet F records
+
+This local checkout is stacked on merged PR #85 at protected main
+`15d313f8bee33717e3e59f2583599df5305ca4fd` and remains unmerged. It proves
+the existing Packet G compile surface over records admitted by the Packet E
+x Packet F scheduled capture journey in one disposable `CoreService` vault.
+
+The focused tests begin with the same scheduler-driven local-workspace path
+already used by `tests/unit/test_scheduled_packet_f_composition.py`: they
+call `capture_scheduler.run_cycle()`, the method used by the background
+loop, without starting that thread. After the initial due cycle admits four
+public registered-source records, an in-process L2 host compiles through
+`compile_authorized_pack` and injected Core Retrieval V3. Compiled items are
+a subset of current public Memory Truth IDs, are structural
+registered-source facts with provenance packaging, and are delivered as
+capability-qualified `context_pack` references whose SHA-256 matches pack
+content. The 256-character bootstrap compile truncates for budget:
+`truncated` is true, `budget` is a truncation reason, and used characters
+stay within 256. A separate 4000-character compile is not truncated; it
+omits the duplicate Markdown structural sentence through existing
+Retrieval V3 duplicate suppression, with empty `truncation_reasons`.
+Those are distinct existing compile behaviors, not a 1:1 Memory Truth dump
+and not a ranking or schema change.
+
+Authorization-first refusals stay in-process: missing `ClientPrincipal`
+raises `MissingCorePrincipal` before retrieval; L0 and ordinary MCP return
+`UnsupportedHookReport` without calling the compiler. Instruction-like
+direct-user text remains an untrusted envelope and is absent from the pack;
+secret-like input is refused content-free. After the scheduled incremental
+delete/update cycle, the next compile excludes the withdrawn record ID.
+When the scheduler process gate is closed, public record counts stay at
+zero, so L1+ compile fails closed on empty Core context while L0 stays
+unsupported.
+
+No Packet G, scheduler, retrieval, or formation production behavior was
+added. Shared Packet F setup/journey helpers are reused; Packet F
+assertions are not duplicated. ADR-143 records this composition
+evidence. This is not ZF-009 product exit, ZF-010, complete Packet H,
+Phase 2, provider or client support, release, private-data evidence, or
+macOS. Packet G remains a local stacked proof; continuous/scheduled Packet F
+acceptance remains open.
+
+Local validation on this worktree:
+
+- `python -m pytest tests/unit/test_scheduled_packet_g_composition.py tests/unit/test_scheduled_packet_f_composition.py tests/unit/test_reference_host_retrieval_lifecycle.py tests/unit/test_docs.py tests/unit/test_docs_and_configs.py`
+  passed 14 tests in 5.22 seconds
+  (`test_scheduled_packet_g_compiles_public_registered_source_references`,
+  `test_scheduler_negative_gate_leaves_packet_g_empty_pack_fail_closed`,
+  `test_scheduled_packet_f_drives_public_truth_and_retrieval_v3`,
+  `test_scheduler_negative_gates_create_zero_public_records`,
+  plus related Packet G lifecycle and docs nodeids)
+- `python -m ruff check .` passed
+- `python -m ruff format --check` on the touched Python files passed
+- `python scripts/check_docs.py` passed
+- `git diff --check` passed
+
+Full repository pytest, hosted CI, push, and merge were intentionally not
+run. This candidate remains a local checkout. mypy was not required because
+production package source was not touched.
 
 ## 2026-08-24 Packet E x Packet F scheduled composition evidence
 
@@ -81,8 +142,11 @@ Local validation on this worktree:
 - `python scripts/check_docs.py` passed
 - `git diff --check` passed
 
-Full repository pytest, hosted CI, push, and merge were intentionally not
-run. This candidate remains a local checkout.
+The local worktree validation above did not run full repository pytest. PR #85
+later passed all 12 hosted checks, including the Windows and Ubuntu full Python
+suites, and merged at protected main
+`15d313f8bee33717e3e59f2583599df5305ca4fd`. No private-data, release, or macOS
+work is credited by that merge.
 
 ## 2026-08-24 ZF-010 direct-user formation mapper (local composition evidence)
 
@@ -730,16 +794,18 @@ merged a disposable Packet H-D proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3. It is not complete
 Packet H or Phase 2 acceptance.
 
-Packet E and Packet G remain component-complete. This local checkout adds
-Packet E x Packet F scheduled composition evidence: the opt-in Packet E
-scheduler drives authorized local-workspace ingestion through public Memory
-Truth and Retrieval V3. It is not ZF-007/ZF-008 product exit, complete
+Packet E and Packet G remain component-complete. PR #85 merged the Packet E x
+Packet F scheduled composition evidence. This local checkout stacks Packet G
+compilation evidence over it: the opt-in Packet E scheduler admits authorized
+local-workspace records, and Packet G compiles only those public
+provenance-backed references through the existing authorization-first
+compile surface. It is not ZF-007/ZF-008/ZF-009 product exit, complete
 Packet E product acceptance, complete Packet H, or Phase 2.
-Continuous/scheduled Packet F acceptance remains open. Packet G composition
-and product acceptance, complete Packet E product acceptance, ZF-010 product
-exit, complete Wave 4 E–G (complete Packet H), and the Phase 2 journey
-remain. Stable project identity and deterministic Project Context Capsules
-still precede graph shadow evaluation.
+Continuous/scheduled Packet F acceptance remains open. Packet G product
+acceptance, complete Packet E product acceptance, ZF-010 product exit,
+complete Wave 4 E–G (complete Packet H), and the Phase 2 journey remain.
+Stable project identity and deterministic Project Context Capsules still
+precede graph shadow evaluation.
 
 Wave 3 component evidence remains experimental as originally landed. Later
 merged PRs #82 and #84 added CoreService/startup capture-runtime wiring and
