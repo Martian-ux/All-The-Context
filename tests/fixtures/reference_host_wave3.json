@@ -13,7 +13,7 @@
       "conversation_id": "conversation-atlas",
       "task_id": "task-atlas",
       "workspace_id": "workspace-synthetic",
-      "project_id": "project:atlas",
+      "project_id": "atlas",
       "query": "Atlas retrieval"
     },
     {
