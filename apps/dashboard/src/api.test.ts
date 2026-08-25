@@ -75,6 +75,109 @@ describe("desktop browser session", () => {
     await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345, observations: 8, current_context: 3 });
   });
 
+  it("posts an explicit local-only workspace authorization and drops private response fields", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: "disabled",
+      authorized: true,
+      reconciled: false,
+      root: "C:\\private\\workspace",
+      account_fingerprint: "private-fingerprint",
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.authorizeWorkspace("C:\\Workspaces\\Project")).resolves.toEqual({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: "disabled",
+      authorized: true,
+      reconciled: false,
+    });
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/capture/workspaces/authorize");
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      root: "C:\\Workspaces\\Project",
+      local_only_acknowledged: true,
+    });
+  });
+
+  it("normalizes content-free capture telemetry without returning opaque source metadata", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      total: 1,
+      items: [{
+        source: {
+          id: "capture-source-1",
+          provider: "local-git-workspace",
+          lifecycle_state: "enabled",
+          account_label: "private label",
+          account_fingerprint: "private fingerprint",
+          requested_scopes: ["workspace.structure"],
+          last_run_at: "2026-08-25T12:00:00Z",
+          lag_events: 2,
+        },
+        checkpoint: { generation: 4 },
+        last_run: {
+          state: "completed",
+          attempt_count: 1,
+          pages: 2,
+          events: 5,
+          applied_events: 3,
+          duplicate_events: 1,
+          failures: 0,
+          started_at: "2026-08-25T11:59:00Z",
+          completed_at: "2026-08-25T12:00:00Z",
+        },
+      }],
+      scheduler: {
+        config_valid: true,
+        dispatch_allowed: true,
+        durable_enabled: true,
+        enabled: true,
+        max_workers: 1,
+        process_gate: true,
+        running: true,
+        update_health_forced_off: false,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const result = await api.captureStatus();
+
+    expect(result.items[0]).toMatchObject({
+      source: { id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: "enabled", lag_events: 2 },
+      checkpoint_generation: 4,
+      last_run: { state: "completed", events: 5, applied_events: 3 },
+    });
+    expect(result.scheduler).toMatchObject({ enabled: true, running: true });
+    expect(result.items[0]?.source).not.toHaveProperty("account_fingerprint");
+    expect(result.items[0]?.source).not.toHaveProperty("account_label");
+    expect(result.items[0]?.source).not.toHaveProperty("requested_scopes");
+  });
+
+  it("fails closed on malformed capture telemetry and keeps scheduler actions bounded", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/admin/capture/status")) {
+        return new Response(JSON.stringify({ items: [{ source: { id: "source-1", provider: "local-git-workspace", lifecycle_state: "enabled" }, checkpoint: { generation: "not-a-count" } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        config_valid: true,
+        dispatch_allowed: true,
+        durable_enabled: true,
+        enabled: true,
+        max_workers: 1,
+        process_gate: true,
+        update_health_forced_off: false,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.captureStatus()).rejects.toThrow("Core returned an invalid response.");
+    await expect(api.enableCaptureScheduler()).resolves.toMatchObject({ enabled: true });
+    expect(fetch.mock.calls[1]?.[0]).toBe("/v1/admin/capture/scheduler/enable");
+    expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  });
+
   it("normalizes the exact seven-key source accounting map without inventing missing counts", async () => {
     expect(normalizeClosedCoverage({ recognized: 4, skipped: 1, unexpected: 99 })).toEqual({
       closed_coverage: {

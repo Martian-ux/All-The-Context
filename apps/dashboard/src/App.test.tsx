@@ -705,6 +705,106 @@ describe("dashboard", () => {
     expect(document.querySelector('input[type="file"]')).toHaveAttribute("accept", expect.stringContaining(".zip"));
   });
 
+  it("connects and syncs a local workspace from the real Sources page", async () => {
+    let authorized = false;
+    let lifecycle: "disabled" | "enabled" = "disabled";
+    let schedulerEnabled = false;
+    let lastRun = false;
+    const source = () => ({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: lifecycle,
+      local_only: true,
+      local_only_acknowledged: true,
+      lag_events: 0,
+      last_run_at: lastRun ? "2026-08-25T12:00:00Z" : null,
+    });
+    const captureStatus = () => ({
+      total: authorized ? 1 : 0,
+      items: authorized ? [{
+        source: source(),
+        checkpoint: { generation: lastRun ? 1 : 0 },
+        ...(lastRun ? { last_run: { state: "completed", attempt_count: 1, pages: 1, events: 3, applied_events: 2, duplicate_events: 0, failures: 0, started_at: "2026-08-25T11:59:00Z", completed_at: "2026-08-25T12:00:00Z" } } : {}),
+      }] : [],
+      scheduler: { config_valid: true, dispatch_allowed: schedulerEnabled, durable_enabled: schedulerEnabled, enabled: schedulerEnabled, max_workers: 1, process_gate: true, update_health_forced_off: false },
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/capture/status")) return json(captureStatus());
+      if (url.endsWith("/admin/sources")) return json({ items: [] });
+      if (url.endsWith("/admin/capture/workspaces/authorize")) {
+        authorized = true;
+        return json({ id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: "disabled", authorized: true, reconciled: false, root: "C:\\private\\workspace" });
+      }
+      if (url.endsWith("/admin/capture/sources/capture-source-1/enable")) {
+        lifecycle = "enabled";
+        return json(source());
+      }
+      if (url.endsWith("/admin/capture/scheduler/enable")) {
+        schedulerEnabled = true;
+        return json(captureStatus().scheduler);
+      }
+      if (url.endsWith("/admin/capture/sources/capture-source-1/run")) {
+        lastRun = true;
+        return json({ status: "completed", pages: 1, events: 3, applied_events: 2, duplicate_events: 0, failures: 0, retry_count: 0, lag_events: 0, lag_pages: 0 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    const path = await screen.findByLabelText("Absolute workspace path");
+    fireEvent.change(path, { target: { value: "C:\\Workspaces\\Example" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Connect and sync" }));
+
+    expect(await screen.findByText("Workspace connected and synced. Automatic sync is on.")).toBeInTheDocument();
+    expect(screen.getByText("Current")).toBeInTheDocument();
+    expect(screen.getByText("Automatic sync")).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, requestInit]) => String(request).endsWith("/admin/capture/workspaces/authorize") && requestInit?.method === "POST" && JSON.parse(String(requestInit.body)).local_only_acknowledged === true)).toBe(true);
+    expect(screen.queryByText(/private-fingerprint|account_label|requested_scopes/i)).not.toBeInTheDocument();
+  });
+
+  it("operates local workspace sync, pause/resume, scheduler, and destructive revoke confirmation", async () => {
+    let lifecycle: "enabled" | "paused" | "revoked" = "enabled";
+    let schedulerEnabled = true;
+    let runCount = 0;
+    const source = () => ({ id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: lifecycle, local_only: true, local_only_acknowledged: true, lag_events: 0, last_run_at: "2026-08-25T12:00:00Z" });
+    const captureStatus = () => ({ items: [{ source: source(), checkpoint: { generation: runCount }, last_run: { state: "completed", attempt_count: 1, pages: 1, events: 2, applied_events: 2, duplicate_events: 0, failures: 0, started_at: "2026-08-25T11:59:00Z", completed_at: "2026-08-25T12:00:00Z" } }], scheduler: { config_valid: true, dispatch_allowed: schedulerEnabled, durable_enabled: schedulerEnabled, enabled: schedulerEnabled, max_workers: 1, process_gate: true, update_health_forced_off: false } });
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/capture/status")) return json(captureStatus());
+      if (url.endsWith("/admin/sources")) return json({ items: [] });
+      if (url.endsWith("/capture/sources/capture-source-1/run")) { runCount += 1; return json({ status: "completed", pages: 1, events: 2, applied_events: 2, duplicate_events: 0, failures: 0, retry_count: 0, lag_events: 0, lag_pages: 0 }); }
+      if (url.endsWith("/capture/sources/capture-source-1/pause")) { lifecycle = "paused"; return json(source()); }
+      if (url.endsWith("/capture/sources/capture-source-1/resume")) { lifecycle = "enabled"; return json(source()); }
+      if (url.endsWith("/capture/sources/capture-source-1/revoke")) { lifecycle = "revoked"; return json(source()); }
+      if (url.endsWith("/capture/scheduler/disable")) { schedulerEnabled = false; return json(captureStatus().scheduler); }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    expect(await screen.findByRole("button", { name: "Sync now" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    await screen.findByText("Sync completed. Core reported the workspace as current.");
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    expect(await screen.findByText("Paused")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("Current")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+    expect(await screen.findByText("Automatic sync is off.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect / Revoke" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Revoking is permanent");
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect and revoke" }));
+    expect(await screen.findByText("Workspace authorization needed")).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/capture/sources/capture-source-1/revoke"))).toBe(true);
+  });
+
   it("imports a provider export and shows local coverage", async () => {
     let submittedProvider: string | null = null;
     const importResult = {

@@ -2,6 +2,8 @@ export type Availability = "always_available" | "core_available" | "local_only";
 export type HealthState = "ready" | "degraded" | "offline";
 export type ImportStatus = "processing" | "complete" | "failed" | "cancelled";
 export type SourceTerminalReason = "failed" | "cancelled";
+export type CaptureLifecycleState = "disabled" | "enabled" | "paused" | "revoked" | "degraded" | "reconciling";
+export type CaptureRunState = "running" | "completed" | "failed" | "skipped";
 
 export type ClosedCoverageKey =
   | "recognized"
@@ -189,6 +191,79 @@ export interface UpdateStatus {
 export interface Page<T> {
   items: T[];
   next_cursor?: string | null;
+  total?: number;
+}
+
+export interface CaptureAuthorizationProjection {
+  id: string;
+  provider: string;
+  lifecycle_state: CaptureLifecycleState;
+  authorized: boolean;
+  reconciled: boolean;
+}
+
+export interface CaptureSourceProjection {
+  id: string;
+  provider: string;
+  lifecycle_state: CaptureLifecycleState;
+  local_only?: boolean;
+  local_only_acknowledged?: boolean;
+  retry_count?: number;
+  next_retry_at?: string | null;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
+  lag_events?: number;
+  lag_pages?: number;
+  created_at?: string;
+  updated_at?: string;
+  last_run_at?: string | null;
+}
+
+export interface CaptureRunStatus {
+  state: CaptureRunState;
+  attempt_count: number;
+  pages: number;
+  events: number;
+  applied_events: number;
+  duplicate_events: number;
+  failures: number;
+  error_code?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface CaptureSourceStatus {
+  source: CaptureSourceProjection;
+  checkpoint_generation: number;
+  last_run?: CaptureRunStatus;
+}
+
+export interface CaptureRunResult {
+  status: Exclude<CaptureRunState, "running">;
+  pages: number;
+  events: number;
+  applied_events: number;
+  duplicate_events: number;
+  failures: number;
+  retry_count: number;
+  lag_events: number;
+  lag_pages: number;
+}
+
+export interface CaptureSchedulerStatus {
+  config_valid: boolean;
+  dispatch_allowed: boolean;
+  durable_enabled: boolean;
+  enabled: boolean;
+  max_workers: number;
+  process_gate: boolean;
+  running?: boolean;
+  update_health_forced_off: boolean;
+}
+
+export interface CaptureStatus {
+  items: CaptureSourceStatus[];
+  scheduler: CaptureSchedulerStatus | null;
   total?: number;
 }
 

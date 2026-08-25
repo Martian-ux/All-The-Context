@@ -31,6 +31,9 @@ import type {
   ActivityEvent,
   ArchiveProvider,
   Availability,
+  CaptureSchedulerStatus,
+  CaptureSourceStatus,
+  CaptureStatus,
   ClientRegistration,
   ContextRecord,
   ContextRecordVersion,
@@ -171,6 +174,43 @@ function sourceNeedsRetry(source: SourceRecord): boolean {
 
 function sourceCanRebuild(source: SourceRecord): boolean {
   return source.import_status === "complete" && incompleteCoverageReasons(sourceCoverageForRecord(source)).length === 0;
+}
+
+type CaptureHealthTone = "neutral" | "current" | "syncing" | "paused" | "attention";
+
+function workspaceHealth(status?: CaptureSourceStatus): { label: string; detail: string; tone: CaptureHealthTone } {
+  if (!status) return { label: "Not connected", detail: "Authorize one local workspace to begin.", tone: "neutral" };
+  const source = status.source;
+  if (source.lifecycle_state === "revoked") {
+    return { label: "Authorization needed", detail: "This workspace authorization is no longer active.", tone: "attention" };
+  }
+  if (source.lifecycle_state === "reconciling" || status.last_run?.state === "running") {
+    return { label: "Syncing", detail: "The local Core is processing the workspace.", tone: "syncing" };
+  }
+  if (source.lifecycle_state === "degraded" || status.last_run?.state === "failed" || source.last_error_code) {
+    return { label: "Failed / degraded", detail: "The last sync needs attention. Try Sync now when the workspace is available.", tone: "attention" };
+  }
+  if (source.lifecycle_state === "paused" || source.lifecycle_state === "disabled") {
+    return { label: "Paused", detail: "The workspace is connected but capture is paused.", tone: "paused" };
+  }
+  if (status.last_run?.completed_at || source.last_run_at) {
+    return { label: "Current", detail: `Last sync ${formatDate(source.last_run_at ?? status.last_run?.completed_at)}.`, tone: "current" };
+  }
+  return { label: "Current", detail: "Connected; no completed sync is reported yet.", tone: "current" };
+}
+
+function captureErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message === "Core is not reachable on this device.") return error.message;
+  return "Continuous Context could not complete that action. No workspace details are shown here.";
+}
+
+function schedulerSummary(scheduler: CaptureSchedulerStatus | null): { label: string; detail: string } {
+  if (!scheduler) return { label: "Status unavailable", detail: "Automatic sync state was not provided by Core." };
+  if (scheduler.enabled) return { label: "On", detail: "Core may dispatch bounded local syncs." };
+  if (scheduler.update_health_forced_off || !scheduler.process_gate || !scheduler.config_valid) {
+    return { label: "Unavailable", detail: "Automatic sync is not available in this Core configuration." };
+  }
+  return { label: "Off", detail: "Automatic sync is off until you enable it." };
 }
 
 function truthStatusLabel(status: MemoryTruthStatus | null | undefined): string {
@@ -464,6 +504,7 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
 
   return (
     <div className="content-column">
+      <LocalWorkspaceSection onChanged={onChanged} />
       <section className="provider-import-intro" aria-labelledby="provider-import-heading">
         <span className="eyebrow">One-time history import</span>
         <div className="provider-import-title">
@@ -574,6 +615,255 @@ function SourcesView({ onChanged }: { onChanged: () => Promise<boolean> }) {
         ) : <EmptyState icon={<Archive />} title="No sources yet" body="Import an archive above. Observations are applied, reinforced, retained, or ignored automatically." />}
       </section>
     </div>
+  );
+}
+
+function LocalWorkspaceSection({ onChanged }: { onChanged: () => Promise<boolean> }) {
+  const [captureStatus, setCaptureStatus] = useState<CaptureStatus | null>(null);
+  const [captureLoading, setCaptureLoading] = useState(true);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null);
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
+  const [pathError, setPathError] = useState<string | null>(null);
+  const [localOnlyAcknowledged, setLocalOnlyAcknowledged] = useState(false);
+  const [workingAction, setWorkingAction] = useState<"connect" | "sync" | "pause" | "resume" | "scheduler" | "revoke" | null>(null);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
+  const revokeCancelRef = useRef<HTMLButtonElement>(null);
+
+  const load = useCallback(async () => {
+    setCaptureLoading(true);
+    try {
+      setCaptureStatus(await api.captureStatus());
+      setCaptureError(null);
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setCaptureLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (confirmingRevoke) revokeCancelRef.current?.focus();
+  }, [confirmingRevoke]);
+
+  const workspace = captureStatus?.items.find((item) => item.source.provider === "local-git-workspace");
+  const health = workspaceHealth(workspace);
+  const scheduler = captureStatus?.scheduler ?? null;
+  const schedulerState = schedulerSummary(scheduler);
+  const busy = workingAction !== null;
+
+  async function refreshAfterAction() {
+    await Promise.all([load(), onChanged()]);
+  }
+
+  async function connectAndSync() {
+    const root = workspaceRoot.trim();
+    if (!root) {
+      setPathError("Enter the absolute path to a local workspace.");
+      return;
+    }
+    if (!localOnlyAcknowledged) {
+      setPathError("Acknowledge the local-only read-only boundary before connecting.");
+      return;
+    }
+    setPathError(null);
+    setCaptureError(null);
+    setCaptureNotice(null);
+    setWorkingAction("connect");
+    try {
+      const authorization = await api.authorizeWorkspace(root);
+      if (!authorization.authorized || authorization.lifecycle_state === "revoked") {
+        setCaptureError("This workspace needs authorization before it can sync.");
+        return;
+      }
+      if (authorization.lifecycle_state === "paused" || authorization.lifecycle_state === "degraded") {
+        await api.resumeCaptureSource(authorization.id);
+      } else if (authorization.lifecycle_state !== "enabled" && authorization.lifecycle_state !== "reconciling") {
+        await api.enableCaptureSource(authorization.id);
+      }
+
+      let automaticSyncAvailable = true;
+      try {
+        automaticSyncAvailable = (await api.enableCaptureScheduler()).enabled;
+      } catch {
+        automaticSyncAvailable = false;
+      }
+      const result = await api.runCaptureSource(authorization.id);
+      if (result.status === "failed") {
+        setCaptureError("Workspace connected, but the first sync failed or degraded.");
+      } else if (result.status === "skipped") {
+        setCaptureNotice("Workspace connected. The first sync was skipped; try Sync now when it is available.");
+      } else if (!automaticSyncAvailable) {
+        setCaptureNotice("Workspace connected and synced. Automatic sync is unavailable in this Core.");
+      } else {
+        setCaptureNotice("Workspace connected and synced. Automatic sync is on.");
+      }
+      await refreshAfterAction();
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  async function syncNow() {
+    if (!workspace) return;
+    setCaptureError(null);
+    setCaptureNotice(null);
+    setWorkingAction("sync");
+    try {
+      const result = await api.runCaptureSource(workspace.source.id);
+      if (result.status === "failed") {
+        setCaptureError("Sync failed or degraded. Core kept the workspace authorization in place.");
+      } else if (result.status === "skipped") {
+        setCaptureNotice("Sync was skipped because the source is not ready.");
+      } else {
+        setCaptureNotice("Sync completed. Core reported the workspace as current.");
+      }
+      await refreshAfterAction();
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  async function togglePause() {
+    if (!workspace) return;
+    const shouldPause = workspace.source.lifecycle_state === "enabled" || workspace.source.lifecycle_state === "reconciling";
+    setCaptureError(null);
+    setCaptureNotice(null);
+    setWorkingAction(shouldPause ? "pause" : "resume");
+    try {
+      if (shouldPause) await api.pauseCaptureSource(workspace.source.id);
+      else await api.resumeCaptureSource(workspace.source.id);
+      setCaptureNotice(shouldPause ? "Workspace capture paused." : "Workspace capture resumed.");
+      await refreshAfterAction();
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  async function toggleScheduler() {
+    if (!scheduler) return;
+    setCaptureError(null);
+    setCaptureNotice(null);
+    setWorkingAction("scheduler");
+    try {
+      const next = scheduler.enabled
+        ? await api.disableCaptureScheduler()
+        : await api.enableCaptureScheduler();
+      setCaptureNotice(next.enabled ? "Automatic sync is on." : "Automatic sync is off.");
+      await refreshAfterAction();
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  async function revokeWorkspace() {
+    if (!workspace) return;
+    setCaptureError(null);
+    setCaptureNotice(null);
+    setWorkingAction("revoke");
+    try {
+      await api.revokeCaptureSource(workspace.source.id);
+      setConfirmingRevoke(false);
+      setCaptureNotice("Workspace disconnected and revoked. Core will not sync it again.");
+      await refreshAfterAction();
+    } catch (caught) {
+      setCaptureError(captureErrorMessage(caught));
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  return (
+    <section className="local-workspace-section" aria-labelledby="local-workspace-heading" aria-busy={captureLoading}>
+      <div className="capture-heading">
+        <div>
+          <span className="eyebrow">Continuous Context</span>
+          <h2 id="local-workspace-heading">Keep one local workspace in sync.</h2>
+          <p>Opt-in, read-only, local-only, and bounded. Workspace files are treated as data and remain on this device.</p>
+        </div>
+        <div className={`capture-health capture-health--${health.tone}`} role="status" aria-live="polite">
+          <span className="capture-health-dot" />
+          <span><strong>{health.label}</strong><small>{health.detail}</small></span>
+        </div>
+      </div>
+
+      <div className="capture-policy">
+        <ShieldCheck size={16} aria-hidden="true" />
+        <span><strong>Local guardrails</strong><small>Explicit opt-in · read-only · local-only · bounded discovery</small></span>
+      </div>
+
+      {captureLoading && !captureStatus ? <LoadingRows /> : workspace && workspace.source.lifecycle_state !== "revoked" ? (
+        <div className="capture-connected">
+          <div className="capture-connected-copy">
+            <span className="capture-source-icon" aria-hidden="true"><Laptop size={19} /></span>
+            <div><strong>Local workspace</strong><p>{health.detail}</p></div>
+          </div>
+          <CaptureTelemetry status={workspace} />
+          <div className="capture-actions">
+            <button className="primary-button" disabled={busy || workspace.source.lifecycle_state === "paused" || workspace.source.lifecycle_state === "disabled"} onClick={() => void syncNow()}><RefreshCw size={14} /> {workingAction === "sync" ? "Syncing…" : "Sync now"}</button>
+            <button className="secondary-button" disabled={busy} onClick={() => void togglePause()}>{workingAction === "pause" || workingAction === "resume" ? "Updating…" : workspace.source.lifecycle_state === "enabled" || workspace.source.lifecycle_state === "reconciling" ? "Pause" : "Resume"}</button>
+            <button className="quiet-button danger-text" disabled={busy} onClick={() => setConfirmingRevoke(true)}><X size={13} /> Disconnect / Revoke</button>
+          </div>
+          {confirmingRevoke ? (
+            <div className="capture-confirm" role="alertdialog" aria-labelledby="capture-revoke-heading" aria-describedby="capture-revoke-copy">
+              <strong id="capture-revoke-heading">Disconnect this workspace?</strong>
+              <p id="capture-revoke-copy">Revoking is permanent for this authorization. Core will stop syncing this workspace, and the dashboard will not show its path or private source details.</p>
+              <div className="capture-confirm-actions">
+                <button ref={revokeCancelRef} className="secondary-button" disabled={busy} onClick={() => setConfirmingRevoke(false)}>Keep connected</button>
+                <button className="secondary-button danger" disabled={busy} onClick={() => void revokeWorkspace()}>{workingAction === "revoke" ? "Revoking…" : "Disconnect and revoke"}</button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : workspace ? (
+        <div className="capture-revoked">
+          <span className="capture-source-icon" aria-hidden="true"><ShieldCheck size={19} /></span>
+          <div><strong>Workspace authorization needed</strong><p>Core has revoked this local workspace source. It will not sync until a new authorization is provided by the integration.</p></div>
+        </div>
+      ) : (
+        <form className="capture-connect" onSubmit={(event) => { event.preventDefault(); void connectAndSync(); }}>
+          <div className="capture-connect-copy"><strong>Connect a local workspace</strong><p>Enter the absolute path that the local Core can read. The dashboard cannot choose a folder on the server for you.</p></div>
+          <label className="field-label">Absolute workspace path
+            <input value={workspaceRoot} onChange={(event) => { setWorkspaceRoot(event.target.value); setPathError(null); }} placeholder="C:\\Workspaces\\Project" aria-describedby="workspace-path-help" aria-invalid={pathError ? true : undefined} autoComplete="off" />
+          </label>
+          <p id="workspace-path-help" className="capture-field-help">Use a local absolute path. Network-style paths and implicit home or current-directory paths are refused by Core.</p>
+          <label className="capture-checkbox"><input type="checkbox" checked={localOnlyAcknowledged} onChange={(event) => { setLocalOnlyAcknowledged(event.target.checked); setPathError(null); }} /><span>I understand this is opt-in: Core reads this workspace read-only, keeps it local, bounds discovery, and treats files as untrusted data.</span></label>
+          {pathError ? <p className="capture-field-error" role="alert">{pathError}</p> : null}
+          <div className="capture-connect-actions"><button className="primary-button" type="submit" disabled={busy || !workspaceRoot.trim() || !localOnlyAcknowledged}><Laptop size={15} /> {workingAction === "connect" ? "Connecting…" : "Connect and sync"}</button></div>
+        </form>
+      )}
+
+      {workspace ? (
+        <div className="capture-scheduler-line">
+          <div><span>Automatic sync</span><strong>{schedulerState.label}</strong><small>{schedulerState.detail}</small></div>
+          {scheduler ? <button className="quiet-button" disabled={busy} onClick={() => void toggleScheduler()}>{workingAction === "scheduler" ? "Updating…" : scheduler.enabled ? "Turn off" : "Turn on"}</button> : null}
+        </div>
+      ) : null}
+      {captureNotice ? <Notice kind="success">{captureNotice}</Notice> : null}
+      {captureError ? <Notice kind="error"><span>{captureError}</span><button className="notice-action" onClick={() => void load()} disabled={captureLoading}><RefreshCw size={12} /> Retry</button></Notice> : null}
+    </section>
+  );
+}
+
+function CaptureTelemetry({ status }: { status: CaptureSourceStatus }) {
+  const lastRun = status.last_run;
+  const lastRunAt = status.source.last_run_at ?? lastRun?.completed_at;
+  return (
+    <dl className="capture-telemetry" aria-label="Workspace sync details">
+      {lastRunAt ? <div><dt>Last sync</dt><dd>{formatDate(lastRunAt)}</dd></div> : null}
+      {lastRun ? <div><dt>Events</dt><dd>{formatCount(lastRun.events)}</dd></div> : null}
+      {lastRun ? <div><dt>Applied</dt><dd>{formatCount(lastRun.applied_events)}</dd></div> : null}
+      {status.source.lag_events !== undefined ? <div><dt>Pending</dt><dd>{formatCount(status.source.lag_events)}</dd></div> : null}
+    </dl>
   );
 }
 
