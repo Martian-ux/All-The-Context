@@ -28,6 +28,12 @@ import type {
   MemoryTruthRecord,
   MemoryTruthStatus,
   Page,
+  ProjectCapsule,
+  ProjectCapsuleItem,
+  ProjectCapsuleOmission,
+  ProjectCapsuleSection,
+  ProjectSummary,
+  ProjectSummariesResponse,
   SourceDeletion,
   SourceMetadata,
   SourceRecord,
@@ -100,6 +106,28 @@ const MAX_CAPTURE_ITEMS = 512;
 const MAX_CAPTURE_PROVIDER_CHARS = 256;
 const MAX_CAPTURE_ERROR_CODE_CHARS = 128;
 const MAX_WORKSPACE_ROOT_CHARS = 4_096;
+const MAX_PROJECTS = 256;
+const MAX_PROJECT_ALIASES = 32;
+const MAX_PROJECT_LABEL_CHARS = 160;
+const MAX_PROJECT_ITEM_COUNT = 1_000_000;
+const MAX_PROJECT_REVISION_CHARS = 128;
+const MAX_CAPSULE_ITEMS = 64;
+const MAX_CAPSULE_TEXT_CHARS = 16_000;
+const MAX_CAPSULE_PROVENANCE_IDS = 64;
+const MAX_CAPSULE_PROVENANCE_PER_ITEM = 8;
+const MAX_CAPSULE_DEPENDENCY_IDS = 64;
+const MAX_CAPSULE_BUDGET_CHARS = 32_000;
+const MAX_CAPSULE_OMISSIONS = 16;
+const MAX_CAPSULE_OMISSION_IDS = 16;
+const MAX_CAPSULE_COMPILER_CHARS = 256;
+
+const PROJECT_CAPSULE_SECTIONS: readonly ProjectCapsuleSection[] = [
+  "current_goal",
+  "decisions",
+  "constraints_preferences",
+  "blockers",
+  "recent_meaningful_changes",
+];
 
 const COUNT_STAT_KEYS = [
   "files",
@@ -185,6 +213,162 @@ function strictStringArray(
     strings.push(normalized);
   }
   return strings;
+}
+
+function nullableRequiredString(value: unknown, maxLength: number): string | null | undefined {
+  return value === null ? null : asRequiredString(value, maxLength);
+}
+
+function projectSummaryFromWire(value: unknown): ProjectSummary | null {
+  if (!isRecord(value)) return null;
+  const projectId = asRequiredString(value.project_id, MAX_ID_CHARS);
+  const projectRef = asRequiredString(value.project_ref, MAX_ID_CHARS);
+  const name = nullableRequiredString(value.name, MAX_PROJECT_LABEL_CHARS);
+  const aliases = strictStringArray(value.aliases, MAX_PROJECT_ALIASES, MAX_PROJECT_LABEL_CHARS);
+  const itemCount = asCount(value.item_count, MAX_PROJECT_ITEM_COUNT);
+  if (projectId === undefined || projectRef === undefined || name === undefined || aliases === null || itemCount === undefined) {
+    return null;
+  }
+  return { project_id: projectId, project_ref: projectRef, name, aliases, item_count: itemCount };
+}
+
+export function projectSummariesFromWire(value: unknown): ProjectSummariesResponse {
+  if (!isRecord(value) || !Array.isArray(value.items) || value.items.length > MAX_PROJECTS) {
+    throw invalidWireError();
+  }
+  const items = value.items.map(projectSummaryFromWire);
+  if (items.some((item): item is null => item === null)) throw invalidWireError();
+  const projects = items as ProjectSummary[];
+  if (new Set(projects.map((project) => project.project_id)).size !== projects.length) {
+    throw invalidWireError();
+  }
+  const total = asCount(value.total, MAX_PROJECT_ITEM_COUNT);
+  const unresolvedCount = asCount(value.unresolved_count, MAX_PROJECT_ITEM_COUNT);
+  const ambiguousCount = asCount(value.ambiguous_count, MAX_PROJECT_ITEM_COUNT);
+  const revision = asBoundedString(value.revision, MAX_PROJECT_REVISION_CHARS);
+  if (total === undefined || unresolvedCount === undefined || ambiguousCount === undefined || revision === undefined || total < projects.length) {
+    throw invalidWireError();
+  }
+  return {
+    items: projects,
+    total,
+    unresolved_count: unresolvedCount,
+    ambiguous_count: ambiguousCount,
+    revision,
+  };
+}
+
+function projectCapsuleItemFromWire(value: unknown, section: ProjectCapsuleSection): ProjectCapsuleItem | null {
+  if (!isRecord(value) || value.section !== section || typeof value.truncated !== "boolean") return null;
+  const evidenceId = asRequiredString(value.evidence_id, MAX_ID_CHARS);
+  const text = asRequiredString(value.text, MAX_CAPSULE_TEXT_CHARS);
+  const provenanceIds = strictStringArray(value.provenance_ids, MAX_CAPSULE_PROVENANCE_PER_ITEM, MAX_ID_CHARS);
+  const recordId = nullableRequiredString(value.record_id, MAX_ID_CHARS);
+  const sourceId = nullableRequiredString(value.source_id, MAX_ID_CHARS);
+  const authority = value.authority === "current_memory" || value.authority === "workspace_fact" ? value.authority : undefined;
+  if (evidenceId === undefined || text === undefined || provenanceIds === null || recordId === undefined || sourceId === undefined || authority === undefined) {
+    return null;
+  }
+  return {
+    evidence_id: evidenceId,
+    section,
+    text,
+    provenance_ids: provenanceIds,
+    record_id: recordId,
+    source_id: sourceId,
+    truncated: value.truncated,
+    authority,
+  };
+}
+
+function projectCapsuleOmissionFromWire(value: unknown): ProjectCapsuleOmission | null {
+  if (!isRecord(value) || (value.reason !== "character_budget" && value.reason !== "item_budget")) return null;
+  const count = asCount(value.count, MAX_PROJECT_ITEM_COUNT);
+  const evidenceIds = strictStringArray(value.evidence_ids, MAX_CAPSULE_OMISSION_IDS, MAX_ID_CHARS);
+  if (count === undefined || count < 1 || evidenceIds === null) return null;
+  return { reason: value.reason, count, evidence_ids: evidenceIds };
+}
+
+export function projectCapsuleFromWire(value: unknown): ProjectCapsule {
+  if (!isRecord(value) || value.schema !== "atc.project-context-capsule.v0" || value.assignment_outcome !== "resolved" || value.derived_read_only !== true) {
+    throw invalidWireError();
+  }
+  const compilerVersion = asRequiredString(value.compiler_version, MAX_CAPSULE_COMPILER_CHARS);
+  const projectId = asRequiredString(value.project_id, MAX_ID_CHARS);
+  const projectRef = asRequiredString(value.project_ref, MAX_ID_CHARS);
+  const projectName = nullableRequiredString(value.project_name, MAX_PROJECT_LABEL_CHARS);
+  const aliases = strictStringArray(value.aliases, MAX_PROJECT_ALIASES, MAX_PROJECT_LABEL_CHARS);
+  const provenanceIds = strictStringArray(value.provenance_ids, MAX_CAPSULE_PROVENANCE_IDS, MAX_ID_CHARS);
+  const dependencyIds = strictStringArray(value.dependency_ids, MAX_CAPSULE_DEPENDENCY_IDS, MAX_ID_CHARS);
+  const characterBudget = asCount(value.character_budget, MAX_CAPSULE_BUDGET_CHARS);
+  const itemBudget = asCount(value.item_budget, MAX_CAPSULE_ITEMS);
+  const usedChars = asCount(value.used_chars, MAX_CAPSULE_BUDGET_CHARS);
+  const omittedCount = asCount(value.omitted_count, MAX_PROJECT_ITEM_COUNT);
+  const abstentionReason = nullableRequiredString(value.abstention_reason, MAX_REASON_CHARS);
+  if (
+    compilerVersion === undefined
+    || projectId === undefined
+    || projectRef === undefined
+    || projectName === undefined
+    || aliases === null
+    || provenanceIds === null
+    || dependencyIds === null
+    || characterBudget === undefined
+    || characterBudget < 1
+    || itemBudget === undefined
+    || itemBudget < 1
+    || usedChars === undefined
+    || usedChars > characterBudget
+    || omittedCount === undefined
+    || abstentionReason === undefined
+    || abstentionReason !== null
+    || !isRecord(value.sections)
+    || !Array.isArray(value.omissions)
+    || value.omissions.length > MAX_CAPSULE_OMISSIONS
+    || typeof value.truncated !== "boolean"
+  ) {
+    throw invalidWireError();
+  }
+
+  const sections = {} as Record<ProjectCapsuleSection, ProjectCapsuleItem[]>;
+  let itemTotal = 0;
+  for (const section of PROJECT_CAPSULE_SECTIONS) {
+    const wireItems = value.sections[section];
+    if (!Array.isArray(wireItems) || wireItems.length > MAX_CAPSULE_ITEMS) throw invalidWireError();
+    const items = wireItems.map((item) => projectCapsuleItemFromWire(item, section));
+    if (items.some((item): item is null => item === null)) throw invalidWireError();
+    sections[section] = items as ProjectCapsuleItem[];
+    itemTotal += sections[section].length;
+  }
+  if (itemTotal > MAX_CAPSULE_ITEMS || itemTotal > itemBudget) throw invalidWireError();
+
+  const omissions = value.omissions.map(projectCapsuleOmissionFromWire);
+  if (omissions.some((item): item is null => item === null)) throw invalidWireError();
+  const normalizedOmissions = omissions as ProjectCapsuleOmission[];
+  if (normalizedOmissions.reduce((sum, item) => sum + item.count, 0) !== omittedCount || (omittedCount > 0 && value.truncated !== true)) {
+    throw invalidWireError();
+  }
+
+  return {
+    schema: "atc.project-context-capsule.v0",
+    compiler_version: compilerVersion,
+    project_id: projectId,
+    project_ref: projectRef,
+    project_name: projectName,
+    aliases,
+    assignment_outcome: "resolved",
+    sections,
+    provenance_ids: provenanceIds,
+    dependency_ids: dependencyIds,
+    character_budget: characterBudget,
+    item_budget: itemBudget,
+    used_chars: usedChars,
+    omitted_count: omittedCount,
+    omissions: normalizedOmissions,
+    truncated: value.truncated,
+    abstention_reason: null,
+    derived_read_only: true,
+  };
 }
 
 function boundedIds(value: unknown): string[] | null {
@@ -1006,6 +1190,17 @@ export const api = {
       body: JSON.stringify(payload),
     });
     return normalizePage(result, recordFromWire);
+  },
+  projects: async (): Promise<ProjectSummariesResponse> =>
+    projectSummariesFromWire(await request<unknown>("/admin/projects")),
+  projectCapsule: async (projectId: string): Promise<ProjectCapsule> => {
+    const normalizedProjectId = asRequiredString(projectId, MAX_ID_CHARS);
+    if (normalizedProjectId === undefined) throw invalidWireError();
+    const capsule = projectCapsuleFromWire(await request<unknown>(
+      `/admin/projects/${encodeURIComponent(normalizedProjectId)}/capsule?character_budget=12000&item_budget=32`,
+    ));
+    if (capsule.project_id !== normalizedProjectId) throw invalidWireError();
+    return capsule;
   },
   contextCoverage: async (): Promise<TruthCoverage> =>
     normalizeTruthCoverage(await request<unknown>("/context/coverage")),

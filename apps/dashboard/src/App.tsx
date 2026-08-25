@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api, sourceCoverageForRecord } from "./api";
+import ProjectContinuity from "./ProjectContinuity";
 import type {
   ActivityEvent,
   ArchiveProvider,
@@ -1305,6 +1306,7 @@ function ContextView({ status, onChanged }: { status: CoreStatus | null; onChang
   return (
     <div className="context-layout">
       <section className="context-results">
+        <ProjectContinuity />
         <ContextAccounting
           coverage={coverage}
           coverageLoading={coverageLoading}

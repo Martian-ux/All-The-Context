@@ -297,6 +297,140 @@ describe("desktop browser session", () => {
     ]);
   });
 
+  it("normalizes bounded project summaries and capsules without retaining private wire fields", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({
+          items: [{
+            project_id: "project/alpha",
+            project_ref: "project-ref-alpha",
+            name: "Atlas",
+            aliases: ["Atlas workspace"],
+            item_count: 6,
+            private_path: "C:\\Users\\private",
+          }],
+          total: 1,
+          unresolved_count: 2,
+          ambiguous_count: 1,
+          revision: "revision-alpha",
+          private_wire: { raw: "must not escape" },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project/alpha",
+        project_ref: "project-ref-alpha",
+        project_name: "Atlas",
+        aliases: ["Atlas workspace"],
+        assignment_outcome: "resolved",
+        sections: {
+          current_goal: [{
+            evidence_id: "evidence-goal",
+            section: "current_goal",
+            text: "Ship project continuity.",
+            provenance_ids: ["provenance-goal"],
+            record_id: "record-goal",
+            source_id: "source-goal",
+            truncated: false,
+            authority: "current_memory",
+            private_excerpt: "do not render",
+          }],
+          decisions: [],
+          constraints_preferences: [],
+          blockers: [],
+          recent_meaningful_changes: [],
+        },
+        provenance_ids: ["provenance-goal"],
+        dependency_ids: ["evidence-goal"],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 24,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+        private_wire: { source_path: "C:\\Users\\private" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).resolves.toEqual({
+      items: [{ project_id: "project/alpha", project_ref: "project-ref-alpha", name: "Atlas", aliases: ["Atlas workspace"], item_count: 6 }],
+      total: 1,
+      unresolved_count: 2,
+      ambiguous_count: 1,
+      revision: "revision-alpha",
+    });
+    const capsule = await api.projectCapsule("project/alpha");
+    expect(capsule.sections.current_goal[0]).toEqual({
+      evidence_id: "evidence-goal",
+      section: "current_goal",
+      text: "Ship project continuity.",
+      provenance_ids: ["provenance-goal"],
+      record_id: "record-goal",
+      source_id: "source-goal",
+      truncated: false,
+      authority: "current_memory",
+    });
+    expect(capsule).not.toHaveProperty("private_wire");
+    expect(capsule.sections.current_goal[0]).not.toHaveProperty("private_excerpt");
+    expect(String(fetch.mock.calls[1]?.[0])).toBe("/v1/admin/projects/project%2Falpha/capsule?character_budget=12000&item_budget=32");
+  });
+
+  it("accepts an honest empty project result while retaining aggregate assignment counts", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      items: [],
+      total: 0,
+      unresolved_count: 4,
+      ambiguous_count: 2,
+      revision: "",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.projects()).resolves.toEqual({
+      items: [],
+      total: 0,
+      unresolved_count: 4,
+      ambiguous_count: 2,
+      revision: "",
+    });
+  });
+
+  it("rejects malformed project and capsule responses instead of guessing", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({ items: [{ project_id: "project-1", project_ref: "ref-1", name: {}, aliases: [], item_count: 1 }], total: 1, unresolved_count: 0, ambiguous_count: 0, revision: "rev" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project-1",
+        project_ref: "ref-1",
+        project_name: null,
+        aliases: [],
+        assignment_outcome: "resolved",
+        sections: { current_goal: [], decisions: [], constraints_preferences: [], blockers: [] },
+        provenance_ids: [],
+        dependency_ids: [],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 0,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+    await expect(api.projectCapsule("project-1")).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+  });
+
   it("drops malformed list records, bounds truth fields, and fails malformed truth records content-free", async () => {
     const record = {
       id: "record-1",

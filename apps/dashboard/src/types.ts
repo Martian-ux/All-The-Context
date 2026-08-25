@@ -412,6 +412,67 @@ export interface TruthCoverage {
   sessions_with_unavailable_sources: number | null;
 }
 
+export interface ProjectSummary {
+  project_id: string;
+  project_ref: string;
+  name: string | null;
+  aliases: string[];
+  item_count: number;
+}
+
+export type ProjectCapsuleSection =
+  | "current_goal"
+  | "decisions"
+  | "constraints_preferences"
+  | "blockers"
+  | "recent_meaningful_changes";
+
+export interface ProjectCapsuleItem {
+  evidence_id: string;
+  section: ProjectCapsuleSection;
+  text: string;
+  provenance_ids: string[];
+  record_id: string | null;
+  source_id: string | null;
+  truncated: boolean;
+  authority: "current_memory" | "workspace_fact";
+}
+
+export interface ProjectCapsuleOmission {
+  reason: "character_budget" | "item_budget";
+  count: number;
+  evidence_ids: string[];
+}
+
+export interface ProjectCapsule {
+  schema: "atc.project-context-capsule.v0";
+  compiler_version: string;
+  project_id: string;
+  project_ref: string;
+  project_name: string | null;
+  aliases: string[];
+  assignment_outcome: "resolved";
+  sections: Record<ProjectCapsuleSection, ProjectCapsuleItem[]>;
+  provenance_ids: string[];
+  dependency_ids: string[];
+  character_budget: number;
+  item_budget: number;
+  used_chars: number;
+  omitted_count: number;
+  omissions: ProjectCapsuleOmission[];
+  truncated: boolean;
+  abstention_reason: string | null;
+  derived_read_only: true;
+}
+
+export interface ProjectSummariesResponse {
+  items: ProjectSummary[];
+  total: number;
+  unresolved_count: number;
+  ambiguous_count: number;
+  revision: string;
+}
+
 export interface ContextDeletion {
   record_id: string;
   deleted_version: number;

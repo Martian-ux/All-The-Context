@@ -92,6 +92,61 @@ function truthPayload(record = contextRecord(), overrides: Record<string, unknow
   };
 }
 
+function projectListPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    items: [{ project_id: "project-alpha", project_ref: "private-project-ref", name: "Atlas", aliases: ["Atlas workspace"], item_count: 5, private_path: "C:\\Users\\private" }],
+    total: 1,
+    unresolved_count: 2,
+    ambiguous_count: 1,
+    revision: "revision-alpha",
+    ...overrides,
+  };
+}
+
+function capsuleItem(section: string, text: string) {
+  return {
+    evidence_id: `private-evidence-${section}`,
+    section,
+    text,
+    provenance_ids: [`private-provenance-${section}`],
+    record_id: `private-record-${section}`,
+    source_id: `private-source-${section}`,
+    truncated: false,
+    authority: "current_memory",
+  };
+}
+
+function projectCapsulePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    schema: "atc.project-context-capsule.v0",
+    compiler_version: "project-continuity-v0",
+    project_id: "project-alpha",
+    project_ref: "private-project-ref",
+    project_name: "Atlas",
+    aliases: ["Atlas workspace"],
+    assignment_outcome: "resolved",
+    sections: {
+      current_goal: [capsuleItem("current_goal", "Ship the continuity dashboard.")],
+      decisions: [capsuleItem("decisions", "Keep the capsule read-only.")],
+      constraints_preferences: [capsuleItem("constraints_preferences", "Preserve existing memory search.")],
+      blockers: [capsuleItem("blockers", "Integration handoff is still pending.")],
+      recent_meaningful_changes: [capsuleItem("recent_meaningful_changes", "Added bounded project selection.")],
+    },
+    provenance_ids: ["private-provenance-capsule"],
+    dependency_ids: ["private-dependency-capsule"],
+    character_budget: 12000,
+    item_budget: 32,
+    used_chars: 120,
+    omitted_count: 2,
+    omissions: [{ reason: "item_budget", count: 2, evidence_ids: ["private-omitted-evidence"] }],
+    truncated: true,
+    abstention_reason: null,
+    derived_read_only: true,
+    private_wire: { path: "C:\\Users\\private" },
+    ...overrides,
+  };
+}
+
 function matchMedia(matches: boolean): MediaQueryList {
   return { matches, media: "(max-width: 760px)", onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() };
 }
@@ -226,6 +281,77 @@ describe("dashboard", () => {
     expect(screen.queryByRole("button", { name: "Audit" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
+  });
+
+  it("shows bounded project continuity alongside search and truth accounting", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json(projectListPayload());
+      if (url.includes("/admin/projects/project-alpha/capsule")) return json(projectCapsulePayload());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Keep the active project in view" })).toBeInTheDocument();
+    expect(screen.getByText("Not assigned")).toBeInTheDocument();
+    expect(screen.getByText("3", { selector: ".project-continuity-assignment > span" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Atlas/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Atlas/ }));
+
+    expect(await screen.findByText("Ship the continuity dashboard.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Current goal" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Decisions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Constraints & preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blockers" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent meaningful changes" })).toBeInTheDocument();
+    expect(screen.getByText("Derived · read-only")).toBeInTheDocument();
+    expect(screen.getByText(/2 items were omitted/i)).toBeInTheDocument();
+    expect(screen.queryByText(/private-project-ref|private-(evidence|provenance|record|source)/i)).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/projects/project-alpha/capsule?character_budget=12000&item_budget=32"))).toBe(true);
+    expect(screen.getByText("Prefers concise technical explanations.")).toBeInTheDocument();
+  });
+
+  it("shows an honest empty project state without replacing context search", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json({ items: [], total: 0, unresolved_count: 4, ambiguous_count: 2, revision: "" });
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByText("No projects available")).toBeInTheDocument();
+    expect(screen.getByText(/unresolved or ambiguous are not presented as projects/i)).toBeInTheDocument();
+    expect(await screen.findByText("No current memories yet")).toBeInTheDocument();
+  });
+
+  it("shows no-usable-context when a selected project has no human sections", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json(projectListPayload({ unresolved_count: 0, ambiguous_count: 0 }));
+      if (url.includes("/admin/projects/project-alpha/capsule")) return json(projectCapsulePayload({ sections: { current_goal: [], decisions: [], constraints_preferences: [], blockers: [], recent_meaningful_changes: [] }, used_chars: 0, omitted_count: 0, omissions: [], truncated: false }));
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Atlas/ }));
+
+    expect(await screen.findByText("No usable context for this project")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Current goal" })).not.toBeInTheDocument();
   });
 
   it("loads content-free truth accounting and selected canonical truth without N+1 row requests", async () => {
