@@ -8,7 +8,7 @@ import math
 import re
 import sqlite3
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +26,7 @@ from .admissibility import (
 from .ids import new_id, utc_now
 from .lexical_v3 import LexicalSearchResult, LexicalV3, VocabularyDiagnostics
 from .models import (
+    MAX_CONTEXT_CHARS,
     BootstrapRequest,
     BootstrapResponse,
     ContextPackMetadata,
@@ -54,7 +55,6 @@ from .temporal import (
 )
 
 _MAX_QUERY_TOKENS = 32
-_MIN_MULTI_TERM_COVERAGE = 0.5
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
 _MAX_MANDATORY_PREFERENCE_RESERVE = 8
@@ -75,6 +75,7 @@ _QUERY_STOPWORDS = frozenset(
         "an",
         "and",
         "all",
+        "based",
         "can",
         "do",
         "does",
@@ -109,9 +110,19 @@ def _tokens(value: str) -> list[str]:
     return [token.casefold() for token in _WORD_RE.findall(value)[:_MAX_QUERY_TOKENS]]
 
 
-def _content_tokens(value: str) -> set[str]:
-    """Bound content terms using punctuation boundaries compatible with FTS."""
-    return {token.casefold() for token in _CONTENT_WORD_RE.findall(value)[:_MAX_QUERY_TOKENS]}
+def _content_tokens(value: str, *, required_tokens: Collection[str] | None = None) -> set[str]:
+    """Scan the complete model-bounded content using FTS-compatible boundaries."""
+    bounded_value = value[:MAX_CONTEXT_CHARS]
+    tokens: set[str] = set()
+    remaining = set(required_tokens or ())
+    for match in _CONTENT_WORD_RE.finditer(bounded_value):
+        token = match.group(0).casefold()
+        tokens.add(token)
+        if remaining:
+            remaining.discard(token)
+            if not remaining:
+                break
+    return tokens
 
 
 def _fts_terms(tokens: Sequence[str], operator: str) -> str:
@@ -1558,6 +1569,8 @@ def _admissibility_inputs(
     rows: Sequence[sqlite3.Row],
     request: SearchRequest,
     conflicts: dict[str, ConflictState],
+    *,
+    hard_task_coverage: bool = True,
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
     intent = parse_query_intent(request.query)
     # Hard task coverage measures meaningful query terms against content only.
@@ -1566,7 +1579,6 @@ def _admissibility_inputs(
     # task-relevant.
     raw_query_tokens = set(intent.raw_tokens)
     task_tokens = set(intent.focus_tokens or intent.raw_tokens)
-    has_alias = bool(raw_query_tokens & _LEXICAL_ALIASES.keys())
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -1577,22 +1589,13 @@ def _admissibility_inputs(
     )
     for row in rows:
         record_id = str(row["id"])
-        content_tokens = _content_tokens(str(row["content"]))
+        content_tokens = (
+            _content_tokens(str(row["content"]), required_tokens=task_tokens)
+            if task_tokens
+            else set()
+        )
         matched_task_tokens = task_tokens & content_tokens
         coverage = len(matched_task_tokens) / len(task_tokens) if task_tokens else None
-        # A low-coverage multi-term hit is weak evidence even when metadata
-        # made it through lexical candidate generation. A lone non-alias hit
-        # must cover the complete task or the engine abstains instead of
-        # treating the one surviving row as sufficient evidence.
-        if (
-            coverage is not None
-            and len(task_tokens) > 1
-            and (
-                coverage < _MIN_MULTI_TERM_COVERAGE
-                or (len(rows) == 1 and not has_alias and matched_task_tokens != task_tokens)
-            )
-        ):
-            coverage = 0.0
         row_scopes = _json_set(str(row["scopes_json"]))
         if project_scope is not None:
             scope_fit = float(project_scope in {scope.casefold() for scope in row_scopes})
@@ -1629,14 +1632,11 @@ def _admissibility_inputs(
                 ),
             )
         )
-    specificity = (
-        0.0
-        if len(rows) == 1 and (len(task_tokens) <= 1 or has_alias)
-        else _specificity(task_tokens)
-    )
+    specificity = _specificity(task_tokens)
     return candidates, AdmissibilityContext(
         query_specificity=specificity,
         task_specificity=specificity,
+        task_query_term_count=len(task_tokens) if hard_task_coverage else None,
     )
 
 
@@ -1763,6 +1763,7 @@ class RetrievalEngine:
         principal: ClientPrincipal | None,
         *,
         bounded: bool,
+        hard_task_coverage: bool = True,
     ) -> tuple[
         list[sqlite3.Row],
         Sequence[RankingExplanation],
@@ -1810,7 +1811,12 @@ class RetrievalEngine:
         )
         ranked = _hydrate_ranked_rows(connection, ranked)
         conflicts = _conflict_states(connection, (str(row["id"]) for row in ranked))
-        gate_inputs, gate_context = _admissibility_inputs(ranked, request, conflicts)
+        gate_inputs, gate_context = _admissibility_inputs(
+            ranked,
+            request,
+            conflicts,
+            hard_task_coverage=hard_task_coverage,
+        )
         admissibility = self.admissibility_gate.evaluate_many(gate_inputs, gate_context)
         admitted = {decision.key for decision in admissibility.decisions if decision.admitted}
         gated = [row for row in ranked if str(row["id"]) in admitted]
@@ -1858,6 +1864,7 @@ class RetrievalEngine:
         principal: ClientPrincipal | None,
         *,
         bounded: bool = False,
+        hard_task_coverage: bool = True,
     ) -> tuple[SearchResponse, Sequence[RankingExplanation], _PipelineDiagnostics]:
         with self.store.connect() as connection:
             explanations: Sequence[RankingExplanation]
@@ -1878,7 +1885,11 @@ class RetrievalEngine:
                 )
             else:
                 ranked, explanations, denied, diagnostics = self._v3_rows(
-                    connection, request, principal, bounded=bounded
+                    connection,
+                    request,
+                    principal,
+                    bounded=bounded,
+                    hard_task_coverage=hard_task_coverage,
                 )
         page = ranked[request.offset : request.offset + request.limit]
         items = [self.store._record_out(row) for row in page]
@@ -1980,6 +1991,8 @@ class RetrievalEngine:
             principal,
             bounded=True,
         )
+        # A nonempty bootstrap query assembles multiple independent context
+        # facets; direct answer search retains the hard all-task coverage floor.
         relevant_search, _relevant_explanations, relevant_diagnostics = self._search(
             SearchRequest(
                 query=" ".join(part for part in query_parts if part),
@@ -1989,6 +2002,7 @@ class RetrievalEngine:
             ),
             principal,
             bounded=True,
+            hard_task_coverage=False,
         )
         candidate_pool_ids = None
         if (

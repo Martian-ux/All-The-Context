@@ -280,13 +280,14 @@ def run(work_dir: Path, *, fixture_path: Path = FIXTURES) -> dict[str, Any]:
 def baseline_payload(report: Mapping[str, Any], *, captured_revision: str) -> dict[str, Any]:
     """Return a content-free baseline snapshot with an explicit revision marker."""
 
-    if not captured_revision:
+    normalized_revision = captured_revision.strip()
+    if not normalized_revision:
         raise PrecisionEvaluationError("captured_revision is required for a baseline snapshot")
 
     return {
         "schema": SCORECARD_SCHEMA,
         "report_kind": REPORT_KIND,
-        "captured_revision": captured_revision,
+        "captured_revision": normalized_revision,
         "fixture_sha256": report["fixture_sha256"],
         "case_count": report["case_count"],
         "cases": report["cases"],
@@ -354,8 +355,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--baseline",
         type=Path,
-        default=DEFAULT_BASELINE,
-        help="Baseline path used with --write-baseline.",
+        help=(
+            "Explicit new snapshot path used with --write-baseline; the historical path is refused."
+        ),
     )
     parser.add_argument(
         "--fail-on-quality",
@@ -367,6 +369,21 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    baseline_output: Path | None = None
+    captured_revision: str | None = None
+    if args.write_baseline:
+        if args.baseline is None:
+            raise PrecisionEvaluationError(
+                "--baseline is required with --write-baseline and must be a new path"
+            )
+        captured_revision = args.captured_revision.strip() if args.captured_revision else ""
+        if not captured_revision:
+            raise PrecisionEvaluationError("--captured-revision is required with --write-baseline")
+        baseline_output = args.baseline
+        if baseline_output.expanduser().resolve() == DEFAULT_BASELINE.resolve():
+            raise PrecisionEvaluationError(
+                "--write-baseline cannot overwrite the historical baseline snapshot"
+            )
     temporary: tempfile.TemporaryDirectory[str] | None = None
     if args.work_dir is None:
         temporary = tempfile.TemporaryDirectory(prefix="atc-m3-retrieval-precision-parent-")
@@ -389,20 +406,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.markdown.parent.mkdir(parents=True, exist_ok=True)
         args.markdown.write_text(render_markdown(report), encoding="utf-8")
         print(f"wrote {args.markdown}")
-    if args.write_baseline:
-        if not args.captured_revision:
-            raise PrecisionEvaluationError("--captured-revision is required with --write-baseline")
-        args.baseline.parent.mkdir(parents=True, exist_ok=True)
-        args.baseline.write_text(
+    if baseline_output is not None and captured_revision is not None:
+        baseline_output.parent.mkdir(parents=True, exist_ok=True)
+        baseline_output.write_text(
             json.dumps(
-                baseline_payload(report, captured_revision=args.captured_revision),
+                baseline_payload(report, captured_revision=captured_revision),
                 indent=2,
                 sort_keys=True,
             )
             + "\n",
             encoding="utf-8",
         )
-        print(f"wrote {args.baseline}")
+        print(f"wrote {baseline_output}")
     return 1 if args.fail_on_quality and not report["passed"] else 0
 
 

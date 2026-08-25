@@ -160,6 +160,53 @@ def test_sparse_evidence_fails_open_even_when_observed_score_is_low() -> None:
     assert decision.reason_codes == (AdmissibilityReason.ADMIT_FAIL_OPEN_SPARSE_EVIDENCE,)
 
 
+def test_sufficiently_specified_multi_term_coverage_is_a_hard_rejection() -> None:
+    candidate = _candidate(
+        "partial-task",
+        _complete_signals(coverage=2 / 3, conflict=ConflictState.ACTIVE),
+    )
+    context = AdmissibilityContext(
+        query_specificity=0.9,
+        task_specificity=0.9,
+        task_query_term_count=3,
+    )
+
+    batch = DeterministicAdmissibilityGate().evaluate_many([candidate], context)
+    decision = batch.decisions[0]
+
+    assert decision.admitted is False
+    assert decision.fail_open is False
+    assert decision.factors.task_query_coverage == 2 / 3
+    assert decision.reason_codes == (AdmissibilityReason.REJECT_LOW_TASK_QUERY_COVERAGE,)
+    assert (
+        dict(batch.diagnostics.reason_counts)[AdmissibilityReason.REJECT_LOW_TASK_QUERY_COVERAGE]
+        == 1
+    )
+
+
+def test_multi_term_coverage_floor_is_inclusive_and_single_term_is_not_hard_rejected() -> None:
+    context = AdmissibilityContext(
+        query_specificity=0.9,
+        task_specificity=0.9,
+        task_query_term_count=4,
+    )
+    usable = _candidate("three-of-four", _complete_signals(coverage=0.75))
+    usable_decision = DeterministicAdmissibilityGate().evaluate_many([usable], context).decisions[0]
+
+    single_context = AdmissibilityContext(
+        query_specificity=0.9,
+        task_specificity=0.9,
+        task_query_term_count=1,
+    )
+    single = _candidate("single-term", _complete_signals(coverage=0.0))
+    single_decision = (
+        DeterministicAdmissibilityGate().evaluate_many([single], single_context).decisions[0]
+    )
+
+    assert usable_decision.admitted is True
+    assert single_decision.admitted is True
+
+
 @pytest.mark.parametrize(
     "context",
     [

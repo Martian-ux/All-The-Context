@@ -11,6 +11,7 @@ from bench.retrieval_precision_m3 import (
     FIXTURES,
     PrecisionEvaluationError,
     load_fixture,
+    main,
     run,
 )
 
@@ -96,3 +97,61 @@ def test_current_production_quality_gate_passes(tmp_path: Path) -> None:
     assert report["scorecard"]["passed_case_count"] == report["case_count"] == 5
     assert report["scorecard"]["aggregate_precision"] == 1.0
     assert report["scorecard"]["abstention_case_count"] == 1
+
+
+def test_cli_cannot_overwrite_historical_baseline_and_requires_new_path(tmp_path: Path) -> None:
+    before = DEFAULT_BASELINE.read_bytes()
+
+    with pytest.raises(PrecisionEvaluationError, match="new path"):
+        main(["--write-baseline", "--captured-revision", "new-revision"])
+    assert DEFAULT_BASELINE.read_bytes() == before
+
+    with pytest.raises(PrecisionEvaluationError, match="historical baseline"):
+        main(
+            [
+                "--write-baseline",
+                "--captured-revision",
+                "new-revision",
+                "--baseline",
+                str(DEFAULT_BASELINE),
+            ]
+        )
+    assert DEFAULT_BASELINE.read_bytes() == before
+
+    with pytest.raises(PrecisionEvaluationError, match="captured-revision"):
+        main(
+            [
+                "--write-baseline",
+                "--captured-revision",
+                "   ",
+                "--baseline",
+                str(tmp_path / "new-baseline.json"),
+            ]
+        )
+    assert DEFAULT_BASELINE.read_bytes() == before
+
+
+def test_cli_writes_only_an_explicit_new_baseline(tmp_path: Path) -> None:
+    before = DEFAULT_BASELINE.read_bytes()
+    output = tmp_path / "new-baseline.json"
+
+    assert (
+        main(
+            [
+                "--output",
+                str(tmp_path / "report.json"),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--write-baseline",
+                "--captured-revision",
+                "  refinement-sha  ",
+                "--baseline",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    created = json.loads(output.read_text(encoding="utf-8"))
+    assert created["captured_revision"] == "refinement-sha"
+    assert DEFAULT_BASELINE.read_bytes() == before

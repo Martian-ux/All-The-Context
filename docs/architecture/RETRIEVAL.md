@@ -27,10 +27,15 @@ The production pipeline has seven ordered boundaries:
    tokens of at least four characters. The production evidence-pool threshold
    is two hits.
 4. Conflict state is joined for the temporally eligible candidates, then
-   `DeterministicAdmissibilityGate` evaluates numeric task/query coverage,
+   `DeterministicAdmissibilityGate` evaluates content-only task/query coverage,
    scope/project fit, requested-kind compatibility, confidence/explicitness,
-   and conflict state. Sparse or underspecified evidence fails open. An optional
-   learned gate can run only in shadow and has no production authority.
+   and conflict state. For a sufficiently specified multi-term task, content
+   coverage below the deterministic `0.75` floor is a hard rejection with the
+   `reject.low_task_query_coverage` diagnostic; no row count, metadata, alias,
+   confidence, or conflict state can bypass it. Single-term and empty-query
+   paths retain their usefulness/fail-open behavior. Sparse or underspecified
+   evidence otherwise fails open. An optional learned gate can run only in
+   shadow and has no production authority.
 5. `DeterministicUsefulnessReranker` reranks only the authorized, temporally
    eligible, conflict-checked, task-admissible candidates. It applies bounded
    local query-intent, field-coverage, recency, confidence, availability,
@@ -115,8 +120,12 @@ untrusted or unauthorized corpus rows.
 
 `RetrievalEngine.bootstrap()` uses the separate bounded evidence path and keeps
 its 100-record retrieval pool before `ContextCompiler` performs budgeted set
-selection. This preserves bounded MCP context compilation; it is not the source
-of the catalog API's `total`. Its optional `pack_metadata` envelope is
+selection. Its nonempty request is a broad context-assembly query: authorization,
+request scopes/kinds, temporal eligibility, and dedicated project signals still
+apply, while the direct-search multi-term content floor is reserved for the
+answer-oriented search path. Empty bootstrap already has no task terms and
+remains fail-open. This preserves bounded MCP context compilation; it is not the
+source of the catalog API's `total`. Its optional `pack_metadata` envelope is
 provider-facing accounting, not ranking diagnostics, and does not expose query
 text or record IDs beyond the selected items already returned. The candidate
 count is the exact union of the two complete bounded policy/temporal-eligible

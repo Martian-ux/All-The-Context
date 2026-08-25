@@ -33,10 +33,17 @@ case returned one item, so its honest-abstention check failed.
 
 The current integrated production path uses focus query terms for hard task
 coverage and counts those terms against content only. Multi-term hard coverage
-rejects coverage below one half, and a lone non-alias candidate must cover all
-meaningful terms before it is admitted. Single-term, alias, and empty-query
-behavior retain their existing usefulness/fail-open paths. Scope, project, and
-kind evidence remain dedicated signals.
+rejects coverage below `0.75` when the task is sufficiently specified; therefore
+2/3 coverage rejects while 3/4 coverage may pass. The measured coverage remains
+in the gate factors and the hard rejection reports
+`reject.low_task_query_coverage`. Candidate count and alias presence do not
+change that rule. Single-term and empty-query behavior retain their existing
+usefulness/fail-open paths. Scope, project, and kind evidence remain dedicated
+signals and cannot satisfy task-topic coverage.
+Nonempty bootstrap remains a separate broad context-assembly path so a
+multi-topic request can contribute distinct authorized records; its dedicated
+scope/kind/project filters still apply. The direct-search hard-floor behavior
+is covered by the focused admissibility and usefulness regressions.
 
 The unchanged five-case fixture now produces an honest quality pass:
 
@@ -77,5 +84,7 @@ python -m pytest tests/unit/test_retrieval_precision_m3.py
 
 The lane must be rerun after a production precision change. Preserve the
 historical snapshot; if a new snapshot is deliberately needed, provide its
-explicit revision with `--write-baseline --captured-revision <sha>` after
-reviewing the content-free score delta.
+explicit output path and revision with
+`--write-baseline --baseline <new-path> --captured-revision <sha>` after
+reviewing the content-free score delta. The CLI refuses the checked-in
+historical path and rejects an empty revision marker.

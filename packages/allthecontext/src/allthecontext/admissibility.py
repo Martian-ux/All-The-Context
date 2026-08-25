@@ -89,6 +89,7 @@ class AdmissibilityConfig:
     conflict_scores: tuple[tuple[ConflictState, float], ...] = field(
         default_factory=_default_conflict_scores
     )
+    minimum_task_query_coverage: float = 0.75
 
     def __post_init__(self) -> None:
         for name, value in self.weights.items():
@@ -97,6 +98,7 @@ class AdmissibilityConfig:
             raise ValueError("at least one factor weight must be positive")
         _validate_unit_interval(self.rejection_threshold, "rejection_threshold")
         _validate_unit_interval(self.minimum_task_specificity, "minimum_task_specificity")
+        _validate_unit_interval(self.minimum_task_query_coverage, "minimum_task_query_coverage")
         _validate_unit_interval(self.confidence_share, "confidence_share")
         _validate_unit_interval(self.low_factor_reason_floor, "low_factor_reason_floor")
         if not 1 <= self.minimum_evidence_factors <= len(self.weights.items()):
@@ -146,10 +148,11 @@ class AdmissibilityCandidate:
 
 @dataclass(frozen=True, slots=True)
 class AdmissibilityContext:
-    """Sanitized task/query specificity; no raw task or query text is accepted."""
+    """Sanitized task/query features; no raw task or query text is accepted."""
 
     query_specificity: float | None = None
     task_specificity: float | None = None
+    task_query_term_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,14 +325,25 @@ class DeterministicAdmissibilityGate:
         task_underspecified = (
             not specificities or max(specificities) < self.config.minimum_task_specificity
         )
+        hard_coverage_shortfall = (
+            context.task_query_term_count is not None
+            and context.task_query_term_count > 1
+            and not task_underspecified
+            and factors.task_query_coverage is not None
+            and factors.task_query_coverage < self.config.minimum_task_query_coverage
+        )
         sparse = evidence_factor_count < self.config.minimum_evidence_factors
         fail_open_reasons: list[AdmissibilityReason] = []
         if task_underspecified:
             fail_open_reasons.append(AdmissibilityReason.ADMIT_FAIL_OPEN_UNDERSPECIFIED_TASK)
         if sparse:
             fail_open_reasons.append(AdmissibilityReason.ADMIT_FAIL_OPEN_SPARSE_EVIDENCE)
-        fail_open = bool(fail_open_reasons)
-        if fail_open:
+        fail_open = bool(fail_open_reasons) and not hard_coverage_shortfall
+        reasons: tuple[AdmissibilityReason, ...]
+        if hard_coverage_shortfall:
+            admitted = False
+            reasons = (AdmissibilityReason.REJECT_LOW_TASK_QUERY_COVERAGE,)
+        elif fail_open:
             admitted = True
             reasons = tuple(fail_open_reasons)
         elif score >= self.config.rejection_threshold:
@@ -469,6 +483,12 @@ def _validate_context(context: AdmissibilityContext) -> None:
         _validate_unit_interval(context.query_specificity, "query_specificity")
     if context.task_specificity is not None:
         _validate_unit_interval(context.task_specificity, "task_specificity")
+    if context.task_query_term_count is not None and (
+        isinstance(context.task_query_term_count, bool)
+        or not isinstance(context.task_query_term_count, int)
+        or context.task_query_term_count < 0
+    ):
+        raise ValueError("task_query_term_count must be a non-negative integer")
 
 
 def _diagnostics(decisions: Sequence[AdmissibilityDecision]) -> AdmissibilityDiagnostics:

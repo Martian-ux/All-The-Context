@@ -228,6 +228,8 @@ def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -
             kind="context_note",
             content="All the context remains local and bounded.",
             tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
             idempotency_key="stopword-noise",
         )
     )
@@ -236,6 +238,8 @@ def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -
             kind="context_note",
             content="An unrelated observatory inventory note.",
             tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
             idempotency_key="provider-tag-noise",
         )
     )
@@ -245,6 +249,8 @@ def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -
             content="MCP provider ingestion imports records into the local Core.",
             scopes=["project:atlas"],
             tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
             idempotency_key="provider-ingestion-relevant",
         )
     )
@@ -298,6 +304,102 @@ def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -
             )
             assert records[1].id not in {item.id for item in provider_search.items}
             assert records[2].id in {item.id for item in provider_search.items}
+    finally:
+        store.close()
+
+
+def test_multi_term_coverage_boundary_keeps_strong_content_match(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "coverage-boundary.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    metadata_only = store.add_candidate(
+        CandidateInput(
+            kind="mcp_provider_kind",
+            content="Unrelated inventory note.",
+            scopes=["scope:ingestion"],
+            tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-metadata-only",
+        )
+    )
+    two_of_three = store.add_candidate(
+        CandidateInput(
+            kind="topic_note",
+            content="alpha beta only",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-two-of-three",
+        )
+    )
+    three_of_four = store.add_candidate(
+        CandidateInput(
+            kind="topic_note",
+            content="alpha beta gamma",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-three-of-four",
+        )
+    )
+    strong = store.add_candidate(
+        CandidateInput(
+            kind="topic_fact",
+            content="alpha beta gamma focus",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-strong",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (metadata_only, two_of_three, three_of_four, strong)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        three_term_ids = [
+            item.id
+            for item in engine.search(
+                SearchRequest(query="alpha beta gamma", limit=10), principal
+            ).items
+        ]
+        assert approved[1].id not in three_term_ids
+        assert approved[2].id in three_term_ids
+        assert approved[3].id in three_term_ids
+
+        four_term_ids = [
+            item.id
+            for item in engine.search(
+                SearchRequest(query="alpha beta gamma focus", limit=10), principal
+            ).items
+        ]
+        assert approved[0].id not in four_term_ids
+        assert approved[1].id not in four_term_ids
+        assert four_term_ids[:2] == [approved[3].id, approved[2].id]
+    finally:
+        store.close()
+
+
+def test_admissibility_scans_full_bounded_content_after_first_query_window(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "late-content.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    late = store.add_candidate(
+        CandidateInput(
+            kind="late_evidence",
+            content=("filler " * 40) + "needle anchor",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="late-content-evidence",
+        )
+    )
+    record = store.approve_candidate(late.id, ApprovalRequest(), actor="test")
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        response = RetrievalEngine(store).search(
+            SearchRequest(query="needle anchor", limit=10), principal
+        )
+        assert [item.id for item in response.items] == [record.id]
     finally:
         store.close()
 
