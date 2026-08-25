@@ -162,6 +162,75 @@ def test_prefix_fallback_has_minimum_length_token_cap_and_literal_quoting() -> N
     connection.close()
 
 
+@pytest.mark.parametrize(
+    ("query", "strong_content", "weak_content"),
+    [
+        (
+            "project phrase",
+            "Project Phrase is the exact multiword marker.",
+            "Generic context noise mentions project only.",
+        ),
+        (
+            "Windows Linux platform support",
+            "Windows Linux platform support is documented.",
+            "A generic Linux preference is recorded.",
+        ),
+        (
+            "local Core Relay architecture",
+            "Local Core Relay architecture uses ordered replication.",
+            "Unrelated core prose describes a different topic.",
+        ),
+        (
+            "mCp PROVIDER ingestion",
+            "MCP provider ingestion is bounded by Core policy.",
+            "Generic preserve-context guidance is unrelated.",
+        ),
+    ],
+    ids=("project_phrase", "platform_support", "core_relay", "mcp_ingestion"),
+)
+def test_multi_term_fallback_rejects_weak_one_token_candidates(
+    query: str, strong_content: str, weak_content: str
+) -> None:
+    connection = _connection()
+    _insert(connection, "strong", content=strong_content)
+    _insert(connection, "weak", content=weak_content)
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["weak", "strong"], query, limit=5
+    )
+
+    assert _ids(result) == ["strong"]
+    assert result.hits[0].best_channel == "phrase"
+    connection.close()
+
+
+def test_multi_term_fallback_orders_admitted_candidates_by_term_coverage() -> None:
+    connection = _connection()
+    _insert(connection, "three-terms", content="Windows Linux platform notes.")
+    _insert(connection, "two-terms", content="Windows Linux preference.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["two-terms", "three-terms"], "Windows Linux platform support", limit=5
+    )
+
+    assert _ids(result) == ["three-terms", "two-terms"]
+    assert all(hit.best_channel == "exact_any" for hit in result.hits)
+    connection.close()
+
+
+def test_multi_term_fallback_abstains_when_only_one_term_matches() -> None:
+    connection = _connection()
+    _insert(connection, "weak", content="A generic Linux preference is recorded.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["weak"], "Windows Linux support", limit=5
+    )
+
+    assert result.hits == ()
+    assert DiagnosticReason.NO_MATCHES in result.diagnostics.reason_codes
+    connection.close()
+
+
 def test_query_and_candidate_hard_bounds_are_enforced() -> None:
     connection = _connection()
     _insert(connection, "eligible", content="token")

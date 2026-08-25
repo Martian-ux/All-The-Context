@@ -114,6 +114,7 @@ class _PreparedQuery:
 class _HitState:
     record_id: str
     channel_scores: dict[str, float] = field(default_factory=dict)
+    term_coverage: int = 0
 
 
 def _quoted_identifier(value: str) -> str:
@@ -202,6 +203,13 @@ def _prefix_query(tokens: Sequence[str]) -> str:
         :MAX_PREFIX_TOKENS
     ]
     return " OR ".join(f"{_quoted_fts_token(token)}*" for token in prefixable)
+
+
+def _minimum_term_coverage(term_count: int) -> int:
+    """Require two terms, or at least half, for multi-term fallback matches."""
+    if term_count <= 1:
+        return 1
+    return min(term_count, max(2, (term_count + 1) // 2))
 
 
 def _attempt_fts5_secure_delete(
@@ -365,6 +373,17 @@ class LexicalV3:
                     fts_query,
                     limit=None if limit is None else CHANNEL_RESULT_CAP,
                 )
+            query_terms = _deduplicated(prepared.tokens)
+            if states and len(query_terms) > 1:
+                coverage = self._term_coverage(connection, query_terms)
+                for state in states.values():
+                    state.term_coverage = coverage.get(state.record_id, 0)
+                minimum_coverage = _minimum_term_coverage(len(query_terms))
+                states = {
+                    record_id: state
+                    for record_id, state in states.items()
+                    if state.term_coverage >= minimum_coverage
+                }
             if not states:
                 reasons.append(DiagnosticReason.NO_MATCHES)
             hits = self._rank(states, limit)
@@ -456,6 +475,23 @@ class LexicalV3:
         return int(row[0]) if row is not None else 0
 
     @staticmethod
+    def _term_coverage(
+        connection: sqlite3.Connection, query_terms: Sequence[str]
+    ) -> dict[str, int]:
+        """Count distinct exact query terms in the already-bounded candidate FTS."""
+        target = _quoted_identifier(_CANDIDATE_FTS_TABLE)
+        coverage: dict[str, int] = {}
+        for token in query_terms:
+            rows = connection.execute(
+                f"SELECT record_id FROM temp.{target} WHERE {target} MATCH ?",
+                (_quoted_fts_token(token),),
+            ).fetchall()
+            for row in rows:
+                record_id = str(row[0])
+                coverage[record_id] = coverage.get(record_id, 0) + 1
+        return coverage
+
+    @staticmethod
     def _collect_channel(
         connection: sqlite3.Connection,
         states: dict[str, _HitState],
@@ -485,10 +521,11 @@ class LexicalV3:
 
     @staticmethod
     def _rank(states: dict[str, _HitState], limit: int | None) -> tuple[LexicalHit, ...]:
-        def ranking_key(state: _HitState) -> tuple[int, int, float, str]:
+        def ranking_key(state: _HitState) -> tuple[int, int, int, float, str]:
             best_priority = max(_CHANNEL_PRIORITY[channel] for channel in state.channel_scores)
             return (
                 -best_priority,
+                -state.term_coverage,
                 -len(state.channel_scores),
                 -sum(state.channel_scores.values()),
                 state.record_id,
