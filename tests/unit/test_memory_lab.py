@@ -135,9 +135,9 @@ def test_lab_compares_simple_baseline_and_current_atc_without_content_in_report(
     assert (
         "programmatic_log_search_not_exercised" in file_search["benchmark"]["validity_limitations"]
     )
-    assert atc["metrics"]["task_success_rate"] == 0.8
+    assert atc["metrics"]["task_success_rate"] == 0.6
     assert atc["metrics"]["forbidden_output_count"] == 0
-    assert atc["metrics"]["mean_evidence_group_recall"] == 0.9
+    assert atc["metrics"]["mean_evidence_group_recall"] == 0.6
     for result in report["adapters"].values():
         assert result["metrics"]["contract_violation_count"] == 0
         assert result["metrics"]["budget_violation_count"] == 0

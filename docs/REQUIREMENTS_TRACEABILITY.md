@@ -26,6 +26,19 @@ does not become evidence for this checkout.
 | 536 — set-level marginal context selection | `set_selection.py`, `ContextCompiler`, `tests/unit/test_retrieval_high_cardinality.py`, `tests/unit/test_retrieval_bootstrap_composition.py` | Implemented locally: bootstrap relevant records must provide a complete topical set union; incomplete relevant tiers abstain rather than return partial context, while exact budget/omission accounting remains bounded and deterministic |
 | 537 — synthetic retrieval usefulness evaluation | `bench/retrieval_usefulness.py`, sanitized fixture, isolated public-API vault, `tests/unit/test_retrieval_usefulness.py` | Developer-facing local evaluation only: the 17-case scorecard remains passing across current-fact, lifecycle, sensitivity, provenance, budget, and provider-shape gates; the harness refuses live Core data and grants no provider/client/release credit |
 
+### 2026-08-25 bounded PR #88 lab reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Current-production benchmark snapshots reflect accepted strict retrieval semantics | `tests/unit/test_lexical_v3_benchmark.py`; `tests/unit/test_memory_lab.py`; `tests/unit/test_memory_lab_b01.py`; regenerated `bench/reports/memory_lab_baseline_ladder_wave2.*` and `bench/reports/memory_lab_b01_wave3.*` | Reconciled locally: lexical current Recall@5 `0.611111` and MRR `0.666667` remain below the unchanged V1 gates; M0 ATC is `0.6` success/recall with zero forbidden output; B01 ATC confirmatory CAOS is `0.285714`, while its fixture/config, boundary, accounting, and kill decision remain unchanged |
+| Historical reliability reports are not current-production acceptance baselines | `tests/unit/test_memory_reliability_lab_e01b.py`; `tests/unit/test_memory_reliability_lab_e02_wave4.py`; immutable `bench/reports/memory_reliability_e01b_wave3.json` and `bench/reports/memory_reliability_e02_wave4.json` | Reconciled locally: exact assertions validate each report's recorded frozen base and preserve E01b's six unsupported/not-exercised semantics and E02's five `UNSUPPORTED` plus one `NOT_EXERCISED`; current disposable runs remain content-free boundary checks |
+| Historical M3 retrieval precision baseline remains immutable | `bench/baselines/retrieval_precision_m3_f5e3a2b.json`; `docs/evidence/RETRIEVAL_PRECISION_M3_BASELINE.md` | Preserved byte-for-byte; no current-production lab result is written into or compared as a replacement for the historical snapshot |
+
+Evidence is limited to the focused local benchmark/lab tests and generated
+content-free reports described above. Full pytest, network, private data,
+production retrieval changes, push/merge/release/publish actions remain out of
+scope.
+
 Evidence is aggregate local evaluation only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
 
 ### 2026-08-22 ZF-004 Wave 1 event reconciliation

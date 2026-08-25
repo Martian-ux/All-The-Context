@@ -5,13 +5,13 @@ Baseline config `6dbf75db008b1be2d3db643b8dd19fe45f1a45c88121ac1ac3af16a0a0cd3c9
 
 | Rung | Success | Recall | Precision | Forbidden | Failures | p50 ms | p95 ms | Storage B | Cost USD | Evidence disposition |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| `no-memory` | 0.200 | 0.200 | 0.000 | 0 | 4 | 0.000600 | 0.001000 | 0 | 0.000000 | `retain_control` |
-| `fixed-budget-long-history` | 0.400 | 0.800 | 0.400 | 1 | 3 | 0.004900 | 0.009435 | 382 | 0.000000 | `not_earned_on_this_fixture` |
-| `static-profile` | 0.600 | 0.800 | 0.400 | 1 | 2 | 0.003200 | 0.005305 | 221 | 0.000000 | `not_earned_on_this_fixture` |
-| `raw-append-log-search` | 0.800 | 1.000 | 0.700 | 1 | 1 | 0.027900 | 0.067785 | 382 | 0.000000 | `not_earned_on_this_fixture` |
-| `stable-observation-current-state` | 1.000 | 1.000 | 0.800 | 0 | 0 | 0.024100 | 0.058995 | 382 | 0.000000 | `advance_to_next_fixture` |
-| `bounded-local-file-search` | 0.800 | 1.000 | 0.700 | 1 | 1 | 1.027850 | 1.132170 | 980 | 0.000000 | `not_earned_on_this_fixture` |
-| `atc-retrieval-v3` | 0.800 | 0.900 | 0.800 | 0 | 1 | 16.458650 | 17.741220 | 335872 | 0.000000 | `not_earned_on_this_fixture` |
+| `no-memory` | 0.200 | 0.200 | 0.000 | 0 | 4 | 0.000600 | 0.001005 | 0 | 0.000000 | `retain_control` |
+| `fixed-budget-long-history` | 0.400 | 0.800 | 0.400 | 1 | 3 | 0.005000 | 0.008615 | 382 | 0.000000 | `not_earned_on_this_fixture` |
+| `static-profile` | 0.600 | 0.800 | 0.400 | 1 | 2 | 0.003100 | 0.005100 | 221 | 0.000000 | `not_earned_on_this_fixture` |
+| `raw-append-log-search` | 0.800 | 1.000 | 0.700 | 1 | 1 | 0.027900 | 0.072715 | 382 | 0.000000 | `not_earned_on_this_fixture` |
+| `stable-observation-current-state` | 1.000 | 1.000 | 0.800 | 0 | 0 | 0.024550 | 0.074220 | 382 | 0.000000 | `advance_to_next_fixture` |
+| `bounded-local-file-search` | 0.800 | 1.000 | 0.700 | 1 | 1 | 0.929100 | 1.021615 | 980 | 0.000000 | `not_earned_on_this_fixture` |
+| `atc-retrieval-v3` | 0.600 | 0.600 | 0.400 | 0 | 2 | 29.082750 | 30.458880 | 512000 | 0.000000 | `not_earned_on_this_fixture` |
 
 ## Failure cases
 
@@ -21,7 +21,7 @@ Baseline config `6dbf75db008b1be2d3db643b8dd19fe45f1a45c88121ac1ac3af16a0a0cd3c9
 - `raw-append-log-search`: task-index-1 (forbidden_output).
 - `stable-observation-current-state`: none.
 - `bounded-local-file-search`: task-index-1 (forbidden_output).
-- `atc-retrieval-v3`: task-index-0 (required_evidence_missing).
+- `atc-retrieval-v3`: task-index-0 (required_evidence_missing); task-index-2 (required_evidence_missing).
 
 ## Validity limitations
 

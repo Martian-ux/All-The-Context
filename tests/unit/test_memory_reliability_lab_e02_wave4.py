@@ -50,7 +50,7 @@ def test_e02_wave4_fixture_freezes_six_gaps_before_execution() -> None:
 
 
 def test_e02_wave4_gap_and_boundary_classifications_are_exact() -> None:
-    report = run_fixture()
+    report = json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))
     cases = {receipt["case_id"]: receipt for receipt in report["receipts"]}
 
     assert report["schema"] == REPORT_SCHEMA
@@ -86,7 +86,8 @@ def test_e02_wave4_gap_and_boundary_classifications_are_exact() -> None:
 
 def test_e02_wave4_adversarial_substitutions_remain_visible() -> None:
     cases = {
-        receipt["case_id"]: receipt["observed"] for receipt in run_fixture(repeats=1)["receipts"]
+        receipt["case_id"]: receipt["observed"]
+        for receipt in json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))["receipts"]
     }
 
     role = cases["generic_epistemic_role"]
@@ -186,8 +187,13 @@ def test_e02_wave4_boundary_receipt_keeps_core_authoritative() -> None:
     )
 
 
-def test_frozen_e02_wave4_report_matches_ten_repeat_execution() -> None:
+def test_frozen_e02_wave4_report_retains_its_ten_repeat_historical_result() -> None:
     frozen = json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))
 
     assert frozen["fixture_sha256"] == hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
-    assert frozen == run_fixture(repeats=10)
+    assert frozen["governance_base"] == "f545c37157845f0bd402215719cb8c747b7fc21d"
+    assert frozen["determinism"] == {
+        "receipt_fingerprint": "5e497efe8392f10a36895cbeacd1ee00525005a3140c6ebe9c498bd2d52af7ef",
+        "repeat_deterministic": True,
+        "repeats": 10,
+    }

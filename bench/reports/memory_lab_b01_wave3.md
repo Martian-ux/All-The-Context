@@ -9,7 +9,7 @@ This is **not a reproduction of PRO-LONG**: no equivalent coding-agent action mo
 | `no-memory` | 0.222 | 0.286 | 0.286 | 0.286 | 0.000 | 0.000 | 0 | bounded synthetic comparison |
 | `stable-observation-current-state` | 0.444 | 0.429 | 0.714 | 0.810 | 515.571 | 1.000 | 2 | bounded synthetic comparison |
 | `bounded-programmatic-structured-log` | 0.889 | 0.857 | 0.857 | 0.857 | 331.000 | 3.571 | 0 | bounded synthetic comparison |
-| `atc-retrieval-v3` | 0.111 | 0.143 | 0.429 | 0.524 | 517.143 | 1.000 | 1 | bounded synthetic comparison |
+| `atc-retrieval-v3` | 0.222 | 0.286 | 0.429 | 0.762 | 399.000 | 1.000 | 1 | bounded synthetic comparison |
 | `frozen-programmatic-atc-combination` | 1.000 | 1.000 | 1.000 | 1.000 | 361.857 | 3.714 | 0 | bounded synthetic comparison |
 
 ## Frozen decision
@@ -26,7 +26,7 @@ This is **not a reproduction of PRO-LONG**: no equivalent coding-agent action mo
 - `no-memory`: task-index-0 (incorrect_action, required_evidence_missing); task-index-1 (incorrect_action, required_evidence_missing); task-index-2 (incorrect_action, required_evidence_missing); task-index-3 (incorrect_action, required_evidence_missing); task-index-4 (incorrect_action, required_evidence_missing); task-index-5 (incorrect_action, required_evidence_missing); task-index-6 (incorrect_action, required_evidence_missing).
 - `stable-observation-current-state`: task-index-3 (incorrect_action, required_evidence_missing); task-index-4 (incorrect_action, required_evidence_missing); task-index-5 (incorrect_action, required_evidence_missing); task-index-7 (abstention_mismatch, forbidden_output); task-index-8 (abstention_mismatch, forbidden_output).
 - `bounded-programmatic-structured-log`: task-index-6 (incorrect_action, required_evidence_missing).
-- `atc-retrieval-v3`: task-index-0 (incorrect_action, required_evidence_missing); task-index-1 (incorrect_action, required_evidence_missing); task-index-2 (incorrect_action, required_evidence_missing); task-index-3 (incorrect_action, required_evidence_missing); task-index-4 (incorrect_action, required_evidence_missing); task-index-5 (incorrect_action, required_evidence_missing); task-index-7 (abstention_mismatch); task-index-8 (abstention_mismatch, forbidden_output).
+- `atc-retrieval-v3`: task-index-0 (incorrect_action, required_evidence_missing); task-index-1 (incorrect_action, required_evidence_missing); task-index-2 (incorrect_action, required_evidence_missing); task-index-3 (incorrect_action, required_evidence_missing); task-index-4 (incorrect_action, required_evidence_missing); task-index-5 (incorrect_action, required_evidence_missing); task-index-8 (abstention_mismatch, forbidden_output).
 - `frozen-programmatic-atc-combination`: none.
 
 ## Planner and validity limitations

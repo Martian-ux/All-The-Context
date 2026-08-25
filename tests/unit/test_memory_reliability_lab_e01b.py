@@ -64,7 +64,7 @@ def test_e01b_uses_closed_status_stage_classification_and_reason_codes() -> None
 
 
 def test_e01b_frozen_base_production_result_and_unsupported_boundaries_are_exact() -> None:
-    report = run_fixture()
+    report = json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))
     matrix = {
         receipt["capability"]: (
             receipt["status"],
@@ -193,8 +193,13 @@ def test_e01b_report_omits_raw_values_and_runtime_identifiers() -> None:
                 assert event["value"] not in rendered
 
 
-def test_frozen_e01b_report_matches_twenty_repeat_execution() -> None:
+def test_frozen_e01b_report_retains_its_twenty_repeat_historical_result() -> None:
     frozen = json.loads(FROZEN_REPORT.read_text(encoding="utf-8"))
 
     assert frozen["fixture_sha256"] == hashlib.sha256(FIXTURES.read_bytes()).hexdigest()
-    assert frozen == run_fixture(repeats=20)
+    assert frozen["coordinator_base"] == "950f649d9e3cc106fb8ff4febbe38919f8e00d11"
+    assert frozen["determinism"] == {
+        "receipt_fingerprint": "9a07bfbf951761173866da5ce89064dbd19c8281d18cd17c0f5860f1f4f588ea",
+        "repeat_deterministic": True,
+        "repeats": 20,
+    }

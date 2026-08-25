@@ -1,5 +1,26 @@
 # Architecture decisions
 
+## ADR-150: Reconcile current lab snapshots without rewriting historical evidence
+
+**Status:** accepted locally on 2026-08-25 for the bounded PR #88
+reconciliation. This is evidence-contract maintenance, not production or
+release acceptance.
+
+The accepted strict Retrieval V3 behavior is measured honestly in the current
+lexical, M0, and B01 snapshots. The lexical V1 comparator keeps its existing
+recall and MRR gates and records their current failures; no threshold is
+lowered. M0 and B01 regenerate only their current-production result rows,
+while their sanitized fixture/config identities, privacy boundaries, and
+research decisions remain fixed.
+
+E01b and E02 were authored against frozen historical production bases, and
+their reports are immutable observations rather than current conformance
+expectations. Exact tests therefore validate the checked-in reports and their
+recorded bases; current execution remains covered only by the separate
+content-free, deterministic, disposable-boundary tests. The historical
+`retrieval_precision_m3_f5e3a2b` baseline is not rewritten or used as a target
+for current-production reconciliation.
+
 ## ADR-149: Provisional synthetic retrieval precision remains content-only and abstaining
 
 **Status:** accepted locally on 2026-08-25 as the Milestone 3 retrieval

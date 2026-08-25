@@ -104,6 +104,26 @@ with the other four incomplete relevant tiers withheld instead of returning
 partial context; strict search any-target is 1/24 and both-target is 0/24 by
 design.
 
+### 2026-08-25 bounded PR #88 lab reconciliation
+
+The accepted stricter retrieval semantics were replayed against the current
+production snapshots without changing production retrieval or lowering any
+quality gate. The focused lexical profile records Recall@5 `0.611111`, MRR
+`0.666667`, and macro Precision@5 `0.666667`; the unchanged V1 comparator
+therefore remains red on its overall-recall and MRR gates. M0's current ATC
+row is success `0.6`, evidence-group recall `0.6`, and zero forbidden output.
+B01's current ATC confirmatory CAOS is `0.285714` (2/7); its fixture/config
+identities, zero-network/zero-model boundary, accounting, and final
+`KILL_MECHANISM` decision remain unchanged. The M0 and B01 reports were
+regenerated from this worktree and remain content-free.
+
+E01b and E02 remain historical immutable reports: their exact tests now read
+the checked-in reports by the recorded frozen bases rather than comparing
+today's production execution to those old observations. Their explicit
+unsupported and not-exercised gaps, report bytes, and provenance remain
+unchanged. The immutable
+`bench/baselines/retrieval_precision_m3_f5e3a2b.json` snapshot was not modified.
+
 ## 2026-08-24 same-vault ZF-010 composition over scheduled Packet G records
 
 This local checkout is stacked on merged PR #86 at protected main

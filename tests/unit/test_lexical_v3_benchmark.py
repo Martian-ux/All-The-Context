@@ -15,7 +15,7 @@ def _fixture() -> dict[str, object]:
     return loaded
 
 
-def test_focused_profile_improves_frozen_relevance_without_policy_leaks(
+def test_focused_profile_records_stricter_current_relevance_without_policy_leaks(
     tmp_path: Path,
 ) -> None:
     fixture = _fixture()
@@ -25,12 +25,12 @@ def test_focused_profile_improves_frozen_relevance_without_policy_leaks(
 
     assert metrics["unauthorized_result_count"] == 0
     assert metrics["exact_recall_at_5"] == 1.0
-    assert metrics["recall_at_5"] > 0.666667
-    assert metrics["mrr"] > 0.666667
+    assert metrics["recall_at_5"] == 0.611111
+    assert metrics["mrr"] == 0.666667
+    assert metrics["macro_precision_at_5"] == 0.666667
     assert metrics["persistent_index_growth_bytes"] <= 4_096
     assert any(
-        query["id"] == "multi_term_empty" and query["ids"] == ["multi-cache"]
-        for query in profile["queries"]
+        query["id"] == "multi_term_empty" and query["ids"] == [] for query in profile["queries"]
     )
 
 
@@ -44,9 +44,10 @@ def test_comparator_evidences_precision_mrr_recall_and_growth_gates(tmp_path: Pa
 
     passed, messages = compare(candidate, baseline)
 
-    assert passed is True
+    assert passed is False
     assert any("PASS [100] exact Recall@5 preserved" in message for message in messages)
-    assert any("PASS [100] MRR at least 10% better" in message for message in messages)
+    assert any("FAIL [100] overall Recall@5 not worse" in message for message in messages)
+    assert any("FAIL [100] MRR at least 10% better" in message for message in messages)
     assert any("PASS [100] macro Precision@5 improved" in message for message in messages)
     assert any("PASS [100] persistent index growth" in message for message in messages)
     assert _macro_precision_at_5(candidate_profile["queries"]) > _macro_precision_at_5(
