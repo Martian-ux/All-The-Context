@@ -1,0 +1,70 @@
+{
+  "captured_revision": "f5e3a2b6e7f86ad65c0bf9aa78d6baa8b639456f",
+  "case_count": 5,
+  "cases": [
+    {
+      "abstained": false,
+      "case": "exact_project_phrase",
+      "deterministic": true,
+      "first_relevant_rank": 1,
+      "passed": false,
+      "precision_at_5_or_returned_depth": 0.2,
+      "returned_count": 5,
+      "scored_depth": 5
+    },
+    {
+      "abstained": false,
+      "case": "platform_support_over_linux_noise",
+      "deterministic": true,
+      "first_relevant_rank": 1,
+      "passed": true,
+      "precision_at_5_or_returned_depth": 1.0,
+      "returned_count": 1,
+      "scored_depth": 1
+    },
+    {
+      "abstained": false,
+      "case": "local_core_relay_architecture",
+      "deterministic": true,
+      "first_relevant_rank": 1,
+      "passed": false,
+      "precision_at_5_or_returned_depth": 0.333333,
+      "returned_count": 3,
+      "scored_depth": 3
+    },
+    {
+      "abstained": false,
+      "case": "mcp_provider_ingestion",
+      "deterministic": true,
+      "first_relevant_rank": 1,
+      "passed": false,
+      "precision_at_5_or_returned_depth": 0.333333,
+      "returned_count": 3,
+      "scored_depth": 3
+    },
+    {
+      "abstained": false,
+      "case": "coverage_gap_abstention",
+      "deterministic": true,
+      "first_relevant_rank": null,
+      "passed": false,
+      "precision_at_5_or_returned_depth": 0.0,
+      "returned_count": 1,
+      "scored_depth": 1
+    }
+  ],
+  "fixture_sha256": "c1328670cc501898945fa9c8fe907d3794d3330d8838c98d9a055af1515ca425",
+  "passed": false,
+  "report_kind": "synthetic_retrieval_precision_m3",
+  "schema": "atc.retrieval-precision-m3.scorecard.v1",
+  "scorecard": {
+    "abstention_case_count": 0,
+    "aggregate_precision": 0.373333,
+    "case_count": 5,
+    "deterministic": true,
+    "passed": false,
+    "passed_case_count": 1,
+    "returned_count": 13,
+    "schema": "atc.retrieval-precision-m3.scorecard.v1"
+  }
+}
