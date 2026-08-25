@@ -163,6 +163,30 @@ def test_provider_archive_lineage_produces_a_useful_capsule_and_narrow_list(
             assert capsule_response.json() == capsule.to_dict()
 
 
+def test_provider_archive_project_content_is_a_safe_display_name(tmp_path: Any) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=False)
+    with CoreService(config) as service:
+        source_id = _archive_source(service, "plain-project")
+        _archive_records(
+            service,
+            source_id=source_id,
+            records=[
+                _anchor(
+                    "All The Context",
+                    reference="conversations.json#conversation=one&message=anchor",
+                ),
+                _goal(
+                    "Make project continuity useful.",
+                    reference="conversations.json#conversation=one&message=goal",
+                ),
+            ],
+        )
+
+        snapshot = build_project_runtime(service.store, as_of=AS_OF)
+        assert len(snapshot.projects) == 1
+        assert snapshot.projects[0].name == "All The Context"
+
+
 def test_two_provider_anchors_abstain_and_facts_do_not_cross_lineages(tmp_path: Any) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=False)
     with CoreService(config) as service:

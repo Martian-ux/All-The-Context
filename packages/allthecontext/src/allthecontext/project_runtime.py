@@ -117,17 +117,23 @@ def _safe_label(value: object) -> str | None:
 
 
 def _anchor_labels(record: MemoryTruthRecordOut) -> tuple[str | None, tuple[str, ...]]:
-    """Use optional structured display metadata without copying archive text."""
+    """Derive one safe local display label without exposing source metadata."""
 
     value = record.record.structured_value
-    if not isinstance(value, Mapping):
-        return None, ()
     name = None
-    for key in ("project_name", "display_name", "name"):
-        name = _safe_label(value.get(key))
-        if name is not None:
-            break
-    raw_aliases = value.get("aliases")
+    raw_aliases: object = None
+    if isinstance(value, Mapping):
+        for key in ("project_name", "display_name", "name"):
+            name = _safe_label(value.get(key))
+            if name is not None:
+                break
+        raw_aliases = value.get("aliases")
+    if name is None:
+        # Provider imports store a cleaned, explicit project statement as the
+        # canonical Core record content. It is already visible in the local
+        # admin capsule; using it here avoids unusable "Unnamed project" rows
+        # while still rejecting paths, control characters, and oversized text.
+        name = _safe_label(record.record.content)
     aliases = (
         tuple(
             sorted(
