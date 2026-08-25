@@ -298,7 +298,7 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Keep the active project in view" })).toBeInTheDocument();
-    expect(screen.getByText("Not assigned")).toBeInTheDocument();
+    expect(await screen.findByText("Not assigned")).toBeInTheDocument();
     expect(screen.getByText("3", { selector: ".project-continuity-assignment > span" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Atlas/ })).toBeInTheDocument();
 
