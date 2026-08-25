@@ -52,6 +52,27 @@ The direct exact, strict near-miss, union-insufficient abstention, kind-only,
 tag-only, scope-only, and direct metadata-noise cases pass. These are observed
 candidate measurements, not changes to the historical baseline.
 
+## Current integrated local result
+
+The current synthetic evaluator is 10/10 on production and content-free. This
+is a local aggregate, not committed evidence or live acceptance.
+
+The reported aggregate authorized local result on the final production
+evaluation profile is 387 current, 319 eligible, sample 96. Exact self
+retrieval for 2, 3, and 4 tokens and `natural-scaffold-3` are each 96/96
+nonempty and self recall at 5. Split evaluation is 24 pairs: bootstrap
+both-target and any-target recall is 20/24, with the other four incomplete
+relevant tiers withheld instead of returning partial context. Strict search
+any-target is 1/24 and both-target is 0/24 by design.
+
+The historical five-case precision snapshot and the separate 17-case
+usefulness scorecard also pass in their respective synthetic local lanes.
+These results may be recorded only as aggregate scores/counts, pass/fail
+results, node IDs, fixture revisions, and evidence-boundary facts. No raw
+exports, workspace files, personal context, credentials, database files,
+per-record traces, generated reports, or other evaluation artifacts are part
+of this evidence.
+
 ## Reproduce
 
 From this checkout, use a repository-local temporary parent:

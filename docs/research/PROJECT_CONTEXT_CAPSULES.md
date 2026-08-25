@@ -1,10 +1,31 @@
 # Project Context Capsules
 
+## Current Milestone 2 implementation overlay (2026-08-25)
+
+The bounded Milestone 2 baseline described by the current checkout is now
+implemented locally. Core derives deterministic, read-only Project Context
+Capsules from public Memory Truth and authorized source bindings; it does not
+open imported sources or workspace sidecars, write capsule state, or create a
+second memory authority. Exact `project:<ref>` scopes and unambiguous provider
+lineage establish project assignment; competing anchors abstain, and
+instruction-like imported claims cannot choose or instruct a capsule.
+
+Capsules carry authority and provenance references, lifecycle-safe selected
+items, deterministic revisions, exact omission/truncation accounting, and
+bounded default budgets of 12,000 characters and 32 items. The full rebuild is
+the oracle for the optimized rebuild, including after restart and input
+reordering. The Core admin project list/capsule API and read-only Project
+Continuity dashboard expose the resolved-project and bounded-capsule result.
+
+This overlay does not promote the graph/learning proposal below. ZF-013 graph
+work, graph expansion, learned assignment, and any hosted or client/provider
+acceptance remain open.
+
 ## Status
 
-Proposed feature plan for a post-beta ATC Project Context capability. This document
-is intentionally non-normative for the `0.1.0-beta.6` release gate until promoted by
-a later ADR or implementation PR.
+The sections below retain the original post-beta design plan. The Milestone 2
+implementation overlay above is the current bounded baseline and remains
+non-normative for the `0.1.0-beta.6` release gate.
 
 ## Motivation
 

@@ -97,3 +97,9 @@ explicit output path and revision with
 `--write-baseline --baseline <new-path> --captured-revision <sha>` after
 reviewing the content-free score delta. The CLI refuses the checked-in
 historical path and rejects an empty revision marker.
+
+The current five-case scorecard is a passing synthetic local observation, and
+the separate current-candidate evaluator is 10/10 on production and
+content-free. The historical five-case and 17-case scorecards remain
+preserved as historical/current synthetic scorecards, not committed evidence
+or live provider, client, platform, release, or private-data acceptance.

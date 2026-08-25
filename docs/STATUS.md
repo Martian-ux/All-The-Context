@@ -2,30 +2,107 @@
 
 ## Current milestone
 
-As of 2026-08-24 UTC, protected main contains the merged Import Truth, Memory
-Truth, Retrieval, Context UI, provider-neutral Continuous
-Capture foundations, the PR #78 registered-source admission contract, the
-PR #79 Packet H-D disposable proof
-(`034d995d99802651537d91206c10c0018390dcd9`), the PR #82 CoreService/startup
-capture-runtime wiring, the PR #84 opt-in Packet E scheduler, the PR #85
-Packet E x Packet F scheduled composition evidence, and the PR #86 Packet G
-compilation over those scheduled records. The exact protected-main SHA is
-`f06961e7aaefc37f6f7f3b86d16d50d983cedca7`. This local checkout, which has
-not been pushed or merged, stacks same-vault ZF-010 composition evidence on
-that exact merged Packet G base. It is not
-ZF-007/ZF-008/ZF-009/ZF-010 product exit; continuous/scheduled Packet F
-acceptance remains open. The separately
-published immutable `0.1.0-beta.6` remains the current downloadable release.
-Packet H-D remains disposable proof/lab evidence only; it is not released.
-Development evidence after beta.6 does not
-become release, exact-artifact, client/provider, or private-data acceptance.
+As of 2026-08-25 UTC, this unpushed local checkout integrates Milestones 1
+through 3 on top of the earlier Import Truth, Memory Truth, Retrieval, Context
+UI, and provider-neutral capture foundations. It records product truth for
+explicit local Continuous Context, deterministic Core-derived Project Context
+Capsules, provider candidate safety, inert failed rebuilds, and provisional
+synthetic retrieval precision. These are local implementation milestones, not
+beta/release readiness and not live provider, client, platform, or private-data
+acceptance.
 
-Core remains the authoritative local service and binds to loopback by default.
-The supported posture is Windows and supported Linux source/package work; the
-macOS source, tests, and historical preflight remain retained for portability,
-but macOS is unsupported and creates no support or acceptance claim. Historical
-release and CI notes lower in this file are retained as provenance only, not as
-evidence for this integrated checkout.
+protected main contains the merged Import Truth, Memory Truth, Retrieval,
+Context UI, provider-neutral Continuous Capture foundations, and the Core-owned
+registered-source admission contract. Development evidence in this local
+checkout does not
+become release, exact-artifact, client/provider, or private-data acceptance.
+The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
+
+Supported source/package targets for this checkout are Windows and supported Linux. macOS source, tests, and historical preflight/packaging code remain retained for portability and maintenance only; macOS is unsupported and creates no package, CI, release, provider/client, acceptance, or support claim.
+
+Evidence is aggregate local evaluation only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
+
+The separately published immutable `0.1.0-beta.6` remains the current
+downloadable release. Historical release and CI notes lower in this file are
+retained as provenance only, not as evidence for this integrated checkout.
+
+### 2026-08-25 integrated Milestone 1 — Continuous Context
+
+Continuous Context is an explicit local workspace runtime. Core remains the
+authoritative service and binds to loopback by default. The authenticated admin
+workspace-authorization route requires an absolute local root and an explicit
+local-only acknowledgement, creates one identity-bound `local-git-workspace`
+source disabled, and fails closed for implicit home/current-directory paths,
+network-style roots, symlink/reparse or non-regular roots, malformed sidecars,
+and invalid source inventory. Repeated authorization of the same root is
+bounded and idempotent; a different root does not silently replace the existing
+identity.
+
+Authorization does not refresh the workspace adapter. Adapter refresh is
+deferred to the run boundary, where foreground admin runs and scheduled cycles
+use the same composed adapter/sink path. The Core-owned scheduler remains
+disabled by default: dispatch requires the process gate
+`ATC_CAPTURE_SCHEDULER_ENABLED=1`, a valid durable enable sidecar, and no
+`ATC_UPDATE_HEALTH_OPERATION`; desktop launch opens only the process gate and
+does not create durable enablement. Sources controls expose authenticated
+connect/authorize, enable, pause/resume, run-now, revoke, and automatic-sync
+on/off state without exposing workspace paths, credentials, or raw source text.
+
+This milestone covers the local workspace capability and its focused runtime,
+scheduler, desktop-launch, and Sources-dashboard tests only. It does not claim
+live provider acceptance or universal continuous capture.
+
+### 2026-08-25 integrated Milestone 2 — Project Context Capsules
+
+Project Context Capsules are deterministic, bounded, read-only projections of
+public Core Memory Truth. The runtime derives opaque project identity from
+authorized bindings and either one exact `project:<ref>` scope or one
+unambiguous provider lineage anchor. Multiple provider anchors that would assign
+different projects abstain; imported claims cannot choose a project. Current,
+lifecycle-eligible evidence is filtered for deletion, expiry, purge, high
+sensitivity, and instruction-like content before compilation. Capsule items carry
+authority and provenance references, and the compiler reports exact omissions,
+character/item budgets, truncation, and a deterministic revision. The default
+capsule budgets are 12,000 characters and 32 items.
+
+The Core-backed admin API exposes the resolved project list and one capsule per
+project at `/v1/admin/projects` and
+`/v1/admin/projects/{project_id}/capsule`; the Project Continuity dashboard
+renders resolved projects, bounded capsule contents, provenance-backed sections,
+and omitted-item accounting. The optimized rebuild is required to equal the
+full deterministic rebuild oracle after restart and input reordering. This
+milestone does not add a graph store, graph expansion, learned retrieval, or
+learning runtime; ZF-013 remains open for later evaluation.
+
+### 2026-08-25 integrated Milestone 3 — provider safety and retrieval precision
+
+Provider candidate handling now keeps project scoping, sensitivity, and
+instruction filters conservative and opaque. One recognized project anchor can
+scope siblings deterministically; multiple competing anchors abstain. Sensitive
+health/location-like material remains marked sensitive, while task-local,
+assistant/system/tool, secret-like, and instruction-shaped material is not
+promoted as durable current memory. A failed archive rebuild leaves its staged
+candidates inert on startup until the source-bound atomic cutover validates and
+publishes them; startup evaluation cannot turn a failed cutover into an additive
+import.
+
+Direct retrieval keeps a strict `0.75` content floor for nonempty multi-term
+queries. Bootstrap uses a separate content-only one-anchor pool: distinct
+relevant records must cover the full topical set union, otherwise the relevant
+tier abstains instead of returning partial context. Curated aliases count only
+as their mapped original anchor, and metadata-only matches cannot consume the
+content pool. The historical five-case and 17-case synthetic scorecards remain
+preserved and passing; the current synthetic evaluator is 10/10 on production
+and content-free.
+
+Reported aggregate authorized local result on the final production evaluation
+profile (a local aggregate, not committed evidence or live acceptance): 387
+current, 319 eligible, sample 96; exact self retrieval for 2, 3, and 4 tokens
+and `natural-scaffold-3` are each 96/96 nonempty and self recall at 5; split
+evaluation is 24 pairs, bootstrap both-target and any-target recall is 20/24,
+with the other four incomplete relevant tiers withheld instead of returning
+partial context; strict search any-target is 1/24 and both-target is 0/24 by
+design.
 
 ## 2026-08-24 same-vault ZF-010 composition over scheduled Packet G records
 
