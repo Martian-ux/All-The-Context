@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-As of 2026-08-25 UTC, this unpushed local checkout integrates Milestones 1
+As of 2026-08-25 UTC, this branch integrates Milestones 1
 through 3 on top of the earlier Import Truth, Memory Truth, Retrieval, Context
 UI, and provider-neutral capture foundations. It records product truth for
 explicit local Continuous Context, deterministic Core-derived Project Context
@@ -13,8 +13,9 @@ acceptance.
 
 protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Context UI, provider-neutral Continuous Capture foundations, and the Core-owned
-registered-source admission contract. Development evidence in this local
-checkout does not
+registered-source admission contract. Its exact SHA at this boundary is
+`f558f79e6c3b76ebc1c8f90e073e19485ea59ebe`. Development evidence on this
+branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
 
@@ -22,9 +23,8 @@ Supported source/package targets for this checkout are Windows and supported Lin
 
 Evidence is aggregate local evaluation only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
 
-The separately published immutable `0.1.0-beta.6` remains the current
-downloadable release. Historical release and CI notes lower in this file are
-retained as provenance only, not as evidence for this integrated checkout.
+Historical release and CI notes lower in this file are retained as provenance
+only, not as evidence for this integrated checkout.
 
 ### 2026-08-25 integrated Milestone 1 — Continuous Context
 
