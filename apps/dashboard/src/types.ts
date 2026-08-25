@@ -3,7 +3,8 @@ export type HealthState = "ready" | "degraded" | "offline";
 export type ImportStatus = "processing" | "complete" | "failed" | "cancelled";
 export type SourceTerminalReason = "failed" | "cancelled";
 export type CaptureLifecycleState = "disabled" | "enabled" | "paused" | "revoked" | "degraded" | "reconciling";
-export type CaptureRunState = "running" | "completed" | "failed" | "skipped";
+export type CaptureRunState = "running" | "completed" | "failed" | "abandoned";
+export type CaptureRunResultState = "completed" | "failed" | "skipped";
 
 export type ClosedCoverageKey =
   | "recognized"
@@ -239,7 +240,7 @@ export interface CaptureSourceStatus {
 }
 
 export interface CaptureRunResult {
-  status: Exclude<CaptureRunState, "running">;
+  status: CaptureRunResultState;
   pages: number;
   events: number;
   applied_events: number;

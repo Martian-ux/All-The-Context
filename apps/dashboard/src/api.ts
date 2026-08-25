@@ -5,6 +5,7 @@ import type {
   CaptureAuthorizationProjection,
   CaptureLifecycleState,
   CaptureRunResult,
+  CaptureRunResultState,
   CaptureRunState,
   CaptureSchedulerStatus,
   CaptureSourceProjection,
@@ -66,7 +67,8 @@ const CLOSED_COVERAGE_KEYS: readonly ClosedCoverageKey[] = [
 const IMPORT_STATUSES: readonly ImportStatus[] = ["processing", "complete", "failed", "cancelled"];
 const TERMINAL_REASONS: readonly SourceTerminalReason[] = ["failed", "cancelled"];
 const CAPTURE_LIFECYCLE_STATES: readonly CaptureLifecycleState[] = ["disabled", "enabled", "paused", "revoked", "degraded", "reconciling"];
-const CAPTURE_RUN_STATES: readonly CaptureRunState[] = ["running", "completed", "failed", "skipped"];
+const CAPTURE_RUN_STATES: readonly CaptureRunState[] = ["running", "completed", "failed", "abandoned"];
+const CAPTURE_RUN_RESULT_STATES: readonly CaptureRunResultState[] = ["completed", "failed", "skipped"];
 const TRUTH_STATUSES: readonly MemoryTruthStatus[] = ["current", "tentative", "superseded", "conflicted", "deleted"];
 const CONFLICT_STATES: readonly TruthConflictState[] = ["none", "active", "resolved"];
 const AVAILABILITIES: readonly Availability[] = ["always_available", "core_available", "local_only"];
@@ -237,6 +239,12 @@ function normalizeCaptureRunState(value: unknown): CaptureRunState | null {
     : null;
 }
 
+function normalizeCaptureRunResultState(value: unknown): CaptureRunResultState | null {
+  return CAPTURE_RUN_RESULT_STATES.includes(value as CaptureRunResultState)
+    ? value as CaptureRunResultState
+    : null;
+}
+
 function captureOptionalCount(source: Record<string, unknown>, key: string): number | undefined {
   if (source[key] === undefined) return undefined;
   const count = asCount(source[key]);
@@ -386,10 +394,10 @@ function captureStatusFromWire(value: unknown): CaptureStatus {
 
 function captureRunResultFromWire(value: unknown): CaptureRunResult {
   if (!isRecord(value)) throw invalidWireError();
-  const status = normalizeCaptureRunState(value.status);
+  const status = normalizeCaptureRunResultState(value.status);
   const counts = ["pages", "events", "applied_events", "duplicate_events", "failures", "retry_count", "lag_events", "lag_pages"] as const;
   const normalizedCounts = counts.map((key) => asCount(value[key]));
-  if (!status || status === "running" || normalizedCounts.some((count) => count === undefined)) throw invalidWireError();
+  if (!status || normalizedCounts.some((count) => count === undefined)) throw invalidWireError();
   return {
     status,
     pages: normalizedCounts[0]!,

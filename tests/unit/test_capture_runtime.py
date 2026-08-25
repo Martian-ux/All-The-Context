@@ -1994,6 +1994,15 @@ def test_admin_authorize_workspace_is_bounded_idempotent_and_run_refreshes_core(
             assert repeated_response.status_code == 200
             authorized = authorized_response.json()
             repeated = repeated_response.json()
+            assert set(authorized) == {
+                "id",
+                "provider",
+                "lifecycle_state",
+                "authorized",
+                "reconciled",
+            }
+            assert set(repeated) == set(authorized)
+            assert authorized["authorized"] is True
             assert authorized["provider"] == LOCAL_GIT_WORKSPACE_PROVIDER
             assert authorized["lifecycle_state"] == "disabled"
             assert authorized["reconciled"] is False

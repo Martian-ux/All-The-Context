@@ -118,7 +118,7 @@ describe("desktop browser session", () => {
         },
         checkpoint: { generation: 4 },
         last_run: {
-          state: "completed",
+          state: "abandoned",
           attempt_count: 1,
           pages: 2,
           events: 5,
@@ -146,7 +146,7 @@ describe("desktop browser session", () => {
     expect(result.items[0]).toMatchObject({
       source: { id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: "enabled", lag_events: 2 },
       checkpoint_generation: 4,
-      last_run: { state: "completed", events: 5, applied_events: 3 },
+      last_run: { state: "abandoned", events: 5, applied_events: 3 },
     });
     expect(result.scheduler).toMatchObject({ enabled: true, running: true });
     expect(result.items[0]?.source).not.toHaveProperty("account_fingerprint");

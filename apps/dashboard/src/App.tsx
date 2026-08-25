@@ -187,7 +187,7 @@ function workspaceHealth(status?: CaptureSourceStatus): { label: string; detail:
   if (source.lifecycle_state === "reconciling" || status.last_run?.state === "running") {
     return { label: "Syncing", detail: "The local Core is processing the workspace.", tone: "syncing" };
   }
-  if (source.lifecycle_state === "degraded" || status.last_run?.state === "failed" || source.last_error_code) {
+  if (source.lifecycle_state === "degraded" || ["failed", "abandoned"].includes(status.last_run?.state ?? "") || source.last_error_code) {
     return { label: "Failed / degraded", detail: "The last sync needs attention. Try Sync now when the workspace is available.", tone: "attention" };
   }
   if (source.lifecycle_state === "paused" || source.lifecycle_state === "disabled") {
