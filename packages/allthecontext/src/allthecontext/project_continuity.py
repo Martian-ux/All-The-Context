@@ -50,6 +50,28 @@ MAX_CAPSULE_PROVENANCE = 64
 MAX_CAPSULE_ITEMS = 64
 MAX_CAPSULE_CHARS = 32_000
 MAX_OMISSION_IDS = 16
+PROJECT_ANCHOR_KINDS = frozenset({"project", "project_identity"})
+IMPORTED_CAPSULE_KINDS = frozenset(
+    {
+        "goal",
+        "objective",
+        "current_goal",
+        "project_decision",
+        "decision",
+        "architecture",
+        "component",
+        "constraint",
+        "preference",
+        "interaction_preference",
+        "workflow",
+        "blocker",
+        "blocked",
+        "recent_change",
+        "completed_work",
+        "test_outcome",
+        "meaningful_change",
+    }
+)
 
 
 class ContinuityError(ValueError):
@@ -228,9 +250,11 @@ WorkspaceBinding = AuthorizedSourceBinding
 class ProjectEvidence:
     """One bounded evidence item supplied to the disposable projection.
 
-    ``project_ref`` is a structured, explicit reference.  It is never parsed
-    from ``content``.  Imported text may be associated through an authorized
-    binding, but an imported project claim is ignored for assignment.
+    ``project_ref`` is a structured reference supplied by a trusted Core
+    projection boundary; this module never parses it from ``content``.
+    Current, explicit imported user memories may contribute as data, but only
+    recognized project anchors can establish identity and instruction-like
+    imported kinds never select a project.
     """
 
     evidence_id: str
@@ -312,7 +336,10 @@ class ProjectEvidence:
             and self.project_ref is not None
             and self.binding_id is not None
             and self.sensitivity is not Sensitivity.HIGHLY_SENSITIVE
-            and self.origin in {EvidenceOrigin.USER, EvidenceOrigin.CORE, EvidenceOrigin.WORKSPACE}
+            and (
+                self.origin in {EvidenceOrigin.USER, EvidenceOrigin.CORE, EvidenceOrigin.WORKSPACE}
+                or (self.origin is EvidenceOrigin.IMPORTED and self.kind in PROJECT_ANCHOR_KINDS)
+            )
         )
 
     def is_expired(self, as_of: str | None) -> bool:
@@ -940,8 +967,14 @@ def _label_state(
     eligible = tuple(
         evidence
         for evidence in anchors
-        if evidence.origin in {EvidenceOrigin.USER, EvidenceOrigin.CORE, EvidenceOrigin.WORKSPACE}
-        and evidence.explicit
+        if evidence.explicit
+        and (
+            evidence.origin in {EvidenceOrigin.USER, EvidenceOrigin.CORE, EvidenceOrigin.WORKSPACE}
+            or (
+                evidence.origin is EvidenceOrigin.IMPORTED
+                and evidence.kind in PROJECT_ANCHOR_KINDS
+            )
+        )
     )
     labels = {
         label
@@ -1049,7 +1082,12 @@ def _assign_projects(
                 )
             )
             continue
-        if item.origin is EvidenceOrigin.IMPORTED and item.project_ref is not None:
+        if (
+            item.origin is EvidenceOrigin.IMPORTED
+            and item.project_ref is not None
+            and item.kind not in PROJECT_ANCHOR_KINDS
+            and item.kind not in IMPORTED_CAPSULE_KINDS
+        ):
             assignments.append(
                 ProjectAssignment(
                     item.evidence_id,
@@ -1060,12 +1098,18 @@ def _assign_projects(
             continue
         if (
             item.project_ref is not None
-            and item.origin
-            in {
-                EvidenceOrigin.USER,
-                EvidenceOrigin.CORE,
-                EvidenceOrigin.WORKSPACE,
-            }
+            and (
+                item.origin
+                in {
+                    EvidenceOrigin.USER,
+                    EvidenceOrigin.CORE,
+                    EvidenceOrigin.WORKSPACE,
+                }
+                or (
+                    item.origin is EvidenceOrigin.IMPORTED
+                    and item.kind in PROJECT_ANCHOR_KINDS | IMPORTED_CAPSULE_KINDS
+                )
+            )
             and item.explicit
         ):
             candidate_project = project_by_key.get((binding.workspace_ref, item.project_ref))
@@ -1087,9 +1131,9 @@ def _assign_projects(
                 )
             )
             continue
-        # Imported text cannot choose a project by what it says.  If it has a
-        # structured project claim, it is ignored; the authorized binding is
-        # the only remaining basis for association.
+        # Imported prose never chooses a project by what it says. Any usable
+        # ``project_ref`` above was supplied by the trusted runtime boundary;
+        # without one, the authorized binding is the only basis for association.
         candidates = projects_by_workspace.get(binding.workspace_ref, [])
         if len(candidates) == 1:
             assignments.append(
@@ -1154,7 +1198,10 @@ def _capsule_candidate(
         or item.is_expired(as_of)
         or item.sensitivity is Sensitivity.HIGHLY_SENSITIVE
         or item.origin is EvidenceOrigin.INFERRED
-        or item.origin is EvidenceOrigin.IMPORTED
+        or (
+            item.origin is EvidenceOrigin.IMPORTED
+            and (not item.explicit or item.kind not in IMPORTED_CAPSULE_KINDS)
+        )
     ):
         return None
     return _SECTION_BY_KIND.get(item.kind)

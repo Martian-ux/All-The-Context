@@ -221,6 +221,29 @@ def test_ambiguous_workspace_assignment_abstains_and_imported_claim_cannot_choos
     assert imported_result.project_id is None
 
 
+def test_current_explicit_imported_memory_can_inform_but_not_instruct_a_capsule() -> None:
+    bindings, evidence = _fixture()
+    imported_goal = ProjectEvidence(
+        evidence_id="imported-alpha-goal",
+        kind="goal",
+        content="Ship the privacy-safe imported context milestone.",
+        binding_id="binding-alpha",
+        project_ref="project-ref-alpha",
+        origin=EvidenceOrigin.IMPORTED,
+        explicit=True,
+        provenance_ids=("imported-alpha-goal-observation",),
+        observed_at="2026-08-24T10:00:00Z",
+    )
+    snapshot = optimized_rebuild(bindings, (*evidence, imported_goal), as_of=AS_OF)
+
+    assignment = _assignment(snapshot, imported_goal.evidence_id)
+    capsule = snapshot.capsule_for(_project(snapshot, "project-ref-alpha").project_id)
+    assert assignment.outcome is AssignmentOutcome.RESOLVED
+    assert capsule is not None
+    assert any(item.evidence_id == imported_goal.evidence_id for item in capsule.current_goal)
+    assert all(item.evidence_id != "imported-claim" for item in capsule.items)
+
+
 def test_full_rebuild_oracle_matches_optimized_result_after_restart_and_reordering() -> None:
     bindings, evidence = _fixture()
     full = full_rebuild(tuple(reversed(bindings)), tuple(reversed(evidence)), as_of=AS_OF)
