@@ -398,6 +398,59 @@ describe("desktop browser session", () => {
     });
   });
 
+  it("rejects internally inconsistent project totals and capsule accounting", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({
+          items: [{ project_id: "project-1", project_ref: "ref-1", name: "Atlas", aliases: [], item_count: 1 }],
+          total: 2,
+          unresolved_count: 0,
+          ambiguous_count: 0,
+          revision: "rev",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project-1",
+        project_ref: "ref-1",
+        project_name: "Atlas",
+        aliases: [],
+        assignment_outcome: "resolved",
+        sections: {
+          current_goal: [{
+            evidence_id: "evidence-1",
+            section: "current_goal",
+            text: "Ship it.",
+            provenance_ids: [],
+            record_id: "record-1",
+            source_id: null,
+            truncated: false,
+            authority: "current_memory",
+          }],
+          decisions: [],
+          constraints_preferences: [],
+          blockers: [],
+          recent_meaningful_changes: [],
+        },
+        provenance_ids: [],
+        dependency_ids: ["evidence-1"],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 999,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+    await expect(api.projectCapsule("project-1")).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+  });
+
   it("rejects malformed project and capsule responses instead of guessing", async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

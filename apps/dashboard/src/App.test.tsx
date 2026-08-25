@@ -136,7 +136,7 @@ function projectCapsulePayload(overrides: Record<string, unknown> = {}) {
     dependency_ids: ["private-dependency-capsule"],
     character_budget: 12000,
     item_budget: 32,
-    used_chars: 120,
+    used_chars: 158,
     omitted_count: 2,
     omissions: [{ reason: "item_budget", count: 2, evidence_ids: ["private-omitted-evidence"] }],
     truncated: true,

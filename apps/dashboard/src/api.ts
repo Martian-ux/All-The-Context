@@ -246,7 +246,7 @@ export function projectSummariesFromWire(value: unknown): ProjectSummariesRespon
   const unresolvedCount = asCount(value.unresolved_count, MAX_PROJECT_ITEM_COUNT);
   const ambiguousCount = asCount(value.ambiguous_count, MAX_PROJECT_ITEM_COUNT);
   const revision = asBoundedString(value.revision, MAX_PROJECT_REVISION_CHARS);
-  if (total === undefined || unresolvedCount === undefined || ambiguousCount === undefined || revision === undefined || total < projects.length) {
+  if (total === undefined || unresolvedCount === undefined || ambiguousCount === undefined || revision === undefined || total !== projects.length) {
     throw invalidWireError();
   }
   return {
@@ -332,6 +332,9 @@ export function projectCapsuleFromWire(value: unknown): ProjectCapsule {
 
   const sections = {} as Record<ProjectCapsuleSection, ProjectCapsuleItem[]>;
   let itemTotal = 0;
+  let textCharacterTotal = 0;
+  let hasTruncatedItem = false;
+  const evidenceIds = new Set<string>();
   for (const section of PROJECT_CAPSULE_SECTIONS) {
     const wireItems = value.sections[section];
     if (!Array.isArray(wireItems) || wireItems.length > MAX_CAPSULE_ITEMS) throw invalidWireError();
@@ -339,13 +342,22 @@ export function projectCapsuleFromWire(value: unknown): ProjectCapsule {
     if (items.some((item): item is null => item === null)) throw invalidWireError();
     sections[section] = items as ProjectCapsuleItem[];
     itemTotal += sections[section].length;
+    for (const item of sections[section]) {
+      if (evidenceIds.has(item.evidence_id)) throw invalidWireError();
+      evidenceIds.add(item.evidence_id);
+      textCharacterTotal += item.text.length;
+      hasTruncatedItem ||= item.truncated;
+    }
   }
-  if (itemTotal > MAX_CAPSULE_ITEMS || itemTotal > itemBudget) throw invalidWireError();
+  if (itemTotal > MAX_CAPSULE_ITEMS || itemTotal > itemBudget || textCharacterTotal !== usedChars) throw invalidWireError();
 
   const omissions = value.omissions.map(projectCapsuleOmissionFromWire);
   if (omissions.some((item): item is null => item === null)) throw invalidWireError();
   const normalizedOmissions = omissions as ProjectCapsuleOmission[];
-  if (normalizedOmissions.reduce((sum, item) => sum + item.count, 0) !== omittedCount || (omittedCount > 0 && value.truncated !== true)) {
+  if (
+    normalizedOmissions.reduce((sum, item) => sum + item.count, 0) !== omittedCount
+    || value.truncated !== (omittedCount > 0 || hasTruncatedItem)
+  ) {
     throw invalidWireError();
   }
 
