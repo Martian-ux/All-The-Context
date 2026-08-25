@@ -115,6 +115,7 @@ class _HitState:
     record_id: str
     channel_scores: dict[str, float] = field(default_factory=dict)
     term_coverage: int = 0
+    alias_coverage: int = 0
 
 
 def _quoted_identifier(value: str) -> str:
@@ -206,10 +207,10 @@ def _prefix_query(tokens: Sequence[str]) -> str:
 
 
 def _minimum_term_coverage(term_count: int) -> int:
-    """Require two terms, or at least half, for multi-term fallback matches."""
+    """Require at least two lexical terms for a multi-term fallback match."""
     if term_count <= 1:
         return 1
-    return min(term_count, max(2, (term_count + 1) // 2))
+    return 2
 
 
 def _attempt_fts5_secure_delete(
@@ -376,13 +377,19 @@ class LexicalV3:
             query_terms = _deduplicated(prepared.tokens)
             if states and len(query_terms) > 1:
                 coverage = self._term_coverage(connection, query_terms)
+                alias_terms = tuple(
+                    token for token in _expanded_tokens(prepared.tokens) if token not in query_terms
+                )
+                alias_coverage = self._term_coverage(connection, alias_terms)
                 for state in states.values():
                     state.term_coverage = coverage.get(state.record_id, 0)
+                    state.alias_coverage = alias_coverage.get(state.record_id, 0)
                 minimum_coverage = _minimum_term_coverage(len(query_terms))
                 states = {
                     record_id: state
                     for record_id, state in states.items()
                     if state.term_coverage >= minimum_coverage
+                    or (state.term_coverage == 0 and state.alias_coverage > 0)
                 }
             if not states:
                 reasons.append(DiagnosticReason.NO_MATCHES)

@@ -207,6 +207,27 @@ def test_multi_term_coverage_floor_is_inclusive_and_single_term_is_not_hard_reje
     assert single_decision.admitted is True
 
 
+def test_broad_query_scaffolding_allows_a_bounded_content_subset() -> None:
+    context = AdmissibilityContext(
+        query_specificity=0.9,
+        task_specificity=0.9,
+        task_query_term_count=3,
+        task_query_scaffolding_count=1,
+    )
+    bounded_subset = _candidate("bounded-subset", _complete_signals(coverage=2 / 3))
+    weak_subset = _candidate("weak-subset", _complete_signals(coverage=1 / 3))
+
+    decisions = (
+        DeterministicAdmissibilityGate()
+        .evaluate_many([bounded_subset, weak_subset], context)
+        .decisions
+    )
+    by_key = {decision.key: decision for decision in decisions}
+
+    assert by_key["bounded-subset"].admitted is True
+    assert by_key["weak-subset"].admitted is False
+
+
 @pytest.mark.parametrize(
     "context",
     [

@@ -231,6 +231,18 @@ def test_multi_term_fallback_abstains_when_only_one_term_matches() -> None:
     connection.close()
 
 
+def test_multi_term_fallback_keeps_content_alias_recovery_bounded() -> None:
+    connection = _connection()
+    _insert(connection, "alias-content", content="A cache invalidation note.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["alias-content"], "segmented eviction strategy", limit=5
+    )
+
+    assert _ids(result) == ["alias-content"]
+    connection.close()
+
+
 def test_query_and_candidate_hard_bounds_are_enforced() -> None:
     connection = _connection()
     _insert(connection, "eligible", content="token")

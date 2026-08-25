@@ -24,18 +24,25 @@ The production pipeline has seven ordered boundaries:
    containing only temporally eligible IDs. The bounded evidence path used by
    context compilation uses a 100-record result pool; phrase/all-term channels
    precede a bounded exact-OR fallback, and prefix fallback is limited to four
-   tokens of at least four characters. The production evidence-pool threshold
-   is two hits.
+   tokens of at least four characters. Multi-term fallback keeps candidates
+   with at least two lexical terms, or one explicitly curated alias target;
+   admissibility still decides whether that alias target occurs in candidate
+   content. The production evidence-pool threshold is two hits.
 4. Conflict state is joined for the temporally eligible candidates, then
    `DeterministicAdmissibilityGate` evaluates content-only task/query coverage,
    scope/project fit, requested-kind compatibility, confidence/explicitness,
-   and conflict state. For a sufficiently specified multi-term task, content
-   coverage below the deterministic `0.75` floor is a hard rejection with the
-   `reject.low_task_query_coverage` diagnostic; no row count, metadata, alias,
-   confidence, or conflict state can bypass it. Single-term and empty-query
-   paths retain their usefulness/fail-open behavior. Sparse or underspecified
-   evidence otherwise fails open. An optional learned gate can run only in
-   shadow and has no production authority.
+   and conflict state. Query intent is projected into direct topical anchors
+   and request scaffolding; scaffolding is not a required content match. A
+   focused multi-term task retains the deterministic `0.75` content floor. A
+   broad task with scaffolding may cover a meaningful content subset, but still
+   needs at least two matched anchors for up to three anchors or three matched
+   anchors for longer tasks, bounded by that same floor. A curated lexical alias
+   counts only when its target occurs in candidate content. Zero- and
+   one-anchor content matches remain rejected; no row count, metadata, fixture
+   alias, confidence, or conflict state can bypass the rule. Single-term and
+   empty-query paths retain their usefulness/fail-open behavior. Sparse or
+   underspecified evidence otherwise fails open. An optional learned gate can
+   run only in shadow and has no production authority.
 5. `DeterministicUsefulnessReranker` reranks only the authorized, temporally
    eligible, conflict-checked, task-admissible candidates. It applies bounded
    local query-intent, field-coverage, recency, confidence, availability,

@@ -30,7 +30,7 @@ def _record(record_id: str, kind: str, content: str, **values: object) -> Contex
     )
 
 
-def test_v3_ordering_is_stable_and_hard_coverage_rejects_alias_only_multi_term_query(
+def test_v3_ordering_is_stable_and_bounded_alias_recovers_multi_term_query(
     tmp_path: Path,
 ) -> None:
     fixture = _fixture()
@@ -46,7 +46,7 @@ def test_v3_ordering_is_stable_and_hard_coverage_rejects_alias_only_multi_term_q
     runs = [[item.id for item in engine.search(request, principal).items] for _ in range(5)]
 
     assert runs == [runs[0]] * 5
-    assert runs[0] == []
+    assert runs[0] == ["multi-cache"]
 
 
 def test_administrator_explanations_contain_only_authorized_returned_records(

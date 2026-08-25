@@ -101,6 +101,39 @@ _QUERY_STOPWORDS = frozenset(
         "context",
     }
 )
+_QUERY_SCAFFOLDING = frozenset(
+    {
+        # Request-form and answer-shape terms are useful for ranking intent,
+        # but they are not independently required content anchors.
+        "current",
+        "detail",
+        "details",
+        "describe",
+        "explain",
+        "find",
+        "give",
+        "guidance",
+        "help",
+        "information",
+        "info",
+        "latest",
+        "list",
+        "mention",
+        "plan",
+        "please",
+        "procedure",
+        "recent",
+        "runbook",
+        "show",
+        "strategy",
+        "support",
+        "supports",
+        "tell",
+        "today",
+        "workflow",
+        "would",
+    }
+)
 _MAX_CONTEXT_PACK_ITEMS = 32
 _WORD_RE = re.compile(r"[\w@.]+", flags=re.UNICODE)
 _CONTENT_WORD_RE = re.compile(r"[\w@]+", flags=re.UNICODE)
@@ -136,10 +169,12 @@ def _fts_query(value: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class QueryIntent:
-    """Small deterministic intent projection used only for local ranking."""
+    """Small deterministic intent projection used for local ranking and gating."""
 
     raw_tokens: tuple[str, ...]
     focus_tokens: tuple[str, ...]
+    anchor_tokens: tuple[str, ...]
+    scaffolding_tokens: tuple[str, ...]
     expanded_tokens: tuple[str, ...]
     asks_current: bool
     asks_location: bool
@@ -153,6 +188,10 @@ def parse_query_intent(value: str) -> QueryIntent:
     focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
     if not focus:
         focus = raw
+    scaffolding = tuple(token for token in focus if token in _QUERY_SCAFFOLDING)
+    anchors = tuple(token for token in focus if token not in _QUERY_SCAFFOLDING)
+    if not anchors:
+        anchors = focus
     expanded = tuple(
         dict.fromkeys(
             token for original in focus for token in (original, *_LEXICAL_ALIASES.get(original, ()))
@@ -161,6 +200,8 @@ def parse_query_intent(value: str) -> QueryIntent:
     return QueryIntent(
         raw_tokens=raw,
         focus_tokens=focus,
+        anchor_tokens=anchors,
+        scaffolding_tokens=scaffolding,
         expanded_tokens=expanded,
         asks_current=bool(set(raw) & {"active", "current", "latest", "now", "recent", "today"}),
         asks_location=bool(set(raw) & {"where", "location", "city", "address", "based"}),
@@ -1573,12 +1614,11 @@ def _admissibility_inputs(
     hard_task_coverage: bool = True,
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
     intent = parse_query_intent(request.query)
-    # Hard task coverage measures meaningful query terms against content only.
-    # Structural metadata remains available to its dedicated scope/project/kind
-    # signals, but generic tags and scopes must not make unrelated content look
-    # task-relevant.
+    # Hard task coverage measures direct topical anchors against content only.
+    # Query scaffolding remains available to the bounded broad-query rule, while
+    # structural metadata stays in its dedicated scope/project/kind signals.
     raw_query_tokens = set(intent.raw_tokens)
-    task_tokens = set(intent.focus_tokens or intent.raw_tokens)
+    task_tokens = set(intent.anchor_tokens or intent.focus_tokens or intent.raw_tokens)
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -1594,8 +1634,17 @@ def _admissibility_inputs(
             if task_tokens
             else set()
         )
-        matched_task_tokens = task_tokens & content_tokens
+        direct_matches = task_tokens & content_tokens
+        alias_matches = {
+            token for token in task_tokens if set(_LEXICAL_ALIASES.get(token, ())) & content_tokens
+        }
+        matched_task_tokens = direct_matches | alias_matches
         coverage = len(matched_task_tokens) / len(task_tokens) if task_tokens else None
+        # A curated alias is evidence only when its target occurs in bounded
+        # candidate content. It can recover the explicit alias-only path, but
+        # tags, kinds, scopes, and fixture record aliases never contribute.
+        if alias_matches and not direct_matches:
+            coverage = 1.0
         row_scopes = _json_set(str(row["scopes_json"]))
         if project_scope is not None:
             scope_fit = float(project_scope in {scope.casefold() for scope in row_scopes})
@@ -1637,6 +1686,9 @@ def _admissibility_inputs(
         query_specificity=specificity,
         task_specificity=specificity,
         task_query_term_count=len(task_tokens) if hard_task_coverage else None,
+        task_query_scaffolding_count=(
+            len(intent.scaffolding_tokens) if hard_task_coverage else None
+        ),
     )
 
 

@@ -31,19 +31,27 @@ case returned one item, so its honest-abstention check failed.
 
 ## Current correction result
 
-The current integrated production path uses focus query terms for hard task
-coverage and counts those terms against content only. Multi-term hard coverage
-rejects coverage below `0.75` when the task is sufficiently specified; therefore
-2/3 coverage rejects while 3/4 coverage may pass. The measured coverage remains
-in the gate factors and the hard rejection reports
-`reject.low_task_query_coverage`. Candidate count and alias presence do not
-change that rule. Single-term and empty-query behavior retain their existing
-usefulness/fail-open paths. Scope, project, and kind evidence remain dedicated
-signals and cannot satisfy task-topic coverage.
+The current integrated production path separates direct topical anchors from
+query scaffolding and measures matched anchors against candidate content only.
+Focused multi-term requests retain the `0.75` hard floor, so the focused 2/3
+near-miss still abstains while 3/4 remains admissible. Broad requests with
+scaffolding use a bounded subset rule: at least two matched anchors are needed
+for up to three anchors, or three for longer tasks, with the same `0.75` cap.
+The lexical layer retains a multi-term candidate when at least two query terms
+match or when a curated alias target matches; admissibility accepts the latter
+only if that target is in candidate content. Metadata-only alias hits and
+one-anchor candidates remain excluded. Scope, project, and kind evidence remain
+dedicated signals and cannot satisfy task-topic coverage. The measured
+coverage remains in the gate factors and hard rejections retain the
+`reject.low_task_query_coverage` diagnostic.
+
 Nonempty bootstrap remains a separate broad context-assembly path so a
 multi-topic request can contribute distinct authorized records; its dedicated
-scope/kind/project filters still apply. The direct-search hard-floor behavior
-is covered by the focused admissibility and usefulness regressions.
+scope/kind/project, authorization, temporal, sensitivity, and conflict
+boundaries still apply. The focused regressions now also cover broad,
+compositional, and paraphrastic fictional queries, metadata-only noise,
+one-token candidates, restored bounded alias recovery, and multi-record
+bootstrap assembly.
 
 The unchanged five-case fixture now produces an honest quality pass:
 

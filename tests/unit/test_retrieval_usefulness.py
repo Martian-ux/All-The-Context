@@ -141,6 +141,8 @@ def test_query_intent_uses_bounded_local_features() -> None:
 
     assert intent.raw_tokens == ("where", "is", "the", "latest", "helios", "rollback", "runbook")
     assert intent.focus_tokens == ("latest", "helios", "rollback", "runbook")
+    assert intent.anchor_tokens == ("helios", "rollback")
+    assert intent.scaffolding_tokens == ("latest", "runbook")
     assert {"current", "recent", "restore"} <= set(intent.expanded_tokens)
     assert intent.asks_current is True
     assert intent.asks_location is True
@@ -375,6 +377,111 @@ def test_multi_term_coverage_boundary_keeps_strong_content_match(tmp_path: Path)
         assert approved[0].id not in four_term_ids
         assert approved[1].id not in four_term_ids
         assert four_term_ids[:2] == [approved[3].id, approved[2].id]
+    finally:
+        store.close()
+
+
+def test_broad_compositional_and_paraphrastic_search_keeps_content_subset_only(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "broad-content-subset.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="architecture_fact",
+            content=(
+                "Fictional Atlas uses a local Core plus Relay architecture for offline "
+                "synchronization."
+            ),
+            idempotency_key="broad-relevant",
+        )
+    )
+    partial = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="Fictional Atlas Relay notes cover a separate topic.",
+            idempotency_key="broad-partial",
+        )
+    )
+    one_token = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="Fictional Atlas notes cover a separate topic.",
+            idempotency_key="broad-one-token",
+        )
+    )
+    metadata_only = store.add_candidate(
+        CandidateInput(
+            kind="atlas_relay_kind",
+            content="Unrelated inventory note.",
+            tags=["atlas", "relay", "rollback"],
+            scopes=["project:atlas"],
+            idempotency_key="broad-metadata-only",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (relevant, partial, one_token, metadata_only)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        paraphrase = engine.search(
+            SearchRequest(
+                query="What is the current rollback procedure for the Atlas local Relay?"
+            ),
+            principal,
+        )
+        returned = {item.id for item in paraphrase.items}
+
+        assert approved[0].id in returned
+        assert approved[1].id not in returned
+        assert approved[2].id not in returned
+        assert approved[3].id not in returned
+
+        compositional = engine.search(
+            SearchRequest(query="How does Atlas support Windows and local Relay synchronization?"),
+            principal,
+        )
+        assert [item.id for item in compositional.items] == [approved[0].id]
+    finally:
+        store.close()
+
+
+def test_bootstrap_retains_multi_record_context_assembly(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "bootstrap-assembly.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    platform = store.add_candidate(
+        CandidateInput(
+            kind="platform_fact",
+            content="Fictional Atlas supports deployments on Windows and Linux.",
+            idempotency_key="bootstrap-platform",
+        )
+    )
+    architecture = store.add_candidate(
+        CandidateInput(
+            kind="architecture_fact",
+            content="Fictional Atlas uses a local Core plus Relay architecture.",
+            idempotency_key="bootstrap-architecture",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (platform, architecture)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(
+                query="Atlas Windows local Relay",
+                requested_scopes=[],
+                budget_chars=4_000,
+            ),
+            principal,
+        )
+        returned = {item.id for item in response.items}
+
+        assert {item.id for item in approved} <= returned
     finally:
         store.close()
 

@@ -153,6 +153,7 @@ class AdmissibilityContext:
     query_specificity: float | None = None
     task_specificity: float | None = None
     task_query_term_count: int | None = None
+    task_query_scaffolding_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,7 +331,8 @@ class DeterministicAdmissibilityGate:
             and context.task_query_term_count > 1
             and not task_underspecified
             and factors.task_query_coverage is not None
-            and factors.task_query_coverage < self.config.minimum_task_query_coverage
+            and factors.task_query_coverage
+            < self._minimum_task_query_coverage(context.task_query_term_count, context)
         )
         sparse = evidence_factor_count < self.config.minimum_evidence_factors
         fail_open_reasons: list[AdmissibilityReason] = []
@@ -367,6 +369,24 @@ class DeterministicAdmissibilityGate:
             reason_codes=reasons,
         )
         return self._with_shadow(decision, task_underspecified)
+
+    def _minimum_task_query_coverage(
+        self,
+        anchor_count: int,
+        context: AdmissibilityContext,
+    ) -> float:
+        """Allow broad requests to assemble a bounded set of content anchors.
+
+        Focused multi-term requests retain the configured 0.75 floor. When
+        query scaffolding is present, a candidate may cover a meaningful
+        content subset, but it still needs two anchors for short requests or
+        three for longer requests. This is a query-shape rule, not a candidate
+        identity or result-count exception.
+        """
+        if not context.task_query_scaffolding_count:
+            return self.config.minimum_task_query_coverage
+        minimum_matches = 2 if anchor_count <= 3 else 3
+        return min(self.config.minimum_task_query_coverage, minimum_matches / anchor_count)
 
     def _factors(self, signals: AdmissibilitySignals) -> FactorValues:
         for name, value in (
@@ -489,6 +509,12 @@ def _validate_context(context: AdmissibilityContext) -> None:
         or context.task_query_term_count < 0
     ):
         raise ValueError("task_query_term_count must be a non-negative integer")
+    if context.task_query_scaffolding_count is not None and (
+        isinstance(context.task_query_scaffolding_count, bool)
+        or not isinstance(context.task_query_scaffolding_count, int)
+        or context.task_query_scaffolding_count < 0
+    ):
+        raise ValueError("task_query_scaffolding_count must be a non-negative integer")
 
 
 def _diagnostics(decisions: Sequence[AdmissibilityDecision]) -> AdmissibilityDiagnostics:
