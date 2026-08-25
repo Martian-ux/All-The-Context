@@ -24,6 +24,7 @@ from pathlib import Path
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
 from .client_config import (
     ClientConfigResult,
     ManagedClientConfig,
@@ -212,6 +213,7 @@ def launch_core(
                     "ATC_CORE_DATA_DIR": str(config.data_dir),
                     "ATC_CORE_HOST": config.host,
                     "ATC_CORE_PORT": str(config.port),
+                    CAPTURE_SCHEDULER_ENABLED_ENV: "1",
                 }
             )
             if getattr(sys, "frozen", False):

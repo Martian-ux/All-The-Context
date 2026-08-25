@@ -10,6 +10,11 @@ from pathlib import Path
 
 import pytest
 from allthecontext import client_config as client_config_module
+from allthecontext.capture_runtime import scheduler_config_path
+from allthecontext.capture_scheduler import (
+    CAPTURE_SCHEDULER_ENABLED_ENV,
+    capture_scheduler_status_payload,
+)
 from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
 from allthecontext.credentials import (
@@ -43,6 +48,7 @@ from keyring.errors import KeyringError
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.delenv(CAPTURE_SCHEDULER_ENABLED_ENV, raising=False)
     config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_439)
     runtime = RuntimeCommand(tmp_path / "AllTheContext.exe")
     states = iter((CoreProbe.UNREACHABLE, CoreProbe.VERIFIED))
@@ -70,6 +76,13 @@ def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
     environment = kwargs["env"]
     assert isinstance(environment, dict)
     assert environment["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert environment[CAPTURE_SCHEDULER_ENABLED_ENV] == "1"
+    assert not scheduler_config_path(config.data_dir).exists()
+
+    monkeypatch.setenv(CAPTURE_SCHEDULER_ENABLED_ENV, "1")
+    status = capture_scheduler_status_payload(config.data_dir)
+    assert status["durable_enabled"] is False
+    assert status["dispatch_allowed"] is False
 
 
 def test_core_launch_waits_for_a_shutting_down_process_lock(
