@@ -981,14 +981,12 @@ def create_app(
         request: CaptureWorkspaceAuthorizeRequest, principal: Principal
     ) -> dict[str, Any]:
         require(principal, "admin")
-        authorized = authorize_local_workspace(
+        return authorize_local_workspace(
             core.store,
             active_config,
             Path(request.root),
             local_only_acknowledged=request.local_only_acknowledged,
         )
-        refresh_local_workspace_adapter(core.capture, active_config)
-        return authorized
 
     @app.get("/v1/admin/capture/sources")
     def list_capture_sources(

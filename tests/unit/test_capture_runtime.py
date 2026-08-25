@@ -1918,7 +1918,7 @@ def test_admin_run_refreshes_adapter_after_late_authorization(tmp_path: Path) ->
         _assert_no_root_leak(body, workspace, config.data_dir)
 
 
-def test_admin_authorize_workspace_is_bounded_idempotent_and_refreshes_core(
+def test_admin_authorize_workspace_is_bounded_idempotent_and_run_refreshes_core(
     tmp_path: Path,
 ) -> None:
     config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
@@ -1999,7 +1999,7 @@ def test_admin_authorize_workspace_is_bounded_idempotent_and_refreshes_core(
             assert authorized["reconciled"] is False
             assert repeated["id"] == authorized["id"]
             assert repeated["reconciled"] is True
-            assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+            assert LOCAL_GIT_WORKSPACE_PROVIDER not in service.capture.adapters
             source_id = str(authorized["id"])
             enabled = client.post(
                 f"/v1/admin/capture/sources/{source_id}/enable",
@@ -2021,6 +2021,7 @@ def test_admin_authorize_workspace_is_bounded_idempotent_and_refreshes_core(
         assert first_run.status_code == 200
         assert first_run.json()["status"] == "completed"
         assert first_run.json()["applied_events"] == 5
+        assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
         assert replay.status_code == 200
         assert replay.json()["status"] == "completed"
         assert replay.json()["applied_events"] == 0
