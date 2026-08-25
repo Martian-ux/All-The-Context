@@ -854,7 +854,9 @@ def evidence_from_memory_truth(
             if item.disposition
             in {ObservationDisposition.APPLIED, ObservationDisposition.REINFORCED}
         )
-        truth_provenance = tuple(item.observation_id for item in eligible_truth_evidence)
+        truth_provenance = tuple(
+            item.observation_id for item in eligible_truth_evidence[:MAX_PROVENANCE_PER_EVIDENCE]
+        )
         if value.evidence and not eligible_truth_evidence:
             evidence_status = EvidenceStatus.TENTATIVE
         source_deleted = value.source is not None and value.source.deleted_at is not None
@@ -971,8 +973,7 @@ def _label_state(
         and (
             evidence.origin in {EvidenceOrigin.USER, EvidenceOrigin.CORE, EvidenceOrigin.WORKSPACE}
             or (
-                evidence.origin is EvidenceOrigin.IMPORTED
-                and evidence.kind in PROJECT_ANCHOR_KINDS
+                evidence.origin is EvidenceOrigin.IMPORTED and evidence.kind in PROJECT_ANCHOR_KINDS
             )
         )
     )
@@ -1439,7 +1440,6 @@ def _build_snapshot(
         ],
         "capsules": [capsule.to_dict() for capsule in capsules],
         "transitions": [item.to_dict() for item in normalized_transitions],
-        "as_of": normalized_as_of,
         "character_budget": character_budget,
         "item_budget": item_budget,
     }

@@ -31,6 +31,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -103,6 +104,14 @@ from ..models import (
     SearchCursor,
     SearchRequest,
     SubmitBatchRequest,
+)
+from ..project_runtime import (
+    RUNTIME_MAX_CAPSULE_CHARS,
+    RUNTIME_MAX_CAPSULE_ITEMS,
+    ProjectRuntimeError,
+    build_project_runtime,
+    capsule_for_project,
+    project_list_payload,
 )
 from ..security import ClientPrincipal
 from ..storage import (
@@ -949,6 +958,50 @@ def create_app(
             limit=limit,
             offset=offset,
         ).model_dump(mode="json")
+
+    @app.get("/v1/admin/projects")
+    def list_projects(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        try:
+            snapshot = build_project_runtime(core.store)
+        except ProjectRuntimeError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="project projection unavailable",
+            ) from error
+        return project_list_payload(snapshot)
+
+    @app.get("/v1/admin/projects/{project_id}/capsule")
+    def get_project_capsule(
+        project_id: str,
+        principal: Principal,
+        character_budget: int = Query(
+            default=12_000,
+            ge=1,
+            le=RUNTIME_MAX_CAPSULE_CHARS,
+        ),
+        item_budget: int = Query(
+            default=32,
+            ge=1,
+            le=RUNTIME_MAX_CAPSULE_ITEMS,
+        ),
+    ) -> dict[str, object]:
+        require(principal, "admin")
+        try:
+            snapshot = build_project_runtime(
+                core.store,
+                character_budget=character_budget,
+                item_budget=item_budget,
+            )
+            capsule = capsule_for_project(snapshot, project_id)
+        except KeyError as error:
+            raise NotFoundError("project not found") from error
+        except ProjectRuntimeError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="project projection unavailable",
+            ) from error
+        return capsule.to_dict()
 
     @app.get("/v1/admin/memory-truth/{record_id}")
     def get_memory_truth(record_id: str, principal: Principal) -> dict[str, Any]:
