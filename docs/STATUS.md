@@ -3,12 +3,18 @@
 ## Current milestone
 
 As of 2026-08-24 UTC, protected main contains the merged Import Truth, Memory
-Truth, Retrieval, Context UI, provider-neutral Continuous Capture foundations,
-the PR #78 registered-source admission contract, and the PR #79 Packet H-D
-disposable proof (`034d995d99802651537d91206c10c0018390dcd9`). The separately
-published immutable `0.1.0-beta.6` remains the current downloadable release.
-Packet H-D remains disposable proof/lab evidence only; it is not released.
-Development evidence after beta.6 does not
+Truth, Retrieval, Context UI, provider-neutral Continuous
+Capture foundations, the PR #78 registered-source admission contract, the
+PR #79 Packet H-D disposable proof
+(`034d995d99802651537d91206c10c0018390dcd9`), the PR #82 CoreService/startup
+capture-runtime wiring, and the PR #84 opt-in Packet E scheduler. The exact
+protected-main SHA is `27d4ff397aff822bc5e3a14b72a7458f8604ab5a`. This local
+checkout, which has not been pushed or merged, adds Packet E x Packet F
+scheduled composition evidence over that scheduler. It is not ZF-007/ZF-008
+product exit; continuous/scheduled Packet F acceptance remains open. The
+separately published immutable `0.1.0-beta.6` remains the current
+downloadable release. Packet H-D remains disposable proof/lab evidence only;
+it is not released. Development evidence after beta.6 does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
@@ -18,9 +24,69 @@ but macOS is unsupported and creates no support or acceptance claim. Historical
 release and CI notes lower in this file are retained as provenance only, not as
 evidence for this integrated checkout.
 
+## 2026-08-24 Packet E x Packet F scheduled composition evidence
+
+This local checkout proves the already-merged opt-in Packet E scheduler can
+drive an authorized, enabled Packet F local-workspace source through the
+public Memory Truth and Retrieval V3 surfaces. The two focused tests call
+`capture_scheduler.run_cycle()`, the same method used by the background
+loop, without starting that thread. The journey uses an isolated
+`CoreService` vault and the existing process/env/sidecar contract. Current
+records are observed only through `list_memory_truth` / `get_memory_truth` /
+`memory_truth_coverage` and Retrieval V3 search, bootstrap, and get. Direct
+SQL row counts are not the acceptance surface. The proof reuses Packet H-D
+truth/retrieval helpers but is not Packet H.
+
+The deterministic synthetic path is: initial due cycle admits four structural
+records; an unchanged cycle before the incremental interval is due creates no
+new public records; advancing an injected clock, deleting one workspace item,
+and changing another then yields exact source-reference withdrawal, in-place
+update of the same current identity, no duplicate current records, and no
+ordinary tombstone; restart from the same vault plus a third unchanged due
+cycle is idempotent with zero new records. Negative gates keep public record
+counts at zero when the scheduler env is absent, the sidecar is disabled, or
+`ATC_UPDATE_HEALTH_OPERATION` is present, including present-but-empty.
+Existing content-free scheduler status is a public non-mutating read: repeated
+status equality holds, `running` remains false, and the tests do not start
+the worker or expose captured text, paths beyond existing policy,
+credentials, or raw personal context. Dedicated existing scheduler tests own
+internal non-mutation of reauthorization and rotation state. No new CLI or
+health UI was added.
+
+`CoreService` accepts an optional injected clock so incremental due times can
+be made deterministic. Production still uses `utc_now`. ADR-142 records this
+composition evidence. This is Packet E x Packet F scheduled composition
+evidence, not ZF-007/ZF-008 product exit, complete Packet E product
+acceptance, complete Packet H, Phase 2, real provider or client support,
+macOS support, or universal continuous capture. Continuous/scheduled Packet F
+acceptance remains open.
+
+Local validation on this worktree:
+
+- `python -m pytest tests/unit/test_scheduled_packet_f_composition.py` passed
+  2 tests in 2.76 seconds
+  (`test_scheduled_packet_f_drives_public_truth_and_retrieval_v3`,
+  `test_scheduler_negative_gates_create_zero_public_records`)
+- related scheduler/runtime nodeids passed 7 tests in 2.79 seconds:
+  `tests/unit/test_capture_scheduler_productization.py::test_due_execution_runs_enabled_workspace_source_through_shared_runtime`,
+  `tests/unit/test_capture_scheduler_productization.py::test_status_does_not_mutate_reauth_or_rotation`,
+  `tests/unit/test_capture_scheduler_productization.py::test_explicit_enable_survives_restart_when_process_gate_stays_open`,
+  `tests/unit/test_capture_runtime.py::test_enable_and_foreground_run_admit_structural_facts_and_no_fact`,
+  `tests/unit/test_capture_runtime.py::test_file_deletion_withdraws_exact_record_without_tombstone`,
+  `tests/unit/test_capture_scheduler.py::test_health_status_read_does_not_consume_reauthorization_actions`,
+  `tests/unit/test_capture_scheduler.py::test_initial_backfill_then_incremental_due_time_uses_existing_checkpoint`
+- `python -m ruff check .` passed
+- `python -m ruff format --check` on the touched Python files passed
+- `python -m mypy packages/allthecontext/src` passed (94 source files)
+- `python scripts/check_docs.py` passed
+- `git diff --check` passed
+
+Full repository pytest, hosted CI, push, and merge were intentionally not
+run. This candidate remains a local checkout.
+
 ## 2026-08-24 ZF-010 direct-user formation mapper (local composition evidence)
 
-This checkout adds the smallest safe direct-user formation mapper over accepted
+PR #83 merged the smallest safe direct-user formation mapper over accepted
 in-process Packet G L1+ `direct_user_turn` envelopes. The mapper recomputes
 UTF-8 byte length and SHA-256 against the envelope `turn_ref`, then uses
 existing `normalize_lifecycle_event`, `form_observation`, and authenticated
@@ -140,7 +206,7 @@ remains unsupported/deferred.
 
 ## 2026-08-24 Packet G + Core Retrieval V3 lifecycle visibility
 
-This checkout adds a narrow Packet G composition slice over the existing
+PR #81 merged a narrow Packet G composition slice over the existing
 controlled reference host and Core Retrieval V3. Accepted L1+ pre-generation
 compilation now fails closed with `MissingCorePrincipal` when no Core
 `ClientPrincipal` is supplied, before retrieval, delivery, or generation.
@@ -172,7 +238,7 @@ was intentionally not run.
 
 ## 2026-08-24 productized Packet E capture scheduler
 
-This checkout adds an isolated Core-owned Packet E scheduler on the shared
+PR #84 merged an isolated Core-owned Packet E scheduler on the shared
 foreground capture runtime. Scheduling stays disabled by default and is
 explicit opt-in. Core remains the authority. The existing `capture_scheduler.py`
 planner still chooses due work and invokes `CaptureCoordinator`; it does not
@@ -227,11 +293,13 @@ not run.
 
 This does not claim complete Packet E product acceptance, complete Packet H,
 ZF-010, provider support, hosted/full-suite acceptance, release, private-data
-evidence, or macOS support.
+evidence, or macOS support. Packet E x Packet F scheduled composition
+evidence over this scheduler is the later focused local proof documented
+above; it is not ZF-007/ZF-008 product exit.
 
 ## 2026-08-24 productized foreground local-workspace capture runtime
 
-This checkout adds a shared `capture_runtime` composition used by both
+PR #82 merged a shared `capture_runtime` composition used by both
 `CoreService` and the contributor CLI. The registered-source sink is always
 injected. The experimental `LocalGitWorkspaceCaptureProviderAdapter` is
 registered only when a valid machine-local authorization sidecar exists under
@@ -272,9 +340,10 @@ support.
 
 ## 2026-08-24 local-workspace authorization hardening
 
-This checkout hardens the productized foreground local-workspace authorization
-path without scheduler, dashboard, migration, network-provider, or Packet H
-milestone work.
+The merged PR #82 local-workspace path also hardens the productized
+foreground authorization path without dashboard, migration, network-provider,
+or Packet H milestone work. The later PR #84 scheduler remains a separate
+explicit Core opt-in.
 
 Authorize holds the sidecar FileLock across read, identity, complete
 workspace-source inventory, reconcile/create, and write. Lock timeout and
@@ -661,18 +730,23 @@ merged a disposable Packet H-D proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3. It is not complete
 Packet H or Phase 2 acceptance.
 
-Packet E and Packet G remain component-complete. This checkout adds local
-composition evidence for one conservative direct-user formation class; it is
-not ZF-010 product exit. The remaining frontier is Packet E/G composition and
-product acceptance, ZF-010 product exit, complete Wave 4 E–G (complete Packet
-H), and the Phase 2 journey. Stable project identity and deterministic Project
-Context Capsules still precede graph shadow evaluation.
+Packet E and Packet G remain component-complete. This local checkout adds
+Packet E x Packet F scheduled composition evidence: the opt-in Packet E
+scheduler drives authorized local-workspace ingestion through public Memory
+Truth and Retrieval V3. It is not ZF-007/ZF-008 product exit, complete
+Packet E product acceptance, complete Packet H, or Phase 2.
+Continuous/scheduled Packet F acceptance remains open. Packet G composition
+and product acceptance, complete Packet E product acceptance, ZF-010 product
+exit, complete Wave 4 E–G (complete Packet H), and the Phase 2 journey
+remain. Stable project identity and deterministic Project Context Capsules
+still precede graph shadow evaluation.
 
-Wave 3 component evidence remains experimental. It adds no provider support,
-production startup wiring, durable scheduler/notification state, stable SDK,
-release, or support claim. Implementation packets use sanitized synthetic
-fixtures and disposable Core state; private data, publication actions, and
-macOS support remain outside their boundary.
+Wave 3 component evidence remains experimental as originally landed. Later
+merged PRs #82 and #84 added CoreService/startup capture-runtime wiring and
+the opt-in Packet E scheduler. That wiring does not add provider support, a
+stable SDK, release, or a support claim. Implementation packets use sanitized
+synthetic fixtures and disposable Core state; private data, publication
+actions, and macOS support remain outside their boundary.
 
 ## Registered-source admission PR1 contract (2026-08-23)
 
@@ -2510,14 +2584,10 @@ or papered over in this integration.
   continuous-capture evidence to deterministic source-fact promotion.
   `add_candidate` entered ongoing-client policy and non-witness workspace
   facts remained tentative; archive importer is a distinct lifecycle.
-  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected. PR #78
-  later merged that Core-owned admission contract, so the live frontier is no
-  longer "design the missing admission seam." Packet E/G are
-  component-complete; remaining work is their composition/product acceptance,
-  ZF-010, complete Wave 4 E–G, and Phase 2. ZF-007/ZF-008/ZF-009 product
-  acceptance, the first real source/client pair, production wiring, and any
-  release/support claim remain OPEN. Continuous/scheduled Packet F acceptance
-  remains open. macOS remains unsupported/absent/deferred. See the 2026-08-24
-  Packet H-D reconstruction note above for the foreground disposable proof that
-  now exercises Packet F, PR #78 admission, public Memory Truth, and Retrieval
-  V3 without composing Packet E or Packet G.
+  Hardcoded allowlist/`explicit_user_statement` relabeling was rejected.
+  That historical stop is not current frontier language. See the 2026-08-24
+  current milestone, Packet H-D reconstruction note, and Packet E x Packet F
+  scheduled composition evidence section for later merged PRs
+  #78/#79/#82/#84, existing CoreService/startup wiring, and this local
+  composition checkout. Those later facts do not belong under this
+  2026-08-22 heading.

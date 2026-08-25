@@ -7,6 +7,11 @@ contract, not evidence that any provider supports continuous capture.
 
 ## Boundary
 
+The historical first-slice paragraph below remains the ledger/admission origin.
+It is not the current Core composition: PRs #82 and #84 later wired
+`capture_runtime` through `CoreService` and package startup, and added the
+disabled-by-default Packet E scheduler. See the productized sections below.
+
 Capture is local-only, opt-in, and foreground-only. Core remains the sole
 canonical authority. This slice contains no network implementation, OAuth flow,
 token/credential handling, background scheduler, dashboard/package-startup
@@ -346,3 +351,17 @@ scheduler status.
 This slice does not claim complete Packet E product acceptance, provider or
 network/OAuth support, dashboard enablement, ZF-010, ranking/schema changes,
 release, or macOS support.
+
+A focused CoreService composition test proves that the same opt-in scheduler,
+once due, drives an authorized and enabled local-workspace source through
+public Memory Truth and Retrieval V3 with exact withdrawal, in-place update,
+restart idempotence, and fail-closed negative gates. The two focused tests
+call `capture_scheduler.run_cycle()`, the same method used by the background
+loop, without starting that thread. That is Packet E x Packet F scheduled
+composition evidence. It is not ZF-007/ZF-008 product exit, complete Packet
+E/H product acceptance, Phase 2, provider or client support, macOS support,
+or universal continuous capture. Continuous/scheduled Packet F acceptance
+remains open. `CoreService` accepts an optional injected clock so due
+incremental cycles can be made deterministic; production still uses `utc_now`.
+No new CLI or health UI is added. Existing content-free scheduler status
+remains a public non-mutating read.

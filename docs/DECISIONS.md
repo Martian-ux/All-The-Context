@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## ADR-142: Packet E x Packet F scheduled composition is opt-in scheduler evidence, not Packet H
+
+**Status:** accepted locally on 2026-08-24 as Packet E x Packet F scheduled
+composition evidence on top of protected main
+`27d4ff397aff822bc5e3a14b72a7458f8604ab5a`; this candidate remains a local
+checkout until pushed and merged. This is not ZF-007/ZF-008 product exit,
+complete Packet E product acceptance, complete Packet H, Phase 2, real
+provider or client support, hosted/full-suite acceptance, release, or macOS
+support. Continuous/scheduled Packet F acceptance remains open. ADR-139
+remains the shared foreground capture runtime. ADR-141 remains the isolated
+Packet E scheduler productization. ADR-137 remains the disposable Packet H-D
+foreground proof and is not this scheduled composition.
+
+The already-merged opt-in Core scheduler is the only capture loop in this
+slice. An isolated `CoreService` vault authorizes and enables one Packet F
+local-workspace source, then the two focused tests call
+`capture_scheduler.run_cycle()`, the same method used by the background loop,
+without starting that thread. Public Memory Truth (`list_memory_truth`,
+`get_memory_truth`, `memory_truth_coverage`) and Retrieval V3 (search,
+bootstrap, get) are the acceptance surfaces. Direct SQL row counts are not.
+The proof reuses Packet H-D truth/retrieval helpers but is not Packet H.
+`CoreService` accepts an optional injected clock so incremental due times are
+deterministic; production continues to use `utc_now`. No new CLI, scheduler
+table, health UI, or dashboard/desktop auto-enable is added. Existing
+content-free scheduler status remains a public non-mutating read: status
+equality holds and `running` remains false. Dedicated existing scheduler
+tests own internal non-mutation of reauthorization and rotation state.
+
+The focused synthetic journey proves: an initial due cycle admits four
+structural current records; a cycle before the incremental interval is due
+creates no new public records; after the injected clock advances, deleting one
+source item and changing another yields exact public source-reference
+withdrawal, in-place update of the same current identity with changed public
+`binding_hash`, no duplicate current records, and
+`status_reason == "record is soft-deleted"` rather than an ordinary tombstone;
+restart from the same vault plus a third unchanged due cycle is idempotent
+with zero new records. Negative gates keep public record counts at zero when
+the scheduler env is absent, the sidecar is disabled, or
+`ATC_UPDATE_HEALTH_OPERATION` is present, including the empty string.
+
+Evidence is the focused scheduled composition tests in
+`tests/unit/test_scheduled_packet_f_composition.py` plus the related
+scheduler/runtime nodeids recorded in `STATUS.md`, Ruff check and format
+`--check` on touched Python files, and mypy on package source. Full
+repository pytest, hosted CI, private data, and macOS work were not run.
+
 ## ADR-140: Direct-user formation maps only declared Packet G L1+ turns
 
 **Status:** accepted locally on 2026-08-24 as composition evidence for one
