@@ -2,20 +2,20 @@
 
 ## Current milestone
 
-As of 2026-08-24 UTC, protected main is
-`27d4ff397aff822bc5e3a14b72a7458f8604ab5a` and contains the merged Import
-Truth, Memory Truth, Retrieval, Context UI, provider-neutral Continuous
+As of 2026-08-24 UTC, protected main contains the merged Import Truth, Memory
+Truth, Retrieval, Context UI, provider-neutral Continuous
 Capture foundations, the PR #78 registered-source admission contract, the
 PR #79 Packet H-D disposable proof
 (`034d995d99802651537d91206c10c0018390dcd9`), the PR #82 CoreService/startup
-capture-runtime wiring, and the PR #84 opt-in Packet E scheduler. This local
+capture-runtime wiring, and the PR #84 opt-in Packet E scheduler. The exact
+protected-main SHA is `27d4ff397aff822bc5e3a14b72a7458f8604ab5a`. This local
 checkout, which has not been pushed or merged, adds Packet E x Packet F
 scheduled composition evidence over that scheduler. It is not ZF-007/ZF-008
 product exit; continuous/scheduled Packet F acceptance remains open. The
 separately published immutable `0.1.0-beta.6` remains the current
 downloadable release. Packet H-D remains disposable proof/lab evidence only;
-it is not released. Development evidence after beta.6 does not become
-release, exact-artifact, client/provider, or private-data acceptance.
+it is not released. Development evidence after beta.6 does not
+become release, exact-artifact, client/provider, or private-data acceptance.
 
 Core remains the authoritative local service and binds to loopback by default.
 The supported posture is Windows and supported Linux source/package work; the
