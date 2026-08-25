@@ -37,7 +37,7 @@ from fastapi import (
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -52,6 +52,7 @@ from ..browser_session import (
 )
 from ..capture import CaptureError, CaptureRunResult
 from ..capture_runtime import (
+    authorize_local_workspace,
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
@@ -249,6 +250,13 @@ class CaptureCreateRequest(BaseModel):
     account_fingerprint: str | None = None
     requested_scopes: list[str] = Field(default_factory=list, max_length=64)
     local_only_acknowledged: bool = False
+
+
+class CaptureWorkspaceAuthorizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root: str = Field(min_length=1, max_length=16_384)
+    local_only_acknowledged: StrictBool
 
 
 def create_app(
@@ -967,6 +975,20 @@ def create_app(
             local_only_acknowledged=request.local_only_acknowledged,
         )
         return source.model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/workspaces/authorize")
+    def authorize_capture_workspace(
+        request: CaptureWorkspaceAuthorizeRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        authorized = authorize_local_workspace(
+            core.store,
+            active_config,
+            Path(request.root),
+            local_only_acknowledged=request.local_only_acknowledged,
+        )
+        refresh_local_workspace_adapter(core.capture, active_config)
+        return authorized
 
     @app.get("/v1/admin/capture/sources")
     def list_capture_sources(

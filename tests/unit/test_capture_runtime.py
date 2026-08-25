@@ -1918,6 +1918,119 @@ def test_admin_run_refreshes_adapter_after_late_authorization(tmp_path: Path) ->
         _assert_no_root_leak(body, workspace, config.data_dir)
 
 
+def test_admin_authorize_workspace_is_bounded_idempotent_and_refreshes_core(
+    tmp_path: Path,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
+    workspace = _workspace(tmp_path)
+    with CoreService(config) as service:
+        principal, token = service.store.create_client(
+            ClientCreate(name="capture-admin", scopes=["admin"], auto_approve=False)
+        )
+        assert principal.id
+        app = create_app(config, service=service)
+        headers = {"Authorization": f"Bearer {token}"}
+        with TestClient(app) as client:
+            assert (
+                client.post(
+                    "/v1/admin/capture/workspaces/authorize",
+                    json={
+                        "root": str(workspace),
+                        "local_only_acknowledged": True,
+                    },
+                ).status_code
+                == 401
+            )
+            missing_ack = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={"root": str(workspace)},
+            )
+            assert missing_ack.status_code == 422
+            too_long = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={"root": "x" * 16_385, "local_only_acknowledged": True},
+            )
+            assert too_long.status_code == 422
+            relative = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={"root": "workspace", "local_only_acknowledged": True},
+            )
+            assert relative.status_code == 422
+            assert relative.json()["error"]["code"] == "capture_authorization_unavailable"
+            home = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={"root": "~", "local_only_acknowledged": True},
+            )
+            assert home.status_code == 422
+            assert home.json()["error"]["code"] == "capture_authorization_unavailable"
+            refused = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={"root": str(workspace), "local_only_acknowledged": False},
+            )
+            assert refused.status_code == 422
+            assert refused.json()["error"]["code"] == "capture_local_only_required"
+            authorized_response = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={
+                    "root": str(workspace),
+                    "local_only_acknowledged": True,
+                },
+            )
+            repeated_response = client.post(
+                "/v1/admin/capture/workspaces/authorize",
+                headers=headers,
+                json={
+                    "root": str(workspace),
+                    "local_only_acknowledged": True,
+                },
+            )
+            assert authorized_response.status_code == 200
+            assert repeated_response.status_code == 200
+            authorized = authorized_response.json()
+            repeated = repeated_response.json()
+            assert authorized["provider"] == LOCAL_GIT_WORKSPACE_PROVIDER
+            assert authorized["lifecycle_state"] == "disabled"
+            assert authorized["reconciled"] is False
+            assert repeated["id"] == authorized["id"]
+            assert repeated["reconciled"] is True
+            assert LOCAL_GIT_WORKSPACE_PROVIDER in service.capture.adapters
+            source_id = str(authorized["id"])
+            enabled = client.post(
+                f"/v1/admin/capture/sources/{source_id}/enable",
+                headers=headers,
+            )
+            first_run = client.post(
+                f"/v1/admin/capture/sources/{source_id}/run",
+                headers=headers,
+            )
+            replay = client.post(
+                f"/v1/admin/capture/sources/{source_id}/run",
+                headers=headers,
+            )
+            status = client.get(
+                f"/v1/admin/capture/sources/{source_id}/status",
+                headers=headers,
+            )
+        assert enabled.status_code == 200
+        assert first_run.status_code == 200
+        assert first_run.json()["status"] == "completed"
+        assert first_run.json()["applied_events"] == 5
+        assert replay.status_code == 200
+        assert replay.json()["status"] == "completed"
+        assert replay.json()["applied_events"] == 0
+        assert status.status_code == 200
+        assert status.json()["source"]["lifecycle_state"] == "enabled"
+        assert status.json()["last_run"]["state"] == "completed"
+        for response in (authorized_response, repeated_response, first_run, replay, status):
+            _assert_no_root_leak(response.json(), workspace, config.data_dir)
+
+
 def test_admin_run_fail_closes_after_sidecar_invalidation(tmp_path: Path) -> None:
     config = CoreConfig.in_directory(tmp_path / "core", require_auth=True)
     workspace = _workspace(tmp_path)
