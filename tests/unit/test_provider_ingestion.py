@@ -2599,6 +2599,12 @@ def test_rebuild_ingestion_failure_rolls_back_withdrawal(
     assert "rebuild_published_generation" not in sources[0]["metadata"]
     candidates, _ = store.list_candidates(status=None, source_id=source_id)
     assert any(item.disposition.value == "staged" for item in candidates)
+    # A normal Core startup calls this recovery evaluator. Rebuild staging must
+    # remain inert until the source-bound atomic cutover validates and publishes.
+    assert store.evaluate_staged_observations() == 0
+    for record_id, history in prior_history.items():
+        assert store.get_record(record_id).content == prior_content[record_id]
+        assert store.record_history(record_id) == history
 
     monkeypatch.setattr(store, "_evaluate_observation_tx", original_evaluate)
     resumed = ArchiveImportService(store).reprocess_source(source_id)
