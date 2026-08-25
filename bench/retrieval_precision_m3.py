@@ -277,13 +277,16 @@ def run(work_dir: Path, *, fixture_path: Path = FIXTURES) -> dict[str, Any]:
     }
 
 
-def baseline_payload(report: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a content-free, exact baseline snapshot for the current revision."""
+def baseline_payload(report: Mapping[str, Any], *, captured_revision: str) -> dict[str, Any]:
+    """Return a content-free baseline snapshot with an explicit revision marker."""
+
+    if not captured_revision:
+        raise PrecisionEvaluationError("captured_revision is required for a baseline snapshot")
 
     return {
         "schema": SCORECARD_SCHEMA,
         "report_kind": REPORT_KIND,
-        "captured_revision": "f5e3a2b6e7f86ad65c0bf9aa78d6baa8b639456f",
+        "captured_revision": captured_revision,
         "fixture_sha256": report["fixture_sha256"],
         "case_count": report["case_count"],
         "cases": report["cases"],
@@ -342,7 +345,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-baseline",
         action="store_true",
-        help="Write the checked-in baseline shape from this run.",
+        help="Write a baseline shape from this run; requires --captured-revision.",
+    )
+    parser.add_argument(
+        "--captured-revision",
+        help="Explicit source revision to record when writing a baseline.",
     )
     parser.add_argument(
         "--baseline",
@@ -383,9 +390,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.markdown.write_text(render_markdown(report), encoding="utf-8")
         print(f"wrote {args.markdown}")
     if args.write_baseline:
+        if not args.captured_revision:
+            raise PrecisionEvaluationError("--captured-revision is required with --write-baseline")
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
         args.baseline.write_text(
-            json.dumps(baseline_payload(report), indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                baseline_payload(report, captured_revision=args.captured_revision),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         print(f"wrote {args.baseline}")

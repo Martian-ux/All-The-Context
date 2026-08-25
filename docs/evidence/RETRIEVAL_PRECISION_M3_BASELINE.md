@@ -1,4 +1,4 @@
-# Milestone 3 synthetic retrieval precision baseline
+# Milestone 3 synthetic retrieval precision evidence
 
 This is a privacy-safe, developer-only regression lane. It builds a temporary
 fictional Core vault through `CoreStore.add_candidate`, searches through the
@@ -9,7 +9,7 @@ The checked-in snapshot in
 [`bench/baselines/retrieval_precision_m3_f5e3a2b.json`](../../bench/baselines/retrieval_precision_m3_f5e3a2b.json)
 was captured at `f5e3a2b6e7f86ad65c0bf9aa78d6baa8b639456f`.
 
-## Baseline result
+## Historical baseline result
 
 The baseline is intentionally an observation, not a fabricated quality claim.
 The aggregate currently fails because the known precision and coverage-gap
@@ -28,6 +28,30 @@ stored without fixture text, queries, record IDs, or trace IDs.
 Aggregate precision is `0.373333` across five cases, with `1/5` cases passing,
 `13` total returned items, and deterministic repeated rankings. The abstention
 case returned one item, so its honest-abstention check failed.
+
+## Current correction result
+
+The current integrated production path uses focus query terms for hard task
+coverage and counts those terms against content only. Multi-term hard coverage
+rejects coverage below one half, and a lone non-alias candidate must cover all
+meaningful terms before it is admitted. Single-term, alias, and empty-query
+behavior retain their existing usefulness/fail-open paths. Scope, project, and
+kind evidence remain dedicated signals.
+
+The unchanged five-case fixture now produces an honest quality pass:
+
+| Case | Precision at 5 or returned depth | First relevant rank | Returned count | Abstained | Pass |
+|---|---:|---:|---:|:---:|:---:|
+| `exact_project_phrase` | 1.000000 | 1 | 1 | no | pass |
+| `platform_support_over_linux_noise` | 1.000000 | 1 | 1 | no | pass |
+| `local_core_relay_architecture` | 1.000000 | 1 | 1 | no | pass |
+| `mcp_provider_ingestion` | 1.000000 | 1 | 1 | no | pass |
+| `coverage_gap_abstention` | — | — | 0 | yes | pass |
+
+Aggregate precision is `1.000000` across five cases, with `5/5` cases passing,
+`4` total returned items, one honest abstention, and deterministic repeated
+rankings. The current quality gate is tested independently; it does not
+overwrite or compare future production output to the historical snapshot.
 
 ## Reproduce
 
@@ -51,7 +75,7 @@ The focused harness tests are:
 python -m pytest tests/unit/test_retrieval_precision_m3.py
 ```
 
-The lane must be rerun after a production precision change. Update the
-checked-in baseline only after reviewing the content-free score delta and
-capturing the new production revision deliberately; the baseline test will
-surface any unreviewed score change.
+The lane must be rerun after a production precision change. Preserve the
+historical snapshot; if a new snapshot is deliberately needed, provide its
+explicit revision with `--write-baseline --captured-revision <sha>` after
+reviewing the content-free score delta.

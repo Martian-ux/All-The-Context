@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
-from allthecontext.admissibility import ConflictState
+from allthecontext.admissibility import ConflictState, DeterministicAdmissibilityGate
 from allthecontext.config import CoreConfig
 from allthecontext.models import ApprovalRequest, BootstrapRequest, CandidateInput, SearchRequest
 from allthecontext.retrieval import (
@@ -185,7 +185,7 @@ def test_usefulness_reranker_neutralizes_nonfinite_or_malformed_lexical_scores(
         store.close()
 
 
-def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path) -> None:
+def test_admissibility_uses_focus_content_tokens_not_raw_metadata(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "admissibility.sqlite3")
     store.initialize_vault("synthetic", "UTC")
     candidate = store.add_candidate(
@@ -193,7 +193,7 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
             kind="location",
             content="Helios",
             scopes=["project:helios"],
-            idempotency_key="raw-query-admissibility",
+            idempotency_key="focus-query-admissibility",
         )
     )
     record = store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
@@ -208,7 +208,7 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
                 SearchRequest(query="what is Helios", current_project="helios"),
                 {record.id: ConflictState.CLEAR},
             )
-            assert inputs[0].signals.task_query_coverage == round(1 / 3, 6)
+            assert inputs[0].signals.task_query_coverage == 1.0
 
             alias_inputs, _alias_context = _admissibility_inputs(
                 [row],
@@ -216,6 +216,153 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
                 {record.id: ConflictState.CLEAR},
             )
             assert alias_inputs[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
+
+
+def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility-noise.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    noise = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="All the context remains local and bounded.",
+            tags=["provider:chatgpt"],
+            idempotency_key="stopword-noise",
+        )
+    )
+    provider_noise = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="An unrelated observatory inventory note.",
+            tags=["provider:chatgpt"],
+            idempotency_key="provider-tag-noise",
+        )
+    )
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="ingestion_fact",
+            content="MCP provider ingestion imports records into the local Core.",
+            scopes=["project:atlas"],
+            tags=["provider:chatgpt"],
+            idempotency_key="provider-ingestion-relevant",
+        )
+    )
+    records = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (noise, provider_noise, relevant)
+    ]
+    try:
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM context_records WHERE id IN (?,?,?)",
+                [item.id for item in records],
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+            inputs, context = _admissibility_inputs(
+                [by_id[item.id] for item in records],
+                SearchRequest(query="MCP provider ingestion context"),
+                {item.id: ConflictState.CLEAR for item in records},
+            )
+            coverage = {
+                candidate.key: candidate.signals.task_query_coverage for candidate in inputs
+            }
+            assert coverage[records[0].id] == 0.0
+            assert coverage[records[1].id] == 0.0
+            assert coverage[records[2].id] == 1.0
+
+            focus_inputs, _focus_context = _admissibility_inputs(
+                [by_id[records[0].id]],
+                SearchRequest(query="all the context product constraints"),
+                {records[0].id: ConflictState.CLEAR},
+            )
+            assert focus_inputs[0].signals.task_query_coverage == 0.0
+
+            decisions = DeterministicAdmissibilityGate().evaluate_many(inputs, context).decisions
+            admitted = {decision.key for decision in decisions if decision.admitted}
+            assert records[2].id in admitted
+            assert records[0].id not in admitted
+            assert records[1].id not in admitted
+
+            principal = _principal(
+                {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+            )
+            engine = RetrievalEngine(store)
+            stopword_search = engine.search(
+                SearchRequest(query="all the context product constraints", limit=10),
+                principal,
+            )
+            assert records[0].id not in {item.id for item in stopword_search.items}
+            provider_search = engine.search(
+                SearchRequest(query="MCP provider ingestion", limit=10), principal
+            )
+            assert records[1].id not in {item.id for item in provider_search.items}
+            assert records[2].id in {item.id for item in provider_search.items}
+    finally:
+        store.close()
+
+
+def test_retrieval_preserves_explicit_filters_and_single_term_usefulness(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility-filters.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="workflow",
+            content="MCP provider ingestion workflow for the Atlas project.",
+            scopes=["project:atlas"],
+            idempotency_key="filter-relevant",
+        )
+    )
+    other = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="MCP provider ingestion fact for a different project.",
+            scopes=["project:other"],
+            idempotency_key="filter-other",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (relevant, other)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        filtered = engine.search(
+            SearchRequest(
+                query="MCP provider ingestion",
+                scopes=["project:atlas"],
+                kinds=["workflow"],
+                limit=10,
+            ),
+            principal,
+        )
+        assert [item.id for item in filtered.items] == [approved[0].id]
+
+        single = engine.search(SearchRequest(query="MCP", limit=10), principal)
+        assert approved[0].id in [item.id for item in single.items]
+
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM context_records WHERE id IN (?,?)",
+                [item.id for item in approved],
+            ).fetchall()
+            inputs, _context = _admissibility_inputs(
+                rows,
+                SearchRequest(
+                    query="MCP provider ingestion",
+                    kinds=["workflow"],
+                    current_project="atlas",
+                ),
+                {item.id: ConflictState.CLEAR for item in approved},
+            )
+            by_id = {candidate.key: candidate.signals for candidate in inputs}
+            assert by_id[approved[0].id].task_query_coverage == 1.0
+            assert by_id[approved[1].id].task_query_coverage == 1.0
+            assert by_id[approved[0].id].scope_project_fit == 1.0
+            assert by_id[approved[1].id].scope_project_fit == 0.0
+            assert by_id[approved[0].id].kind_compatibility == 1.0
+            assert by_id[approved[1].id].kind_compatibility == 0.0
     finally:
         store.close()
 

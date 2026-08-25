@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from bench.retrieval_precision_m3 import (
     DEFAULT_BASELINE,
     FIXTURES,
     PrecisionEvaluationError,
-    baseline_payload,
     load_fixture,
     run,
 )
@@ -79,11 +79,20 @@ def test_existing_core_database_is_refused(tmp_path: Path) -> None:
         run(tmp_path)
 
 
-def test_checked_in_baseline_is_an_honest_snapshot_not_a_quality_claim(tmp_path: Path) -> None:
+def test_checked_in_baseline_is_preserved_as_a_historical_snapshot() -> None:
     baseline = json.loads(DEFAULT_BASELINE.read_text(encoding="utf-8"))
-    report = run(tmp_path)
 
     assert baseline["captured_revision"] == "f5e3a2b6e7f86ad65c0bf9aa78d6baa8b639456f"
-    assert baseline == baseline_payload(report)
+    assert baseline["fixture_sha256"] == hashlib.sha256(FIXTURES.read_bytes()).hexdigest()
+    assert baseline["case_count"] == 5
     assert baseline["passed"] is False
     assert baseline["scorecard"]["passed_case_count"] < baseline["case_count"]
+
+
+def test_current_production_quality_gate_passes(tmp_path: Path) -> None:
+    report = run(tmp_path)
+
+    assert report["passed"] is True
+    assert report["scorecard"]["passed_case_count"] == report["case_count"] == 5
+    assert report["scorecard"]["aggregate_precision"] == 1.0
+    assert report["scorecard"]["abstention_case_count"] == 1

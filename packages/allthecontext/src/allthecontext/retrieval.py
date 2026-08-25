@@ -54,6 +54,7 @@ from .temporal import (
 )
 
 _MAX_QUERY_TOKENS = 32
+_MIN_MULTI_TERM_COVERAGE = 0.5
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
 _MAX_MANDATORY_PREFERENCE_RESERVE = 8
@@ -73,6 +74,7 @@ _QUERY_STOPWORDS = frozenset(
         "about",
         "an",
         "and",
+        "all",
         "can",
         "do",
         "does",
@@ -85,6 +87,7 @@ _QUERY_STOPWORDS = frozenset(
         "on",
         "or",
         "please",
+        "project",
         "tell",
         "the",
         "to",
@@ -94,14 +97,21 @@ _QUERY_STOPWORDS = frozenset(
         "who",
         "why",
         "with",
+        "context",
     }
 )
 _MAX_CONTEXT_PACK_ITEMS = 32
 _WORD_RE = re.compile(r"[\w@.]+", flags=re.UNICODE)
+_CONTENT_WORD_RE = re.compile(r"[\w@]+", flags=re.UNICODE)
 
 
 def _tokens(value: str) -> list[str]:
     return [token.casefold() for token in _WORD_RE.findall(value)[:_MAX_QUERY_TOKENS]]
+
+
+def _content_tokens(value: str) -> set[str]:
+    """Bound content terms using punctuation boundaries compatible with FTS."""
+    return {token.casefold() for token in _CONTENT_WORD_RE.findall(value)[:_MAX_QUERY_TOKENS]}
 
 
 def _fts_terms(tokens: Sequence[str], operator: str) -> str:
@@ -1550,12 +1560,13 @@ def _admissibility_inputs(
     conflicts: dict[str, ConflictState],
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
     intent = parse_query_intent(request.query)
-    # Hard admissibility uses only the raw normalized query vocabulary. The
-    # usefulness reranker may remove stopwords and apply bounded aliases, but
-    # those ranking conveniences must not make a candidate appear to cover the
-    # whole task or satisfy a requested kind.
+    # Hard task coverage measures meaningful query terms against content only.
+    # Structural metadata remains available to its dedicated scope/project/kind
+    # signals, but generic tags and scopes must not make unrelated content look
+    # task-relevant.
     raw_query_tokens = set(intent.raw_tokens)
-    query_tokens = raw_query_tokens
+    task_tokens = set(intent.focus_tokens or intent.raw_tokens)
+    has_alias = bool(raw_query_tokens & _LEXICAL_ALIASES.keys())
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -1566,23 +1577,22 @@ def _admissibility_inputs(
     )
     for row in rows:
         record_id = str(row["id"])
-        searchable_tokens = set(
-            _tokens(
-                " ".join(
-                    (
-                        str(row["content"]),
-                        str(row["kind"]),
-                        " ".join(_json_set(str(row["tags_json"]))),
-                        " ".join(_json_set(str(row["scopes_json"]))),
-                    )
-                )
+        content_tokens = _content_tokens(str(row["content"]))
+        matched_task_tokens = task_tokens & content_tokens
+        coverage = len(matched_task_tokens) / len(task_tokens) if task_tokens else None
+        # A low-coverage multi-term hit is weak evidence even when metadata
+        # made it through lexical candidate generation. A lone non-alias hit
+        # must cover the complete task or the engine abstains instead of
+        # treating the one surviving row as sufficient evidence.
+        if (
+            coverage is not None
+            and len(task_tokens) > 1
+            and (
+                coverage < _MIN_MULTI_TERM_COVERAGE
+                or (len(rows) == 1 and not has_alias and matched_task_tokens != task_tokens)
             )
-        )
-        coverage = (
-            len(query_tokens & searchable_tokens) / len(raw_query_tokens)
-            if raw_query_tokens
-            else None
-        )
+        ):
+            coverage = 0.0
         row_scopes = _json_set(str(row["scopes_json"]))
         if project_scope is not None:
             scope_fit = float(project_scope in {scope.casefold() for scope in row_scopes})
@@ -1595,7 +1605,7 @@ def _admissibility_inputs(
             1.0
             if requested_kinds and str(row["kind"]) in requested_kinds
             else (
-                float(bool(query_tokens & kind_tokens))
+                float(bool(raw_query_tokens & kind_tokens))
                 if request.current_project is not None and raw_query_tokens
                 else None
             )
@@ -1619,7 +1629,11 @@ def _admissibility_inputs(
                 ),
             )
         )
-    specificity = 0.0 if len(rows) == 1 else _specificity(raw_query_tokens)
+    specificity = (
+        0.0
+        if len(rows) == 1 and (len(task_tokens) <= 1 or has_alias)
+        else _specificity(task_tokens)
+    )
     return candidates, AdmissibilityContext(
         query_specificity=specificity,
         task_specificity=specificity,
