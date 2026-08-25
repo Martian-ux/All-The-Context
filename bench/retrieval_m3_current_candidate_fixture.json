@@ -1,0 +1,209 @@
+{
+  "schema": "atc.retrieval-m3-current-candidate.fixture.v1",
+  "schema_version": 1,
+  "title": "Synthetic Milestone 3 current-candidate retrieval fixture",
+  "description": "Fictional content for strict direct retrieval and split-record bootstrap coverage.",
+  "records": [
+    {
+      "alias": "direct_exact",
+      "kind": "synthetic_exact_fact",
+      "content": "cobalt orbit ledger",
+      "content_anchors": ["cobalt", "orbit", "ledger"],
+      "scopes": ["synthetic:direct"],
+      "tags": ["exact"]
+    },
+    {
+      "alias": "direct_two_of_three",
+      "kind": "synthetic_near_miss",
+      "content": "cobalt orbit",
+      "content_anchors": ["cobalt", "orbit"],
+      "scopes": ["synthetic:direct"],
+      "tags": ["near-miss"]
+    },
+    {
+      "alias": "direct_irrelevant",
+      "kind": "synthetic_irrelevant_note",
+      "content": "meadow inventory note",
+      "content_anchors": [],
+      "scopes": ["synthetic:direct"],
+      "tags": ["irrelevant"]
+    },
+    {
+      "alias": "split_cobalt",
+      "kind": "synthetic_split_fact",
+      "content": "cobalt",
+      "content_anchors": ["cobalt"],
+      "scopes": ["synthetic:split"],
+      "tags": ["split"]
+    },
+    {
+      "alias": "split_orbit",
+      "kind": "synthetic_split_fact",
+      "content": "orbit",
+      "content_anchors": ["orbit"],
+      "scopes": ["synthetic:split"],
+      "tags": ["split"]
+    },
+    {
+      "alias": "split_irrelevant",
+      "kind": "synthetic_irrelevant_note",
+      "content": "meadow inventory note",
+      "content_anchors": [],
+      "scopes": ["synthetic:split"],
+      "tags": ["irrelevant"]
+    },
+    {
+      "alias": "alias_only_cache",
+      "kind": "synthetic_alias_note",
+      "content": "cache",
+      "content_anchors": ["cache"],
+      "scopes": ["synthetic:alias"],
+      "tags": ["alias"]
+    },
+    {
+      "alias": "kind_only_cobalt",
+      "kind": "cobalt",
+      "content": "unrelated meadow note",
+      "content_anchors": [],
+      "scopes": ["synthetic:kind"],
+      "tags": []
+    },
+    {
+      "alias": "tag_only_orbit",
+      "kind": "synthetic_metadata_note",
+      "content": "unrelated meadow note",
+      "content_anchors": [],
+      "scopes": ["synthetic:tag"],
+      "tags": ["orbit"]
+    },
+    {
+      "alias": "scope_only_ledger",
+      "kind": "synthetic_metadata_note",
+      "content": "unrelated meadow note",
+      "content_anchors": [],
+      "scopes": ["ledger"],
+      "tags": []
+    }
+  ],
+  "noise_profiles": {
+    "metadata_only_256": {
+      "count": 256,
+      "kind": "cobalt orbit ledger",
+      "content": "unrelated meadow note",
+      "scopes": ["synthetic:metadata-only"],
+      "tags": ["metadata-only"]
+    }
+  },
+  "cases": [
+    {
+      "id": "direct_exact_precision",
+      "surface": "search",
+      "query": "cobalt orbit ledger",
+      "task_anchors": ["cobalt", "orbit", "ledger"],
+      "record_aliases": ["direct_exact", "direct_two_of_three", "direct_irrelevant"],
+      "expected_aliases": ["direct_exact"],
+      "limit": 5,
+      "expect_abstention": false
+    },
+    {
+      "id": "direct_two_of_three_abstention",
+      "surface": "search",
+      "query": "cobalt orbit ledger",
+      "task_anchors": ["cobalt", "orbit", "ledger"],
+      "record_aliases": ["direct_two_of_three", "direct_irrelevant"],
+      "expected_aliases": [],
+      "limit": 5,
+      "expect_abstention": true
+    },
+    {
+      "id": "bootstrap_split_union_recall",
+      "surface": "bootstrap",
+      "query": "explain cobalt orbit",
+      "task_anchors": ["cobalt", "orbit"],
+      "record_aliases": ["split_cobalt", "split_orbit", "split_irrelevant"],
+      "expected_aliases": ["split_cobalt", "split_orbit"],
+      "anchor_aliases": ["split_cobalt", "split_orbit"],
+      "anchor_mode": "split_distinct",
+      "budget_chars": 4000,
+      "expect_abstention": false
+    },
+    {
+      "id": "bootstrap_union_insufficient_abstention",
+      "surface": "bootstrap",
+      "query": "explain cobalt orbit ledger",
+      "task_anchors": ["cobalt", "orbit", "ledger"],
+      "record_aliases": ["split_cobalt", "split_orbit"],
+      "expected_aliases": [],
+      "anchor_aliases": ["split_cobalt", "split_orbit"],
+      "anchor_mode": "split_distinct",
+      "budget_chars": 4000,
+      "expect_abstention": true
+    },
+    {
+      "id": "alias_only_not_full_coverage",
+      "surface": "search",
+      "query": "eviction cobalt",
+      "task_anchors": ["eviction", "cobalt"],
+      "record_aliases": ["alias_only_cache"],
+      "expected_aliases": [],
+      "limit": 5,
+      "expect_abstention": true
+    },
+    {
+      "id": "kind_metadata_only_rejection",
+      "surface": "search",
+      "query": "cobalt",
+      "task_anchors": ["cobalt"],
+      "record_aliases": ["kind_only_cobalt"],
+      "expected_aliases": [],
+      "limit": 5,
+      "expect_abstention": true
+    },
+    {
+      "id": "tag_metadata_only_rejection",
+      "surface": "search",
+      "query": "orbit",
+      "task_anchors": ["orbit"],
+      "record_aliases": ["tag_only_orbit"],
+      "expected_aliases": [],
+      "limit": 5,
+      "expect_abstention": true
+    },
+    {
+      "id": "scope_metadata_only_rejection",
+      "surface": "search",
+      "query": "ledger",
+      "task_anchors": ["ledger"],
+      "record_aliases": ["scope_only_ledger"],
+      "expected_aliases": [],
+      "limit": 5,
+      "expect_abstention": true
+    },
+    {
+      "id": "direct_exact_metadata_noise_invariance",
+      "surface": "search",
+      "query": "cobalt orbit ledger",
+      "task_anchors": ["cobalt", "orbit", "ledger"],
+      "record_aliases": ["direct_exact", "direct_two_of_three", "direct_irrelevant"],
+      "expected_aliases": ["direct_exact"],
+      "noise_profile": "metadata_only_256",
+      "compare_with": "direct_exact_precision",
+      "limit": 5,
+      "expect_abstention": false
+    },
+    {
+      "id": "bootstrap_split_metadata_noise_invariance",
+      "surface": "bootstrap",
+      "query": "explain cobalt orbit",
+      "task_anchors": ["cobalt", "orbit"],
+      "record_aliases": ["split_cobalt", "split_orbit", "split_irrelevant"],
+      "expected_aliases": ["split_cobalt", "split_orbit"],
+      "anchor_aliases": ["split_cobalt", "split_orbit"],
+      "anchor_mode": "split_distinct",
+      "noise_profile": "metadata_only_256",
+      "compare_with": "bootstrap_split_union_recall",
+      "budget_chars": 4000,
+      "expect_abstention": false
+    }
+  ]
+}
