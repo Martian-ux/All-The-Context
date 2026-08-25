@@ -15,6 +15,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from .content_evidence import CURATED_CONTENT_ALIASES, project_content_evidence
+
 MAX_ELIGIBLE_CANDIDATES = 50_000
 MAX_CANDIDATE_ID_CHARS = 256
 MAX_RESULTS = 100
@@ -39,11 +41,7 @@ _TOKEN_RE = re.compile(r"[^\W_]+", flags=re.UNICODE)
 _CHANNEL_PRIORITY = {"phrase": 4, "all_terms": 3, "exact_any": 2, "prefix": 1}
 _CHANNEL_SCORE_WEIGHTS = {"phrase": 1.5, "all_terms": 1.25, "exact_any": 1.0, "prefix": 0.5}
 
-# These equivalences are deliberately tiny, inspectable, and independent of
-# vault content. They do not learn from or reveal the eligible vocabulary.
-_CURATED_EQUIVALENTS: dict[str, tuple[str, ...]] = {
-    "eviction": ("cache",),
-}
+_CURATED_EQUIVALENTS = CURATED_CONTENT_ALIASES
 
 
 class DiagnosticReason(StrEnum):
@@ -116,6 +114,8 @@ class _HitState:
     channel_scores: dict[str, float] = field(default_factory=dict)
     term_coverage: int = 0
     alias_coverage: int = 0
+    content_coverage: int = 0
+    matched_anchors: frozenset[str] = frozenset()
 
 
 def _quoted_identifier(value: str) -> str:
@@ -199,6 +199,12 @@ def _joined_query(tokens: Sequence[str], operator: str) -> str:
     return f" {operator} ".join(_quoted_fts_token(token) for token in tokens)
 
 
+def _content_query(fts_query: str) -> str:
+    """Restrict an already literal-quoted FTS expression to record content."""
+
+    return f"content : ({fts_query})"
+
+
 def _prefix_query(tokens: Sequence[str]) -> str:
     prefixable = _deduplicated(token for token in tokens if len(token) >= MIN_PREFIX_TOKEN_CHARS)[
         :MAX_PREFIX_TOKENS
@@ -270,12 +276,21 @@ class LexicalV3:
         query: str,
         *,
         limit: int = 5,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> LexicalSearchResult:
         """Rank only caller-supplied IDs; policy evaluation is intentionally absent."""
         candidates = self._bounded_candidates(eligible_candidate_ids)
         if not 1 <= limit <= MAX_RESULTS:
             raise ValueError(f"limit must be between 1 and {MAX_RESULTS}")
-        return self._search(connection, candidates, query, limit=limit)
+        return self._search(
+            connection,
+            candidates,
+            query,
+            limit=limit,
+            minimum_content_coverage=minimum_content_coverage,
+            coverage_aware=coverage_aware,
+        )
 
     def search_catalog(
         self,
@@ -300,7 +315,11 @@ class LexicalV3:
         query: str,
         *,
         limit: int | None,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> LexicalSearchResult:
+        if minimum_content_coverage is not None and minimum_content_coverage < 1:
+            raise ValueError("minimum_content_coverage must be positive")
         prepared = _prepare_query(query)
         if not candidates:
             return LexicalSearchResult(
@@ -375,25 +394,36 @@ class LexicalV3:
                     limit=None if limit is None else CHANNEL_RESULT_CAP,
                 )
             query_terms = _deduplicated(prepared.tokens)
-            if states and len(query_terms) > 1:
-                coverage = self._term_coverage(connection, query_terms)
-                alias_terms = tuple(
-                    token for token in _expanded_tokens(prepared.tokens) if token not in query_terms
-                )
-                alias_coverage = self._term_coverage(connection, alias_terms)
+            if states and query_terms:
+                target = _quoted_identifier(_CANDIDATE_FTS_TABLE)
+                content_by_id = {
+                    str(row[0]): str(row[1])
+                    for row in connection.execute(
+                        f"SELECT record_id,content FROM temp.{target}"
+                    ).fetchall()
+                }
                 for state in states.values():
-                    state.term_coverage = coverage.get(state.record_id, 0)
-                    state.alias_coverage = alias_coverage.get(state.record_id, 0)
-                minimum_coverage = _minimum_term_coverage(len(query_terms))
+                    evidence = project_content_evidence(
+                        content_by_id.get(state.record_id, ""),
+                        query_terms,
+                        _CURATED_EQUIVALENTS,
+                        allow_prefix="prefix" in state.channel_scores,
+                    )
+                    state.term_coverage = len(evidence.direct_matches)
+                    state.alias_coverage = len(evidence.alias_matches)
+                    state.content_coverage = len(evidence.matched_anchors)
+                    state.matched_anchors = evidence.matched_anchors
+                minimum_coverage = minimum_content_coverage or _minimum_term_coverage(
+                    len(query_terms)
+                )
                 states = {
                     record_id: state
                     for record_id, state in states.items()
-                    if state.term_coverage >= minimum_coverage
-                    or (state.term_coverage == 0 and state.alias_coverage > 0)
+                    if state.content_coverage >= minimum_coverage
                 }
             if not states:
                 reasons.append(DiagnosticReason.NO_MATCHES)
-            hits = self._rank(states, limit)
+            hits = self._rank(states, limit, coverage_aware=coverage_aware)
             diagnostics = VocabularyDiagnostics(
                 eligible_candidate_count=len(candidates),
                 indexed_candidate_count=indexed_count,
@@ -457,7 +487,7 @@ class LexicalV3:
             f"SELECT source.record_id FROM main.{source} AS source "
             f"JOIN temp.{eligible} AS eligible ON eligible.record_id=source.record_id "
             f"WHERE {self.source_fts_table} MATCH ? ORDER BY source.record_id",
-            (fts_query,),
+            (_content_query(fts_query),),
         )
         return max(0, cursor.rowcount)
 
@@ -480,23 +510,6 @@ class LexicalV3:
         )
         row = connection.execute(f"SELECT COUNT(*) FROM temp.{target}").fetchone()
         return int(row[0]) if row is not None else 0
-
-    @staticmethod
-    def _term_coverage(
-        connection: sqlite3.Connection, query_terms: Sequence[str]
-    ) -> dict[str, int]:
-        """Count distinct exact query terms in the already-bounded candidate FTS."""
-        target = _quoted_identifier(_CANDIDATE_FTS_TABLE)
-        coverage: dict[str, int] = {}
-        for token in query_terms:
-            rows = connection.execute(
-                f"SELECT record_id FROM temp.{target} WHERE {target} MATCH ?",
-                (_quoted_fts_token(token),),
-            ).fetchall()
-            for row in rows:
-                record_id = str(row[0])
-                coverage[record_id] = coverage.get(record_id, 0) + 1
-        return coverage
 
     @staticmethod
     def _collect_channel(
@@ -527,18 +540,22 @@ class LexicalV3:
         return len(rows)
 
     @staticmethod
-    def _rank(states: dict[str, _HitState], limit: int | None) -> tuple[LexicalHit, ...]:
+    def _rank(
+        states: dict[str, _HitState], limit: int | None, *, coverage_aware: bool = False
+    ) -> tuple[LexicalHit, ...]:
         def ranking_key(state: _HitState) -> tuple[int, int, int, float, str]:
             best_priority = max(_CHANNEL_PRIORITY[channel] for channel in state.channel_scores)
             return (
                 -best_priority,
-                -state.term_coverage,
+                -state.content_coverage,
                 -len(state.channel_scores),
                 -sum(state.channel_scores.values()),
                 state.record_id,
             )
 
         ordered_states = sorted(states.values(), key=ranking_key)
+        if coverage_aware and limit is not None:
+            ordered_states = LexicalV3._coverage_aware_order(ordered_states)
         ordered = ordered_states if limit is None else ordered_states[:limit]
         hits: list[LexicalHit] = []
         for state in ordered:
@@ -557,6 +574,38 @@ class LexicalV3:
                 )
             )
         return tuple(hits)
+
+    @staticmethod
+    def _coverage_aware_order(states: Sequence[_HitState]) -> list[_HitState]:
+        """Prefer bounded contributors that add the most missing anchors."""
+
+        remaining = list(enumerate(states))
+        selected: list[_HitState] = []
+        covered: set[str] = set()
+        while remaining:
+            ranked = [
+                (
+                    len(state.matched_anchors - covered),
+                    original_rank,
+                    state.record_id,
+                    state,
+                )
+                for original_rank, state in remaining
+            ]
+            best_new, _original_rank, _record_id, best_state = min(
+                ranked, key=lambda item: (-item[0], item[1], item[2])
+            )
+            if best_new == 0:
+                selected.extend(state for _rank, state in remaining)
+                break
+            selected.append(best_state)
+            covered.update(best_state.matched_anchors)
+            remaining = [
+                (original_rank, state)
+                for original_rank, state in remaining
+                if state is not best_state
+            ]
+        return selected
 
     @staticmethod
     def _drop_candidate_scope(connection: sqlite3.Connection) -> None:

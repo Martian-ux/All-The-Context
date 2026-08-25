@@ -207,7 +207,7 @@ def test_multi_term_coverage_floor_is_inclusive_and_single_term_is_not_hard_reje
     assert single_decision.admitted is True
 
 
-def test_broad_query_scaffolding_allows_a_bounded_content_subset() -> None:
+def test_direct_multi_term_floor_is_not_relaxed_by_query_shape() -> None:
     context = AdmissibilityContext(
         query_specificity=0.9,
         task_specificity=0.9,
@@ -224,7 +224,7 @@ def test_broad_query_scaffolding_allows_a_bounded_content_subset() -> None:
     )
     by_key = {decision.key: decision for decision in decisions}
 
-    assert by_key["bounded-subset"].admitted is True
+    assert by_key["bounded-subset"].admitted is False
     assert by_key["weak-subset"].admitted is False
 
 

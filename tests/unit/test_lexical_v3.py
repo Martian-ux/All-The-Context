@@ -49,15 +49,14 @@ def _ids(result: object) -> list[str]:
     return [hit.record_id for hit in result.hits]
 
 
-def test_weighted_bm25_favors_content_over_lower_weight_structural_fields() -> None:
+def test_structural_only_matches_cannot_satisfy_content_retrieval() -> None:
     connection = _connection()
     _insert(connection, "content-hit", content="quartz")
     _insert(connection, "kind-hit", kind="quartz")
 
     result = LexicalV3().search(connection, ["kind-hit", "content-hit"], "quartz")
 
-    assert _ids(result) == ["content-hit", "kind-hit"]
-    assert result.hits[0].score > result.hits[1].score
+    assert _ids(result) == ["content-hit"]
     connection.close()
 
 
@@ -231,7 +230,7 @@ def test_multi_term_fallback_abstains_when_only_one_term_matches() -> None:
     connection.close()
 
 
-def test_multi_term_fallback_keeps_content_alias_recovery_bounded() -> None:
+def test_alias_only_coverage_does_not_become_full_multi_term_coverage() -> None:
     connection = _connection()
     _insert(connection, "alias-content", content="A cache invalidation note.")
 
@@ -239,7 +238,7 @@ def test_multi_term_fallback_keeps_content_alias_recovery_bounded() -> None:
         connection, ["alias-content"], "segmented eviction strategy", limit=5
     )
 
-    assert _ids(result) == ["alias-content"]
+    assert _ids(result) == []
     connection.close()
 
 

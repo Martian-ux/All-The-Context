@@ -153,6 +153,8 @@ class AdmissibilityContext:
     query_specificity: float | None = None
     task_specificity: float | None = None
     task_query_term_count: int | None = None
+    # Retained as an inert compatibility field. Direct admissibility never
+    # derives a threshold from query scaffolding.
     task_query_scaffolding_count: int | None = None
 
 
@@ -326,13 +328,15 @@ class DeterministicAdmissibilityGate:
         task_underspecified = (
             not specificities or max(specificities) < self.config.minimum_task_specificity
         )
+        # Direct multi-term searches supply a term count and retain the
+        # configured floor. Bootstrap omits that count and checks its union
+        # separately; scaffolding never changes this threshold.
         hard_coverage_shortfall = (
             context.task_query_term_count is not None
             and context.task_query_term_count > 1
             and not task_underspecified
             and factors.task_query_coverage is not None
-            and factors.task_query_coverage
-            < self._minimum_task_query_coverage(context.task_query_term_count, context)
+            and factors.task_query_coverage < self.config.minimum_task_query_coverage
         )
         sparse = evidence_factor_count < self.config.minimum_evidence_factors
         fail_open_reasons: list[AdmissibilityReason] = []
@@ -369,24 +373,6 @@ class DeterministicAdmissibilityGate:
             reason_codes=reasons,
         )
         return self._with_shadow(decision, task_underspecified)
-
-    def _minimum_task_query_coverage(
-        self,
-        anchor_count: int,
-        context: AdmissibilityContext,
-    ) -> float:
-        """Allow broad requests to assemble a bounded set of content anchors.
-
-        Focused multi-term requests retain the configured 0.75 floor. When
-        query scaffolding is present, a candidate may cover a meaningful
-        content subset, but it still needs two anchors for short requests or
-        three for longer requests. This is a query-shape rule, not a candidate
-        identity or result-count exception.
-        """
-        if not context.task_query_scaffolding_count:
-            return self.config.minimum_task_query_coverage
-        minimum_matches = 2 if anchor_count <= 3 else 3
-        return min(self.config.minimum_task_query_coverage, minimum_matches / anchor_count)
 
     def _factors(self, signals: AdmissibilitySignals) -> FactorValues:
         for name, value in (
@@ -509,6 +495,7 @@ def _validate_context(context: AdmissibilityContext) -> None:
         or context.task_query_term_count < 0
     ):
         raise ValueError("task_query_term_count must be a non-negative integer")
+
     if context.task_query_scaffolding_count is not None and (
         isinstance(context.task_query_scaffolding_count, bool)
         or not isinstance(context.task_query_scaffolding_count, int)
