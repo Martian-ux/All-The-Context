@@ -1,11 +1,54 @@
 # Architecture decisions
 
+## ADR-144: Same-vault ZF-010 composition forms one declared preference over scheduled Packet G records
+
+**Status:** accepted locally on 2026-08-24 as stacked composition evidence on
+merged PR #86 at protected main
+`f06961e7aaefc37f6f7f3b86d16d50d983cedca7`; this candidate remains a local
+checkout until pushed and merged. This is not ZF-010 product exit, complete
+Packet H, Phase 2, provider or client support, hosted/full-suite acceptance,
+release, private-data evidence, or macOS support. ADR-140 remains the
+direct-user formation mapper. ADR-138 remains the Packet G compile contract.
+ADR-143 remains the Packet G compilation over scheduled Packet E x Packet F
+records and is not this formation work.
+
+Same-vault ZF-010 composition reuses existing code only. One disposable
+`CoreService` vault authorizes and enables a sanitized Packet F workspace,
+runs one due Packet E scheduler cycle without starting the worker thread,
+and compiles those scheduler-admitted public identities through the existing
+Packet G path as setup. A durable `context:read` principal compiles; a
+separate durable witness principal with the exact
+`witness:explicit_user_statement` grant forms. The formation host
+`client_id` matches that witness. Host events and checkpoints are not Core
+persistence. Mapper status `formed` is not current truth by itself:
+disposition and public Memory Truth are required. Direct-user content stays
+out of envelopes; UTF-8 length and SHA-256 must match `turn_ref`. Kind is
+never inferred. `CandidateInput.source_id` stays `None`.
+
+The journey forms one caller-declared `interaction_preference` with an
+aware frozen timestamp, proves APPLIED current public truth, includes that
+preference in the next Packet G compile, then corrects it in place and
+forgets it. Registered-source records remain valid and unmutated.
+Distinctive refusals in this vault are the compile reader failing to mint
+current truth, unsupported caller-declared kinds, and lookalike copied
+envelopes refused by object identity. Instruction-like text is observed and
+never formed. Secret-like input stays content-free. Packet F incremental
+counts and Packet G exact selected counts are not reasserted after the
+preference because mandatory preferences change budgets. No
+`project_decision` or working-state formation is claimed. No Packet G,
+scheduler, retrieval, or formation production behavior is added.
+
+Evidence is the focused same-vault test in
+`tests/unit/test_scheduled_zf010_same_vault.py` plus existing scheduled
+Packet F/G and formation tests, Ruff check and format `--check` on touched
+Python files, `scripts/check_docs.py`, and `git diff --check`. Full
+repository pytest, mypy (no production source touched), hosted CI, private
+data, and macOS work were not run.
+
 ## ADR-143: Packet G compiles scheduled Packet E x Packet F public references in-process
 
-**Status:** accepted locally on 2026-08-24 as Packet G compilation/composition
-evidence stacked on merged PR #85 at protected main
-`15d313f8bee33717e3e59f2583599df5305ca4fd`; this candidate remains a local
-checkout until pushed and merged. This is not ZF-009 product exit, ZF-010,
+**Status:** accepted on protected main on 2026-08-24 through merged PR #86 at
+`f06961e7aaefc37f6f7f3b86d16d50d983cedca7`. This is not ZF-009 product exit, ZF-010,
 complete Packet H, Phase 2, provider or client support, hosted/full-suite
 acceptance, release, private-data evidence, or macOS support. ADR-138 remains
 the Packet G compile contract. ADR-140 remains the separate direct-user
@@ -35,8 +78,10 @@ Evidence is the focused Packet G composition tests in
 `tests/unit/test_scheduled_packet_g_composition.py` plus the extracted
 Packet F journey helpers and existing scheduled Packet F tests, Ruff check
 and format `--check` on touched Python files, `scripts/check_docs.py`, and
-`git diff --check`. Full repository pytest, mypy (no production source
-touched), hosted CI, private data, and macOS work were not run.
+`git diff --check`; PR #86's hosted Linux and Windows Python suites and all
+other required checks passed before merge. Mypy was not required locally
+because no production source was touched. Private-data and macOS work were not
+run.
 
 ## ADR-142: Packet E x Packet F scheduled composition is opt-in scheduler evidence, not Packet H
 

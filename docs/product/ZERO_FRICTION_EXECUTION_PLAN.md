@@ -6,7 +6,7 @@
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
 | Current execution frontier | Packet G product acceptance, complete Packet E product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F scheduled composition evidence now exists over that scheduler and is not ZF-007/ZF-008 product exit or complete Packet E/H acceptance; a later stacked local slice compiles those admitted records through Packet G and is not ZF-009 product exit; continuous/scheduled Packet F acceptance remains open |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F scheduled composition evidence now exists over that scheduler and is not ZF-007/ZF-008 product exit or complete Packet E/H acceptance; PR #86 merged compilation of those admitted records through Packet G and is not ZF-009 product exit; a later stacked local slice forms one caller-declared interaction_preference in that same vault and is not ZF-010 product exit; continuous/scheduled Packet F acceptance remains open |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -41,8 +41,8 @@ V3 via two focused tests that call `capture_scheduler.run_cycle()`, the same
 method used by the background loop, without starting that thread; it is not
 ZF-007/ZF-008 product exit, complete Packet E product acceptance, complete
 Packet H, or Phase 2. Continuous/scheduled Packet F acceptance remains open.
-A later stacked local slice compiles those admitted records through Packet G
-and is not ZF-009 product exit. Remaining work is Packet G product
+PR #86 merged compilation of those admitted records through Packet G and is
+not ZF-009 product exit. Remaining work is Packet G product
 acceptance, complete Packet E product acceptance, ZF-010, complete Wave 4
 E–G, and Phase 2. This plan does not turn the component seams or those
 partial proofs into support, stable-SDK, or complete Packet H acceptance.
@@ -724,8 +724,8 @@ Memory Truth and Retrieval V3 via two focused tests that call
 `capture_scheduler.run_cycle()`, the same method used by the background loop,
 without starting that thread; that is not ZF-007/ZF-008 product exit,
 complete Packet E product acceptance, or complete Packet H.
-Continuous/scheduled Packet F acceptance remains open. A later stacked local
-slice compiles those admitted records through Packet G and is not ZF-009
+Continuous/scheduled Packet F acceptance remains open. PR #86 merged
+compilation of those admitted records through Packet G and is not ZF-009
 product exit. Remaining work is Packet G product acceptance, complete Packet E
 product acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. ZF-007, ZF-008,
 and ZF-009 product acceptance; the first real continuous integration pair; and
@@ -755,8 +755,8 @@ scheduled composition evidence now proves the opt-in Packet E scheduler can
 drive that local-workspace source through public Memory Truth and Retrieval
 V3; it is not ZF-007/ZF-008 product exit, complete Packet E product
 acceptance, complete Packet H, or Phase 2. Continuous/scheduled Packet F
-acceptance remains open. A later stacked local slice compiles those admitted
-records through Packet G and is not ZF-009 product exit. Packet E and Packet G
+acceptance remains open. PR #86 merged compilation of those admitted records
+through Packet G and is not ZF-009 product exit. Packet E and Packet G
 remain component-complete; remaining work is Packet G product acceptance,
 complete Packet E product acceptance, ZF-010, complete Wave 4 E–G, and
 Phase 2. Packet H-D is not complete Packet H or Phase 2 acceptance.
