@@ -24,6 +24,10 @@ from pathlib import Path
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .capture_runtime import (
+    authorize_local_workspace,
+    compose_capture_coordinator,
+)
 from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
 from .client_config import (
     ClientConfigResult,
@@ -48,12 +52,13 @@ from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
-from .storage import CoreStore
+from .storage import CoreStore, StorageError
 from .user_startup import StartupResult, install_user_startup
 
 DESKTOP_CLIENT_NAME = "All The Context Desktop"
 CODEX_CLIENT_NAME = "Codex"
 CLAUDE_CLIENT_NAME = "Claude Desktop"
+SCHEDULER_SETUP_CLIENT_NAME = "All The Context one-time setup scheduler"
 DESKTOP_SCOPES = [
     "*",
     "admin",
@@ -87,6 +92,8 @@ class SetupOptions:
     configure_codex: bool = True
     configure_claude: bool = True
     start_at_login: bool = True
+    workspace_root: Path | None = None
+    workspace_local_only_acknowledged: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +108,8 @@ class SetupResult:
     startup: StartupResult | None
     log_path: Path
     warnings: tuple[str, ...] = ()
+    workspace_source_id: str | None = None
+    continuous_capture_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -640,6 +649,143 @@ def authenticated_dashboard_url(
     return urllib.parse.urljoin(root, path)
 
 
+def _validate_workspace_options(options: SetupOptions) -> None:
+    if options.workspace_root is None:
+        if options.workspace_local_only_acknowledged:
+            raise ValueError("workspace local-only acknowledgement requires a workspace root")
+        return
+    if not options.workspace_local_only_acknowledged:
+        raise ValueError("workspace local-only acknowledgement is required")
+
+
+def _configure_workspace_capture(
+    options: SetupOptions,
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    notify: ProgressCallback,
+    warnings: list[str],
+) -> tuple[str | None, bool]:
+    root = options.workspace_root
+    if root is None:
+        return None, False
+
+    notify("source", "Authorizing the selected local source")
+    authorization = authorize_local_workspace(
+        store,
+        config,
+        root,
+        local_only_acknowledged=True,
+    )
+    source_id = authorization.get("id")
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError("workspace authorization did not return a source")
+
+    coordinator = compose_capture_coordinator(store, config)
+    source = coordinator.get_source(source_id)
+    if source.lifecycle_state == "disabled":
+        source = coordinator.enable(source_id)
+
+    if source.lifecycle_state != "enabled":
+        warnings.append(
+            "Continuous capture remains disabled because the local source is not enabled."
+        )
+        return source_id, False
+
+    return source_id, True
+
+
+def _running_core_scheduler_request(
+    config: CoreConfig,
+    token: str,
+    *,
+    action: str | None = None,
+    timeout: float = 3.0,
+) -> dict[str, object] | None:
+    """Call one scheduler route only after the listener proves this installation."""
+
+    if probe_core(config, timeout=min(timeout, 1.0)) is not CoreProbe.VERIFIED:
+        return None
+    root = f"http://{config.host}:{config.port}"
+    suffix = f"/{action}" if action is not None else ""
+    method = "POST" if action is not None else "GET"
+    request = urllib.request.Request(
+        f"{root}/v1/admin/capture/scheduler{suffix}",
+        data=b"" if method == "POST" else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TypeError, ValueError, UnicodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _scheduler_is_active(payload: dict[str, object] | None) -> bool:
+    return bool(
+        payload is not None
+        and payload.get("config_valid") is True
+        and payload.get("durable_enabled") is True
+        and payload.get("enabled") is True
+        and payload.get("running") is True
+    )
+
+
+def _enable_running_core_scheduler(
+    config: CoreConfig,
+    token: str,
+    *,
+    timeout: float = 3.0,
+) -> bool:
+    """Enable the live scheduler and reconcile an ambiguous activation response."""
+
+    previous = _running_core_scheduler_request(config, token, timeout=timeout)
+    if _scheduler_is_active(previous):
+        return True
+
+    activated = _running_core_scheduler_request(
+        config,
+        token,
+        action="enable",
+        timeout=timeout,
+    )
+    if _scheduler_is_active(activated):
+        return True
+
+    reconciled = _running_core_scheduler_request(config, token, timeout=timeout)
+    if _scheduler_is_active(reconciled):
+        return True
+
+    if previous is not None and previous.get("durable_enabled") is False:
+        _running_core_scheduler_request(
+            config,
+            token,
+            action="disable",
+            timeout=timeout,
+        )
+    return False
+
+
+def _activate_running_core_scheduler(store: CoreStore, config: CoreConfig) -> bool:
+    """Use a revocable one-time administrator rather than the durable desktop token."""
+
+    principal, token = store.create_client(
+        ClientCreate(name=SCHEDULER_SETUP_CLIENT_NAME, scopes=["admin"])
+    )
+    try:
+        return _enable_running_core_scheduler(config, token)
+    finally:
+        with suppress(StorageError):
+            store.revoke_client(principal.id)
+
+
 def perform_setup(
     options: SetupOptions,
     runtime: RuntimeCommand | None = None,
@@ -647,6 +793,7 @@ def perform_setup(
     progress: ProgressCallback | None = None,
     config: CoreConfig | None = None,
 ) -> SetupResult:
+    _validate_workspace_options(options)
     active_runtime = runtime or RuntimeCommand.current()
     active_config = config or CoreConfig.default()
     notify = progress or (lambda _step, _message: None)
@@ -737,6 +884,19 @@ def perform_setup(
     notify("core", "Starting Core on this device")
     log_path = launch_core(active_runtime, active_config)
     dashboard_url = authenticated_dashboard_url(active_config, access.token)
+
+    workspace_source_id, workspace_capture_ready = _configure_workspace_capture(
+        options,
+        store,
+        active_config,
+        notify=notify,
+        warnings=warnings,
+    )
+    continuous_capture_enabled = False
+    if workspace_source_id is not None and workspace_capture_ready:
+        continuous_capture_enabled = _activate_running_core_scheduler(store, active_config)
+        if not continuous_capture_enabled:
+            warnings.append("Continuous capture could not be activated in the running Core.")
     notify("complete", "All The Context is ready")
     return SetupResult(
         vault_id=vault_id,
@@ -749,6 +909,8 @@ def perform_setup(
         startup=startup_result,
         log_path=log_path,
         warnings=tuple(warnings),
+        workspace_source_id=workspace_source_id,
+        continuous_capture_enabled=continuous_capture_enabled,
     )
 
 

@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Complete Wave 4 E–G product acceptance (complete Packet H), the packaged lifecycle-aware source/client journey, and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while later clean-vault journeys exercise the real Core worker through retry, initial snapshot, incremental update/deletion, and restart, then carry worker-produced records through authenticated Packet G pre-generation delivery and controlled ZF-010 preference formation, correction, forget, Core restart, principal reauthentication, and caller-owned L2 checkpoint restore; these close local developer composition gaps, not ZF-007/ZF-008/ZF-009/ZF-010 product exits, supported-client capture, or packaged/live support |
+| Current execution frontier | Accept the optional packaged local-workspace setup on exact artifacts, add the first supported lifecycle-aware client, complete Wave 4 E–G product acceptance (complete Packet H), and run Phase 2 |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; later clean-vault journeys exercise the real Core worker through retry, initial snapshot, incremental update/deletion, and restart, then carry worker-produced records through authenticated Packet G pre-generation delivery and controlled ZF-010 preference formation, correction, forget, Core restart, principal reauthentication, and caller-owned L2 checkpoint restore; this branch also adds optional first-run authorization plus verified scheduler activation for one local workspace without a dashboard. These close local developer and packaged-setup code seams, not exact packaged/live acceptance, supported lifecycle-client capture, or ZF-007/ZF-008/ZF-009/ZF-010 product exits |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -50,9 +50,13 @@ worker-driven update/deletion. A companion clean-vault journey carries the
 worker-created truth through controlled ZF-010 preference formation,
 correction, forget, Core restart, scope reauthentication, and restored host
 checkpoint advancement. These close the local Packet G and ZF-010 developer
-gaps, not supported-client or product exits. Remaining work is complete Wave 4
-E–G product acceptance, the packaged lifecycle-aware source/client journey,
-and Phase 2. This plan does not turn the component seams
+gaps, not supported-client or product exits. This branch also provides the
+optional packaged setup code path for one explicit local workspace: it
+authorizes and enables the source, starts/wakes the durable scheduler, keeps the
+dashboard closed, and reports success only for a running worker. Exact-artifact
+acceptance and the lifecycle-aware client half remain open. Remaining work is
+that artifact acceptance, the first supported lifecycle-aware client, complete
+Wave 4 E–G product acceptance, and Phase 2. This plan does not turn the component seams
 or local proofs into support, a stable SDK, or complete Packet H acceptance.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
@@ -357,6 +361,13 @@ lifecycle semantics or a more representative zero-friction journey.
 **Exit:** installation plus one account connection produces an initial snapshot
 and later incremental evidence with no repeat archive import or manual
 classification.
+
+**Current product path:** optional first-run setup can select and acknowledge
+one local workspace, authorize and enable it, and start or wake the durable Core
+worker without opening the dashboard. Focused local tests cover no-root,
+idempotent repeat, preserved pause/degraded state, second-root refusal, and
+content-free reporting. Exact packaged-artifact and live/private-workspace
+acceptance are still required before this exit is credited.
 
 ### ZF-009: First lifecycle-aware client adapter
 
@@ -770,9 +781,12 @@ not ZF-009 product exit. A later controlled clean-vault journey carries those
 worker-created records through ZF-010 preference formation, correction,
 forget, Core restart, principal reauthentication, and checkpoint restoration.
 It closes the local ZF-010 developer gap, not supported-client or product
-acceptance. Packet E and Packet G remain component-complete; remaining work is
-complete Wave 4 E–G product acceptance, the packaged source/client journey,
-and Phase 2. Packet H-D is not complete Packet H or Phase 2 acceptance.
+acceptance. Optional packaged first-run local-workspace setup is now implemented
+on this branch and activates the real scheduler without opening the dashboard,
+but exact-artifact/live acceptance and the lifecycle-aware client remain open.
+Packet E and Packet G remain component-complete; remaining work is complete
+Wave 4 E–G product acceptance, that client/artifact acceptance, and Phase 2.
+Packet H-D is not complete Packet H or Phase 2 acceptance.
 
 ## 14. Proposed GitHub issue hierarchy
 

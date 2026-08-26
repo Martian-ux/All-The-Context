@@ -16,7 +16,7 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`7e474b89dfb08a75501400b2ca805c002dc21847`. Development evidence on this
+`f3512fe890bf91894a28faa251b3127932c79132`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -27,6 +27,42 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-26 packaged local-workspace onboarding path
+
+The first-run wizard now leaves local-workspace capture blank and disabled by
+default. An operator may instead select one explicit folder and separately
+acknowledge local-only capture. Setup completes its credential, client, startup,
+Core-launch, and dashboard-handoff stages before reusing the Core-owned
+authorization contract as its final mutation. It enables only a newly disabled
+source and preserves an existing paused or degraded source. It then calls the
+authenticated scheduler-enable route with a one-time administrator credential,
+reconciles ambiguous activation responses, and rolls back only a scheduler it
+positively observed as previously disabled. Setup reports continuous capture
+only when Core proves this installation identity and returns valid, durable,
+enabled, and running scheduler state. It
+does not call a capture cycle directly or open the dashboard automatically.
+
+Hidden headless flags expose the same inputs for packaged acceptance without
+adding a second setup authority. With respect to this workspace surface, the
+disposable report adds only the opaque source ID and enabled result; it adds no
+root, acknowledgement, or input content. Existing smoke-only fields remain
+governed by ADR-056 and are deleted with the disposable worktree. Failures,
+progress, warnings, and wizard error copy do not emit the selected root or
+lower-layer source content. Repeating the same root
+is idempotent, a second root fails closed, acknowledgement/root mismatches fail
+before vault mutation, and omitting the root preserves the previous setup path
+without writing scheduler state.
+
+Focused integration validation is `111 passed, 2 skipped` across the new setup,
+wizard, and headless tests plus existing desktop setup/runtime/packaging
+regressions; the two skips are this Windows account's unavailable symlink
+capability. Ruff check and format, mypy over 99 source files, the docs checker,
+and `git diff --check` are clean. The full repository suite is deliberately not
+run locally. This is a product code path, not exact packaged-artifact or
+live/private-workspace acceptance. Ordinary MCP remains L0; no supported
+lifecycle-aware client, complete Packet H/Phase 2, release, provider, or macOS
+claim is added.
 
 ### 2026-08-25 Milestone 5 — bounded typed project graph and safety oracle
 

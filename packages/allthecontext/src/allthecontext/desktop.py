@@ -728,10 +728,18 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
                 configure_codex=not args.no_codex,
                 configure_claude=not args.no_claude,
                 start_at_login=not args.no_startup,
+                workspace_root=args.workspace_root,
+                workspace_local_only_acknowledged=args.acknowledge_local_workspace,
             ),
             installed,
         )
         report = asdict(result)
+        for field_name in (
+            "workspace_root",
+            "workspace_local_only_acknowledged",
+            "acknowledge_local_workspace",
+        ):
+            report.pop(field_name, None)
         report["setup"] = "passed"
         report["log_path"] = str(result.log_path)
         report["codex"] = asdict(result.codex) if result.codex else None
@@ -1027,6 +1035,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-claude", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-startup", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--workspace-root", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--acknowledge-local-workspace", action="store_true", help=argparse.SUPPRESS
+    )
     parser.add_argument("--recovery-data-dir", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--recovery-destination", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--recovery-rollback-path", type=Path, help=argparse.SUPPRESS)
