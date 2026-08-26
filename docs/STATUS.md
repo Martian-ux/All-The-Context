@@ -2,26 +2,9 @@
 
 ## Current milestone
 
-### 2026-08-25 Milestone 5 — bounded typed project graph and safety oracle
-
-This isolated lane adds only an in-memory, rebuildable typed graph over
-already-authorized, single-project, temporally eligible relation evidence.
-The closed relation set is belongs_to, supersedes, depends_on, blocks,
-implements, and tested_by. Invalid, ambiguous, inferred, cross-project,
-duplicate, cyclic, and over-cap evidence abstains deterministically. One- and
-two-hop expansion is bounded and carries direct provenance and dependency
-lineage. There is no graph store, persistence, source scan, MCP/UI/storage
-wiring, automatic authority, model inference, provider claim, or release
-claim.
-
-The separate sanitized 14-case oracle remains independent of the candidate
-module and is retained as a kill/hold contract. Seven implementation-facing
-tests map every frozen case onto the actual typed graph; the combined graph,
-oracle, and benchmark selection is locally green at 39 tests. This is still
-synthetic component evidence, not runtime or retrieval promotion.
-
-As of 2026-08-25 UTC, this branch builds on the merged Import Truth, Memory
-Truth, Retrieval, Continuous Context, and
+As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
+an independent safety oracle on the merged Import Truth, Memory Truth,
+Retrieval, Continuous Context, and
 deterministic Project Context Capsule foundations. Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
@@ -42,6 +25,24 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-25 Milestone 5 — bounded typed project graph and safety oracle
+
+This isolated lane adds only an in-memory, rebuildable typed graph over
+already-authorized, single-project, temporally eligible relation evidence.
+The closed relation set is belongs_to, supersedes, depends_on, blocks,
+implements, and tested_by. Invalid, ambiguous, inferred, cross-project,
+duplicate, cyclic, and over-cap evidence abstains deterministically. One- and
+two-hop expansion is bounded and carries direct provenance and dependency
+lineage. There is no graph store, persistence, source scan, MCP/UI/storage
+wiring, automatic authority, model inference, provider claim, or release
+claim.
+
+The separate sanitized 14-case oracle remains independent of the candidate
+module and is retained as a kill/hold contract. Seven implementation-facing
+tests map every frozen case onto the actual typed graph; the combined graph,
+oracle, and benchmark selection is locally green at 39 tests. This is still
+synthetic component evidence, not runtime or retrieval promotion.
 
 ### 2026-08-25 Milestone 5 lane C — ZF-013 graph adversarial oracle
 
