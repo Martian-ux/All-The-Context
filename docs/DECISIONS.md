@@ -55,7 +55,10 @@ client acknowledgement, declared use/nonuse, bounded action/tool envelopes,
 task completion, typed external results, user corrections, and invalidation
 dependencies. Receipt serialization is allowlisted and rejects raw context,
 private text, hidden reasoning, secrets, credentials, provider claims, and
-model self-report.
+model self-report. Every identifier and code is an ASCII machine token matching
+`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`; whitespace, Unicode prose, controls,
+slash/backslash paths, and `..` traversal shapes are rejected while timestamp
+and code punctuation remains available.
 
 The receipt ledger is bounded and idempotent. Ordinary correction or projection
 mutation marks linked evidence inactive; terminal purge removes linked receipts
@@ -63,7 +66,8 @@ and retains only an opaque barrier/count surface, so old evidence cannot be
 reused. `propose_procedure` derives a candidate only from matching observable
 successes and requires recurrence or strong non-client external verification,
 explicit project/task applicability, negative guards, passing repair tests,
-source and outcome dependencies, and a closed purge dependency set. Action
+influence dependencies (project, projection, memory, and source) plus outcome
+dependencies, and a closed purge dependency set. Action
 signatures must agree across evidence. The result is always `proposed` and
 `advisory_only`; no promotion or truth-authority operation exists.
 

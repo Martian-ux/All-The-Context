@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 from allthecontext.memory_lab_outcome_shadow import (
+    MAX_REPAIR_TESTS,
     Acknowledgement,
     ActionEnvelope,
     ApplicabilityBoundary,
@@ -169,6 +170,8 @@ def test_recurrence_with_same_action_signature_creates_advisory_proposal() -> No
     assert decision.proposal is not None
     assert decision.proposal.supporting_receipt_ids == ("one", "two")
     assert decision.proposal.recurrence_count == 2
+    assert decision.proposal.influence_dependencies
+    assert not hasattr(decision.proposal, "source_dependencies")
     assert decision.proposal.advisory_only is True
     assert decision.shadow_only is True
 
@@ -214,3 +217,168 @@ def test_action_disagreement_and_missing_purge_closure_fail_closed() -> None:
     assert decision.status is ProposalStatus.REJECTED
     assert ProposalReason.ACTION_SIGNATURE_DISAGREEMENT in decision.reasons
     assert ProposalReason.PURGE_CLOSURE_REQUIRED in decision.reasons
+
+
+def test_identical_duplicate_receipt_input_cannot_satisfy_recurrence() -> None:
+    receipt = _receipt("one")
+    decision = propose_procedure((receipt, receipt), **_proposal_kwargs((receipt,)))
+
+    assert decision.status is ProposalStatus.REJECTED
+    assert decision.recurrence_count == 0
+    assert ProposalReason.DUPLICATE_RECEIPT_INPUT in decision.reasons
+
+
+def test_conflicting_duplicate_receipt_ids_fail_closed_before_learning() -> None:
+    receipt = _receipt("one")
+    conflicting = replace(receipt, task_id="task-conflict")
+    decision = propose_procedure(
+        (receipt, conflicting), **_proposal_kwargs((receipt, conflicting))
+    )
+
+    assert decision.status is ProposalStatus.REJECTED
+    assert decision.proposal is None
+    assert ProposalReason.DUPLICATE_RECEIPT_CONFLICT in decision.reasons
+
+
+def test_distinct_receipts_for_one_task_are_not_independent_recurrence() -> None:
+    first = _receipt("one")
+    second = replace(_receipt("two"), task_id=first.task_id)
+    decision = propose_procedure(
+        (first, second), **_proposal_kwargs((first, second))
+    )
+
+    assert decision.status is ProposalStatus.REJECTED
+    assert decision.recurrence_count == 1
+    assert ProposalReason.NON_INDEPENDENT_TASK_EVIDENCE in decision.reasons
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: DependencyRef("memory", "memory-one", 1),
+        lambda: ActionEnvelope(1, "tool", "read", "bounded-record"),
+        lambda: ActionEnvelope(
+            1, EnvelopeKind.TOOL, "read", "bounded-record", "succeeded"
+        ),
+        lambda: ExternalResult(
+            "succeeded", EvidenceSource.OUTCOME_ADAPTER, VerificationStrength.OBSERVED, "ok"
+        ),
+        lambda: ExternalResult(
+            OutcomeStatus.SUCCEEDED, "outcome_adapter", VerificationStrength.OBSERVED, "ok"
+        ),
+        lambda: ExternalResult(
+            OutcomeStatus.SUCCEEDED,
+            EvidenceSource.OUTCOME_ADAPTER,
+            "observed",
+            "ok",
+        ),
+        lambda: UserCorrection(
+            "correction-one",
+            DependencyRef(DependencyKind.MEMORY, "memory-one", 1),
+            "invalidated",
+            "user-correction",
+        ),
+        lambda: replace(_receipt("one"), acknowledgement="acknowledged"),
+        lambda: replace(_receipt("one"), declared_use="used"),
+        lambda: replace(_receipt("one"), completion="completed"),
+        lambda: RepairTest("repair-one", "ordinary_delete", True),
+    ],
+)
+def test_raw_enum_values_are_rejected_at_runtime(factory: object) -> None:
+    with pytest.raises(ValueError):
+        factory()  # type: ignore[operator]
+
+
+def test_non_bool_decision_fields_are_rejected_at_runtime() -> None:
+    with pytest.raises(ValueError, match="repair test passed"):
+        RepairTest("repair-one", InvalidationReason.ORDINARY_DELETE, 1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="purge closure closed"):
+        PurgeClosure((), closed=1)  # type: ignore[arg-type]
+
+
+def test_invalid_lifecycle_enum_and_client_strong_verification_fail_closed() -> None:
+    with pytest.raises(ValueError, match="invalidation reason"):
+        OutcomeReceiptLedger(run_id="test-run").invalidate(
+            _receipt("one").assignment.memory_versions[0], reason="correction"
+        )  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="verification strength"):
+        ExternalResult(
+            OutcomeStatus.SUCCEEDED,
+            EvidenceSource.OUTCOME_ADAPTER,
+            "strong",
+            "ok",
+        )
+
+
+def test_unknown_action_status_cannot_support_procedural_learning() -> None:
+    receipt = _receipt("one", verification=VerificationStrength.STRONG)
+    unknown_action = replace(
+        receipt,
+        action_envelopes=(ActionEnvelope(1, EnvelopeKind.ACTION, "write", "bounded-record"),),
+    )
+    decision = propose_procedure(
+        (unknown_action,), **_proposal_kwargs((unknown_action,))
+    )
+
+    assert decision.status is ProposalStatus.REJECTED
+    assert ProposalReason.NO_OBSERVABLE_SUCCESS in decision.reasons
+
+
+@pytest.mark.parametrize(
+    "bad_token",
+    ["plain text", "café", r"C:\\private\\file.txt", "../traversal", "line\nfeed"],
+)
+def test_machine_token_grammar_rejects_content_unicode_paths_and_controls(
+    bad_token: str,
+) -> None:
+    with pytest.raises(ValueError, match="ASCII machine-token grammar"):
+        DependencyRef(DependencyKind.MEMORY, bad_token, 1)
+
+
+def test_machine_token_grammar_preserves_timestamp_and_code_punctuation() -> None:
+    assignment = replace(_assignment("one"), time_bucket="2026-08-25T22:00")
+    receipt = replace(_receipt("one"), assignment=assignment)
+
+    assert receipt.assignment.time_bucket == "2026-08-25T22:00"
+    assert receipt.external_result is not None
+    assert replace(receipt.external_result, result_code="result:v1.2").result_code == "result:v1.2"
+
+
+def test_repair_collection_is_bounded_before_rejection_iteration() -> None:
+    receipt = _receipt("one")
+    kwargs = _proposal_kwargs((receipt,))
+    kwargs["repair_tests"] = tuple(
+        RepairTest(f"repair-{index}", InvalidationReason.ORDINARY_DELETE, True)
+        for index in range(MAX_REPAIR_TESTS + 1)
+    )
+
+    with pytest.raises(ValueError, match="repair_tests exceed"):
+        propose_procedure((receipt,), **kwargs)
+
+
+def test_candidate_guards_and_invalidations_reject_duplicate_identity() -> None:
+    receipt = _receipt("one")
+    kwargs = _proposal_kwargs((receipt,))
+    kwargs["negative_guards"] = ("guard-record-stale", "guard-record-stale")
+    with pytest.raises(ValueError, match="negative guards must be unique"):
+        propose_procedure((receipt,), **kwargs)
+
+    with pytest.raises(ValueError, match="invalidated dependencies must be unique"):
+        propose_procedure(
+            (receipt,),
+            **_proposal_kwargs((receipt,)),
+            invalidated_dependencies=(
+                receipt.assignment.memory_versions[0],
+                receipt.assignment.memory_versions[0],
+            ),
+        )
+
+
+def test_direct_proposal_requires_purge_coverage() -> None:
+    first, second = _receipt("one"), _receipt("two")
+    decision = propose_procedure(
+        (first, second), **_proposal_kwargs((first, second))
+    )
+    assert decision.proposal is not None
+    with pytest.raises(ValueError, match="purge closure must cover proposal dependencies"):
+        replace(decision.proposal, purge_closure=PurgeClosure((), closed=True))

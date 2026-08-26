@@ -150,16 +150,20 @@ project and projection versions, assigned memory/source dependencies, issue
 receipts, acknowledgement, declared use/nonuse, bounded action/tool envelopes,
 completion, typed external result or user correction, and invalidation
 dependencies without raw context, private text, hidden reasoning, or provider
-claims. The in-memory ledger is idempotent, correction-invalidatable, and
-terminal-purgeable; purge leaves only aggregate counts and an opaque barrier.
+claims. Every identifier and code follows the ASCII machine-token grammar
+`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`; whitespace, Unicode prose, controls,
+slash/backslash paths, and `..` traversal shapes are rejected. The in-memory
+ledger is idempotent, correction-invalidatable, and terminal-purgeable; purge
+leaves only aggregate counts and an opaque barrier.
 
 `propose_procedure` is deterministic and shadow-only. It requires recurrence or
 strong non-client external verification, explicit project/task applicability,
-negative guards, passing repair tests, source/outcome dependencies, and a
-closed purge dependency set. It returns only an advisory candidate or a closed
+negative guards, passing repair tests, influence dependencies (project,
+projection, memory, and source) plus outcome dependencies, and a closed purge
+dependency set. It returns only an advisory candidate or a closed
 rejection; there is no promotion, truth-write, authority, model, network,
 storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring.
-The focused local evidence is 7 unit tests, Ruff, and mypy for the new module;
+The focused local evidence is 33 unit tests, Ruff, and strict mypy for the new module;
 full-suite, live-data, provider, packaging, release, and platform acceptance
 remain outside the evidence boundary.
 
