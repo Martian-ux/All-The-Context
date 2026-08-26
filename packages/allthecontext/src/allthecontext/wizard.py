@@ -8,8 +8,10 @@ import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable
-from tkinter import messagebox
-from typing import Any
+from dataclasses import fields as dataclass_fields
+from pathlib import Path
+from tkinter import filedialog, messagebox
+from typing import Any, cast
 
 from .client_config import claude_is_detected, codex_is_detected
 from .config import CoreConfig
@@ -36,6 +38,103 @@ SUCCESS = "#2f7d61"
 WHITE = "#ffffff"
 
 SetupRunner = Callable[..., SetupResult]
+
+WORKSPACE_ACKNOWLEDGEMENT_ERROR = (
+    "Select a workspace folder before allowing local workspace capture."
+)
+WORKSPACE_ROOT_REQUIRED_ERROR = "Select a workspace folder before enabling local workspace capture."
+
+_PROGRESS_STEP_ALIASES = {"workspace": "source"}
+_PROGRESS_STATUS_COPY = {
+    "vault": "Creating your private local Core",
+    "credential": "Securing the desktop and MCP credential",
+    "source": "Preparing the local workspace source",
+    "client": "Connecting your AI client",
+    "startup": "Enabling private per-user startup",
+    "core": "Starting Core on this device",
+    "complete": "All The Context is ready",
+}
+
+
+def validate_workspace_selection(root_text: str, acknowledged: bool) -> Path | None:
+    """Validate the optional workspace choice without touching the filesystem."""
+
+    normalized = root_text.strip()
+    if normalized and not acknowledged:
+        raise ValueError(WORKSPACE_ACKNOWLEDGEMENT_ERROR)
+    if acknowledged and not normalized:
+        raise ValueError(WORKSPACE_ROOT_REQUIRED_ERROR)
+    return Path(normalized) if normalized else None
+
+
+def build_setup_options(
+    *,
+    vault_name: str,
+    configure_codex: bool,
+    configure_claude: bool,
+    start_at_login: bool,
+    workspace_root_text: str,
+    workspace_local_only_acknowledged: bool,
+) -> SetupOptions:
+    """Build immutable setup options from the wizard's user-entered values."""
+
+    workspace_root = validate_workspace_selection(
+        workspace_root_text,
+        workspace_local_only_acknowledged,
+    )
+    option_values: dict[str, object] = {
+        "vault_name": vault_name,
+        "configure_codex": configure_codex,
+        "configure_claude": configure_claude,
+        "start_at_login": start_at_login,
+    }
+    supported_fields = {field.name for field in dataclass_fields(SetupOptions)}
+    workspace_fields = {"workspace_root", "workspace_local_only_acknowledged"}
+    if workspace_root is not None or workspace_local_only_acknowledged:
+        if not workspace_fields <= supported_fields:
+            raise RuntimeError("This build cannot configure an optional workspace source.")
+        option_values.update(
+            workspace_root=workspace_root,
+            workspace_local_only_acknowledged=workspace_local_only_acknowledged,
+        )
+    elif workspace_fields <= supported_fields:
+        option_values.update(
+            workspace_root=None,
+            workspace_local_only_acknowledged=False,
+        )
+    options_factory: Any = SetupOptions
+    return cast(SetupOptions, options_factory(**option_values))
+
+
+def progress_status_text(step: str, _message: str = "") -> str:
+    """Return content-free status copy for a setup step."""
+
+    canonical_step = _PROGRESS_STEP_ALIASES.get(step, step)
+    return _PROGRESS_STATUS_COPY.get(canonical_step, "Continuing setup")
+
+
+def completion_body(continuous_capture_enabled: bool) -> str:
+    """Describe the normal or continuously captured setup outcome without a path."""
+
+    if continuous_capture_enabled:
+        return (
+            "Core is running privately on this device. Continuous capture is enabled for the "
+            "selected workspace: supported project files are read locally and derived context "
+            "stays on this device. Start by bringing over your ChatGPT, Claude, or Grok history; "
+            "normal retrieval and new proposals happen through MCP from then on."
+        )
+    return (
+        "Core is running privately on this device. Start by bringing over your ChatGPT, Claude, "
+        "or Grok history; normal retrieval and new proposals happen through MCP from then on."
+    )
+
+
+def redact_workspace_path(text: str, workspace_root: Path | None) -> str:
+    """Keep a selected root out of completion warnings without inspecting it."""
+
+    if workspace_root is None:
+        return text
+    return text.replace(str(workspace_root), "selected workspace")
 
 
 def community_build_notice(*, system: str | None = None, frozen: bool | None = None) -> str | None:
@@ -82,6 +181,9 @@ class SetupWizard:
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
         self.configure_claude = tk.BooleanVar(value=self.claude_detected)
         self.start_at_login = tk.BooleanVar(value=True)
+        self.workspace_root = tk.StringVar(value="")
+        self.workspace_local_only_acknowledged = tk.BooleanVar(value=False)
+        self.selected_workspace_root: Path | None = None
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
 
         self._configure_window()
@@ -361,6 +463,69 @@ class SetupWizard:
             font=("Segoe UI", 8),
         ).pack(fill="x", pady=(2, 0))
 
+    def _workspace_field(self) -> None:
+        tk.Label(
+            self.content,
+            text="Workspace folder (optional)",
+            bg=PAPER,
+            fg=INK,
+            anchor="w",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(fill="x", pady=(18, 5))
+        tk.Label(
+            self.content,
+            text="Choose a project folder only if you want local workspace capture.",
+            bg=PAPER,
+            fg=MUTED,
+            anchor="w",
+            font=("Segoe UI", 8),
+        ).pack(fill="x", pady=(0, 6))
+        row = tk.Frame(self.content, bg=PAPER)
+        row.pack(fill="x")
+        entry = tk.Entry(
+            row,
+            textvariable=self.workspace_root,
+            bg=PAPER_LIGHT,
+            fg=INK,
+            insertbackground=INK,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=LINE,
+            highlightcolor=AMBER,
+            font=("Segoe UI", 10),
+        )
+        entry.pack(side="left", fill="x", expand=True, ipady=8)
+        browse = tk.Button(
+            row,
+            text="Browse",
+            command=self._browse_workspace,
+            bg=PAPER_LIGHT,
+            fg=INK,
+            activebackground="#e9edf5",
+            activeforeground=INK,
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            padx=15,
+            pady=9,
+            font=("Segoe UI", 9, "bold"),
+        )
+        browse.pack(side="left", padx=(9, 0))
+        self._check(
+            "Allow local workspace capture",
+            "ATC will read supported project files under that selected folder and retain derived "
+            "context locally.",
+            self.workspace_local_only_acknowledged,
+        )
+
+    def _browse_workspace(self) -> None:
+        selected = filedialog.askdirectory(
+            parent=self.root,
+            title="Choose a workspace folder",
+        )
+        if selected:
+            self.workspace_root.set(selected)
+
     def show_preferences(self) -> None:
         self._clear()
         self._set_step(1)
@@ -370,6 +535,7 @@ class SetupWizard:
             "Core stays private on this device. You can change any connection later.",
         )
         self._field("Vault name", self.vault_name)
+        self._workspace_field()
         self._check(
             "Connect Codex",
             (
@@ -401,6 +567,18 @@ class SetupWizard:
         if not self.vault_name.get().strip():
             messagebox.showerror("Vault name required", "Give your local context vault a name.")
             return
+        try:
+            options = build_setup_options(
+                vault_name=self.vault_name.get().strip(),
+                configure_codex=self.configure_codex.get(),
+                configure_claude=self.configure_claude.get(),
+                start_at_login=self.start_at_login.get(),
+                workspace_root_text=self.workspace_root.get(),
+                workspace_local_only_acknowledged=self.workspace_local_only_acknowledged.get(),
+            )
+        except (RuntimeError, ValueError) as error:
+            messagebox.showerror("Workspace choice required", str(error), parent=self.root)
+            return
         self._clear()
         self._set_step(2)
         self._eyebrow("Installing")
@@ -411,13 +589,20 @@ class SetupWizard:
         rows = tk.Frame(self.content, bg=PAPER)
         rows.pack(fill="x", pady=(36, 0))
         self.progress_rows.clear()
-        for key, label in (
+        progress_steps = [
             ("vault", "Private local vault"),
             ("credential", "Secure client credential"),
-            ("client", "MCP client connection"),
-            ("startup", "Background startup"),
-            ("core", "Core health check"),
-        ):
+        ]
+        if self.workspace_root.get().strip():
+            progress_steps.append(("source", "Local workspace source"))
+        progress_steps.extend(
+            (
+                ("client", "MCP client connection"),
+                ("startup", "Background startup"),
+                ("core", "Core health check"),
+            )
+        )
+        for key, label in progress_steps:
             row = tk.Frame(rows, bg=PAPER)
             row.pack(fill="x", pady=7)
             status = tk.Label(row, text="○", bg=PAPER, fg=LINE, width=2, font=("Segoe UI", 11))
@@ -435,11 +620,9 @@ class SetupWizard:
         )
         self.status_copy.pack(side="bottom", fill="x")
         self.working = True
-        options = SetupOptions(
-            vault_name=self.vault_name.get().strip(),
-            configure_codex=self.configure_codex.get(),
-            configure_claude=self.configure_claude.get(),
-            start_at_login=self.start_at_login.get(),
+        self.selected_workspace_root = cast(
+            Path | None,
+            getattr(options, "workspace_root", None),
         )
         thread = threading.Thread(target=self._setup_worker, args=(options,), daemon=True)
         thread.start()
@@ -479,7 +662,8 @@ class SetupWizard:
 
     def _show_progress(self, step: str, message: str) -> None:
         keys = list(self.progress_rows)
-        active_index = keys.index(step) if step in keys else len(keys)
+        canonical_step = _PROGRESS_STEP_ALIASES.get(step, step)
+        active_index = keys.index(canonical_step) if canonical_step in keys else len(keys)
         for index, key in enumerate(keys):
             icon, label = self.progress_rows[key]
             if index < active_index:
@@ -488,7 +672,7 @@ class SetupWizard:
             elif index == active_index:
                 icon.configure(text="●", fg=AMBER)
                 label.configure(fg=INK)
-        self.status_copy.configure(text=message)
+        self.status_copy.configure(text=progress_status_text(step, message))
 
     def show_complete(self) -> None:
         self._clear()
@@ -496,9 +680,9 @@ class SetupWizard:
         self._eyebrow("Setup complete")
         self._heading(
             "You're ready.",
-            "Core is running privately on this device. Start by bringing over your ChatGPT, "
-            "Claude, or Grok history; normal retrieval and new proposals happen through MCP "
-            "from then on.",
+            completion_body(
+                bool(self.result and getattr(self.result, "continuous_capture_enabled", False))
+            ),
         )
         summary = tk.Frame(self.content, bg=PAPER)
         summary.pack(fill="x", pady=(38, 0))
@@ -521,6 +705,8 @@ class SetupWizard:
             ("History", "ChatGPT, Claude, and Grok exports are ready to import"),
             ("Mobile", "Connects directly whenever this Core is online"),
         ]
+        if self.result and getattr(self.result, "continuous_capture_enabled", False):
+            details.insert(4, ("Workspace", "Continuous capture enabled"))
         for label, value in details:
             row = tk.Frame(summary, bg=PAPER)
             row.pack(fill="x", pady=8)
@@ -533,7 +719,10 @@ class SetupWizard:
         if self.result and self.result.warnings:
             tk.Label(
                 self.content,
-                text="\n".join(self.result.warnings),
+                text="\n".join(
+                    redact_workspace_path(warning, self.selected_workspace_root)
+                    for warning in self.result.warnings
+                ),
                 bg=PAPER,
                 fg=AMBER_HOVER,
                 anchor="w",
