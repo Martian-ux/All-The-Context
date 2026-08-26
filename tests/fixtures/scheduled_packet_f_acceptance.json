@@ -1,0 +1,19 @@
+{
+  "incremental": {
+    "current_items": 3,
+    "deleted_items": 1
+  },
+  "initial": {
+    "current_items": 4
+  },
+  "replay": {
+    "current_items": 3,
+    "deleted_items": 1,
+    "duplicate_current_records": 0
+  },
+  "retry": {
+    "delay_seconds": 1,
+    "error_code": "capture_retryable_failure",
+    "current_items_before_resume": 0
+  }
+}

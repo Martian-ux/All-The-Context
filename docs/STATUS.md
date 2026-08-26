@@ -3,9 +3,11 @@
 ## Current milestone
 
 As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
-an independent safety oracle on the merged Import Truth, Memory Truth,
-Retrieval, Continuous Context, and
-deterministic Project Context Capsule foundations. Ordinary healthy use keeps
+independent safety oracle while adding worker-backed Continuous Context,
+pre-generation lifecycle-context, and direct-user formation continuity
+acceptance journeys on the merged Import Truth, Memory Truth, Retrieval,
+Continuous Context, and deterministic Project Context Capsule foundations.
+Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
@@ -14,7 +16,7 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Development evidence on this
+`7e474b89dfb08a75501400b2ca805c002dc21847`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -109,6 +111,86 @@ RetrievalEngine/Core policy façade is explicitly `not_exercised`. This is
 aggregate synthetic harness self-test evidence only and does not close ZF-013,
 promote a graph, or imply live/private/provider/client/platform or release
 acceptance.
+
+### 2026-08-26 worker-backed Continuous Context local-source acceptance
+
+One clean disposable vault now exercises the real non-daemon
+`CoreCaptureScheduler` worker after one explicit local-workspace authorization
+and durable scheduler enablement. The acceptance test never calls
+`capture_scheduler.run_cycle()` directly. Its fail-once adapter enters the
+persisted retry state with zero public records; after Core restart and the due
+retry, the worker creates the initial four-record snapshot without another user
+action. A later workspace update and deletion wake the same worker and yield
+three current records, one exact deleted record, updated Retrieval V3 results,
+and no duplicate current identity. A second Core restart and unchanged due run
+leave public Memory Truth and Retrieval identical.
+
+The journey observes durable source state plus public Memory Truth and Retrieval
+rather than internal cycle reports. It fails on any dashboard launch and checks
+that scheduler status and accepted outputs omit the authorized root, captured
+source text, credentials, and fixture secret material. Existing focused tests
+remain authoritative for detailed connector health, admin controls, process and
+update-health gates, worker shutdown, notification, and package-startup
+composition.
+
+This closes the prior manual-cycle-only gap for local worker-backed Packet E x
+Packet F developer acceptance. It does not create a new production mechanism or
+claim packaged installation, a live/private workspace, provider or client
+support, complete ZF-007/ZF-008 product exit, Packet G product acceptance,
+complete Packet H, Phase 2, release acceptance, or macOS support.
+
+### 2026-08-26 worker-backed Packet G continuity acceptance
+
+A second clean disposable-vault journey now composes the real scheduler worker
+with public Memory Truth, Retrieval V3, and the controlled L2 reference host.
+After one local-workspace authorization, the worker produces the initial four
+current records without a dashboard or direct `capture_scheduler.run_cycle()`
+call. A durable `context:read` principal compiles only current public record
+IDs into provenance-backed, capability-qualified `context_pack` references,
+and delivery completes before generation starts.
+
+The journey checkpoints the typed host lifecycle, closes Core, reauthenticates
+the same principal from Core-owned durable state, and restores the host from
+the caller-owned checkpoint. A worker-driven update and deletion after restart
+produce three unique current records and one deleted record. The next
+pre-generation compile includes the updated identity, excludes the withdrawn
+identity, preserves delivery ordering, and advances the checkpoint sequence.
+The acceptance oracle fails on any dashboard launch and checks content-free
+scheduler status and compiled material.
+
+This closes the manual-cycle-only gap for the local worker-backed Packet G
+developer composition. It does not turn the controlled in-process reference
+host into a supported client, persist host checkpoints as a product feature,
+or claim ZF-009 product exit, ZF-010 automatic formation, complete Packet H,
+the packaged source/client journey, Phase 2, release acceptance, private-data
+evidence, or macOS support.
+
+### 2026-08-26 worker-backed ZF-010 formation continuity acceptance
+
+A third clean disposable-vault journey now carries records created by the real
+scheduler worker into the existing controlled L2 formation path. After one
+local-workspace authorization, the worker creates the initial public snapshot
+without a dashboard or direct `capture_scheduler.run_cycle()` call. Separate
+durable reader and explicit-user-statement witness principals compile those
+records and form one caller-declared `interaction_preference` through the
+existing Core policy boundary.
+
+The journey checkpoints the typed formation host, closes Core, reauthenticates
+both principals with their original scopes, and restores the same caller-owned
+session checkpoint. The next bounded pre-generation compile contains the
+current preference alongside worker-created source truth. An in-place
+correction replaces the visible preference value without changing its record
+identity; a later explicit forget makes that record deleted and removes both
+values from retrieval while every worker-created source record remains
+current. Lifecycle envelopes retain only length and SHA-256 commitments, and
+the resumed checkpoint advances after correction and forget.
+
+This closes the prior manual-cycle-only gap for local worker-backed ZF-010
+developer composition. It does not provide automatic capture from a supported
+lifecycle-aware client, product-owned checkpoint persistence, ZF-010 product
+exit, complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support. No production mechanism
+changed.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 

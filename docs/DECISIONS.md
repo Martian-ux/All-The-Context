@@ -78,6 +78,98 @@ and missing purge closure. This slice does not add storage, Core/Relay/MCP,
 dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
 packaging, release, or macOS behavior.
 
+## ADR-158: Worker-backed ZF-010 continuity preserves separate Core and host authority
+
+**Status:** accepted locally on 2026-08-26 for the controlled worker-backed
+ZF-010 developer boundary. This is not automatic capture from a supported
+lifecycle-aware client, product checkpoint persistence, ZF-010 product exit,
+complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support.
+
+The focused acceptance journey begins with the real non-daemon capture worker
+after one explicit local-workspace authorization and must not call
+`capture_scheduler.run_cycle()` directly. Separate durable principals own
+read and explicit-user-statement authority. The existing controlled L2 host
+may form only a caller-declared interaction preference through the Core policy
+boundary; its envelope retains the UTF-8 length and SHA-256 commitment, not the
+direct-user content.
+
+Core restart and host restart remain independent. Core reauthenticates both
+principals and their original scopes from opaque tokens. The caller restores
+the same typed host session from its checkpoint. A bounded pre-generation
+compile must contain current worker-created source truth plus the formed
+preference. Correction keeps the preference record identity while replacing
+its visible value; explicit forget makes that record deleted and removes both
+preference values from retrieval without changing the current status of the
+worker-created source records. The restored host checkpoint must advance after
+those lifecycle operations.
+
+No production mechanism changes are required. ADR-156 remains the worker
+contract, ADR-157 remains the worker-backed Packet G contract, and ADR-144
+remains the detailed same-vault formation/refusal contract. This decision
+closes only their manual-cycle local composition gap; supported-client,
+packaged, release, and support exits stay open.
+
+## ADR-157: Packet G developer acceptance must cross the real worker and Core restart
+
+**Status:** accepted locally on 2026-08-26 for the worker-backed Packet G
+developer boundary. This is not a supported lifecycle-aware client, product
+checkpoint persistence, ZF-009 product exit, ZF-010 automatic formation,
+complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support.
+
+The focused acceptance journey must start the existing non-daemon capture
+worker after one explicit local-workspace authorization and must not call
+`capture_scheduler.run_cycle()` directly. It observes the resulting public
+Memory Truth through the existing Retrieval V3 compiler and requires an
+authenticated durable `context:read` principal. The controlled L2 reference
+host must deliver only current, provenance-backed, capability-qualified
+references before generation starts.
+
+Core restart and host restart are separate authority boundaries. Core owns the
+principal and reauthenticates it from the original opaque token; the caller
+owns the typed host checkpoint and restores the same client/session binding.
+The resumed worker must apply a source update and deletion, after which the
+next compile includes the stable updated identity, excludes the withdrawn
+identity, preserves ordering, and advances the host checkpoint sequence.
+Any dashboard launch, duplicate current identity, stale withdrawn reference,
+or leakage through status or compiled material fails the journey.
+
+No production mechanism changes are required. ADR-156 remains the detailed
+worker/retry/replay contract, and ADR-138/ADR-143 remain the Packet G compile
+contracts. This decision closes only their manual-cycle local composition gap;
+packaged, provider/client, formation, release, and support exits stay open.
+
+## ADR-156: Local continuous-capture acceptance must exercise the Core worker
+
+**Status:** accepted locally on 2026-08-26 as the worker-backed Packet E x
+Packet F developer acceptance boundary. This is not packaged installation,
+live/private source evidence, provider or client support, complete
+ZF-007/ZF-008 product exit, Packet G product acceptance, complete Packet H,
+Phase 2, release acceptance, or macOS support.
+
+The acceptance oracle starts the existing non-daemon `CoreCaptureScheduler`
+through its public lifecycle after one explicit local-workspace authorization
+and durable enablement. Capture transitions may be made deterministic by
+advancing the injected clock and waking the worker, but the journey must not
+call `capture_scheduler.run_cycle()` directly. It observes only durable source
+state, public Memory Truth, Retrieval V3, and content-free scheduler status.
+
+A fail-once adapter must persist a retry with zero public records. Restart at
+the due retry must create the initial four-record snapshot without another user
+action. A later update and deletion must yield three current records, one exact
+deleted record, current retrieval visibility, stable updated identity, and no
+duplicate current records. A second restart and unchanged due run must leave
+public truth and retrieval identical. Any routine dashboard launch or leakage
+of the authorized root, captured text, credentials, or fixture secret material
+fails the journey.
+
+No production source changes are required. Existing focused scheduler/runtime
+tests remain authoritative for detailed health reports, gates, controls,
+notifications, shutdown, and package-startup composition. This decision closes
+only the manual-cycle gap left open by ADR-142 for the local worker-backed
+developer pair; broader product and support exits remain explicit.
+
 ## ADR-151: Project activation is ambient, principal-filtered, and abstaining
 
 **Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project

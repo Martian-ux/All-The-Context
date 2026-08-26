@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Packet G product acceptance, complete Packet E product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F scheduled composition evidence now exists over that scheduler and is not ZF-007/ZF-008 product exit or complete Packet E/H acceptance; PR #86 merged compilation of those admitted records through Packet G and is not ZF-009 product exit; a later stacked local slice forms one caller-declared interaction_preference in that same vault and is not ZF-010 product exit; continuous/scheduled Packet F acceptance remains open |
+| Current execution frontier | Complete Wave 4 E–G product acceptance (complete Packet H), the packaged lifecycle-aware source/client journey, and Phase 2 |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while later clean-vault journeys exercise the real Core worker through retry, initial snapshot, incremental update/deletion, and restart, then carry worker-produced records through authenticated Packet G pre-generation delivery and controlled ZF-010 preference formation, correction, forget, Core restart, principal reauthentication, and caller-owned L2 checkpoint restore; these close local developer composition gaps, not ZF-007/ZF-008/ZF-009/ZF-010 product exits, supported-client capture, or packaged/live support |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -35,17 +35,25 @@ H-D is a merged disposable proof over Packet F local workspace, that
 admission contract, public Memory Truth, and Retrieval V3; it does not exercise
 Packet E scheduler, Packet G reference host, ZF-010 automatic formation, the
 full Wave 4 E–G composition, or the Phase 2 journey. Packet E x Packet F
-scheduled composition evidence now proves the opt-in Packet E scheduler can
-drive that local-workspace source through public Memory Truth and Retrieval
-V3 via two focused tests that call `capture_scheduler.run_cycle()`, the same
-method used by the background loop, without starting that thread; it is not
-ZF-007/ZF-008 product exit, complete Packet E product acceptance, complete
-Packet H, or Phase 2. Continuous/scheduled Packet F acceptance remains open.
-PR #86 merged compilation of those admitted records through Packet G and is
-not ZF-009 product exit. Remaining work is Packet G product
-acceptance, complete Packet E product acceptance, ZF-010, complete Wave 4
-E–G, and Phase 2. This plan does not turn the component seams or those
-partial proofs into support, stable-SDK, or complete Packet H acceptance.
+manual-cycle composition evidence remains historical. A later clean-vault
+acceptance journey starts the real Core worker after one-time authorization,
+persists and resumes a transient retry across restart, produces the initial
+snapshot, applies a later update and deletion, and proves a second restart is
+duplicate-free through public Memory Truth and Retrieval without opening the
+dashboard or calling `capture_scheduler.run_cycle()` directly. That closes the
+local worker-backed developer gap, not complete ZF-007/ZF-008 product exit,
+packaged/live support, complete Packet H, or Phase 2. PR #86 merged compilation
+of admitted records through Packet G and is not ZF-009 product exit. A later
+clean-vault journey now proves the same compile path over the real worker across
+Core restart, principal reauthentication, typed host checkpoint restore, and a
+worker-driven update/deletion. A companion clean-vault journey carries the
+worker-created truth through controlled ZF-010 preference formation,
+correction, forget, Core restart, scope reauthentication, and restored host
+checkpoint advancement. These close the local Packet G and ZF-010 developer
+gaps, not supported-client or product exits. Remaining work is complete Wave 4
+E–G product acceptance, the packaged lifecycle-aware source/client journey,
+and Phase 2. This plan does not turn the component seams
+or local proofs into support, a stable SDK, or complete Packet H acceptance.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -717,19 +725,20 @@ L1+ Core context explicitly fail-closed. PR #78 merged the Core-owned
 registered-source admission contract, so that seam is no longer missing. PR #79
 merged a disposable Packet H-D foreground proof over Packet F, that admission
 contract, public Memory Truth, and Retrieval V3; it does not compose Packet E
-or Packet G and does not satisfy continuous/scheduled Packet F acceptance.
-Packet E x Packet F scheduled composition evidence now proves the opt-in
-Packet E scheduler can drive Packet F local-workspace ingestion through public
-Memory Truth and Retrieval V3 via two focused tests that call
-`capture_scheduler.run_cycle()`, the same method used by the background loop,
-without starting that thread; that is not ZF-007/ZF-008 product exit,
-complete Packet E product acceptance, or complete Packet H.
-Continuous/scheduled Packet F acceptance remains open. PR #86 merged
-compilation of those admitted records through Packet G and is not ZF-009
-product exit. Remaining work is Packet G product acceptance, complete Packet E
-product acceptance, ZF-010, complete Wave 4 E–G, and Phase 2. ZF-007, ZF-008,
-and ZF-009 product acceptance; the first real continuous integration pair; and
-release/support claims remain open. PRs #82 and #84 already wired
+or Packet G. Packet E x Packet F manual-cycle composition evidence remains
+historical. A later clean-vault acceptance journey now starts the real Core
+worker and proves automatic retry/resume, initial snapshot, incremental
+update/deletion, and duplicate-free restart through public truth/retrieval with
+no dashboard or direct cycle call. This closes the local worker-backed
+developer gap, not complete ZF-007/ZF-008 product exit or packaged/live
+support. PR #86 merged compilation of those admitted records through Packet G
+and is not ZF-009 product exit. A later controlled clean-vault journey forms,
+corrects, and forgets one declared preference over worker-created records
+across Core restart; it closes the local ZF-010 developer gap but is not a
+supported client or ZF-010 product exit. Remaining work is complete Wave 4 E–G
+product acceptance, the packaged source/client journey, and Phase 2.
+ZF-007, ZF-008, and ZF-009 complete product acceptance and release/support
+claims remain open. PRs #82 and #84 already wired
 CoreService/startup capture-runtime composition and the opt-in Packet E
 scheduler. macOS remains absent/deferred under the current project truth.
 
@@ -751,15 +760,19 @@ exercises Packet F local workspace, that admission contract, public Memory
 Truth, and Retrieval V3 against a throwaway Core. It does not exercise Packet E
 scheduler, Packet G reference host, ZF-010 automatic formation, the full Wave 4
 E–G composition described above, or the Phase 2 journey. Packet E x Packet F
-scheduled composition evidence now proves the opt-in Packet E scheduler can
-drive that local-workspace source through public Memory Truth and Retrieval
-V3; it is not ZF-007/ZF-008 product exit, complete Packet E product
-acceptance, complete Packet H, or Phase 2. Continuous/scheduled Packet F
-acceptance remains open. PR #86 merged compilation of those admitted records
-through Packet G and is not ZF-009 product exit. Packet E and Packet G
-remain component-complete; remaining work is Packet G product acceptance,
-complete Packet E product acceptance, ZF-010, complete Wave 4 E–G, and
-Phase 2. Packet H-D is not complete Packet H or Phase 2 acceptance.
+manual-cycle composition evidence remains historical. The later worker-backed
+clean-vault journey closes its local developer acceptance gap through automatic
+retry/resume, initial snapshot, incremental update/deletion, and duplicate-free
+restart without a dashboard or direct cycle call. It does not close complete
+ZF-007/ZF-008 product exit, packaged/live support, complete Packet H, or Phase
+2. PR #86 merged compilation of those admitted records through Packet G and is
+not ZF-009 product exit. A later controlled clean-vault journey carries those
+worker-created records through ZF-010 preference formation, correction,
+forget, Core restart, principal reauthentication, and checkpoint restoration.
+It closes the local ZF-010 developer gap, not supported-client or product
+acceptance. Packet E and Packet G remain component-complete; remaining work is
+complete Wave 4 E–G product acceptance, the packaged source/client journey,
+and Phase 2. Packet H-D is not complete Packet H or Phase 2 acceptance.
 
 ## 14. Proposed GitHub issue hierarchy
 
