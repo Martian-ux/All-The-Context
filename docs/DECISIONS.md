@@ -1,5 +1,83 @@
 # Architecture decisions
 
+## ADR-153: Freeze an independent ZF-013 graph safety oracle
+
+**Status:** frozen locally on 2026-08-25 for Milestone 5 against protected-main
+base `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. This is a safety contract,
+not graph, provider, client, release, or private-data acceptance.
+
+The sanitized oracle imports no ATC runtime, storage, retrieval, network,
+provider, UI, or private data. It applies authorization and project isolation
+before all graph-derived observables and requires exact paired equality for
+content, reason codes, revisions, counts, ordering, and receipts when
+unauthorized records are added. The frozen matrix covers assignment
+abstention, correction/supersession, historical `as_of`, delete/purge closure,
+stale dependency invalidation, cycle and self-edge rejection, duplicate-edge
+idempotence, bounded high fan-out/two-hop expansion, deterministic rebuild,
+and secret-like/imported-instruction inertness.
+
+Any required-zero safety violation yields `KILL_ZF013`; missing coverage,
+unsafe diagnostics, runtime coupling, an unobservable surface, or a rebuild
+control that shares optimized state yields `HOLD_ZF013`. The standalone
+reference implementation remains an independent oracle and is not product
+proof. A separate implementation-facing suite maps every frozen case onto the
+actual typed graph while keeping the oracle itself free of product imports.
+
+## ADR-152: Milestone 5 uses an ephemeral typed project graph
+
+**Status:** accepted locally on 2026-08-25 for the bounded lane-B component.
+This is not graph-store, learned-retrieval, provider, client, private-data,
+package, release, or production acceptance.
+
+The graph builder consumes relation-shaped evidence only after the caller has
+resolved authorization, one-project assignment, and temporal/lifecycle
+eligibility. Its six closed families are belongs_to, supersedes, depends_on,
+blocks, implements, and tested_by. Unknown or inferred relations—including
+causal and failure edges—are unsupported. Invalid, ambiguous, cross-project,
+duplicate, cyclic, self, and over-cap inputs are omitted with content-free
+abstention receipts. Rebuilds sort all accepted material and hash a stable
+revision; one- and two-hop expansion uses bounded deterministic traversal and
+preserves direct provenance and dependency lineage.
+
+The component is in-memory and read-only. It does not parse prose, create
+canonical records, persist a graph, scan a workspace, capture a source, call a
+model, or wire into runtime, retrieval, MCP, dashboard, or storage paths.
+
+## ADR-155: Outcome receipts and procedural learning remain advisory shadow state
+
+**Status:** accepted locally on 2026-08-25 for Milestone 5 lane D. This is a
+pure research foundation, not production, provider, client, release, or
+platform acceptance.
+
+ZF-017 through ZF-019 begin with an isolated in-memory contract rather than a
+Core schema or route. `memory_lab_outcome_shadow.py` models exact project and
+projection versions, assigned memory/source dependencies, issue receipts,
+client acknowledgement, declared use/nonuse, bounded action/tool envelopes,
+task completion, typed external results, user corrections, and invalidation
+dependencies. Receipt serialization is allowlisted and rejects raw context,
+private text, hidden reasoning, secrets, credentials, provider claims, and
+model self-report. Every identifier and code is an ASCII machine token matching
+`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`; whitespace, Unicode prose, controls,
+slash/backslash paths, and `..` traversal shapes are rejected while timestamp
+and code punctuation remains available.
+
+The receipt ledger is bounded and idempotent. Ordinary correction or projection
+mutation marks linked evidence inactive; terminal purge removes linked receipts
+and retains only an opaque barrier/count surface, so old evidence cannot be
+reused. `propose_procedure` derives a candidate only from matching observable
+successes and requires recurrence or strong non-client external verification,
+exact project/task/applicability-key matching, negative guards, passing repair tests,
+influence dependencies (project, projection, memory, and source) plus outcome
+dependencies, and a closed purge dependency set. Action
+signatures must agree across evidence. The result is always `proposed` and
+`advisory_only`; no promotion or truth-authority operation exists.
+
+The focused synthetic tests cover allowlisting, idempotency, correction,
+purge, recurrence, strong verification, invalidation, signature disagreement,
+and missing purge closure. This slice does not add storage, Core/Relay/MCP,
+dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
+packaging, release, or macOS behavior.
+
 ## ADR-151: Project activation is ambient, principal-filtered, and abstaining
 
 **Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project
@@ -128,6 +206,57 @@ The decision is grounded in the provider-ingestion tests
 `test_task_local_and_adversarial_preference_framing_stays_inert`, plus the
 provider runtime project-lineage and lifecycle-filter tests. No provider SDK,
 live export, OAuth, or client acceptance is implied.
+
+## ADR-154: ZF-013 lane A is a frozen synthetic graph harness self-test
+
+**Status:** accepted locally on 2026-08-25 for the Milestone 5 lane A
+evaluation boundary. This decision does not promote a project graph or change
+production behavior.
+
+ZF-013 lane A freezes a sanitized, in-memory harness contract pinned to
+protected-main base `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. The harness
+compares five named profiles: a stdlib-only lexical proxy, checkout-local
+production `LexicalV3` with fixture-supplied current/project eligibility,
+deterministic Project Context Capsules, lexical seeds plus directed typed
+one-hop expansion, and bounded directed two-hop expansion. The full
+RetrievalEngine/Core policy façade is explicitly not exercised. The corpus includes
+current, stale, deleted, and purged synthetic records, two projects, all six
+allowed relation families (`belongs_to`, `supersedes`, `depends_on`, `blocks`,
+`implements`, `tested_by`), a cycle, a self-edge, a cross-project edge, and a
+high-fan-out source.
+
+The evaluator defines Project CAOS as the mean of query cases that contain all
+required evidence, no wrong-project/stale/deleted/purged/unnecessary
+disclosure, no budget violation, and no traversal-bound violation. Required
+recall, Project CAOS, disclosure counts, deterministic receipt hashes, cycle
+and fan-out bounds, depth, expanded-edge count, and warm p95 latency are
+machine-readable gates. One-hop requires recall/CAOS `>= 0.75`, two-hop
+requires `>= 0.90`/`0.85`; each must improve recall/CAOS over structured
+filtering by the frozen `0.20`/`0.30` thresholds. Safety disclosures are zero;
+depth is bounded at one/two hops, accepted self-edges and cycle revisits are
+zero, each source has at most two neighbors, each query has at most 24
+expanded edges, and warm p95 is at most 50 ms. Endpoint eligibility is applied
+before ordering, accounting, traversal, timing, or receipts; rejected-edge
+classes are aggregate validation evidence only.
+
+Relation-family ablations remove exactly one family from the one-hop candidate
+on one assigned case per family. A family is kept if removing it reduces
+required recall or CAOS by at least `0.10` without a safety regression. It is
+killed if both deltas are below `0.10`, or if enabling it causes a safety
+failure that the ablation removes. Every family receives a finite, internally
+consistent explicit decision or the harness self-test fails closed. The lane
+fixture's synthetic integration hypotheses keep `belongs_to`, `depends_on`,
+`blocks`, `implements`, and `tested_by`, and kill `supersedes`; none is
+promotion evidence.
+
+The evaluator remains outside `packages/allthecontext` but imports the actual
+ephemeral `allthecontext.project_graph` candidate for one- and two-hop
+profiles. It must not open Core or a workspace, scan files, enable capture, use
+a provider/model, open a browser/dashboard, add MCP/storage/runtime/packaging/
+release/CI behavior, or emit raw fixture content. Reports remain disposable aggregate
+evidence and grant no live, private, provider, client, platform, release, or
+graph-promotion credit. The deterministic Project Context Capsule foundation
+and Core authority remain governed by ADR-146.
 
 ## ADR-146: Project Context Capsules are bounded Core-derived projections
 

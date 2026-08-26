@@ -2,18 +2,19 @@
 
 ## Current milestone
 
-As of 2026-08-26 UTC, this branch builds Milestone 4 ambient project activation
-on the merged Import Truth, Memory Truth, Retrieval, Continuous Context, and
+As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
+an independent safety oracle on the merged Import Truth, Memory Truth,
+Retrieval, Continuous Context, and
 deterministic Project Context Capsule foundations. Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
-one content-bearing project.
-Every ambiguous or unauthorized case abstains instead of guessing.
+one content-bearing project. Every ambiguous or unauthorized case abstains
+instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`3be9ece851e62338d13a694778feb5cb2836d2c6`. Development evidence on this
+`fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -24,6 +25,90 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-25 Milestone 5 — bounded typed project graph and safety oracle
+
+This isolated lane adds only an in-memory, rebuildable typed graph over
+already-authorized, single-project, temporally eligible relation evidence.
+The closed relation set is belongs_to, supersedes, depends_on, blocks,
+implements, and tested_by. Invalid, ambiguous, inferred, cross-project,
+duplicate, cyclic, and over-cap evidence abstains deterministically. One- and
+two-hop expansion is bounded and carries direct provenance and dependency
+lineage. There is no graph store, persistence, source scan, MCP/UI/storage
+wiring, automatic authority, model inference, provider claim, or release
+claim.
+
+The separate sanitized 14-case oracle remains independent of the candidate
+module and is retained as a kill/hold contract. Seven implementation-facing
+tests map every frozen case onto the actual typed graph; the combined graph,
+oracle, and benchmark selection is locally green at 39 tests. This is still
+synthetic component evidence, not runtime or retrieval promotion.
+
+### 2026-08-25 Milestone 5 lane C — ZF-013 graph adversarial oracle
+
+This oracle lane adds no runtime wiring. It freezes 14 sanitized adversarial cases in
+`bench/zf013_graph_adversarial_fixtures.json` and a stdlib-only reference
+oracle in `bench/zf013_graph_adversarial.py`. The focused tests pass locally
+(`14 passed`) and cover authorization-first noninterference, project isolation,
+ambiguous assignment abstention, correction/supersession, historical `as_of`,
+delete/purge closure, stale dependencies, cycles, self-edges, duplicate edges,
+high fan-out/two-hop bounds, deterministic rebuild/input reordering,
+secret-like/imported-instruction inertness, and exact equality of content,
+reason codes, revisions, counts, ordering, and receipts under unauthorized
+input.
+
+Any violation of those zero-influence, lifecycle, topology, bound, or receipt
+rules is `KILL_ZF013`; missing coverage, unsafe diagnostics, runtime coupling,
+or an invalid rebuild control is `HOLD_ZF013`. This is sanitized local oracle
+evidence only and does not close ZF-013 or claim a graph store, graph
+promotion, provider/client, network, release, or private-data acceptance. The
+separate implementation-facing conformance suite maps every frozen case onto
+the ephemeral typed graph without coupling the reference oracle to product code.
+
+### 2026-08-25 Milestone 5 lane A — frozen ZF-013 project-graph evaluation
+
+This isolated branch adds only the frozen synthetic ZF-013 harness self-test contract
+and harness in `bench/zf013_project_graph_contract.json`,
+`bench/zf013_project_graph_fixtures.json`, and
+`bench/zf013_project_graph_benchmark.py`, with focused coverage in
+`tests/unit/test_zf013_project_graph_benchmark.py`. It compares a stdlib-only
+lexical proxy, structured project filtering, deterministic
+Project Context Capsules, lexical seeds plus actual `project_graph` one-hop
+expansion, bounded two-hop expansion, and six relation-family ablations. It
+does not add a graph store, runtime wiring, learned relation,
+Core/storage/retrieval behavior, MCP,
+dashboard, capture, workspace scanning, provider, browser, package, release,
+CI, or macOS behavior.
+
+The sanitized fixture has two synthetic projects, 31 lifecycle-labeled records,
+23 typed relations, nine cases, a cycle, a self-edge, a cross-project edge, and
+an eight-way fan-out. Eligible relation endpoints are normalized before
+ordering, fan-out/edge accounting, visited state, timed traversal, or receipt
+material; unknown, cross-project, non-current, self, and cycle edges are
+rejected. Project CAOS requires complete frozen required evidence, zero
+wrong-project/stale/deleted/purged/unnecessary disclosure, budget compliance,
+and zero traversal-bound violations. The exact one-hop and two-hop gates are
+recall `>= 0.75`/`0.90`, CAOS `>= 0.75`/`0.85`, graph gains over the structured
+filter `>= 0.20`/`0.30`, zero disclosure counts, deterministic receipts, depth
+`<= 1`/`2`, zero accepted self-edges and cycle revisits, at most 24 expanded
+edges, at most two neighbors per source, and warm p95 `<= 50 ms`.
+
+The default local harness self-test passed both graph profiles and all six
+synthetic integration-hypothesis decisions. The stdlib lexical proxy measured
+required-evidence recall `0.537037`, CAOS
+`0.111111`, and one wrong-project disclosure; checkout-local production
+`LexicalV3` with fixture-supplied current/project eligibility removed the
+wrong-project disclosure without improving recall. One-hop measured recall
+`0.962963` and CAOS `0.888889`; bounded two-hop measured recall and CAOS
+`1.000000`. The ablation kept `belongs_to`, `depends_on`, `blocks`,
+`implements`, and `tested_by`, and killed `supersedes` under the frozen
+`0.10` recall/CAOS delta rule. Focused evidence is seven passing tests in
+`tests/unit/test_zf013_project_graph_benchmark.py`; no full repository suite
+was run. The production lexical ranker component is exercised; the full
+RetrievalEngine/Core policy façade is explicitly `not_exercised`. This is
+aggregate synthetic harness self-test evidence only and does not close ZF-013,
+promote a graph, or imply live/private/provider/client/platform or release
+acceptance.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 
@@ -61,6 +146,32 @@ The MCP path is exercised end to end through the real STDIO SDK transport.
 This milestone does not silently scan a workspace, enable capture, open a
 browser, claim a provider lifecycle hook, or establish remote/live-provider
 acceptance.
+
+### 2026-08-25 Milestone 5 lane D — observable outcome receipts in shadow
+
+This isolated lane adds `memory_lab_outcome_shadow.py`, a pure in-memory
+research contract for ZF-017 through ZF-019. Immutable receipts record exact
+project and projection versions, assigned memory/source dependencies, issue
+receipts, acknowledgement, declared use/nonuse, bounded action/tool envelopes,
+completion, typed external result or user correction, and invalidation
+dependencies without raw context, private text, hidden reasoning, or provider
+claims. Every identifier and code follows the ASCII machine-token grammar
+`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`; whitespace, Unicode prose, controls,
+slash/backslash paths, and `..` traversal shapes are rejected. The in-memory
+ledger is idempotent, correction-invalidatable, and terminal-purgeable; purge
+leaves only aggregate counts and an opaque barrier.
+
+`propose_procedure` is deterministic and shadow-only. It requires recurrence or
+strong non-client external verification, exact project/task/applicability-key matching,
+negative guards, passing repair tests, influence dependencies (project,
+projection, memory, and source) plus outcome dependencies, and a closed purge
+dependency set. It returns only an advisory candidate or a closed
+rejection; there is no promotion, truth-write, authority, model, network,
+storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring.
+The focused local evidence is 35 unit tests, Ruff, and strict mypy for the new
+module;
+full-suite, live-data, provider, packaging, release, and platform acceptance
+remain outside the evidence boundary.
 
 ### 2026-08-25 integrated Milestone 1 — Continuous Context
 
