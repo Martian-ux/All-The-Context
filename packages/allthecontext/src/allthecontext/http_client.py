@@ -127,6 +127,11 @@ class ContextHttpClient:
                 "audit_trace_id": None,
             }
 
+    def bootstrap_context_core_only(self, payload: dict[str, Any]) -> Any:
+        """Retrieve bootstrap context from Core without the ordinary Relay fallback."""
+
+        return self._request("POST", "/v1/context/bootstrap", json=payload)
+
     def search_context(self, payload: dict[str, Any]) -> Any:
         try:
             return self._request("POST", "/v1/context/search", json=payload)

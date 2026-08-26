@@ -16,7 +16,7 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`f3512fe890bf91894a28faa251b3127932c79132`. Development evidence on this
+`0e92083744bd07ed1f8c5ac0e863e9a88474d649`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -27,6 +27,22 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-26 — isolated Claude Code UserPromptSubmit pre-generation slice
+
+This branch adds a dedicated `claude_code_hook` MCP profile and one
+`claude_code_user_prompt_submit` tool. It accepts the official hook's bounded
+`prompt`, `cwd`, and `session_id` shape, uses only the prompt as an in-memory
+query to an authenticated loopback Core bootstrap route, and returns only
+bounded authorized record content as untrusted reference data. Missing,
+revoked, unavailable, error, and timeout paths are content-free and
+nonblocking; the profile has no Relay fallback and creates no records or
+proposals.
+
+This is pre-generation-only runtime evidence. It is not a supported configured
+Claude Code client connection, an L1 lifecycle claim, a product exit, a release
+claim, or live provider/client acceptance. Ordinary MCP remains the existing L0
+tool set and instruction contract.
 
 ### 2026-08-26 packaged local-workspace onboarding path
 

@@ -1,5 +1,30 @@
 # Architecture decisions
 
+## ADR-160: Keep the Claude Code pre-generation hook as an isolated L0 slice
+
+**Status:** accepted locally on 2026-08-26 for the pre-generation-only runtime
+lane. This is not supported configured Claude Code client setup, an L1
+lifecycle implementation, a product exit, a release claim, or live provider
+acceptance.
+
+The dedicated `ATC_MCP_PROFILE=claude_code_hook` server exposes only
+`claude_code_user_prompt_submit` under a distinct server identity. Its strict
+three-field hook contract accepts `prompt`, `cwd`, and `session_id`, but only
+uses the bounded prompt as an in-memory query to authenticated Core
+`POST /v1/context/bootstrap`. `cwd` and `session_id` are contract-only values;
+they are never resolved, read, forwarded, logged, audited, or persisted. A
+separate Core-only HTTP client method prevents the ordinary bootstrap method's
+Relay compatibility fallback from entering this profile.
+
+The adapter allowlists only authorized Core `items[].content`, frames it as
+untrusted reference data, and caps the complete Claude hook text at 8,000
+characters. Every failure, missing/revoked credential, unavailable Core, or
+timeout returns the valid hook envelope with empty `additionalContext`. The
+installed MCP SDK's actual call-tool serialization is pinned by a focused
+test to one valid JSON text content item; `structured_content` is not part of
+the hook contract. Ordinary MCP remains byte-for-byte behaviorally unchanged
+and honestly L0, with no client-runtime lifecycle or durable-formation wiring.
+
 ## ADR-159: Packaged setup may opt into one local workspace without becoming a lifecycle client
 
 **Status:** accepted locally on 2026-08-26 for the packaged first-run product
