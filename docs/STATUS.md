@@ -3,9 +3,10 @@
 ## Current milestone
 
 As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
-an independent safety oracle on the merged Import Truth, Memory Truth,
-Retrieval, Continuous Context, and
-deterministic Project Context Capsule foundations. Ordinary healthy use keeps
+independent safety oracle while adding a worker-backed Continuous Context
+local-source acceptance journey on the merged Import Truth, Memory Truth,
+Retrieval, Continuous Context, and deterministic Project Context Capsule
+foundations. Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
@@ -109,6 +110,33 @@ RetrievalEngine/Core policy façade is explicitly `not_exercised`. This is
 aggregate synthetic harness self-test evidence only and does not close ZF-013,
 promote a graph, or imply live/private/provider/client/platform or release
 acceptance.
+
+### 2026-08-26 worker-backed Continuous Context local-source acceptance
+
+One clean disposable vault now exercises the real non-daemon
+`CoreCaptureScheduler` worker after one explicit local-workspace authorization
+and durable scheduler enablement. The acceptance test never calls
+`capture_scheduler.run_cycle()` directly. Its fail-once adapter enters the
+persisted retry state with zero public records; after Core restart and the due
+retry, the worker creates the initial four-record snapshot without another user
+action. A later workspace update and deletion wake the same worker and yield
+three current records, one exact deleted record, updated Retrieval V3 results,
+and no duplicate current identity. A second Core restart and unchanged due run
+leave public Memory Truth and Retrieval identical.
+
+The journey observes durable source state plus public Memory Truth and Retrieval
+rather than internal cycle reports. It fails on any dashboard launch and checks
+that scheduler status and accepted outputs omit the authorized root, captured
+source text, credentials, and fixture secret material. Existing focused tests
+remain authoritative for detailed connector health, admin controls, process and
+update-health gates, worker shutdown, notification, and package-startup
+composition.
+
+This closes the prior manual-cycle-only gap for local worker-backed Packet E x
+Packet F developer acceptance. It does not create a new production mechanism or
+claim packaged installation, a live/private workspace, provider or client
+support, complete ZF-007/ZF-008 product exit, Packet G product acceptance,
+complete Packet H, Phase 2, release acceptance, or macOS support.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 

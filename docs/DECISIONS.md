@@ -78,6 +78,36 @@ and missing purge closure. This slice does not add storage, Core/Relay/MCP,
 dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
 packaging, release, or macOS behavior.
 
+## ADR-156: Local continuous-capture acceptance must exercise the Core worker
+
+**Status:** accepted locally on 2026-08-26 as the worker-backed Packet E x
+Packet F developer acceptance boundary. This is not packaged installation,
+live/private source evidence, provider or client support, complete
+ZF-007/ZF-008 product exit, Packet G product acceptance, complete Packet H,
+Phase 2, release acceptance, or macOS support.
+
+The acceptance oracle starts the existing non-daemon `CoreCaptureScheduler`
+through its public lifecycle after one explicit local-workspace authorization
+and durable enablement. Capture transitions may be made deterministic by
+advancing the injected clock and waking the worker, but the journey must not
+call `capture_scheduler.run_cycle()` directly. It observes only durable source
+state, public Memory Truth, Retrieval V3, and content-free scheduler status.
+
+A fail-once adapter must persist a retry with zero public records. Restart at
+the due retry must create the initial four-record snapshot without another user
+action. A later update and deletion must yield three current records, one exact
+deleted record, current retrieval visibility, stable updated identity, and no
+duplicate current records. A second restart and unchanged due run must leave
+public truth and retrieval identical. Any routine dashboard launch or leakage
+of the authorized root, captured text, credentials, or fixture secret material
+fails the journey.
+
+No production source changes are required. Existing focused scheduler/runtime
+tests remain authoritative for detailed health reports, gates, controls,
+notifications, shutdown, and package-startup composition. This decision closes
+only the manual-cycle gap left open by ADR-142 for the local worker-backed
+developer pair; broader product and support exits remain explicit.
+
 ## ADR-151: Project activation is ambient, principal-filtered, and abstaining
 
 **Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project
