@@ -7,11 +7,12 @@ release publication, exact artifact/client/provider acceptance, or live/private
 data inspection. Earlier evidence is retained only as historical context and
 does not become evidence for this checkout.
 
-### 2026-08-25 Milestone 5 lane B
+### 2026-08-25 Milestone 5 graph foundation
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
 | ZF-013 — bounded typed project graph | project_graph.py; tests/unit/test_project_graph.py | Implemented locally as an ephemeral single-project projection over caller-authorized temporal relation evidence. Six explicit/structural families, deterministic revision/receipts, cycle rejection, fan-out/node/edge/input caps, and bounded one-/two-hop expansion preserve direct provenance/dependency lineage. No persistence, prose parsing, model inference, runtime/API/UI wiring, provider/client, private-data, package, release, or hosted acceptance claim |
+| ZF-013 — independent adversarial graph safety matrix and reusable oracle | `bench/zf013_graph_adversarial_fixtures.json`, `bench/zf013_graph_adversarial.py`, `tests/unit/test_zf013_graph_adversarial.py`, `docs/research/ATC_ZF013_GRAPH_ADVERSARIAL_ORACLE.md` | Independent sanitized contract complete locally: 14 cases and six exact observable dimensions cover authorization-first noninterference, cross-project isolation, ambiguity abstention, correction/supersession, `as_of`, delete/purge closure, stale dependencies, illegal topology, bounded expansion, deterministic rebuild, and untrusted-text inertness. The standalone oracle is not product proof; actual-implementation conformance remains required before promotion |
 
 ### 2026-08-25 integrated Milestones 1–3 (current checkout)
 

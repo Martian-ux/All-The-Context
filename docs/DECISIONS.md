@@ -1,6 +1,28 @@
 # Architecture decisions
 
-## ADR-152: Milestone 5 lane B uses an ephemeral typed project graph
+## ADR-153: Freeze an independent ZF-013 graph safety oracle
+
+**Status:** frozen locally on 2026-08-25 for Milestone 5 against protected-main
+base `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. This is a safety contract,
+not graph, provider, client, release, or private-data acceptance.
+
+The sanitized oracle imports no ATC runtime, storage, retrieval, network,
+provider, UI, or private data. It applies authorization and project isolation
+before all graph-derived observables and requires exact paired equality for
+content, reason codes, revisions, counts, ordering, and receipts when
+unauthorized records are added. The frozen matrix covers assignment
+abstention, correction/supersession, historical `as_of`, delete/purge closure,
+stale dependency invalidation, cycle and self-edge rejection, duplicate-edge
+idempotence, bounded high fan-out/two-hop expansion, deterministic rebuild,
+and secret-like/imported-instruction inertness.
+
+Any required-zero safety violation yields `KILL_ZF013`; missing coverage,
+unsafe diagnostics, runtime coupling, an unobservable surface, or a rebuild
+control that shares optimized state yields `HOLD_ZF013`. The standalone
+reference implementation remains an independent oracle and is not product
+proof; the actual typed graph must be tested against the same cases.
+
+## ADR-152: Milestone 5 uses an ephemeral typed project graph
 
 **Status:** accepted locally on 2026-08-25 for the bounded lane-B component.
 This is not graph-store, learned-retrieval, provider, client, private-data,

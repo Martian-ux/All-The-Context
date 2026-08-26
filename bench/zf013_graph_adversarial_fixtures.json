@@ -1,0 +1,218 @@
+{
+  "schema": "atc.zf013.graph-adversarial.v1",
+  "status": "frozen_preimplementation",
+  "synthetic_only": true,
+  "governance_base_commit": "fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2",
+  "production_runtime_touched": false,
+  "oracle_module": "bench/zf013_graph_adversarial.py",
+  "bounds": {
+    "max_hops": 2,
+    "max_nodes": 12,
+    "edge_direction": "source_to_derived",
+    "input_order": "semantically irrelevant"
+  },
+  "observable_dimensions": [
+    "content",
+    "reason_codes",
+    "revision",
+    "counts",
+    "ordering",
+    "receipts"
+  ],
+  "invariants": [
+    {
+      "invariant_id": "ZF013-I01",
+      "name": "authorization_first",
+      "severity": "kill",
+      "assertion": "Filter unauthorized records before assignment, lifecycle, edge, revision, count, ordering, reason, or receipt derivation."
+    },
+    {
+      "invariant_id": "ZF013-I02",
+      "name": "project_isolation",
+      "severity": "kill",
+      "assertion": "A projection for one opaque project cannot contain or be revised by another project's nodes or edges."
+    },
+    {
+      "invariant_id": "ZF013-I03",
+      "name": "abstain_on_ambiguity",
+      "severity": "kill",
+      "assertion": "An ambiguous assignment produces no graph content, traversal, or derived receipt."
+    },
+    {
+      "invariant_id": "ZF013-I04",
+      "name": "temporal_and_lifecycle_closure",
+      "severity": "kill",
+      "assertion": "Correction, supersession, as-of, delete, and terminal purge semantics apply to every reachable dependency."
+    },
+    {
+      "invariant_id": "ZF013-I05",
+      "name": "legal_edge_topology",
+      "severity": "kill",
+      "assertion": "Cycles, self-edges, cross-project edges, and conflicting duplicate relations never become accepted graph edges."
+    },
+    {
+      "invariant_id": "ZF013-I06",
+      "name": "bounded_expansion",
+      "severity": "kill",
+      "assertion": "Expansion visits no more than two hops and twelve nodes, including under high fan-out."
+    },
+    {
+      "invariant_id": "ZF013-I07",
+      "name": "rebuild_determinism",
+      "severity": "kill",
+      "assertion": "Fresh rebuilds and all node/edge input reorderings produce the same observable projection."
+    },
+    {
+      "invariant_id": "ZF013-I08",
+      "name": "untrusted_text_inertness",
+      "severity": "kill",
+      "assertion": "Secret-like and imported instruction-like material cannot create graph influence or appear in receipts."
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "ZF013-C01-AUTHORIZATION-FIRST-NONINTERFERENCE",
+      "covers": ["ZF013-I01"],
+      "attack": "Add unauthorized alpha and beta nodes, ambiguous assignments, invalid edges, secret-like markers, and imported instruction-like markers before graph evaluation.",
+      "expected": "The authorized baseline projection is byte-for-byte equal on every observable dimension.",
+      "failure": "Any unauthorized row reaches assignment, lifecycle, edge rejection, revision, count, ordering, reason, or receipt evaluation.",
+      "kill": "KILL_ZF013_AUTHORIZATION_NONINTERFERENCE"
+    },
+    {
+      "case_id": "ZF013-C02-CROSS-PROJECT-ISOLATION",
+      "covers": ["ZF013-I02", "ZF013-I05"],
+      "attack": "Add a beta branch and an alpha-to-beta edge attempt to an alpha projection.",
+      "expected": "The alpha projection is unchanged; the cross-project edge is rejected and beta content is absent.",
+      "failure": "Beta content, beta identifiers, beta counts, or a cross-project edge enters the alpha projection.",
+      "kill": "KILL_ZF013_CROSS_PROJECT_LEAK"
+    },
+    {
+      "case_id": "ZF013-C03-AMBIGUOUS-ASSIGNMENT-ABSTENTION",
+      "covers": ["ZF013-I03"],
+      "attack": "Use an authorized seed whose assignment is explicitly ambiguous.",
+      "expected": "Empty content, empty ordering, zero expansion, no receipts, and reason code graph:abstain:ambiguous_assignment.",
+      "failure": "Any ambiguous record is published, traversed, counted as selected, or used as a receipt dependency.",
+      "kill": "KILL_ZF013_AMBIGUOUS_ASSIGNMENT"
+    },
+    {
+      "case_id": "ZF013-C04-CORRECTION-SUPERSESSION",
+      "covers": ["ZF013-I04"],
+      "attack": "Replace an alpha dependency revision 1 with revision 2 while retaining the immutable old input.",
+      "expected": "Current projection contains revision 2 and its fresh descendant, never revision 1 or its stale descendant.",
+      "failure": "A superseded node or any stale descendant remains visible, ordered, counted, or receipt-bound.",
+      "kill": "KILL_ZF013_STALE_SUPERSESSION"
+    },
+    {
+      "case_id": "ZF013-C05-AS-OF-HISTORICAL",
+      "covers": ["ZF013-I04"],
+      "attack": "Query before and after the correction timestamp, while keeping current state unchanged.",
+      "expected": "The earlier as-of projection returns revision 1; the later as-of projection returns revision 2; neither leaks into the other.",
+      "failure": "Current-only state is returned for the historical query, or a later correction appears before its effective time.",
+      "kill": "KILL_ZF013_AS_OF_MISMATCH"
+    },
+    {
+      "case_id": "ZF013-C06-DELETE-PURGE-CLOSURE",
+      "covers": ["ZF013-I04"],
+      "attack": "Apply reversible delete to one node and terminal purge to another node with a reachable descendant.",
+      "expected": "Delete is absent after its timestamp but visible before it; purge leaves no current or historical residue and closes its descendants.",
+      "failure": "A deleted or purged source, descendant, dependency path, or receipt is served after the applicable barrier.",
+      "kill": "KILL_ZF013_DELETE_PURGE_CLOSURE"
+    },
+    {
+      "case_id": "ZF013-C07-STALE-DEPENDENCY-INVALIDATION",
+      "covers": ["ZF013-I04"],
+      "attack": "Leave an old source-to-derived edge present after its source is superseded.",
+      "expected": "The stale derived node is absent and no receipt dependency path contains the superseded source revision.",
+      "failure": "A stale edge, stale derived node, or stale receipt survives source invalidation.",
+      "kill": "KILL_ZF013_STALE_DEPENDENCY"
+    },
+    {
+      "case_id": "ZF013-C08-CYCLE-REJECTION",
+      "covers": ["ZF013-I05"],
+      "attack": "Add a back-edge from a two-hop descendant to the seed.",
+      "expected": "The back-edge is rejected, accepted topology remains acyclic, and projection terminates within the bound.",
+      "failure": "A cycle is accepted, changes output, creates duplicate receipts, or causes unbounded work.",
+      "kill": "KILL_ZF013_CYCLE_ACCEPTANCE"
+    },
+    {
+      "case_id": "ZF013-C09-SELF-EDGE-REJECTION",
+      "covers": ["ZF013-I05"],
+      "attack": "Add an edge whose source and target are the same node.",
+      "expected": "The self-edge is rejected with no projection or receipt effect.",
+      "failure": "A self-edge is accepted, counted, or used to change ordering or revision.",
+      "kill": "KILL_ZF013_SELF_EDGE_ACCEPTANCE"
+    },
+    {
+      "case_id": "ZF013-C10-DUPLICATE-EDGE-IDEMPOTENCE",
+      "covers": ["ZF013-I05"],
+      "attack": "Replay the same source-target-relation edge under multiple synthetic edge IDs and add a conflicting relation for the same endpoints.",
+      "expected": "One canonical relation, one traversal effect, one receipt path, unchanged projection dimensions, and rejection of the conflicting relation.",
+      "failure": "Duplicate edges inflate counts, ordering, receipts, or revisions, or a conflicting duplicate relation is accepted.",
+      "kill": "KILL_ZF013_DUPLICATE_EDGE_INFLATION"
+    },
+    {
+      "case_id": "ZF013-C11-HIGH-FANOUT-BOUNDED-TWO-HOP",
+      "covers": ["ZF013-I06"],
+      "attack": "Give one seed more than twelve direct children and add a third-hop chain.",
+      "expected": "At most twelve nodes are selected, no third-hop node is selected, ordering is deterministic, and bounded_two_hop is reported.",
+      "failure": "Node count exceeds twelve, a third-hop node appears, or high fan-out changes work without bound.",
+      "kill": "KILL_ZF013_EXPANSION_BOUND"
+    },
+    {
+      "case_id": "ZF013-C12-DETERMINISTIC-REBUILD-REORDER",
+      "covers": ["ZF013-I07"],
+      "attack": "Rebuild from fresh oracle state repeatedly and permute node and edge input order.",
+      "expected": "All six observable dimensions are identical for every permutation and rebuild.",
+      "failure": "Any output, receipt, revision, or ordering changes solely because input order changed.",
+      "kill": "KILL_ZF013_NONDETERMINISTIC_REBUILD"
+    },
+    {
+      "case_id": "ZF013-C13-SECRET-IMPORTED-INSTRUCTION-INERTNESS",
+      "covers": ["ZF013-I08"],
+      "attack": "Provide authorized secret-like and imported instruction-like nodes connected to the alpha seed.",
+      "expected": "Neither marker influences content, graph traversal, revision, counts, ordering, reason codes, or receipts.",
+      "failure": "Secret-like or imported instruction-like material is selected, propagated, echoed, or receipt-bound.",
+      "kill": "KILL_ZF013_UNTRUSTED_TEXT_INFLUENCE"
+    },
+    {
+      "case_id": "ZF013-C14-UNAUTHORIZED-DIMENSION-NONINTERFERENCE",
+      "covers": ["ZF013-I01", "ZF013-I02", "ZF013-I08"],
+      "attack": "Pair a clean authorized graph with the same graph plus unauthorized content, edges, corrections, cycles, secrets, and instructions.",
+      "expected": "content, reason_codes, revision, counts, ordering, and receipts are each exactly equal.",
+      "failure": "Any one of the six observable dimensions differs between the paired runs.",
+      "kill": "KILL_ZF013_UNAUTHORIZED_DIMENSION_INFLUENCE"
+    }
+  ],
+  "kill_criteria": {
+    "status_if_all_pass": "RETAIN_ZF013_SAFETY_ORACLE",
+    "kill_on_any": [
+      "unauthorized_content_influence",
+      "unauthorized_reason_code_influence",
+      "unauthorized_revision_influence",
+      "unauthorized_count_influence",
+      "unauthorized_ordering_influence",
+      "unauthorized_receipt_influence",
+      "cross_project_leak",
+      "ambiguous_assignment_publish",
+      "stale_dependency_publish",
+      "as_of_mismatch",
+      "delete_or_purge_residue",
+      "illegal_cycle_or_self_edge",
+      "duplicate_edge_inflation",
+      "two_hop_or_node_cap_violation",
+      "nondeterministic_rebuild",
+      "secret_or_imported_instruction_influence",
+      "receipt_contains_raw_or_secret_like_data"
+    ],
+    "hold_on": [
+      "missing_case_or_invariant_coverage",
+      "missing_observable_dimension",
+      "oracle_imports_production_runtime",
+      "oracle_reads_private_or_live_data",
+      "rebuild_control_shares_optimized_state",
+      "required_surface_is_unobservable"
+    ],
+    "kill_rule": "Any kill_on_any item is a failed safety gate and yields KILL_ZF013; no aggregate score may compensate for it.",
+    "hold_rule": "Any hold_on item yields HOLD_ZF013 and no implementation credit until the evidence boundary or observability gap is repaired."
+  }
+}

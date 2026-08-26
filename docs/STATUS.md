@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-### 2026-08-25 Milestone 5 lane B — bounded typed project graph
+### 2026-08-25 Milestone 5 — bounded typed project graph and safety oracle
 
 This isolated lane adds only an in-memory, rebuildable typed graph over
 already-authorized, single-project, temporally eligible relation evidence.
@@ -14,14 +14,19 @@ lineage. There is no graph store, persistence, source scan, MCP/UI/storage
 wiring, automatic authority, model inference, provider claim, or release
 claim.
 
-As of 2026-08-26 UTC, this branch builds Milestone 4 ambient project activation
-on the merged Import Truth, Memory Truth, Retrieval, Continuous Context, and
+The separate sanitized 14-case oracle remains independent of the production
+module and is retained as a kill/hold contract, not as proof that the typed
+graph conforms. Actual-implementation conformance is still required before any
+runtime or retrieval promotion.
+
+As of 2026-08-25 UTC, this branch builds on the merged Import Truth, Memory
+Truth, Retrieval, Continuous Context, and
 deterministic Project Context Capsule foundations. Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
-one content-bearing project.
-Every ambiguous or unauthorized case abstains instead of guessing.
+one content-bearing project. Every ambiguous or unauthorized case abstains
+instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
@@ -36,6 +41,27 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-25 Milestone 5 lane C — ZF-013 graph adversarial oracle
+
+This oracle lane adds no runtime wiring. It freezes 14 sanitized adversarial cases in
+`bench/zf013_graph_adversarial_fixtures.json` and a stdlib-only reference
+oracle in `bench/zf013_graph_adversarial.py`. The focused tests pass locally
+(`14 passed`) and cover authorization-first noninterference, project isolation,
+ambiguous assignment abstention, correction/supersession, historical `as_of`,
+delete/purge closure, stale dependencies, cycles, self-edges, duplicate edges,
+high fan-out/two-hop bounds, deterministic rebuild/input reordering,
+secret-like/imported-instruction inertness, and exact equality of content,
+reason codes, revisions, counts, ordering, and receipts under unauthorized
+input.
+
+Any violation of those zero-influence, lifecycle, topology, bound, or receipt
+rules is `KILL_ZF013`; missing coverage, unsafe diagnostics, runtime coupling,
+or an invalid rebuild control is `HOLD_ZF013`. This is sanitized local oracle
+evidence only and does not close ZF-013 or claim a graph store, graph
+promotion, provider/client, network, release, or private-data acceptance. The
+separate ephemeral typed graph is present above, but it has not yet been run
+through this independent oracle.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 
