@@ -65,8 +65,7 @@ def test_matrix_is_frozen_and_covers_the_complete_zf013_attack_set() -> None:
     invariant_ids = {item["invariant_id"] for item in matrix["invariants"]}
     assert all(set(case["covers"]) <= invariant_ids for case in matrix["cases"])
     assert all(
-        case["failure"] and case["kill"].startswith("KILL_ZF013")
-        for case in matrix["cases"]
+        case["failure"] and case["kill"].startswith("KILL_ZF013") for case in matrix["cases"]
     )
     assert matrix["kill_criteria"]["status_if_all_pass"] == "RETAIN_ZF013_SAFETY_ORACLE"
     assert matrix["kill_criteria"]["kill_rule"].startswith("Any kill_on_any item")
@@ -127,9 +126,7 @@ def test_authorization_first_noninterference_covers_every_observable_dimension()
 
 def test_cross_project_edge_is_rejected_and_project_projection_is_unchanged() -> None:
     graph = base_graph()
-    alpha_nodes = {
-        node.node_id: node for node in graph.nodes if node.project_id == "project-alpha"
-    }
+    alpha_nodes = {node.node_id: node for node in graph.nodes if node.project_id == "project-alpha"}
     cross_project = Edge("e-cross-project", "alpha-root", "beta-root")
     beta_root = next(node for node in graph.nodes if node.node_id == "beta-root")
     normalized = normalize_edges(
@@ -165,9 +162,7 @@ def test_correction_supersession_and_stale_dependency_invalidation() -> None:
 
 
 def test_as_of_rebuild_keeps_old_revision_before_correction() -> None:
-    historical = project(
-        base_graph(), Query("project-alpha", ("alpha-root",), as_of=OLD_AS_OF)
-    )
+    historical = project(base_graph(), Query("project-alpha", ("alpha-root",), as_of=OLD_AS_OF))
     current = project(base_graph(), ALPHA_QUERY)
 
     assert "alpha-corrected-v1" in historical.content
@@ -194,9 +189,7 @@ def test_delete_is_historical_but_terminal_purge_closes_current_and_past() -> No
     assert "alpha-purged" not in before_purge.content
     assert "alpha-purged-derived" not in before_purge.content
     assert all(receipt.subject_id != "alpha-purged" for receipt in before_purge.receipts)
-    assert all(
-        receipt.subject_id != "alpha-purged-derived" for receipt in before_purge.receipts
-    )
+    assert all(receipt.subject_id != "alpha-purged-derived" for receipt in before_purge.receipts)
 
 
 def test_cycles_and_self_edges_are_rejected_without_projection_effect() -> None:
@@ -237,9 +230,7 @@ def test_duplicate_edges_are_idempotent_in_all_projection_dimensions() -> None:
         relation="conflicts",
     )
     normalized = normalize_edges(
-        {
-            node.node_id: node for node in graph.nodes if node.project_id == "project-alpha"
-        },
+        {node.node_id: node for node in graph.nodes if node.project_id == "project-alpha"},
         (*graph.edges, duplicate, conflicting),
     )
 

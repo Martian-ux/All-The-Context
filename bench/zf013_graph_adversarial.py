@@ -144,9 +144,7 @@ def _eligible_nodes(graph: GraphInput, query: Query) -> dict[str, Node]:
     authorized = tuple(node for node in graph.nodes if node.authorized)
     project_nodes = tuple(node for node in authorized if node.project_id == query.project_id)
 
-    purged_logical_ids = {
-        node.logical_id for node in project_nodes if node.purged_at is not None
-    }
+    purged_logical_ids = {node.logical_id for node in project_nodes if node.purged_at is not None}
     as_of = _instant(query.as_of)
     candidates: list[Node] = []
     for node in project_nodes:
@@ -294,8 +292,7 @@ def project(graph: GraphInput, query: Query) -> Projection:
     edge_nodes = {
         node.node_id: node
         for node in all_authorized
-        if node.project_id == query.project_id
-        and node.node_id in eligible
+        if node.project_id == query.project_id and node.node_id in eligible
     }
     normalized = normalize_edges(edge_nodes, graph.edges)
 
