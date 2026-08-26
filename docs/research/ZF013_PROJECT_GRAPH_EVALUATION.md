@@ -1,17 +1,18 @@
 # ZF-013 Milestone 5 lane A: frozen project-graph evaluation
 
-Status: local synthetic evaluation contract, accepted for this isolated lane on
-2026-08-25. This is a benchmark and evaluator boundary, not a production graph
-implementation or promotion decision.
+Status: local synthetic harness self-test contract, accepted for this isolated
+lane on 2026-08-25. This is an evaluator boundary, not a production graph
+implementation, usefulness result, or promotion decision.
 
-The frozen comparator is pinned to protected-main base
+The frozen harness is pinned to protected-main base
 `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Its machine-readable contract is
 `bench/zf013_project_graph_contract.json` and its sanitized corpus is
 `bench/zf013_project_graph_fixtures.json`. The fixture contains two synthetic
-projects, 31 records across current/stale/deleted/purged lifecycle states, 19
-typed relations, nine query cases, a directed cycle, a cross-project edge, and
-an eight-neighbor high-fan-out source. No workspace, Core database, provider,
-browser, dashboard, network, model, or private data is used.
+projects, 31 records across current/stale/deleted/purged lifecycle states, 23
+typed relations, nine query cases, a directed cycle, a self-edge, a
+cross-project edge, and an eight-neighbor high-fan-out source. No workspace,
+Core database, provider, browser, dashboard, network, model, or private data is
+used.
 
 Run the bounded evaluator with:
 
@@ -30,17 +31,22 @@ Each profile uses the same frozen corpus and query cases.
 
 | Profile | Definition | Purpose |
 |---|---|---|
-| `retrieval_v3_current` | Current-only lexical ranking without an explicit project filter | Current Retrieval V3 comparator control |
-| `structured_project_filter` | The same lexical ranking after an explicit project filter | Project-scoping control |
+| `stdlib_lexical_proxy` | A stdlib-only current-record lexical proxy without an explicit project filter | Frozen lexical control; production Retrieval V3 is **not exercised** |
+| `structured_project_filter` | The same lexical proxy after an explicit project filter | Project-scoping control |
 | `deterministic_project_context_capsule` | Current, project-scoped records selected by fixed capsule rank | Deterministic Project Context Capsule control |
 | `lexical_typed_one_hop` | Highest-score project-scoped lexical seeds plus directed typed expansion to depth 1 | First graph candidate |
 | `bounded_typed_two_hop` | The same seeds plus bounded directed typed expansion to depth 2 | Two-hop graph candidate |
 
-Graph traversal filters lifecycle eligibility and project scope before a record
-can be selected. It follows only the six frozen relation families: `belongs_to`,
-`supersedes`, `depends_on`, `blocks`, `implements`, and `tested_by`. It uses a
-maximum of two outgoing neighbors per source and 24 expanded edges per query.
-The fixture's cross-project edge may be examined but never becomes disclosure.
+The harness first normalizes a typed relation graph. It drops unknown,
+cross-project, non-current, unsupported, duplicate, self, and cycle edges
+before relation ordering, neighbor counts, fan-out truncation, visited state,
+timed traversal, or receipt construction. Only then does traversal follow the
+six frozen relation families: `belongs_to`, `supersedes`, `depends_on`,
+`blocks`, `implements`, and `tested_by`. It uses a maximum of two outgoing
+neighbors per eligible source and 24 expanded edges per query. The normalized
+graph has zero accepted self-edges and zero accepted cycle revisits; rejected
+edge classes are reported only as aggregate normalization evidence. The
+fixture's cross-project edge never becomes disclosure or traversal work.
 
 ## Metrics and exact gates
 
@@ -80,12 +86,14 @@ The two graph profiles must pass all of these gates:
 | Maximum depth | `1` | `2` |
 | Expanded edges per query | `<= 24` | `<= 24` |
 | Neighbors per source | `<= 2` | `<= 2` |
-| Cycle revisits per query | `<= 1` | `<= 1` |
+| Accepted cycle revisits per query | `0` | `0` |
+| Accepted self-edges | `0` | `0` |
 | Warm p95 latency | `<= 50 ms` | `<= 50 ms` |
 
-Receipts hash the ordered, query-ordinal result projection and outcome flags.
-They must be identical across repeated runs and input reordering. The report
-does not emit the material being hashed.
+Receipts hash the ordered, query-ordinal result projection and outcome flags
+after eligible graph normalization. They must be identical across repeated
+runs, relation reordering, and addition of ineligible/unknown relations. The
+report does not emit the material being hashed.
 
 ## Relation-family ablation and kill rule
 
@@ -95,29 +103,38 @@ after removing only that family. A family is kept when removing it reduces
 required-evidence recall by at least `0.10` or Project CAOS by at least `0.10`,
 without a safety regression. A family is killed when both deltas are below
 `0.10`, or when enabling that family creates a safety failure that disappears
-under its ablation. Every family must receive an explicit `keep` or `kill`
-decision; no family is silently promoted.
+under its ablation. Every family must receive a valid finite-metric `keep` or
+`kill` decision; malformed, unknown, or internally inconsistent decisions fail
+the harness self-test. These decisions are explicitly synthetic integration
+hypotheses only, never promotion evidence.
 
 The lane A synthetic run at fixture revision `2026-08-25.lane-a` produced:
 
 | Profile | Required recall | Project CAOS | Wrong-project | Unnecessary |
 |---|---:|---:|---:|---:|
-| Current Retrieval V3 | `0.537037` | `0.111111` | `1` | `4` |
+| Stdlib lexical proxy | `0.537037` | `0.111111` | `1` | `4` |
 | Structured project filter | `0.537037` | `0.111111` | `0` | `3` |
 | Deterministic capsule | `0.111111` | `0.000000` | `0` | `16` |
 | Lexical typed one-hop | `0.962963` | `0.888889` | `0` | `0` |
 | Bounded typed two-hop | `1.000000` | `1.000000` | `0` | `0` |
 
-Both graph profiles passed their gates. The two-hop run observed one bounded
-cycle revisit, one high-fan-out truncation, maximum depth 2, maximum expanded
-edges 3, and zero bound violations. Ablations kept `belongs_to`, `depends_on`,
-`blocks`, `implements`, and `tested_by`; `supersedes` was killed because its
-removal changed neither required recall nor CAOS in this usefulness fixture.
-These are local synthetic observations, not production acceptance, provider or
-client claims, private-data evidence, release evidence, or a graph-promotion
-decision.
+The harness self-test passed both graph profiles. The normalized graph rejected
+seven illegal edges (one cross-project, two stale-target, one deleted-target,
+one purged-target, one self-edge, and one cycle edge), accepted zero self-edges
+and zero cycle revisits, observed one high-fan-out truncation, maximum depth 2,
+maximum expanded edges 2, and zero bound violations. Ablations kept
+`belongs_to`, `depends_on`, `blocks`, `implements`, and `tested_by`; `supersedes`
+was killed because its removal changed neither required recall nor CAOS in this
+synthetic integration hypothesis. These are not production acceptance,
+provider or client claims, private-data evidence, release evidence, or a graph
+promotion decision.
+
+Machine output explicitly reports production Retrieval V3 as `not_exercised`
+and names the aggregate result `harness_self_test_passed`/
+`harness_self_test_failed`; it never emits a generic production-usefulness
+`passed` status.
 
 The lane hashes are fixture SHA-256
-`100611b4b3da0deefa808d46701cc9c8eff374f9f9b77e8defc65bd74ea871cd` and
+`9b872901586d22424d307c9067d65352d83bcf6d3e4c1125b1a35388528a9543` and
 contract SHA-256
-`a97a8db9a4c8ab2501b6db8a2032ff6508ef10df16b1a2b782275313fff09d35`.
+`b301f090f93d5756296baa31bb9dc78ae717ff1666cf36d2e9cd5171afa60e88`.

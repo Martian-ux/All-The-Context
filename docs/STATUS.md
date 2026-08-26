@@ -65,12 +65,12 @@ through this independent oracle.
 
 ### 2026-08-25 Milestone 5 lane A — frozen ZF-013 project-graph evaluation
 
-This isolated branch adds only the frozen synthetic ZF-013 evaluation contract
+This isolated branch adds only the frozen synthetic ZF-013 harness self-test contract
 and harness in `bench/zf013_project_graph_contract.json`,
 `bench/zf013_project_graph_fixtures.json`, and
 `bench/zf013_project_graph_benchmark.py`, with focused coverage in
-`tests/unit/test_zf013_project_graph_benchmark.py`. It compares the current
-Retrieval V3 lexical control, structured project filtering, deterministic
+`tests/unit/test_zf013_project_graph_benchmark.py`. It compares a stdlib-only
+lexical proxy, structured project filtering, deterministic
 Project Context Capsules, lexical seeds plus typed one-hop expansion, bounded
 two-hop expansion, and six relation-family ablations. It does not add a graph
 store, graph runtime, learned relation, Core/storage/retrieval behavior, MCP,
@@ -78,27 +78,32 @@ dashboard, capture, workspace scanning, provider, browser, package, release,
 CI, or macOS behavior.
 
 The sanitized fixture has two synthetic projects, 31 lifecycle-labeled records,
-19 typed relations, nine cases, a cycle, a cross-project edge, and an eight-way
-fan-out. Project CAOS requires complete frozen required evidence, zero
+23 typed relations, nine cases, a cycle, a self-edge, a cross-project edge, and
+an eight-way fan-out. Eligible relation endpoints are normalized before
+ordering, fan-out/edge accounting, visited state, timed traversal, or receipt
+material; unknown, cross-project, non-current, self, and cycle edges are
+rejected. Project CAOS requires complete frozen required evidence, zero
 wrong-project/stale/deleted/purged/unnecessary disclosure, budget compliance,
 and zero traversal-bound violations. The exact one-hop and two-hop gates are
 recall `>= 0.75`/`0.90`, CAOS `>= 0.75`/`0.85`, graph gains over the structured
 filter `>= 0.20`/`0.30`, zero disclosure counts, deterministic receipts, depth
-`<= 1`/`2`, at most 24 expanded edges, at most two neighbors per source, at
-most one cycle revisit per query, and warm p95 `<= 50 ms`.
+`<= 1`/`2`, zero accepted self-edges and cycle revisits, at most 24 expanded
+edges, at most two neighbors per source, and warm p95 `<= 50 ms`.
 
-The default local run passed both graph profiles and all six ablation decisions.
-Current Retrieval V3 measured required-evidence recall `0.537037`, CAOS
+The default local harness self-test passed both graph profiles and all six
+synthetic integration-hypothesis decisions. The stdlib lexical proxy measured
+required-evidence recall `0.537037`, CAOS
 `0.111111`, and one wrong-project disclosure; structured filtering removed the
 wrong-project disclosure without improving recall. One-hop measured recall
 `0.962963` and CAOS `0.888889`; bounded two-hop measured recall and CAOS
 `1.000000`. The ablation kept `belongs_to`, `depends_on`, `blocks`,
 `implements`, and `tested_by`, and killed `supersedes` under the frozen
-`0.10` recall/CAOS delta rule. Focused evidence is five passing tests in
+`0.10` recall/CAOS delta rule. Focused evidence is seven passing tests in
 `tests/unit/test_zf013_project_graph_benchmark.py`; no full repository suite
-was run. This is aggregate synthetic research evidence only and does not close
-ZF-013, promote a graph, or imply live/private/provider/client/platform or
-release acceptance.
+was run. Production Retrieval V3 is explicitly `not_exercised`. This is
+aggregate synthetic harness self-test evidence only and does not close ZF-013,
+promote a graph, or imply live/private/provider/client/platform or release
+acceptance.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 

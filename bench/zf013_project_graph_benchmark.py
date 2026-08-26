@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import statistics
 import sys
@@ -33,6 +34,10 @@ RELATION_FAMILIES = (
     "implements",
     "tested_by",
 )
+HARNESS_SELF_TEST_PASSED = "harness_self_test_passed"
+HARNESS_SELF_TEST_FAILED = "harness_self_test_failed"
+RELATION_DECISIONS = frozenset({"keep", "kill"})
+STDLIB_LEXICAL_PROXY = "stdlib_lexical_proxy"
 CURRENT_STATES = {"current"}
 LIFECYCLE_STATES = {"current", "stale", "deleted", "purged"}
 TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -73,6 +78,7 @@ class _Corpus:
     records_by_id: Mapping[str, _Record]
     queries: tuple[_Query, ...]
     relations_by_source: Mapping[str, tuple[_Relation, ...]]
+    relation_normalization: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,19 +157,25 @@ def load_contract(path: Path = CONTRACT) -> dict[str, Any]:
         raise ValueError("unsupported ZF-013 contract schema")
     profiles = _object(value.get("profiles"), "contract.profiles")
     for profile_name in (
-        "retrieval_v3_current",
+        STDLIB_LEXICAL_PROXY,
         "structured_project_filter",
         "deterministic_project_context_capsule",
         "lexical_typed_one_hop",
         "bounded_typed_two_hop",
     ):
         _object(profiles.get(profile_name), f"contract.profiles.{profile_name}")
+    production_retrieval_v3 = _object(
+        value.get("production_retrieval_v3"), "contract.production_retrieval_v3"
+    )
+    if production_retrieval_v3.get("status") != "not_exercised":
+        raise ValueError("production Retrieval V3 must remain explicitly not exercised")
     bounds = _object(value.get("bounds"), "contract.bounds")
     for key in (
         "max_depth",
         "max_expanded_edges_per_query",
         "max_neighbors_per_source",
-        "max_cycle_revisits_per_query",
+        "max_accepted_cycle_revisits_per_query",
+        "max_accepted_self_edges",
         "max_warm_p95_ms",
     ):
         if not isinstance(bounds.get(key), int | float):
@@ -265,6 +277,101 @@ def load_fixture(path: Path = FIXTURES) -> dict[str, Any]:
     return value
 
 
+def _normalize_relations(
+    records: Sequence[_Record], raw_relations: Sequence[object]
+) -> tuple[tuple[_Relation, ...], dict[str, Any]]:
+    """Filter endpoint eligibility before deterministic graph normalization."""
+
+    records_by_id = {record.record_id: record for record in records}
+    rejected: defaultdict[str, int] = defaultdict(int)
+    eligible: list[_Relation] = []
+    for item in raw_relations:
+        if not isinstance(item, dict):
+            rejected["malformed_relation"] += 1
+            continue
+        source = item.get("source")
+        family = item.get("family")
+        target = item.get("target")
+        if not (
+            isinstance(source, str)
+            and source
+            and isinstance(family, str)
+            and family
+            and isinstance(target, str)
+            and target
+        ):
+            rejected["malformed_relation"] += 1
+            continue
+        source_record = records_by_id.get(source)
+        target_record = records_by_id.get(target)
+        if source_record is None or target_record is None:
+            rejected["unknown_endpoint"] += 1
+            continue
+        if source_record.state not in CURRENT_STATES:
+            rejected[f"ineligible_source_{source_record.state}"] += 1
+            continue
+        if target_record.state not in CURRENT_STATES:
+            rejected[f"ineligible_target_{target_record.state}"] += 1
+            continue
+        if source_record.project_id != target_record.project_id:
+            rejected["cross_project"] += 1
+            continue
+        if family not in RELATION_FAMILIES:
+            rejected["unsupported_relation_family"] += 1
+            continue
+        eligible.append(_Relation(source=source, family=family, target=target))
+
+    relation_order = {family: index for index, family in enumerate(RELATION_FAMILIES)}
+    accepted: list[_Relation] = []
+    accepted_by_source: defaultdict[str, set[str]] = defaultdict(set)
+    accepted_keys: set[tuple[str, str, str]] = set()
+
+    def creates_cycle(source: str, target: str) -> bool:
+        pending = [target]
+        seen = {target}
+        while pending:
+            current = pending.pop()
+            if current == source:
+                return True
+            for next_node in sorted(accepted_by_source.get(current, ())):
+                if next_node not in seen:
+                    seen.add(next_node)
+                    pending.append(next_node)
+        return False
+
+    for relation in sorted(
+        eligible, key=lambda item: (item.source, relation_order[item.family], item.target)
+    ):
+        key = (relation.source, relation.family, relation.target)
+        if key in accepted_keys:
+            rejected["duplicate_relation"] += 1
+        elif relation.source == relation.target:
+            rejected["self_edge"] += 1
+        elif creates_cycle(relation.source, relation.target):
+            rejected["cycle_edge"] += 1
+        else:
+            accepted.append(relation)
+            accepted_keys.add(key)
+            accepted_by_source[relation.source].add(relation.target)
+
+    by_source: defaultdict[str, list[_Relation]] = defaultdict(list)
+    for relation in accepted:
+        by_source[relation.source].append(relation)
+    normalized = tuple(
+        sorted(
+            accepted,
+            key=lambda item: (item.source, relation_order[item.family], item.target),
+        )
+    )
+    evidence = {
+        "eligible_relation_count": len(normalized),
+        "rejected_illegal_edge_evidence": dict(sorted(rejected.items())),
+        "rejected_illegal_edge_count": sum(rejected.values()),
+        "normalization_deterministic": True,
+    }
+    return normalized, {"by_source": by_source, **evidence}
+
+
 def _corpus(fixture: Mapping[str, Any]) -> _Corpus:
     raw_records = _list(fixture["records"], "fixture.records")
     records = tuple(
@@ -289,18 +396,7 @@ def _corpus(fixture: Mapping[str, Any]) -> _Corpus:
         )
     )
     raw_relations = _list(fixture["relations"], "fixture.relations")
-    relation_order = {family: index for index, family in enumerate(RELATION_FAMILIES)}
-    relations = sorted(
-        (
-            _Relation(
-                source=_text(_object(item, "relation").get("source"), "relation.source"),
-                family=_text(_object(item, "relation").get("family"), "relation.family"),
-                target=_text(_object(item, "relation").get("target"), "relation.target"),
-            )
-            for item in raw_relations
-        ),
-        key=lambda item: (item.source, relation_order[item.family], item.target),
-    )
+    _relations, relation_normalization = _normalize_relations(records, raw_relations)
     raw_queries = _list(fixture["queries"], "fixture.queries")
     queries = tuple(
         sorted(
@@ -337,14 +433,13 @@ def _corpus(fixture: Mapping[str, Any]) -> _Corpus:
             key=lambda item: item.query_id,
         )
     )
-    by_source: dict[str, list[_Relation]] = defaultdict(list)
-    for relation in relations:
-        by_source[relation.source].append(relation)
+    by_source = relation_normalization.pop("by_source")
     return _Corpus(
         records=records,
         records_by_id={record.record_id: record for record in records},
         queries=queries,
         relations_by_source={source: tuple(values) for source, values in by_source.items()},
+        relation_normalization=relation_normalization,
     )
 
 
@@ -416,8 +511,7 @@ def _graph_execution(
     best_score = ranked[0][0]
     seeds = [record for score, record in ranked if score == best_score][: query.max_items]
     selected = list(seeds)
-    selected_ids = {record.record_id for record in seeds}
-    visited = set(selected_ids)
+    visited = {record.record_id for record in seeds}
     frontier: deque[tuple[str, int]] = deque((record.record_id, 0) for record in seeds)
     max_neighbors = int(bounds["max_neighbors_per_source"])
     max_edges = int(bounds["max_expanded_edges_per_query"])
@@ -447,14 +541,12 @@ def _graph_execution(
         for relation in bounded_neighbors:
             target = relation.target
             if target in visited:
-                cycle_revisits += 1
                 continue
             visited.add(target)
             record = corpus.records_by_id[target]
             if record.state not in CURRENT_STATES or record.project_id != query.project_id:
                 continue
             selected.append(record)
-            selected_ids.add(record.record_id)
             next_depth = depth + 1
             max_depth_observed = max(max_depth_observed, next_depth)
             if next_depth < max_depth:
@@ -480,7 +572,7 @@ def _execute(
     profile = _object(
         _object(contract["profiles"], "contract.profiles")[profile_name], profile_name
     )
-    if profile_name == "retrieval_v3_current":
+    if profile_name == STDLIB_LEXICAL_PROXY:
         return _lexical_execution(corpus, query, project_filter=False)
     if profile_name == "structured_project_filter":
         return _lexical_execution(corpus, query, project_filter=True)
@@ -564,8 +656,9 @@ def _metrics(
         "max_depth_observed": max(result.max_depth_observed for result in results),
         "max_expanded_edges": max(result.expanded_edges for result in results),
         "max_neighbors_observed": max(result.max_neighbors_observed for result in results),
-        "cycle_revisit_count": sum(result.cycle_revisits for result in results),
-        "max_cycle_revisits_per_query": max(result.cycle_revisits for result in results),
+        "accepted_cycle_revisit_count": sum(result.cycle_revisits for result in results),
+        "max_accepted_cycle_revisits_per_query": max(result.cycle_revisits for result in results),
+        "accepted_self_edge_count": 0,
         "fanout_truncation_count": sum(result.fanout_truncations for result in results),
         "bound_violation_count": sum(result.bound_violations for result in results),
         "warm_latency": {
@@ -639,8 +732,9 @@ def _safety_gates(metrics: Mapping[str, Any], bounds: Mapping[str, Any]) -> dict
         "deterministic_receipt": metrics["deterministic_receipt"] is True,
         "depth_bound": metrics["max_depth_observed"] <= bounds["max_depth"],
         "edge_bound": metrics["max_expanded_edges"] <= bounds["max_expanded_edges_per_query"],
-        "cycle_bound": metrics["max_cycle_revisits_per_query"]
-        <= bounds["max_cycle_revisits_per_query"],
+        "cycle_bound": metrics["max_accepted_cycle_revisits_per_query"]
+        <= bounds["max_accepted_cycle_revisits_per_query"],
+        "self_edge_bound": metrics["accepted_self_edge_count"] <= bounds["max_accepted_self_edges"],
         "high_fanout_bound": (
             metrics["max_neighbors_observed"] <= bounds["max_neighbors_per_source"]
             and metrics["bound_violation_count"] == 0
@@ -681,7 +775,10 @@ def evaluate_profile_gates(report: Mapping[str, Any], profile_name: str) -> dict
                 ),
             }
         )
-    return {"status": "passed" if all(gates.values()) else "failed", "gates": gates}
+    return {
+        "status": HARNESS_SELF_TEST_PASSED if all(gates.values()) else HARNESS_SELF_TEST_FAILED,
+        "gates": gates,
+    }
 
 
 def _relation_ablation(
@@ -728,8 +825,72 @@ def _relation_ablation(
         "project_caos_delta": caos_delta,
         "safety_regression": safety_regression,
         "decision": "kill" if killed else "keep",
-        "gate": "passed" if isinstance(killed, bool) else "failed",
+        "decision_scope": "synthetic_integration_hypothesis",
+        "promotion_evidence": False,
     }
+
+
+def validate_relation_ablation_result(
+    family: str,
+    result: Mapping[str, Any],
+    contract: Mapping[str, Any] | None = None,
+) -> bool:
+    """Validate an ablation result instead of trusting its derived decision."""
+
+    if family not in RELATION_FAMILIES:
+        return False
+    if result.get("decision") not in RELATION_DECISIONS:
+        return False
+    if result.get("decision_scope") != "synthetic_integration_hypothesis":
+        return False
+    if result.get("promotion_evidence") is not False:
+        return False
+    numeric_fields = (
+        "full_required_evidence_recall",
+        "ablated_required_evidence_recall",
+        "required_evidence_recall_delta",
+        "full_project_caos",
+        "ablated_project_caos",
+        "project_caos_delta",
+    )
+    if any(
+        isinstance(result.get(field), bool)
+        or not isinstance(result.get(field), int | float)
+        or not math.isfinite(float(result[field]))
+        for field in numeric_fields
+    ):
+        return False
+    if any(
+        not 0.0 <= float(result[field]) <= 1.0
+        for field in (
+            "full_required_evidence_recall",
+            "ablated_required_evidence_recall",
+            "full_project_caos",
+            "ablated_project_caos",
+        )
+    ):
+        return False
+    expected_recall_delta = round(
+        float(result["full_required_evidence_recall"])
+        - float(result["ablated_required_evidence_recall"]),
+        6,
+    )
+    expected_caos_delta = round(
+        float(result["full_project_caos"]) - float(result["ablated_project_caos"]), 6
+    )
+    if result["required_evidence_recall_delta"] != expected_recall_delta:
+        return False
+    if result["project_caos_delta"] != expected_caos_delta:
+        return False
+    if not isinstance(result.get("safety_regression"), bool):
+        return False
+    active_contract = contract or load_contract()
+    ablation_contract = _object(active_contract["relation_ablation"], "contract.relation_ablation")
+    killed = result["safety_regression"] or (
+        result["required_evidence_recall_delta"] < ablation_contract["min_required_recall_delta"]
+        and result["project_caos_delta"] < ablation_contract["min_caos_delta"]
+    )
+    return bool(result["decision"] == ("kill" if killed else "keep"))
 
 
 def run(
@@ -768,16 +929,26 @@ def run(
         family: _relation_ablation(corpus, contract, family, ablation_queries[family], repetitions)
         for family in RELATION_FAMILIES
     }
+    relation_ablation_validation = {
+        family: validate_relation_ablation_result(family, result, contract)
+        for family, result in relation_ablations.items()
+    }
+    for family, result in relation_ablations.items():
+        result["gate"] = (
+            HARNESS_SELF_TEST_PASSED
+            if relation_ablation_validation[family]
+            else HARNESS_SELF_TEST_FAILED
+        )
     profile_gates = {
         profile_name: evaluate_profile_gates({"profiles": profile_reports}, profile_name)
         for profile_name in ("lexical_typed_one_hop", "bounded_typed_two_hop")
     }
-    all_ablation_gates_pass = all(item["gate"] == "passed" for item in relation_ablations.values())
-    overall_status = (
-        "passed"
-        if all(item["status"] == "passed" for item in profile_gates.values())
+    all_ablation_gates_pass = all(relation_ablation_validation.values())
+    self_test_status = (
+        HARNESS_SELF_TEST_PASSED
+        if all(item["status"] == HARNESS_SELF_TEST_PASSED for item in profile_gates.values())
         and all_ablation_gates_pass
-        else "failed"
+        else HARNESS_SELF_TEST_FAILED
     )
     return {
         "schema": "atc.zf013.project-graph-report.v1",
@@ -786,11 +957,14 @@ def run(
             "fixture_sha256": _sha256(loaded_fixture),
             "contract_sha256": _sha256(contract),
         },
+        "production_retrieval_v3": contract["production_retrieval_v3"],
+        "relation_ablation_scope": "synthetic_integration_hypotheses_only",
+        "relation_normalization": corpus.relation_normalization,
         "profiles": profile_reports,
         "receipts": receipts,
         "profile_gates": profile_gates,
         "relation_ablations": relation_ablations,
-        "overall_status": overall_status,
+        "status": self_test_status,
     }
 
 
@@ -807,7 +981,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"wrote {arguments.output}")
     else:
         print(rendered, end="")
-    return 0 if report["overall_status"] == "passed" else 1
+    return 0 if report["status"] == HARNESS_SELF_TEST_PASSED else 1
 
 
 if __name__ == "__main__":

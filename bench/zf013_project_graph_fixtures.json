@@ -43,8 +43,11 @@
     {"source": "atlas-decision-current", "family": "supersedes", "target": "atlas-decision-old"},
     {"source": "atlas-release", "family": "depends_on", "target": "atlas-build"},
     {"source": "atlas-release", "family": "depends_on", "target": "beacon-release"},
+    {"source": "atlas-release", "family": "depends_on", "target": "atlas-deleted"},
     {"source": "atlas-risk", "family": "blocks", "target": "atlas-blocked-lane"},
+    {"source": "atlas-risk", "family": "blocks", "target": "atlas-purged"},
     {"source": "atlas-code", "family": "implements", "target": "atlas-requirement"},
+    {"source": "atlas-code", "family": "implements", "target": "atlas-decision-old"},
     {"source": "atlas-requirement", "family": "tested_by", "target": "atlas-test"},
     {"source": "atlas-chain-seed", "family": "depends_on", "target": "atlas-chain-mid"},
     {"source": "atlas-chain-mid", "family": "implements", "target": "atlas-chain-target"},
@@ -57,6 +60,7 @@
     {"source": "atlas-fanout-seed", "family": "belongs_to", "target": "atlas-fanout-07"},
     {"source": "atlas-fanout-seed", "family": "belongs_to", "target": "atlas-fanout-08"},
     {"source": "atlas-cycle-a", "family": "depends_on", "target": "atlas-cycle-b"},
+    {"source": "atlas-cycle-a", "family": "depends_on", "target": "atlas-cycle-a"},
     {"source": "atlas-cycle-b", "family": "depends_on", "target": "atlas-cycle-a"}
   ],
   "queries": [
