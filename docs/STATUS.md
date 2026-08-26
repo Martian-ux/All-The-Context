@@ -157,13 +157,13 @@ ledger is idempotent, correction-invalidatable, and terminal-purgeable; purge
 leaves only aggregate counts and an opaque barrier.
 
 `propose_procedure` is deterministic and shadow-only. It requires recurrence or
-strong non-client external verification, explicit project/task applicability,
+strong non-client external verification, exact project/task/applicability-key matching,
 negative guards, passing repair tests, influence dependencies (project,
 projection, memory, and source) plus outcome dependencies, and a closed purge
 dependency set. It returns only an advisory candidate or a closed
 rejection; there is no promotion, truth-write, authority, model, network,
 storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring.
-The focused local evidence is 33 unit tests, Ruff, and strict mypy for the new module;
+The focused local evidence is 35 unit tests, Ruff, and strict mypy for the new module;
 full-suite, live-data, provider, packaging, release, and platform acceptance
 remain outside the evidence boundary.
 

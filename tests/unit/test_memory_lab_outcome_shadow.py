@@ -97,7 +97,10 @@ def _proposal_kwargs(receipts: tuple[OutcomeReceipt, ...]) -> dict[str, object]:
     return {
         "proposal_id": "proposal-alpha",
         "applicability": ApplicabilityBoundary(
-            "project-alpha", "task-alpha", ("precondition-record-current",)
+            "project-alpha",
+            "task-alpha",
+            "task-class-alpha",
+            ("precondition-record-current",),
         ),
         "negative_guards": ("guard-record-stale", "guard-permission-missing"),
         "repair_tests": (RepairTest("repair-delete", InvalidationReason.ORDINARY_DELETE, True),),
@@ -169,6 +172,8 @@ def test_recurrence_with_same_action_signature_creates_advisory_proposal() -> No
     assert decision.reasons == ()
     assert decision.proposal is not None
     assert decision.proposal.supporting_receipt_ids == ("one", "two")
+    assert decision.proposal.supporting_task_ids == ("task-one", "task-two")
+    assert decision.proposal.strong_external_receipt_ids == ()
     assert decision.proposal.recurrence_count == 2
     assert decision.proposal.influence_dependencies
     assert not hasattr(decision.proposal, "source_dependencies")
@@ -183,6 +188,8 @@ def test_one_strong_external_result_can_satisfy_recurrence_gate() -> None:
     assert decision.status is ProposalStatus.PROPOSED
     assert decision.recurrence_count == 1
     assert decision.strong_external_verification_count == 1
+    assert decision.proposal is not None
+    assert decision.proposal.strong_external_receipt_ids == ("one",)
 
 
 def test_correction_or_invalidation_cannot_support_learning() -> None:
@@ -204,6 +211,19 @@ def test_correction_or_invalidation_cannot_support_learning() -> None:
 
     assert decision.status is ProposalStatus.REJECTED
     assert decision.recurrence_count == 0
+    assert ProposalReason.NO_OBSERVABLE_SUCCESS in decision.reasons
+
+
+def test_mismatched_assignment_applicability_cannot_support_learning() -> None:
+    receipt = _receipt("one", verification=VerificationStrength.STRONG)
+    kwargs = _proposal_kwargs((receipt,))
+    kwargs["applicability"] = ApplicabilityBoundary(
+        "project-alpha", "task-alpha", "different-task-class"
+    )
+    decision = propose_procedure((receipt,), **kwargs)
+
+    assert decision.status is ProposalStatus.REJECTED
+    assert decision.eligible_receipt_count == 0
     assert ProposalReason.NO_OBSERVABLE_SUCCESS in decision.reasons
 
 
@@ -231,9 +251,7 @@ def test_identical_duplicate_receipt_input_cannot_satisfy_recurrence() -> None:
 def test_conflicting_duplicate_receipt_ids_fail_closed_before_learning() -> None:
     receipt = _receipt("one")
     conflicting = replace(receipt, task_id="task-conflict")
-    decision = propose_procedure(
-        (receipt, conflicting), **_proposal_kwargs((receipt, conflicting))
-    )
+    decision = propose_procedure((receipt, conflicting), **_proposal_kwargs((receipt, conflicting)))
 
     assert decision.status is ProposalStatus.REJECTED
     assert decision.proposal is None
@@ -243,9 +261,7 @@ def test_conflicting_duplicate_receipt_ids_fail_closed_before_learning() -> None
 def test_distinct_receipts_for_one_task_are_not_independent_recurrence() -> None:
     first = _receipt("one")
     second = replace(_receipt("two"), task_id=first.task_id)
-    decision = propose_procedure(
-        (first, second), **_proposal_kwargs((first, second))
-    )
+    decision = propose_procedure((first, second), **_proposal_kwargs((first, second)))
 
     assert decision.status is ProposalStatus.REJECTED
     assert decision.recurrence_count == 1
@@ -257,9 +273,7 @@ def test_distinct_receipts_for_one_task_are_not_independent_recurrence() -> None
     [
         lambda: DependencyRef("memory", "memory-one", 1),
         lambda: ActionEnvelope(1, "tool", "read", "bounded-record"),
-        lambda: ActionEnvelope(
-            1, EnvelopeKind.TOOL, "read", "bounded-record", "succeeded"
-        ),
+        lambda: ActionEnvelope(1, EnvelopeKind.TOOL, "read", "bounded-record", "succeeded"),
         lambda: ExternalResult(
             "succeeded", EvidenceSource.OUTCOME_ADAPTER, VerificationStrength.OBSERVED, "ok"
         ),
@@ -316,9 +330,7 @@ def test_unknown_action_status_cannot_support_procedural_learning() -> None:
         receipt,
         action_envelopes=(ActionEnvelope(1, EnvelopeKind.ACTION, "write", "bounded-record"),),
     )
-    decision = propose_procedure(
-        (unknown_action,), **_proposal_kwargs((unknown_action,))
-    )
+    decision = propose_procedure((unknown_action,), **_proposal_kwargs((unknown_action,)))
 
     assert decision.status is ProposalStatus.REJECTED
     assert ProposalReason.NO_OBSERVABLE_SUCCESS in decision.reasons
@@ -326,7 +338,14 @@ def test_unknown_action_status_cannot_support_procedural_learning() -> None:
 
 @pytest.mark.parametrize(
     "bad_token",
-    ["plain text", "café", r"C:\\private\\file.txt", "../traversal", "line\nfeed"],
+    [
+        "plain text",
+        "café",
+        r"C:\\private\\file.txt",
+        "../traversal",
+        "line\nfeed",
+        "sk-abcdefghijklmnopqrstuvwxyz123456",
+    ],
 )
 def test_machine_token_grammar_rejects_content_unicode_paths_and_controls(
     bad_token: str,
@@ -376,9 +395,7 @@ def test_candidate_guards_and_invalidations_reject_duplicate_identity() -> None:
 
 def test_direct_proposal_requires_purge_coverage() -> None:
     first, second = _receipt("one"), _receipt("two")
-    decision = propose_procedure(
-        (first, second), **_proposal_kwargs((first, second))
-    )
+    decision = propose_procedure((first, second), **_proposal_kwargs((first, second)))
     assert decision.proposal is not None
     with pytest.raises(ValueError, match="purge closure must cover proposal dependencies"):
         replace(decision.proposal, purge_closure=PurgeClosure((), closed=True))

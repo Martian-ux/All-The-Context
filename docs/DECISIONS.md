@@ -65,7 +65,7 @@ mutation marks linked evidence inactive; terminal purge removes linked receipts
 and retains only an opaque barrier/count surface, so old evidence cannot be
 reused. `propose_procedure` derives a candidate only from matching observable
 successes and requires recurrence or strong non-client external verification,
-explicit project/task applicability, negative guards, passing repair tests,
+exact project/task/applicability-key matching, negative guards, passing repair tests,
 influence dependencies (project, projection, memory, and source) plus outcome
 dependencies, and a closed purge dependency set. Action
 signatures must agree across evidence. The result is always `proposed` and

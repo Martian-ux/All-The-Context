@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any, cast
 
+from .secret_boundary import contains_secret_like_text
+
 SCHEMA_VERSION = 1
 MAX_RECEIPTS = 512
 MAX_ACTION_ENVELOPES = 16
@@ -163,6 +165,7 @@ def _validate_token(value: object, name: str) -> None:
         or any(ord(character) < 32 for character in value)
         or ".." in value
         or _MACHINE_TOKEN_RE.fullmatch(value) is None
+        or contains_secret_like_text(value)
     ):
         raise ValueError(f"{name} must match the ASCII machine-token grammar")
 
@@ -552,11 +555,13 @@ class ApplicabilityBoundary:
 
     project_id: str
     task_kind: str
+    applicability_key: str
     precondition_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_token(self.project_id, "applicability project_id")
         _validate_token(self.task_kind, "applicability task_kind")
+        _validate_token(self.applicability_key, "applicability key")
         _validate_tuple(self.precondition_codes, "precondition_codes")
         _validate_unique_tokens(self.precondition_codes, "precondition_codes", MAX_GUARDS)
 
@@ -606,6 +611,8 @@ class ProcedureProposal:
     repair_tests: tuple[RepairTest, ...]
     purge_closure: PurgeClosure
     supporting_receipt_ids: tuple[str, ...]
+    supporting_task_ids: tuple[str, ...]
+    strong_external_receipt_ids: tuple[str, ...]
     recurrence_count: int
     strong_external_verification_count: int
     advisory_only: bool = field(default=True, init=False)
@@ -623,6 +630,8 @@ class ProcedureProposal:
         _validate_tuple(self.negative_guards, "negative_guards")
         _validate_tuple(self.repair_tests, "repair_tests")
         _validate_tuple(self.supporting_receipt_ids, "supporting_receipt_ids")
+        _validate_tuple(self.supporting_task_ids, "supporting_task_ids")
+        _validate_tuple(self.strong_external_receipt_ids, "strong_external_receipt_ids")
         if len(self.influence_dependencies) > MAX_DEPENDENCIES:
             raise ValueError("influence_dependencies exceed the bounded limit")
         if len(self.outcome_dependencies) > MAX_DEPENDENCIES:
@@ -653,6 +662,12 @@ class ProcedureProposal:
         if len(set(self.outcome_dependencies)) != len(self.outcome_dependencies):
             raise ValueError("outcome_dependencies must be unique")
         _validate_unique_tokens(self.supporting_receipt_ids, "supporting_receipt_ids", MAX_RECEIPTS)
+        _validate_unique_tokens(self.supporting_task_ids, "supporting_task_ids", MAX_RECEIPTS)
+        _validate_unique_tokens(
+            self.strong_external_receipt_ids,
+            "strong_external_receipt_ids",
+            MAX_RECEIPTS,
+        )
         if len(self.supporting_receipt_ids) != len(self.outcome_dependencies):
             raise ValueError("supporting receipts must match outcome dependencies")
         if (
@@ -662,16 +677,20 @@ class ProcedureProposal:
             raise ValueError("supporting receipts must match outcome dependency order")
         if self.recurrence_count != len(self.supporting_receipt_ids):
             raise ValueError("recurrence count must match independent supporting receipts")
+        if self.recurrence_count != len(self.supporting_task_ids):
+            raise ValueError("recurrence count must match independent supporting tasks")
         _validate_nonnegative_int(self.recurrence_count, "recurrence count")
         if not 1 <= self.recurrence_count <= MAX_RECEIPTS:
             raise ValueError("recurrence count is outside the bounded limit")
-        _validate_nonnegative_int(
-            self.strong_external_verification_count, "verification count"
-        )
+        _validate_nonnegative_int(self.strong_external_verification_count, "verification count")
         if not 0 <= self.strong_external_verification_count <= MAX_RECEIPTS:
             raise ValueError("verification count is outside the bounded limit")
         if self.strong_external_verification_count > self.recurrence_count:
             raise ValueError("verification count cannot exceed recurrence count")
+        if self.strong_external_verification_count != len(self.strong_external_receipt_ids):
+            raise ValueError("verification count must match strong supporting receipts")
+        if not set(self.strong_external_receipt_ids).issubset(self.supporting_receipt_ids):
+            raise ValueError("strong supporting receipts must be proposal support")
         _validate_unique_tokens(self.negative_guards, "negative_guards", MAX_GUARDS)
         if not self.repair_tests:
             raise ValueError("repair tests are required and bounded")
@@ -681,9 +700,7 @@ class ProcedureProposal:
             raise ValueError("purge_closure must be a PurgeClosure")
         if not self.purge_closure.closed:
             raise ValueError("purge closure must be closed")
-        required_closure = frozenset(
-            (*self.influence_dependencies, *self.outcome_dependencies)
-        )
+        required_closure = frozenset((*self.influence_dependencies, *self.outcome_dependencies))
         if not required_closure.issubset(frozenset(self.purge_closure.dependency_refs)):
             raise ValueError("purge closure must cover proposal dependencies")
 
@@ -816,16 +833,12 @@ def propose_procedure(
         if applicability is not None
         and receipt.assignment.project_id == applicability.project_id
         and receipt.task_kind == applicability.task_kind
+        and receipt.assignment.applicability_key == applicability.applicability_key
         and not set(receipt.dependency_refs).intersection(invalidated)
     )
-    successes = tuple(
-        receipt
-        for receipt in eligible
-        if _is_observable_success(receipt)
-    )
+    successes = tuple(receipt for receipt in eligible if _is_observable_success(receipt))
     signatures = {
-        tuple(item.signature_part for item in receipt.action_envelopes)
-        for receipt in successes
+        tuple(item.signature_part for item in receipt.action_envelopes) for receipt in successes
     }
     if len(signatures) > 1:
         reasons.append(ProposalReason.ACTION_SIGNATURE_DISAGREEMENT)
@@ -883,6 +896,13 @@ def propose_procedure(
         repair_tests=tuple(sorted(repair_tests, key=lambda item: item.test_id)),
         purge_closure=purge_closure,
         supporting_receipt_ids=tuple(receipt.receipt_id for receipt in successes),
+        supporting_task_ids=tuple(receipt.task_id for receipt in successes),
+        strong_external_receipt_ids=tuple(
+            receipt.receipt_id
+            for receipt in successes
+            if receipt.external_result is not None
+            and receipt.external_result.verification is VerificationStrength.STRONG
+        ),
         recurrence_count=recurrence_count,
         strong_external_verification_count=strong_count,
     )
