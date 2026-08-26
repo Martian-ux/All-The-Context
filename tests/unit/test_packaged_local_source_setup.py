@@ -14,6 +14,7 @@ from allthecontext.capture_runtime import (
     authorization_path,
     compose_capture_coordinator,
     scheduler_config_path,
+    write_scheduler_enabled,
 )
 from allthecontext.config import CoreConfig
 from allthecontext.desktop_runtime import RuntimeCommand
@@ -68,8 +69,13 @@ def setup_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
             f"http://{active_config.host}:{active_config.port}/v1/browser/connect?ticket=test"
         ),
     )
+
     # Ordinary tests exercise setup orchestration without requiring a live Core.
-    monkeypatch.setattr(desktop_setup, "_enable_running_core_scheduler", lambda *_args: True)
+    def enable_scheduler(active_config: CoreConfig, _token: str) -> bool:
+        write_scheduler_enabled(active_config.data_dir, enabled=True)
+        return True
+
+    monkeypatch.setattr(desktop_setup, "_enable_running_core_scheduler", enable_scheduler)
 
     def run(
         options: SetupOptions,
@@ -215,18 +221,14 @@ def test_second_workspace_root_is_refused_by_existing_identity_check(
     assert all(str(second_root) not in message for _step, message in events)
 
 
-def test_scheduler_sidecar_failure_returns_false_without_contentful_diagnostics(
+def test_scheduler_activation_failure_returns_false_without_contentful_diagnostics(
     setup_harness: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = _workspace(setup_harness["tmp_path"], marker="raw workspace marker")
     events: list[tuple[str, str]] = []
 
-    def fail_write(_data_dir: Path, *, enabled: bool) -> Any:
-        del enabled
-        raise RuntimeError(f"write failed for {root}: raw workspace marker")
-
-    monkeypatch.setattr(desktop_setup, "write_scheduler_enabled", fail_write)
+    monkeypatch.setattr(desktop_setup, "_enable_running_core_scheduler", lambda *_args: False)
     result = setup_harness["run"](_options(workspace_root=root, acknowledged=True), progress=events)
 
     rendered = _rendered_setup(result, events)
@@ -235,7 +237,7 @@ def test_scheduler_sidecar_failure_returns_false_without_contentful_diagnostics(
     assert not scheduler_config_path(setup_harness["config"].data_dir).exists()
     assert str(root) not in rendered
     assert "raw workspace marker" not in rendered
-    assert "write failed" not in rendered
+    assert "activated in the running Core" in rendered
 
 
 def test_already_running_core_is_woken_through_authenticated_scheduler_api(
@@ -256,7 +258,7 @@ def test_already_running_core_is_woken_through_authenticated_scheduler_api(
             return None
 
         def read(self) -> bytes:
-            return b'{"config_valid":true,"durable_enabled":true,"enabled":true}'
+            return b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":true}'
 
     def fake_urlopen(request: Any, **_kwargs: Any) -> Response:
         observed.append(request)
@@ -279,3 +281,40 @@ def test_already_running_core_is_woken_through_authenticated_scheduler_api(
     assert request.full_url.endswith("/v1/admin/capture/scheduler/enable")
     assert request.get_header("Authorization") == "Bearer desktop-token"
     assert request.data == b""
+
+
+def test_scheduler_activation_requires_a_running_worker(
+    setup_harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _workspace(setup_harness["tmp_path"])
+    real_scheduler_enable = setup_harness["real_scheduler_enable"]
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":false}'
+
+    monkeypatch.setattr(desktop_setup, "_enable_running_core_scheduler", real_scheduler_enable)
+    monkeypatch.setattr(
+        desktop_setup,
+        "probe_core",
+        lambda _config, **_kwargs: desktop_setup.CoreProbe.VERIFIED,
+    )
+    monkeypatch.setattr(
+        desktop_setup.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    result = setup_harness["run"](_options(workspace_root=root, acknowledged=True))
+
+    assert result.continuous_capture_enabled is False
+    assert result.warnings[-1] == "Continuous capture could not be activated in the running Core."

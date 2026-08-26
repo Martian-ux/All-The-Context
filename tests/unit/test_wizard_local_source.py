@@ -105,3 +105,21 @@ def test_progress_and_completion_copy_never_include_workspace_path() -> None:
     assert root_text not in warning
     assert "private-project" not in warning
     assert "Continuous capture is enabled" in complete
+
+
+def test_workspace_setup_error_hides_path_and_lower_layer_details() -> None:
+    root_text = "C:/Users/Noah/private-project"
+    error = RuntimeError(f"failed at {root_text}: raw workspace marker")
+
+    rendered = wizard.setup_error_text(error, Path(root_text))
+
+    assert root_text not in rendered
+    assert "private-project" not in rendered
+    assert "raw workspace marker" not in rendered
+    assert "selected folder" in rendered
+
+
+def test_setup_error_without_workspace_preserves_existing_diagnostic() -> None:
+    error = RuntimeError("Core is not reachable")
+
+    assert wizard.setup_error_text(error, None) == str(error)

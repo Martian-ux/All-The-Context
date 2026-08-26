@@ -27,7 +27,6 @@ from filelock import Timeout as FileLockTimeout
 from .capture_runtime import (
     authorize_local_workspace,
     compose_capture_coordinator,
-    write_scheduler_enabled,
 )
 from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
 from .client_config import (
@@ -692,27 +691,7 @@ def _configure_workspace_capture(
         )
         return source_id, False
 
-    try:
-        durable = write_scheduler_enabled(config.data_dir, enabled=True)
-    except Exception:
-        warnings.append(
-            "Continuous capture could not be enabled because its local scheduler state "
-            "could not be saved."
-        )
-        return source_id, False
-
-    continuous_capture_enabled = (
-        type(getattr(durable, "valid", None)) is bool
-        and durable.valid
-        and type(getattr(durable, "enabled", None)) is bool
-        and durable.enabled
-    )
-    if not continuous_capture_enabled:
-        warnings.append(
-            "Continuous capture could not be enabled because its local scheduler state "
-            "could not be verified."
-        )
-    return source_id, continuous_capture_enabled
+    return source_id, True
 
 
 def _enable_running_core_scheduler(
@@ -747,6 +726,7 @@ def _enable_running_core_scheduler(
         and payload.get("config_valid") is True
         and payload.get("durable_enabled") is True
         and payload.get("enabled") is True
+        and payload.get("running") is True
     )
 
 
@@ -768,7 +748,7 @@ def perform_setup(
     store = CoreStore(active_config.database_path)
     vault_id = store.initialize_vault(options.vault_name.strip() or "My Context", options.timezone)
 
-    workspace_source_id, continuous_capture_enabled = _configure_workspace_capture(
+    workspace_source_id, workspace_capture_ready = _configure_workspace_capture(
         options,
         store,
         active_config,
@@ -855,13 +835,11 @@ def perform_setup(
 
     notify("core", "Starting Core on this device")
     log_path = launch_core(active_runtime, active_config)
-    if (
-        workspace_source_id is not None
-        and continuous_capture_enabled
-        and not _enable_running_core_scheduler(active_config, access.token)
-    ):
-        warnings.append("Continuous capture could not be activated in the running Core.")
-        continuous_capture_enabled = False
+    continuous_capture_enabled = False
+    if workspace_source_id is not None and workspace_capture_ready:
+        continuous_capture_enabled = _enable_running_core_scheduler(active_config, access.token)
+        if not continuous_capture_enabled:
+            warnings.append("Continuous capture could not be activated in the running Core.")
     dashboard_url = authenticated_dashboard_url(active_config, access.token)
     notify("complete", "All The Context is ready")
     return SetupResult(

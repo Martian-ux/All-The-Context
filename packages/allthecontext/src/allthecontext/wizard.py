@@ -8,10 +8,9 @@ import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable
-from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from typing import Any, cast
+from typing import Any
 
 from .client_config import claude_is_detected, codex_is_detected
 from .config import CoreConfig
@@ -82,28 +81,14 @@ def build_setup_options(
         workspace_root_text,
         workspace_local_only_acknowledged,
     )
-    option_values: dict[str, object] = {
-        "vault_name": vault_name,
-        "configure_codex": configure_codex,
-        "configure_claude": configure_claude,
-        "start_at_login": start_at_login,
-    }
-    supported_fields = {field.name for field in dataclass_fields(SetupOptions)}
-    workspace_fields = {"workspace_root", "workspace_local_only_acknowledged"}
-    if workspace_root is not None or workspace_local_only_acknowledged:
-        if not workspace_fields <= supported_fields:
-            raise RuntimeError("This build cannot configure an optional workspace source.")
-        option_values.update(
-            workspace_root=workspace_root,
-            workspace_local_only_acknowledged=workspace_local_only_acknowledged,
-        )
-    elif workspace_fields <= supported_fields:
-        option_values.update(
-            workspace_root=None,
-            workspace_local_only_acknowledged=False,
-        )
-    options_factory: Any = SetupOptions
-    return cast(SetupOptions, options_factory(**option_values))
+    return SetupOptions(
+        vault_name=vault_name,
+        configure_codex=configure_codex,
+        configure_claude=configure_claude,
+        start_at_login=start_at_login,
+        workspace_root=workspace_root,
+        workspace_local_only_acknowledged=workspace_local_only_acknowledged,
+    )
 
 
 def progress_status_text(step: str, _message: str = "") -> str:
@@ -135,6 +120,14 @@ def redact_workspace_path(text: str, workspace_root: Path | None) -> str:
     if workspace_root is None:
         return text
     return text.replace(str(workspace_root), "selected workspace")
+
+
+def setup_error_text(error: Exception, workspace_root: Path | None) -> str:
+    """Keep a selected private root and lower-layer details out of setup failures."""
+
+    if workspace_root is not None:
+        return "Local workspace setup did not finish. Review the selected folder and try again."
+    return str(error)
 
 
 def community_build_notice(*, system: str | None = None, frozen: bool | None = None) -> str | None:
@@ -620,10 +613,7 @@ class SetupWizard:
         )
         self.status_copy.pack(side="bottom", fill="x")
         self.working = True
-        self.selected_workspace_root = cast(
-            Path | None,
-            getattr(options, "workspace_root", None),
-        )
+        self.selected_workspace_root = options.workspace_root
         thread = threading.Thread(target=self._setup_worker, args=(options,), daemon=True)
         thread.start()
         self.root.after(60, self._poll_events)
@@ -742,7 +732,7 @@ class SetupWizard:
         )
         tk.Label(
             self.content,
-            text=str(error),
+            text=setup_error_text(error, self.selected_workspace_root),
             bg="#e9edf5",
             fg=INK,
             justify="left",

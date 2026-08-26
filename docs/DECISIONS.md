@@ -1,5 +1,38 @@
 # Architecture decisions
 
+## ADR-159: Packaged setup may opt into one local workspace without becoming a lifecycle client
+
+**Status:** accepted locally on 2026-08-26 for the packaged first-run product
+path; exact packaged-artifact, live/private-workspace, provider/client, hosted,
+release, and macOS acceptance remain open or unsupported as applicable.
+
+Local-workspace setup is optional and blank by default. A nonblank folder and a
+separate local-only acknowledgement are a matched pair; either one without the
+other fails before vault mutation. The setup path reuses
+`authorize_local_workspace` and the existing capture coordinator rather than
+creating a second source or authorization authority. It enables a source only
+from `disabled`, keeps exact-root repetition idempotent, preserves paused or
+degraded lifecycle state, and refuses a different root through the existing
+identity contract.
+
+Continuous capture requires both durable and live truth. Setup launches the
+loopback Core with the process gate, re-verifies that the listener belongs to
+this installation before sending the desktop administrator credential, and
+invokes the authenticated scheduler-enable route. That single Core-owned route
+persists the existing scheduler sidecar and starts or wakes the worker. The
+result is true only when Core reports valid configuration, durable enablement,
+dispatch enablement, and a running worker. Setup never calls `run_cycle` and
+never opens the dashboard automatically.
+
+Wizard progress, completion, warnings, and workspace-selected failures are
+content-free with respect to the root and captured text. Headless acceptance
+uses hidden arguments for the same frozen options and reports only an opaque
+source ID plus the scheduler result. No-root setup preserves prior behavior and
+does not mutate scheduler state. This decision closes the packaged setup seam
+only: ordinary MCP remains L0, the controlled L2 host remains experimental, and
+the first supported lifecycle-aware client plus complete Phase 2 journey remain
+open.
+
 ## ADR-153: Freeze an independent ZF-013 graph safety oracle
 
 **Status:** frozen locally on 2026-08-25 for Milestone 5 against protected-main
