@@ -11,7 +11,8 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project.
 Every ambiguous or unauthorized case abstains instead of guessing.
 
-Protected main contains merged Milestones 1 through 3 at exact SHA
+At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
+Continuous Context, and Project Context foundations at exact SHA
 `3be9ece851e62338d13a694778feb5cb2836d2c6`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
