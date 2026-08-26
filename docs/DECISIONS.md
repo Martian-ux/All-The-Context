@@ -1,5 +1,154 @@
 # Architecture decisions
 
+## ADR-150: Reconcile current lab snapshots without rewriting historical evidence
+
+**Status:** accepted locally on 2026-08-25 for the bounded PR #88
+reconciliation. This is evidence-contract maintenance, not production or
+release acceptance.
+
+The accepted strict Retrieval V3 behavior is measured honestly in the current
+lexical, M0, and B01 snapshots. The lexical V1 comparator keeps its existing
+recall and MRR gates and records their current failures; no threshold is
+lowered. M0 and B01 regenerate only their current-production result rows,
+while their sanitized fixture/config identities, privacy boundaries, and
+research decisions remain fixed.
+
+E01b and E02 were authored against frozen historical production bases, and
+their reports are immutable observations rather than current conformance
+expectations. Exact tests therefore validate the checked-in reports and their
+recorded bases; current execution remains covered only by the separate
+content-free, deterministic, disposable-boundary tests. The historical
+`retrieval_precision_m3_f5e3a2b` baseline is not rewritten or used as a target
+for current-production reconciliation.
+
+## ADR-149: Provisional synthetic retrieval precision remains content-only and abstaining
+
+**Status:** accepted locally on 2026-08-25 as the Milestone 3 retrieval
+precision decision. This is a provisional developer-evaluation contract, not
+committed evidence, live acceptance, beta readiness, or a release gate.
+
+Direct nonempty multi-term retrieval keeps the deterministic `0.75` content
+floor; query scaffolding cannot lower it. Bootstrap is a separate broad
+context-assembly path with a content-only one-anchor candidate pool. Relevant
+records must cover the complete topical anchor set union; an incomplete union
+withholds the relevant tier rather than returning partial context. A curated
+alias counts only as its mapped original anchor, and kind/tag/scope/project
+metadata cannot satisfy content coverage or consume the content pool as a
+metadata-only match.
+
+The historical five-case precision snapshot remains immutable. The current
+synthetic evaluator is 10/10 on production and content-free, and the separate
+17-case usefulness scorecard remains passing. Reported aggregate authorized
+local result on the final production evaluation profile is 387 current, 319
+eligible, sample 96; exact self retrieval for 2, 3, and 4 tokens and
+`natural-scaffold-3` are each 96/96 nonempty and self recall at 5; split
+evaluation is 24 pairs, bootstrap both-target and any-target recall is 20/24,
+the other four incomplete relevant tiers are withheld, and strict search
+any-target is 1/24 with both-target 0/24 by design.
+
+Evidence is limited to sanitized synthetic/disposable local evaluation and the
+focused tests `test_retrieval_precision_m3.py`,
+`test_retrieval_bootstrap_composition.py`,
+`test_retrieval_m3_current_candidate.py`, and the content-free evaluator
+reports. No raw exports, database files, per-record traces, generated reports,
+or live provider/client/platform/private-data acceptance are credited.
+
+## ADR-148: Failed archive rebuild candidates remain inert until atomic cutover
+
+**Status:** accepted locally on 2026-08-25 for the Milestone 3 provider
+rebuild boundary. This is not provider acceptance or release evidence.
+
+Startup staged-observation evaluation excludes source-rebuild sessions. A
+finished rebuild session is still staging until the source-bound atomic cutover
+validates and publishes it together with withdrawal of prior automatic records.
+If rebuild ingestion fails, prior current records and history remain unchanged,
+the failed session remains marked for recovery, and startup cannot turn the
+staged candidates into a second additive import.
+
+The boundary is covered by `test_rebuild_ingestion_failure_rolls_back_withdrawal`
+in `tests/unit/test_provider_ingestion.py`, including the startup recovery
+evaluator returning zero and prior record/history remaining unchanged.
+
+## ADR-147: Provider candidate quality uses opaque scoping and conservative filters
+
+**Status:** accepted locally on 2026-08-25 for the Milestone 3 provider
+candidate boundary. Candidate tests are synthetic/fixture-based and do not
+establish live provider acceptance.
+
+Provider candidates may inherit one recognized project anchor only when the
+anchor is unambiguous; competing provider anchors abstain from scoping rather
+than guessing or crossing lineages. Project references and provider lineage
+remain opaque. Sensitivity classification is conservative, including
+health/location-like material, and task-local, adversarial, assistant/system,
+tool, secret-like, and instruction-shaped content remains inert or excluded
+from current-memory promotion according to the existing importer policy.
+
+The decision is grounded in the provider-ingestion tests
+`test_one_project_anchor_scopes_all_siblings_opaquely_and_deterministically`,
+`test_multiple_project_anchors_abstain_from_scoping_siblings`,
+`test_health_and_location_statements_are_marked_sensitive`, and
+`test_task_local_and_adversarial_preference_framing_stays_inert`, plus the
+provider runtime project-lineage and lifecycle-filter tests. No provider SDK,
+live export, OAuth, or client acceptance is implied.
+
+## ADR-146: Project Context Capsules are bounded Core-derived projections
+
+**Status:** accepted locally on 2026-08-25 as the Milestone 2 Project Context
+Capsule foundation. Graph and learning work remains open under ZF-013.
+
+Project Context Capsules are deterministic, in-memory, read-only projections of
+public Core Memory Truth. Core remains the sole authority; the project runtime
+does not open imported sources or workspace sidecars, write capsules, or create
+a second memory store. Exact `project:<ref>` scopes take precedence, otherwise
+one unambiguous provider lineage anchor may assign a project. Ambiguous or
+unresolved assignments abstain. Current/lifecycle-eligible content is filtered
+before selection, and imported instruction-like material cannot choose or
+instruct a project capsule.
+
+Each selected item carries authority and provenance references. The capsule
+reports project identity, assignment outcome, section, used characters,
+character/item budgets, omissions, truncation, and a deterministic revision; the
+default bounds are 12,000 characters and 32 items. `full_rebuild` is the clean
+oracle and `optimized_rebuild` must produce the same snapshot after restart and
+input reordering. Core exposes the bounded admin list/capsule routes, and the
+Project Continuity dashboard displays only resolved projects and bounded
+capsule accounting.
+
+Evidence is the focused `test_project_continuity.py`,
+`test_project_runtime.py`, and Project Continuity dashboard/API tests. This
+decision does not claim a graph store, graph expansion, learned retrieval,
+cross-project graph semantics, or client/provider/release acceptance.
+
+## ADR-145: Continuous Context is an explicit local workspace runtime
+
+**Status:** accepted locally on 2026-08-25 for Milestone 1. This decision
+records a local capability, not live provider acceptance or universal continuous
+capture.
+
+Core remains loopback-bound by default and owns the explicit local workspace
+runtime. The authenticated admin endpoint
+`POST /v1/admin/capture/workspaces/authorize` requires an absolute root and an
+explicit local-only acknowledgement, creates one identity-bound
+`local-git-workspace` source disabled, and fails closed for implicit,
+network-style, symlink/reparse, non-regular, malformed, or mismatched roots.
+Repeated authorization of the same root is idempotent; a different root does
+not silently replace the existing identity. Authorization does not refresh the
+adapter: refresh occurs at the foreground/scheduled run boundary.
+
+The Core-owned scheduler remains disabled by default. Dispatch requires the
+process gate `ATC_CAPTURE_SCHEDULER_ENABLED=1`, valid durable enablement, and
+the absence of `ATC_UPDATE_HEALTH_OPERATION`; desktop launch opens only the
+process gate and does not create durable enablement. Authenticated Sources
+controls cover connect/authorize, enable, pause/resume, run-now, revoke, and
+automatic-sync on/off state. Public status remains bounded and content-free.
+
+Supported source/package targets for this checkout are Windows and supported Linux. macOS source, tests, and historical preflight/packaging code remain retained for portability and maintenance only; macOS is unsupported and creates no package, CI, release, provider/client, acceptance, or support claim.
+
+Evidence is the focused capture-runtime, scheduler productization, desktop
+launch, and Sources-dashboard tests, including the late-authorization refresh
+regressions. No real provider, network/OAuth, private workspace, release, or
+client acceptance is credited.
+
 ## ADR-144: Same-vault ZF-010 composition forms one declared preference over scheduled Packet G records
 
 **Status:** accepted locally on 2026-08-24 as stacked composition evidence on

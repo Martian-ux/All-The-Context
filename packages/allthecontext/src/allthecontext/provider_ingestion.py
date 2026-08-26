@@ -182,6 +182,39 @@ _DURABLE_PREFERENCE_HINT = re.compile(
     r"(?:using|use|including|include|mentioning|mention)\b)",
     flags=re.IGNORECASE,
 )
+_CITATION_ARTIFACT_HINT = re.compile(
+    r"(?:\[\^?[0-9]{1,4}(?:\s*[-,]\s*\^?[0-9]{1,4})*\]|"
+    r"\[[A-Z][A-Za-z-]+(?:\s+et al\.)?,?\s*20\d{2}[a-z]?\]|"
+    r"\(\s*[A-Z][A-Za-z-]+(?:\s+et al\.)?,\s*20\d{2}[a-z]?\s*\)|"
+    r"\b(?:doi|arxiv):|\bet al\.|https?://)",
+    flags=re.IGNORECASE,
+)
+_REFERENCE_PROSE_HINT = re.compile(
+    r"^\s*(?:>\s*|(?:abstract|references?|bibliography)\s*:|"
+    r"(?:according to|as (?:shown|described|defined|reported) (?:in|by)|"
+    r"the (?:paper|study|authors?|research)|this (?:paper|study)|"
+    r"we (?:show|prove|find|derive|observe)\b))",
+    flags=re.IGNORECASE,
+)
+_MARKDOWN_TABLE_ROW = re.compile(r"^\s*\|[^|\r\n]*(?:\|[^|\r\n]*)+\|\s*$")
+_PERSONAL_CONSTRAINT_HINT = re.compile(
+    r"(?:\b(?:i|we)\s+(?:must|need(?:s)?(?:\s+to)?|cannot|can't|can not)\b|"
+    r"\b(?:my|our)\b[^.!?\r\n]{0,160}\b"
+    r"(?:must|need(?:s)?(?:\s+to)?|cannot|can't|can not)\b)",
+    flags=re.IGNORECASE,
+)
+_DIRECT_PRODUCT_CONSTRAINT_HINT = re.compile(
+    r"^\s*(?!(?i:the|a|an|there|this|that|these|those|it|one|any|each|every|some)\b)"
+    r"[A-Z][A-Za-z0-9_.+#/-]*(?:\s+[A-Za-z][A-Za-z0-9_.+#/-]*){0,4}\s+"
+    r"(?:must|needs?\s+to|cannot|can't|can\s+not)\b"
+)
+_GENERIC_TECHNICAL_SUBJECT = re.compile(
+    r"^\s*(?:system|function|method|algorithm|equation|theorem|proof|result|answer|"
+    r"model|application|service|endpoint|program|code|solution|experiment|study|"
+    r"research|paper|assistant|tool|message|input|output|data|table|row|field|"
+    r"value|variable|object|class|module|library|api)\b",
+    flags=re.IGNORECASE,
+)
 _EPHEMERAL_STANCE = re.compile(
     r"\b(?:i think|i guess|i feel(?: like)?|i'm trying|i am trying|"
     r"i'm looking|i was wondering|just curious|for this (?:task|one))\b",
@@ -632,20 +665,30 @@ class ProviderArchiveBuilder:
         )
 
     def _consume_messages(self, messages: Sequence[NormalizedMessage]) -> None:
+        conversation_candidates: dict[tuple[ArchiveProvider, str], list[CandidateInput]] = {}
         for message in messages:
             self._stats["messages"] += 1
             if message.role == "user":
                 self._stats["user_messages"] += 1
                 extracted = _durable_candidates(message)
-                self._candidates.extend(extracted)
                 if extracted:
                     self._stats["recognized_items"] += len(extracted)
+                    key = (message.provider, message.conversation_id)
+                    conversation_candidates.setdefault(key, []).extend(extracted)
                 else:
                     self._stats["skipped_messages"] += 1
             elif message.role == "assistant":
                 self._stats["assistant_messages"] += 1
             else:
                 self._stats["other_messages"] += 1
+        for (provider, conversation_id), candidates in conversation_candidates.items():
+            self._candidates.extend(
+                _scope_conversation_candidates(
+                    candidates,
+                    provider=provider,
+                    conversation_id=conversation_id,
+                )
+            )
 
     def _result_provider(self) -> ArchiveProvider:
         meaningful = {
@@ -1216,6 +1259,8 @@ def _durable_candidates(message: NormalizedMessage) -> list[CandidateInput]:
     result: list[CandidateInput] = []
     paragraphs = re.split(r"\n\s*\n", text) or [text]
     for paragraph in paragraphs:
+        if _looks_like_reference_material(paragraph):
+            continue
         sentences = [
             _clean_statement(part)
             for part in _SENTENCE_BREAK.split(paragraph)
@@ -1245,7 +1290,12 @@ def _candidate_from_statement(
     require_specific: bool,
 ) -> CandidateInput | None:
     cleaned = _clean_statement(segment)
-    if not cleaned or len(cleaned) > 4_000 or _SECRET_HINT.search(cleaned):
+    if (
+        not cleaned
+        or len(cleaned) > 4_000
+        or _SECRET_HINT.search(cleaned)
+        or _looks_like_reference_material(cleaned)
+    ):
         return None
     if cleaned.endswith("?") or _is_inert_instruction(cleaned) or _EPHEMERAL_STANCE.search(cleaned):
         return None
@@ -1291,6 +1341,34 @@ def _candidate_from_statement(
     )
 
 
+def _scope_conversation_candidates(
+    candidates: Sequence[CandidateInput],
+    *,
+    provider: ArchiveProvider,
+    conversation_id: str,
+) -> list[CandidateInput]:
+    """Attach an opaque project scope only for one safe project anchor."""
+    anchors = [
+        candidate
+        for candidate in candidates
+        if (
+            candidate.explicit_user_statement
+            and candidate.kind.casefold() in {"project", "project_identity"}
+            and candidate.sensitivity != Sensitivity.HIGHLY_SENSITIVE
+        )
+    ]
+    if len(anchors) != 1:
+        return list(candidates)
+    scope = f"project:archive-{_stable_id(f'{provider.value}:{conversation_id}')}"
+    result: list[CandidateInput] = []
+    for candidate in candidates:
+        scopes = list(candidate.scopes)
+        if scope not in scopes:
+            scopes.append(scope)
+        result.append(candidate.model_copy(update={"scopes": scopes}))
+    return result
+
+
 def _provider_observed_at(value: str | None) -> str | None:
     if value is None:
         return None
@@ -1314,6 +1392,15 @@ def _clean_statement(value: str) -> str:
     cleaned = _MARKDOWN_PREFIX.sub("", value).strip().strip("\u2022")
     cleaned = " ".join(cleaned.split())
     return cleaned.strip()
+
+
+def _looks_like_reference_material(value: str) -> bool:
+    lines = value.splitlines()
+    return (
+        any(_MARKDOWN_TABLE_ROW.fullmatch(line) for line in lines)
+        or bool(_CITATION_ARTIFACT_HINT.search(value))
+        or any(_REFERENCE_PROSE_HINT.search(line) for line in lines)
+    )
 
 
 def _classify_statement(
@@ -1387,10 +1474,9 @@ def _classify_statement(
         lowered,
     ):
         return ("workflow", 0.84, None, None)
-    if re.search(
-        r"\b(?:i must|we must|i cannot|i can't|we cannot|we can't|must not|"
-        r"must be|needs? to)\b",
-        lowered,
+    if _PERSONAL_CONSTRAINT_HINT.search(statement) or (
+        _DIRECT_PRODUCT_CONSTRAINT_HINT.search(statement)
+        and not _GENERIC_TECHNICAL_SUBJECT.search(statement)
     ):
         return ("constraint", 0.84, None, None)
     if _TRANSIENT_HINT.search(lowered):
@@ -1418,6 +1504,7 @@ def _memory_candidate(
         or len(cleaned) > 4_000
         or _SECRET_HINT.search(cleaned)
         or _is_inert_instruction(cleaned)
+        or _looks_like_reference_material(cleaned)
         or classify_sensitivity(cleaned) == Sensitivity.HIGHLY_SENSITIVE
     ):
         return None
@@ -1610,9 +1697,13 @@ def _deduplicate_strings(items: Iterable[str]) -> Iterable[str]:
 
 def _deduplicate_candidates(items: Iterable[CandidateInput]) -> list[CandidateInput]:
     result: list[CandidateInput] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
     for item in items:
-        key = (item.kind.casefold(), " ".join(item.content.casefold().split()))
+        key = (
+            item.kind.casefold(),
+            " ".join(item.content.casefold().split()),
+            tuple(item.scopes),
+        )
         if key not in seen:
             seen.add(key)
             result.append(item)

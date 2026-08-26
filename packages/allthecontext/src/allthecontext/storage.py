@@ -5381,18 +5381,26 @@ class CoreStore:
         return self._candidate_out(updated)
 
     def evaluate_staged_observations(self, *, limit: int = 10_000) -> int:
-        """Apply eligible legacy/finished-session observations after an upgrade."""
+        """Apply eligible legacy/finished-session observations after an upgrade.
+
+        Source-rebuild candidates are deliberately excluded. A finished rebuild
+        session is only staging: ``publish_source_rebuild`` must evaluate it in
+        the same transaction that withdraws the prior automatic records. Startup
+        recovery must never turn a failed cutover into a second, additive import.
+        """
 
         evaluated = 0
         with self.transaction() as connection:
             rows = connection.execute(
                 "SELECT c.id,c.session_id,c.source_service,c.source_type,c.kind,"
                 "c.submitted_by_client_id,"
-                "s.mode,s.status FROM context_candidates c "
+                "s.mode,s.status,s.client_id,s.idempotency_key FROM context_candidates c "
                 "LEFT JOIN ingestion_sessions s ON s.id=c.session_id "
-                "WHERE c.disposition='staged' AND (c.session_id IS NULL OR s.status='finished') "
+                "WHERE c.disposition='staged' AND (c.session_id IS NULL OR ("
+                "s.status='finished' AND NOT (s.mode=? AND s.client_id IS NULL "
+                "AND s.idempotency_key LIKE 'archive:%:rebuild:%'))) "
                 "ORDER BY c.created_at,c.id LIMIT ?",
-                (min(max(limit, 1), 100_000),),
+                (IngestionMode.ARCHIVE.value, min(max(limit, 1), 100_000)),
             ).fetchall()
             for row in rows:
                 if str(row["source_type"] or "") == "queued_proposal":

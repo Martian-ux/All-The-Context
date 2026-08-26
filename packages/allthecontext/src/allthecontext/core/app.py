@@ -31,13 +31,14 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -52,6 +53,7 @@ from ..browser_session import (
 )
 from ..capture import CaptureError, CaptureRunResult
 from ..capture_runtime import (
+    authorize_local_workspace,
     refresh_local_workspace_adapter,
     reject_reserved_workspace_provider,
 )
@@ -102,6 +104,14 @@ from ..models import (
     SearchCursor,
     SearchRequest,
     SubmitBatchRequest,
+)
+from ..project_runtime import (
+    RUNTIME_MAX_CAPSULE_CHARS,
+    RUNTIME_MAX_CAPSULE_ITEMS,
+    ProjectRuntimeError,
+    build_project_runtime,
+    capsule_for_project,
+    project_list_payload,
 )
 from ..security import ClientPrincipal
 from ..storage import (
@@ -249,6 +259,13 @@ class CaptureCreateRequest(BaseModel):
     account_fingerprint: str | None = None
     requested_scopes: list[str] = Field(default_factory=list, max_length=64)
     local_only_acknowledged: bool = False
+
+
+class CaptureWorkspaceAuthorizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root: str = Field(min_length=1, max_length=16_384)
+    local_only_acknowledged: StrictBool
 
 
 def create_app(
@@ -942,6 +959,50 @@ def create_app(
             offset=offset,
         ).model_dump(mode="json")
 
+    @app.get("/v1/admin/projects")
+    def list_projects(principal: Principal) -> dict[str, Any]:
+        require(principal, "admin")
+        try:
+            snapshot = build_project_runtime(core.store)
+        except ProjectRuntimeError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="project projection unavailable",
+            ) from error
+        return project_list_payload(snapshot)
+
+    @app.get("/v1/admin/projects/{project_id}/capsule")
+    def get_project_capsule(
+        project_id: str,
+        principal: Principal,
+        character_budget: int = Query(
+            default=12_000,
+            ge=1,
+            le=RUNTIME_MAX_CAPSULE_CHARS,
+        ),
+        item_budget: int = Query(
+            default=32,
+            ge=1,
+            le=RUNTIME_MAX_CAPSULE_ITEMS,
+        ),
+    ) -> dict[str, object]:
+        require(principal, "admin")
+        try:
+            snapshot = build_project_runtime(
+                core.store,
+                character_budget=character_budget,
+                item_budget=item_budget,
+            )
+            capsule = capsule_for_project(snapshot, project_id)
+        except KeyError as error:
+            raise NotFoundError("project not found") from error
+        except ProjectRuntimeError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="project projection unavailable",
+            ) from error
+        return capsule.to_dict()
+
     @app.get("/v1/admin/memory-truth/{record_id}")
     def get_memory_truth(record_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
@@ -967,6 +1028,22 @@ def create_app(
             local_only_acknowledged=request.local_only_acknowledged,
         )
         return source.model_dump(mode="json")
+
+    @app.post("/v1/admin/capture/workspaces/authorize")
+    def authorize_capture_workspace(
+        request: CaptureWorkspaceAuthorizeRequest, principal: Principal
+    ) -> dict[str, Any]:
+        require(principal, "admin")
+        authorization = authorize_local_workspace(
+            core.store,
+            active_config,
+            Path(request.root),
+            local_only_acknowledged=request.local_only_acknowledged,
+        )
+        return {
+            key: authorization[key]
+            for key in ("id", "provider", "lifecycle_state", "authorized", "reconciled")
+        }
 
     @app.get("/v1/admin/capture/sources")
     def list_capture_sources(

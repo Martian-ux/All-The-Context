@@ -397,7 +397,7 @@ def test_large_in_memory_source_uses_the_same_bounded_chunk_store(
     assert core.store.get_source_content(source.id) == content
 
 
-def test_bootstrap_always_includes_authorized_interaction_preferences(
+def test_bootstrap_keeps_authorized_interaction_preferences_when_relevant_abstains(
     core: CoreService,
 ) -> None:
     preference = core.ingestion.propose(
@@ -423,14 +423,9 @@ def test_bootstrap_always_includes_authorized_interaction_preferences(
             requested_scopes=["project:atlas"],
         )
     )
-    assert [item.id for item in result.items][:2] == [
-        preference_record.id,
-        decision_record.id,
-    ]
-    assert (
-        core.retrieval.search(SearchRequest(query="cadence unrelated-token")).items[0].id
-        == decision_record.id
-    )
+    assert [item.id for item in result.items] == [preference_record.id]
+    assert decision_record.id not in {item.id for item in result.items}
+    assert core.retrieval.search(SearchRequest(query="cadence unrelated-token")).items == []
 
 
 def test_sensitive_replication_requires_explicit_confirmation(core: CoreService) -> None:

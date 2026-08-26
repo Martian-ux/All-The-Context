@@ -63,9 +63,15 @@ def _candidate(data: Mapping[str, Any]) -> AdmissibilityCandidate:
 
 
 def _context(data: Mapping[str, Any]) -> AdmissibilityContext:
+    raw_term_count = data.get("task_query_term_count")
+    if raw_term_count is not None and (
+        not isinstance(raw_term_count, int) or isinstance(raw_term_count, bool)
+    ):
+        raise ValueError("task_query_term_count must be a non-negative integer")
     return AdmissibilityContext(
         query_specificity=_optional_float(data, "query_specificity"),
         task_specificity=_optional_float(data, "task_specificity"),
+        task_query_term_count=raw_term_count,
     )
 
 
@@ -79,6 +85,7 @@ def _config_report(config: AdmissibilityConfig) -> dict[str, object]:
         "rejection_threshold": config.rejection_threshold,
         "minimum_evidence_factors": config.minimum_evidence_factors,
         "minimum_task_specificity": config.minimum_task_specificity,
+        "minimum_task_query_coverage": config.minimum_task_query_coverage,
         "confidence_share": config.confidence_share,
         "low_factor_reason_floor": config.low_factor_reason_floor,
         "conflict_scores": {state.value: score for state, score in config.conflict_scores},

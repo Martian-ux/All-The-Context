@@ -160,8 +160,18 @@ def test_bootstrap_candidate_metadata_unions_exact_bounded_pool_ids(
         principal: ClientPrincipal | None = None,
         *,
         bounded: bool = False,
+        hard_task_coverage: bool = True,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> tuple[SearchResponse, tuple[object, ...], _PipelineDiagnostics]:
-        del request, principal, bounded
+        del (
+            request,
+            principal,
+            bounded,
+            hard_task_coverage,
+            minimum_content_coverage,
+            coverage_aware,
+        )
         if not hasattr(stub_search, "calls"):
             stub_search.calls = 0  # type: ignore[attr-defined]
         stub_search.calls += 1  # type: ignore[attr-defined]

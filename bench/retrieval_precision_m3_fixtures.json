@@ -1,0 +1,136 @@
+{
+  "schema": "atc.retrieval-precision-m3.fixture.v1",
+  "schema_version": 1,
+  "title": "Synthetic Milestone 3 retrieval precision corpus",
+  "description": "Fictional records for measuring known lexical retrieval precision failure shapes. No operator context, credentials, or private data.",
+  "records": [
+    {
+      "alias": "quasar_migration_plan",
+      "kind": "synthetic_project_fact",
+      "content": "Project Quasar migration plan uses the cobalt bridge cutover checklist.",
+      "scopes": ["project:quasar"],
+      "tags": ["project-quasar", "migration"]
+    },
+    {
+      "alias": "generic_migration_plan",
+      "kind": "synthetic_context_note",
+      "content": "Generic migration planning notes cover routine maintenance windows.",
+      "scopes": ["project:generic"],
+      "tags": ["maintenance"]
+    },
+    {
+      "alias": "quasar_status_note",
+      "kind": "synthetic_context_note",
+      "content": "Project Quasar weekly status notes mention routine testing.",
+      "scopes": ["project:quasar"],
+      "tags": ["status"]
+    },
+    {
+      "alias": "atlas_platform_support",
+      "kind": "synthetic_platform_fact",
+      "content": "Fictional Atlas supports deployments on Windows and Linux.",
+      "scopes": ["project:atlas"],
+      "tags": ["platform-support", "windows", "linux"]
+    },
+    {
+      "alias": "linux_hobby",
+      "kind": "synthetic_hobby_note",
+      "content": "The fictional operator enjoys Linux hobby projects on weekends.",
+      "scopes": ["topic:hobby"],
+      "tags": ["linux", "hobby"]
+    },
+    {
+      "alias": "linux_preference",
+      "kind": "synthetic_preference",
+      "content": "The fictional operator prefers Linux for a personal coding hobby.",
+      "scopes": ["topic:preference"],
+      "tags": ["linux", "preference"]
+    },
+    {
+      "alias": "atlas_local_relay_architecture",
+      "kind": "synthetic_architecture_fact",
+      "content": "Fictional Atlas uses a local Core plus Relay architecture for offline synchronization.",
+      "scopes": ["project:atlas"],
+      "tags": ["core", "relay", "architecture"]
+    },
+    {
+      "alias": "unrelated_core_prose",
+      "kind": "synthetic_context_note",
+      "content": "Core prose says durable context records remain local and user-owned.",
+      "scopes": ["topic:architecture"],
+      "tags": ["core"]
+    },
+    {
+      "alias": "generic_core_queue",
+      "kind": "synthetic_context_note",
+      "content": "Generic architecture notes describe a core queue for routine work.",
+      "scopes": ["topic:architecture"],
+      "tags": ["core", "queue"]
+    },
+    {
+      "alias": "mcp_provider_ingestion",
+      "kind": "synthetic_ingestion_fact",
+      "content": "The fictional MCP provider ingestion path imports context into the local Core.",
+      "scopes": ["project:atlas"],
+      "tags": ["mcp", "provider", "ingestion"]
+    },
+    {
+      "alias": "preserve_context_prose",
+      "kind": "synthetic_context_note",
+      "content": "Generic preserve-context guidance keeps useful notes available across sessions.",
+      "scopes": ["topic:writing"],
+      "tags": ["context", "guidance"]
+    },
+    {
+      "alias": "nebula_partial_match",
+      "kind": "synthetic_context_note",
+      "content": "Fictional Nebula status notes summarize a generic calibration rehearsal.",
+      "scopes": ["project:nebula"],
+      "tags": ["status", "calibration"]
+    },
+    {
+      "alias": "unrelated_filler",
+      "kind": "synthetic_context_note",
+      "content": "Fictional Kestrel notes describe a quiet observatory inventory.",
+      "scopes": ["project:kestrel"],
+      "tags": ["inventory"]
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact_project_phrase",
+      "query": "Project Quasar migration plan",
+      "limit": 5,
+      "relevant_aliases": ["quasar_migration_plan"],
+      "expect_abstention": false
+    },
+    {
+      "id": "platform_support_over_linux_noise",
+      "query": "Atlas supports Windows and Linux",
+      "limit": 5,
+      "relevant_aliases": ["atlas_platform_support"],
+      "expect_abstention": false
+    },
+    {
+      "id": "local_core_relay_architecture",
+      "query": "local Core plus Relay architecture",
+      "limit": 5,
+      "relevant_aliases": ["atlas_local_relay_architecture"],
+      "expect_abstention": false
+    },
+    {
+      "id": "mcp_provider_ingestion",
+      "query": "MCP provider ingestion context",
+      "limit": 5,
+      "relevant_aliases": ["mcp_provider_ingestion"],
+      "expect_abstention": false
+    },
+    {
+      "id": "coverage_gap_abstention",
+      "query": "Nebula ledger calibration",
+      "limit": 5,
+      "relevant_aliases": [],
+      "expect_abstention": true
+    }
+  ]
+}

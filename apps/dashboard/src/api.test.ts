@@ -75,6 +75,109 @@ describe("desktop browser session", () => {
     await expect(api.status()).resolves.toMatchObject({ database_size_bytes: 12345, observations: 8, current_context: 3 });
   });
 
+  it("posts an explicit local-only workspace authorization and drops private response fields", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: "disabled",
+      authorized: true,
+      reconciled: false,
+      root: "C:\\private\\workspace",
+      account_fingerprint: "private-fingerprint",
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.authorizeWorkspace("C:\\Workspaces\\Project")).resolves.toEqual({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: "disabled",
+      authorized: true,
+      reconciled: false,
+    });
+
+    expect(fetch.mock.calls[0]?.[0]).toBe("/v1/admin/capture/workspaces/authorize");
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      root: "C:\\Workspaces\\Project",
+      local_only_acknowledged: true,
+    });
+  });
+
+  it("normalizes content-free capture telemetry without returning opaque source metadata", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      total: 1,
+      items: [{
+        source: {
+          id: "capture-source-1",
+          provider: "local-git-workspace",
+          lifecycle_state: "enabled",
+          account_label: "private label",
+          account_fingerprint: "private fingerprint",
+          requested_scopes: ["workspace.structure"],
+          last_run_at: "2026-08-25T12:00:00Z",
+          lag_events: 2,
+        },
+        checkpoint: { generation: 4 },
+        last_run: {
+          state: "abandoned",
+          attempt_count: 1,
+          pages: 2,
+          events: 5,
+          applied_events: 3,
+          duplicate_events: 1,
+          failures: 0,
+          started_at: "2026-08-25T11:59:00Z",
+          completed_at: "2026-08-25T12:00:00Z",
+        },
+      }],
+      scheduler: {
+        config_valid: true,
+        dispatch_allowed: true,
+        durable_enabled: true,
+        enabled: true,
+        max_workers: 1,
+        process_gate: true,
+        running: true,
+        update_health_forced_off: false,
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const result = await api.captureStatus();
+
+    expect(result.items[0]).toMatchObject({
+      source: { id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: "enabled", lag_events: 2 },
+      checkpoint_generation: 4,
+      last_run: { state: "abandoned", events: 5, applied_events: 3 },
+    });
+    expect(result.scheduler).toMatchObject({ enabled: true, running: true });
+    expect(result.items[0]?.source).not.toHaveProperty("account_fingerprint");
+    expect(result.items[0]?.source).not.toHaveProperty("account_label");
+    expect(result.items[0]?.source).not.toHaveProperty("requested_scopes");
+  });
+
+  it("fails closed on malformed capture telemetry and keeps scheduler actions bounded", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/admin/capture/status")) {
+        return new Response(JSON.stringify({ items: [{ source: { id: "source-1", provider: "local-git-workspace", lifecycle_state: "enabled" }, checkpoint: { generation: "not-a-count" } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        config_valid: true,
+        dispatch_allowed: true,
+        durable_enabled: true,
+        enabled: true,
+        max_workers: 1,
+        process_gate: true,
+        update_health_forced_off: false,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.captureStatus()).rejects.toThrow("Core returned an invalid response.");
+    await expect(api.enableCaptureScheduler()).resolves.toMatchObject({ enabled: true });
+    expect(fetch.mock.calls[1]?.[0]).toBe("/v1/admin/capture/scheduler/enable");
+    expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  });
+
   it("normalizes the exact seven-key source accounting map without inventing missing counts", async () => {
     expect(normalizeClosedCoverage({ recognized: 4, skipped: 1, unexpected: 99 })).toEqual({
       closed_coverage: {
@@ -192,6 +295,193 @@ describe("desktop browser session", () => {
       "/v1/context/coverage",
       "/v1/context/truth/record-1",
     ]);
+  });
+
+  it("normalizes bounded project summaries and capsules without retaining private wire fields", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({
+          items: [{
+            project_id: "project/alpha",
+            project_ref: "project-ref-alpha",
+            name: "Atlas",
+            aliases: ["Atlas workspace"],
+            item_count: 6,
+            private_path: "C:\\Users\\private",
+          }],
+          total: 1,
+          unresolved_count: 2,
+          ambiguous_count: 1,
+          revision: "revision-alpha",
+          private_wire: { raw: "must not escape" },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project/alpha",
+        project_ref: "project-ref-alpha",
+        project_name: "Atlas",
+        aliases: ["Atlas workspace"],
+        assignment_outcome: "resolved",
+        sections: {
+          current_goal: [{
+            evidence_id: "evidence-goal",
+            section: "current_goal",
+            text: "Ship project continuity.",
+            provenance_ids: ["provenance-goal"],
+            record_id: "record-goal",
+            source_id: "source-goal",
+            truncated: false,
+            authority: "current_memory",
+            private_excerpt: "do not render",
+          }],
+          decisions: [],
+          constraints_preferences: [],
+          blockers: [],
+          recent_meaningful_changes: [],
+        },
+        provenance_ids: ["provenance-goal"],
+        dependency_ids: ["evidence-goal"],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 24,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+        private_wire: { source_path: "C:\\Users\\private" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).resolves.toEqual({
+      items: [{ project_id: "project/alpha", project_ref: "project-ref-alpha", name: "Atlas", aliases: ["Atlas workspace"], item_count: 6 }],
+      total: 1,
+      unresolved_count: 2,
+      ambiguous_count: 1,
+      revision: "revision-alpha",
+    });
+    const capsule = await api.projectCapsule("project/alpha");
+    expect(capsule.sections.current_goal[0]).toEqual({
+      evidence_id: "evidence-goal",
+      section: "current_goal",
+      text: "Ship project continuity.",
+      provenance_ids: ["provenance-goal"],
+      record_id: "record-goal",
+      source_id: "source-goal",
+      truncated: false,
+      authority: "current_memory",
+    });
+    expect(capsule).not.toHaveProperty("private_wire");
+    expect(capsule.sections.current_goal[0]).not.toHaveProperty("private_excerpt");
+    expect(String(fetch.mock.calls[1]?.[0])).toBe("/v1/admin/projects/project%2Falpha/capsule?character_budget=12000&item_budget=32");
+  });
+
+  it("accepts an honest empty project result while retaining aggregate assignment counts", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({
+      items: [],
+      total: 0,
+      unresolved_count: 4,
+      ambiguous_count: 2,
+      revision: "",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.projects()).resolves.toEqual({
+      items: [],
+      total: 0,
+      unresolved_count: 4,
+      ambiguous_count: 2,
+      revision: "",
+    });
+  });
+
+  it("rejects internally inconsistent project totals and capsule accounting", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({
+          items: [{ project_id: "project-1", project_ref: "ref-1", name: "Atlas", aliases: [], item_count: 1 }],
+          total: 2,
+          unresolved_count: 0,
+          ambiguous_count: 0,
+          revision: "rev",
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project-1",
+        project_ref: "ref-1",
+        project_name: "Atlas",
+        aliases: [],
+        assignment_outcome: "resolved",
+        sections: {
+          current_goal: [{
+            evidence_id: "evidence-1",
+            section: "current_goal",
+            text: "Ship it.",
+            provenance_ids: [],
+            record_id: "record-1",
+            source_id: null,
+            truncated: false,
+            authority: "current_memory",
+          }],
+          decisions: [],
+          constraints_preferences: [],
+          blockers: [],
+          recent_meaningful_changes: [],
+        },
+        provenance_ids: [],
+        dependency_ids: ["evidence-1"],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 999,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+    await expect(api.projectCapsule("project-1")).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+  });
+
+  it("rejects malformed project and capsule responses instead of guessing", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/projects")) {
+        return new Response(JSON.stringify({ items: [{ project_id: "project-1", project_ref: "ref-1", name: {}, aliases: [], item_count: 1 }], total: 1, unresolved_count: 0, ambiguous_count: 0, revision: "rev" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        schema: "atc.project-context-capsule.v0",
+        compiler_version: "project-continuity-v0",
+        project_id: "project-1",
+        project_ref: "ref-1",
+        project_name: null,
+        aliases: [],
+        assignment_outcome: "resolved",
+        sections: { current_goal: [], decisions: [], constraints_preferences: [], blockers: [] },
+        provenance_ids: [],
+        dependency_ids: [],
+        character_budget: 12000,
+        item_budget: 32,
+        used_chars: 0,
+        omitted_count: 0,
+        omissions: [],
+        truncated: false,
+        abstention_reason: null,
+        derived_read_only: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.projects()).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
+    await expect(api.projectCapsule("project-1")).rejects.toMatchObject({ name: "ApiError", message: "Core returned an invalid response." } satisfies Partial<ApiError>);
   });
 
   it("drops malformed list records, bounds truth fields, and fails malformed truth records content-free", async () => {

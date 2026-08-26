@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
-from allthecontext.admissibility import ConflictState
+from allthecontext.admissibility import ConflictState, DeterministicAdmissibilityGate
 from allthecontext.config import CoreConfig
 from allthecontext.models import ApprovalRequest, BootstrapRequest, CandidateInput, SearchRequest
 from allthecontext.retrieval import (
@@ -141,6 +141,8 @@ def test_query_intent_uses_bounded_local_features() -> None:
 
     assert intent.raw_tokens == ("where", "is", "the", "latest", "helios", "rollback", "runbook")
     assert intent.focus_tokens == ("latest", "helios", "rollback", "runbook")
+    assert intent.anchor_tokens == ("helios", "rollback")
+    assert intent.scaffolding_tokens == ("latest", "runbook")
     assert {"current", "recent", "restore"} <= set(intent.expanded_tokens)
     assert intent.asks_current is True
     assert intent.asks_location is True
@@ -185,7 +187,7 @@ def test_usefulness_reranker_neutralizes_nonfinite_or_malformed_lexical_scores(
         store.close()
 
 
-def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path) -> None:
+def test_admissibility_uses_focus_content_tokens_not_raw_metadata(tmp_path: Path) -> None:
     store = CoreStore(tmp_path / "admissibility.sqlite3")
     store.initialize_vault("synthetic", "UTC")
     candidate = store.add_candidate(
@@ -193,7 +195,7 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
             kind="location",
             content="Helios",
             scopes=["project:helios"],
-            idempotency_key="raw-query-admissibility",
+            idempotency_key="focus-query-admissibility",
         )
     )
     record = store.approve_candidate(candidate.id, ApprovalRequest(), actor="test")
@@ -208,7 +210,7 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
                 SearchRequest(query="what is Helios", current_project="helios"),
                 {record.id: ConflictState.CLEAR},
             )
-            assert inputs[0].signals.task_query_coverage == round(1 / 3, 6)
+            assert inputs[0].signals.task_query_coverage == 1.0
 
             alias_inputs, _alias_context = _admissibility_inputs(
                 [row],
@@ -216,6 +218,360 @@ def test_admissibility_uses_raw_query_tokens_not_focus_or_aliases(tmp_path: Path
                 {record.id: ConflictState.CLEAR},
             )
             assert alias_inputs[0].signals.kind_compatibility == 0.0
+    finally:
+        store.close()
+
+
+def test_admissibility_rejects_stopword_and_provider_tag_noise(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility-noise.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    noise = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="All the context remains local and bounded.",
+            tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="stopword-noise",
+        )
+    )
+    provider_noise = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="An unrelated observatory inventory note.",
+            tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="provider-tag-noise",
+        )
+    )
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="ingestion_fact",
+            content="MCP provider ingestion imports records into the local Core.",
+            scopes=["project:atlas"],
+            tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="provider-ingestion-relevant",
+        )
+    )
+    records = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (noise, provider_noise, relevant)
+    ]
+    try:
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM context_records WHERE id IN (?,?,?)",
+                [item.id for item in records],
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+            inputs, context = _admissibility_inputs(
+                [by_id[item.id] for item in records],
+                SearchRequest(query="MCP provider ingestion context"),
+                {item.id: ConflictState.CLEAR for item in records},
+            )
+            coverage = {
+                candidate.key: candidate.signals.task_query_coverage for candidate in inputs
+            }
+            assert coverage[records[0].id] == 0.0
+            assert coverage[records[1].id] == 0.0
+            assert coverage[records[2].id] == 1.0
+
+            focus_inputs, _focus_context = _admissibility_inputs(
+                [by_id[records[0].id]],
+                SearchRequest(query="all the context product constraints"),
+                {records[0].id: ConflictState.CLEAR},
+            )
+            assert focus_inputs[0].signals.task_query_coverage == 0.0
+
+            decisions = DeterministicAdmissibilityGate().evaluate_many(inputs, context).decisions
+            admitted = {decision.key for decision in decisions if decision.admitted}
+            assert records[2].id in admitted
+            assert records[0].id not in admitted
+            assert records[1].id not in admitted
+
+            principal = _principal(
+                {"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]}
+            )
+            engine = RetrievalEngine(store)
+            stopword_search = engine.search(
+                SearchRequest(query="all the context product constraints", limit=10),
+                principal,
+            )
+            assert records[0].id not in {item.id for item in stopword_search.items}
+            provider_search = engine.search(
+                SearchRequest(query="MCP provider ingestion", limit=10), principal
+            )
+            assert records[1].id not in {item.id for item in provider_search.items}
+            assert records[2].id in {item.id for item in provider_search.items}
+    finally:
+        store.close()
+
+
+def test_multi_term_coverage_boundary_keeps_strong_content_match(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "coverage-boundary.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    metadata_only = store.add_candidate(
+        CandidateInput(
+            kind="mcp_provider_kind",
+            content="Unrelated inventory note.",
+            scopes=["scope:ingestion"],
+            tags=["provider:chatgpt"],
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-metadata-only",
+        )
+    )
+    two_of_three = store.add_candidate(
+        CandidateInput(
+            kind="topic_note",
+            content="alpha beta only",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-two-of-three",
+        )
+    )
+    three_of_four = store.add_candidate(
+        CandidateInput(
+            kind="topic_note",
+            content="alpha beta gamma",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-three-of-four",
+        )
+    )
+    strong = store.add_candidate(
+        CandidateInput(
+            kind="topic_fact",
+            content="alpha beta gamma focus",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="coverage-strong",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (metadata_only, two_of_three, three_of_four, strong)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        three_term_ids = [
+            item.id
+            for item in engine.search(
+                SearchRequest(query="alpha beta gamma", limit=10), principal
+            ).items
+        ]
+        assert approved[1].id not in three_term_ids
+        assert approved[2].id in three_term_ids
+        assert approved[3].id in three_term_ids
+
+        four_term_ids = [
+            item.id
+            for item in engine.search(
+                SearchRequest(query="alpha beta gamma focus", limit=10), principal
+            ).items
+        ]
+        assert approved[0].id not in four_term_ids
+        assert approved[1].id not in four_term_ids
+        assert four_term_ids[:2] == [approved[3].id, approved[2].id]
+    finally:
+        store.close()
+
+
+def test_broad_compositional_and_paraphrastic_search_keeps_content_subset_only(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "broad-content-subset.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="architecture_fact",
+            content=(
+                "Fictional Atlas uses a local Core plus Relay architecture for offline "
+                "synchronization."
+            ),
+            idempotency_key="broad-relevant",
+        )
+    )
+    partial = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="Fictional Atlas Relay notes cover a separate topic.",
+            idempotency_key="broad-partial",
+        )
+    )
+    one_token = store.add_candidate(
+        CandidateInput(
+            kind="context_note",
+            content="Fictional Atlas notes cover a separate topic.",
+            idempotency_key="broad-one-token",
+        )
+    )
+    metadata_only = store.add_candidate(
+        CandidateInput(
+            kind="atlas_relay_kind",
+            content="Unrelated inventory note.",
+            tags=["atlas", "relay", "rollback"],
+            scopes=["project:atlas"],
+            idempotency_key="broad-metadata-only",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (relevant, partial, one_token, metadata_only)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        paraphrase = engine.search(
+            SearchRequest(
+                query="What is the current rollback procedure for the Atlas local Relay?"
+            ),
+            principal,
+        )
+        returned = {item.id for item in paraphrase.items}
+
+        assert approved[0].id in returned
+        assert approved[1].id not in returned
+        assert approved[2].id not in returned
+        assert approved[3].id not in returned
+
+        compositional = engine.search(
+            SearchRequest(query="How does Atlas support Windows and local Relay synchronization?"),
+            principal,
+        )
+        assert [item.id for item in compositional.items] == [approved[0].id]
+    finally:
+        store.close()
+
+
+def test_bootstrap_retains_multi_record_context_assembly(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "bootstrap-assembly.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    platform = store.add_candidate(
+        CandidateInput(
+            kind="platform_fact",
+            content="Fictional Atlas supports deployments on Windows and Linux.",
+            idempotency_key="bootstrap-platform",
+        )
+    )
+    architecture = store.add_candidate(
+        CandidateInput(
+            kind="architecture_fact",
+            content="Fictional Atlas uses a local Core plus Relay architecture.",
+            idempotency_key="bootstrap-architecture",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (platform, architecture)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        response = RetrievalEngine(store).bootstrap(
+            BootstrapRequest(
+                query="Atlas Windows local Relay",
+                requested_scopes=[],
+                budget_chars=4_000,
+            ),
+            principal,
+        )
+        returned = {item.id for item in response.items}
+
+        assert {item.id for item in approved} <= returned
+    finally:
+        store.close()
+
+
+def test_admissibility_scans_full_bounded_content_after_first_query_window(
+    tmp_path: Path,
+) -> None:
+    store = CoreStore(tmp_path / "late-content.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    late = store.add_candidate(
+        CandidateInput(
+            kind="late_evidence",
+            content=("filler " * 40) + "needle anchor",
+            confidence=1.0,
+            explicit_user_statement=True,
+            idempotency_key="late-content-evidence",
+        )
+    )
+    record = store.approve_candidate(late.id, ApprovalRequest(), actor="test")
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        response = RetrievalEngine(store).search(
+            SearchRequest(query="needle anchor", limit=10), principal
+        )
+        assert [item.id for item in response.items] == [record.id]
+    finally:
+        store.close()
+
+
+def test_retrieval_preserves_explicit_filters_and_single_term_usefulness(tmp_path: Path) -> None:
+    store = CoreStore(tmp_path / "admissibility-filters.sqlite3")
+    store.initialize_vault("synthetic", "UTC")
+    relevant = store.add_candidate(
+        CandidateInput(
+            kind="workflow",
+            content="MCP provider ingestion workflow for the Atlas project.",
+            scopes=["project:atlas"],
+            idempotency_key="filter-relevant",
+        )
+    )
+    other = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="MCP provider ingestion fact for a different project.",
+            scopes=["project:other"],
+            idempotency_key="filter-other",
+        )
+    )
+    approved = [
+        store.approve_candidate(item.id, ApprovalRequest(), actor="test")
+        for item in (relevant, other)
+    ]
+    principal = _principal({"id": "reader", "name": "Synthetic reader", "scopes": ["context:read"]})
+    try:
+        engine = RetrievalEngine(store)
+        filtered = engine.search(
+            SearchRequest(
+                query="MCP provider ingestion",
+                scopes=["project:atlas"],
+                kinds=["workflow"],
+                limit=10,
+            ),
+            principal,
+        )
+        assert [item.id for item in filtered.items] == [approved[0].id]
+
+        single = engine.search(SearchRequest(query="MCP", limit=10), principal)
+        assert approved[0].id in [item.id for item in single.items]
+
+        with store.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM context_records WHERE id IN (?,?)",
+                [item.id for item in approved],
+            ).fetchall()
+            inputs, _context = _admissibility_inputs(
+                rows,
+                SearchRequest(
+                    query="MCP provider ingestion",
+                    kinds=["workflow"],
+                    current_project="atlas",
+                ),
+                {item.id: ConflictState.CLEAR for item in approved},
+            )
+            by_id = {candidate.key: candidate.signals for candidate in inputs}
+            assert by_id[approved[0].id].task_query_coverage == 1.0
+            assert by_id[approved[1].id].task_query_coverage == 1.0
+            assert by_id[approved[0].id].scope_project_fit == 1.0
+            assert by_id[approved[1].id].scope_project_fit == 0.0
+            assert by_id[approved[0].id].kind_compatibility == 1.0
+            assert by_id[approved[1].id].kind_compatibility == 0.0
     finally:
         store.close()
 

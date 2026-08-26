@@ -23,6 +23,7 @@ from .admissibility import (
     ConflictState,
     DeterministicAdmissibilityGate,
 )
+from .content_evidence import CURATED_CONTENT_ALIASES, project_content_evidence
 from .ids import new_id, utc_now
 from .lexical_v3 import LexicalSearchResult, LexicalV3, VocabularyDiagnostics
 from .models import (
@@ -57,22 +58,15 @@ _MAX_QUERY_TOKENS = 32
 _CHANNEL_LIMIT = 256
 _RRF_K = 60
 _MAX_MANDATORY_PREFERENCE_RESERVE = 8
-_LEXICAL_ALIASES: dict[str, tuple[str, ...]] = {
-    # Deliberately small, inspectable lexical equivalences. These are not learned
-    # from vault content and cannot create a canonical record or authority.
-    "eviction": ("cache",),
-    "latest": ("current", "recent"),
-    "now": ("current", "recent"),
-    "where": ("location", "city"),
-    "procedure": ("workflow", "runbook"),
-    "rollback": ("restore",),
-}
+_LEXICAL_ALIASES = CURATED_CONTENT_ALIASES
 _QUERY_STOPWORDS = frozenset(
     {
         "a",
         "about",
         "an",
         "and",
+        "all",
+        "based",
         "can",
         "do",
         "does",
@@ -85,6 +79,7 @@ _QUERY_STOPWORDS = frozenset(
         "on",
         "or",
         "please",
+        "project",
         "tell",
         "the",
         "to",
@@ -94,6 +89,40 @@ _QUERY_STOPWORDS = frozenset(
         "who",
         "why",
         "with",
+        "context",
+    }
+)
+_QUERY_SCAFFOLDING = frozenset(
+    {
+        # Request-form and answer-shape terms are useful for ranking intent,
+        # but they are not independently required content anchors.
+        "current",
+        "detail",
+        "details",
+        "describe",
+        "explain",
+        "find",
+        "give",
+        "guidance",
+        "help",
+        "information",
+        "info",
+        "latest",
+        "list",
+        "mention",
+        "plan",
+        "please",
+        "procedure",
+        "recent",
+        "runbook",
+        "show",
+        "strategy",
+        "support",
+        "supports",
+        "tell",
+        "today",
+        "workflow",
+        "would",
     }
 )
 _MAX_CONTEXT_PACK_ITEMS = 32
@@ -115,10 +144,12 @@ def _fts_query(value: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class QueryIntent:
-    """Small deterministic intent projection used only for local ranking."""
+    """Small deterministic intent projection used for local ranking and gating."""
 
     raw_tokens: tuple[str, ...]
     focus_tokens: tuple[str, ...]
+    anchor_tokens: tuple[str, ...]
+    scaffolding_tokens: tuple[str, ...]
     expanded_tokens: tuple[str, ...]
     asks_current: bool
     asks_location: bool
@@ -132,6 +163,10 @@ def parse_query_intent(value: str) -> QueryIntent:
     focus = tuple(token for token in raw if token not in _QUERY_STOPWORDS)
     if not focus:
         focus = raw
+    scaffolding = tuple(token for token in focus if token in _QUERY_SCAFFOLDING)
+    anchors = tuple(token for token in focus if token not in _QUERY_SCAFFOLDING)
+    if not anchors:
+        anchors = focus
     expanded = tuple(
         dict.fromkeys(
             token for original in focus for token in (original, *_LEXICAL_ALIASES.get(original, ()))
@@ -140,6 +175,8 @@ def parse_query_intent(value: str) -> QueryIntent:
     return QueryIntent(
         raw_tokens=raw,
         focus_tokens=focus,
+        anchor_tokens=anchors,
+        scaffolding_tokens=scaffolding,
         expanded_tokens=expanded,
         asks_current=bool(set(raw) & {"active", "current", "latest", "now", "recent", "today"}),
         asks_location=bool(set(raw) & {"where", "location", "city", "address", "based"}),
@@ -542,14 +579,24 @@ class LexicalV3CandidateRanker:
         query: str,
         *,
         limit: int,
+        content_anchor_tokens: Sequence[str] | None = None,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         if not query:
+            return self._empty_query_result(candidates, limit=limit)
+        lexical_query = query
+        if content_anchor_tokens is not None:
+            lexical_query = " ".join(content_anchor_tokens)
+        if not lexical_query:
             return self._empty_query_result(candidates, limit=limit)
         result = self.lexical.search(
             connection,
             tuple(str(row["id"]) for row in candidates),
-            query,
+            lexical_query,
             limit=limit,
+            minimum_content_coverage=minimum_content_coverage,
+            coverage_aware=coverage_aware,
         )
         return self._adapt_result(connection, result)
 
@@ -558,14 +605,21 @@ class LexicalV3CandidateRanker:
         connection: sqlite3.Connection,
         candidates: Sequence[sqlite3.Row],
         query: str,
+        *,
+        content_anchor_tokens: Sequence[str] | None = None,
     ) -> tuple[list[sqlite3.Row], tuple[RankingExplanation, ...], VocabularyDiagnostics | None]:
         """Return the complete deterministic match set for catalog pagination."""
         if not query:
             return self._empty_query_result(candidates, limit=None)
+        lexical_query = query
+        if content_anchor_tokens is not None:
+            lexical_query = " ".join(content_anchor_tokens)
+        if not lexical_query:
+            return self._empty_query_result(candidates, limit=None)
         result = self.lexical.search_catalog(
             connection,
             tuple(str(row["id"]) for row in candidates),
-            query,
+            lexical_query,
         )
         return self._adapt_result(connection, result)
 
@@ -693,7 +747,6 @@ class DeterministicUsefulnessReranker:
             return [], ()
         intent = parse_query_intent(query)
         focus = set(intent.focus_tokens)
-        expanded = set(intent.expanded_tokens)
         explanation_by_id = {item.record_id: item for item in explanations}
         ordered_ids = [str(row["id"]) for row in rows]
         lexical_scores: dict[str, float] = {}
@@ -714,13 +767,17 @@ class DeterministicUsefulnessReranker:
         scored: list[tuple[float, str, sqlite3.Row, RankingExplanation]] = []
         for lexical_rank, (row, timestamp) in enumerate(zip(rows, timestamps, strict=True)):
             record_id = str(row["id"])
-            _content_tokens, field_tokens, searchable_tokens = self._row_tokens(row)
-            direct_matches = focus & searchable_tokens
-            expanded_matches = expanded & searchable_tokens
-            coverage = len(direct_matches) / len(focus) if focus else 0.0
+            _content_token_set, field_tokens, searchable_tokens = self._row_tokens(row)
+            content_evidence = project_content_evidence(
+                str(row["content"]),
+                intent.focus_tokens,
+                _LEXICAL_ALIASES,
+            )
+            coverage = len(content_evidence.matched_anchors) / len(focus) if focus else 0.0
+            alias_anchor_count = sum(bool(_LEXICAL_ALIASES.get(token)) for token in focus)
             alias_coverage = (
-                len(expanded_matches - focus) / max(1, len(expanded - focus))
-                if expanded - focus
+                len(content_evidence.alias_matches) / max(1, alias_anchor_count)
+                if alias_anchor_count
                 else 0.0
             )
             field_match = len(focus & field_tokens) / len(focus) if focus else 0.0
@@ -1548,14 +1605,15 @@ def _admissibility_inputs(
     rows: Sequence[sqlite3.Row],
     request: SearchRequest,
     conflicts: dict[str, ConflictState],
+    *,
+    hard_task_coverage: bool = True,
 ) -> tuple[list[AdmissibilityCandidate], AdmissibilityContext]:
     intent = parse_query_intent(request.query)
-    # Hard admissibility uses only the raw normalized query vocabulary. The
-    # usefulness reranker may remove stopwords and apply bounded aliases, but
-    # those ranking conveniences must not make a candidate appear to cover the
-    # whole task or satisfy a requested kind.
+    # Hard task coverage measures direct topical anchors against content only.
+    # Structural metadata stays in its dedicated scope/project/kind signals;
+    # bootstrap disables this per-record floor and applies a set-level union.
     raw_query_tokens = set(intent.raw_tokens)
-    query_tokens = raw_query_tokens
+    task_tokens = set(intent.anchor_tokens or intent.focus_tokens or intent.raw_tokens)
     candidates: list[AdmissibilityCandidate] = []
     requested_scopes = set(request.scopes)
     requested_kinds = set(request.kinds)
@@ -1566,23 +1624,12 @@ def _admissibility_inputs(
     )
     for row in rows:
         record_id = str(row["id"])
-        searchable_tokens = set(
-            _tokens(
-                " ".join(
-                    (
-                        str(row["content"]),
-                        str(row["kind"]),
-                        " ".join(_json_set(str(row["tags_json"]))),
-                        " ".join(_json_set(str(row["scopes_json"]))),
-                    )
-                )
-            )
+        content_evidence = project_content_evidence(
+            str(row["content"]),
+            task_tokens,
+            _LEXICAL_ALIASES,
         )
-        coverage = (
-            len(query_tokens & searchable_tokens) / len(raw_query_tokens)
-            if raw_query_tokens
-            else None
-        )
+        coverage = len(content_evidence.matched_anchors) / len(task_tokens) if task_tokens else None
         row_scopes = _json_set(str(row["scopes_json"]))
         if project_scope is not None:
             scope_fit = float(project_scope in {scope.casefold() for scope in row_scopes})
@@ -1595,7 +1642,7 @@ def _admissibility_inputs(
             1.0
             if requested_kinds and str(row["kind"]) in requested_kinds
             else (
-                float(bool(query_tokens & kind_tokens))
+                float(bool(raw_query_tokens & kind_tokens))
                 if request.current_project is not None and raw_query_tokens
                 else None
             )
@@ -1619,11 +1666,64 @@ def _admissibility_inputs(
                 ),
             )
         )
-    specificity = 0.0 if len(rows) == 1 else _specificity(raw_query_tokens)
+    specificity = _specificity(task_tokens)
     return candidates, AdmissibilityContext(
         query_specificity=specificity,
         task_specificity=specificity,
+        task_query_term_count=len(task_tokens) if hard_task_coverage else None,
     )
+
+
+def _content_anchor_union(
+    items: Sequence[ContextRecordOut], anchors: frozenset[str]
+) -> frozenset[str]:
+    """Return the content-only anchor union for a bounded candidate set."""
+
+    matched: set[str] = set()
+    for item in items:
+        matched.update(
+            project_content_evidence(item.content, anchors, _LEXICAL_ALIASES).matched_anchors
+        )
+    return frozenset(matched)
+
+
+def _coverage_aware_bootstrap_order(
+    items: Sequence[ContextRecordOut], anchors: frozenset[str]
+) -> list[ContextRecordOut]:
+    """Order an already-filtered bounded pool by deterministic anchor contribution."""
+
+    remaining = list(enumerate(items))
+    ordered: list[ContextRecordOut] = []
+    covered: set[str] = set()
+    while remaining:
+        ranked = [
+            (
+                len(
+                    project_content_evidence(
+                        item.content, anchors, _LEXICAL_ALIASES
+                    ).matched_anchors
+                    - covered
+                ),
+                original_rank,
+                item.id,
+                item,
+            )
+            for original_rank, item in remaining
+        ]
+        best_new, _original_rank, _record_id, best_item = min(
+            ranked, key=lambda value: (-value[0], value[1], value[2])
+        )
+        if best_new == 0:
+            ordered.extend(item for _rank, item in remaining)
+            break
+        ordered.append(best_item)
+        covered.update(
+            project_content_evidence(best_item.content, anchors, _LEXICAL_ALIASES).matched_anchors
+        )
+        remaining = [
+            (original_rank, item) for original_rank, item in remaining if item.id != best_item.id
+        ]
+    return ordered
 
 
 @dataclass(frozen=True, slots=True)
@@ -1724,16 +1824,27 @@ class RetrievalEngine:
         request: SearchRequest,
         *,
         bounded: bool,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> tuple[list[sqlite3.Row], Sequence[RankingExplanation], VocabularyDiagnostics | None]:
         if isinstance(self.ranker, LexicalV3CandidateRanker):
+            anchor_tokens = parse_query_intent(request.query).anchor_tokens
             if bounded:
                 return self.ranker.rank_with_explanations(
                     connection,
                     candidates,
                     request.query,
                     limit=100,
+                    content_anchor_tokens=anchor_tokens,
+                    minimum_content_coverage=minimum_content_coverage,
+                    coverage_aware=coverage_aware,
                 )
-            return self.ranker.catalog_rank_with_explanations(connection, candidates, request.query)
+            return self.ranker.catalog_rank_with_explanations(
+                connection,
+                candidates,
+                request.query,
+                content_anchor_tokens=anchor_tokens,
+            )
         if isinstance(self.ranker, V2LexicalRanker):
             ranked, explanations = self.ranker.rank_with_explanations(
                 connection, candidates, request.query
@@ -1749,6 +1860,9 @@ class RetrievalEngine:
         principal: ClientPrincipal | None,
         *,
         bounded: bool,
+        hard_task_coverage: bool = True,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> tuple[
         list[sqlite3.Row],
         Sequence[RankingExplanation],
@@ -1792,11 +1906,21 @@ class RetrievalEngine:
         by_id = {str(row["id"]): row for row in authorized}
         temporally_eligible = [row for record_id, row in by_id.items() if record_id in selected_ids]
         ranked, explanations, lexical = self._rank(
-            connection, temporally_eligible, request, bounded=bounded
+            connection,
+            temporally_eligible,
+            request,
+            bounded=bounded,
+            minimum_content_coverage=minimum_content_coverage,
+            coverage_aware=coverage_aware,
         )
         ranked = _hydrate_ranked_rows(connection, ranked)
         conflicts = _conflict_states(connection, (str(row["id"]) for row in ranked))
-        gate_inputs, gate_context = _admissibility_inputs(ranked, request, conflicts)
+        gate_inputs, gate_context = _admissibility_inputs(
+            ranked,
+            request,
+            conflicts,
+            hard_task_coverage=hard_task_coverage,
+        )
         admissibility = self.admissibility_gate.evaluate_many(gate_inputs, gate_context)
         admitted = {decision.key for decision in admissibility.decisions if decision.admitted}
         gated = [row for row in ranked if str(row["id"]) in admitted]
@@ -1844,6 +1968,9 @@ class RetrievalEngine:
         principal: ClientPrincipal | None,
         *,
         bounded: bool = False,
+        hard_task_coverage: bool = True,
+        minimum_content_coverage: int | None = None,
+        coverage_aware: bool = False,
     ) -> tuple[SearchResponse, Sequence[RankingExplanation], _PipelineDiagnostics]:
         with self.store.connect() as connection:
             explanations: Sequence[RankingExplanation]
@@ -1864,7 +1991,13 @@ class RetrievalEngine:
                 )
             else:
                 ranked, explanations, denied, diagnostics = self._v3_rows(
-                    connection, request, principal, bounded=bounded
+                    connection,
+                    request,
+                    principal,
+                    bounded=bounded,
+                    hard_task_coverage=hard_task_coverage,
+                    minimum_content_coverage=minimum_content_coverage,
+                    coverage_aware=coverage_aware,
                 )
         page = ranked[request.offset : request.offset + request.limit]
         items = [self.store._record_out(row) for row in page]
@@ -1958,24 +2091,42 @@ class RetrievalEngine:
     def bootstrap(
         self, request: BootstrapRequest, principal: ClientPrincipal | None = None
     ) -> BootstrapResponse:
-        query_parts = [request.query]
-        if request.current_project:
-            query_parts.append(request.current_project)
         mandatory_search, _mandatory_explanations, mandatory_diagnostics = self._search(
             SearchRequest(query="", kinds=["interaction_preference"], limit=100),
             principal,
             bounded=True,
         )
+        # A nonempty bootstrap query assembles independently useful content
+        # facets; direct answer search retains the hard all-task coverage floor.
         relevant_search, _relevant_explanations, relevant_diagnostics = self._search(
             SearchRequest(
-                query=" ".join(part for part in query_parts if part),
+                query=request.query,
                 scopes=request.requested_scopes,
                 current_project=request.current_project,
                 limit=100,
             ),
             principal,
             bounded=True,
+            hard_task_coverage=False,
+            minimum_content_coverage=1,
+            coverage_aware=True,
         )
+        intent = parse_query_intent(request.query)
+        bootstrap_anchors = frozenset(
+            intent.anchor_tokens or intent.focus_tokens or intent.raw_tokens
+        )
+        mandatory_ids = {item.id for item in mandatory_search.items}
+        relevant_items = [item for item in relevant_search.items if item.id not in mandatory_ids]
+        if bootstrap_anchors and not bootstrap_anchors <= _content_anchor_union(
+            relevant_items, bootstrap_anchors
+        ):
+            # A broad pack is useful only when its independently useful records
+            # jointly cover every topical anchor. Mandatory preferences remain
+            # an independent policy tier and cannot satisfy this content rule.
+            relevant_items = []
+        elif bootstrap_anchors:
+            relevant_items = _coverage_aware_bootstrap_order(relevant_items, bootstrap_anchors)
+        relevant_ids = {item.id for item in relevant_items}
         candidate_pool_ids = None
         if (
             mandatory_diagnostics.candidate_pool_ids is not None
@@ -1986,7 +2137,7 @@ class RetrievalEngine:
             )
         selected, used, pack_metadata = self.compiler.compile_with_diagnostics(
             mandatory_search.items,
-            relevant_search.items,
+            relevant_items,
             request.budget_chars,
             candidate_pool_truncated=(
                 mandatory_diagnostics.candidate_pool_truncated
@@ -2002,6 +2153,36 @@ class RetrievalEngine:
                 )
             ),
         )
+        if bootstrap_anchors and relevant_ids:
+            selected_relevant = [item for item in selected if item.id in relevant_ids]
+            if not bootstrap_anchors <= _content_anchor_union(selected_relevant, bootstrap_anchors):
+                # Never return a partial task pack when budget, duplicate, or
+                # conflict selection prevents the required union from fitting.
+                initial_pack_metadata = pack_metadata
+                selected, used, pack_metadata = self.compiler.compile_with_diagnostics(
+                    mandatory_search.items,
+                    (),
+                    request.budget_chars,
+                    candidate_pool_truncated=(
+                        mandatory_diagnostics.candidate_pool_truncated
+                        or relevant_diagnostics.candidate_pool_truncated
+                    ),
+                    candidate_pool_count=(
+                        len(candidate_pool_ids)
+                        if candidate_pool_ids is not None
+                        else max(
+                            len({item.id for item in (*mandatory_search.items, *relevant_items)}),
+                            mandatory_diagnostics.candidate_pool_count,
+                            relevant_diagnostics.candidate_pool_count,
+                        )
+                    ),
+                )
+                pack_metadata = pack_metadata.model_copy(
+                    update={
+                        "truncated": initial_pack_metadata.truncated,
+                        "truncation_reasons": initial_pack_metadata.truncation_reasons,
+                    }
+                )
         granted = set(principal.scopes) if principal else set(request.requested_scopes)
         omitted = sorted(set(request.requested_scopes) - granted) if principal else []
         trace_id = new_id()

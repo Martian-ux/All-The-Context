@@ -23,15 +23,15 @@
       "confirmatory_families": {
         "latest_route": {
           "action_accuracy": 0.5,
-          "caos_rate": 0.0,
+          "caos_rate": 0.25,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
           "deterministic_task_rate": 1.0,
           "forbidden_output_count": 1,
-          "mean_disclosure_chars": 585.25,
-          "mean_evidence_group_recall": 0.5,
+          "mean_disclosure_chars": 377.25,
+          "mean_evidence_group_recall": 0.75,
           "mean_operations_per_task": 1.0,
-          "mean_precision": 0.0,
+          "mean_precision": 0.166666,
           "operation_budget_violation_count": 0,
           "task_count": 4
         },
@@ -56,10 +56,10 @@
           "contract_violation_count": 0,
           "deterministic_task_rate": 1.0,
           "forbidden_output_count": 0,
-          "mean_disclosure_chars": 531.5,
-          "mean_evidence_group_recall": 0.333333,
+          "mean_disclosure_chars": 534.0,
+          "mean_evidence_group_recall": 0.666667,
           "mean_operations_per_task": 1.0,
-          "mean_precision": 0.5,
+          "mean_precision": 0.833333,
           "operation_budget_violation_count": 0,
           "task_count": 2
         }
@@ -109,12 +109,6 @@
         },
         {
           "reason_codes": [
-            "abstention_mismatch"
-          ],
-          "task_index": 7
-        },
-        {
-          "reason_codes": [
             "abstention_mismatch",
             "forbidden_output"
           ],
@@ -131,38 +125,38 @@
       },
       "metrics": {
         "action_accuracy": 0.333333,
-        "caos_rate": 0.111111,
+        "caos_rate": 0.222222,
         "context_budget_violation_count": 0,
         "contract_violation_count": 0,
         "deterministic_task_rate": 1.0,
         "forbidden_output_count": 1,
-        "mean_disclosure_chars": 540.111111,
-        "mean_evidence_group_recall": 0.444444,
+        "mean_disclosure_chars": 453.555556,
+        "mean_evidence_group_recall": 0.722222,
         "mean_operations_per_task": 1.0,
-        "mean_precision": 0.277778,
+        "mean_precision": 0.481481,
         "model_calls": 0,
         "monetary_cost_usd": 0.0,
         "operation_budget_violation_count": 0,
         "provider_tokens": 0,
         "retrieval_and_action_latency": {
-          "p50_ms": 19.8174,
-          "p95_ms": 25.257805,
-          "p99_ms": 65.085315
+          "p50_ms": 30.6771,
+          "p95_ms": 36.16503,
+          "p99_ms": 41.76702
         },
         "task_count": 9
       },
       "partitions": {
         "confirmatory": {
           "action_accuracy": 0.428571,
-          "caos_rate": 0.142857,
+          "caos_rate": 0.285714,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
           "deterministic_task_rate": 1.0,
           "forbidden_output_count": 1,
-          "mean_disclosure_chars": 517.142857,
-          "mean_evidence_group_recall": 0.523809,
+          "mean_disclosure_chars": 399.0,
+          "mean_evidence_group_recall": 0.761905,
           "mean_operations_per_task": 1.0,
-          "mean_precision": 0.285714,
+          "mean_precision": 0.47619,
           "operation_budget_violation_count": 0,
           "task_count": 7
         },
@@ -173,17 +167,17 @@
           "contract_violation_count": 0,
           "deterministic_task_rate": 1.0,
           "forbidden_output_count": 0,
-          "mean_disclosure_chars": 620.5,
-          "mean_evidence_group_recall": 0.166666,
+          "mean_disclosure_chars": 644.5,
+          "mean_evidence_group_recall": 0.583333,
           "mean_operations_per_task": 1.0,
-          "mean_precision": 0.25,
+          "mean_precision": 0.5,
           "operation_budget_violation_count": 0,
           "task_count": 2
         }
       },
       "preparation": {
-        "latency_ms": 62.1433,
-        "storage_bytes": 413696
+        "latency_ms": 94.5588,
+        "storage_bytes": 589824
       },
       "tasks": [
         {
@@ -193,16 +187,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 707,
-          "evidence_group_recall": 0.0,
+          "disclosure_chars": 644,
+          "evidence_group_recall": 0.5,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 21.7137,
-            "p95_ms": 25.725015
+            "p50_ms": 30.74065,
+            "p95_ms": 33.244675
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -210,8 +204,8 @@
             "atc_retrieval_v3"
           ],
           "partition": "development",
-          "precision": 0.0,
-          "ranking_fingerprint": "ade729be4471421df85ecbcf785a0dde3a9b387ba6863729aa7567b14dfa1d5e",
+          "precision": 0.333333,
+          "ranking_fingerprint": "ed0cab17e548487ab054cdd3051fd001deea5594d4a97026ce151d2495cd838b",
           "repeat_deterministic": true,
           "returned_count": 3,
           "strategy": "latest_route",
@@ -224,16 +218,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 710,
-          "evidence_group_recall": 0.0,
+          "disclosure_chars": 648,
+          "evidence_group_recall": 0.5,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 20.53335,
-            "p95_ms": 22.95672
+            "p50_ms": 30.8641,
+            "p95_ms": 32.564255
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -241,8 +235,8 @@
             "atc_retrieval_v3"
           ],
           "partition": "confirmatory",
-          "precision": 0.0,
-          "ranking_fingerprint": "566898defb70dc8573ae018ef144f9d25d5e6c2da9fc8b1ef6fd9e8af65cfc0e",
+          "precision": 0.333333,
+          "ranking_fingerprint": "5268c1ccc8bf62f766b1dd24201508e2887f21677b7cfe91bc3239c82c16a490",
           "repeat_deterministic": true,
           "returned_count": 3,
           "strategy": "latest_route",
@@ -255,16 +249,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 711,
-          "evidence_group_recall": 0.0,
+          "disclosure_chars": 648,
+          "evidence_group_recall": 0.5,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 19.7596,
-            "p95_ms": 22.598745
+            "p50_ms": 30.7335,
+            "p95_ms": 31.490505
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -272,8 +266,8 @@
             "atc_retrieval_v3"
           ],
           "partition": "confirmatory",
-          "precision": 0.0,
-          "ranking_fingerprint": "69ba4f2f0b7eb90348ad25e8864d42aaa1258b33edbc867ae5cfc3437fc319b8",
+          "precision": 0.333333,
+          "ranking_fingerprint": "9ef754210a7635c9d1610fd245c020ce2d111a0f062372c2ec960a866813d99f",
           "repeat_deterministic": true,
           "returned_count": 3,
           "strategy": "latest_route",
@@ -286,16 +280,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 534,
-          "evidence_group_recall": 0.333333,
+          "disclosure_chars": 645,
+          "evidence_group_recall": 0.666667,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 19.9322,
-            "p95_ms": 20.872615
+            "p50_ms": 30.71895,
+            "p95_ms": 31.39073
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -303,10 +297,10 @@
             "atc_retrieval_v3"
           ],
           "partition": "development",
-          "precision": 0.5,
-          "ranking_fingerprint": "a29f36b29ea0ac7cb7b9fc42739b209e7ec5616803c75532787617194f2a1caa",
+          "precision": 0.666667,
+          "ranking_fingerprint": "9d08981f515539b166d96266a298be9fde5fc086efa3f5d44382abd3da799bfd",
           "repeat_deterministic": true,
-          "returned_count": 2,
+          "returned_count": 3,
           "strategy": "threshold_route",
           "task_index": 3
         },
@@ -317,16 +311,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 534,
-          "evidence_group_recall": 0.333333,
+          "disclosure_chars": 432,
+          "evidence_group_recall": 0.666667,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 19.8292,
-            "p95_ms": 21.422545
+            "p50_ms": 30.578,
+            "p95_ms": 31.770355
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -334,8 +328,8 @@
             "atc_retrieval_v3"
           ],
           "partition": "confirmatory",
-          "precision": 0.5,
-          "ranking_fingerprint": "462718dc7f923570f65f441b0a9e1fcbbb4b83bbedc772d675a7c726088c788e",
+          "precision": 1.0,
+          "ranking_fingerprint": "f6eead2a63dbeb24ecea1719169abdb187d5a2e08ac9bb0e9a4deb632a404b3c",
           "repeat_deterministic": true,
           "returned_count": 2,
           "strategy": "threshold_route",
@@ -348,16 +342,16 @@
           "caos": false,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 529,
-          "evidence_group_recall": 0.333333,
+          "disclosure_chars": 636,
+          "evidence_group_recall": 0.666667,
           "failure_reason_codes": [
             "incorrect_action",
             "required_evidence_missing"
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 19.1327,
-            "p95_ms": 109.93395
+            "p50_ms": 30.8804,
+            "p95_ms": 33.48725
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -365,10 +359,10 @@
             "atc_retrieval_v3"
           ],
           "partition": "confirmatory",
-          "precision": 0.5,
-          "ranking_fingerprint": "cb96441259dfd44c31550b6ba42ab94373d8395d23095b082f463ccbd6b6e17f",
+          "precision": 0.666667,
+          "ranking_fingerprint": "dca20ca3aa84ba13fc7429c53439a1d3dfc5dee05fede89cf8e4a0c988571eb5",
           "repeat_deterministic": true,
-          "returned_count": 2,
+          "returned_count": 3,
           "strategy": "threshold_route",
           "task_index": 5
         },
@@ -384,8 +378,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 17.7281,
-            "p95_ms": 20.66095
+            "p50_ms": 29.57135,
+            "p95_ms": 30.38534
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -401,21 +395,19 @@
           "task_index": 6
         },
         {
-          "abstention_correct": false,
+          "abstention_correct": true,
           "action_correct": true,
-          "adapter_reason_code": "selected",
-          "caos": false,
+          "adapter_reason_code": "no_match",
+          "caos": true,
           "context_budget_violation_count": 0,
           "contract_violation_count": 0,
-          "disclosure_chars": 707,
+          "disclosure_chars": 0,
           "evidence_group_recall": 1.0,
-          "failure_reason_codes": [
-            "abstention_mismatch"
-          ],
+          "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 23.99655,
-            "p95_ms": 26.810865
+            "p50_ms": 36.07445,
+            "p95_ms": 37.52121
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -424,9 +416,9 @@
           ],
           "partition": "confirmatory",
           "precision": 0.0,
-          "ranking_fingerprint": "ade729be4471421df85ecbcf785a0dde3a9b387ba6863729aa7567b14dfa1d5e",
+          "ranking_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "repeat_deterministic": true,
-          "returned_count": 3,
+          "returned_count": 0,
           "strategy": "latest_route",
           "task_index": 7
         },
@@ -445,8 +437,8 @@
           ],
           "forbidden_output_count": 1,
           "latency": {
-            "p50_ms": 18.55835,
-            "p95_ms": 20.668465
+            "p50_ms": 29.5019,
+            "p95_ms": 30.190805
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -541,9 +533,9 @@
         "operation_budget_violation_count": 0,
         "provider_tokens": 0,
         "retrieval_and_action_latency": {
-          "p50_ms": 0.0637,
-          "p95_ms": 0.084535,
-          "p99_ms": 0.095325
+          "p50_ms": 0.0634,
+          "p95_ms": 0.077705,
+          "p99_ms": 0.092341
         },
         "task_count": 9
       },
@@ -578,7 +570,7 @@
         }
       },
       "preparation": {
-        "latency_ms": 0.1843,
+        "latency_ms": 0.2038,
         "storage_bytes": 10453
       },
       "tasks": [
@@ -594,8 +586,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.06305,
-            "p95_ms": 0.073895
+            "p50_ms": 0.0641,
+            "p95_ms": 0.076745
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -625,8 +617,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0637,
-            "p95_ms": 0.07251
+            "p50_ms": 0.06325,
+            "p95_ms": 0.06643
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -656,8 +648,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.06415,
-            "p95_ms": 0.08231
+            "p50_ms": 0.06305,
+            "p95_ms": 0.069145
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -687,8 +679,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0756,
-            "p95_ms": 0.094925
+            "p50_ms": 0.0748,
+            "p95_ms": 0.083075
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -719,8 +711,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.07515,
-            "p95_ms": 0.090415
+            "p50_ms": 0.07495,
+            "p95_ms": 0.083445
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -751,8 +743,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.07495,
-            "p95_ms": 0.08611
+            "p50_ms": 0.0747,
+            "p95_ms": 0.077955
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -786,8 +778,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0019,
-            "p95_ms": 0.002725
+            "p50_ms": 0.0018,
+            "p95_ms": 0.002695
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -812,8 +804,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.05085,
-            "p95_ms": 0.06287
+            "p50_ms": 0.0493,
+            "p95_ms": 0.053165
           },
           "operation_budget_violation_count": 0,
           "operation_count": 3,
@@ -842,8 +834,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.03725,
-            "p95_ms": 0.05091
+            "p50_ms": 0.0363,
+            "p95_ms": 0.039145
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -933,9 +925,9 @@
         "operation_budget_violation_count": 0,
         "provider_tokens": 0,
         "retrieval_and_action_latency": {
-          "p50_ms": 0.07025,
-          "p95_ms": 18.39824,
-          "p99_ms": 19.031407
+          "p50_ms": 0.0665,
+          "p95_ms": 29.842,
+          "p99_ms": 31.683494
         },
         "task_count": 9
       },
@@ -970,8 +962,8 @@
         }
       },
       "preparation": {
-        "latency_ms": 47.382,
-        "storage_bytes": 424149
+        "latency_ms": 78.5283,
+        "storage_bytes": 600277
       },
       "tasks": [
         {
@@ -986,8 +978,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0628,
-            "p95_ms": 0.0737
+            "p50_ms": 0.0639,
+            "p95_ms": 0.074085
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -1017,8 +1009,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0617,
-            "p95_ms": 0.07465
+            "p50_ms": 0.0628,
+            "p95_ms": 0.06881
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -1048,8 +1040,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0654,
-            "p95_ms": 0.09701
+            "p50_ms": 0.0624,
+            "p95_ms": 0.07012
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -1079,8 +1071,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.07355,
-            "p95_ms": 0.08838
+            "p50_ms": 0.0745,
+            "p95_ms": 0.08265
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -1111,8 +1103,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.07135,
-            "p95_ms": 0.07684
+            "p50_ms": 0.07435,
+            "p95_ms": 0.081135
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -1143,8 +1135,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0716,
-            "p95_ms": 0.07746
+            "p50_ms": 0.07405,
+            "p95_ms": 0.078815
           },
           "operation_budget_violation_count": 0,
           "operation_count": 5,
@@ -1175,8 +1167,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 18.38445,
-            "p95_ms": 21.270075
+            "p50_ms": 29.83095,
+            "p95_ms": 33.50167
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1203,8 +1195,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0491,
-            "p95_ms": 0.05633
+            "p50_ms": 0.0492,
+            "p95_ms": 0.05532
           },
           "operation_budget_violation_count": 0,
           "operation_count": 3,
@@ -1233,8 +1225,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0357,
-            "p95_ms": 0.04092
+            "p50_ms": 0.0361,
+            "p95_ms": 0.03947
           },
           "operation_budget_violation_count": 0,
           "operation_count": 4,
@@ -1374,9 +1366,9 @@
         "operation_budget_violation_count": 0,
         "provider_tokens": 0,
         "retrieval_and_action_latency": {
-          "p50_ms": 0.0052,
-          "p95_ms": 0.00823,
-          "p99_ms": 0.03078
+          "p50_ms": 0.005,
+          "p95_ms": 0.007415,
+          "p99_ms": 0.010562
         },
         "task_count": 9
       },
@@ -1411,7 +1403,7 @@
         }
       },
       "preparation": {
-        "latency_ms": 0.4668,
+        "latency_ms": 0.3819,
         "storage_bytes": 0
       },
       "tasks": [
@@ -1430,8 +1422,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0054,
-            "p95_ms": 0.013255
+            "p50_ms": 0.00495,
+            "p95_ms": 0.01304
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1459,8 +1451,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0051,
-            "p95_ms": 0.006385
+            "p50_ms": 0.005,
+            "p95_ms": 0.006
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1488,8 +1480,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.005,
-            "p95_ms": 0.006015
+            "p50_ms": 0.0047,
+            "p95_ms": 0.005525
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1518,7 +1510,7 @@
           "forbidden_output_count": 0,
           "latency": {
             "p50_ms": 0.0053,
-            "p95_ms": 0.00756
+            "p95_ms": 0.00782
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1546,8 +1538,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0053,
-            "p95_ms": 0.00611
+            "p50_ms": 0.0052,
+            "p95_ms": 0.006665
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1576,7 +1568,7 @@
           "forbidden_output_count": 0,
           "latency": {
             "p50_ms": 0.0053,
-            "p95_ms": 0.006095
+            "p95_ms": 0.006775
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1604,8 +1596,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0051,
-            "p95_ms": 0.00652
+            "p50_ms": 0.00485,
+            "p95_ms": 0.00637
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1630,8 +1622,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0051,
-            "p95_ms": 0.02968
+            "p50_ms": 0.0047,
+            "p95_ms": 0.005285
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1656,8 +1648,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.00535,
-            "p95_ms": 0.0077
+            "p50_ms": 0.0047,
+            "p95_ms": 0.005265
           },
           "operation_budget_violation_count": 0,
           "operation_count": 0,
@@ -1778,9 +1770,9 @@
         "operation_budget_violation_count": 0,
         "provider_tokens": 0,
         "retrieval_and_action_latency": {
-          "p50_ms": 0.2072,
-          "p95_ms": 1.06724,
-          "p99_ms": 1.09132
+          "p50_ms": 0.20055,
+          "p95_ms": 1.039305,
+          "p99_ms": 1.051172
         },
         "task_count": 9
       },
@@ -1815,7 +1807,7 @@
         }
       },
       "preparation": {
-        "latency_ms": 0.349,
+        "latency_ms": 0.3252,
         "storage_bytes": 10453
       },
       "tasks": [
@@ -1831,8 +1823,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.21165,
-            "p95_ms": 0.251355
+            "p50_ms": 0.1991,
+            "p95_ms": 0.22238
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1859,8 +1851,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.2074,
-            "p95_ms": 0.225335
+            "p50_ms": 0.20015,
+            "p95_ms": 0.207325
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1887,8 +1879,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.20385,
-            "p95_ms": 0.21476
+            "p50_ms": 0.199,
+            "p95_ms": 0.21248
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1918,8 +1910,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.214,
-            "p95_ms": 0.243315
+            "p50_ms": 0.2028,
+            "p95_ms": 0.21745
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1949,8 +1941,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.20745,
-            "p95_ms": 0.215785
+            "p50_ms": 0.2015,
+            "p95_ms": 0.216165
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -1980,8 +1972,8 @@
           ],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.20325,
-            "p95_ms": 0.21005
+            "p50_ms": 0.20185,
+            "p95_ms": 0.20747
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -2008,8 +2000,8 @@
           "failure_reason_codes": [],
           "forbidden_output_count": 0,
           "latency": {
-            "p50_ms": 0.0666,
-            "p95_ms": 0.078415
+            "p50_ms": 0.0665,
+            "p95_ms": 0.084255
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -2039,8 +2031,8 @@
           ],
           "forbidden_output_count": 1,
           "latency": {
-            "p50_ms": 1.0654,
-            "p95_ms": 1.09304
+            "p50_ms": 1.0391,
+            "p95_ms": 1.054935
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -2070,8 +2062,8 @@
           ],
           "forbidden_output_count": 1,
           "latency": {
-            "p50_ms": 0.0673,
-            "p95_ms": 0.11657
+            "p50_ms": 0.06685,
+            "p95_ms": 0.07456
           },
           "operation_budget_violation_count": 0,
           "operation_count": 1,
@@ -2121,7 +2113,7 @@
     "machine": "AMD64",
     "operating_system": "Windows",
     "operating_system_release": "11",
-    "python": "3.12.10",
+    "python": "3.14.3",
     "python_implementation": "CPython"
   },
   "event_count": 45,

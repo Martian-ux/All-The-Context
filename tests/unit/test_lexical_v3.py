@@ -49,15 +49,14 @@ def _ids(result: object) -> list[str]:
     return [hit.record_id for hit in result.hits]
 
 
-def test_weighted_bm25_favors_content_over_lower_weight_structural_fields() -> None:
+def test_structural_only_matches_cannot_satisfy_content_retrieval() -> None:
     connection = _connection()
     _insert(connection, "content-hit", content="quartz")
     _insert(connection, "kind-hit", kind="quartz")
 
     result = LexicalV3().search(connection, ["kind-hit", "content-hit"], "quartz")
 
-    assert _ids(result) == ["content-hit", "kind-hit"]
-    assert result.hits[0].score > result.hits[1].score
+    assert _ids(result) == ["content-hit"]
     connection.close()
 
 
@@ -159,6 +158,87 @@ def test_prefix_fallback_has_minimum_length_token_cap_and_literal_quoting() -> N
     assert DiagnosticReason.PREFIX_UNAVAILABLE in too_short.diagnostics.reason_codes
     assert rendered == '"abcd"* OR "ef""gh"* OR "ijk*"* OR "lmno"*'
     assert rendered.count(" OR ") == MAX_PREFIX_TOKENS - 1
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("query", "strong_content", "weak_content"),
+    [
+        (
+            "project phrase",
+            "Project Phrase is the exact multiword marker.",
+            "Generic context noise mentions project only.",
+        ),
+        (
+            "Windows Linux platform support",
+            "Windows Linux platform support is documented.",
+            "A generic Linux preference is recorded.",
+        ),
+        (
+            "local Core Relay architecture",
+            "Local Core Relay architecture uses ordered replication.",
+            "Unrelated core prose describes a different topic.",
+        ),
+        (
+            "mCp PROVIDER ingestion",
+            "MCP provider ingestion is bounded by Core policy.",
+            "Generic preserve-context guidance is unrelated.",
+        ),
+    ],
+    ids=("project_phrase", "platform_support", "core_relay", "mcp_ingestion"),
+)
+def test_multi_term_fallback_rejects_weak_one_token_candidates(
+    query: str, strong_content: str, weak_content: str
+) -> None:
+    connection = _connection()
+    _insert(connection, "strong", content=strong_content)
+    _insert(connection, "weak", content=weak_content)
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["weak", "strong"], query, limit=5
+    )
+
+    assert _ids(result) == ["strong"]
+    assert result.hits[0].best_channel == "phrase"
+    connection.close()
+
+
+def test_multi_term_fallback_orders_admitted_candidates_by_term_coverage() -> None:
+    connection = _connection()
+    _insert(connection, "three-terms", content="Windows Linux platform notes.")
+    _insert(connection, "two-terms", content="Windows Linux preference.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["two-terms", "three-terms"], "Windows Linux platform support", limit=5
+    )
+
+    assert _ids(result) == ["three-terms", "two-terms"]
+    assert all(hit.best_channel == "exact_any" for hit in result.hits)
+    connection.close()
+
+
+def test_multi_term_fallback_abstains_when_only_one_term_matches() -> None:
+    connection = _connection()
+    _insert(connection, "weak", content="A generic Linux preference is recorded.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["weak"], "Windows Linux support", limit=5
+    )
+
+    assert result.hits == ()
+    assert DiagnosticReason.NO_MATCHES in result.diagnostics.reason_codes
+    connection.close()
+
+
+def test_alias_only_coverage_does_not_become_full_multi_term_coverage() -> None:
+    connection = _connection()
+    _insert(connection, "alias-content", content="A cache invalidation note.")
+
+    result = LexicalV3(prefix_fallback_min_results=2).search(
+        connection, ["alias-content"], "segmented eviction strategy", limit=5
+    )
+
+    assert _ids(result) == []
     connection.close()
 
 

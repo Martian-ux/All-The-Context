@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import threading
 import zipfile
 from hashlib import sha256
@@ -2040,6 +2041,164 @@ def test_project_constraints_and_named_decisions_are_extracted() -> None:
     ]
 
 
+def test_impersonal_constraint_keywords_are_not_current_constraints() -> None:
+    parsed = parse_text(
+        "## User\nA function must return a value for every input. "
+        "There must be exactly one solution. The theorem needs to hold for all cases.",
+        provider="chatgpt",
+        source_name="synthetic-technical-prose.md",
+    )
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage["recognized"] == 0
+    assert parsed.closed_coverage["skipped"] == 1
+    assert parsed.complete is True
+
+
+def test_first_person_durable_constraints_remain_constraints() -> None:
+    parsed = parse_text(
+        "## User\nI must keep production data local. We need to redact secrets. "
+        "My service cannot depend on a network connection.",
+        provider="chatgpt",
+        source_name="synthetic-durable-constraints.md",
+    )
+
+    assert [item.kind for item in parsed.candidates] == ["constraint"] * 3
+
+
+def test_labeled_constraint_survives_impersonal_wording() -> None:
+    parsed = parse_text(
+        "## User\nConstraint: The API must return bounded data.",
+        provider="chatgpt",
+        source_name="synthetic-labeled-constraint.md",
+    )
+
+    assert [(item.kind, item.content) for item in parsed.candidates] == [
+        ("constraint", "The API must return bounded data.")
+    ]
+
+
+def test_table_and_citation_shaped_prose_does_not_promote_constraints() -> None:
+    parsed = parse_text(
+        "## User\n"
+        "| Claim | Requirement |\n"
+        "| --- | --- |\n"
+        "| The function must return a value. | Required |\n\n"
+        "[12] The theorem must hold for all inputs (Smith et al., 2024).",
+        provider="chatgpt",
+        source_name="synthetic-reference-material.md",
+    )
+
+    assert parsed.candidates == []
+    assert parsed.closed_coverage["recognized"] == 0
+    assert parsed.closed_coverage["skipped"] == 1
+    assert parsed.complete is True
+
+
+def test_one_project_anchor_scopes_all_siblings_opaquely_and_deterministically() -> None:
+    export = {
+        "conversations": [
+            {
+                "id": "synthetic-scope-conversation",
+                "messages": [
+                    {"id": "project", "role": "user", "content": "Project: Atlas workspace."},
+                    {"id": "goal", "role": "user", "content": "Goal: Ship a local prototype."},
+                    {
+                        "id": "decision",
+                        "role": "user",
+                        "content": "Decision: Keep the index local.",
+                    },
+                    {
+                        "id": "constraint",
+                        "role": "user",
+                        "content": "Constraint: The service must stay bounded.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    parsed = parse_json(json.dumps(export), provider="chatgpt")
+    replayed = parse_json(json.dumps(export), provider="chatgpt")
+    reordered_export = {
+        **export,
+        "conversations": [
+            {
+                **export["conversations"][0],
+                "messages": list(reversed(export["conversations"][0]["messages"])),
+            }
+        ],
+    }
+    reordered = parse_json(json.dumps(reordered_export), provider="chatgpt")
+
+    def scope_by_content(result: Any) -> dict[str, tuple[str, ...]]:
+        return {item.content: tuple(item.scopes) for item in result.candidates}
+
+    expected = scope_by_content(parsed)
+    assert scope_by_content(replayed) == expected
+    assert scope_by_content(reordered) == expected
+    assert len(expected) == 4
+    all_scopes = set(expected.values())
+    assert len(all_scopes) == 1
+    scopes = next(iter(all_scopes))
+    assert scopes[0] == "personal"
+    assert len(scopes) == 2
+    assert re.fullmatch(r"project:archive-[0-9a-f]+", scopes[1])
+    assert "synthetic-scope-conversation" not in scopes[1]
+    assert "Atlas" not in scopes[1]
+
+
+def test_multiple_project_anchors_abstain_from_scoping_siblings() -> None:
+    parsed = parse_json(
+        json.dumps(
+            {
+                "conversations": [
+                    {
+                        "id": "synthetic-multiple-projects",
+                        "messages": [
+                            {"role": "user", "content": "Project: First workspace."},
+                            {"role": "user", "content": "Project: Second workspace."},
+                            {"role": "user", "content": "Goal: Keep both prototypes local."},
+                        ],
+                    }
+                ]
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert parsed.candidates
+    assert all(tuple(item.scopes) == ("personal",) for item in parsed.candidates)
+
+
+def test_assistant_system_and_tool_messages_never_publish() -> None:
+    parsed = parse_json(
+        json.dumps(
+            {
+                "conversations": [
+                    {
+                        "id": "synthetic-role-boundary",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "content": "Constraint: fabricated assistant text.",
+                            },
+                            {"role": "system", "content": "Project: fabricated system text."},
+                            {"role": "tool", "content": "Goal: fabricated tool text."},
+                            {"role": "user", "content": "I must keep this synthetic boundary."},
+                        ],
+                    }
+                ]
+            }
+        ),
+        provider="chatgpt",
+    )
+
+    assert [(item.kind, item.content) for item in parsed.candidates] == [
+        ("constraint", "I must keep this synthetic boundary.")
+    ]
+
+
 def test_broad_first_person_fragments_are_not_auto_current_memory() -> None:
     parsed = parse_json(
         json.dumps(
@@ -2440,6 +2599,12 @@ def test_rebuild_ingestion_failure_rolls_back_withdrawal(
     assert "rebuild_published_generation" not in sources[0]["metadata"]
     candidates, _ = store.list_candidates(status=None, source_id=source_id)
     assert any(item.disposition.value == "staged" for item in candidates)
+    # A normal Core startup calls this recovery evaluator. Rebuild staging must
+    # remain inert until the source-bound atomic cutover validates and publishes.
+    assert store.evaluate_staged_observations() == 0
+    for record_id, history in prior_history.items():
+        assert store.get_record(record_id).content == prior_content[record_id]
+        assert store.record_history(record_id) == history
 
     monkeypatch.setattr(store, "_evaluate_observation_tx", original_evaluate)
     resumed = ArchiveImportService(store).reprocess_source(source_id)

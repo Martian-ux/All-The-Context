@@ -92,6 +92,61 @@ function truthPayload(record = contextRecord(), overrides: Record<string, unknow
   };
 }
 
+function projectListPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    items: [{ project_id: "project-alpha", project_ref: "private-project-ref", name: "Atlas", aliases: ["Atlas workspace"], item_count: 5, private_path: "C:\\Users\\private" }],
+    total: 1,
+    unresolved_count: 2,
+    ambiguous_count: 1,
+    revision: "revision-alpha",
+    ...overrides,
+  };
+}
+
+function capsuleItem(section: string, text: string) {
+  return {
+    evidence_id: `private-evidence-${section}`,
+    section,
+    text,
+    provenance_ids: [`private-provenance-${section}`],
+    record_id: `private-record-${section}`,
+    source_id: `private-source-${section}`,
+    truncated: false,
+    authority: "current_memory",
+  };
+}
+
+function projectCapsulePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    schema: "atc.project-context-capsule.v0",
+    compiler_version: "project-continuity-v0",
+    project_id: "project-alpha",
+    project_ref: "private-project-ref",
+    project_name: "Atlas",
+    aliases: ["Atlas workspace"],
+    assignment_outcome: "resolved",
+    sections: {
+      current_goal: [capsuleItem("current_goal", "Ship the continuity dashboard.")],
+      decisions: [capsuleItem("decisions", "Keep the capsule read-only.")],
+      constraints_preferences: [capsuleItem("constraints_preferences", "Preserve existing memory search.")],
+      blockers: [capsuleItem("blockers", "Integration handoff is still pending.")],
+      recent_meaningful_changes: [capsuleItem("recent_meaningful_changes", "Added bounded project selection.")],
+    },
+    provenance_ids: ["private-provenance-capsule"],
+    dependency_ids: ["private-dependency-capsule"],
+    character_budget: 12000,
+    item_budget: 32,
+    used_chars: 158,
+    omitted_count: 2,
+    omissions: [{ reason: "item_budget", count: 2, evidence_ids: ["private-omitted-evidence"] }],
+    truncated: true,
+    abstention_reason: null,
+    derived_read_only: true,
+    private_wire: { path: "C:\\Users\\private" },
+    ...overrides,
+  };
+}
+
 function matchMedia(matches: boolean): MediaQueryList {
   return { matches, media: "(max-width: 760px)", onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() };
 }
@@ -226,6 +281,77 @@ describe("dashboard", () => {
     expect(screen.queryByRole("button", { name: "Audit" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
     expect(fetch.mock.calls.some(([request]) => String(request).includes("/admin/candidates"))).toBe(false);
+  });
+
+  it("shows bounded project continuity alongside search and truth accounting", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json(projectListPayload());
+      if (url.includes("/admin/projects/project-alpha/capsule")) return json(projectCapsulePayload());
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 1, items: [contextRecord()] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Keep the active project in view" })).toBeInTheDocument();
+    expect(await screen.findByText("Not assigned")).toBeInTheDocument();
+    expect(screen.getByText("3", { selector: ".project-continuity-assignment > span" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Atlas/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Atlas/ }));
+
+    expect(await screen.findByText("Ship the continuity dashboard.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Current goal" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Decisions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Constraints & preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blockers" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent meaningful changes" })).toBeInTheDocument();
+    expect(screen.getByText("Derived · read-only")).toBeInTheDocument();
+    expect(screen.getByText(/2 items were omitted/i)).toBeInTheDocument();
+    expect(screen.queryByText(/private-project-ref|private-(evidence|provenance|record|source)/i)).not.toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/admin/projects/project-alpha/capsule?character_budget=12000&item_budget=32"))).toBe(true);
+    expect(screen.getByText("Prefers concise technical explanations.")).toBeInTheDocument();
+  });
+
+  it("shows an honest empty project state without replacing context search", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json({ items: [], total: 0, unresolved_count: 4, ambiguous_count: 2, revision: "" });
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+
+    expect(await screen.findByText("No projects available")).toBeInTheDocument();
+    expect(screen.getByText(/unresolved or ambiguous are not presented as projects/i)).toBeInTheDocument();
+    expect(await screen.findByText("No current memories yet")).toBeInTheDocument();
+  });
+
+  it("shows no-usable-context when a selected project has no human sections", async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/projects")) return json(projectListPayload({ unresolved_count: 0, ambiguous_count: 0 }));
+      if (url.includes("/admin/projects/project-alpha/capsule")) return json(projectCapsulePayload({ sections: { current_goal: [], decisions: [], constraints_preferences: [], blockers: [], recent_meaningful_changes: [] }, used_chars: 0, omitted_count: 0, omissions: [], truncated: false }));
+      if (url.endsWith("/context/coverage")) return json(truthCoveragePayload());
+      if (url.endsWith("/context/search")) return json({ total: 0, items: [] });
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Atlas/ }));
+
+    expect(await screen.findByText("No usable context for this project")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Current goal" })).not.toBeInTheDocument();
   });
 
   it("loads content-free truth accounting and selected canonical truth without N+1 row requests", async () => {
@@ -703,6 +829,106 @@ describe("dashboard", () => {
     expect(screen.getByRole("link", { name: "Open Claude export instructions" })).toHaveAttribute("href", expect.stringContaining("claude.com"));
     expect(screen.getByRole("link", { name: "Open Grok export instructions" })).toHaveAttribute("href", expect.stringContaining("x.ai"));
     expect(document.querySelector('input[type="file"]')).toHaveAttribute("accept", expect.stringContaining(".zip"));
+  });
+
+  it("connects and syncs a local workspace from the real Sources page", async () => {
+    let authorized = false;
+    let lifecycle: "disabled" | "enabled" = "disabled";
+    let schedulerEnabled = false;
+    let lastRun = false;
+    const source = () => ({
+      id: "capture-source-1",
+      provider: "local-git-workspace",
+      lifecycle_state: lifecycle,
+      local_only: true,
+      local_only_acknowledged: true,
+      lag_events: 0,
+      last_run_at: lastRun ? "2026-08-25T12:00:00Z" : null,
+    });
+    const captureStatus = () => ({
+      total: authorized ? 1 : 0,
+      items: authorized ? [{
+        source: source(),
+        checkpoint: { generation: lastRun ? 1 : 0 },
+        ...(lastRun ? { last_run: { state: "completed", attempt_count: 1, pages: 1, events: 3, applied_events: 2, duplicate_events: 0, failures: 0, started_at: "2026-08-25T11:59:00Z", completed_at: "2026-08-25T12:00:00Z" } } : {}),
+      }] : [],
+      scheduler: { config_valid: true, dispatch_allowed: schedulerEnabled, durable_enabled: schedulerEnabled, enabled: schedulerEnabled, max_workers: 1, process_gate: true, update_health_forced_off: false },
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/capture/status")) return json(captureStatus());
+      if (url.endsWith("/admin/sources")) return json({ items: [] });
+      if (url.endsWith("/admin/capture/workspaces/authorize")) {
+        authorized = true;
+        return json({ id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: "disabled", authorized: true, reconciled: false, root: "C:\\private\\workspace" });
+      }
+      if (url.endsWith("/admin/capture/sources/capture-source-1/enable")) {
+        lifecycle = "enabled";
+        return json(source());
+      }
+      if (url.endsWith("/admin/capture/scheduler/enable")) {
+        schedulerEnabled = true;
+        return json(captureStatus().scheduler);
+      }
+      if (url.endsWith("/admin/capture/sources/capture-source-1/run")) {
+        lastRun = true;
+        return json({ status: "completed", pages: 1, events: 3, applied_events: 2, duplicate_events: 0, failures: 0, retry_count: 0, lag_events: 0, lag_pages: 0 });
+      }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    const path = await screen.findByLabelText("Absolute workspace path");
+    fireEvent.change(path, { target: { value: "C:\\Workspaces\\Example" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Connect and sync" }));
+
+    expect(await screen.findByText("Workspace connected and synced. Automatic sync is on.")).toBeInTheDocument();
+    expect(screen.getByText("Current")).toBeInTheDocument();
+    expect(screen.getByText("Automatic sync")).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request, requestInit]) => String(request).endsWith("/admin/capture/workspaces/authorize") && requestInit?.method === "POST" && JSON.parse(String(requestInit.body)).local_only_acknowledged === true)).toBe(true);
+    expect(screen.queryByText(/private-fingerprint|account_label|requested_scopes/i)).not.toBeInTheDocument();
+  });
+
+  it("operates local workspace sync, pause/resume, scheduler, and destructive revoke confirmation", async () => {
+    let lifecycle: "enabled" | "paused" | "revoked" = "enabled";
+    let schedulerEnabled = true;
+    let runCount = 0;
+    const source = () => ({ id: "capture-source-1", provider: "local-git-workspace", lifecycle_state: lifecycle, local_only: true, local_only_acknowledged: true, lag_events: 0, last_run_at: "2026-08-25T12:00:00Z" });
+    const captureStatus = () => ({ items: [{ source: source(), checkpoint: { generation: runCount }, last_run: { state: "completed", attempt_count: 1, pages: 1, events: 2, applied_events: 2, duplicate_events: 0, failures: 0, started_at: "2026-08-25T11:59:00Z", completed_at: "2026-08-25T12:00:00Z" } }], scheduler: { config_valid: true, dispatch_allowed: schedulerEnabled, durable_enabled: schedulerEnabled, enabled: schedulerEnabled, max_workers: 1, process_gate: true, update_health_forced_off: false } });
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      if (url.includes("/context/status")) return json(status());
+      if (url.endsWith("/admin/capture/status")) return json(captureStatus());
+      if (url.endsWith("/admin/sources")) return json({ items: [] });
+      if (url.endsWith("/capture/sources/capture-source-1/run")) { runCount += 1; return json({ status: "completed", pages: 1, events: 2, applied_events: 2, duplicate_events: 0, failures: 0, retry_count: 0, lag_events: 0, lag_pages: 0 }); }
+      if (url.endsWith("/capture/sources/capture-source-1/pause")) { lifecycle = "paused"; return json(source()); }
+      if (url.endsWith("/capture/sources/capture-source-1/resume")) { lifecycle = "enabled"; return json(source()); }
+      if (url.endsWith("/capture/sources/capture-source-1/revoke")) { lifecycle = "revoked"; return json(source()); }
+      if (url.endsWith("/capture/scheduler/disable")) { schedulerEnabled = false; return json(captureStatus().scheduler); }
+      return json({ items: [] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    expect(await screen.findByRole("button", { name: "Sync now" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    await screen.findByText("Sync completed. Core reported the workspace as current.");
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    expect(await screen.findByText("Paused")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("Current")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+    expect(await screen.findByText("Automatic sync is off.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect / Revoke" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Revoking is permanent");
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect and revoke" }));
+    expect(await screen.findByText("Workspace authorization needed")).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([request]) => String(request).endsWith("/capture/sources/capture-source-1/revoke"))).toBe(true);
   });
 
   it("imports a provider export and shows local coverage", async () => {

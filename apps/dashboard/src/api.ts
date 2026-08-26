@@ -2,6 +2,15 @@ import type {
   ActivityEvent,
   ArchiveProvider,
   Availability,
+  CaptureAuthorizationProjection,
+  CaptureLifecycleState,
+  CaptureRunResult,
+  CaptureRunResultState,
+  CaptureRunState,
+  CaptureSchedulerStatus,
+  CaptureSourceProjection,
+  CaptureSourceStatus,
+  CaptureStatus,
   ClientRegistration,
   ContextDeletion,
   ContextRecord,
@@ -19,6 +28,12 @@ import type {
   MemoryTruthRecord,
   MemoryTruthStatus,
   Page,
+  ProjectCapsule,
+  ProjectCapsuleItem,
+  ProjectCapsuleOmission,
+  ProjectCapsuleSection,
+  ProjectSummary,
+  ProjectSummariesResponse,
   SourceDeletion,
   SourceMetadata,
   SourceRecord,
@@ -57,6 +72,9 @@ const CLOSED_COVERAGE_KEYS: readonly ClosedCoverageKey[] = [
 
 const IMPORT_STATUSES: readonly ImportStatus[] = ["processing", "complete", "failed", "cancelled"];
 const TERMINAL_REASONS: readonly SourceTerminalReason[] = ["failed", "cancelled"];
+const CAPTURE_LIFECYCLE_STATES: readonly CaptureLifecycleState[] = ["disabled", "enabled", "paused", "revoked", "degraded", "reconciling"];
+const CAPTURE_RUN_STATES: readonly CaptureRunState[] = ["running", "completed", "failed", "abandoned"];
+const CAPTURE_RUN_RESULT_STATES: readonly CaptureRunResultState[] = ["completed", "failed", "skipped"];
 const TRUTH_STATUSES: readonly MemoryTruthStatus[] = ["current", "tentative", "superseded", "conflicted", "deleted"];
 const CONFLICT_STATES: readonly TruthConflictState[] = ["none", "active", "resolved"];
 const AVAILABILITIES: readonly Availability[] = ["always_available", "core_available", "local_only"];
@@ -84,6 +102,32 @@ const MAX_TRUTH_SUPERSEDED_BY = 64;
 const MAX_TRUTH_EVIDENCE = 512;
 const MAX_STATS_STRING_CHARS = 256;
 const MAX_SOURCE_BYTES = 2_147_483_647;
+const MAX_CAPTURE_ITEMS = 512;
+const MAX_CAPTURE_PROVIDER_CHARS = 256;
+const MAX_CAPTURE_ERROR_CODE_CHARS = 128;
+const MAX_WORKSPACE_ROOT_CHARS = 4_096;
+const MAX_PROJECTS = 256;
+const MAX_PROJECT_ALIASES = 32;
+const MAX_PROJECT_LABEL_CHARS = 160;
+const MAX_PROJECT_ITEM_COUNT = 1_000_000;
+const MAX_PROJECT_REVISION_CHARS = 128;
+const MAX_CAPSULE_ITEMS = 64;
+const MAX_CAPSULE_TEXT_CHARS = 16_000;
+const MAX_CAPSULE_PROVENANCE_IDS = 64;
+const MAX_CAPSULE_PROVENANCE_PER_ITEM = 8;
+const MAX_CAPSULE_DEPENDENCY_IDS = 64;
+const MAX_CAPSULE_BUDGET_CHARS = 32_000;
+const MAX_CAPSULE_OMISSIONS = 16;
+const MAX_CAPSULE_OMISSION_IDS = 16;
+const MAX_CAPSULE_COMPILER_CHARS = 256;
+
+const PROJECT_CAPSULE_SECTIONS: readonly ProjectCapsuleSection[] = [
+  "current_goal",
+  "decisions",
+  "constraints_preferences",
+  "blockers",
+  "recent_meaningful_changes",
+];
 
 const COUNT_STAT_KEYS = [
   "files",
@@ -171,6 +215,174 @@ function strictStringArray(
   return strings;
 }
 
+function nullableRequiredString(value: unknown, maxLength: number): string | null | undefined {
+  return value === null ? null : asRequiredString(value, maxLength);
+}
+
+function projectSummaryFromWire(value: unknown): ProjectSummary | null {
+  if (!isRecord(value)) return null;
+  const projectId = asRequiredString(value.project_id, MAX_ID_CHARS);
+  const projectRef = asRequiredString(value.project_ref, MAX_ID_CHARS);
+  const name = nullableRequiredString(value.name, MAX_PROJECT_LABEL_CHARS);
+  const aliases = strictStringArray(value.aliases, MAX_PROJECT_ALIASES, MAX_PROJECT_LABEL_CHARS);
+  const itemCount = asCount(value.item_count, MAX_PROJECT_ITEM_COUNT);
+  if (projectId === undefined || projectRef === undefined || name === undefined || aliases === null || itemCount === undefined) {
+    return null;
+  }
+  return { project_id: projectId, project_ref: projectRef, name, aliases, item_count: itemCount };
+}
+
+export function projectSummariesFromWire(value: unknown): ProjectSummariesResponse {
+  if (!isRecord(value) || !Array.isArray(value.items) || value.items.length > MAX_PROJECTS) {
+    throw invalidWireError();
+  }
+  const items = value.items.map(projectSummaryFromWire);
+  if (items.some((item): item is null => item === null)) throw invalidWireError();
+  const projects = items as ProjectSummary[];
+  if (new Set(projects.map((project) => project.project_id)).size !== projects.length) {
+    throw invalidWireError();
+  }
+  const total = asCount(value.total, MAX_PROJECT_ITEM_COUNT);
+  const unresolvedCount = asCount(value.unresolved_count, MAX_PROJECT_ITEM_COUNT);
+  const ambiguousCount = asCount(value.ambiguous_count, MAX_PROJECT_ITEM_COUNT);
+  const revision = asBoundedString(value.revision, MAX_PROJECT_REVISION_CHARS);
+  if (total === undefined || unresolvedCount === undefined || ambiguousCount === undefined || revision === undefined || total !== projects.length) {
+    throw invalidWireError();
+  }
+  return {
+    items: projects,
+    total,
+    unresolved_count: unresolvedCount,
+    ambiguous_count: ambiguousCount,
+    revision,
+  };
+}
+
+function projectCapsuleItemFromWire(value: unknown, section: ProjectCapsuleSection): ProjectCapsuleItem | null {
+  if (!isRecord(value) || value.section !== section || typeof value.truncated !== "boolean") return null;
+  const evidenceId = asRequiredString(value.evidence_id, MAX_ID_CHARS);
+  const text = asRequiredString(value.text, MAX_CAPSULE_TEXT_CHARS);
+  const provenanceIds = strictStringArray(value.provenance_ids, MAX_CAPSULE_PROVENANCE_PER_ITEM, MAX_ID_CHARS);
+  const recordId = nullableRequiredString(value.record_id, MAX_ID_CHARS);
+  const sourceId = nullableRequiredString(value.source_id, MAX_ID_CHARS);
+  const authority = value.authority === "current_memory" || value.authority === "workspace_fact" ? value.authority : undefined;
+  if (evidenceId === undefined || text === undefined || provenanceIds === null || recordId === undefined || sourceId === undefined || authority === undefined) {
+    return null;
+  }
+  return {
+    evidence_id: evidenceId,
+    section,
+    text,
+    provenance_ids: provenanceIds,
+    record_id: recordId,
+    source_id: sourceId,
+    truncated: value.truncated,
+    authority,
+  };
+}
+
+function projectCapsuleOmissionFromWire(value: unknown): ProjectCapsuleOmission | null {
+  if (!isRecord(value) || (value.reason !== "character_budget" && value.reason !== "item_budget")) return null;
+  const count = asCount(value.count, MAX_PROJECT_ITEM_COUNT);
+  const evidenceIds = strictStringArray(value.evidence_ids, MAX_CAPSULE_OMISSION_IDS, MAX_ID_CHARS);
+  if (count === undefined || count < 1 || evidenceIds === null) return null;
+  return { reason: value.reason, count, evidence_ids: evidenceIds };
+}
+
+export function projectCapsuleFromWire(value: unknown): ProjectCapsule {
+  if (!isRecord(value) || value.schema !== "atc.project-context-capsule.v0" || value.assignment_outcome !== "resolved" || value.derived_read_only !== true) {
+    throw invalidWireError();
+  }
+  const compilerVersion = asRequiredString(value.compiler_version, MAX_CAPSULE_COMPILER_CHARS);
+  const projectId = asRequiredString(value.project_id, MAX_ID_CHARS);
+  const projectRef = asRequiredString(value.project_ref, MAX_ID_CHARS);
+  const projectName = nullableRequiredString(value.project_name, MAX_PROJECT_LABEL_CHARS);
+  const aliases = strictStringArray(value.aliases, MAX_PROJECT_ALIASES, MAX_PROJECT_LABEL_CHARS);
+  const provenanceIds = strictStringArray(value.provenance_ids, MAX_CAPSULE_PROVENANCE_IDS, MAX_ID_CHARS);
+  const dependencyIds = strictStringArray(value.dependency_ids, MAX_CAPSULE_DEPENDENCY_IDS, MAX_ID_CHARS);
+  const characterBudget = asCount(value.character_budget, MAX_CAPSULE_BUDGET_CHARS);
+  const itemBudget = asCount(value.item_budget, MAX_CAPSULE_ITEMS);
+  const usedChars = asCount(value.used_chars, MAX_CAPSULE_BUDGET_CHARS);
+  const omittedCount = asCount(value.omitted_count, MAX_PROJECT_ITEM_COUNT);
+  const abstentionReason = nullableRequiredString(value.abstention_reason, MAX_REASON_CHARS);
+  if (
+    compilerVersion === undefined
+    || projectId === undefined
+    || projectRef === undefined
+    || projectName === undefined
+    || aliases === null
+    || provenanceIds === null
+    || dependencyIds === null
+    || characterBudget === undefined
+    || characterBudget < 1
+    || itemBudget === undefined
+    || itemBudget < 1
+    || usedChars === undefined
+    || usedChars > characterBudget
+    || omittedCount === undefined
+    || abstentionReason === undefined
+    || abstentionReason !== null
+    || !isRecord(value.sections)
+    || !Array.isArray(value.omissions)
+    || value.omissions.length > MAX_CAPSULE_OMISSIONS
+    || typeof value.truncated !== "boolean"
+  ) {
+    throw invalidWireError();
+  }
+
+  const sections = {} as Record<ProjectCapsuleSection, ProjectCapsuleItem[]>;
+  let itemTotal = 0;
+  let textCharacterTotal = 0;
+  let hasTruncatedItem = false;
+  const evidenceIds = new Set<string>();
+  for (const section of PROJECT_CAPSULE_SECTIONS) {
+    const wireItems = value.sections[section];
+    if (!Array.isArray(wireItems) || wireItems.length > MAX_CAPSULE_ITEMS) throw invalidWireError();
+    const items = wireItems.map((item) => projectCapsuleItemFromWire(item, section));
+    if (items.some((item): item is null => item === null)) throw invalidWireError();
+    sections[section] = items as ProjectCapsuleItem[];
+    itemTotal += sections[section].length;
+    for (const item of sections[section]) {
+      if (evidenceIds.has(item.evidence_id)) throw invalidWireError();
+      evidenceIds.add(item.evidence_id);
+      textCharacterTotal += item.text.length;
+      hasTruncatedItem ||= item.truncated;
+    }
+  }
+  if (itemTotal > MAX_CAPSULE_ITEMS || itemTotal > itemBudget || textCharacterTotal !== usedChars) throw invalidWireError();
+
+  const omissions = value.omissions.map(projectCapsuleOmissionFromWire);
+  if (omissions.some((item): item is null => item === null)) throw invalidWireError();
+  const normalizedOmissions = omissions as ProjectCapsuleOmission[];
+  if (
+    normalizedOmissions.reduce((sum, item) => sum + item.count, 0) !== omittedCount
+    || value.truncated !== (omittedCount > 0 || hasTruncatedItem)
+  ) {
+    throw invalidWireError();
+  }
+
+  return {
+    schema: "atc.project-context-capsule.v0",
+    compiler_version: compilerVersion,
+    project_id: projectId,
+    project_ref: projectRef,
+    project_name: projectName,
+    aliases,
+    assignment_outcome: "resolved",
+    sections,
+    provenance_ids: provenanceIds,
+    dependency_ids: dependencyIds,
+    character_budget: characterBudget,
+    item_budget: itemBudget,
+    used_chars: usedChars,
+    omitted_count: omittedCount,
+    omissions: normalizedOmissions,
+    truncated: value.truncated,
+    abstention_reason: null,
+    derived_read_only: true,
+  };
+}
+
 function boundedIds(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   const ids: string[] = [];
@@ -209,6 +421,200 @@ function normalizeSensitivity(value: unknown): (typeof SENSITIVITIES)[number] | 
 
 function normalizeConflictState(value: unknown): TruthConflictState | null {
   return CONFLICT_STATES.includes(value as TruthConflictState) ? value as TruthConflictState : null;
+}
+
+function normalizeCaptureLifecycle(value: unknown): CaptureLifecycleState | null {
+  return CAPTURE_LIFECYCLE_STATES.includes(value as CaptureLifecycleState)
+    ? value as CaptureLifecycleState
+    : null;
+}
+
+function normalizeCaptureRunState(value: unknown): CaptureRunState | null {
+  return CAPTURE_RUN_STATES.includes(value as CaptureRunState)
+    ? value as CaptureRunState
+    : null;
+}
+
+function normalizeCaptureRunResultState(value: unknown): CaptureRunResultState | null {
+  return CAPTURE_RUN_RESULT_STATES.includes(value as CaptureRunResultState)
+    ? value as CaptureRunResultState
+    : null;
+}
+
+function captureOptionalCount(source: Record<string, unknown>, key: string): number | undefined {
+  if (source[key] === undefined) return undefined;
+  const count = asCount(source[key]);
+  if (count === undefined) throw invalidWireError();
+  return count;
+}
+
+function captureOptionalTimestamp(source: Record<string, unknown>, key: string): string | null | undefined {
+  if (source[key] === undefined) return undefined;
+  const timestamp = asNullableTimestamp(source[key]);
+  if (timestamp === undefined) throw invalidWireError();
+  return timestamp;
+}
+
+function captureOptionalString(source: Record<string, unknown>, key: string): string | null | undefined {
+  if (source[key] === undefined) return undefined;
+  const value = asNullableString(source[key], MAX_CAPTURE_ERROR_CODE_CHARS);
+  if (value === undefined) throw invalidWireError();
+  return value;
+}
+
+function captureSourceProjectionFromWire(value: unknown): CaptureSourceProjection {
+  if (!isRecord(value)) throw invalidWireError();
+  const id = asRequiredString(value.id, MAX_ID_CHARS);
+  const provider = asRequiredString(value.provider, MAX_CAPTURE_PROVIDER_CHARS);
+  const lifecycleState = normalizeCaptureLifecycle(value.lifecycle_state);
+  if (!id || !provider || !lifecycleState) throw invalidWireError();
+
+  const source: CaptureSourceProjection = {
+    id,
+    provider,
+    lifecycle_state: lifecycleState,
+  };
+  for (const key of ["local_only", "local_only_acknowledged"] as const) {
+    if (value[key] !== undefined) {
+      if (typeof value[key] !== "boolean") throw invalidWireError();
+      source[key] = value[key];
+    }
+  }
+  for (const key of ["retry_count", "lag_events", "lag_pages"] as const) {
+    const count = captureOptionalCount(value, key);
+    if (count !== undefined) source[key] = count;
+  }
+  for (const key of ["next_retry_at", "last_error_at", "last_run_at"] as const) {
+    const timestamp = captureOptionalTimestamp(value, key);
+    if (timestamp !== undefined) source[key] = timestamp;
+  }
+  for (const key of ["last_error_code"] as const) {
+    const text = captureOptionalString(value, key);
+    if (text !== undefined) source[key] = text;
+  }
+  for (const key of ["created_at", "updated_at"] as const) {
+    if (value[key] !== undefined) {
+      const timestamp = asTimestamp(value[key]);
+      if (timestamp === undefined) throw invalidWireError();
+      source[key] = timestamp;
+    }
+  }
+  return source;
+}
+
+function captureAuthorizationFromWire(value: unknown): CaptureAuthorizationProjection {
+  if (!isRecord(value)) throw invalidWireError();
+  const id = asRequiredString(value.id, MAX_ID_CHARS);
+  const provider = asRequiredString(value.provider, MAX_CAPTURE_PROVIDER_CHARS);
+  const lifecycleState = normalizeCaptureLifecycle(value.lifecycle_state);
+  if (!id || !provider || !lifecycleState || typeof value.authorized !== "boolean" || typeof value.reconciled !== "boolean") {
+    throw invalidWireError();
+  }
+  return {
+    id,
+    provider,
+    lifecycle_state: lifecycleState,
+    authorized: value.authorized,
+    reconciled: value.reconciled,
+  };
+}
+
+function captureRunStatusFromWire(value: unknown): CaptureSourceStatus["last_run"] {
+  if (!isRecord(value)) throw invalidWireError();
+  const state = normalizeCaptureRunState(value.state);
+  const startedAt = asTimestamp(value.started_at);
+  const counts = ["attempt_count", "pages", "events", "applied_events", "duplicate_events", "failures"] as const;
+  const normalizedCounts = counts.map((key) => asCount(value[key]));
+  if (!state || !startedAt || normalizedCounts.some((count) => count === undefined)) throw invalidWireError();
+  const errorCode = value.error_code === undefined
+    ? undefined
+    : captureOptionalString(value, "error_code");
+  const completedAt = captureOptionalTimestamp(value, "completed_at");
+  return {
+    state,
+    attempt_count: normalizedCounts[0]!,
+    pages: normalizedCounts[1]!,
+    events: normalizedCounts[2]!,
+    applied_events: normalizedCounts[3]!,
+    duplicate_events: normalizedCounts[4]!,
+    failures: normalizedCounts[5]!,
+    ...(errorCode !== undefined ? { error_code: errorCode } : {}),
+    started_at: startedAt,
+    ...(completedAt !== undefined ? { completed_at: completedAt } : {}),
+  };
+}
+
+function captureSourceStatusFromWire(value: unknown): CaptureSourceStatus {
+  if (!isRecord(value) || !isRecord(value.checkpoint)) throw invalidWireError();
+  const generation = asCount(value.checkpoint.generation);
+  if (generation === undefined) throw invalidWireError();
+  return {
+    source: captureSourceProjectionFromWire(value.source),
+    checkpoint_generation: generation,
+    ...(value.last_run !== undefined && value.last_run !== null
+      ? { last_run: captureRunStatusFromWire(value.last_run) }
+      : {}),
+  };
+}
+
+function captureSchedulerFromWire(value: unknown): CaptureSchedulerStatus {
+  if (!isRecord(value)) throw invalidWireError();
+  const booleanKeys = ["config_valid", "dispatch_allowed", "durable_enabled", "enabled", "process_gate", "update_health_forced_off"] as const;
+  if (booleanKeys.some((key) => typeof value[key] !== "boolean")) throw invalidWireError();
+  const maxWorkers = asCount(value.max_workers);
+  if (maxWorkers === undefined) throw invalidWireError();
+  if (value.running !== undefined && typeof value.running !== "boolean") throw invalidWireError();
+  return {
+    config_valid: value.config_valid as boolean,
+    dispatch_allowed: value.dispatch_allowed as boolean,
+    durable_enabled: value.durable_enabled as boolean,
+    enabled: value.enabled as boolean,
+    max_workers: maxWorkers,
+    process_gate: value.process_gate as boolean,
+    ...(value.running !== undefined ? { running: value.running } : {}),
+    update_health_forced_off: value.update_health_forced_off as boolean,
+  };
+}
+
+function captureStatusFromWire(value: unknown): CaptureStatus {
+  if (!isRecord(value) || !Array.isArray(value.items)) throw invalidWireError();
+  if (value.items.length > MAX_CAPTURE_ITEMS) throw invalidWireError();
+  const items = value.items.map(captureSourceStatusFromWire);
+  const scheduler = value.scheduler === undefined || value.scheduler === null
+    ? null
+    : captureSchedulerFromWire(value.scheduler);
+  const total = value.total === undefined ? undefined : asCount(value.total);
+  if (value.total !== undefined && total === undefined) throw invalidWireError();
+  return { items, scheduler, ...(total !== undefined ? { total } : {}) };
+}
+
+function captureRunResultFromWire(value: unknown): CaptureRunResult {
+  if (!isRecord(value)) throw invalidWireError();
+  const status = normalizeCaptureRunResultState(value.status);
+  const counts = ["pages", "events", "applied_events", "duplicate_events", "failures", "retry_count", "lag_events", "lag_pages"] as const;
+  const normalizedCounts = counts.map((key) => asCount(value[key]));
+  if (!status || normalizedCounts.some((count) => count === undefined)) throw invalidWireError();
+  return {
+    status,
+    pages: normalizedCounts[0]!,
+    events: normalizedCounts[1]!,
+    applied_events: normalizedCounts[2]!,
+    duplicate_events: normalizedCounts[3]!,
+    failures: normalizedCounts[4]!,
+    retry_count: normalizedCounts[5]!,
+    lag_events: normalizedCounts[6]!,
+    lag_pages: normalizedCounts[7]!,
+  };
+}
+
+function normalizeWorkspaceRoot(value: string): string {
+  const root = value.trim();
+  const isUnixAbsolute = root.startsWith("/") && !root.startsWith("//");
+  const isWindowsAbsolute = /^[A-Za-z]:[\\/]/.test(root);
+  if (!root || root.length > MAX_WORKSPACE_ROOT_CHARS || root.startsWith("~") || (!isUnixAbsolute && !isWindowsAbsolute)) {
+    throw new ApiError("Enter an absolute local workspace path.", 400);
+  }
+  return root;
 }
 
 export function normalizeClosedCoverage(value: unknown): { closed_coverage: ClosedCoverage; available: boolean } {
@@ -647,6 +1053,31 @@ export const api = {
   sources: async (): Promise<Page<SourceRecord>> => {
     return normalizePage(await request<unknown>("/admin/sources"), sourceFromWire);
   },
+  captureStatus: async (): Promise<CaptureStatus> =>
+    captureStatusFromWire(await request<unknown>("/admin/capture/status")),
+  authorizeWorkspace: async (root: string): Promise<CaptureAuthorizationProjection> =>
+    captureAuthorizationFromWire(await request<unknown>("/admin/capture/workspaces/authorize", {
+      method: "POST",
+      body: JSON.stringify({ root: normalizeWorkspaceRoot(root), local_only_acknowledged: true }),
+    })),
+  captureSourceStatus: async (sourceId: string): Promise<CaptureSourceStatus> =>
+    captureSourceStatusFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/status`)),
+  enableCaptureSource: async (sourceId: string): Promise<CaptureSourceProjection> =>
+    captureSourceProjectionFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/enable`, { method: "POST" })),
+  pauseCaptureSource: async (sourceId: string): Promise<CaptureSourceProjection> =>
+    captureSourceProjectionFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/pause`, { method: "POST" })),
+  resumeCaptureSource: async (sourceId: string): Promise<CaptureSourceProjection> =>
+    captureSourceProjectionFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/resume`, { method: "POST" })),
+  disableCaptureSource: async (sourceId: string): Promise<CaptureSourceProjection> =>
+    captureSourceProjectionFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/disable`, { method: "POST" })),
+  revokeCaptureSource: async (sourceId: string): Promise<CaptureSourceProjection> =>
+    captureSourceProjectionFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/revoke`, { method: "POST" })),
+  runCaptureSource: async (sourceId: string): Promise<CaptureRunResult> =>
+    captureRunResultFromWire(await request<unknown>(`/admin/capture/sources/${encodeURIComponent(sourceId)}/run`, { method: "POST" })),
+  enableCaptureScheduler: async (): Promise<CaptureSchedulerStatus> =>
+    captureSchedulerFromWire(await request<unknown>("/admin/capture/scheduler/enable", { method: "POST" })),
+  disableCaptureScheduler: async (): Promise<CaptureSchedulerStatus> =>
+    captureSchedulerFromWire(await request<unknown>("/admin/capture/scheduler/disable", { method: "POST" })),
   startImportOperation: async (
     declaredByteSize: number,
     filename: string,
@@ -771,6 +1202,17 @@ export const api = {
       body: JSON.stringify(payload),
     });
     return normalizePage(result, recordFromWire);
+  },
+  projects: async (): Promise<ProjectSummariesResponse> =>
+    projectSummariesFromWire(await request<unknown>("/admin/projects")),
+  projectCapsule: async (projectId: string): Promise<ProjectCapsule> => {
+    const normalizedProjectId = asRequiredString(projectId, MAX_ID_CHARS);
+    if (normalizedProjectId === undefined) throw invalidWireError();
+    const capsule = projectCapsuleFromWire(await request<unknown>(
+      `/admin/projects/${encodeURIComponent(normalizedProjectId)}/capsule?character_budget=12000&item_budget=32`,
+    ));
+    if (capsule.project_id !== normalizedProjectId) throw invalidWireError();
+    return capsule;
   },
   contextCoverage: async (): Promise<TruthCoverage> =>
     normalizeTruthCoverage(await request<unknown>("/context/coverage")),

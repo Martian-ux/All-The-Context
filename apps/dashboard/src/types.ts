@@ -2,6 +2,9 @@ export type Availability = "always_available" | "core_available" | "local_only";
 export type HealthState = "ready" | "degraded" | "offline";
 export type ImportStatus = "processing" | "complete" | "failed" | "cancelled";
 export type SourceTerminalReason = "failed" | "cancelled";
+export type CaptureLifecycleState = "disabled" | "enabled" | "paused" | "revoked" | "degraded" | "reconciling";
+export type CaptureRunState = "running" | "completed" | "failed" | "abandoned";
+export type CaptureRunResultState = "completed" | "failed" | "skipped";
 
 export type ClosedCoverageKey =
   | "recognized"
@@ -192,6 +195,79 @@ export interface Page<T> {
   total?: number;
 }
 
+export interface CaptureAuthorizationProjection {
+  id: string;
+  provider: string;
+  lifecycle_state: CaptureLifecycleState;
+  authorized: boolean;
+  reconciled: boolean;
+}
+
+export interface CaptureSourceProjection {
+  id: string;
+  provider: string;
+  lifecycle_state: CaptureLifecycleState;
+  local_only?: boolean;
+  local_only_acknowledged?: boolean;
+  retry_count?: number;
+  next_retry_at?: string | null;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
+  lag_events?: number;
+  lag_pages?: number;
+  created_at?: string;
+  updated_at?: string;
+  last_run_at?: string | null;
+}
+
+export interface CaptureRunStatus {
+  state: CaptureRunState;
+  attempt_count: number;
+  pages: number;
+  events: number;
+  applied_events: number;
+  duplicate_events: number;
+  failures: number;
+  error_code?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface CaptureSourceStatus {
+  source: CaptureSourceProjection;
+  checkpoint_generation: number;
+  last_run?: CaptureRunStatus;
+}
+
+export interface CaptureRunResult {
+  status: CaptureRunResultState;
+  pages: number;
+  events: number;
+  applied_events: number;
+  duplicate_events: number;
+  failures: number;
+  retry_count: number;
+  lag_events: number;
+  lag_pages: number;
+}
+
+export interface CaptureSchedulerStatus {
+  config_valid: boolean;
+  dispatch_allowed: boolean;
+  durable_enabled: boolean;
+  enabled: boolean;
+  max_workers: number;
+  process_gate: boolean;
+  running?: boolean;
+  update_health_forced_off: boolean;
+}
+
+export interface CaptureStatus {
+  items: CaptureSourceStatus[];
+  scheduler: CaptureSchedulerStatus | null;
+  total?: number;
+}
+
 export interface ContextSearchOptions {
   availability?: Availability;
   kinds?: string[];
@@ -334,6 +410,67 @@ export interface TruthCoverage {
   ingestion_session_count: number | null;
   incomplete_ingestion_session_count: number | null;
   sessions_with_unavailable_sources: number | null;
+}
+
+export interface ProjectSummary {
+  project_id: string;
+  project_ref: string;
+  name: string | null;
+  aliases: string[];
+  item_count: number;
+}
+
+export type ProjectCapsuleSection =
+  | "current_goal"
+  | "decisions"
+  | "constraints_preferences"
+  | "blockers"
+  | "recent_meaningful_changes";
+
+export interface ProjectCapsuleItem {
+  evidence_id: string;
+  section: ProjectCapsuleSection;
+  text: string;
+  provenance_ids: string[];
+  record_id: string | null;
+  source_id: string | null;
+  truncated: boolean;
+  authority: "current_memory" | "workspace_fact";
+}
+
+export interface ProjectCapsuleOmission {
+  reason: "character_budget" | "item_budget";
+  count: number;
+  evidence_ids: string[];
+}
+
+export interface ProjectCapsule {
+  schema: "atc.project-context-capsule.v0";
+  compiler_version: string;
+  project_id: string;
+  project_ref: string;
+  project_name: string | null;
+  aliases: string[];
+  assignment_outcome: "resolved";
+  sections: Record<ProjectCapsuleSection, ProjectCapsuleItem[]>;
+  provenance_ids: string[];
+  dependency_ids: string[];
+  character_budget: number;
+  item_budget: number;
+  used_chars: number;
+  omitted_count: number;
+  omissions: ProjectCapsuleOmission[];
+  truncated: boolean;
+  abstention_reason: string | null;
+  derived_read_only: true;
+}
+
+export interface ProjectSummariesResponse {
+  items: ProjectSummary[];
+  total: number;
+  unresolved_count: number;
+  ambiguous_count: number;
+  revision: string;
 }
 
 export interface ContextDeletion {
