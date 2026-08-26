@@ -78,6 +78,36 @@ and missing purge closure. This slice does not add storage, Core/Relay/MCP,
 dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
 packaging, release, or macOS behavior.
 
+## ADR-157: Packet G developer acceptance must cross the real worker and Core restart
+
+**Status:** accepted locally on 2026-08-26 for the worker-backed Packet G
+developer boundary. This is not a supported lifecycle-aware client, product
+checkpoint persistence, ZF-009 product exit, ZF-010 automatic formation,
+complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support.
+
+The focused acceptance journey must start the existing non-daemon capture
+worker after one explicit local-workspace authorization and must not call
+`capture_scheduler.run_cycle()` directly. It observes the resulting public
+Memory Truth through the existing Retrieval V3 compiler and requires an
+authenticated durable `context:read` principal. The controlled L2 reference
+host must deliver only current, provenance-backed, capability-qualified
+references before generation starts.
+
+Core restart and host restart are separate authority boundaries. Core owns the
+principal and reauthenticates it from the original opaque token; the caller
+owns the typed host checkpoint and restores the same client/session binding.
+The resumed worker must apply a source update and deletion, after which the
+next compile includes the stable updated identity, excludes the withdrawn
+identity, preserves ordering, and advances the host checkpoint sequence.
+Any dashboard launch, duplicate current identity, stale withdrawn reference,
+or leakage through status or compiled material fails the journey.
+
+No production mechanism changes are required. ADR-156 remains the detailed
+worker/retry/replay contract, and ADR-138/ADR-143 remain the Packet G compile
+contracts. This decision closes only their manual-cycle local composition gap;
+packaged, provider/client, formation, release, and support exits stay open.
+
 ## ADR-156: Local continuous-capture acceptance must exercise the Core worker
 
 **Status:** accepted locally on 2026-08-26 as the worker-backed Packet E x

@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Packet G product acceptance, ZF-010 automatic formation, complete Wave 4 E–G (complete Packet H), the packaged source/client journey, and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while a later clean-vault acceptance journey now exercises the real Core worker through retry, initial snapshot, incremental update/deletion, and restart without a dashboard or direct cycle call; this closes the local worker-backed developer gap, not complete ZF-007/ZF-008 product exit or packaged/live support; PR #86 merged compilation of admitted records through Packet G and is not ZF-009 product exit; a later stacked local slice forms one caller-declared interaction_preference in that same vault and is not ZF-010 product exit |
+| Current execution frontier | ZF-010 worker-backed automatic formation, complete Wave 4 E–G (complete Packet H), the packaged lifecycle-aware source/client journey, and Phase 2 |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while a later clean-vault acceptance journey now exercises the real Core worker through retry, initial snapshot, incremental update/deletion, and restart without a dashboard or direct cycle call; a second journey carries those worker-produced records through authenticated Packet G pre-generation delivery, Core restart, principal reauthentication, caller-owned L2 checkpoint restore, and a later worker update/delete; these close local developer composition gaps, not ZF-007/ZF-008/ZF-009 product exits or packaged/live support; a stacked manual-cycle slice forms one caller-declared interaction_preference and is not ZF-010 product exit |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -43,9 +43,13 @@ duplicate-free through public Memory Truth and Retrieval without opening the
 dashboard or calling `capture_scheduler.run_cycle()` directly. That closes the
 local worker-backed developer gap, not complete ZF-007/ZF-008 product exit,
 packaged/live support, complete Packet H, or Phase 2. PR #86 merged compilation
-of admitted records through Packet G and is not ZF-009 product exit. Remaining
-work is Packet G product acceptance, ZF-010, complete Wave 4 E–G, the packaged
-source/client journey, and Phase 2. This plan does not turn the component seams
+of admitted records through Packet G and is not ZF-009 product exit. A later
+clean-vault journey now proves the same compile path over the real worker across
+Core restart, principal reauthentication, typed host checkpoint restore, and a
+worker-driven update/deletion. That closes the local Packet G developer gap,
+not a supported client or ZF-009 product exit. Remaining work is worker-backed
+ZF-010, complete Wave 4 E–G, the packaged lifecycle-aware source/client journey,
+and Phase 2. This plan does not turn the component seams
 or local proofs into support, a stable SDK, or complete Packet H acceptance.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory

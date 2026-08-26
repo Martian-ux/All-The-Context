@@ -3,10 +3,10 @@
 ## Current milestone
 
 As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
-independent safety oracle while adding a worker-backed Continuous Context
-local-source acceptance journey on the merged Import Truth, Memory Truth,
-Retrieval, Continuous Context, and deterministic Project Context Capsule
-foundations. Ordinary healthy use keeps
+independent safety oracle while adding worker-backed Continuous Context and
+pre-generation lifecycle-context acceptance journeys on the merged Import
+Truth, Memory Truth, Retrieval, Continuous Context, and deterministic Project
+Context Capsule foundations. Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
@@ -15,7 +15,7 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Development evidence on this
+`7e474b89dfb08a75501400b2ca805c002dc21847`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -137,6 +137,32 @@ Packet F developer acceptance. It does not create a new production mechanism or
 claim packaged installation, a live/private workspace, provider or client
 support, complete ZF-007/ZF-008 product exit, Packet G product acceptance,
 complete Packet H, Phase 2, release acceptance, or macOS support.
+
+### 2026-08-26 worker-backed Packet G continuity acceptance
+
+A second clean disposable-vault journey now composes the real scheduler worker
+with public Memory Truth, Retrieval V3, and the controlled L2 reference host.
+After one local-workspace authorization, the worker produces the initial four
+current records without a dashboard or direct `capture_scheduler.run_cycle()`
+call. A durable `context:read` principal compiles only current public record
+IDs into provenance-backed, capability-qualified `context_pack` references,
+and delivery completes before generation starts.
+
+The journey checkpoints the typed host lifecycle, closes Core, reauthenticates
+the same principal from Core-owned durable state, and restores the host from
+the caller-owned checkpoint. A worker-driven update and deletion after restart
+produce three unique current records and one deleted record. The next
+pre-generation compile includes the updated identity, excludes the withdrawn
+identity, preserves delivery ordering, and advances the checkpoint sequence.
+The acceptance oracle fails on any dashboard launch and checks content-free
+scheduler status and compiled material.
+
+This closes the manual-cycle-only gap for the local worker-backed Packet G
+developer composition. It does not turn the controlled in-process reference
+host into a supported client, persist host checkpoints as a product feature,
+or claim ZF-009 product exit, ZF-010 automatic formation, complete Packet H,
+the packaged source/client journey, Phase 2, release acceptance, private-data
+evidence, or macOS support.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 
