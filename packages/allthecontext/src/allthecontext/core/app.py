@@ -108,7 +108,9 @@ from ..models import (
 from ..project_runtime import (
     RUNTIME_MAX_CAPSULE_CHARS,
     RUNTIME_MAX_CAPSULE_ITEMS,
+    AmbientProjectActivation,
     ProjectRuntimeError,
+    activate_project_context,
     build_project_runtime,
     capsule_for_project,
     project_list_payload,
@@ -648,7 +650,59 @@ def create_app(
     @app.post("/v1/context/bootstrap")
     def bootstrap_context(request: BootstrapRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:read")
-        return core.retrieval.bootstrap(request, principal).model_dump(mode="json")
+        project_budget = min(
+            RUNTIME_MAX_CAPSULE_CHARS,
+            max(1, request.budget_chars // 2),
+        )
+        try:
+            project_snapshot = build_project_runtime(
+                core.store,
+                character_budget=project_budget,
+                item_budget=min(32, RUNTIME_MAX_CAPSULE_ITEMS),
+                principal=principal,
+            )
+            project_activation = activate_project_context(
+                project_snapshot,
+                task_description=request.query,
+                current_project=request.current_project,
+                host_project_hint=request.host_project_hint,
+            )
+        except ProjectRuntimeError:
+            # Project continuity is an optional derived projection. A bounded
+            # projection failure must not take ordinary authorized retrieval
+            # offline or expose the failing record.
+            project_activation = AmbientProjectActivation(
+                outcome="abstained",
+                reason="project_projection_unavailable",
+                snapshot_revision=None,
+            )
+
+        project_used_chars = (
+            project_activation.capsule.used_chars if project_activation.capsule is not None else 0
+        )
+        retrieval_budget = max(1, request.budget_chars - project_used_chars)
+        retrieval_request = request.model_copy(update={"budget_chars": retrieval_budget})
+        response = core.retrieval.bootstrap(retrieval_request, principal)
+        result = response.model_dump(mode="json")
+        result["project_context"] = project_activation.to_dict()
+        result["total_used_chars"] = response.used_chars + project_used_chars
+        if project_activation.capsule is not None:
+            core.store.audit_access(
+                principal.id,
+                "activate_project_context",
+                [
+                    item.record_id
+                    for item in project_activation.capsule.items
+                    if item.record_id is not None
+                ],
+                trace_id=response.audit_trace_id,
+                metadata={
+                    "activation_reason": project_activation.reason,
+                    "item_count": len(project_activation.capsule.items),
+                    "used_chars": project_used_chars,
+                },
+            )
+        return result
 
     @app.get("/v1/context/status")
     def context_status(principal: Principal) -> dict[str, Any]:

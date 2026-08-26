@@ -52,6 +52,52 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
         assert result.is_error is not True
         assert result.structured_content is not None
         assert result.structured_content["core_online"] is True
+        project = await session.call_tool(
+            "propose_memory",
+            {
+                "kind": "project",
+                "content": "Integration Atlas",
+                "scope": "project:integration-atlas",
+                "confidence": 1.0,
+                "explicit_user_statement": True,
+            },
+        )
+        assert project.is_error is not True
+        assert project.structured_content is not None
+        assert project.structured_content["disposition"] == "applied"
+        goal = await session.call_tool(
+            "propose_memory",
+            {
+                "kind": "goal",
+                "content": "Deliver ambient project context through MCP.",
+                "scope": "project:integration-atlas",
+                "confidence": 1.0,
+                "explicit_user_statement": True,
+            },
+        )
+        assert goal.is_error is not True
+        assert goal.structured_content is not None
+        assert goal.structured_content["disposition"] == "applied"
+        bootstrapped = await session.call_tool(
+            "bootstrap_context",
+            {
+                "task_description": "Continue the Integration Atlas project.",
+                "character_budget": 4_000,
+            },
+        )
+        assert bootstrapped.is_error is not True
+        assert bootstrapped.structured_content is not None
+        assert bootstrapped.structured_content["project_context"]["outcome"] == "activated"
+        assert (
+            bootstrapped.structured_content["project_context"]["project_name"]
+            == "Integration Atlas"
+        )
+        assert (
+            bootstrapped.structured_content["project_context"]["capsule"]["sections"][
+                "current_goal"
+            ][0]["text"]
+            == "Deliver ambient project context through MCP."
+        )
         proposed = await session.call_tool(
             "propose_memory",
             {

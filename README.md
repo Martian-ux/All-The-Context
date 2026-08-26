@@ -15,6 +15,13 @@ inferences remain tentative until sufficiently supported. Automatic decisions
 retain their evidence and history so they can be inspected, corrected, undone,
 or deleted later.
 
+After setup, normal use does not require opening All The Context. Core runs in
+the background and an authenticated local MCP bootstrap automatically activates
+the sole authorized project or a project uniquely named by the current task.
+When project identity is ambiguous, Core withholds project-specific context
+instead of guessing. The dashboard is optional for setup, inspection,
+correction, and recovery.
+
 ## V1 product boundary
 
 V1 has no hosted Edge, cloud replica, hosting provider, or paid runtime
@@ -86,6 +93,8 @@ client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
   JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
 - one-click local Codex and Claude Desktop configuration;
+- deterministic Core-derived Project Context Capsules with automatic,
+  principal-filtered MCP activation and explicit ambiguity abstention;
 - optional local context/activity/search/backup/update dashboard;
 - encrypted portable export, contributor CLI restore, and a version-matched
   packaged recovery/admin helper or console mode on every supported release

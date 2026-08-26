@@ -20,7 +20,12 @@ from allthecontext.models import (
     TruthConflictState,
     TruthSourceOut,
 )
-from allthecontext.project_runtime import build_project_runtime
+from allthecontext.project_runtime import (
+    ProjectRuntimeError,
+    activate_project_context,
+    build_project_runtime,
+)
+from allthecontext.security import ClientPrincipal
 from fastapi.testclient import TestClient
 
 AS_OF = "2026-08-25T00:00:00+00:00"
@@ -282,11 +287,14 @@ def _truth_record(
     source_type: str | None = None,
     explicit: bool = True,
     deleted_at: str | None = None,
+    allowed_clients: list[str] | None = None,
+    scopes: list[str] | None = None,
 ) -> MemoryTruthRecordOut:
     record = ContextRecordOut(
         id=record_id,
         kind=kind,
         content=content,
+        scopes=scopes or [],
         source_id=source_id,
         source_reference=source_reference,
         source_type=source_type,
@@ -294,6 +302,7 @@ def _truth_record(
         sensitivity=sensitivity,
         availability=Availability.CORE,
         explicit_user_statement=explicit,
+        allowed_clients=allowed_clients or [],
         observation_origin=origin,
         expires_at=expires_at,
         deleted_at=deleted_at,
@@ -406,6 +415,132 @@ def test_runtime_excludes_lifecycle_unsafe_and_instruction_like_records() -> Non
     assert capsule.stable_json() == second.capsules[0].stable_json()
 
 
+def test_ambient_activation_uses_only_authorized_truth_and_opens_the_sole_project() -> None:
+    reader = ClientPrincipal(
+        id="reader-client",
+        name="Reader",
+        scopes=frozenset({"context:read"}),
+    )
+    records = (
+        _truth_record("visible-anchor", kind="project", content="Atlas"),
+        _truth_record("visible-goal", kind="goal", content="Ship Atlas automatically."),
+        _truth_record(
+            "hidden-anchor",
+            kind="project",
+            content="Hidden project",
+            allowed_clients=["different-client"],
+        ),
+        _truth_record(
+            "hidden-goal",
+            kind="goal",
+            content="Never expose this goal.",
+            allowed_clients=["different-client"],
+        ),
+    )
+
+    class FakeStore:
+        def vault_id(self) -> str:
+            return "vault-fixture"
+
+        def list_memory_truth(self, *, limit: int, offset: int) -> Any:
+            return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
+
+    snapshot = build_project_runtime(FakeStore(), as_of=AS_OF, principal=reader)
+    activation = activate_project_context(snapshot)
+
+    assert activation.outcome == "activated"
+    assert activation.reason == "single_authorized_project"
+    assert activation.capsule is not None
+    assert {item.text for item in activation.capsule.items} == {"Ship Atlas automatically."}
+    assert "Hidden project" not in str(activation.to_dict())
+    assert "Never expose this goal." not in str(activation.to_dict())
+
+
+def test_ambient_activation_matches_task_or_explicit_identity_and_abstains_on_ambiguity() -> None:
+    records = (
+        _truth_record(
+            "atlas-anchor",
+            kind="project",
+            content="Atlas",
+            scopes=["project:atlas"],
+        ),
+        _truth_record(
+            "atlas-goal",
+            kind="goal",
+            content="Ship the Atlas handoff.",
+            scopes=["project:atlas"],
+        ),
+        _truth_record(
+            "zephyr-anchor",
+            kind="project",
+            content="Zephyr",
+            scopes=["project:zephyr"],
+        ),
+        _truth_record(
+            "zephyr-goal",
+            kind="goal",
+            content="Finish the Zephyr migration.",
+            scopes=["project:zephyr"],
+        ),
+    )
+
+    class FakeStore:
+        def vault_id(self) -> str:
+            return "vault-fixture"
+
+        def list_memory_truth(self, *, limit: int, offset: int) -> Any:
+            return SimpleNamespace(items=list(records[offset : offset + limit]), total=len(records))
+
+    snapshot = build_project_runtime(FakeStore(), as_of=AS_OF)
+    atlas = next(project for project in snapshot.projects if project.name == "Atlas")
+
+    task_activation = activate_project_context(
+        snapshot,
+        task_description="Continue the Atlas release work.",
+    )
+    assert task_activation.outcome == "activated"
+    assert task_activation.reason == "task_project_match"
+    assert task_activation.capsule is not None
+    assert task_activation.capsule.project_id == atlas.project_id
+
+    explicit_activation = activate_project_context(
+        snapshot,
+        current_project=atlas.project_id,
+    )
+    assert explicit_activation.outcome == "activated"
+    assert explicit_activation.reason == "explicit_project_match"
+    assert explicit_activation.capsule == task_activation.capsule
+    assert (
+        activate_project_context(snapshot, current_project="atlas").capsule
+        == task_activation.capsule
+    )
+    host_activation = activate_project_context(snapshot, host_project_hint="Zephyr")
+    assert host_activation.outcome == "activated"
+    assert host_activation.reason == "host_project_match"
+    assert host_activation.capsule is not None
+    assert host_activation.capsule.project_name == "Zephyr"
+    fallback_activation = activate_project_context(
+        snapshot,
+        task_description="Continue the Atlas release work.",
+        host_project_hint="Unknown host root",
+    )
+    assert fallback_activation.reason == "task_project_match"
+    assert fallback_activation.capsule == task_activation.capsule
+
+    assert activate_project_context(snapshot).reason == "multiple_projects_without_match"
+    assert (
+        activate_project_context(
+            snapshot,
+            task_description="Compare Atlas and Zephyr.",
+        ).reason
+        == "ambiguous_task_match"
+    )
+    assert (
+        activate_project_context(snapshot, current_project="missing-project").reason
+        == "project_signal_not_found"
+    )
+
+
 def test_project_admin_routes_require_admin_bound_budgets_and_not_found(tmp_path: Any) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
     with TestClient(create_app(config)) as client:
@@ -430,6 +565,37 @@ def test_project_admin_routes_require_admin_bound_budgets_and_not_found(tmp_path
             },
         )
         assert proposed.status_code == 200, proposed.text
+        goal = client.post(
+            "/v1/ingestion/propose",
+            headers=owner,
+            json={
+                "kind": "goal",
+                "content": "Deliver useful project context without opening ATC.",
+                "scopes": ["project:api"],
+                "explicit_user_statement": True,
+            },
+        )
+        assert goal.status_code == 200, goal.text
+
+        automatic = client.post(
+            "/v1/context/bootstrap",
+            headers=reader,
+            json={
+                "task_description": "Continue the Bounded API project.",
+                "character_budget": 4_000,
+            },
+        )
+        assert automatic.status_code == 200, automatic.text
+        automatic_payload = automatic.json()
+        assert automatic_payload["used_chars"] == automatic_payload["pack_metadata"]["used_chars"]
+        assert automatic_payload["total_used_chars"] <= 4_000
+        assert automatic_payload["project_context"]["outcome"] == "activated"
+        assert automatic_payload["project_context"]["reason"] == "task_project_match"
+        assert automatic_payload["project_context"]["project_name"] == "Bounded API project"
+        assert (
+            automatic_payload["project_context"]["capsule"]["sections"]["current_goal"][0]["text"]
+            == "Deliver useful project context without opening ATC."
+        )
 
         assert client.get("/v1/admin/projects").status_code == 401
         assert client.get("/v1/admin/projects", headers=reader).status_code == 403
@@ -457,3 +623,41 @@ def test_project_admin_routes_require_admin_bound_budgets_and_not_found(tmp_path
             ).status_code
             == 404
         )
+
+
+def test_bootstrap_keeps_retrieval_available_when_project_projection_fails(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    def fail_projection(*_args: Any, **_kwargs: Any) -> None:
+        raise ProjectRuntimeError("bounded test failure")
+
+    monkeypatch.setattr(
+        "allthecontext.core.app.build_project_runtime",
+        fail_projection,
+    )
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with TestClient(create_app(config)) as client:
+        setup = client.post("/v1/setup", json={"name": "Owner", "scopes": []})
+        assert setup.status_code == 200, setup.text
+        owner = {"Authorization": f"Bearer {setup.json()['token']}"}
+
+        response = client.post(
+            "/v1/context/bootstrap",
+            headers=owner,
+            json={"task_description": "Continue ordinary retrieval."},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["project_context"] == {
+        "schema": "atc.ambient-project-context.v1",
+        "outcome": "abstained",
+        "reason": "project_projection_unavailable",
+        "project_id": None,
+        "project_name": None,
+        "snapshot_revision": None,
+        "capsule": None,
+    }
+    assert payload["used_chars"] == payload["pack_metadata"]["used_chars"]
+    assert payload["total_used_chars"] == payload["used_chars"]

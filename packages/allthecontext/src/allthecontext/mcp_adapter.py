@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import anyio
 import uvicorn
 from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.tools import Tool
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
@@ -129,6 +130,42 @@ def _strict_tool(fn: Callable[..., Any], **kwargs: Any) -> Tool:
     return tool
 
 
+def _safe_root_project_hint(value: object) -> str | None:
+    """Accept one client display label while refusing root paths and URIs."""
+
+    if type(value) is not str:
+        return None
+    normalized = " ".join(value.split()).strip()
+    if (
+        not normalized
+        or len(normalized) > 160
+        or "/" in normalized
+        or "\\" in normalized
+        or any(ord(character) < 32 or ord(character) == 127 for character in normalized)
+    ):
+        return None
+    return normalized
+
+
+async def _single_root_project_hint(ctx: Context) -> str | None:
+    """Read only one advertised MCP root name; never read or forward its URI."""
+
+    try:
+        capabilities = ctx.client_capabilities
+        if capabilities is None or capabilities.roots is None or not ctx.session.can_send_request:
+            return None
+        roots_result = None
+        with anyio.move_on_after(1.0) as cancel_scope:
+            roots_result = await ctx.session.list_roots()
+        if cancel_scope.cancel_called or roots_result is None or len(roots_result.roots) != 1:
+            return None
+        return _safe_root_project_hint(roots_result.roots[0].name)
+    except Exception:
+        # Roots are an optional MCP capability. A missing, malformed, or
+        # unresponsive backchannel never blocks ordinary context retrieval.
+        return None
+
+
 def build_mcp() -> MCPServer:
     """Build the transport-independent tool registry."""
 
@@ -136,7 +173,10 @@ def build_mcp() -> MCPServer:
         "Use this context service automatically; do not ask the user to manage it. At the "
         "start of every substantive task where preferences, projects, people, constraints, "
         "or prior decisions could matter, call bootstrap_context before answering or acting, "
-        "then use search_context or get_context_item when more detail is needed. When the user "
+        "without asking the user to open or manage All The Context. Core automatically activates "
+        "the sole authorized project or a project uniquely named by the task or explicit host "
+        "signal; it abstains instead of guessing across projects. "
+        "Then use search_context or get_context_item when more detail is needed. When the user "
         "states or corrects durable personal context or makes a lasting decision, call "
         "propose_memory before the task ends. Set explicit_user_statement=true only when the "
         "content was directly stated by the user in the current interaction; leave it false "
@@ -157,13 +197,22 @@ def build_mcp() -> MCPServer:
         return register
 
     @tool()
-    def bootstrap_context(
+    async def bootstrap_context(
+        ctx: Context,
         task_description: str = "",
         requested_scopes: list[str] | None = None,
         character_budget: int = 8000,
         current_project: str | None = None,
     ) -> dict[str, Any]:
-        """Call at the start of relevant tasks to compile current context within a budget."""
+        """Compile context and automatically activate one unambiguous authorized project.
+
+        Do not ask the user to open ATC. Supply current_project only when the host or
+        task already exposes a project name or returned opaque project ID; otherwise
+        Core resolves the task label or sole authorized project and safely abstains.
+        """
+        host_project_hint = (
+            await _single_root_project_hint(ctx) if current_project is None else None
+        )
         return _safe(
             lambda: _client().bootstrap_context(
                 {
@@ -171,6 +220,7 @@ def build_mcp() -> MCPServer:
                     "requested_scopes": requested_scopes or [],
                     "budget_chars": character_budget,
                     "current_project": current_project,
+                    "host_project_hint": host_project_hint,
                 }
             )
         )

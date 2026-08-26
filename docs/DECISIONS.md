@@ -1,5 +1,43 @@
 # Architecture decisions
 
+## ADR-151: Project activation is ambient, principal-filtered, and abstaining
+
+**Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project
+bootstrap. This is a local MCP/Core product contract, not live-provider,
+remote-host, package, or release acceptance.
+
+All The Context is background infrastructure during healthy use. Per-user
+startup launches only Core; users do not need to open the ATC dashboard to
+resume a project. The local MCP instructions require automatic bootstrap and
+explicitly prohibit asking the user to open or manage ATC. The dashboard stays
+optional for setup, inspection, correction, and recovery.
+
+Core builds the project projection after applying the requesting principal's
+record allow/deny boundary. Resolution then follows a closed order: an explicit
+host signal may match a safe label, opaque project identity/reference, or the
+existing project-scope compatibility value; otherwise one unique safe project
+label present in the task may match; otherwise exactly one authorized
+content-bearing project activates. Invalid, missing, unauthorized, ambiguous,
+or multiply matching signals abstain. Imported prose cannot instruct the
+resolver, and resolution never scans a workspace or turns capture on.
+
+If a compatible MCP client advertises exactly one root, the adapter may request
+the roots capability for at most one second and forward only one safe bounded
+root display name as a weak host hint. It never reads or forwards a root URI or
+path. Multiple roots, path-shaped names, malformed replies, missing backchannel
+support, and timeouts produce no hint. Unlike explicit `current_project`, an
+unmatched host hint falls through to the task label and sole-project rules.
+
+The deterministic capsule and ordinary retrieval share the caller's bootstrap
+character budget. Project context receives at most half and retrieval receives
+the remainder; `total_used_chars` cannot exceed the requested budget while the
+existing retrieval-only `used_chars` contract stays unchanged. A bounded
+project-projection failure returns a content-free abstention
+without taking ordinary authorized retrieval offline. Capsule delivery receives
+a separate content-free audit action under the bootstrap trace. The real STDIO
+MCP test proves automatic activation without a dashboard call, but does not
+claim a provider lifecycle hook or remote Edge parity.
+
 ## ADR-150: Reconcile current lab snapshots without rewriting historical evidence
 
 **Status:** accepted locally on 2026-08-25 for the bounded PR #88
