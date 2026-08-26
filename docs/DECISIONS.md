@@ -171,6 +171,49 @@ The decision is grounded in the provider-ingestion tests
 provider runtime project-lineage and lifecycle-filter tests. No provider SDK,
 live export, OAuth, or client acceptance is implied.
 
+## ADR-154: ZF-013 lane A is a frozen synthetic graph-usefulness harness
+
+**Status:** accepted locally on 2026-08-25 for the Milestone 5 lane A
+evaluation boundary. This decision does not promote a project graph or change
+production behavior.
+
+ZF-013 lane A freezes a sanitized, in-memory benchmark contract pinned to
+protected-main base `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. The harness
+compares five named profiles: current Retrieval V3 lexical ranking, explicit
+structured project filtering, deterministic Project Context Capsules, lexical
+seeds plus directed typed one-hop expansion, and bounded directed two-hop
+expansion. The corpus includes current, stale, deleted, and purged synthetic
+records, two projects, all six allowed relation families (`belongs_to`,
+`supersedes`, `depends_on`, `blocks`, `implements`, `tested_by`), a cycle, a
+cross-project edge, and a high-fan-out source.
+
+The evaluator defines Project CAOS as the mean of query cases that contain all
+required evidence, no wrong-project/stale/deleted/purged/unnecessary
+disclosure, no budget violation, and no traversal-bound violation. Required
+recall, Project CAOS, disclosure counts, deterministic receipt hashes, cycle
+and fan-out bounds, depth, expanded-edge count, and warm p95 latency are
+machine-readable gates. One-hop requires recall/CAOS `>= 0.75`, two-hop
+requires `>= 0.90`/`0.85`; each must improve recall/CAOS over structured
+filtering by the frozen `0.20`/`0.30` thresholds. Safety disclosures are zero;
+depth is bounded at one/two hops, each source at two neighbors, each query at
+24 expanded edges and one cycle revisit, and warm p95 is at most 50 ms.
+
+Relation-family ablations remove exactly one family from the one-hop candidate
+on one assigned case per family. A family is kept if removing it reduces
+required recall or CAOS by at least `0.10` without a safety regression. It is
+killed if both deltas are below `0.10`, or if enabling it causes a safety
+failure that the ablation removes. Every family receives an explicit decision.
+The lane fixture's local result keeps `belongs_to`, `depends_on`, `blocks`,
+`implements`, and `tested_by`, and kills `supersedes`.
+
+The evaluator is deliberately outside `packages/allthecontext`. It must not
+open Core or a workspace, scan files, enable capture, use a provider/model,
+open a browser/dashboard, add MCP/storage/runtime/packaging/release/CI
+behavior, or emit raw fixture content. Reports remain disposable aggregate
+evidence and grant no live, private, provider, client, platform, release, or
+graph-promotion credit. The deterministic Project Context Capsule foundation
+and Core authority remain governed by ADR-146.
+
 ## ADR-146: Project Context Capsules are bounded Core-derived projections
 
 **Status:** accepted locally on 2026-08-25 as the Milestone 2 Project Context

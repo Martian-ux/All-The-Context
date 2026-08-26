@@ -1,0 +1,58 @@
+{
+  "schema": "atc.zf013.project-graph-contract.v1",
+  "base_commit": "fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2",
+  "fixture": "zf013_project_graph_fixtures.json",
+  "profiles": {
+    "retrieval_v3_current": {
+      "kind": "current_retrieval_v3_comparator",
+      "project_filter": false,
+      "max_depth": 0
+    },
+    "structured_project_filter": {
+      "kind": "retrieval_v3_with_explicit_project_filter",
+      "project_filter": true,
+      "max_depth": 0
+    },
+    "deterministic_project_context_capsule": {
+      "kind": "bounded_deterministic_capsule",
+      "project_filter": true,
+      "max_depth": 0
+    },
+    "lexical_typed_one_hop": {
+      "kind": "lexical_seeds_plus_typed_expansion",
+      "project_filter": true,
+      "max_depth": 1,
+      "min_required_evidence_recall": 0.75,
+      "min_project_caos": 0.75,
+      "min_gain_recall_vs_structured_filter": 0.2,
+      "min_gain_caos_vs_structured_filter": 0.2
+    },
+    "bounded_typed_two_hop": {
+      "kind": "bounded_two_hop_typed_expansion",
+      "project_filter": true,
+      "max_depth": 2,
+      "min_required_evidence_recall": 0.9,
+      "min_project_caos": 0.85,
+      "min_gain_recall_vs_structured_filter": 0.3,
+      "min_gain_caos_vs_structured_filter": 0.3
+    }
+  },
+  "bounds": {
+    "max_depth": 2,
+    "max_expanded_edges_per_query": 24,
+    "max_neighbors_per_source": 2,
+    "max_cycle_revisits_per_query": 1,
+    "max_warm_p95_ms": 50.0,
+    "max_wrong_project_disclosures": 0,
+    "max_stale_disclosures": 0,
+    "max_deleted_disclosures": 0,
+    "max_purged_disclosures": 0,
+    "max_unnecessary_disclosures": 0
+  },
+  "relation_ablation": {
+    "min_required_recall_delta": 0.1,
+    "min_caos_delta": 0.1,
+    "safety_regression_is_kill": true
+  },
+  "warm_repetitions": 10
+}
