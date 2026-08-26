@@ -5,8 +5,8 @@
 | Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | ZF-010 worker-backed automatic formation, complete Wave 4 E–G (complete Packet H), the packaged lifecycle-aware source/client journey, and Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while a later clean-vault acceptance journey now exercises the real Core worker through retry, initial snapshot, incremental update/deletion, and restart without a dashboard or direct cycle call; a second journey carries those worker-produced records through authenticated Packet G pre-generation delivery, Core restart, principal reauthentication, caller-owned L2 checkpoint restore, and a later worker update/delete; these close local developer composition gaps, not ZF-007/ZF-008/ZF-009 product exits or packaged/live support; a stacked manual-cycle slice forms one caller-declared interaction_preference and is not ZF-010 product exit |
+| Current execution frontier | Complete Wave 4 E–G product acceptance (complete Packet H), the packaged lifecycle-aware source/client journey, and Phase 2 |
+| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; Packet E x Packet F manual-cycle composition evidence remains historical, while later clean-vault journeys exercise the real Core worker through retry, initial snapshot, incremental update/deletion, and restart, then carry worker-produced records through authenticated Packet G pre-generation delivery and controlled ZF-010 preference formation, correction, forget, Core restart, principal reauthentication, and caller-owned L2 checkpoint restore; these close local developer composition gaps, not ZF-007/ZF-008/ZF-009/ZF-010 product exits, supported-client capture, or packaged/live support |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -46,9 +46,12 @@ packaged/live support, complete Packet H, or Phase 2. PR #86 merged compilation
 of admitted records through Packet G and is not ZF-009 product exit. A later
 clean-vault journey now proves the same compile path over the real worker across
 Core restart, principal reauthentication, typed host checkpoint restore, and a
-worker-driven update/deletion. That closes the local Packet G developer gap,
-not a supported client or ZF-009 product exit. Remaining work is worker-backed
-ZF-010, complete Wave 4 E–G, the packaged lifecycle-aware source/client journey,
+worker-driven update/deletion. A companion clean-vault journey carries the
+worker-created truth through controlled ZF-010 preference formation,
+correction, forget, Core restart, scope reauthentication, and restored host
+checkpoint advancement. These close the local Packet G and ZF-010 developer
+gaps, not supported-client or product exits. Remaining work is complete Wave 4
+E–G product acceptance, the packaged lifecycle-aware source/client journey,
 and Phase 2. This plan does not turn the component seams
 or local proofs into support, a stable SDK, or complete Packet H acceptance.
 
@@ -729,8 +732,11 @@ update/deletion, and duplicate-free restart through public truth/retrieval with
 no dashboard or direct cycle call. This closes the local worker-backed
 developer gap, not complete ZF-007/ZF-008 product exit or packaged/live
 support. PR #86 merged compilation of those admitted records through Packet G
-and is not ZF-009 product exit. Remaining work is Packet G product acceptance,
-ZF-010, complete Wave 4 E–G, the packaged source/client journey, and Phase 2.
+and is not ZF-009 product exit. A later controlled clean-vault journey forms,
+corrects, and forgets one declared preference over worker-created records
+across Core restart; it closes the local ZF-010 developer gap but is not a
+supported client or ZF-010 product exit. Remaining work is complete Wave 4 E–G
+product acceptance, the packaged source/client journey, and Phase 2.
 ZF-007, ZF-008, and ZF-009 complete product acceptance and release/support
 claims remain open. PRs #82 and #84 already wired
 CoreService/startup capture-runtime composition and the opt-in Packet E
@@ -760,10 +766,13 @@ retry/resume, initial snapshot, incremental update/deletion, and duplicate-free
 restart without a dashboard or direct cycle call. It does not close complete
 ZF-007/ZF-008 product exit, packaged/live support, complete Packet H, or Phase
 2. PR #86 merged compilation of those admitted records through Packet G and is
-not ZF-009 product exit. Packet E and Packet G remain component-complete;
-remaining work is Packet G product acceptance, ZF-010, complete Wave 4 E–G,
-the packaged source/client journey, and Phase 2. Packet H-D is not complete
-Packet H or Phase 2 acceptance.
+not ZF-009 product exit. A later controlled clean-vault journey carries those
+worker-created records through ZF-010 preference formation, correction,
+forget, Core restart, principal reauthentication, and checkpoint restoration.
+It closes the local ZF-010 developer gap, not supported-client or product
+acceptance. Packet E and Packet G remain component-complete; remaining work is
+complete Wave 4 E–G product acceptance, the packaged source/client journey,
+and Phase 2. Packet H-D is not complete Packet H or Phase 2 acceptance.
 
 ## 14. Proposed GitHub issue hierarchy
 

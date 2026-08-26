@@ -7,11 +7,11 @@ one L2 direct-user formation host, and continuity across a Core restart.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from allthecontext.capture_scheduler import SchedulerConfig
 from allthecontext.client_runtime import ClientLifecycleEnvelope, DirectUserTurnPayload
 from allthecontext.core.service import CoreService
 from allthecontext.experimental_reference_host import (
@@ -60,7 +60,7 @@ def _compile(
         principal,
         generation_id=generation_id,
         requested_scopes=(SCOPE,),
-        budget_chars=16_000,
+        budget_chars=4_000,
         query="workspace item",
     )
     assert delivery.delivered_before_generation is True
@@ -80,6 +80,7 @@ def _observe(
     turn_ref = envelope.payload.turn_ref
     assert turn_ref.size_bytes == len(encoded)
     assert turn_ref.sha256 == hashlib.sha256(encoded).hexdigest()
+    assert content not in json.dumps(envelope.as_dict(), sort_keys=True)
     return envelope
 
 
@@ -102,7 +103,6 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
     core_config = config(tmp_path)
     workspace = create_sanitized_workspace(tmp_path / "workspace")
     clock = MutableClock()
-    interval = SchedulerConfig().incremental_interval_seconds
     dashboard_calls: list[str] = []
     checkpoints: list[tuple[RuntimeCheckpoint, str]] = []
 
@@ -204,6 +204,8 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
         assert resumed_witness is not None
         assert resumed_reader.id == reader_id
         assert resumed_witness.id == witness_id
+        assert resumed_reader.scopes == reader.scopes
+        assert resumed_witness.scopes == witness.scopes
 
         restored_host = ControlledReferenceHostV0.from_checkpoint(
             checkpoint,
@@ -218,7 +220,6 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
 
         restarted.capture_scheduler.start()
         assert restarted.capture_scheduler.status()["running"] is True
-        clock.advance(interval)
 
         resumed_reader_host = ControlledReferenceHostV0.for_level(
             "L2",
@@ -281,6 +282,11 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
         assert forgotten.status == "formed"
         assert forgotten.candidate is not None
         assert forgotten.candidate.record_id == preference_id
+        forgotten_truth = restarted.store.get_memory_truth(
+            preference_id,
+            include_deleted=True,
+        )
+        assert forgotten_truth.status is MemoryTruthStatus.DELETED
 
         after_forget = _compile(
             resumed_reader_host,
@@ -295,5 +301,13 @@ def test_worker_backed_zf010_preference_continuity_across_core_restart(
         assert forgotten_ids <= source_ids
         assert forgotten_ids & source_ids
         _assert_source_truth_current(restarted, source_ids)
+
+        resumed_checkpoint = restored_host.checkpoint()
+        assert resumed_checkpoint is not None
+        assert resumed_checkpoint.sequence > checkpoint.sequence
+        assert checkpoints[-1] == (
+            resumed_checkpoint,
+            resumed_checkpoint.idempotency_key,
+        )
 
     assert dashboard_calls == []

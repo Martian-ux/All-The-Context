@@ -3,10 +3,11 @@
 ## Current milestone
 
 As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
-independent safety oracle while adding worker-backed Continuous Context and
-pre-generation lifecycle-context acceptance journeys on the merged Import
-Truth, Memory Truth, Retrieval, Continuous Context, and deterministic Project
-Context Capsule foundations. Ordinary healthy use keeps
+independent safety oracle while adding worker-backed Continuous Context,
+pre-generation lifecycle-context, and direct-user formation continuity
+acceptance journeys on the merged Import Truth, Memory Truth, Retrieval,
+Continuous Context, and deterministic Project Context Capsule foundations.
+Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
 safe host display-name hint, one unique project label in the task, or exactly
@@ -163,6 +164,33 @@ host into a supported client, persist host checkpoints as a product feature,
 or claim ZF-009 product exit, ZF-010 automatic formation, complete Packet H,
 the packaged source/client journey, Phase 2, release acceptance, private-data
 evidence, or macOS support.
+
+### 2026-08-26 worker-backed ZF-010 formation continuity acceptance
+
+A third clean disposable-vault journey now carries records created by the real
+scheduler worker into the existing controlled L2 formation path. After one
+local-workspace authorization, the worker creates the initial public snapshot
+without a dashboard or direct `capture_scheduler.run_cycle()` call. Separate
+durable reader and explicit-user-statement witness principals compile those
+records and form one caller-declared `interaction_preference` through the
+existing Core policy boundary.
+
+The journey checkpoints the typed formation host, closes Core, reauthenticates
+both principals with their original scopes, and restores the same caller-owned
+session checkpoint. The next bounded pre-generation compile contains the
+current preference alongside worker-created source truth. An in-place
+correction replaces the visible preference value without changing its record
+identity; a later explicit forget makes that record deleted and removes both
+values from retrieval while every worker-created source record remains
+current. Lifecycle envelopes retain only length and SHA-256 commitments, and
+the resumed checkpoint advances after correction and forget.
+
+This closes the prior manual-cycle-only gap for local worker-backed ZF-010
+developer composition. It does not provide automatic capture from a supported
+lifecycle-aware client, product-owned checkpoint persistence, ZF-010 product
+exit, complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support. No production mechanism
+changed.
 
 ### 2026-08-26 Milestone 4 — ambient project activation
 

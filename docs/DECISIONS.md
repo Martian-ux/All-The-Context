@@ -78,6 +78,38 @@ and missing purge closure. This slice does not add storage, Core/Relay/MCP,
 dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
 packaging, release, or macOS behavior.
 
+## ADR-158: Worker-backed ZF-010 continuity preserves separate Core and host authority
+
+**Status:** accepted locally on 2026-08-26 for the controlled worker-backed
+ZF-010 developer boundary. This is not automatic capture from a supported
+lifecycle-aware client, product checkpoint persistence, ZF-010 product exit,
+complete Packet H, the packaged source/client journey, Phase 2, release
+acceptance, private-data evidence, or macOS support.
+
+The focused acceptance journey begins with the real non-daemon capture worker
+after one explicit local-workspace authorization and must not call
+`capture_scheduler.run_cycle()` directly. Separate durable principals own
+read and explicit-user-statement authority. The existing controlled L2 host
+may form only a caller-declared interaction preference through the Core policy
+boundary; its envelope retains the UTF-8 length and SHA-256 commitment, not the
+direct-user content.
+
+Core restart and host restart remain independent. Core reauthenticates both
+principals and their original scopes from opaque tokens. The caller restores
+the same typed host session from its checkpoint. A bounded pre-generation
+compile must contain current worker-created source truth plus the formed
+preference. Correction keeps the preference record identity while replacing
+its visible value; explicit forget makes that record deleted and removes both
+preference values from retrieval without changing the current status of the
+worker-created source records. The restored host checkpoint must advance after
+those lifecycle operations.
+
+No production mechanism changes are required. ADR-156 remains the worker
+contract, ADR-157 remains the worker-backed Packet G contract, and ADR-144
+remains the detailed same-vault formation/refusal contract. This decision
+closes only their manual-cycle local composition gap; supported-client,
+packaged, release, and support exits stay open.
+
 ## ADR-157: Packet G developer acceptance must cross the real worker and Core restart
 
 **Status:** accepted locally on 2026-08-26 for the worker-backed Packet G
