@@ -42,6 +42,37 @@ The component is in-memory and read-only. It does not parse prose, create
 canonical records, persist a graph, scan a workspace, capture a source, call a
 model, or wire into runtime, retrieval, MCP, dashboard, or storage paths.
 
+## ADR-155: Outcome receipts and procedural learning remain advisory shadow state
+
+**Status:** accepted locally on 2026-08-25 for Milestone 5 lane D. This is a
+pure research foundation, not production, provider, client, release, or
+platform acceptance.
+
+ZF-017 through ZF-019 begin with an isolated in-memory contract rather than a
+Core schema or route. `memory_lab_outcome_shadow.py` models exact project and
+projection versions, assigned memory/source dependencies, issue receipts,
+client acknowledgement, declared use/nonuse, bounded action/tool envelopes,
+task completion, typed external results, user corrections, and invalidation
+dependencies. Receipt serialization is allowlisted and rejects raw context,
+private text, hidden reasoning, secrets, credentials, provider claims, and
+model self-report.
+
+The receipt ledger is bounded and idempotent. Ordinary correction or projection
+mutation marks linked evidence inactive; terminal purge removes linked receipts
+and retains only an opaque barrier/count surface, so old evidence cannot be
+reused. `propose_procedure` derives a candidate only from matching observable
+successes and requires recurrence or strong non-client external verification,
+explicit project/task applicability, negative guards, passing repair tests,
+source and outcome dependencies, and a closed purge dependency set. Action
+signatures must agree across evidence. The result is always `proposed` and
+`advisory_only`; no promotion or truth-authority operation exists.
+
+The focused synthetic tests cover allowlisting, idempotency, correction,
+purge, recurrence, strong verification, invalidation, signature disagreement,
+and missing purge closure. This slice does not add storage, Core/Relay/MCP,
+dashboard, capture, scheduler, retrieval, model, network, live-data, provider,
+packaging, release, or macOS behavior.
+
 ## ADR-151: Project activation is ambient, principal-filtered, and abstaining
 
 **Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project

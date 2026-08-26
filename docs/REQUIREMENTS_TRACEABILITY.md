@@ -56,6 +56,18 @@ scope.
 
 Evidence is aggregate local evaluation only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
 
+### 2026-08-25 Milestone 5 lane D — ZF-017 through ZF-019 shadow foundation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| ZF-017 — observable outcome receipts | `packages/allthecontext/src/allthecontext/memory_lab_outcome_shadow.py`; `tests/unit/test_memory_lab_outcome_shadow.py` | Implemented as a bounded pure in-memory contract: assignment, exact project/projection versions, acknowledgement, declared use/nonuse, bounded action/tool envelopes, completion, typed external result/user correction, invalidation dependencies, idempotency, correction invalidation, and terminal purge closure are covered by 7 focused tests. No storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring is present |
+| ZF-018 — background consolidation in shadow | `propose_procedure` in `memory_lab_outcome_shadow.py`; focused shadow tests | Implemented only as deterministic advisory consolidation over sanitized typed receipt facts. Matching action signatures, recurrence, strong external verification, and lifecycle filtering are evaluated without a model, network, live data, provider, or production behavior |
+| ZF-019 — procedural-memory gates | `ApplicabilityBoundary`, `RepairTest`, `PurgeClosure`, `ProcedureProposal`, `LearningDecision`; focused shadow tests | Implemented as fail-closed proposal gates requiring recurrence or strong external verification, explicit applicability, negative guards, passing repair tests, source/outcome dependencies, and closed purge coverage. Every result remains `advisory_only`; no learned authority, automatic truth write, or promotion path exists |
+
+This lane is local research evidence only. Full-suite, hosted, release,
+packaging, client/provider, private/live-data, network, and macOS acceptance
+remain outside the evidence boundary.
+
 ### 2026-08-22 ZF-004 Wave 1 event reconciliation
 
 | Requirement | Implementation/evidence | Status |

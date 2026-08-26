@@ -142,6 +142,27 @@ This milestone does not silently scan a workspace, enable capture, open a
 browser, claim a provider lifecycle hook, or establish remote/live-provider
 acceptance.
 
+### 2026-08-25 Milestone 5 lane D — observable outcome receipts in shadow
+
+This isolated lane adds `memory_lab_outcome_shadow.py`, a pure in-memory
+research contract for ZF-017 through ZF-019. Immutable receipts record exact
+project and projection versions, assigned memory/source dependencies, issue
+receipts, acknowledgement, declared use/nonuse, bounded action/tool envelopes,
+completion, typed external result or user correction, and invalidation
+dependencies without raw context, private text, hidden reasoning, or provider
+claims. The in-memory ledger is idempotent, correction-invalidatable, and
+terminal-purgeable; purge leaves only aggregate counts and an opaque barrier.
+
+`propose_procedure` is deterministic and shadow-only. It requires recurrence or
+strong non-client external verification, explicit project/task applicability,
+negative guards, passing repair tests, source/outcome dependencies, and a
+closed purge dependency set. It returns only an advisory candidate or a closed
+rejection; there is no promotion, truth-write, authority, model, network,
+storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring.
+The focused local evidence is 7 unit tests, Ruff, and mypy for the new module;
+full-suite, live-data, provider, packaging, release, and platform acceptance
+remain outside the evidence boundary.
+
 ### 2026-08-25 integrated Milestone 1 — Continuous Context
 
 Continuous Context is an explicit local workspace runtime. Core remains the
