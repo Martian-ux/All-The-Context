@@ -52,12 +52,13 @@ from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
-from .storage import CoreStore
+from .storage import CoreStore, StorageError
 from .user_startup import StartupResult, install_user_startup
 
 DESKTOP_CLIENT_NAME = "All The Context Desktop"
 CODEX_CLIENT_NAME = "Codex"
 CLAUDE_CLIENT_NAME = "Claude Desktop"
+SCHEDULER_SETUP_CLIENT_NAME = "All The Context one-time setup scheduler"
 DESKTOP_SCOPES = [
     "*",
     "admin",
@@ -694,21 +695,24 @@ def _configure_workspace_capture(
     return source_id, True
 
 
-def _enable_running_core_scheduler(
+def _running_core_scheduler_request(
     config: CoreConfig,
     token: str,
     *,
+    action: str | None = None,
     timeout: float = 3.0,
-) -> bool:
-    """Wake an already-running Core after its scheduler sidecar is enabled."""
+) -> dict[str, object] | None:
+    """Call one scheduler route only after the listener proves this installation."""
 
     if probe_core(config, timeout=min(timeout, 1.0)) is not CoreProbe.VERIFIED:
-        return False
+        return None
     root = f"http://{config.host}:{config.port}"
+    suffix = f"/{action}" if action is not None else ""
+    method = "POST" if action is not None else "GET"
     request = urllib.request.Request(
-        f"{root}/v1/admin/capture/scheduler/enable",
-        data=b"",
-        method="POST",
+        f"{root}/v1/admin/capture/scheduler{suffix}",
+        data=b"" if method == "POST" else None,
+        method=method,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -717,17 +721,69 @@ def _enable_running_core_scheduler(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status != 200:
-                return False
+                return None
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, TypeError, ValueError, UnicodeError):
-        return False
-    return (
-        isinstance(payload, dict)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _scheduler_is_active(payload: dict[str, object] | None) -> bool:
+    return bool(
+        payload is not None
         and payload.get("config_valid") is True
         and payload.get("durable_enabled") is True
         and payload.get("enabled") is True
         and payload.get("running") is True
     )
+
+
+def _enable_running_core_scheduler(
+    config: CoreConfig,
+    token: str,
+    *,
+    timeout: float = 3.0,
+) -> bool:
+    """Enable the live scheduler and reconcile an ambiguous activation response."""
+
+    previous = _running_core_scheduler_request(config, token, timeout=timeout)
+    if _scheduler_is_active(previous):
+        return True
+
+    activated = _running_core_scheduler_request(
+        config,
+        token,
+        action="enable",
+        timeout=timeout,
+    )
+    if _scheduler_is_active(activated):
+        return True
+
+    reconciled = _running_core_scheduler_request(config, token, timeout=timeout)
+    if _scheduler_is_active(reconciled):
+        return True
+
+    if previous is not None and previous.get("durable_enabled") is False:
+        _running_core_scheduler_request(
+            config,
+            token,
+            action="disable",
+            timeout=timeout,
+        )
+    return False
+
+
+def _activate_running_core_scheduler(store: CoreStore, config: CoreConfig) -> bool:
+    """Use a revocable one-time administrator rather than the durable desktop token."""
+
+    principal, token = store.create_client(
+        ClientCreate(name=SCHEDULER_SETUP_CLIENT_NAME, scopes=["admin"])
+    )
+    try:
+        return _enable_running_core_scheduler(config, token)
+    finally:
+        with suppress(StorageError):
+            store.revoke_client(principal.id)
 
 
 def perform_setup(
@@ -747,14 +803,6 @@ def perform_setup(
     active_config.prepare()
     store = CoreStore(active_config.database_path)
     vault_id = store.initialize_vault(options.vault_name.strip() or "My Context", options.timezone)
-
-    workspace_source_id, workspace_capture_ready = _configure_workspace_capture(
-        options,
-        store,
-        active_config,
-        notify=notify,
-        warnings=warnings,
-    )
 
     notify("credential", "Securing the desktop and MCP credential")
     access = _desktop_client(store, active_config)
@@ -835,12 +883,20 @@ def perform_setup(
 
     notify("core", "Starting Core on this device")
     log_path = launch_core(active_runtime, active_config)
+    dashboard_url = authenticated_dashboard_url(active_config, access.token)
+
+    workspace_source_id, workspace_capture_ready = _configure_workspace_capture(
+        options,
+        store,
+        active_config,
+        notify=notify,
+        warnings=warnings,
+    )
     continuous_capture_enabled = False
     if workspace_source_id is not None and workspace_capture_ready:
-        continuous_capture_enabled = _enable_running_core_scheduler(active_config, access.token)
+        continuous_capture_enabled = _activate_running_core_scheduler(store, active_config)
         if not continuous_capture_enabled:
             warnings.append("Continuous capture could not be activated in the running Core.")
-    dashboard_url = authenticated_dashboard_url(active_config, access.token)
     notify("complete", "All The Context is ready")
     return SetupResult(
         vault_id=vault_id,

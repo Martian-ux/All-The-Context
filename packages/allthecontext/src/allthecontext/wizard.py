@@ -586,8 +586,6 @@ class SetupWizard:
             ("vault", "Private local vault"),
             ("credential", "Secure client credential"),
         ]
-        if self.workspace_root.get().strip():
-            progress_steps.append(("source", "Local workspace source"))
         progress_steps.extend(
             (
                 ("client", "MCP client connection"),
@@ -595,6 +593,8 @@ class SetupWizard:
                 ("core", "Core health check"),
             )
         )
+        if self.workspace_root.get().strip():
+            progress_steps.append(("source", "Local workspace source"))
         for key, label in progress_steps:
             row = tk.Frame(rows, bg=PAPER)
             row.pack(fill="x", pady=7)

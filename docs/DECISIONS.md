@@ -16,22 +16,27 @@ degraded lifecycle state, and refuses a different root through the existing
 identity contract.
 
 Continuous capture requires both durable and live truth. Setup launches the
-loopback Core with the process gate, re-verifies that the listener belongs to
-this installation before sending the desktop administrator credential, and
-invokes the authenticated scheduler-enable route. That single Core-owned route
+loopback Core with the process gate, obtains the dashboard handoff, then commits
+the workspace authorization as its final setup mutation. It re-verifies that
+the listener belongs to this installation before each scheduler request and
+sends only a one-time administrator credential that is revoked after the
+attempt. The authenticated scheduler-enable route
 persists the existing scheduler sidecar and starts or wakes the worker. The
 result is true only when Core reports valid configuration, durable enablement,
-dispatch enablement, and a running worker. Setup never calls `run_cycle` and
-never opens the dashboard automatically.
+dispatch enablement, and a running worker. Ambiguous responses are reconciled;
+setup rolls back through the authenticated disable route only when it positively
+observed that the scheduler was previously disabled. Setup never calls
+`run_cycle` and never opens the dashboard automatically.
 
 Wizard progress, completion, warnings, and workspace-selected failures are
 content-free with respect to the root and captured text. Headless acceptance
-uses hidden arguments for the same frozen options and reports only an opaque
-source ID plus the scheduler result. No-root setup preserves prior behavior and
-does not mutate scheduler state. This decision closes the packaged setup seam
-only: ordinary MCP remains L0, the controlled L2 host remains experimental, and
-the first supported lifecycle-aware client plus complete Phase 2 journey remain
-open.
+uses hidden arguments for the same frozen options; this workspace surface adds
+only an opaque source ID plus the scheduler result and leaves the disposable
+smoke-report contract in ADR-056 unchanged. No-root setup preserves prior
+behavior and does not mutate scheduler state. This decision closes the packaged
+setup seam only: ordinary MCP remains L0, the controlled L2 host remains
+experimental, and the first supported lifecycle-aware client plus complete
+Phase 2 journey remain open.
 
 ## ADR-153: Freeze an independent ZF-013 graph safety oracle
 

@@ -104,7 +104,7 @@ def test_headless_setup_without_workspace_root_preserves_existing_defaults(
     assert options.workspace_local_only_acknowledged is False
 
 
-def test_headless_setup_success_report_keeps_opaque_result_fields_only(
+def test_headless_setup_success_report_keeps_workspace_fields_opaque(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")

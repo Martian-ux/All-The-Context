@@ -18,7 +18,12 @@ from allthecontext.capture_runtime import (
 )
 from allthecontext.config import CoreConfig
 from allthecontext.desktop_runtime import RuntimeCommand
-from allthecontext.desktop_setup import DesktopAccess, SetupOptions, perform_setup
+from allthecontext.desktop_setup import (
+    SCHEDULER_SETUP_CLIENT_NAME,
+    DesktopAccess,
+    SetupOptions,
+    perform_setup,
+)
 from allthecontext.storage import CoreStore
 
 
@@ -162,6 +167,37 @@ def test_first_workspace_setup_authorizes_enables_and_persists_scheduler(
     assert AUTHORIZATION_FILENAME not in rendered
 
 
+@pytest.mark.parametrize("failure_stage", ["credential", "launch", "dashboard"])
+def test_failures_before_final_workspace_mutation_leave_no_authorization(
+    setup_harness: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    config = setup_harness["config"]
+    root = _workspace(setup_harness["tmp_path"])
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(f"{failure_stage} failed")
+
+    target = {
+        "credential": "_desktop_client",
+        "launch": "launch_core",
+        "dashboard": "authenticated_dashboard_url",
+    }[failure_stage]
+    monkeypatch.setattr(desktop_setup, target, fail)
+
+    with pytest.raises(RuntimeError, match=failure_stage):
+        setup_harness["run"](_options(workspace_root=root, acknowledged=True))
+
+    assert not authorization_path(config.data_dir).exists()
+    assert not scheduler_config_path(config.data_dir).exists()
+    sources, total = compose_capture_coordinator(
+        CoreStore(config.database_path), config
+    ).list_sources()
+    assert sources == []
+    assert total == 0
+
+
 def test_exact_workspace_repeat_is_idempotent_without_enabled_to_enabled_transition(
     setup_harness: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -251,6 +287,9 @@ def test_already_running_core_is_woken_through_authenticated_scheduler_api(
     class Response:
         status = 200
 
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
         def __enter__(self) -> Response:
             return self
 
@@ -258,11 +297,17 @@ def test_already_running_core_is_woken_through_authenticated_scheduler_api(
             return None
 
         def read(self) -> bytes:
-            return b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":true}'
+            return self.body
 
     def fake_urlopen(request: Any, **_kwargs: Any) -> Response:
         observed.append(request)
-        return Response()
+        if request.method == "GET":
+            return Response(
+                b'{"config_valid":true,"durable_enabled":false,"enabled":false,"running":false}'
+            )
+        return Response(
+            b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":true}'
+        )
 
     monkeypatch.setattr(desktop_setup, "_enable_running_core_scheduler", real_scheduler_enable)
     monkeypatch.setattr(
@@ -275,12 +320,24 @@ def test_already_running_core_is_woken_through_authenticated_scheduler_api(
     result = setup_harness["run"](_options(workspace_root=root, acknowledged=True))
 
     assert result.continuous_capture_enabled is True
-    assert len(observed) == 1
-    request = observed[0]
+    assert len(observed) == 2
+    request = observed[-1]
     assert request.method == "POST"
     assert request.full_url.endswith("/v1/admin/capture/scheduler/enable")
-    assert request.get_header("Authorization") == "Bearer desktop-token"
+    authorization = request.get_header("Authorization")
+    assert authorization is not None
+    assert authorization.startswith("Bearer ")
+    assert authorization != "Bearer desktop-token"
+    assert {item.get_header("Authorization") for item in observed} == {authorization}
     assert request.data == b""
+    one_time = [
+        item
+        for item in CoreStore(setup_harness["config"].database_path).list_clients()
+        if item["name"] == SCHEDULER_SETUP_CLIENT_NAME
+    ]
+    assert len(one_time) == 1
+    assert one_time[0]["scopes"] == ["admin"]
+    assert one_time[0]["revoked"] is True
 
 
 def test_scheduler_activation_requires_a_running_worker(
@@ -318,3 +375,122 @@ def test_scheduler_activation_requires_a_running_worker(
 
     assert result.continuous_capture_enabled is False
     assert result.warnings[-1] == "Continuous capture could not be activated in the running Core."
+
+
+def test_scheduler_response_loss_reconciles_running_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core")
+    observed: list[Any] = []
+    status_reads = 0
+
+    class Response:
+        status = 200
+
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.body
+
+    def fake_urlopen(request: Any, **_kwargs: Any) -> Response:
+        nonlocal status_reads
+        observed.append(request)
+        if request.method == "POST":
+            raise TimeoutError("response lost")
+        status_reads += 1
+        if status_reads == 1:
+            return Response(
+                b'{"config_valid":true,"durable_enabled":false,"enabled":false,"running":false}'
+            )
+        return Response(
+            b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":true}'
+        )
+
+    monkeypatch.setattr(
+        desktop_setup,
+        "probe_core",
+        lambda _config, **_kwargs: desktop_setup.CoreProbe.VERIFIED,
+    )
+    monkeypatch.setattr(desktop_setup.urllib.request, "urlopen", fake_urlopen)
+
+    assert desktop_setup._enable_running_core_scheduler(config, "one-time-token") is True
+    assert [request.method for request in observed] == ["GET", "POST", "GET"]
+    assert all(not request.full_url.endswith("/disable") for request in observed)
+
+
+def test_scheduler_unresolved_activation_rolls_back_only_known_disabled_prestate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core")
+    observed: list[Any] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"config_valid":true,"durable_enabled":false,"enabled":false,"running":false}'
+
+    def fake_urlopen(request: Any, **_kwargs: Any) -> Response:
+        observed.append(request)
+        return Response()
+
+    monkeypatch.setattr(
+        desktop_setup,
+        "probe_core",
+        lambda _config, **_kwargs: desktop_setup.CoreProbe.VERIFIED,
+    )
+    monkeypatch.setattr(desktop_setup.urllib.request, "urlopen", fake_urlopen)
+
+    assert desktop_setup._enable_running_core_scheduler(config, "one-time-token") is False
+    assert [request.method for request in observed] == ["GET", "POST", "GET", "POST"]
+    assert observed[-1].full_url.endswith("/v1/admin/capture/scheduler/disable")
+
+
+def test_scheduler_does_not_roll_back_a_previously_enabled_operator_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core")
+    observed: list[Any] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"config_valid":true,"durable_enabled":true,"enabled":true,"running":false}'
+
+    def fake_urlopen(request: Any, **_kwargs: Any) -> Response:
+        observed.append(request)
+        return Response()
+
+    monkeypatch.setattr(
+        desktop_setup,
+        "probe_core",
+        lambda _config, **_kwargs: desktop_setup.CoreProbe.VERIFIED,
+    )
+    monkeypatch.setattr(desktop_setup.urllib.request, "urlopen", fake_urlopen)
+
+    assert desktop_setup._enable_running_core_scheduler(config, "one-time-token") is False
+    assert [request.method for request in observed] == ["GET", "POST", "GET"]
+    assert all(not request.full_url.endswith("/disable") for request in observed)
