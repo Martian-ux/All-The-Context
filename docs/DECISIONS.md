@@ -20,7 +20,8 @@ Any required-zero safety violation yields `KILL_ZF013`; missing coverage,
 unsafe diagnostics, runtime coupling, an unobservable surface, or a rebuild
 control that shares optimized state yields `HOLD_ZF013`. The standalone
 reference implementation remains an independent oracle and is not product
-proof; the actual typed graph must be tested against the same cases.
+proof. A separate implementation-facing suite maps every frozen case onto the
+actual typed graph while keeping the oracle itself free of product imports.
 
 ## ADR-152: Milestone 5 uses an ephemeral typed project graph
 
@@ -214,10 +215,11 @@ production behavior.
 
 ZF-013 lane A freezes a sanitized, in-memory harness contract pinned to
 protected-main base `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. The harness
-compares five named profiles: a stdlib-only lexical proxy, explicit structured
-project filtering, deterministic Project Context Capsules, lexical seeds plus
-directed typed one-hop expansion, and bounded directed two-hop expansion.
-Production Retrieval V3 is explicitly not exercised. The corpus includes
+compares five named profiles: a stdlib-only lexical proxy, checkout-local
+production `LexicalV3` with fixture-supplied current/project eligibility,
+deterministic Project Context Capsules, lexical seeds plus directed typed
+one-hop expansion, and bounded directed two-hop expansion. The full
+RetrievalEngine/Core policy façade is explicitly not exercised. The corpus includes
 current, stale, deleted, and purged synthetic records, two projects, all six
 allowed relation families (`belongs_to`, `supersedes`, `depends_on`, `blocks`,
 `implements`, `tested_by`), a cycle, a self-edge, a cross-project edge, and a
@@ -247,10 +249,11 @@ fixture's synthetic integration hypotheses keep `belongs_to`, `depends_on`,
 `blocks`, `implements`, and `tested_by`, and kill `supersedes`; none is
 promotion evidence.
 
-The evaluator is deliberately outside `packages/allthecontext`. It must not
-open Core or a workspace, scan files, enable capture, use a provider/model,
-open a browser/dashboard, add MCP/storage/runtime/packaging/release/CI
-behavior, or emit raw fixture content. Reports remain disposable aggregate
+The evaluator remains outside `packages/allthecontext` but imports the actual
+ephemeral `allthecontext.project_graph` candidate for one- and two-hop
+profiles. It must not open Core or a workspace, scan files, enable capture, use
+a provider/model, open a browser/dashboard, add MCP/storage/runtime/packaging/
+release/CI behavior, or emit raw fixture content. Reports remain disposable aggregate
 evidence and grant no live, private, provider, client, platform, release, or
 graph-promotion credit. The deterministic Project Context Capsule foundation
 and Core authority remain governed by ADR-146.

@@ -595,11 +595,6 @@ def _build(
         if item.subject_id == item.object_id:
             abstentions.append(GraphAbstention(GraphAbstentionReason.SELF_EDGE))
             continue
-        if item.relation is ProjectRelationFamily.BELONGS_TO and (
-            item.object_id != project_id or item.object_kind != "project"
-        ):
-            abstentions.append(GraphAbstention(GraphAbstentionReason.INVALID_ENDPOINT))
-            continue
         candidates.append(item)
 
     # One evidence identifier cannot bind different relation facts. Exact
@@ -669,7 +664,17 @@ def _build(
     fanout: dict[str, int] = {}
     accepted: list[_MergedRelation] = []
     truncated = False
-    for relation_item in merged:
+    # Opaque evidence identity is the stable precedence key for mutually
+    # incompatible topology. Core, not input ordering, assigns that identity.
+    for relation_item in sorted(
+        merged,
+        key=lambda item: (
+            item.evidence_ids,
+            item.subject_id,
+            item.relation.value,
+            item.object_id,
+        ),
+    ):
         if any(
             kinds.get(node) not in (None, kind)
             for node, kind in (
@@ -711,7 +716,15 @@ def _build(
             item.dependency_ids,
             item.basis,
         )
-        for item in accepted
+        for item in sorted(
+            accepted,
+            key=lambda value: (
+                value.subject_id,
+                value.relation.value,
+                value.object_id,
+                value.evidence_ids,
+            ),
+        )
     )
     lineage: dict[str, list[set[str]]] = {node: [set(), set(), set()] for node in kinds}
     for edge in edges:

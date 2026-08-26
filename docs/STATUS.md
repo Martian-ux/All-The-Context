@@ -14,10 +14,11 @@ lineage. There is no graph store, persistence, source scan, MCP/UI/storage
 wiring, automatic authority, model inference, provider claim, or release
 claim.
 
-The separate sanitized 14-case oracle remains independent of the production
-module and is retained as a kill/hold contract, not as proof that the typed
-graph conforms. Actual-implementation conformance is still required before any
-runtime or retrieval promotion.
+The separate sanitized 14-case oracle remains independent of the candidate
+module and is retained as a kill/hold contract. Seven implementation-facing
+tests map every frozen case onto the actual typed graph; the combined graph,
+oracle, and benchmark selection is locally green at 39 tests. This is still
+synthetic component evidence, not runtime or retrieval promotion.
 
 As of 2026-08-25 UTC, this branch builds on the merged Import Truth, Memory
 Truth, Retrieval, Continuous Context, and
@@ -60,8 +61,8 @@ rules is `KILL_ZF013`; missing coverage, unsafe diagnostics, runtime coupling,
 or an invalid rebuild control is `HOLD_ZF013`. This is sanitized local oracle
 evidence only and does not close ZF-013 or claim a graph store, graph
 promotion, provider/client, network, release, or private-data acceptance. The
-separate ephemeral typed graph is present above, but it has not yet been run
-through this independent oracle.
+separate implementation-facing conformance suite maps every frozen case onto
+the ephemeral typed graph without coupling the reference oracle to product code.
 
 ### 2026-08-25 Milestone 5 lane A — frozen ZF-013 project-graph evaluation
 
@@ -71,9 +72,10 @@ and harness in `bench/zf013_project_graph_contract.json`,
 `bench/zf013_project_graph_benchmark.py`, with focused coverage in
 `tests/unit/test_zf013_project_graph_benchmark.py`. It compares a stdlib-only
 lexical proxy, structured project filtering, deterministic
-Project Context Capsules, lexical seeds plus typed one-hop expansion, bounded
-two-hop expansion, and six relation-family ablations. It does not add a graph
-store, graph runtime, learned relation, Core/storage/retrieval behavior, MCP,
+Project Context Capsules, lexical seeds plus actual `project_graph` one-hop
+expansion, bounded two-hop expansion, and six relation-family ablations. It
+does not add a graph store, runtime wiring, learned relation,
+Core/storage/retrieval behavior, MCP,
 dashboard, capture, workspace scanning, provider, browser, package, release,
 CI, or macOS behavior.
 
@@ -93,14 +95,16 @@ edges, at most two neighbors per source, and warm p95 `<= 50 ms`.
 The default local harness self-test passed both graph profiles and all six
 synthetic integration-hypothesis decisions. The stdlib lexical proxy measured
 required-evidence recall `0.537037`, CAOS
-`0.111111`, and one wrong-project disclosure; structured filtering removed the
+`0.111111`, and one wrong-project disclosure; checkout-local production
+`LexicalV3` with fixture-supplied current/project eligibility removed the
 wrong-project disclosure without improving recall. One-hop measured recall
 `0.962963` and CAOS `0.888889`; bounded two-hop measured recall and CAOS
 `1.000000`. The ablation kept `belongs_to`, `depends_on`, `blocks`,
 `implements`, and `tested_by`, and killed `supersedes` under the frozen
 `0.10` recall/CAOS delta rule. Focused evidence is seven passing tests in
 `tests/unit/test_zf013_project_graph_benchmark.py`; no full repository suite
-was run. Production Retrieval V3 is explicitly `not_exercised`. This is
+was run. The production lexical ranker component is exercised; the full
+RetrievalEngine/Core policy façade is explicitly `not_exercised`. This is
 aggregate synthetic harness self-test evidence only and does not close ZF-013,
 promote a graph, or imply live/private/provider/client/platform or release
 acceptance.
@@ -163,7 +167,8 @@ projection, memory, and source) plus outcome dependencies, and a closed purge
 dependency set. It returns only an advisory candidate or a closed
 rejection; there is no promotion, truth-write, authority, model, network,
 storage, Core route, MCP, dashboard, capture, scheduler, or retrieval wiring.
-The focused local evidence is 35 unit tests, Ruff, and strict mypy for the new module;
+The focused local evidence is 35 unit tests, Ruff, and strict mypy for the new
+module;
 full-suite, live-data, provider, packaging, release, and platform acceptance
 remain outside the evidence boundary.
 

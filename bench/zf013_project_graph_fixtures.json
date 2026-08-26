@@ -1,6 +1,6 @@
 {
   "schema": "atc.zf013.project-graph-fixture.v1",
-  "fixture_revision": "2026-08-25.lane-a",
+  "fixture_revision": "2026-08-25.production-ranker",
   "projects": [
     {"id": "project-atlas", "label": "Atlas"},
     {"id": "project-beacon", "label": "Beacon"}
@@ -69,7 +69,7 @@
     {"id": "q-depends-on", "project_id": "project-atlas", "terms": ["release", "lane"], "required": ["atlas-release", "atlas-build"], "allowed": ["atlas-decision-current", "atlas-release", "atlas-build"], "target_relation_family": "depends_on", "ablation_case": true, "max_items": 5, "max_chars": 300},
     {"id": "q-blocks", "project_id": "project-atlas", "terms": ["hazard", "barrier"], "required": ["atlas-risk", "atlas-blocked-lane"], "allowed": ["atlas-risk", "atlas-blocked-lane"], "target_relation_family": "blocks", "ablation_case": true, "max_items": 5, "max_chars": 300},
     {"id": "q-implements", "project_id": "project-atlas", "terms": ["adapter", "source"], "required": ["atlas-code", "atlas-requirement"], "allowed": ["atlas-code", "atlas-requirement", "atlas-test"], "target_relation_family": "implements", "ablation_case": true, "max_items": 5, "max_chars": 300},
-    {"id": "q-tested-by", "project_id": "project-atlas", "terms": ["contract", "criterion"], "required": ["atlas-requirement", "atlas-test"], "allowed": ["atlas-requirement", "atlas-test"], "target_relation_family": "tested_by", "ablation_case": true, "max_items": 5, "max_chars": 300},
+    {"id": "q-tested-by", "project_id": "project-atlas", "terms": ["durable", "criterion"], "required": ["atlas-requirement", "atlas-test"], "allowed": ["atlas-requirement", "atlas-test"], "target_relation_family": "tested_by", "ablation_case": true, "max_items": 5, "max_chars": 300},
     {"id": "q-two-hop-chain", "project_id": "project-atlas", "terms": ["chain", "origin"], "required": ["atlas-chain-seed", "atlas-chain-mid", "atlas-chain-target"], "allowed": ["atlas-chain-seed", "atlas-chain-mid", "atlas-chain-target"], "target_relation_family": "depends_on", "ablation_case": false, "max_items": 5, "max_chars": 300},
     {"id": "q-high-fanout", "project_id": "project-atlas", "terms": ["fanout", "seed"], "required": ["atlas-fanout-seed", "atlas-fanout-01"], "allowed": ["atlas-fanout-seed", "atlas-fanout-01", "atlas-fanout-02"], "target_relation_family": "belongs_to", "ablation_case": false, "max_items": 5, "max_chars": 300},
     {"id": "q-cycle", "project_id": "project-atlas", "terms": ["cycle", "origin"], "required": ["atlas-cycle-a", "atlas-cycle-b"], "allowed": ["atlas-cycle-a", "atlas-cycle-b"], "target_relation_family": "depends_on", "ablation_case": false, "max_items": 5, "max_chars": 300}

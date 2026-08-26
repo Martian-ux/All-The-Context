@@ -1,11 +1,10 @@
 """Frozen synthetic evaluator for Milestone 5 lane A / ZF-013.
 
 This module is an isolated research harness.  It does not open Core, inspect a
-workspace, enable capture, call a provider, or implement a production graph.
-The lexical comparator is a small deterministic stand-in for the current
-Retrieval V3 surface; the project filter and capsule are equally local
-controls.  Reports contain aggregate metrics and hashes only, never fixture
-IDs or text.
+workspace, enable capture, or call a provider.  Its graph profiles exercise the
+actual ephemeral ``project_graph`` candidate while the lexical comparator is a
+small deterministic proxy rather than production Retrieval V3.  Reports
+contain aggregate metrics and hashes only, never fixture IDs or text.
 """
 
 from __future__ import annotations
@@ -15,14 +14,27 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
 import statistics
 import sys
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_PACKAGE_SRC = Path(__file__).parents[1] / "packages" / "allthecontext" / "src"
+if str(_PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_SRC))
+
+from allthecontext.lexical_v3 import LexicalV3  # noqa: E402
+from allthecontext.project_graph import (  # noqa: E402
+    GraphDirection,
+    ProjectGraphEvidence,
+    ProjectRelationFamily,
+    build_project_graph,
+)
 
 FIXTURES = Path(__file__).with_name("zf013_project_graph_fixtures.json")
 CONTRACT = Path(__file__).with_name("zf013_project_graph_contract.json")
@@ -167,8 +179,14 @@ def load_contract(path: Path = CONTRACT) -> dict[str, Any]:
     production_retrieval_v3 = _object(
         value.get("production_retrieval_v3"), "contract.production_retrieval_v3"
     )
-    if production_retrieval_v3.get("status") != "not_exercised":
-        raise ValueError("production Retrieval V3 must remain explicitly not exercised")
+    if (
+        production_retrieval_v3.get("status") != "lexical_ranker_exercised"
+        or production_retrieval_v3.get("full_retrieval_facade") != "not_exercised"
+    ):
+        raise ValueError(
+            "production Retrieval V3 evidence must distinguish the exercised ranker "
+            "from the unexercised full facade"
+        )
     bounds = _object(value.get("bounds"), "contract.bounds")
     for key in (
         "max_depth",
@@ -447,7 +465,7 @@ def _tokens(text: str) -> set[str]:
     return set(TOKEN_RE.findall(text.lower()))
 
 
-def _ranked_lexical(
+def _ranked_stdlib(
     corpus: _Corpus, query: _Query, project_filter: bool
 ) -> list[tuple[int, _Record]]:
     query_terms = set(query.terms)
@@ -463,8 +481,54 @@ def _ranked_lexical(
     return sorted(ranked, key=lambda item: (-item[0], item[1].record_id))
 
 
-def _lexical_execution(corpus: _Corpus, query: _Query, project_filter: bool) -> _Execution:
-    ranked = _ranked_lexical(corpus, query, project_filter)
+def _ranked_production_lexical_v3(
+    corpus: _Corpus, query: _Query, project_filter: bool
+) -> list[tuple[float, _Record]]:
+    eligible = tuple(
+        record.record_id
+        for record in corpus.records
+        if record.state in CURRENT_STATES
+        and (not project_filter or record.project_id == query.project_id)
+    )
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("PRAGMA temp_store = MEMORY")
+        connection.execute(
+            "CREATE VIRTUAL TABLE context_fts USING fts5("
+            "record_id UNINDEXED, content, kind, tags, scopes, "
+            "tokenize='unicode61 remove_diacritics 2')"
+        )
+        connection.executemany(
+            "INSERT INTO context_fts(record_id, content, kind, tags, scopes) VALUES(?,?,?,?,?)",
+            (
+                (record.record_id, record.text, "artifact", "", record.project_id)
+                for record in corpus.records
+                if record.state in CURRENT_STATES
+            ),
+        )
+        result = LexicalV3().search(
+            connection,
+            eligible,
+            " ".join(query.terms),
+            limit=query.max_items,
+        )
+    finally:
+        connection.close()
+    return [(hit.score, corpus.records_by_id[hit.record_id]) for hit in result.hits]
+
+
+def _lexical_execution(
+    corpus: _Corpus,
+    query: _Query,
+    project_filter: bool,
+    *,
+    production_ranker: bool,
+) -> _Execution:
+    ranked = (
+        _ranked_production_lexical_v3(corpus, query, project_filter)
+        if production_ranker
+        else _ranked_stdlib(corpus, query, project_filter)
+    )
     return _Execution(
         result_ids=tuple(record.record_id for _score, record in ranked[: query.max_items]),
         max_depth_observed=0,
@@ -505,60 +569,107 @@ def _graph_execution(
     enabled_families: frozenset[str],
     bounds: Mapping[str, Any],
 ) -> _Execution:
-    ranked = _ranked_lexical(corpus, query, project_filter=True)
+    ranked = _ranked_production_lexical_v3(corpus, query, project_filter=True)
     if not ranked:
         return _Execution((), 0, 0, 0, 0, 0, 0)
     best_score = ranked[0][0]
     seeds = [record for score, record in ranked if score == best_score][: query.max_items]
-    selected = list(seeds)
-    visited = {record.record_id for record in seeds}
-    frontier: deque[tuple[str, int]] = deque((record.record_id, 0) for record in seeds)
     max_neighbors = int(bounds["max_neighbors_per_source"])
     max_edges = int(bounds["max_expanded_edges_per_query"])
-    expanded_edges = 0
+
+    relations = tuple(
+        relation
+        for source in sorted(corpus.relations_by_source)
+        for relation in corpus.relations_by_source[source]
+        if relation.family in enabled_families
+        and corpus.records_by_id[relation.source].project_id == query.project_id
+        and corpus.records_by_id[relation.target].project_id == query.project_id
+    )
+    graph = build_project_graph(
+        query.project_id,
+        tuple(
+            ProjectGraphEvidence(
+                evidence_id=f"zf013-{index:04d}",
+                project_id=query.project_id,
+                subject_id=relation.source,
+                subject_project_id=query.project_id,
+                subject_kind="artifact",
+                relation=ProjectRelationFamily(relation.family),
+                object_id=relation.target,
+                object_project_id=query.project_id,
+                object_kind="artifact",
+                provenance_ids=("zf013-synthetic-fixture",),
+                dependency_ids=(relation.source, relation.target),
+            )
+            for index, relation in enumerate(relations, start=1)
+        ),
+        edge_cap=max_edges,
+        fanout_cap=max_neighbors,
+    )
+
+    selected_ids = [record.record_id for record in seeds]
+    selected_set = set(selected_ids)
+    expanded_edge_ids: set[str] = set()
+    neighbor_counts: defaultdict[str, int] = defaultdict(int)
     max_depth_observed = 0
-    max_neighbors_observed = 0
-    cycle_revisits = 0
-    fanout_truncations = 0
-    bound_violations = 0
-    while frontier:
-        source, depth = frontier.popleft()
-        if depth >= max_depth:
-            continue
-        neighbors = [
-            relation
-            for relation in corpus.relations_by_source.get(source, ())
-            if relation.family in enabled_families
-        ]
-        if len(neighbors) > max_neighbors:
-            fanout_truncations += 1
-        bounded_neighbors = neighbors[:max_neighbors]
-        if expanded_edges + len(bounded_neighbors) > max_edges:
-            bound_violations += 1
-            bounded_neighbors = bounded_neighbors[: max(0, max_edges - expanded_edges)]
-        expanded_edges += len(bounded_neighbors)
-        max_neighbors_observed = max(max_neighbors_observed, len(bounded_neighbors))
-        for relation in bounded_neighbors:
-            target = relation.target
-            if target in visited:
-                continue
-            visited.add(target)
-            record = corpus.records_by_id[target]
-            if record.state not in CURRENT_STATES or record.project_id != query.project_id:
-                continue
-            selected.append(record)
-            next_depth = depth + 1
-            max_depth_observed = max(max_depth_observed, next_depth)
-            if next_depth < max_depth:
-                frontier.append((record.record_id, next_depth))
+    expansion_truncated = False
+    for seed in seeds:
+        expansion = graph.expand(
+            seed.record_id,
+            hops=max_depth,  # type: ignore[arg-type]
+            direction=GraphDirection.OUTGOING,
+            node_cap=min(query.max_items, 64),
+            edge_cap=min(max_edges, 128),
+            fanout_cap=max_neighbors,
+        )
+        expansion_truncated = expansion_truncated or bool(
+            expansion.omitted_nodes or expansion.omitted_edges
+        )
+        depths = {seed.record_id: 0}
+        for _ in range(max_depth):
+            for edge in expansion.edges:
+                source_depth = depths.get(edge.subject_id)
+                if source_depth is None or source_depth >= max_depth:
+                    continue
+                depths.setdefault(edge.object_id, source_depth + 1)
+        max_depth_observed = max(max_depth_observed, *depths.values())
+        for edge in expansion.edges:
+            expanded_edge_ids.add(edge.edge_id)
+            neighbor_counts[edge.subject_id] += 1
+            for record_id in (edge.subject_id, edge.object_id):
+                if (
+                    record_id in corpus.records_by_id
+                    and record_id not in selected_set
+                    and len(selected_ids) < query.max_items
+                ):
+                    selected_set.add(record_id)
+                    selected_ids.append(record_id)
+
+    fanout_truncations = int(expansion_truncated)
+    metric_frontier = {record.record_id for record in seeds}
+    metric_seen = set(metric_frontier)
+    for _ in range(max_depth):
+        next_frontier: set[str] = set()
+        for source in sorted(metric_frontier):
+            neighbors = tuple(
+                relation
+                for relation in corpus.relations_by_source.get(source, ())
+                if relation.family in enabled_families
+            )
+            fanout_truncations += int(len(neighbors) > max_neighbors)
+            for relation in neighbors[:max_neighbors]:
+                if relation.target not in metric_seen:
+                    metric_seen.add(relation.target)
+                    next_frontier.add(relation.target)
+        metric_frontier = next_frontier
     return _Execution(
-        result_ids=tuple(record.record_id for record in selected[: query.max_items]),
+        result_ids=tuple(selected_ids),
         max_depth_observed=max_depth_observed,
-        expanded_edges=expanded_edges,
-        max_neighbors_observed=max_neighbors_observed,
-        cycle_revisits=cycle_revisits,
+        expanded_edges=len(expanded_edge_ids),
+        max_neighbors_observed=max(neighbor_counts.values(), default=0),
+        cycle_revisits=0,
         fanout_truncations=fanout_truncations,
-        bound_violations=bound_violations,
+        bound_violations=0,
     )
 
 
@@ -573,9 +684,9 @@ def _execute(
         _object(contract["profiles"], "contract.profiles")[profile_name], profile_name
     )
     if profile_name == STDLIB_LEXICAL_PROXY:
-        return _lexical_execution(corpus, query, project_filter=False)
+        return _lexical_execution(corpus, query, project_filter=False, production_ranker=False)
     if profile_name == "structured_project_filter":
-        return _lexical_execution(corpus, query, project_filter=True)
+        return _lexical_execution(corpus, query, project_filter=True, production_ranker=True)
     if profile_name == "deterministic_project_context_capsule":
         return _capsule_execution(corpus, query)
     return _graph_execution(
@@ -958,6 +1069,11 @@ def run(
             "contract_sha256": _sha256(contract),
         },
         "production_retrieval_v3": contract["production_retrieval_v3"],
+        "typed_graph_implementation": {
+            "module": "allthecontext.project_graph",
+            "status": "exercised_ephemeral_candidate",
+            "runtime_wiring": False,
+        },
         "relation_ablation_scope": "synthetic_integration_hypotheses_only",
         "relation_normalization": corpus.relation_normalization,
         "profiles": profile_reports,

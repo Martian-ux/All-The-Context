@@ -9,7 +9,7 @@
       "max_depth": 0
     },
     "structured_project_filter": {
-      "kind": "stdlib_lexical_proxy_with_explicit_project_filter",
+      "kind": "production_lexical_v3_with_fixture_supplied_project_filter",
       "project_filter": true,
       "max_depth": 0
     },
@@ -38,8 +38,9 @@
     }
   },
   "production_retrieval_v3": {
-    "status": "not_exercised",
-    "reason": "production Retrieval V3 is not imported by this isolated stdlib harness"
+    "status": "lexical_ranker_exercised",
+    "scope": "checkout-local LexicalV3 over fixture-supplied current and project-eligible IDs",
+    "full_retrieval_facade": "not_exercised"
   },
   "bounds": {
     "max_depth": 2,

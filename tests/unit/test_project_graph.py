@@ -220,6 +220,28 @@ def test_duplicate_replay_is_idempotent_and_distinct_lineage_merges() -> None:
     assert merged.nodes[0].evidence_ids == ("one", "two")
 
 
+def test_belongs_to_supports_typed_nodes_within_the_authorized_project() -> None:
+    graph = build_project_graph(
+        PROJECT,
+        (
+            _edge(
+                "membership",
+                "component-api",
+                ProjectRelationFamily.BELONGS_TO,
+                "program-atlas",
+                subject_kind="component",
+                object_kind="goal",
+                basis=RelationBasis.STRUCTURAL,
+            ),
+        ),
+        as_of=AS_OF,
+    )
+
+    assert len(graph.edges) == 1
+    assert graph.edges[0].relation is ProjectRelationFamily.BELONGS_TO
+    assert {node.kind for node in graph.nodes} >= {"component", "goal", "project"}
+
+
 def test_conflicting_identifiers_and_relation_families_fail_closed() -> None:
     first = _edge("one", "a", ProjectRelationFamily.DEPENDS_ON, "b")
     reused = replace(first, object_id="c")

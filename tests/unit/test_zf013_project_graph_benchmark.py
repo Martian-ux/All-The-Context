@@ -25,7 +25,7 @@ def test_frozen_fixture_is_sanitized_and_covers_the_lane_matrix() -> None:
     relations = fixture["relations"]
     queries = fixture["queries"]
 
-    assert fixture["fixture_revision"] == "2026-08-25.lane-a"
+    assert fixture["fixture_revision"] == "2026-08-25.production-ranker"
     assert len(relations) == 23
     assert {record["state"] for record in records} == {"current", "stale", "deleted", "purged"}
     assert {relation["family"] for relation in relations} == set(RELATION_FAMILIES)
@@ -48,7 +48,18 @@ def test_benchmark_compares_controls_and_passes_graph_gates() -> None:
     structured = profiles["structured_project_filter"]["metrics"]
 
     assert report["status"] == "harness_self_test_passed"
-    assert report["production_retrieval_v3"]["status"] == "not_exercised"
+    assert report["production_retrieval_v3"] == {
+        "status": "lexical_ranker_exercised",
+        "scope": (
+            "checkout-local LexicalV3 over fixture-supplied current and project-eligible IDs"
+        ),
+        "full_retrieval_facade": "not_exercised",
+    }
+    assert report["typed_graph_implementation"] == {
+        "module": "allthecontext.project_graph",
+        "status": "exercised_ephemeral_candidate",
+        "runtime_wiring": False,
+    }
     assert proxy["wrong_project_disclosures"] == 1
     assert structured["wrong_project_disclosures"] == 0
     assert one_hop["required_evidence_recall"] == 0.962963
@@ -243,7 +254,7 @@ def test_ablation_validation_fails_closed_for_malformed_or_unknown_decisions() -
     assert validate_relation_ablation_result("unknown_family", valid, contract) is False
 
 
-def test_harness_has_no_production_or_external_runtime_imports() -> None:
+def test_harness_imports_only_the_ephemeral_graph_candidate_from_product_code() -> None:
     source_path = Path("bench/zf013_project_graph_benchmark.py")
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
     imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
@@ -254,5 +265,20 @@ def test_harness_has_no_production_or_external_runtime_imports() -> None:
         for alias in node.names
     )
 
-    assert not any(name.startswith("allthecontext") for name in imports)
-    assert not any(name.startswith(("httpx", "requests", "sqlite3")) for name in imports)
+    assert {name for name in imports if name.startswith("allthecontext")} == {
+        "allthecontext.lexical_v3",
+        "allthecontext.project_graph",
+    }
+    assert not any(
+        name.startswith(
+            (
+                "allthecontext.core",
+                "allthecontext.storage",
+                "allthecontext.mcp",
+                "allthecontext.capture",
+            )
+        )
+        for name in imports
+    )
+    assert "sqlite3" in imports
+    assert not any(name.startswith(("httpx", "requests")) for name in imports)

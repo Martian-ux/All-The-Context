@@ -1,8 +1,9 @@
 # ZF-013 Milestone 5 lane A: frozen project-graph evaluation
 
-Status: local synthetic harness self-test contract, accepted for this isolated
-lane on 2026-08-25. This is an evaluator boundary, not a production graph
-implementation, usefulness result, or promotion decision.
+Status: local synthetic harness self-test over the actual ephemeral typed graph
+candidate, accepted for this isolated lane on 2026-08-25. This is component
+evaluation, not runtime wiring, a production Retrieval V3 usefulness result, or
+a promotion decision.
 
 The frozen harness is pinned to protected-main base
 `fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Its machine-readable contract is
@@ -31,13 +32,14 @@ Each profile uses the same frozen corpus and query cases.
 
 | Profile | Definition | Purpose |
 |---|---|---|
-| `stdlib_lexical_proxy` | A stdlib-only current-record lexical proxy without an explicit project filter | Frozen lexical control; production Retrieval V3 is **not exercised** |
-| `structured_project_filter` | The same lexical proxy after an explicit project filter | Project-scoping control |
+| `stdlib_lexical_proxy` | A stdlib-only current-record lexical proxy without an explicit project filter | Frozen weak lexical control |
+| `structured_project_filter` | Checkout-local production `LexicalV3` over fixture-supplied current/project-eligible IDs | Strong ranker/project-scoping control; the full RetrievalEngine/Core policy façade is not exercised |
 | `deterministic_project_context_capsule` | Current, project-scoped records selected by fixed capsule rank | Deterministic Project Context Capsule control |
-| `lexical_typed_one_hop` | Highest-score project-scoped lexical seeds plus directed typed expansion to depth 1 | First graph candidate |
-| `bounded_typed_two_hop` | The same seeds plus bounded directed typed expansion to depth 2 | Two-hop graph candidate |
+| `lexical_typed_one_hop` | Highest-score project-scoped lexical seeds plus the actual `allthecontext.project_graph` expansion to depth 1 | First graph candidate |
+| `bounded_typed_two_hop` | The same seeds plus the actual candidate's bounded expansion to depth 2 | Two-hop graph candidate |
 
-The harness first normalizes a typed relation graph. It drops unknown,
+The harness first normalizes fixture eligibility, then constructs and expands
+the actual ephemeral typed graph. It drops unknown,
 cross-project, non-current, unsupported, duplicate, self, and cycle edges
 before relation ordering, neighbor counts, fan-out truncation, visited state,
 timed traversal, or receipt construction. Only then does traversal follow the
@@ -108,12 +110,13 @@ under its ablation. Every family must receive a valid finite-metric `keep` or
 the harness self-test. These decisions are explicitly synthetic integration
 hypotheses only, never promotion evidence.
 
-The lane A synthetic run at fixture revision `2026-08-25.lane-a` produced:
+The corrected synthetic run at fixture revision
+`2026-08-25.production-ranker` produced:
 
 | Profile | Required recall | Project CAOS | Wrong-project | Unnecessary |
 |---|---:|---:|---:|---:|
 | Stdlib lexical proxy | `0.537037` | `0.111111` | `1` | `4` |
-| Structured project filter | `0.537037` | `0.111111` | `0` | `3` |
+| Production LexicalV3 + project eligibility | `0.537037` | `0.111111` | `0` | `0` |
 | Deterministic capsule | `0.111111` | `0.000000` | `0` | `16` |
 | Lexical typed one-hop | `0.962963` | `0.888889` | `0` | `0` |
 | Bounded typed two-hop | `1.000000` | `1.000000` | `0` | `0` |
@@ -129,12 +132,13 @@ synthetic integration hypothesis. These are not production acceptance,
 provider or client claims, private-data evidence, release evidence, or a graph
 promotion decision.
 
-Machine output explicitly reports production Retrieval V3 as `not_exercised`
-and names the aggregate result `harness_self_test_passed`/
+Machine output explicitly reports the checkout-local production lexical ranker
+as `lexical_ranker_exercised` and the full RetrievalEngine/Core policy façade
+as `not_exercised`. It names the aggregate result `harness_self_test_passed`/
 `harness_self_test_failed`; it never emits a generic production-usefulness
 `passed` status.
 
 The lane hashes are fixture SHA-256
-`9b872901586d22424d307c9067d65352d83bcf6d3e4c1125b1a35388528a9543` and
+`7f17243ccf56bb83bc7e4463adaf00f2232cee4efcd219d940581e2d601bfb5e` and
 contract SHA-256
-`b301f090f93d5756296baa31bb9dc78ae717ff1666cf36d2e9cd5171afa60e88`.
+`7d133a0a60ec8d72872775d845a60d30b508e2d103f7d99af811ee15f447a819`.
