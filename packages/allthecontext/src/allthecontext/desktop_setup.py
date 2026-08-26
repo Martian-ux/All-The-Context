@@ -24,6 +24,11 @@ from pathlib import Path
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .capture_runtime import (
+    authorize_local_workspace,
+    compose_capture_coordinator,
+    write_scheduler_enabled,
+)
 from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
 from .client_config import (
     ClientConfigResult,
@@ -87,6 +92,8 @@ class SetupOptions:
     configure_codex: bool = True
     configure_claude: bool = True
     start_at_login: bool = True
+    workspace_root: Path | None = None
+    workspace_local_only_acknowledged: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +108,8 @@ class SetupResult:
     startup: StartupResult | None
     log_path: Path
     warnings: tuple[str, ...] = ()
+    workspace_source_id: str | None = None
+    continuous_capture_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -640,6 +649,107 @@ def authenticated_dashboard_url(
     return urllib.parse.urljoin(root, path)
 
 
+def _validate_workspace_options(options: SetupOptions) -> None:
+    if options.workspace_root is None:
+        if options.workspace_local_only_acknowledged:
+            raise ValueError("workspace local-only acknowledgement requires a workspace root")
+        return
+    if not options.workspace_local_only_acknowledged:
+        raise ValueError("workspace local-only acknowledgement is required")
+
+
+def _configure_workspace_capture(
+    options: SetupOptions,
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    notify: ProgressCallback,
+    warnings: list[str],
+) -> tuple[str | None, bool]:
+    root = options.workspace_root
+    if root is None:
+        return None, False
+
+    notify("source", "Authorizing the selected local source")
+    authorization = authorize_local_workspace(
+        store,
+        config,
+        root,
+        local_only_acknowledged=True,
+    )
+    source_id = authorization.get("id")
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError("workspace authorization did not return a source")
+
+    coordinator = compose_capture_coordinator(store, config)
+    source = coordinator.get_source(source_id)
+    if source.lifecycle_state == "disabled":
+        source = coordinator.enable(source_id)
+
+    if source.lifecycle_state != "enabled":
+        warnings.append(
+            "Continuous capture remains disabled because the local source is not enabled."
+        )
+        return source_id, False
+
+    try:
+        durable = write_scheduler_enabled(config.data_dir, enabled=True)
+    except Exception:
+        warnings.append(
+            "Continuous capture could not be enabled because its local scheduler state "
+            "could not be saved."
+        )
+        return source_id, False
+
+    continuous_capture_enabled = (
+        type(getattr(durable, "valid", None)) is bool
+        and durable.valid
+        and type(getattr(durable, "enabled", None)) is bool
+        and durable.enabled
+    )
+    if not continuous_capture_enabled:
+        warnings.append(
+            "Continuous capture could not be enabled because its local scheduler state "
+            "could not be verified."
+        )
+    return source_id, continuous_capture_enabled
+
+
+def _enable_running_core_scheduler(
+    config: CoreConfig,
+    token: str,
+    *,
+    timeout: float = 3.0,
+) -> bool:
+    """Wake an already-running Core after its scheduler sidecar is enabled."""
+
+    if probe_core(config, timeout=min(timeout, 1.0)) is not CoreProbe.VERIFIED:
+        return False
+    root = f"http://{config.host}:{config.port}"
+    request = urllib.request.Request(
+        f"{root}/v1/admin/capture/scheduler/enable",
+        data=b"",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            if response.status != 200:
+                return False
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TypeError, ValueError, UnicodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("config_valid") is True
+        and payload.get("durable_enabled") is True
+        and payload.get("enabled") is True
+    )
+
+
 def perform_setup(
     options: SetupOptions,
     runtime: RuntimeCommand | None = None,
@@ -647,6 +757,7 @@ def perform_setup(
     progress: ProgressCallback | None = None,
     config: CoreConfig | None = None,
 ) -> SetupResult:
+    _validate_workspace_options(options)
     active_runtime = runtime or RuntimeCommand.current()
     active_config = config or CoreConfig.default()
     notify = progress or (lambda _step, _message: None)
@@ -656,6 +767,14 @@ def perform_setup(
     active_config.prepare()
     store = CoreStore(active_config.database_path)
     vault_id = store.initialize_vault(options.vault_name.strip() or "My Context", options.timezone)
+
+    workspace_source_id, continuous_capture_enabled = _configure_workspace_capture(
+        options,
+        store,
+        active_config,
+        notify=notify,
+        warnings=warnings,
+    )
 
     notify("credential", "Securing the desktop and MCP credential")
     access = _desktop_client(store, active_config)
@@ -736,6 +855,13 @@ def perform_setup(
 
     notify("core", "Starting Core on this device")
     log_path = launch_core(active_runtime, active_config)
+    if (
+        workspace_source_id is not None
+        and continuous_capture_enabled
+        and not _enable_running_core_scheduler(active_config, access.token)
+    ):
+        warnings.append("Continuous capture could not be activated in the running Core.")
+        continuous_capture_enabled = False
     dashboard_url = authenticated_dashboard_url(active_config, access.token)
     notify("complete", "All The Context is ready")
     return SetupResult(
@@ -749,6 +875,8 @@ def perform_setup(
         startup=startup_result,
         log_path=log_path,
         warnings=tuple(warnings),
+        workspace_source_id=workspace_source_id,
+        continuous_capture_enabled=continuous_capture_enabled,
     )
 
 
