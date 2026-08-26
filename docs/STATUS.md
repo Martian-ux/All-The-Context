@@ -2,19 +2,17 @@
 
 ## Current milestone
 
-As of 2026-08-25 UTC, this branch integrates Milestones 1
-through 3 on top of the earlier Import Truth, Memory Truth, Retrieval, Context
-UI, and provider-neutral capture foundations. It records product truth for
-explicit local Continuous Context, deterministic Core-derived Project Context
-Capsules, provider candidate safety, inert failed rebuilds, and provisional
-synthetic retrieval precision. These are local implementation milestones, not
-beta/release readiness and not live provider, client, platform, or private-data
-acceptance.
+As of 2026-08-26 UTC, this branch builds Milestone 4 ambient project activation
+on the merged Import Truth, Memory Truth, Retrieval, Continuous Context, and
+deterministic Project Context Capsule foundations. Ordinary healthy use keeps
+the ATC dashboard closed: an authenticated MCP bootstrap activates one
+authorized project automatically when Core has an explicit project signal, one
+safe host display-name hint, one unique project label in the task, or exactly
+one content-bearing project.
+Every ambiguous or unauthorized case abstains instead of guessing.
 
-protected main contains the merged Import Truth, Memory Truth, Retrieval,
-Context UI, provider-neutral Continuous Capture foundations, and the Core-owned
-registered-source admission contract. Its exact SHA at this boundary is
-`f558f79e6c3b76ebc1c8f90e073e19485ea59ebe`. Development evidence on this
+Protected main contains merged Milestones 1 through 3 at exact SHA
+`3be9ece851e62338d13a694778feb5cb2836d2c6`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -25,6 +23,43 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-26 Milestone 4 — ambient project activation
+
+ATC remains background infrastructure during ordinary use. Per-user startup
+continues to launch only the loopback Core, and the MCP server instructs the
+host to bootstrap automatically without asking the user to open or manage ATC.
+The dashboard remains an optional setup, inspection, correction, and recovery
+surface; it is not part of the healthy project-resumption path.
+
+The authenticated Core bootstrap builds its project projection only from truth
+authorized to the requesting principal. An explicit `current_project` signal
+may match the opaque project identity, opaque project reference, safe display
+name/alias, or existing `project:<scope>` compatibility value. Without an
+explicit signal, a unique safe project label in the task activates that project;
+otherwise the sole authorized content-bearing project activates. Blank,
+malformed, unauthorized, unmatched, or multiply matching explicit
+`current_project` signals abstain; so do ambiguous task matches and multiple
+unmatched projects. No project name or capsule from another client's allow/deny
+boundary participates in resolution.
+
+When an MCP client advertises exactly one root and supports the roots
+backchannel, the local adapter may use only its bounded safe display name as a
+weaker project hint. It never reads or forwards the root URI or filesystem path;
+multiple, path-shaped, malformed, or unresponsive root responses are ignored.
+An unmatched root hint falls through to task/sole-project resolution rather than
+blocking context.
+
+The activated deterministic capsule is returned alongside ordinary bootstrap
+context under one caller budget: the capsule receives at most half the budget
+and retrieval receives the remainder. `total_used_chars` reports the combined
+use without changing retrieval's existing `used_chars`. Project projection
+failure leaves normal
+authorized retrieval available and returns a bounded unavailable abstention.
+The MCP path is exercised end to end through the real STDIO SDK transport.
+This milestone does not silently scan a workspace, enable capture, open a
+browser, claim a provider lifecycle hook, or establish remote/live-provider
+acceptance.
 
 ### 2026-08-25 integrated Milestone 1 — Continuous Context
 

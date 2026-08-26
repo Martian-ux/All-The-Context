@@ -407,6 +407,10 @@ class BootstrapRequest(StrictModel):
     requested_scopes: list[str] = Field(default_factory=list, max_length=64)
     budget_chars: int = Field(default=12_000, ge=256, le=100_000, alias="character_budget")
     current_project: str | None = Field(default=None, max_length=512)
+    # Best-effort local MCP root display name. The adapter never forwards a
+    # root URI or filesystem path, and Core treats this as weaker than an
+    # explicit current_project signal.
+    host_project_hint: str | None = Field(default=None, max_length=512)
 
 
 class ClientCreate(StrictModel):

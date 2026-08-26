@@ -20,6 +20,7 @@ from allthecontext.mcp_adapter import (
 )
 from allthecontext.mcp_adapter import (
     _ensure_local_core,
+    _single_root_project_hint,
     build_mcp,
 )
 from allthecontext.relay import mcp as edge_mcp
@@ -106,6 +107,9 @@ def test_server_instructions_make_context_use_automatic() -> None:
     instructions = build_mcp().instructions
     assert instructions is not None
     assert "call bootstrap_context before answering or acting" in instructions
+    assert "without asking the user to open or manage All The Context" in instructions
+    assert "automatically activates" in instructions
+    assert "abstains instead of guessing across projects" in instructions
     assert "call propose_memory before the task ends" in instructions
     assert "explicit_user_statement=true only when" in instructions
     assert "leave it false" in instructions
@@ -113,6 +117,43 @@ def test_server_instructions_make_context_use_automatic() -> None:
     assert "does not create a review task" in instructions
     assert "Call forget_context only when the user explicitly asks" in instructions
     assert "never infer that request" in instructions
+
+    bootstrap_description = (_tools(build_mcp())["bootstrap_context"].description or "").casefold()
+    assert "do not ask the user to open atc" in bootstrap_description
+    assert "sole authorized project" in bootstrap_description
+    assert "safely abstains" in bootstrap_description
+    bootstrap_schema = _tools(build_mcp())["bootstrap_context"].input_schema
+    assert "ctx" not in bootstrap_schema["properties"]
+    assert "host_project_hint" not in bootstrap_schema["properties"]
+
+
+def test_mcp_root_hint_uses_only_one_safe_display_name() -> None:
+    class Session:
+        can_send_request = True
+
+        def __init__(self, roots: list[SimpleNamespace]) -> None:
+            self._roots = roots
+
+        async def list_roots(self) -> SimpleNamespace:
+            return SimpleNamespace(roots=self._roots)
+
+    def context(roots: list[SimpleNamespace]) -> SimpleNamespace:
+        return SimpleNamespace(
+            client_capabilities=SimpleNamespace(roots=object()),
+            session=Session(roots),
+        )
+
+    safe = context([SimpleNamespace(name="Atlas", uri="file:///private/atlas")])
+    assert anyio.run(_single_root_project_hint, safe) == "Atlas"
+    path_name = context([SimpleNamespace(name="C:\\private\\atlas", uri="file:///private/atlas")])
+    assert anyio.run(_single_root_project_hint, path_name) is None
+    multiple = context(
+        [
+            SimpleNamespace(name="Atlas", uri="file:///private/atlas"),
+            SimpleNamespace(name="Zephyr", uri="file:///private/zephyr"),
+        ]
+    )
+    assert anyio.run(_single_root_project_hint, multiple) is None
 
 
 def test_propose_memory_schema_exposes_automatic_policy_inputs() -> None:
