@@ -2,6 +2,18 @@
 
 ## Current milestone
 
+### 2026-08-25 Milestone 5 lane B — bounded typed project graph
+
+This isolated lane adds only an in-memory, rebuildable typed graph over
+already-authorized, single-project, temporally eligible relation evidence.
+The closed relation set is belongs_to, supersedes, depends_on, blocks,
+implements, and tested_by. Invalid, ambiguous, inferred, cross-project,
+duplicate, cyclic, and over-cap evidence abstains deterministically. One- and
+two-hop expansion is bounded and carries direct provenance and dependency
+lineage. There is no graph store, persistence, source scan, MCP/UI/storage
+wiring, automatic authority, model inference, provider claim, or release
+claim.
+
 As of 2026-08-26 UTC, this branch builds Milestone 4 ambient project activation
 on the merged Import Truth, Memory Truth, Retrieval, Continuous Context, and
 deterministic Project Context Capsule foundations. Ordinary healthy use keeps
@@ -13,7 +25,7 @@ Every ambiguous or unauthorized case abstains instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`3be9ece851e62338d13a694778feb5cb2836d2c6`. Development evidence on this
+`fd1f802a67b3eb689ecdd4d85cd4440e1a57b7d2`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.

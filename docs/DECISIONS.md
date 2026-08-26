@@ -1,5 +1,25 @@
 # Architecture decisions
 
+## ADR-152: Milestone 5 lane B uses an ephemeral typed project graph
+
+**Status:** accepted locally on 2026-08-25 for the bounded lane-B component.
+This is not graph-store, learned-retrieval, provider, client, private-data,
+package, release, or production acceptance.
+
+The graph builder consumes relation-shaped evidence only after the caller has
+resolved authorization, one-project assignment, and temporal/lifecycle
+eligibility. Its six closed families are belongs_to, supersedes, depends_on,
+blocks, implements, and tested_by. Unknown or inferred relations—including
+causal and failure edges—are unsupported. Invalid, ambiguous, cross-project,
+duplicate, cyclic, self, and over-cap inputs are omitted with content-free
+abstention receipts. Rebuilds sort all accepted material and hash a stable
+revision; one- and two-hop expansion uses bounded deterministic traversal and
+preserves direct provenance and dependency lineage.
+
+The component is in-memory and read-only. It does not parse prose, create
+canonical records, persist a graph, scan a workspace, capture a source, call a
+model, or wire into runtime, retrieval, MCP, dashboard, or storage paths.
+
 ## ADR-151: Project activation is ambient, principal-filtered, and abstaining
 
 **Status:** accepted locally on 2026-08-26 for the Milestone 4 ambient project

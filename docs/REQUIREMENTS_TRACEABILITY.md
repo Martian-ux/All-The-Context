@@ -7,6 +7,12 @@ release publication, exact artifact/client/provider acceptance, or live/private
 data inspection. Earlier evidence is retained only as historical context and
 does not become evidence for this checkout.
 
+### 2026-08-25 Milestone 5 lane B
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| ZF-013 — bounded typed project graph | project_graph.py; tests/unit/test_project_graph.py | Implemented locally as an ephemeral single-project projection over caller-authorized temporal relation evidence. Six explicit/structural families, deterministic revision/receipts, cycle rejection, fan-out/node/edge/input caps, and bounded one-/two-hop expansion preserve direct provenance/dependency lineage. No persistence, prose parsing, model inference, runtime/API/UI wiring, provider/client, private-data, package, release, or hosted acceptance claim |
+
 ### 2026-08-25 integrated Milestones 1–3 (current checkout)
 
 | Requirement | Implementation/evidence | Status |
