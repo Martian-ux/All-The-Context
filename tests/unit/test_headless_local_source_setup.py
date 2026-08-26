@@ -1,6 +1,4 @@
 import json
-import shutil
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,17 +37,6 @@ class FakeSetupResult:
     acknowledge_local_workspace: bool = False
 
 
-@pytest.fixture
-def setup_root() -> Iterator[Path]:
-    root = Path(__file__).resolve().parent / ".headless-local-source-setup"
-    shutil.rmtree(root, ignore_errors=True)
-    root.mkdir()
-    try:
-        yield root
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
 def _stub_setup(
     monkeypatch: pytest.MonkeyPatch,
     runtime: RuntimeCommand,
@@ -73,12 +60,12 @@ def _stub_setup(
 
 
 def test_headless_setup_forwards_packaged_workspace_options_exactly(
-    setup_root: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = RuntimeCommand(setup_root / "AllTheContextSetup.exe")
-    workspace_root = setup_root / "private-workspace"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    workspace_root = tmp_path / "private-workspace"
     captured = _stub_setup(monkeypatch, runtime, FakeSetupResult())
-    report_path = setup_root / "setup-report.json"
+    report_path = tmp_path / "setup-report.json"
 
     assert (
         desktop.main(
@@ -104,11 +91,11 @@ def test_headless_setup_forwards_packaged_workspace_options_exactly(
 
 
 def test_headless_setup_without_workspace_root_preserves_existing_defaults(
-    setup_root: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = RuntimeCommand(setup_root / "AllTheContextSetup.exe")
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
     captured = _stub_setup(monkeypatch, runtime, FakeSetupResult())
-    report_path = setup_root / "setup-report.json"
+    report_path = tmp_path / "setup-report.json"
 
     assert desktop.main(["--headless-setup", str(report_path)]) == 0
 
@@ -118,17 +105,17 @@ def test_headless_setup_without_workspace_root_preserves_existing_defaults(
 
 
 def test_headless_setup_success_report_keeps_opaque_result_fields_only(
-    setup_root: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = RuntimeCommand(setup_root / "AllTheContextSetup.exe")
-    workspace_root = setup_root / "private-workspace"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    workspace_root = tmp_path / "private-workspace"
     result = FakeSetupResult(
         workspace_root=workspace_root,
         workspace_local_only_acknowledged=True,
         acknowledge_local_workspace=True,
     )
     _stub_setup(monkeypatch, runtime, result)
-    report_path = setup_root / "setup-report.json"
+    report_path = tmp_path / "setup-report.json"
 
     assert (
         desktop.main(
@@ -153,13 +140,13 @@ def test_headless_setup_success_report_keeps_opaque_result_fields_only(
 
 
 def test_headless_setup_failure_redacts_workspace_root_and_exception_text(
-    setup_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    runtime = RuntimeCommand(setup_root / "AllTheContextSetup.exe")
-    workspace_root = setup_root / "private-workspace"
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    workspace_root = tmp_path / "private-workspace"
     raw_exception = "raw imported text and secret=never-log-this"
-    report_path = setup_root / "setup-report.json"
-    diagnostics_path = setup_root / "desktop-error.json"
+    report_path = tmp_path / "setup-report.json"
+    diagnostics_path = tmp_path / "desktop-error.json"
 
     monkeypatch.setattr(desktop.RuntimeCommand, "current", lambda: runtime)
     monkeypatch.setattr(
