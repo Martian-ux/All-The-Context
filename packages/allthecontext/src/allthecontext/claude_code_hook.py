@@ -322,6 +322,8 @@ def _explicit_payload(pending: _PendingExplicitCommand) -> dict[str, Any] | None
             "idempotency_key": pending.command_id,
         }
     if pending.action == "atc-forget":
+        if text.strip():
+            return None
         return {
             "record_id": record_id,
             "idempotency_key": pending.command_id,
