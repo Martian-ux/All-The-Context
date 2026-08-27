@@ -31,6 +31,7 @@ from allthecontext.desktop_setup import (
     CLAUDE_CODE_EXPLICIT_SCOPES,
     CLAUDE_CODE_SCOPES,
     CODEX_CLIENT_NAME,
+    CODEX_READ_SCOPES,
     DESKTOP_CLIENT_NAME,
     DESKTOP_SCOPES,
     MAX_CORE_PROBE_RESPONSE_BYTES,
@@ -828,7 +829,7 @@ def test_existing_legacy_admin_config_is_repaired_and_rotated(tmp_path: Path, mo
     assert managed["env"]["ATC_CORE_DATA_DIR"] == str(config.data_dir)
     mcp_principal = store.authenticate(managed["env"]["ATC_CLIENT_TOKEN"])
     assert mcp_principal is not None
-    assert mcp_principal.scopes == frozenset(AI_CLIENT_SCOPES)
+    assert mcp_principal.scopes == frozenset(CODEX_READ_SCOPES)
     assert replacement.client_id != desktop_access.client_id
     assert store.authenticate(desktop_access.token) is None
     assert store.authenticate(replacement.token) is not None

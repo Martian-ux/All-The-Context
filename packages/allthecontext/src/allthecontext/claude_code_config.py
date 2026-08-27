@@ -35,6 +35,12 @@ from .desktop_runtime import RuntimeCommand
 CLAUDE_CODE_MCP_SERVER_KEY = "all-the-context-claude-code"
 CLAUDE_CODE_HOOK_TOOL = "claude_code_user_prompt_submit"
 CLAUDE_CODE_MCP_PROFILE = "claude_code_hook"
+CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY = "all-the-context-claude-code-capture"
+# Stable setup seam for the lifecycle-adapter lane.  The capture principal
+# uses the same hook profile but is kept separate from the read principal.
+CLAUDE_CODE_CAPTURE_USER_PROMPT_HOOK_TOOL = "claude_code_user_prompt_submit"
+CLAUDE_CODE_CAPTURE_STOP_HOOK_TOOL = "claude_code_stop"
+CLAUDE_CODE_CAPTURE_MCP_PROFILE = "claude_code_hook"
 CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY = "all-the-context-claude-code-explicit"
 CLAUDE_CODE_EXPLICIT_HOOK_TOOL = "claude_code_user_prompt_expansion"
 CLAUDE_CODE_EXPLICIT_MCP_PROFILE = "claude_code_explicit"
@@ -69,6 +75,29 @@ _MANAGED_EXPLICIT_HOOK_HANDLER: dict[str, Any] = {
         "command_name": "${command_name}",
         "command_args": "${command_args}",
         "command_source": "${command_source}",
+    },
+}
+
+_MANAGED_CAPTURE_USER_HOOK_HANDLER: dict[str, Any] = {
+    "type": "mcp_tool",
+    "server": CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY,
+    "tool": CLAUDE_CODE_CAPTURE_USER_PROMPT_HOOK_TOOL,
+    "input": {
+        "prompt": "${prompt}",
+        "session_id": "${session_id}",
+        "cwd": "${cwd}",
+    },
+}
+
+_MANAGED_CAPTURE_STOP_HOOK_HANDLER: dict[str, Any] = {
+    "type": "mcp_tool",
+    "server": CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY,
+    "tool": CLAUDE_CODE_CAPTURE_STOP_HOOK_TOOL,
+    "input": {
+        "last_assistant_message": "${last_assistant_message}",
+        "session_id": "${session_id}",
+        "cwd": "${cwd}",
+        "stop_hook_active": "${stop_hook_active}",
     },
 }
 
@@ -128,6 +157,7 @@ class ClaudeCodeConfigResult:
     skill_backup_paths: tuple[Path, ...] = ()
     skill_paths: tuple[Path, ...] = ()
     managed_client_id: str | None = None
+    managed_client_ids: tuple[str, ...] = ()
 
     @property
     def backup_paths(self) -> tuple[Path, ...]:
@@ -574,6 +604,8 @@ def _updated_connect_documents(
     hook_handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
     hook_event_name: str = "UserPromptSubmit",
     hook_matcher: str | None = None,
+    additional_servers: tuple[tuple[str, dict[str, Any], str], ...] = (),
+    additional_hooks: tuple[tuple[str, dict[str, Any], str | None], ...] = (),
 ) -> tuple[str, str]:
     mcp_updated = deepcopy(mcp.parsed)
     servers = mcp_updated.get("mcpServers")
@@ -585,6 +617,12 @@ def _updated_connect_documents(
     if server_key in servers and not _is_managed_server(servers[server_key], profile=profile):
         raise ValueError("the Claude Code server key belongs to an unrelated server")
     servers[server_key] = server
+    for extra_key, extra_server, extra_profile in additional_servers:
+        if extra_key in servers and not _is_managed_server(
+            servers[extra_key], profile=extra_profile
+        ):
+            raise ValueError("the Claude Code server key belongs to an unrelated server")
+        servers[extra_key] = extra_server
 
     settings_updated = deepcopy(settings.parsed)
     hooks = settings_updated.get("hooks")
@@ -593,16 +631,20 @@ def _updated_connect_documents(
         settings_updated["hooks"] = hooks
     if not isinstance(hooks, dict):
         raise ValueError("hooks must contain a JSON object")
-    event_groups = hooks.get(hook_event_name)
-    if hook_event_name not in hooks:
-        event_groups = []
-        hooks[hook_event_name] = event_groups
-    hooks[hook_event_name] = _configured_hook_groups(
-        event_groups,
-        handler=hook_handler,
-        event_name=hook_event_name,
-        matcher=hook_matcher,
-    )
+    for event_name, handler, matcher in (
+        (hook_event_name, hook_handler, hook_matcher),
+        *additional_hooks,
+    ):
+        event_groups = hooks.get(event_name)
+        if event_name not in hooks:
+            event_groups = []
+            hooks[event_name] = event_groups
+        hooks[event_name] = _configured_hook_groups(
+            event_groups,
+            handler=handler,
+            event_name=event_name,
+            matcher=matcher,
+        )
     return (
         _render(mcp_updated) if mcp_updated != mcp.parsed else mcp.original,
         _render(settings_updated) if settings_updated != settings.parsed else settings.original,
@@ -618,10 +660,12 @@ def _updated_disconnect_documents(
     hook_handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
     hook_event_name: str = "UserPromptSubmit",
     hook_matcher: str | None = None,
-) -> tuple[str, str, str | None]:
+    additional_servers: tuple[tuple[str, str], ...] = (),
+    additional_hooks: tuple[tuple[str, dict[str, Any], str | None], ...] = (),
+) -> tuple[str, str, tuple[str, ...]]:
     mcp_updated = deepcopy(mcp.parsed)
     servers = mcp_updated.get("mcpServers")
-    managed_client_id: str | None = None
+    managed_client_ids: list[str] = []
     if "mcpServers" in mcp_updated and not isinstance(servers, dict):
         raise ValueError("mcpServers must contain a JSON object")
     mcp_removed = False
@@ -630,39 +674,55 @@ def _updated_disconnect_documents(
         if isinstance(current, dict) and _is_managed_server(current, profile=profile):
             env = current.get("env")
             if isinstance(env, dict) and isinstance(env.get("ATC_CLIENT_ID"), str):
-                managed_client_id = env["ATC_CLIENT_ID"]
+                managed_client_ids.append(env["ATC_CLIENT_ID"])
             del servers[server_key]
             mcp_removed = True
+        for extra_key, extra_profile in additional_servers:
+            current = servers.get(extra_key)
+            if isinstance(current, dict) and _is_managed_server(current, profile=extra_profile):
+                env = current.get("env")
+                if isinstance(env, dict) and isinstance(env.get("ATC_CLIENT_ID"), str):
+                    managed_client_ids.append(env["ATC_CLIENT_ID"])
+                del servers[extra_key]
+                mcp_removed = True
+        if not servers:
+            mcp_updated.pop("mcpServers", None)
 
     settings_updated = deepcopy(settings.parsed)
     hooks = settings_updated.get("hooks")
     if "hooks" in settings_updated and not isinstance(hooks, dict):
         raise ValueError("hooks must contain a JSON object")
     settings_removed = False
-    if isinstance(hooks, dict) and hook_event_name in hooks:
-        groups = _validate_hook_groups(hooks[hook_event_name], event_name=hook_event_name)
-        cleaned, removed, _moved = _remove_managed_handlers(groups, handler=hook_handler)
-        if hook_matcher is not None:
-            cleaned = [
-                group
-                for group in cleaned
-                if not (
-                    group.get("matcher") == hook_matcher
-                    and group.get("hooks") == []
-                    and set(group) == {"matcher", "hooks"}
-                )
-            ]
-        if cleaned:
-            hooks[hook_event_name] = cleaned
-        else:
-            del hooks[hook_event_name]
+    if isinstance(hooks, dict):
+        for event_name, handler, matcher in (
+            (hook_event_name, hook_handler, hook_matcher),
+            *additional_hooks,
+        ):
+            if event_name not in hooks:
+                continue
+            groups = _validate_hook_groups(hooks[event_name], event_name=event_name)
+            cleaned, removed, _moved = _remove_managed_handlers(groups, handler=handler)
+            if matcher is not None:
+                cleaned = [
+                    group
+                    for group in cleaned
+                    if not (
+                        group.get("matcher") == matcher
+                        and group.get("hooks") == []
+                        and set(group) == {"matcher", "hooks"}
+                    )
+                ]
+            if cleaned:
+                hooks[event_name] = cleaned
+            else:
+                del hooks[event_name]
+            settings_removed = settings_removed or removed > 0 or groups != cleaned
         if not hooks:
             settings_updated.pop("hooks", None)
-        settings_removed = removed > 0 or groups != cleaned
     return (
         _render(mcp_updated) if mcp_removed else mcp.original,
         _render(settings_updated) if settings_removed else settings.original,
-        managed_client_id,
+        tuple(managed_client_ids),
     )
 
 
@@ -786,6 +846,7 @@ def _result(
     client: str = "Claude Code",
     skill_paths: tuple[Path, ...] = (),
     managed_client_id: str | None = None,
+    managed_client_ids: tuple[str, ...] = (),
 ) -> ClaudeCodeConfigResult:
     mcp_plan = next(plan for plan in plans if plan.document.path == paths.mcp)
     settings_plan = next(plan for plan in plans if plan.document.path == paths.settings)
@@ -817,6 +878,7 @@ def _result(
         skill_backup_paths=tuple(skill_backups),
         skill_paths=skill_paths,
         managed_client_id=managed_client_id,
+        managed_client_ids=managed_client_ids,
     )
 
 
@@ -830,8 +892,11 @@ def connect_claude_code(
     settings_path: Path | None = None,
     core_data_dir: Path | None = None,
     credential_storage: str | None = None,
+    capture_client_id: str | None = None,
+    capture_token: str | None = None,
+    capture_credential_storage: str | None = None,
 ) -> ClaudeCodeConfigResult:
-    """Install or refresh the exact user-scope Claude Code integration."""
+    """Install the read hook and, when selected, the separate capture hooks."""
 
     paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
     mcp = _read_document(paths.mcp)
@@ -844,10 +909,46 @@ def connect_claude_code(
         core_data_dir=core_data_dir,
         credential_storage=credential_storage,
     )
-    mcp_updated, settings_updated = _updated_connect_documents(mcp, settings, server)
+    additional_servers: tuple[tuple[str, dict[str, Any], str], ...] = ()
+    additional_hooks: tuple[tuple[str, dict[str, Any], str | None], ...] = ()
+    client_ids = [client_id]
+    if capture_client_id is not None:
+        capture_server = _mcp_server(
+            runtime,
+            capture_client_id,
+            profile=CLAUDE_CODE_CAPTURE_MCP_PROFILE,
+            token=capture_token,
+            target_url=target_url,
+            core_data_dir=core_data_dir,
+            credential_storage=capture_credential_storage,
+        )
+        additional_servers = (
+            (
+                CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY,
+                capture_server,
+                CLAUDE_CODE_CAPTURE_MCP_PROFILE,
+            ),
+        )
+        additional_hooks = (
+            ("UserPromptSubmit", _MANAGED_CAPTURE_USER_HOOK_HANDLER, None),
+            ("Stop", _MANAGED_CAPTURE_STOP_HOOK_HANDLER, None),
+        )
+        client_ids.append(capture_client_id)
+    mcp_updated, settings_updated = _updated_connect_documents(
+        mcp,
+        settings,
+        server,
+        additional_servers=additional_servers,
+        additional_hooks=additional_hooks,
+    )
     plans = (_WritePlan(mcp, mcp_updated), _WritePlan(settings, settings_updated))
     backups = _apply_transaction(plans)
-    return _result(paths, plans, backups)
+    return _result(
+        paths,
+        plans,
+        backups,
+        managed_client_ids=tuple(client_ids),
+    )
 
 
 def configure_claude_code(
@@ -860,6 +961,9 @@ def configure_claude_code(
     settings_path: Path | None = None,
     core_data_dir: Path | None = None,
     credential_storage: str | None = None,
+    capture_client_id: str | None = None,
+    capture_token: str | None = None,
+    capture_credential_storage: str | None = None,
 ) -> ClaudeCodeConfigResult:
     """Compatibility spelling for setup code that uses configure_* adapters."""
 
@@ -872,6 +976,9 @@ def configure_claude_code(
         settings_path=settings_path,
         core_data_dir=core_data_dir,
         credential_storage=credential_storage,
+        capture_client_id=capture_client_id,
+        capture_token=capture_token,
+        capture_credential_storage=capture_credential_storage,
     )
 
 
@@ -883,10 +990,51 @@ def disconnect_claude_code(
     paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
     mcp = _read_document(paths.mcp)
     settings = _read_document(paths.settings)
-    mcp_updated, settings_updated, managed_client_id = _updated_disconnect_documents(mcp, settings)
+    mcp_updated, settings_updated, managed_client_ids = _updated_disconnect_documents(
+        mcp,
+        settings,
+        additional_servers=(
+            (CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY, CLAUDE_CODE_CAPTURE_MCP_PROFILE),
+        ),
+        additional_hooks=(
+            ("UserPromptSubmit", _MANAGED_CAPTURE_USER_HOOK_HANDLER, None),
+            ("Stop", _MANAGED_CAPTURE_STOP_HOOK_HANDLER, None),
+        ),
+    )
     plans = (_WritePlan(mcp, mcp_updated), _WritePlan(settings, settings_updated))
     backups = _apply_transaction(plans)
-    return _result(paths, plans, backups, managed_client_id=managed_client_id)
+    return _result(
+        paths,
+        plans,
+        backups,
+        managed_client_id=managed_client_ids[0] if managed_client_ids else None,
+        managed_client_ids=managed_client_ids,
+    )
+
+
+def connect_claude_code_continuous_capture(
+    runtime: RuntimeCommand,
+    read_client_id: str,
+    capture_client_id: str,
+    **kwargs: Any,
+) -> ClaudeCodeConfigResult:
+    """Install the read path plus the explicitly opted-in capture path."""
+
+    return connect_claude_code(
+        runtime,
+        read_client_id,
+        capture_client_id=capture_client_id,
+        **kwargs,
+    )
+
+
+def disconnect_claude_code_continuous_capture(
+    mcp_path: Path | None = None,
+    settings_path: Path | None = None,
+) -> ClaudeCodeConfigResult:
+    """Compatibility spelling for removing read and capture configuration."""
+
+    return disconnect_claude_code(mcp_path=mcp_path, settings_path=settings_path)
 
 
 def connect_claude_code_explicit_commands(
@@ -962,7 +1110,7 @@ def disconnect_claude_code_explicit_commands(
     mcp = _read_document(paths.mcp)
     settings = _read_document(paths.settings)
     skill_plans, skill_paths = _explicit_skill_plans(skills_dir, remove=True)
-    mcp_updated, settings_updated, managed_client_id = _updated_disconnect_documents(
+    mcp_updated, settings_updated, managed_client_ids = _updated_disconnect_documents(
         mcp,
         settings,
         server_key=CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY,
@@ -983,7 +1131,8 @@ def disconnect_claude_code_explicit_commands(
         backups,
         client="Claude Code explicit commands",
         skill_paths=skill_paths,
-        managed_client_id=managed_client_id,
+        managed_client_id=managed_client_ids[0] if managed_client_ids else None,
+        managed_client_ids=managed_client_ids,
     )
 
 
@@ -1004,7 +1153,41 @@ def disconnect_claude_code_config(
     return disconnect_claude_code(mcp_path=mcp_path, settings_path=settings_path)
 
 
+def read_claude_code_registration_ids(path: Path | None = None) -> dict[str, str]:
+    """Read managed Claude Code client IDs without exposing credentials."""
+
+    document = _read_document(claude_code_mcp_config_path(path))
+    servers = document.parsed.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise ValueError("mcpServers must contain a JSON object")
+    registrations = {
+        CLAUDE_CODE_MCP_SERVER_KEY: ("read", CLAUDE_CODE_MCP_PROFILE),
+        CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY: (
+            "capture",
+            CLAUDE_CODE_CAPTURE_MCP_PROFILE,
+        ),
+        CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY: (
+            "explicit",
+            CLAUDE_CODE_EXPLICIT_MCP_PROFILE,
+        ),
+    }
+    result: dict[str, str] = {}
+    for server_key, (purpose, profile) in registrations.items():
+        server = servers.get(server_key)
+        if not _is_managed_server(server, profile=profile):
+            continue
+        environment = server.get("env") if isinstance(server, dict) else None
+        client_id = environment.get("ATC_CLIENT_ID") if isinstance(environment, dict) else None
+        if isinstance(client_id, str) and client_id:
+            result[purpose] = client_id
+    return result
+
+
 __all__ = [
+    "CLAUDE_CODE_CAPTURE_MCP_PROFILE",
+    "CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY",
+    "CLAUDE_CODE_CAPTURE_STOP_HOOK_TOOL",
+    "CLAUDE_CODE_CAPTURE_USER_PROMPT_HOOK_TOOL",
     "CLAUDE_CODE_EXECUTABLE_ENV",
     "CLAUDE_CODE_EXPLICIT_COMMANDS",
     "CLAUDE_CODE_EXPLICIT_HOOK_TOOL",
@@ -1027,11 +1210,14 @@ __all__ = [
     "configure_claude_code",
     "configure_claude_code_explicit_commands",
     "connect_claude_code",
+    "connect_claude_code_continuous_capture",
     "connect_claude_code_explicit_commands",
     "disconnect_claude_code",
     "disconnect_claude_code_config",
+    "disconnect_claude_code_continuous_capture",
     "disconnect_claude_code_explicit_commands",
     "disconnect_claude_code_explicit_config",
     "managed_claude_code_explicit_hook_handler",
     "managed_claude_code_hook_handler",
+    "read_claude_code_registration_ids",
 ]
