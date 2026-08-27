@@ -559,6 +559,44 @@ def retire_other_named_clients(
             delete_client_credential(client_id, config)
 
 
+def retire_managed_client_group(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    accesses: dict[str, DesktopAccess],
+    managed_names: tuple[str, ...],
+) -> None:
+    """Retain the configured principals and revoke omitted managed authority.
+
+    This runs only after the client configuration transaction succeeds.  A
+    later setup with capture or explicit controls disabled must therefore
+    remove both the hook surface and the no-longer-selected Core principal.
+    """
+
+    retired_ids: list[str] = []
+    for name in managed_names:
+        selected = accesses.get(name)
+        for client in store.list_clients():
+            client_id = str(client["id"])
+            if (
+                client["name"] == name
+                and not client["revoked"]
+                and (selected is None or client_id != selected.client_id)
+            ):
+                store.revoke_client(client_id)
+                retired_ids.append(client_id)
+    cleanup_error: BaseException | None = None
+    for client_id in retired_ids:
+        try:
+            delete_client_credential(client_id, config)
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+    if cleanup_error is not None:
+        raise RuntimeError(
+            "Managed client authority was revoked but credential cleanup was incomplete"
+        ) from cleanup_error
+
+
 def ensure_client_access(
     store: CoreStore,
     config: CoreConfig,
@@ -777,14 +815,16 @@ def migrate_existing_integrations(
             # config file cannot currently be repaired.
             used_desktop_credential = used_desktop_credential or legacy
         else:
-            for name in (
-                CODEX_CLIENT_NAME,
-                CODEX_CAPTURE_CLIENT_NAME,
-                CODEX_EXPLICIT_CLIENT_NAME,
-            ):
-                access = accesses.get(name)
-                if access is not None:
-                    retire_other_named_clients(store, config, name=name, keep_id=access.client_id)
+            retire_managed_client_group(
+                store,
+                config,
+                accesses=accesses,
+                managed_names=(
+                    CODEX_CLIENT_NAME,
+                    CODEX_CAPTURE_CLIENT_NAME,
+                    CODEX_EXPLICIT_CLIENT_NAME,
+                ),
+            )
             used_desktop_credential = used_desktop_credential or legacy
 
     try:
@@ -803,10 +843,12 @@ def migrate_existing_integrations(
         except (OSError, ValueError):
             pass
         else:
-            for name in (CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME):
-                access = claude_code_accesses.get(name)
-                if access is not None:
-                    retire_other_named_clients(store, config, name=name, keep_id=access.client_id)
+            retire_managed_client_group(
+                store,
+                config,
+                accesses=claude_code_accesses,
+                managed_names=(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME),
+            )
 
     integrations = ((CLAUDE_CLIENT_NAME, claude_config_path, read_claude_config, configure_claude),)
     for name, config_path, read_config, configure in integrations:
@@ -1093,13 +1135,16 @@ def perform_setup(
                 explicit=options.configure_codex_explicit_commands,
                 target_url=f"http://{active_config.host}:{active_config.port}",
             )
-            for name, codex_access in codex_accesses.items():
-                retire_other_named_clients(
-                    store,
-                    active_config,
-                    name=name,
-                    keep_id=codex_access.client_id,
-                )
+            retire_managed_client_group(
+                store,
+                active_config,
+                accesses=codex_accesses,
+                managed_names=(
+                    CODEX_CLIENT_NAME,
+                    CODEX_CAPTURE_CLIENT_NAME,
+                    CODEX_EXPLICIT_CLIENT_NAME,
+                ),
+            )
             if options.configure_codex_continuous_capture:
                 continuous_capture_clients.append(CODEX_CLIENT_NAME)
         except (OSError, RuntimeError, ValueError, tomllib.TOMLDecodeError) as exc:
@@ -1154,13 +1199,12 @@ def perform_setup(
                 capture=options.configure_claude_code_continuous_capture,
                 target_url=f"http://{active_config.host}:{active_config.port}",
             )
-            for name, claude_code_access in claude_code_accesses.items():
-                retire_other_named_clients(
-                    store,
-                    active_config,
-                    name=name,
-                    keep_id=claude_code_access.client_id,
-                )
+            retire_managed_client_group(
+                store,
+                active_config,
+                accesses=claude_code_accesses,
+                managed_names=(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME),
+            )
             if options.configure_claude_code_continuous_capture:
                 continuous_capture_clients.append(CLAUDE_CODE_CLIENT_NAME)
         except (OSError, RuntimeError, ValueError) as exc:

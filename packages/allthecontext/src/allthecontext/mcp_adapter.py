@@ -187,7 +187,7 @@ async def _single_root_project_hint(ctx: Context) -> str | None:
         return None
 
 
-def build_mcp() -> MCPServer:
+def build_mcp(*, enabled_tools: frozenset[str] | None = None) -> MCPServer:
     """Build the transport-independent tool registry."""
 
     instructions = (
@@ -406,6 +406,12 @@ def build_mcp() -> MCPServer:
             )
         )
 
+    if enabled_tools is not None:
+        available = {tool.name for tool in registered_tools}
+        unknown = enabled_tools - available
+        if unknown:
+            raise RuntimeError("MCP profile requested an unknown tool")
+        registered_tools = [tool for tool in registered_tools if tool.name in enabled_tools]
     return MCPServer("All The Context", instructions=instructions, tools=registered_tools)
 
 
@@ -441,6 +447,18 @@ def _server_for_profile() -> MCPServer:
     profile = os.environ.get("ATC_MCP_PROFILE", "")
     if not profile:
         return build_mcp()
+    if profile == "codex_read":
+        return build_mcp(
+            enabled_tools=frozenset(
+                {"bootstrap_context", "search_context", "get_context_item", "context_status"}
+            )
+        )
+    if profile == "codex_explicit":
+        return build_mcp(
+            enabled_tools=frozenset(
+                {"propose_memory", "report_context_error", "forget_context"}
+            )
+        )
     if profile == "claude_code_hook":
         from allthecontext.claude_code_hook import build_claude_code_hook_mcp
 

@@ -6,6 +6,7 @@ import json
 import tomllib
 from pathlib import Path
 
+import anyio
 import pytest
 from allthecontext import client_config, desktop_setup
 from allthecontext.claude_code_config import (
@@ -32,6 +33,8 @@ from allthecontext.client_config import (
 )
 from allthecontext.config import CoreConfig
 from allthecontext.desktop_runtime import RuntimeCommand
+from allthecontext.mcp_adapter import _server_for_profile
+from allthecontext.models import ClientCreate
 from allthecontext.storage import CoreStore
 
 
@@ -54,6 +57,27 @@ def _hook_handlers(parsed: dict[str, object], event_name: str) -> list[dict[str,
         assert isinstance(values, list)
         handlers.extend(value for value in values if isinstance(value, dict))
     return handlers
+
+
+def _runtime_tool_names() -> set[str]:
+    return {tool.name for tool in anyio.run(_server_for_profile().list_tools)}
+
+
+def test_generated_codex_profiles_exist_with_closed_runtime_tools(monkeypatch) -> None:
+    monkeypatch.setenv("ATC_MCP_PROFILE", CODEX_READ_PROFILE)
+    assert _runtime_tool_names() == {
+        "bootstrap_context",
+        "search_context",
+        "get_context_item",
+        "context_status",
+    }
+
+    monkeypatch.setenv("ATC_MCP_PROFILE", CODEX_EXPLICIT_PROFILE)
+    assert _runtime_tool_names() == {
+        "propose_memory",
+        "report_context_error",
+        "forget_context",
+    }
 
 
 def test_codex_default_is_read_only_and_preserves_unrelated_toml(tmp_path: Path) -> None:
@@ -342,3 +366,55 @@ def test_setup_principals_have_exact_read_and_capture_scopes(tmp_path: Path, mon
     }
     assert clients[desktop_setup.CLAUDE_CODE_CLIENT_NAME]["scopes"] == ["context:read"]
     assert clients[desktop_setup.CLAUDE_CODE_CAPTURE_CLIENT_NAME]["scopes"] == ["context:capture"]
+
+
+def test_successful_opt_out_retires_omitted_managed_authority(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    read, _read_token = store.create_client(
+        ClientCreate(name=desktop_setup.CODEX_CLIENT_NAME, scopes=["context:read"])
+    )
+    capture, _capture_token = store.create_client(
+        ClientCreate(
+            name=desktop_setup.CODEX_CAPTURE_CLIENT_NAME,
+            scopes=["context:capture"],
+        )
+    )
+    explicit, _explicit_token = store.create_client(
+        ClientCreate(
+            name=desktop_setup.CODEX_EXPLICIT_CLIENT_NAME,
+            scopes=["context:propose", "witness:explicit_user_statement"],
+        )
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        desktop_setup,
+        "delete_client_credential",
+        lambda client_id, _config: deleted.append(client_id),
+    )
+
+    desktop_setup.retire_managed_client_group(
+        store,
+        config,
+        accesses={
+            desktop_setup.CODEX_CLIENT_NAME: desktop_setup.DesktopAccess(
+                read.id,
+                "unused",
+                "operating-system credential store",
+            )
+        },
+        managed_names=(
+            desktop_setup.CODEX_CLIENT_NAME,
+            desktop_setup.CODEX_CAPTURE_CLIENT_NAME,
+            desktop_setup.CODEX_EXPLICIT_CLIENT_NAME,
+        ),
+    )
+
+    clients = {str(item["id"]): item for item in store.list_clients()}
+    assert clients[read.id]["revoked"] is False
+    assert clients[capture.id]["revoked"] is True
+    assert clients[explicit.id]["revoked"] is True
+    assert set(deleted) == {capture.id, explicit.id}

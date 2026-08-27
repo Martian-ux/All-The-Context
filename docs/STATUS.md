@@ -2,12 +2,16 @@
 
 ## Current milestone
 
-As of 2026-08-26 UTC, this branch adds an opt-in Claude Code explicit-memory
-boundary on the merged read-only pre-generation integration while retaining
-the bounded typed project graph, independent safety oracle, worker-backed
-Continuous Context, lifecycle-context, and direct-user formation continuity
-work on the Import Truth, Memory Truth, Retrieval, Continuous Context, and
-deterministic Project Context Capsule foundations.
+As of 2026-08-27 UTC, this branch adds false-by-default Continuous Capture for
+Claude Code and Codex on top of the merged read-only and explicit-memory
+boundaries. After one setup opt-in, ordinary user prompts and rendered
+assistant responses are observed locally without per-turn commands. Core alone
+may form a narrow high-confidence user claim into current memory; explicit
+remember/correct/forget remains a separate higher-authority path. The branch
+retains the bounded typed project graph, independent safety oracle,
+worker-backed Continuous Context, lifecycle-context, and direct-user formation
+continuity work on the Import Truth, Memory Truth, Retrieval, Continuous
+Context, and deterministic Project Context Capsule foundations.
 Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
@@ -15,10 +19,9 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains the merged Import Truth, Memory Truth,
-Retrieval, Continuous Context, and Project Context Capsule foundations plus the
-merged read-only Claude Code pre-generation integration at exact SHA
-`a2607aa2e6031dc806a7704e38eda05c887c7bb5`. Development evidence on this
+At this boundary, protected main contains those foundations plus the merged
+Claude Code read and explicit-memory integration at exact SHA
+`688aa595707f15bf8740357e57e20addd46f57ae`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or
 private-data acceptance.
@@ -30,6 +33,46 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-27 — opt-in Claude Code and Codex Continuous Capture
+
+Setup now keeps read, lifecycle capture, and explicit mutation authority in
+separate registered principals. Continuous Capture is disabled by default for
+both clients. Selecting it installs exact `UserPromptSubmit` and `Stop` hooks;
+ordinary turns then require no ATC command or repeated approval. Repeating,
+repairing, or opting out through setup preserves unrelated user settings and
+retires omitted managed authority after a successful configuration
+transaction.
+
+The capture-only hook sends a strict bounded flat request to authenticated
+loopback Core at `POST /v1/lifecycle/events`. The request cannot declare its
+provider identity, provenance, witness, sensitivity, ACL, availability, or
+memory authority. Core derives those fields from the registered
+`context:capture` principal, stages the raw turn as local evidence, and never
+uses Relay as an authority or fallback. Assistant, tool, and imported content
+remain observation-only and cannot establish user facts.
+
+For direct user turns, the first production formation slice recognizes only a
+narrow deterministic set of first-person claims: interaction preference,
+name, location, health, current project, goal, and workflow. Repeated evidence
+deduplicates; a changed value for the same slot supersedes the prior current
+value through the existing reconciliation path. This is deliberately not a
+general semantic extractor. Normal personal context follows ordinary
+retrieval; sensitive and highly-sensitive personal context stays local and is
+available only through authenticated, non-denied `context:read` principals.
+The raw sensitive turn remains restricted to the capture principal.
+Operational credential values are refused before the capture ledger and
+excluded from ordinary memory,
+retrieval, replication, export, logs, audit text, and model context. The
+optional secret-reference abstraction accepts raw values only through an OS
+credential store and fails closed on plaintext development fallback; automatic
+credential capture into that vault is not claimed.
+
+Focused synthetic tests cover exact setup contracts, authorization, retries,
+correlation, formation/reconciliation, ACLs, secret refusal/export exclusion,
+transactional preservation, and adapter-to-Core retrieval. Full repository
+pytest, hosted CI, exact packaged artifacts, live/private client acceptance,
+provider support, release acceptance, and macOS support remain unclaimed.
 
 ### 2026-08-26 — Core-only Claude Code explicit-user memory contract
 
@@ -46,8 +89,8 @@ Remember and correction reuse the existing candidate/correction policy
 machinery. Forget creates the existing `context_forget` tombstone, so the
 record remains reversibly restorable through the established Core lifecycle.
 These routes have no Relay fallback. Ordinary `UserPromptSubmit` prompt text,
-model/tool/provider output, imported text, and MCP elicitation are not direct
-user evidence; the client lane may bind only its exact expansion metadata
+model/tool/provider output, imported text, and MCP elicitation are not explicit
+memory commands; the client lane may bind only its exact expansion metadata
 fields `command_name`, `command_args`, and `expansion_type` as integration data.
 This paragraph records the Core/API evidence; the separate client/config/setup
 evidence is recorded immediately below. Neither establishes live/private data
@@ -64,8 +107,9 @@ with exactly `context:propose` and `witness:explicit_user_statement`.
 The transaction preserves unrelated Claude user settings and personal skill
 files, refuses reserved-name collisions, installs the three reserved skills at
 `~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, and configures only user-scope
-`UserPromptExpansion` handling. Ordinary `UserPromptSubmit` retrieval remains
-read-only and never scans or captures ordinary prompts. The handler binds the
+`UserPromptExpansion` handling. This explicit-command handler does not scan or
+capture ordinary prompts; the separately selected Continuous Capture lifecycle
+principal governs that lower-authority observation path. The handler binds the
 official event's exact `command_name`, `command_args`, `expansion_type`, and
 `command_source` fields, keeps only bounded in-memory pending state, and calls
 Core's narrow Claude Code memory routes without Relay fallback. Missing or

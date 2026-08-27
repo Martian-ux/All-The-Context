@@ -1,5 +1,50 @@
 # Architecture decisions
 
+## ADR-163: Continuous Capture is separate, opt-in evidence with Core-owned formation
+
+**Status:** accepted locally on 2026-08-27 for the integrated Core, lifecycle
+adapter, and transactional setup boundary. This is not live/private client,
+packaged-artifact, hosted CI, release, provider, or macOS acceptance.
+
+Claude Code and Codex Continuous Capture is false by default. One explicit
+setup choice installs managed `UserPromptSubmit` and `Stop` hooks and separate
+principals for read, capture, and optional explicit mutation. The capture
+principal has exactly `context:capture`; it cannot read or propose memory. The
+read principal has exactly `context:read`. Explicit mutation principals and
+skills remain separately selected and approval-gated. A successful later
+opt-out removes the managed hooks and retires omitted managed principals;
+unrelated client configuration and skills are preserved.
+
+The client sends one bounded flat lifecycle event to authenticated loopback
+Core. Provider/source identity, witness, provenance, sensitivity, availability,
+ACL, explicitness, and disposition are absent from the wire shape and derived
+by Core from the durable registered principal. Capture has no Relay fallback.
+The raw turn is a local tentative observation. Assistant, tool, and imported
+roles never form user truth. A direct user turn may additionally produce a
+Core-owned `live_user_evidence` candidate only through the narrow deterministic
+first-person claim extractor; this is evidence, not an explicit remember or
+correction command. Existing slot reconciliation performs reinforcement and
+replacement before authorized retrieval.
+
+Sensitive and highly-sensitive personal claims may be retained locally and
+read only by authenticated, non-denied `context:read` principals. Their raw
+sensitive lifecycle observations remain bound to the capture principal. This
+separation keeps the raw evidence narrow while allowing the deliberately
+separate read identity to retrieve formed memory. Operational credential
+values are a distinct class: they are refused before lifecycle/observation
+persistence and remain absent
+from ordinary retrieval, replication, export, logs, audit text, and model
+context. Raw operational values may be stored only through the optional opaque
+secret-reference abstraction backed by the OS credential store; insecure
+development-file storage fails closed. Automatic routing of rejected
+credentials into that vault is intentionally not part of this decision.
+
+The lifecycle correlation cache is bounded and process-local. Stable opaque
+event and UUIDv4 idempotency identifiers make an identical retry replayable;
+content changes under the same turn identity fail closed. Loss of process-local
+pairing may reduce an assistant observation to unpaired evidence but cannot
+upgrade its authority or create user truth.
+
 ## ADR-162: Keep Claude Code explicit-user memory Core-authoritative, separate, and opt-in
 
 **Status:** accepted locally on 2026-08-26 for the integrated Core/API and
@@ -28,7 +73,7 @@ tombstone path. Secret-like direct payloads stop at the existing content
 boundary with a content-free refusal, and route validation errors omit rejected
 input values. There is no Relay fallback or new
 storage table. Ordinary prompts, model/tool/provider output, imported text,
-and native MCP elicitation are not direct-user evidence. The client lane's
+and native MCP elicitation are not explicit-memory authority. The client lane's
 `UserPromptExpansion` integration metadata is limited to the exact fields
 `command_name`, `command_args`, and `expansion_type`; those fields are not
 authority grants and are not accepted as Core mutation payload fields.
@@ -36,9 +81,10 @@ authority grants and are not accepted as Core mutation payload fields.
 The write path is opt-in and uses three reserved personal skills at
 `~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, handled by
 the official `UserPromptExpansion` event, whose typed event fields expose the
-command name and exact arguments before expansion. The existing ordinary
-`UserPromptSubmit` hook remains read-only and never inspects ordinary prompts
-for capture. The normal UX accepts slash-command expansions from the user
+command name and exact arguments before expansion. The explicit-command
+handler does not inspect ordinary prompts for capture; the separately selected
+Continuous Capture principal and lifecycle hooks own that lower-authority
+path. The normal UX accepts slash-command expansions from the user
 source and blocks the handled expansion after the explicit operation.
 
 The setup transaction preserves unrelated settings and personal skill files,

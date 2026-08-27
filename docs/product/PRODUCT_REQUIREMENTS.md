@@ -58,9 +58,11 @@ retained in source but is not a supported V1 beta journey or release target.
   Windows uses the one-click installer with no routine terminal use. Supported
   Ubuntu remains a portable `tar.gz` requiring documented manual extract and
   launch.
-- Connect detected Codex and Claude Desktop installations with one selection or
-  button while preserving unrelated settings. After the required client
-  restart, context maintenance needs no recurring setup or approval work.
+- Connect detected Codex, Claude Code, and Claude Desktop installations with
+  one selection or button while preserving unrelated settings. Continuous
+  Capture for Codex and Claude Code is a separate false-by-default selection;
+  after that one opt-in, ordinary lifecycle evidence needs no recurring ATC
+  command or per-turn approval. Explicit mutation remains separately gated.
 - Import complete raw ChatGPT, Claude, and Grok account-history archives
   locally, see truthful coverage and automatic applied/tentative/ignored
   counts, and recover interrupted extraction without re-upload. The import

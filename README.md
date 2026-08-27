@@ -58,9 +58,11 @@ double-click it. The first-run wizard:
 2. creates the vault in the platform-appropriate per-user application-data
    directory;
 3. stores credentials through the operating-system credential abstraction;
-4. detects Codex and Claude Desktop and connects only the apps the user selects;
+4. detects Codex, Claude Code, and Claude Desktop and connects only the apps
+   the user selects; optional Codex/Claude Code Continuous Capture is a
+   separate false-by-default choice;
 5. enables per-user startup when selected;
-6. starts Core and opens an authenticated local dashboard; and
+6. starts Core without opening the optional dashboard; and
 7. finishes without asking for timezone, hosting, provider accounts, or Edge
    setup.
 
@@ -92,7 +94,10 @@ client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
   import and automatic memory evaluation for ChatGPT, Claude, Grok, generic
   JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
-- one-click local Codex and Claude Desktop configuration;
+- one-click local Codex, Claude Code, and Claude Desktop configuration;
+- optional one-time Codex/Claude Code Continuous Capture: ordinary prompts and
+  rendered responses become local evidence without per-turn commands, while
+  Core alone decides what narrow user claims become memory;
 - deterministic Core-derived Project Context Capsules with automatic,
   principal-filtered MCP activation and explicit ambiguity abstention;
 - optional local context/activity/search/backup/update dashboard;

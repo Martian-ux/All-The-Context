@@ -7,6 +7,19 @@ release publication, exact artifact/client/provider acceptance, or live/private
 data inspection. Earlier evidence is retained only as historical context and
 does not become evidence for this checkout.
 
+### 2026-08-27 opt-in client Continuous Capture
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| CC-01 — false-default automatic Claude Code and Codex lifecycle capture | `client_config.py`, `claude_code_config.py`, `desktop_setup.py`, `wizard.py`, `codex_hook.py`, `claude_code_hook.py`; focused setup/hook tests | Implemented locally: one setup opt-in installs exact managed `UserPromptSubmit` and `Stop` hooks. Read, capture, and optional explicit mutation use separate least-privilege principals. Ordinary opted-in turns require no ATC command or per-turn confirmation. Reconfiguration is idempotent, preserves unrelated configuration, rolls back multi-file writes, and retires omitted managed authority after a successful opt-out. Default setup remains capture-off |
+| CC-02 — Core-authoritative capture contract | `CaptureEventRequest`; `POST /v1/lifecycle/events`; `CoreCaptureService`; migration 018; lifecycle runtime tests and `test_client_capture_core.py` | Implemented locally: strict extra-forbid bounded flat requests use UUIDv4 idempotency and require `context:capture`. Core derives source, witness, provenance, sensitivity, local availability, ACL, and disposition from the authenticated durable principal. Raw turns are tentative local observations; retries replay; conflicting reuse fails closed; no Relay path exists |
+| CC-03 — narrow user formation and retrieval usefulness | `extract_live_user_claim`; `LIVE_USER_EVIDENCE`; existing storage reconciliation/retrieval; integrated adapter-to-Core test | Implemented locally for high-confidence first-person interaction preference, name, location, health, current project, goal, and workflow claims. Repeats reinforce/deduplicate and changed slot values supersede. Assistant/tool/imported content remains observation-only. This is not a general semantic extractor or live-client acceptance |
+| CC-04 — personal sensitivity and operational-secret separation | Core sensitivity/ACL assignment; refusal receipts; `LocalSecretReferenceVault`; focused ACL, export-exclusion, and secret-reference tests | Implemented locally: sensitive and highly-sensitive formed personal claims remain local and are available only to authenticated, non-denied `context:read` principals; raw sensitive lifecycle evidence stays capture-principal-bound. Operational credential values are refused before the capture/observation ledger and excluded from ordinary retrieval/replication/export/log/audit/model surfaces. Optional raw values require an opaque OS-keyring reference and plaintext fallback fails closed; automatic credential routing to the vault is not claimed |
+
+Evidence is focused and synthetic. Full pytest, hosted CI, exact packaged
+artifacts, live/private client journeys, provider support, release acceptance,
+and macOS support remain open.
+
 ### 2026-08-25 Milestone 5 graph foundation
 
 | Requirement | Implementation/evidence | Status |

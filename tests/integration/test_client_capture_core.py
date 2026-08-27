@@ -8,6 +8,7 @@ from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
 from allthecontext.export import _decrypt_file, create_export
+from allthecontext.lifecycle_runtime import LifecycleRuntimeAdapter
 from allthecontext.models import ClientCreate
 from fastapi.testclient import TestClient
 
@@ -168,9 +169,21 @@ def test_capture_preserves_roles_and_allows_sensitive_personal_context(tmp_path:
             assert all(row["disposition"] == "applied" for row in formed_rows)
             address = next(row for row in formed_rows if row["sensitivity"] == "sensitive")
             assert address["availability"] == "local_only"
-            assert json.loads(address["allowed_clients_json"]) == [principal.id]
+            assert json.loads(address["allowed_clients_json"]) == []
             ssn = next(row for row in formed_rows if row["sensitivity"] == "highly_sensitive")
-            assert json.loads(ssn["allowed_clients_json"]) == [principal.id]
+            assert ssn["availability"] == "local_only"
+            assert json.loads(ssn["allowed_clients_json"]) == []
+
+            raw_private_rows = [
+                row
+                for row in raw_rows
+                if row["sensitivity"] in {"sensitive", "highly_sensitive"}
+            ]
+            assert len(raw_private_rows) == 2
+            assert all(
+                json.loads(row["allowed_clients_json"]) == [principal.id]
+                for row in raw_private_rows
+            )
 
 
 def test_live_user_reconciliation_deduplicates_and_replaces_preferences(
@@ -225,7 +238,7 @@ def test_live_user_reconciliation_deduplicates_and_replaces_preferences(
             assert assistant == 0
 
 
-def test_sensitive_personal_capture_is_principal_bound_and_secrets_stay_out_of_export(
+def test_sensitive_personal_memory_reaches_local_reader_and_secrets_stay_out_of_export(
     tmp_path: Path,
 ) -> None:
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
@@ -233,7 +246,7 @@ def test_sensitive_personal_capture_is_principal_bound_and_secrets_stay_out_of_e
     key_canary = "ATC_PRIVATE_KEY_CANARY_2K8M"
     with CoreService(config) as service:
         principal, token = service.store.create_client(
-            ClientCreate(name="Protected capture", scopes=["context:capture", "context:read"])
+            ClientCreate(name="Protected capture", scopes=["context:capture"])
         )
         other, other_token = service.store.create_client(
             ClientCreate(name="Other reader", scopes=["context:read"])
@@ -270,20 +283,21 @@ def test_sensitive_personal_capture_is_principal_bound_and_secrets_stay_out_of_e
                 assert token_canary not in response.text
                 assert key_canary not in response.text
 
-            allowed = client.post(
+            capture_cannot_read = client.post(
                 "/v1/context/search",
                 headers=headers,
                 json={"query": "diabetes", "limit": 10},
             )
-            denied = client.post(
+            other_reader = client.post(
                 "/v1/context/search",
                 headers=_headers(other_token, other.id),
                 json={"query": "diabetes", "limit": 10},
             )
-            assert allowed.status_code == 200
-            assert len(allowed.json()["items"]) == 1
-            assert denied.status_code == 200
-            assert denied.json()["items"] == []
+            assert capture_cannot_read.status_code == 403
+            assert other_reader.status_code == 200
+            assert [item["content"] for item in other_reader.json()["items"]] == [
+                "I have diabetes."
+            ]
 
         with service.store.connect() as connection:
             serialized = " ".join(
@@ -343,4 +357,58 @@ def test_operational_secret_is_refused_before_capture_or_observation_persistence
             ).fetchall()
             assert [(row["route"], row["reason_code"]) for row in receipts] == [
                 ("/v1/lifecycle/events", "direct_secret_like_content")
+            ]
+
+
+def test_lifecycle_adapter_reaches_core_formation_and_retrieval(tmp_path: Path) -> None:
+    """Exercise the integrated flat adapter contract through the real Core route."""
+
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with CoreService(config) as service:
+        capture_principal, capture_token = service.store.create_client(
+            ClientCreate(name="Codex capture", scopes=["context:capture"])
+        )
+        reader, reader_token = service.store.create_client(
+            ClientCreate(name="Codex reader", scopes=["context:read"])
+        )
+        with TestClient(create_app(config, service=service)) as client:
+
+            class RouteClient:
+                def capture_lifecycle_event(self, payload: dict[str, object]) -> object:
+                    response = client.post(
+                        "/v1/lifecycle/events",
+                        headers=_headers(capture_token, capture_principal.id),
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    return response.json()
+
+            runtime = LifecycleRuntimeAdapter(
+                provider="codex",
+                client_id=capture_principal.id,
+                core=RouteClient(),
+            )
+            observed = runtime.observe_user_turn(
+                prompt="I prefer concise answers",
+                session_id="session-integrated",
+                turn_id="turn-1",
+                retrieve=False,
+            )
+            completed = runtime.observe_assistant_response(
+                response="I will keep the answer concise.",
+                session_id="session-integrated",
+                turn_id="turn-1",
+            )
+
+            assert observed.capture.status == "captured"
+            assert completed.capture.status == "captured"
+            assert completed.pairing == "paired"
+            search = client.post(
+                "/v1/context/search",
+                headers=_headers(reader_token, reader.id),
+                json={"query": "concise", "kinds": ["interaction_preference"]},
+            )
+            assert search.status_code == 200, search.text
+            assert [item["content"] for item in search.json()["items"]] == [
+                "I prefer concise answers"
             ]

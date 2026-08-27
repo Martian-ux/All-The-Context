@@ -60,8 +60,11 @@ user fact.
 
 Normal, sensitive, and highly-sensitive personal context can be formed from
 direct user evidence. Core assigns the sensitivity and local ACL; sensitive
-and highly-sensitive formed records are limited to the authenticated local
-principal and remain eligible for authorized local retrieval.
+and highly-sensitive formed records remain local and are available only to
+authenticated, non-denied `context:read` principals. This intentionally lets
+the separately provisioned read identity retrieve memory formed by the
+capture-only identity. The raw sensitive lifecycle observation remains bound
+to its capture principal and is not exposed through the ordinary read path.
 
 Operational credential values—passwords, API/session tokens, private keys, and
 cookies—are refused before durable capture and are absent from the observation
@@ -77,7 +80,8 @@ memory or capture payload.
 
 ## Setup boundary
 
-This Core lane exposes the strict route and capability allowlist. The setup
-lane remains responsible for the one-time, false-by-default provider opt-in
-and for explicitly provisioning the capture capability; existing generic and
-Claude read-only defaults remain unchanged.
+The integrated setup path owns the one-time, false-by-default client opt-in and
+explicitly provisions a separate capture principal. Existing generic and read
+defaults do not receive `context:capture`. A successful later opt-out removes
+the managed hook/server configuration and retires the omitted managed capture
+principal without changing unrelated user configuration.

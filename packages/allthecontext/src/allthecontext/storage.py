@@ -3653,6 +3653,7 @@ class CoreStore:
     ) -> CandidateInput:
         """Build a Core-only durable candidate from a formed user claim."""
 
+        del principal
         if request.role != "user":
             raise InvalidStateError("only user turns may form live user evidence")
         return CandidateInput(
@@ -3676,7 +3677,11 @@ class CoreStore:
             confidence=1.0,
             sensitivity=sensitivity,
             availability=Availability.LOCAL,
-            allowed_clients=[principal.id] if sensitivity != Sensitivity.NORMAL else [],
+            # Formed personal memory is shared through the authenticated local
+            # read boundary. The capture principal intentionally has no read
+            # capability, so binding the record to it would make the memory
+            # unreachable from the separately provisioned read principal.
+            allowed_clients=[],
             denied_clients=[],
             observed_at=observed_at,
             explicit_user_statement=False,
@@ -3875,11 +3880,11 @@ class CoreStore:
                         "confidence": 1.0,
                         "sensitivity": formed_sensitivity,
                         "availability": Availability.LOCAL,
-                        "allowed_clients": (
-                            [registered.id]
-                            if formed_sensitivity != Sensitivity.NORMAL
-                            else []
-                        ),
+                        # Keep the raw sensitive turn capture-principal-bound,
+                        # but expose the formed local memory to authenticated
+                        # non-denied context readers. Operational credentials
+                        # are refused before either candidate is persisted.
+                        "allowed_clients": [],
                         "denied_clients": [],
                         "supersedes": None,
                         "explicit_user_statement": False,

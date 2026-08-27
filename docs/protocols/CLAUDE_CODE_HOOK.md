@@ -20,18 +20,22 @@ writes project-local `.claude/settings*.json`, `.mcp.json`, or uses
 exact preimage rechecks, rollback, and operation-backup cleanup after a
 successful rollback. Symlinked/reparse-point paths are rejected.
 
-The managed principal is named `Claude Code` and has exactly `context:read`.
+The managed read principal is named `Claude Code` and has exactly
+`context:read`. When Continuous Capture is separately selected, setup also
+creates `Claude Code Continuous Capture` with exactly `context:capture` and
+installs its managed `UserPromptSubmit` and `Stop` handlers. Re-running setup
+without that selection removes the capture handlers and retires the omitted
+capture authority only after the configuration transaction succeeds.
 With an OS credential store, the serialized MCP environment carries the client
 ID but no bearer token. A token is serialized only when the existing explicit
 `ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1` fallback is the selected
 credential storage. Managed configuration also carries the Core start command,
 data directory, and `ATC_AUTO_START_CORE=1`.
 
-The lifecycle capture bridge additionally requires the authenticated Core
-lifecycle-capture capability. This adapter lane does not change principal or
-setup registration; setup integration must provide that capability for the
-configured capture client while keeping any read-principal separation required
-by the client contract.
+The lifecycle capture bridge uses the capture principal; it cannot read or
+propose memory. The read hook continues to use the read principal. Explicit
+remember/correct/forget, when selected, uses a third principal and remains a
+separate approval-gated path.
 
 Setup configures all selected clients before Core launch and dashboard handoff;
 optional workspace authorization remains the final setup mutation. This

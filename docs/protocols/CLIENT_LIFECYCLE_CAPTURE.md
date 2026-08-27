@@ -81,7 +81,8 @@ separate and approval-gated.
 
 ## Integration assumptions
 
-The Core lane must expose the authenticated lifecycle route using the flat
-request and explicit receipt above. Setup integration must register the Claude
-Stop handler and the Codex capture profile/command after the single opt-in;
-this adapter component does not edit global setup or reconciliation code.
+The integrated Core exposes the authenticated lifecycle route using the flat
+request and explicit receipt above. Transactional setup registers the Claude
+and Codex capture profiles and exact event-specific tools only after the
+single false-by-default opt-in. The separate Core contract documents formation,
+sensitivity, ACL, and operational-secret behavior.

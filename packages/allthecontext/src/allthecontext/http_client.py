@@ -253,11 +253,6 @@ class ContextHttpClient:
                 self._request("POST", "/v1/proposals", json=relay_payload)
             )
 
-    def capture_event(self, payload: dict[str, Any]) -> Any:
-        """Send lifecycle evidence to Core only; capture never falls back to Relay."""
-
-        return self._request("POST", "/v1/lifecycle/events", json=payload)
-
     def claude_code_remember(self, payload: dict[str, Any]) -> Any:
         """Submit an explicit Claude Code remember command to Core only."""
 

@@ -1,11 +1,13 @@
 # Client setup and seamless operation
 
 The intended experience is one-time registration. The desktop wizard creates
-separate least-privilege identities for Codex and Claude Desktop, secures their
-credentials, and adds the installed STDIO adapter to each detected client.
-Existing settings are preserved and backed up. After one client restart,
-normal sessions retrieve context and submit durable observations without
-repeated setup, token handling, configuration copy/paste, or memory review.
+separate least-privilege identities for Codex, Claude Code, and Claude Desktop,
+secures their credentials, and adds the installed adapter to each selected
+client. Existing settings are preserved and backed up. Codex and Claude Code
+also offer a separate false-by-default Continuous Capture opt-in. Once selected,
+managed lifecycle hooks retrieve context and submit ordinary turn evidence
+without repeated setup, token handling, configuration copy/paste, per-turn ATC
+commands, or memory review. Claude Desktop retains the ordinary MCP contract.
 
 Managed entries pin the exact vault, loopback Core URL, installed Core command,
 client ID, and credential. On a tool call the adapter verifies Core; if the
