@@ -91,6 +91,9 @@ from ..models import (
     BeginIngestionRequest,
     BootstrapRequest,
     CandidateInput,
+    ClaudeCodeCorrectionRequest,
+    ClaudeCodeForgetRequest,
+    ClaudeCodeRememberRequest,
     ClientCreate,
     ContextErrorRequest,
     CorrectionRequest,
@@ -115,7 +118,10 @@ from ..project_runtime import (
     capsule_for_project,
     project_list_payload,
 )
-from ..security import ClientPrincipal
+from ..security import (
+    ClientPrincipal,
+    principal_may_submit_claude_code_user_mutation,
+)
 from ..storage import (
     ConflictError,
     InvalidStateError,
@@ -487,6 +493,16 @@ def create_app(
         ):
             raise HTTPException(status_code=403, detail=f"Missing required scope: {scope}")
 
+    def require_claude_code_memory_writer(principal: ClientPrincipal) -> None:
+        if not principal_may_submit_claude_code_user_mutation(principal):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Claude Code memory writes require a separate opt-in principal "
+                    "with exactly context:propose and witness:explicit_user_statement"
+                ),
+            )
+
     @app.get("/health")
     def health(challenge: str | None = None) -> dict[str, str]:
         result = {"status": "ok", "component": "core"}
@@ -613,6 +629,30 @@ def create_app(
     def forget_context(request: ForgetContextRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:propose")
         return core.ingestion.forget(request, principal)
+
+    @app.post("/v1/claude-code/memory/remember")
+    def claude_code_remember(
+        request: ClaudeCodeRememberRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_remember(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/claude-code/memory/correct")
+    def claude_code_correct(
+        request: ClaudeCodeCorrectionRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_correct(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/claude-code/memory/forget")
+    def claude_code_forget(
+        request: ClaudeCodeForgetRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_forget(request, principal).model_dump(mode="json")
 
     @app.post("/v1/context/search")
     def search_context(request: SearchRequest, principal: Principal) -> dict[str, Any]:

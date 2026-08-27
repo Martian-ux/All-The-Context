@@ -28,6 +28,27 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-26 — Core-only Claude Code explicit-user memory contract
+
+Core now exposes three dedicated HTTP routes for explicit Claude Code user
+operations: remember, correct, and reversible forget. They require a separate
+opt-in principal registered with exactly `context:propose` and
+`witness:explicit_user_statement`; the existing Claude Code read principal
+remains exactly `context:read`. Requests use bounded typed payloads and a
+caller-generated opaque UUIDv4 idempotency key. Core rejects client-supplied
+authority fields and assigns origin, sensitivity, availability, ACL, and
+disposition itself.
+
+Remember and correction reuse the existing candidate/correction policy
+machinery. Forget creates the existing `context_forget` tombstone, so the
+record remains reversibly restorable through the established Core lifecycle.
+These routes have no Relay fallback. Ordinary `UserPromptSubmit` prompt text,
+model/tool/provider output, imported text, and MCP elicitation are not direct
+user evidence; the client lane may bind only its exact expansion metadata
+fields `command_name`, `command_args`, and `expansion_type` as integration data.
+This is Core/API evidence only and does not claim client hook/config/setup,
+live/private data acceptance, a product exit, or macOS support.
+
 ### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
 
 The first-run wizard and hidden packaged headless setup now expose a separate

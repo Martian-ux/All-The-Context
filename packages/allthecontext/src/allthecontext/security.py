@@ -17,6 +17,7 @@ _ITERATIONS = 310_000
 # principals with this class may attest that text was an explicit user statement.
 # Authentication and context:propose alone are insufficient (A-09 / B-102).
 WITNESS_EXPLICIT_USER_STATEMENT = "witness:explicit_user_statement"
+CLAUDE_CODE_USER_WRITE_SCOPES = frozenset({"context:propose", WITNESS_EXPLICIT_USER_STATEMENT})
 
 
 def generate_token() -> str:
@@ -66,6 +67,19 @@ def principal_may_attest_explicit_user_statement(
     principal: ClientPrincipal | None,
 ) -> bool:
     return principal is not None and principal.may_attest_explicit_user_statement()
+
+
+def principal_may_submit_claude_code_user_mutation(
+    principal: ClientPrincipal | None,
+) -> bool:
+    """Return whether a principal is the exact opt-in Claude Code write identity.
+
+    This deliberately excludes ``context:read``, administrator, wildcard, and
+    unrelated scopes. The write identity is therefore separate from the
+    existing Claude Code read principal and cannot be used as a read shortcut.
+    """
+
+    return principal is not None and principal.scopes == CLAUDE_CODE_USER_WRITE_SCOPES
 
 
 def record_is_allowed(

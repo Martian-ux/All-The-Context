@@ -1,5 +1,37 @@
 # Architecture decisions
 
+## ADR-162: Keep Claude Code explicit-user memory writes Core-authoritative
+
+**Status:** accepted locally on 2026-08-26 for the Core/API contract. This is
+not client hook/config/setup work, live/private client acceptance, a product
+exit, a release claim, or macOS support.
+
+Claude Code remember, correct, and reversible forget operations use dedicated
+Core routes and a separate least-privilege registration with exactly
+`context:propose` and `witness:explicit_user_statement`. The existing Claude
+Code read registration remains exactly `context:read`; read and write
+authority are not combined. Core also verifies the supplied principal against
+the active durable registration before accepting a mutation, so a forged
+principal shape cannot obtain the write path.
+
+The strict request contracts are bounded and extra-forbid: remember accepts
+`kind`, `content`, and `idempotency_key`; correct accepts `record_id`,
+`content`, and `idempotency_key`; forget accepts `record_id` and
+`idempotency_key`. The key is a caller-generated opaque UUIDv4 reused for
+retries. No client authority, origin, sensitivity, ACL, availability, or
+disposition fields are accepted. Core assigns those values and marks the
+observation as an explicit user statement with `ongoing_client` origin.
+
+Remember uses the existing candidate policy path, correction uses the
+existing correction/error path, and forget uses the existing `context_forget`
+tombstone path. Secret-like direct payloads stop at the existing content
+boundary with a content-free refusal. There is no Relay fallback or new
+storage table. Ordinary prompts, model/tool/provider output, imported text,
+and native MCP elicitation are not direct-user evidence. The client lane's
+`UserPromptExpansion` integration metadata is limited to the exact fields
+`command_name`, `command_args`, and `expansion_type`; those fields are not
+authority grants and are not accepted as Core mutation payload fields.
+
 ## ADR-161: Configure Claude Code as a separate read-only pre-generation client
 
 **Status:** accepted locally on 2026-08-26 for the setup integration. This is

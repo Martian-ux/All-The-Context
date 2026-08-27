@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -21,6 +22,7 @@ from pydantic import (
 
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
+MAX_CLAUDE_CODE_MEMORY_CHARS = 8_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
@@ -417,6 +419,79 @@ class ClientCreate(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     scopes: list[str] = Field(default_factory=list, max_length=128)
     auto_approve: bool = False
+
+
+_CLAUDE_CODE_MEMORY_KINDS = frozenset(
+    {
+        "constraint",
+        "decision",
+        "fact",
+        "goal",
+        "interaction_preference",
+        "name",
+        "personal_context",
+        "preference",
+        "project",
+        "project_decision",
+        "workflow",
+    }
+)
+
+
+def _normalize_claude_code_idempotency_key(value: str) -> str:
+    try:
+        parsed = UUID(value)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("idempotency_key must be an opaque UUIDv4") from exc
+    if parsed.version != 4 or str(parsed) != value.lower():
+        raise ValueError("idempotency_key must be an opaque UUIDv4")
+    return str(parsed)
+
+
+class ClaudeCodeRememberRequest(StrictModel):
+    """Bounded Core input for an explicit Claude Code user statement."""
+
+    kind: StrictStr = Field(default="interaction_preference", max_length=64)
+    content: StrictStr = Field(min_length=1, max_length=MAX_CLAUDE_CODE_MEMORY_CHARS)
+    idempotency_key: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in _CLAUDE_CODE_MEMORY_KINDS:
+            raise ValueError("kind is not supported by the Claude Code memory contract")
+        return normalized
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        return _normalize_claude_code_idempotency_key(value)
+
+
+class ClaudeCodeCorrectionRequest(StrictModel):
+    """Bounded Core input for an explicit correction of one record."""
+
+    record_id: StrictStr = Field(min_length=1, max_length=200)
+    content: StrictStr = Field(min_length=1, max_length=MAX_CLAUDE_CODE_MEMORY_CHARS)
+    idempotency_key: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        return _normalize_claude_code_idempotency_key(value)
+
+
+class ClaudeCodeForgetRequest(StrictModel):
+    """Bounded Core input for a reversible explicit forget request."""
+
+    record_id: StrictStr = Field(min_length=1, max_length=200)
+    idempotency_key: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        return _normalize_claude_code_idempotency_key(value)
 
 
 class SourceOut(StrictModel):
