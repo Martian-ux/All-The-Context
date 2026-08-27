@@ -266,7 +266,6 @@ def _explicit_hook_output(
     output: dict[str, Any] = {
         "decision": "block",
         "reason": reason,
-        "suppressOriginalPrompt": True,
         "hookSpecificOutput": {
             "hookEventName": EXPLICIT_HOOK_EVENT_NAME,
             "additionalContext": "",
@@ -334,7 +333,7 @@ def _explicit_payload(pending: _PendingExplicitCommand) -> dict[str, Any] | None
 async def _native_exact_payload_confirmation(
     ctx: Context, pending: _PendingExplicitCommand
 ) -> bool | None:
-    """Require native exact-payload confirmation before any Core mutation."""
+    """Require native confirmation as authoritative approval before Core mutation."""
 
     elicit = getattr(ctx, "elicit", None)
     if not callable(elicit):
@@ -407,7 +406,7 @@ async def claude_code_user_prompt_expansion(
     command_args: Annotated[StrictStr, Field(max_length=EXPLICIT_MAX_ARGUMENT_CHARS)],
     command_source: Annotated[StrictStr, Field(max_length=128)],
 ) -> dict[str, Any]:
-    """Apply only exact user-typed reserved commands, never ordinary prompts."""
+    """Handle reserved command metadata and require explicit native confirmation."""
 
     normalized_name = command_name.removeprefix("/")
     if normalized_name not in EXPLICIT_COMMANDS:
@@ -466,8 +465,9 @@ def build_claude_code_explicit_mcp() -> MCPServer:
     return MCPServer(
         "All The Context Claude Code Explicit Commands",
         instructions=(
-            "Handle only exact user-typed /atc-remember, /atc-correct, and /atc-forget "
-            "commands. Never capture ordinary prompts or session context."
+            "Handle only exact reserved /atc-remember, /atc-correct, and /atc-forget "
+            "slash-command metadata, and require native exact-payload confirmation. "
+            "Never capture ordinary prompts or session context."
         ),
         tools=[tool],
     )

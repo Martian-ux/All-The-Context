@@ -463,6 +463,7 @@ def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(mo
     )
 
     assert output["decision"] == "block"
+    assert "suppressOriginalPrompt" not in output
     assert output["hookSpecificOutput"] == {
         "hookEventName": "UserPromptExpansion",
         "additionalContext": "",

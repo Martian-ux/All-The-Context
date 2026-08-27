@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.security import WITNESS_EXPLICIT_USER_STATEMENT
@@ -190,3 +191,88 @@ def test_claude_code_memory_routes_require_separate_write_principal_and_are_core
         assert revoked_write.status_code == 401
 
         assert getattr(client.app.state.legacy_edge_sync, "_thread", None) is None
+
+
+@pytest.mark.parametrize("operation", ["remember", "correct", "forget"])
+@pytest.mark.parametrize("failure_kind", ["invalid", "extra", "oversized"])
+def test_claude_code_validation_errors_are_content_free(
+    tmp_path: Path, operation: str, failure_kind: str
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    marker = f"claude-validation-{operation}-{failure_kind}-secret-marker"
+    with TestClient(create_app(config)) as client:
+        setup = client.post("/v1/setup", json={"name": "Owner", "scopes": []})
+        assert setup.status_code == 200, setup.text
+        owner_headers = _bearer(str(setup.json()["token"]))
+        _write_id, write_headers = _create_client(
+            client,
+            owner_headers,
+            name="Claude Code user memory",
+            scopes=["context:propose", WITNESS_EXPLICIT_USER_STATEMENT],
+        )
+
+        payload: dict[str, object] = {"idempotency_key": str(uuid4())}
+        if operation == "remember":
+            payload["content"] = "valid content"
+            route = "/v1/claude-code/memory/remember"
+            if failure_kind == "invalid":
+                payload["content"] = {"marker": marker}
+            elif failure_kind == "extra":
+                payload["unexpected"] = marker
+            else:
+                payload["content"] = marker + "x" * (8_001 - len(marker))
+        elif operation == "correct":
+            payload["record_id"] = "record-id"
+            payload["content"] = "valid correction"
+            route = "/v1/claude-code/memory/correct"
+            if failure_kind == "invalid":
+                payload["record_id"] = {"marker": marker}
+            elif failure_kind == "extra":
+                payload["unexpected"] = marker
+            else:
+                payload["content"] = marker + "x" * (8_001 - len(marker))
+        else:
+            payload["record_id"] = "record-id"
+            route = "/v1/claude-code/memory/forget"
+            if failure_kind == "invalid":
+                payload["record_id"] = {"marker": marker}
+            elif failure_kind == "extra":
+                payload["unexpected"] = marker
+            else:
+                payload["record_id"] = marker + "x" * (201 - len(marker))
+
+        response = client.post(route, headers=write_headers, json=payload)
+
+        assert response.status_code == 422
+        assert marker not in response.text
+        assert response.json() == {
+            "error": {
+                "code": "validation_error",
+                "message": "request validation failed",
+                "route": operation,
+            }
+        }
+
+
+def test_request_validation_behavior_elsewhere_remains_fastapi_default(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    marker = "ordinary-validation-marker"
+    with TestClient(create_app(config)) as client:
+        setup = client.post("/v1/setup", json={"name": "Owner", "scopes": []})
+        assert setup.status_code == 200, setup.text
+        owner_headers = _bearer(str(setup.json()["token"]))
+        _write_id, write_headers = _create_client(
+            client,
+            owner_headers,
+            name="Ordinary proposer",
+            scopes=["context:propose"],
+        )
+
+        response = client.post(
+            "/v1/ingestion/propose",
+            headers=write_headers,
+            json={"content": {"marker": marker}},
+        )
+
+        assert response.status_code == 422
+        assert "detail" in response.json()

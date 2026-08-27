@@ -35,6 +35,8 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -143,6 +145,11 @@ DashboardPage = Literal[
 
 _SEARCH_CURSOR_VERSION = "atc-search-v1"
 _SEARCH_CURSOR_PART_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
+    "/v1/claude-code/memory/remember": "remember",
+    "/v1/claude-code/memory/correct": "correct",
+    "/v1/claude-code/memory/forget": "forget",
+}
 
 
 class _InvalidSearchCursor(ValueError):
@@ -396,6 +403,24 @@ def create_app(
                 "error": {
                     "code": code,
                     "message": code if isinstance(error, CaptureError) else str(error),
+                }
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        route_name = _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES.get(request.url.path)
+        if route_name is None:
+            return await request_validation_exception_handler(request, error)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "request validation failed",
+                    "route": route_name,
                 }
             },
         )

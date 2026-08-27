@@ -17,9 +17,11 @@ from allthecontext.claude_code_config import (
     CLAUDE_CODE_MCP_PROFILE,
     CLAUDE_CODE_MCP_SERVER_KEY,
     CLAUDE_CODE_SETTINGS_ENV,
+    CLAUDE_CODE_SKILLS_DIR_ENV,
     claude_code_is_detected,
     claude_code_mcp_config_path,
     claude_code_settings_path,
+    claude_code_skills_dir,
     configure_claude_code,
     configure_claude_code_explicit_commands,
     disconnect_claude_code,
@@ -66,6 +68,10 @@ def test_user_scope_paths_use_patched_windows_and_posix_homes(
     monkeypatch.setenv(CLAUDE_CODE_SETTINGS_ENV, str(settings_override))
     assert claude_code_mcp_config_path() == mcp_override
     assert claude_code_settings_path() == settings_override
+
+    skills_override = tmp_path / "test-skills"
+    monkeypatch.setenv(CLAUDE_CODE_SKILLS_DIR_ENV, str(skills_override))
+    assert claude_code_skills_dir() == skills_override
 
 
 def test_connect_writes_exact_schema_preserves_unrelated_data_and_is_idempotent(
@@ -584,18 +590,23 @@ def test_explicit_commands_are_opt_in_transactional_and_idempotent(tmp_path: Pat
             ],
         }
     ]
-    command_paths = [
-        settings_path.parent / "commands" / f"{name}.md"
+    skill_paths = [
+        settings_path.parent / "skills" / name / "SKILL.md"
         for name in (
             "atc-remember",
             "atc-correct",
             "atc-forget",
         )
     ]
-    assert all(path.is_file() for path in command_paths)
-    assert all("UserPromptExpansion" in path.read_text(encoding="utf-8") for path in command_paths)
+    assert all(path.is_file() for path in skill_paths)
+    assert all("UserPromptExpansion" in path.read_text(encoding="utf-8") for path in skill_paths)
+    assert all(
+        "\nname:" not in path.read_text(encoding="utf-8").split("---", 2)[1]
+        for path in skill_paths
+    )
+    assert not (settings_path.parent / "commands").exists()
     assert first.changed is True
-    assert first.command_changed is True
+    assert first.skill_changed is True
 
     second = configure_claude_code_explicit_commands(
         _runtime(tmp_path),
@@ -606,30 +617,30 @@ def test_explicit_commands_are_opt_in_transactional_and_idempotent(tmp_path: Pat
         core_data_dir=tmp_path / "core-data",
     )
     assert second.changed is False
-    assert second.command_changed is False
+    assert second.skill_changed is False
 
     removed = disconnect_claude_code_explicit_commands(
         mcp_path=mcp_path, settings_path=settings_path
     )
     assert removed.changed is True
-    assert all(not path.exists() for path in command_paths)
+    assert all(not path.exists() for path in skill_paths)
     assert "UserPromptExpansion" not in json.loads(settings_path.read_text(encoding="utf-8")).get(
         "hooks", {}
     )
 
 
-def test_explicit_command_collision_fails_before_any_config_write(tmp_path: Path) -> None:
+def test_explicit_skill_collision_fails_before_any_config_write(tmp_path: Path) -> None:
     mcp_path = tmp_path / ".claude.json"
     settings_path = tmp_path / ".claude" / "settings.json"
     _write_json(mcp_path, {"keep": "mcp"})
     _write_json(settings_path, {"keep": "settings"})
-    command_path = settings_path.parent / "commands" / "atc-correct.md"
-    command_path.parent.mkdir(parents=True, exist_ok=True)
-    command_path.write_text("---\nname: atc-correct\n---\nuser-owned\n", encoding="utf-8")
+    skill_path = settings_path.parent / "skills" / "atc-correct" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text("---\ndescription: user-owned\n---\nuser-owned\n", encoding="utf-8")
     before_mcp = mcp_path.read_text(encoding="utf-8")
     before_settings = settings_path.read_text(encoding="utf-8")
 
-    with pytest.raises(ValueError, match="reserved Claude Code command path"):
+    with pytest.raises(ValueError, match="reserved Claude Code skill path"):
         configure_claude_code_explicit_commands(
             _runtime(tmp_path),
             "claude-code-explicit-client",
@@ -639,7 +650,9 @@ def test_explicit_command_collision_fails_before_any_config_write(tmp_path: Path
 
     assert mcp_path.read_text(encoding="utf-8") == before_mcp
     assert settings_path.read_text(encoding="utf-8") == before_settings
-    assert command_path.read_text(encoding="utf-8") == "---\nname: atc-correct\n---\nuser-owned\n"
+    assert skill_path.read_text(encoding="utf-8") == (
+        "---\ndescription: user-owned\n---\nuser-owned\n"
+    )
 
 
 def test_remove_rollback_never_overwrites_file_created_after_delete(tmp_path: Path) -> None:

@@ -742,7 +742,7 @@ def _headless_claude_code_explicit_result(result: object) -> dict[str, Any] | No
         "changed": bool(getattr(configured, "changed", False)),
         "mcp_changed": bool(getattr(configured, "mcp_changed", False)),
         "settings_changed": bool(getattr(configured, "settings_changed", False)),
-        "command_changed": bool(getattr(configured, "command_changed", False)),
+        "skill_changed": bool(getattr(configured, "skill_changed", False)),
     }
 
 

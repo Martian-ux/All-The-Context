@@ -1,9 +1,9 @@
 """Transactional configuration for the Claude Code user integration.
 
-Claude Code keeps its user-scope MCP registry, settings, and personal command
-files in separate surfaces. This module owns only the All The Context entries
-and the three reserved explicit commands it creates; all other user data is
-treated as user-owned data.
+Claude Code keeps its user-scope MCP registry, settings, and personal skills in
+separate surfaces. This module owns only the All The Context entries and the
+three reserved explicit skills it creates; all other user data is treated as
+user-owned data.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ CLAUDE_CODE_EXPLICIT_COMMANDS = ("atc-remember", "atc-correct", "atc-forget")
 
 CLAUDE_CODE_MCP_CONFIG_ENV = "ATC_CLAUDE_CODE_MCP_CONFIG"
 CLAUDE_CODE_SETTINGS_ENV = "ATC_CLAUDE_CODE_SETTINGS"
-CLAUDE_CODE_COMMANDS_DIR_ENV = "ATC_CLAUDE_CODE_COMMANDS_DIR"
+CLAUDE_CODE_SKILLS_DIR_ENV = "ATC_CLAUDE_CODE_SKILLS_DIR"
 CLAUDE_CODE_EXECUTABLE_ENV = "ATC_CLAUDE_CODE_EXECUTABLE"
 
 # Claude Code configuration is normally small.  Refusing unexpectedly large
@@ -72,35 +72,32 @@ _MANAGED_EXPLICIT_HOOK_HANDLER: dict[str, Any] = {
     },
 }
 
-_EXPLICIT_COMMAND_FILES: dict[str, str] = {
+_EXPLICIT_SKILL_FILES: dict[str, str] = {
     "atc-remember": """---
-name: atc-remember
 description: Store an exact user-stated context item in All The Context
 disable-model-invocation: true
 user-invocable: true
 ---
 
-This reserved command is handled by the All The Context UserPromptExpansion hook.
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
 Do not paraphrase, summarize, or repeat its arguments.
 """,
     "atc-correct": """---
-name: atc-correct
 description: Correct one exact All The Context record
 disable-model-invocation: true
 user-invocable: true
 ---
 
-This reserved command is handled by the All The Context UserPromptExpansion hook.
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
 Do not paraphrase, summarize, or repeat its arguments.
 """,
     "atc-forget": """---
-name: atc-forget
 description: Forget one exact All The Context record
 disable-model-invocation: true
 user-invocable: true
 ---
 
-This reserved command is handled by the All The Context UserPromptExpansion hook.
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
 Use exactly `/atc-forget <record-id>`; trailing text is rejected.
 Do not paraphrase, summarize, or repeat its arguments.
 """,
@@ -125,11 +122,11 @@ class ClaudeCodeConfigResult:
     changed: bool
     mcp_changed: bool
     settings_changed: bool
-    command_changed: bool = False
+    skill_changed: bool = False
     mcp_backup_path: Path | None = None
     settings_backup_path: Path | None = None
-    command_backup_paths: tuple[Path, ...] = ()
-    command_paths: tuple[Path, ...] = ()
+    skill_backup_paths: tuple[Path, ...] = ()
+    skill_paths: tuple[Path, ...] = ()
     managed_client_id: str | None = None
 
     @property
@@ -141,7 +138,7 @@ class ClaudeCodeConfigResult:
             for path in (
                 self.mcp_backup_path,
                 self.settings_backup_path,
-                *self.command_backup_paths,
+                *self.skill_backup_paths,
             )
             if path is not None
         )
@@ -232,22 +229,22 @@ def claude_code_settings_path(path: Path | None = None) -> Path:
     )
 
 
-def claude_code_commands_dir(
+def claude_code_skills_dir(
     path: Path | None = None, *, settings_path: Path | None = None
 ) -> Path:
-    """Return the personal Claude Code custom-command directory.
+    """Return the personal Claude Code skills root.
 
     A settings override keeps isolated setup callers inside their supplied
-    test/user surface. Production defaults remain under ``~/.claude``.
+    test/user surface. Production defaults remain under ``~/.claude/skills``.
     """
 
-    configured = os.environ.get(CLAUDE_CODE_COMMANDS_DIR_ENV) if path is None else None
+    configured = os.environ.get(CLAUDE_CODE_SKILLS_DIR_ENV) if path is None else None
     if configured:
         selected = Path(configured)
     elif path is not None:
         selected = path
     else:
-        selected = claude_code_settings_path(settings_path).parent / "commands"
+        selected = claude_code_settings_path(settings_path).parent / "skills"
     return _absolute_path(selected.expanduser())
 
 
@@ -352,8 +349,8 @@ def _read_document(path: Path) -> _Document:
     return _Document(path, text, parsed, True)
 
 
-def _read_command_document(path: Path) -> _Document:
-    """Read a bounded plain-text personal command without interpreting it."""
+def _read_skill_document(path: Path) -> _Document:
+    """Read a bounded plain-text personal skill without interpreting it."""
 
     text, existed = _read_bounded_text(path)
     return _Document(path, text, {}, existed)
@@ -363,22 +360,22 @@ def _render(document: dict[str, Any]) -> str:
     return json.dumps(document, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
-def _explicit_command_plans(
-    commands_dir: Path, *, remove: bool = False
+def _explicit_skill_plans(
+    skills_dir: Path, *, remove: bool = False
 ) -> tuple[tuple[_WritePlan, ...], tuple[Path, ...]]:
-    """Plan reserved personal command files without overwriting user commands."""
+    """Plan reserved personal skills without overwriting user-owned skills."""
 
-    paths = tuple(commands_dir / f"{name}.md" for name in CLAUDE_CODE_EXPLICIT_COMMANDS)
+    paths = tuple(skills_dir / name / "SKILL.md" for name in CLAUDE_CODE_EXPLICIT_COMMANDS)
     plans: list[_WritePlan] = []
     for name, path in zip(CLAUDE_CODE_EXPLICIT_COMMANDS, paths, strict=True):
-        document = _read_command_document(path)
-        managed_content = _EXPLICIT_COMMAND_FILES[name]
+        document = _read_skill_document(path)
+        managed_content = _EXPLICIT_SKILL_FILES[name]
         if document.existed and document.original != managed_content:
             if remove:
                 plans.append(_WritePlan(document, document.original))
                 continue
             raise ValueError(
-                f"the reserved Claude Code command path for {name} belongs to an unrelated command"
+                f"the reserved Claude Code skill path for {name} belongs to an unrelated skill"
             )
         plans.append(
             _WritePlan(
@@ -789,7 +786,7 @@ def _result(
     backups: dict[Path, Path | None],
     *,
     client: str = "Claude Code",
-    command_paths: tuple[Path, ...] = (),
+    skill_paths: tuple[Path, ...] = (),
     managed_client_id: str | None = None,
 ) -> ClaudeCodeConfigResult:
     mcp_plan = next(plan for plan in plans if plan.document.path == paths.mcp)
@@ -798,29 +795,29 @@ def _result(
     settings_changed = (
         settings_plan.remove or settings_plan.updated != settings_plan.document.original
     )
-    command_path_set = set(command_paths)
-    command_changed = any(
-        plan.document.path in command_path_set
+    skill_path_set = set(skill_paths)
+    skill_changed = any(
+        plan.document.path in skill_path_set
         and (plan.remove or plan.updated != plan.document.original)
         for plan in plans
     )
-    command_backups: list[Path] = []
-    for path in command_paths:
+    skill_backups: list[Path] = []
+    for path in skill_paths:
         backup = backups.get(path)
         if backup is not None:
-            command_backups.append(backup)
+            skill_backups.append(backup)
     return ClaudeCodeConfigResult(
         client=client,
         mcp_path=paths.mcp,
         settings_path=paths.settings,
-        changed=mcp_changed or settings_changed or command_changed,
+        changed=mcp_changed or settings_changed or skill_changed,
         mcp_changed=mcp_changed,
         settings_changed=settings_changed,
-        command_changed=command_changed,
+        skill_changed=skill_changed,
         mcp_backup_path=backups.get(paths.mcp),
         settings_backup_path=backups.get(paths.settings),
-        command_backup_paths=tuple(command_backups),
-        command_paths=command_paths,
+        skill_backup_paths=tuple(skill_backups),
+        skill_paths=skill_paths,
         managed_client_id=managed_client_id,
     )
 
@@ -908,10 +905,10 @@ def connect_claude_code_explicit_commands(
     """Install the opt-in exact-argument Claude Code command boundary."""
 
     paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
-    commands_dir = claude_code_commands_dir(settings_path=paths.settings)
+    skills_dir = claude_code_skills_dir(settings_path=paths.settings)
     mcp = _read_document(paths.mcp)
     settings = _read_document(paths.settings)
-    command_plans, command_paths = _explicit_command_plans(commands_dir)
+    skill_plans, skill_paths = _explicit_skill_plans(skills_dir)
     server = _mcp_server(
         runtime,
         client_id,
@@ -934,7 +931,7 @@ def connect_claude_code_explicit_commands(
     plans = (
         _WritePlan(mcp, mcp_updated),
         _WritePlan(settings, settings_updated),
-        *command_plans,
+        *skill_plans,
     )
     backups = _apply_transaction(plans)
     return _result(
@@ -942,7 +939,7 @@ def connect_claude_code_explicit_commands(
         plans,
         backups,
         client="Claude Code explicit commands",
-        command_paths=command_paths,
+        skill_paths=skill_paths,
     )
 
 
@@ -963,10 +960,10 @@ def disconnect_claude_code_explicit_commands(
     """Remove only the explicit command integration owned by this module."""
 
     paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
-    commands_dir = claude_code_commands_dir(settings_path=paths.settings)
+    skills_dir = claude_code_skills_dir(settings_path=paths.settings)
     mcp = _read_document(paths.mcp)
     settings = _read_document(paths.settings)
-    command_plans, command_paths = _explicit_command_plans(commands_dir, remove=True)
+    skill_plans, skill_paths = _explicit_skill_plans(skills_dir, remove=True)
     mcp_updated, settings_updated, managed_client_id = _updated_disconnect_documents(
         mcp,
         settings,
@@ -979,7 +976,7 @@ def disconnect_claude_code_explicit_commands(
     plans = (
         _WritePlan(mcp, mcp_updated),
         _WritePlan(settings, settings_updated),
-        *command_plans,
+        *skill_plans,
     )
     backups = _apply_transaction(plans)
     return _result(
@@ -987,7 +984,7 @@ def disconnect_claude_code_explicit_commands(
         plans,
         backups,
         client="Claude Code explicit commands",
-        command_paths=command_paths,
+        skill_paths=skill_paths,
         managed_client_id=managed_client_id,
     )
 
@@ -1010,7 +1007,6 @@ def disconnect_claude_code_config(
 
 
 __all__ = [
-    "CLAUDE_CODE_COMMANDS_DIR_ENV",
     "CLAUDE_CODE_EXECUTABLE_ENV",
     "CLAUDE_CODE_EXPLICIT_COMMANDS",
     "CLAUDE_CODE_EXPLICIT_HOOK_TOOL",
@@ -1021,14 +1017,15 @@ __all__ = [
     "CLAUDE_CODE_MCP_PROFILE",
     "CLAUDE_CODE_MCP_SERVER_KEY",
     "CLAUDE_CODE_SETTINGS_ENV",
+    "CLAUDE_CODE_SKILLS_DIR_ENV",
     "MAX_CLAUDE_CODE_CONFIG_BYTES",
     "ClaudeCodeConfigPaths",
     "ClaudeCodeConfigResult",
-    "claude_code_commands_dir",
     "claude_code_config_paths",
     "claude_code_is_detected",
     "claude_code_mcp_config_path",
     "claude_code_settings_path",
+    "claude_code_skills_dir",
     "configure_claude_code",
     "configure_claude_code_explicit_commands",
     "connect_claude_code",
