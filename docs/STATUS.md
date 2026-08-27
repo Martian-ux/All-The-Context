@@ -66,10 +66,11 @@ revoked, unavailable, error, and timeout paths are content-free and
 nonblocking; the profile has no Relay fallback and creates no records or
 proposals.
 
-This is pre-generation-only runtime evidence. It is not a supported configured
-Claude Code client connection, an L1 lifecycle claim, a product exit, a release
-claim, or live provider/client acceptance. Ordinary MCP remains the existing L0
-tool set and instruction contract.
+At that component boundary, this was pre-generation-only runtime evidence and
+did not by itself provide the configured Claude Code setup added above. It does
+not establish an L1 lifecycle claim, a product exit, a release claim, or live
+provider/client acceptance. Ordinary MCP remains the existing L0 tool set and
+instruction contract.
 
 ### 2026-08-26 packaged local-workspace onboarding path
 
