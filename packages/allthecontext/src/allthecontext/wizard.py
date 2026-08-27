@@ -589,8 +589,9 @@ class SetupWizard:
         self._check(
             "Enable explicit Claude Code memory commands",
             (
-                "Opt in to exact user-typed /atc-remember, /atc-correct, and /atc-forget "
-                "commands. Ordinary prompts remain read-only and are never captured."
+                "Opt in to explicitly confirmed /atc-remember, /atc-correct, and "
+                "/atc-forget commands. Every write requires native exact-payload approval; "
+                "ordinary prompts remain read-only and are never captured."
                 if self.claude_code_detected
                 else "Claude Code was not found."
             ),

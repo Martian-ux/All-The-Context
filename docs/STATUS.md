@@ -59,8 +59,9 @@ the existing `Claude Code` read principal exactly `context:read` and, only
 when selected, creates a separate `Claude Code Explicit Commands` principal
 with exactly `context:propose` and `witness:explicit_user_statement`.
 
-The transaction preserves unrelated Claude user settings and command files,
-refuses reserved-name collisions, and configures only user-scope
+The transaction preserves unrelated Claude user settings and personal skill
+files, refuses reserved-name collisions, installs the three reserved skills at
+`~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, and configures only user-scope
 `UserPromptExpansion` handling. Ordinary `UserPromptSubmit` retrieval remains
 read-only and never scans or captures ordinary prompts. The handler binds the
 official event's exact `command_name`, `command_args`, `expansion_type`, and
@@ -73,10 +74,19 @@ product/release exit claim.
 
 The explicit hook sends only the strict Core route payloads, using the pending
 opaque command ID as `idempotency_key`; commitments and hook event fields stay
-internal. Native exact-payload confirmation is mandatory before a write, even
-when the caller supplies `command_source=user`. An ambiguous transport error
+internal. Native exact-payload confirmation is the authoritative user approval
+and adoption step before a write, even when the caller supplies
+`command_source=user`. Because the MCP tool remains model-visible, hook fields
+do not prove the slash command was personally typed; a direct call must obtain
+the same confirmation and cannot silently write. An ambiguous transport error
 gets one identical retry; an unresolved result is reported as unknown and
 requires verification before repeating.
+
+Validation failures on the three narrow Core routes are content-free and do
+not reflect rejected payload values. Claude documents MCP elicitation generally,
+but nested `Context.elicit` from an `mcp_tool` hook has not yet passed a real
+Claude Code acceptance journey. It fails closed when unavailable, so this
+branch does not claim live Claude Code write support.
 
 ### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
 

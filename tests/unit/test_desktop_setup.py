@@ -607,9 +607,9 @@ def test_setup_keeps_read_principal_and_opt_in_explicit_principal_separate(
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert "UserPromptSubmit" in settings["hooks"]
     assert "UserPromptExpansion" in settings["hooks"]
-    command_dir = settings_path.parent / "commands"
+    skills_dir = settings_path.parent / "skills"
     assert all(
-        (command_dir / f"{name}.md").exists()
+        (skills_dir / name / "SKILL.md").exists()
         for name in (
             "atc-remember",
             "atc-correct",

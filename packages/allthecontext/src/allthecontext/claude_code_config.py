@@ -229,9 +229,7 @@ def claude_code_settings_path(path: Path | None = None) -> Path:
     )
 
 
-def claude_code_skills_dir(
-    path: Path | None = None, *, settings_path: Path | None = None
-) -> Path:
+def claude_code_skills_dir(path: Path | None = None, *, settings_path: Path | None = None) -> Path:
     """Return the personal Claude Code skills root.
 
     A settings override keeps isolated setup callers inside their supplied

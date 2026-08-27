@@ -601,8 +601,7 @@ def test_explicit_commands_are_opt_in_transactional_and_idempotent(tmp_path: Pat
     assert all(path.is_file() for path in skill_paths)
     assert all("UserPromptExpansion" in path.read_text(encoding="utf-8") for path in skill_paths)
     assert all(
-        "\nname:" not in path.read_text(encoding="utf-8").split("---", 2)[1]
-        for path in skill_paths
+        "\nname:" not in path.read_text(encoding="utf-8").split("---", 2)[1] for path in skill_paths
     )
     assert not (settings_path.parent / "commands").exists()
     assert first.changed is True

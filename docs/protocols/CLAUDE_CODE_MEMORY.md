@@ -71,21 +71,25 @@ routes.
 
 ## Evidence rules and client binding
 
-Only a closed, explicit user-authored operation may use these routes. Ordinary
+Only a closed, explicitly user-approved operation may use these routes. Ordinary
 `UserPromptSubmit` `prompt` text is a read-only query/input surface and is not
 direct-user evidence. Model output, tool output, provider output, imported
-text, and arbitrary MCP text are also not direct-user evidence. Native MCP
-elicitation may be used by the client as secondary confirmation, but it does
-not change this Core contract or grant witness authority.
+text, and arbitrary MCP text are also not direct-user evidence. The client
+uses native exact-payload confirmation as the authoritative user approval and
+adoption step. Core itself does not infer authorship from client metadata or
+elicitation; it accepts only a separately registered principal carrying the
+exact witness grant and the strict route payload.
 
 The client lane's `UserPromptExpansion` object uses the exact integration
 metadata fields `command_name`, `command_args`, and `expansion_type`. The
 client must bind and preserve those fields as client-side integration data;
 they are not authority grants, do not prove authorship by themselves, and are
 not accepted as additional fields by these Core request models. The client
-must invoke a mutation route only after its own explicit-user command handling
-has closed the operation and must keep ordinary prompt submission on the
-read-only path.
+must invoke a mutation route only after native confirmation has closed the
+operation and must keep ordinary prompt submission on the read-only path. A
+model-visible direct MCP call cannot silently write because it is subject to
+the same confirmation gate, but the metadata alone is not proof that the
+slash command was personally typed.
 
 Core never falls back to Relay for these operations. Existing replication
 events emitted by Core lifecycle machinery are not a Relay authorization path
@@ -93,7 +97,9 @@ and do not make Relay authoritative.
 
 ## Scope of this slice
 
-This is a local Core/API contract with focused unit and integration coverage.
-It does not modify Claude Code hook/config/setup files, claim live or private
-client acceptance, add storage tables or migrations, provide macOS support, or
-establish a release/product-exit claim.
+This is a local Core/API contract integrated with the separate opt-in Claude
+Code hook/config/setup boundary and focused unit/integration coverage. It does
+not claim live or private client acceptance, add storage tables or migrations,
+provide macOS support, or establish a release/product-exit claim. In
+particular, nested elicitation from an `mcp_tool` hook still requires a real
+Claude Code acceptance test and fails closed when unavailable.

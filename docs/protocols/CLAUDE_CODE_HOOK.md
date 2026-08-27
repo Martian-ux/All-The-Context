@@ -81,8 +81,9 @@ by this hook contract.
 ## Explicit memory commands (opt-in)
 
 The write feature is disabled by default. When explicitly selected in setup,
-All The Context also installs three personal user-scope commands under
-`~/.claude/commands/` (or `ATC_CLAUDE_CODE_COMMANDS_DIR`):
+All The Context also installs three personal user-scope skills at
+`~/.claude/skills/atc-{remember,correct,forget}/SKILL.md` (or beneath the
+`ATC_CLAUDE_CODE_SKILLS_DIR` override):
 
 | Command | Exact argument meaning |
 |---|---|
@@ -90,9 +91,9 @@ All The Context also installs three personal user-scope commands under
 | `/atc-correct <record-id> <replacement>` | The first token is the record ID; the remaining exact text is the replacement |
 | `/atc-forget <record-id>` | The record ID is the only argument; trailing text is rejected |
 
-The personal command files disable model invocation. Setup refuses to replace
-an existing unrelated command with one of these reserved names and preserves
-all unrelated command files and settings. The explicit hook is registered only
+The personal skill files disable model invocation. Setup refuses to replace
+an existing unrelated skill with one of these reserved names and preserves
+all unrelated skill files and settings. The explicit hook is registered only
 for the anchored `UserPromptExpansion` matcher
 `^(atc-remember|atc-correct|atc-forget)$`. It binds Claude Code's separate
 `command_name`, `command_args`, `expansion_type`, and `command_source` fields;
@@ -112,11 +113,23 @@ writes nothing.
 Before the Core request, the hook keeps at most eight pending commands in
 memory for 15 seconds. Each has an opaque UUID command ID and a SHA-256
 commitment over the exact action and arguments; it is never persisted. A
-native MCP exact-payload elicitation is defense in depth and an additional
-mandatory gate: only an explicit `confirm=true` response permits the Core
-request; missing, failed, timed-out, or declined elicitation fails closed.
+native MCP exact-payload elicitation is the authoritative user approval and
+adoption of the proposed durable-memory payload: only an explicit
+`confirm=true` response permits the Core request; missing, failed, timed-out,
+or declined elicitation fails closed. The normal UX begins with one of the
+reserved slash commands, but the registered MCP tool is also model-visible;
+`command_source` and other hook metadata do not prove that the originating
+prompt was personally typed by the user. A direct tool call therefore still
+cannot write silently and must obtain the same native confirmation over the
+exact payload.
 Hook output and receipts contain no raw arguments. An ambiguous transport
 failure is retried once with the identical idempotency key; if the outcome
 remains ambiguous, the hook reports an unknown outcome and tells the user to
 verify before repeating. The command is blocked after handling so the exact
 payload is not sent on as a model prompt.
+
+Claude Code documents MCP elicitation generally, but this branch has not yet
+proved nested `Context.elicit` from an `mcp_tool` hook in a real Claude Code
+session. That capability remains a live-client acceptance item. If the nested
+elicitation is unavailable, the implementation fails closed and writes
+nothing; this local slice does not claim live Claude Code write acceptance.

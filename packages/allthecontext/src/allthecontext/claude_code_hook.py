@@ -339,8 +339,9 @@ async def _native_exact_payload_confirmation(
     if not callable(elicit):
         return None
     message = (
-        "Confirm the exact payload for All The Context "
-        f"/{pending.action}. The typed command and this native confirmation are both required:\n\n"
+        "Confirm that you personally approve and adopt the exact payload for All The Context "
+        f"/{pending.action}. This native confirmation is required before durable memory "
+        "changes:\n\n"
         f"{pending.raw_args}"
     )
     try:

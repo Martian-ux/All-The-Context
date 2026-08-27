@@ -25,35 +25,43 @@ observation as an explicit user statement with `ongoing_client` origin.
 Remember uses the existing candidate policy path, correction uses the
 existing correction/error path, and forget uses the existing `context_forget`
 tombstone path. Secret-like direct payloads stop at the existing content
-boundary with a content-free refusal. There is no Relay fallback or new
+boundary with a content-free refusal, and route validation errors omit rejected
+input values. There is no Relay fallback or new
 storage table. Ordinary prompts, model/tool/provider output, imported text,
 and native MCP elicitation are not direct-user evidence. The client lane's
 `UserPromptExpansion` integration metadata is limited to the exact fields
 `command_name`, `command_args`, and `expansion_type`; those fields are not
 authority grants and are not accepted as Core mutation payload fields.
 
-The write path is opt-in and uses three reserved personal commands handled by
+The write path is opt-in and uses three reserved personal skills at
+`~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, handled by
 the official `UserPromptExpansion` event, whose typed event fields expose the
 command name and exact arguments before expansion. The existing ordinary
 `UserPromptSubmit` hook remains read-only and never inspects ordinary prompts
-for capture. The client accepts only slash-command expansions from the user
+for capture. The normal UX accepts slash-command expansions from the user
 source and blocks the handled expansion after the explicit operation.
 
-The setup transaction preserves unrelated settings and command files, refuses
-unrelated files at reserved command paths, and provisions a separate principal
+The setup transaction preserves unrelated settings and personal skill files,
+refuses unrelated files at reserved skill paths, and provisions a separate principal
 with exactly `context:propose` plus `witness:explicit_user_statement`. The
 explicit handler uses only `/v1/claude-code/memory/remember`,
 `/v1/claude-code/memory/correct`, and `/v1/claude-code/memory/forget`, with no
 Relay fallback. A bounded in-memory pending record carries an opaque command
 ID and content commitment for 15 seconds at most. Native MCP exact-payload
-elicitation remains defense in depth but is a mandatory gate: only explicit
+elicitation is the authoritative user approval and adoption gate: only explicit
 `confirm=true` permits a Core request, and unavailable, failed, timed-out, or
-declined elicitation blocks it. Ambiguous transport failure is retried once
+declined elicitation blocks it. The MCP tool remains model-visible, so
+`command_source` and other event fields do not prove the command was personally
+typed; direct invocation is subject to the identical confirmation gate and
+cannot write silently. Ambiguous transport failure is retried once
 with the identical idempotency key; a second ambiguous failure reports an
 unknown outcome and requires verification before repeating. Raw arguments are
 not placed in hook output or receipts. Missing, unverified, unreachable, or
 revoked Core blocks the operation. The official event contract is recorded in the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks#userpromptexpansion-input).
+Nested `Context.elicit` from an `mcp_tool` hook remains unproved in a real
+Claude Code session. It fails closed when unavailable and is not a live-client
+support claim.
 
 ## ADR-161: Configure Claude Code as a separate read-only pre-generation client
 
