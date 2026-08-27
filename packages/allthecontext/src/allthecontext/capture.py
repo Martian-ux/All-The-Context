@@ -81,6 +81,7 @@ MAX_PAYLOAD_DEPTH = 8
 MAX_PAYLOAD_KEYS = 64
 MAX_PAYLOAD_LIST_ITEMS = 128
 MAX_PAYLOAD_STRING_CHARS = 2_000
+MAX_CAPTURE_CONTENT_CHARS = 16_384
 MAX_PAGE_EVENTS = 256
 MAX_RUN_PAGES = 100
 MAX_RUN_EVENTS = 10_000
@@ -115,6 +116,7 @@ CAPTURE_ERROR_CODES = frozenset(
         "capture_sink_receipt_invalid",
         "capture_lineage_conflict",
         "capture_local_only_required",
+        "capture_contract_invalid",
         "capture_authorize_workspace_required",
         "capture_invalid_transition",
         "capture_failed",
@@ -190,6 +192,21 @@ def _bounded_cursor(value: str, *, maximum: int = MAX_CURSOR_CHARS) -> str:
     return _bounded_text(value, maximum=maximum, code="capture_invalid_cursor")
 
 
+def _bounded_content(value: str) -> str:
+    """Validate captured conversation content with the formation bound."""
+
+    if not isinstance(value, str):
+        raise CaptureError("capture_payload_rejected")
+    if (
+        not value.strip()
+        or len(value) > MAX_CAPTURE_CONTENT_CHARS
+        or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", value) is not None
+        or _SECRET_MARKER_RE.search(_secret_scan_text(value))
+    ):
+        raise CaptureError("capture_payload_rejected")
+    return value
+
+
 def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) -> Any:
     if depth > MAX_PAYLOAD_DEPTH:
         raise CaptureError("capture_payload_rejected")
@@ -208,6 +225,8 @@ def _normalize_payload(value: Any, *, depth: int = 0, key: str | None = None) ->
             raise CaptureError("capture_payload_rejected")
         return value
     if isinstance(value, str):
+        if key == "content":
+            return _bounded_content(value)
         text = _bounded_text(
             value,
             maximum=MAX_PAYLOAD_STRING_CHARS,
@@ -944,6 +963,7 @@ _CAPTURE_MIGRATION_PATHS = (
     Path(__file__).parent / "migrations" / "core" / "015_continuous_capture.sql",
     Path(__file__).parent / "migrations" / "core" / "016_registered_source_admission.sql",
     Path(__file__).parent / "migrations" / "core" / "017_capture_page_recovery.sql",
+    Path(__file__).parent / "migrations" / "core" / "018_client_capture_source.sql",
 )
 _CAPTURE_MIGRATION_VERSIONS = frozenset(
     int(path.name.split("_", 1)[0]) for path in _CAPTURE_MIGRATION_PATHS
@@ -955,6 +975,7 @@ def ensure_capture_schema(connection: Any, *, through_version: int | None = None
 
     if through_version is not None and through_version not in _CAPTURE_MIGRATION_VERSIONS:
         raise ValueError("capture repair version must be an applied capture migration")
+    full_repair = through_version is None
 
     for migration_path in _CAPTURE_MIGRATION_PATHS:
         version = int(migration_path.name.split("_", 1)[0])
@@ -962,6 +983,18 @@ def ensure_capture_schema(connection: Any, *, through_version: int | None = None
             break
         migration = migration_path.read_text(encoding="utf-8")
         for statement in _migration_statements(migration):
+            # Migration 018 deliberately relaxes the older one-observation
+            # index so one lifecycle event can retain raw and formed evidence.
+            # A full repair must not recreate that obsolete unique index before
+            # migration 018 has a chance to drop it; this also keeps repair safe
+            # for databases that already contain both projections.
+            if full_repair and version == 16 and re.search(
+                r"CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+"
+                r"uq_context_candidates_capture_event",
+                statement,
+                flags=re.IGNORECASE,
+            ):
+                continue
             added_column = _added_column(statement)
             if added_column is not None:
                 table, column = added_column
@@ -1333,11 +1366,26 @@ class CaptureLedger:
         source_id: str,
         event: CaptureEvent,
         now: str,
+        idempotency_key: str | None = None,
     ) -> tuple[str, bool, int]:
         payload_json, payload_hash = event.normalized()
-        idempotency_key = _idempotency_key(source_id, event.provider_event_id)
+        durable_idempotency_key = (
+            _idempotency_key(source_id, event.provider_event_id)
+            if idempotency_key is None
+            else _bounded_opaque_id(idempotency_key, maximum=128)
+        )
+        claimed = connection.execute(
+            "SELECT source_id,provider_event_id FROM capture_events WHERE idempotency_key=?",
+            (durable_idempotency_key,),
+        ).fetchone()
+        if claimed is not None and (
+            str(claimed["source_id"]) != source_id
+            or str(claimed["provider_event_id"]) != event.provider_event_id
+        ):
+            raise CaptureError("capture_event_payload_conflict")
         existing = connection.execute(
-            "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts "
+            "SELECT id,status,payload_hash,provider_item_id,operation,generation,order_key,attempts,"
+            "idempotency_key "
             "FROM capture_events "
             "WHERE source_id=? AND provider_event_id=?",
             (source_id, event.provider_event_id),
@@ -1349,6 +1397,7 @@ class CaptureLedger:
                 or str(existing["operation"]) != event.operation
                 or int(existing["generation"]) != event.generation
                 or str(existing["order_key"]) != event.order_key
+                or str(existing["idempotency_key"]) != durable_idempotency_key
             ):
                 raise CaptureError("capture_event_payload_conflict")
             if str(existing["status"]) == "applied":
@@ -1375,7 +1424,7 @@ class CaptureLedger:
                 event.operation,
                 payload_json,
                 payload_hash,
-                idempotency_key,
+                durable_idempotency_key,
                 now,
             ),
         )

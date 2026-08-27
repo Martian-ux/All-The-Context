@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 import keyring
 from filelock import FileLock
@@ -15,6 +17,12 @@ from keyring.errors import KeyringError
 OS_CREDENTIAL_STORAGE = "operating-system credential store"
 FALLBACK_CREDENTIAL_STORAGE = "insecure development credential file"
 DEVELOPMENT_FALLBACK_ENV = "ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE"
+SECRET_REFERENCE_PREFIX = "atc-secret-ref-v1:"
+_SECRET_REFERENCE_RE = re.compile(
+    rf"^{re.escape(SECRET_REFERENCE_PREFIX)}[0-9a-f]{{8}}-"
+    rf"[0-9a-f]{{4}}-4[0-9a-f]{{3}}-[89ab][0-9a-f]{{3}}-[0-9a-f]{{12}}$"
+)
+MAX_SECRET_REFERENCE_VALUE_CHARS = 1_000_000
 
 
 class CredentialStore(Protocol):
@@ -50,6 +58,51 @@ class KeyringCredentialStore:
             return
         except KeyringError as exc:
             raise RuntimeError("the operating-system credential store is unavailable") from exc
+
+
+class LocalSecretReferenceVault:
+    """Store raw operational secrets only behind an OS credential reference.
+
+    The reference, never the value, is suitable for application metadata. A
+    plaintext development store is deliberately rejected even when the global
+    development fallback is enabled.
+    """
+
+    def __init__(
+        self,
+        credential_store: CredentialStore | None = None,
+        *,
+        service_name: str = "All The Context secret references",
+    ) -> None:
+        store = credential_store or KeyringCredentialStore(service_name)
+        if not isinstance(store, KeyringCredentialStore):
+            raise RuntimeError("secret references require an operating-system credential store")
+        self._store = store
+
+    @staticmethod
+    def _reference(value: str) -> str:
+        if type(value) is not str or _SECRET_REFERENCE_RE.fullmatch(value) is None:
+            raise ValueError("invalid secret reference")
+        return value
+
+    def put(self, value: str) -> str:
+        if type(value) is not str or not value or len(value) > MAX_SECRET_REFERENCE_VALUE_CHARS:
+            raise ValueError("secret value is outside its bound")
+        reference = SECRET_REFERENCE_PREFIX + str(uuid4())
+        self._store.set(reference, value)
+        return reference
+
+    def get(self, reference: str) -> str | None:
+        value = self._store.get(self._reference(reference))
+        if value is not None and type(value) is not str:
+            raise RuntimeError("operating-system credential store returned an invalid value")
+        return value
+
+    def delete(self, reference: str) -> None:
+        self._store.delete(self._reference(reference))
+
+
+SecretReferenceVault = LocalSecretReferenceVault
 
 
 class DevelopmentFileCredentialStore:

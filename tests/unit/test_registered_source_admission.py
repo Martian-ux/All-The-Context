@@ -1094,7 +1094,7 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             ).fetchone()
         ) == (4, 4)
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 17
+    assert restarted.migrate() == 18
     with restarted.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
         assert (

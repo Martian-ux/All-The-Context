@@ -93,6 +93,7 @@ from ..models import (
     BeginIngestionRequest,
     BootstrapRequest,
     CandidateInput,
+    CaptureEventRequest,
     ClaudeCodeCorrectionRequest,
     ClaudeCodeForgetRequest,
     ClaudeCodeRememberRequest,
@@ -121,6 +122,8 @@ from ..project_runtime import (
     project_list_payload,
 )
 from ..security import (
+    CLIENT_SCOPE_ALLOWLIST,
+    CONTEXT_CAPTURE,
     ClientPrincipal,
     principal_may_submit_claude_code_user_mutation,
 )
@@ -528,6 +531,11 @@ def create_app(
                 ),
             )
 
+    def validate_client_scopes(request: ClientCreate) -> None:
+        unknown = sorted(set(request.scopes) - CLIENT_SCOPE_ALLOWLIST)
+        if unknown:
+            raise HTTPException(status_code=422, detail="unknown client scope")
+
     @app.get("/health")
     def health(challenge: str | None = None) -> dict[str, str]:
         result = {"status": "ok", "component": "core"}
@@ -604,6 +612,7 @@ def create_app(
         client_host = http_request.client.host if http_request.client else ""
         if client_host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
             raise HTTPException(status_code=403, detail="Initial setup is loopback-only")
+        validate_client_scopes(request)
         scopes = sorted(
             {
                 *request.scopes,
@@ -644,6 +653,16 @@ def create_app(
     def propose_memory(request: CandidateInput, principal: Principal) -> dict[str, Any]:
         require(principal, "context:propose")
         return core.ingestion.propose(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/lifecycle/events")
+    def capture_lifecycle_event(
+        request: CaptureEventRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        """Capture one bounded client event through Core-only formation."""
+
+        require(principal, CONTEXT_CAPTURE)
+        return core.client_capture.capture(request, principal)
 
     @app.post("/v1/ingestion/error")
     def report_context_error(request: ContextErrorRequest, principal: Principal) -> dict[str, Any]:
@@ -1447,6 +1466,7 @@ def create_app(
     @app.post("/v1/admin/clients")
     def create_client(request: ClientCreate, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
+        validate_client_scopes(request)
         created, token = core.store.create_client(request)
         return {
             "client": {

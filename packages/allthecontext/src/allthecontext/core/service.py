@@ -9,6 +9,7 @@ from typing import Literal
 
 from ..capture_runtime import compose_capture_coordinator
 from ..capture_scheduler import CoreCaptureScheduler
+from ..client_capture import CoreCaptureService
 from ..config import CoreConfig
 from ..ids import utc_now
 from ..import_operations import ImportOperationService
@@ -46,6 +47,7 @@ class CoreService:
             pass
         self.store.rebuild_integrity_groups()
         self.ingestion = IngestionService(self.store)
+        self.client_capture = CoreCaptureService(self.store)
         self.retrieval = RetrievalEngine(self.store)
         self.imports = ArchiveImportService(self.store, max_bytes=config.max_import_bytes)
         self.import_operations = ImportOperationService(

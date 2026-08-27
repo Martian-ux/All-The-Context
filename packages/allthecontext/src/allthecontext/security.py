@@ -17,6 +17,19 @@ _ITERATIONS = 310_000
 # principals with this class may attest that text was an explicit user statement.
 # Authentication and context:propose alone are insufficient (A-09 / B-102).
 WITNESS_EXPLICIT_USER_STATEMENT = "witness:explicit_user_statement"
+CONTEXT_CAPTURE = "context:capture"
+CLIENT_SCOPE_ALLOWLIST = frozenset(
+    {
+        "*",
+        "admin",
+        "context:capture",
+        "context:ingest",
+        "context:propose",
+        "context:read",
+        "context:status",
+        WITNESS_EXPLICIT_USER_STATEMENT,
+    }
+)
 CLAUDE_CODE_USER_WRITE_SCOPES = frozenset({"context:propose", WITNESS_EXPLICIT_USER_STATEMENT})
 
 
