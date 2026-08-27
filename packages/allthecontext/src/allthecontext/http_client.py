@@ -60,6 +60,8 @@ class ContextHttpClient:
     client_id: str
     token: str
     timeout_seconds: float = 30.0
+    max_response_bytes: int | None = None
+    trust_env: bool = True
 
     def _request(
         self,
@@ -75,14 +77,50 @@ class ContextHttpClient:
             "Accept": "application/json",
         }
         try:
-            response = httpx.request(
-                method,
-                f"{self.base_url.rstrip('/')}{path}",
-                headers=headers,
-                json=json,
-                params=params,
-                timeout=self.timeout_seconds,
-            )
+            url = f"{self.base_url.rstrip('/')}{path}"
+            if self.max_response_bytes is None:
+                response = httpx.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json,
+                    params=params,
+                    timeout=self.timeout_seconds,
+                    trust_env=self.trust_env,
+                )
+            else:
+                with (
+                    httpx.Client(
+                        timeout=self.timeout_seconds,
+                        trust_env=self.trust_env,
+                        follow_redirects=False,
+                    ) as client,
+                    client.stream(
+                        method,
+                        url,
+                        headers=headers,
+                        json=json,
+                        params=params,
+                        follow_redirects=False,
+                    ) as streamed,
+                ):
+                    chunks: list[bytes] = []
+                    received = 0
+                    for chunk in streamed.iter_bytes():
+                        received += len(chunk)
+                        if received > self.max_response_bytes:
+                            raise ContextApiError(
+                                502,
+                                "response_too_large",
+                                "Target response exceeded its limit",
+                            )
+                        chunks.append(chunk)
+                    response = httpx.Response(
+                        streamed.status_code,
+                        headers=streamed.headers,
+                        content=b"".join(chunks),
+                        request=streamed.request,
+                    )
         except httpx.HTTPError as exc:
             raise ContextApiError(503, "target_unavailable", str(exc)) from exc
         if response.is_error:

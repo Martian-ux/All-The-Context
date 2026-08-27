@@ -1,8 +1,38 @@
 # Claude Code UserPromptSubmit hook
 
-This is an isolated, pre-generation-only runtime slice. It is not a supported
-configured Claude Code client connection, an L1 lifecycle implementation, a
-product exit, a release claim, or evidence of live Claude Code acceptance.
+This is a configured Claude Code UserPromptSubmit pre-generation client backed
+by the isolated hook runtime. It is not an L1 lifecycle implementation, direct-
+user capture, durable formation, live/private client acceptance, provider
+support, a product exit, a release claim, or evidence of live Claude Code
+acceptance.
+
+## Setup integration
+
+The first-run wizard exposes Claude Code as a separate, opt-in choice from
+Claude Desktop. Hidden packaged headless setup uses `--claude-code`; the
+default remains disabled unless the wizard detects an existing Claude Code
+executable. If Claude Code is not detected, install it and rerun setup.
+
+Setup writes only the Claude Code user-scope MCP registry and settings files:
+`~/.claude.json` and `~/.claude/settings.json`, or the dedicated
+`ATC_CLAUDE_CODE_MCP_CONFIG` and `ATC_CLAUDE_CODE_SETTINGS` overrides. It never
+writes project-local `.claude/settings*.json`, `.mcp.json`, or uses
+`ATC_CLAUDE_CONFIG`. Both files are read and updated in one transaction with
+exact preimage rechecks, rollback, and operation-backup cleanup after a
+successful rollback. Symlinked/reparse-point paths are rejected.
+
+The managed principal is named `Claude Code` and has exactly `context:read`.
+With an OS credential store, the serialized MCP environment carries the client
+ID but no bearer token. A token is serialized only when the existing explicit
+`ATC_ENABLE_INSECURE_DEVELOPMENT_CREDENTIAL_FILE=1` fallback is the selected
+credential storage. Managed configuration also carries the Core start command,
+data directory, and `ATC_AUTO_START_CORE=1`.
+
+Setup configures all selected clients before Core launch and dashboard handoff;
+optional workspace authorization remains the final setup mutation. This
+setup-only slice does not add a Claude Code dashboard connection/status,
+repair, or uninstall control. Claude Desktop keeps its existing distinct
+principal and configuration behavior. Ordinary MCP remains L0.
 
 ## Profile
 
@@ -27,9 +57,13 @@ or `session_id`. It does not log, persist, propose, or return `prompt`.
 
 The hook requires the usual authenticated `ATC_CLIENT_ID` and
 `ATC_CLIENT_TOKEN` (or the configured OS credential-store token), and accepts
-only a plain `http://127.0.0.1:<port>` `ATC_TARGET_URL`. It uses only Core's
-`POST /v1/context/bootstrap` path with a bounded timeout; this profile has no
-Relay fallback. Core remains responsible for authentication, authorization,
+only a plain `http://127.0.0.1:<port>` `ATC_TARGET_URL`. Before credential
+lookup or client construction it strictly probes the loopback installation
+with a bounded, direct request that ignores system proxies and redirects; an
+optional auto-start is followed by the same strict proof. The authenticated
+request also ignores system proxies, does not follow redirects, has a bounded
+timeout, and streams no more than 256 KiB before JSON parsing. This profile has
+no Relay fallback. Core remains responsible for authentication, authorization,
 retrieval filtering, and authoritative context.
 
 The output is always valid Claude Code `UserPromptSubmit` hook JSON with only

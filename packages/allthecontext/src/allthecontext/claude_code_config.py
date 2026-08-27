@@ -12,6 +12,7 @@ import os
 import platform
 import secrets
 import shutil
+import stat
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -20,7 +21,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .config import CoreConfig
 from .credentials import (
+    FALLBACK_CREDENTIAL_STORAGE,
+    OS_CREDENTIAL_STORAGE,
     KeyringCredentialStore,
     development_file_credentials_enabled,
     require_development_file_credentials,
@@ -33,6 +37,7 @@ CLAUDE_CODE_MCP_PROFILE = "claude_code_hook"
 
 CLAUDE_CODE_MCP_CONFIG_ENV = "ATC_CLAUDE_CODE_MCP_CONFIG"
 CLAUDE_CODE_SETTINGS_ENV = "ATC_CLAUDE_CODE_SETTINGS"
+CLAUDE_CODE_EXECUTABLE_ENV = "ATC_CLAUDE_CODE_EXECUTABLE"
 
 # Claude Code configuration is normally small.  Refusing unexpectedly large
 # input prevents an accidental unbounded read of a user-owned file.
@@ -101,22 +106,41 @@ def _user_home() -> Path:
     if platform.system() == "Windows":
         configured = os.environ.get("USERPROFILE")
         if configured:
-            return Path(configured).expanduser().resolve()
+            return _absolute_path(Path(configured).expanduser())
         drive = os.environ.get("HOMEDRIVE")
         tail = os.environ.get("HOMEPATH")
         if drive and tail:
-            return Path(f"{drive}{tail}").expanduser().resolve()
+            return _absolute_path(Path(f"{drive}{tail}").expanduser())
     else:
         configured = os.environ.get("HOME")
         if configured:
-            return Path(configured).expanduser().resolve()
-    return Path.home().expanduser().resolve()
+            return _absolute_path(Path(configured).expanduser())
+    return _absolute_path(Path.home().expanduser())
+
+
+def _absolute_path(path: Path) -> Path:
+    """Make a path absolute without resolving links that must be rejected later."""
+
+    return Path(os.path.abspath(os.fspath(path)))
 
 
 def _resolve_override(path: Path | None, default: Path, environment_name: str) -> Path:
     configured = os.environ.get(environment_name) if path is None else None
     selected = path if path is not None else Path(configured) if configured else default
-    return selected.expanduser().resolve()
+    return _absolute_path(selected.expanduser())
+
+
+def claude_code_is_detected() -> bool:
+    """Detect an existing Claude Code executable without treating config as installation."""
+
+    configured = os.environ.get(CLAUDE_CODE_EXECUTABLE_ENV)
+    if configured:
+        try:
+            if Path(configured).expanduser().resolve().is_file():
+                return True
+        except (OSError, RuntimeError, ValueError):
+            pass
+    return shutil.which("claude") is not None
 
 
 def claude_code_mcp_config_path(path: Path | None = None) -> Path:
@@ -180,6 +204,7 @@ def _reject_constant(_value: str) -> Any:
 
 
 def _read_bounded_text(path: Path) -> tuple[str, bool]:
+    _reject_linked_path(path)
     try:
         exists = path.exists()
         if not exists:
@@ -198,6 +223,31 @@ def _read_bounded_text(path: Path) -> tuple[str, bool]:
     except OSError as exc:
         raise RuntimeError("Could not read Claude Code configuration") from exc
     return text, True
+
+
+def _reject_linked_path(path: Path) -> None:
+    """Reject symlink/reparse components before reading or writing user config."""
+
+    current = path
+    while True:
+        try:
+            information = current.lstat()
+        except FileNotFoundError:
+            information = None
+        except OSError as exc:
+            raise RuntimeError("Could not verify Claude Code configuration path") from exc
+        if information is not None:
+            reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if stat.S_ISLNK(information.st_mode) or bool(
+                getattr(information, "st_file_attributes", 0) & reparse_flag
+            ):
+                raise ValueError(
+                    "Claude Code configuration paths may not contain symlinks or reparse points"
+                )
+        parent = current.parent
+        if parent == current:
+            return
+        current = parent
 
 
 def _read_document(path: Path) -> _Document:
@@ -244,12 +294,24 @@ def _keyring_token(client_id: str) -> tuple[bool, str | None]:
         return False, None
 
 
-def _token_environment(client_id: str, token: str | None) -> dict[str, str]:
+def _token_environment(
+    client_id: str,
+    token: str | None,
+    *,
+    credential_storage: str | None,
+) -> dict[str, str]:
     """Keep production credentials out of JSON while retaining explicit dev fallback."""
 
     if token is None:
         return {}
     _validate_text(token, label="client token", maximum=16_384)
+
+    if credential_storage == OS_CREDENTIAL_STORAGE:
+        raise RuntimeError("refusing to serialize a credential stored in the OS credential store")
+    if credential_storage == FALLBACK_CREDENTIAL_STORAGE:
+        if not development_file_credentials_enabled():
+            require_development_file_credentials()
+        return {"ATC_CLIENT_TOKEN": token}
 
     keyring_available, stored = _keyring_token(client_id)
     if stored is not None:
@@ -258,17 +320,14 @@ def _token_environment(client_id: str, token: str | None) -> dict[str, str]:
         # The adapter resolves this same client:<id> entry at runtime.
         return {}
 
+    # A caller that has a recoverable OS credential should pass token=None. A
+    # successful but empty OS lookup is not permission to copy a production
+    # credential into a user-owned JSON file. Only an unavailable OS store plus
+    # the existing explicit development fallback permits serialization.
     if keyring_available:
-        # A caller that has a working OS keyring should pass token=None.  A
-        # missing entry is not permission to copy a production credential into
-        # a user-owned JSON file.
         raise RuntimeError(
             "refusing to serialize a client credential when the OS credential store is available"
         )
-
-    # This is the same explicit opt-in boundary used by the existing
-    # credential helpers.  The MCP adapter receives this value only because
-    # no OS credential lookup is available in this development configuration.
     if not development_file_credentials_enabled():
         require_development_file_credentials()
     return {"ATC_CLIENT_TOKEN": token}
@@ -280,6 +339,8 @@ def _mcp_server(
     *,
     token: str | None,
     target_url: str,
+    core_data_dir: Path | None,
+    credential_storage: str | None,
 ) -> dict[str, Any]:
     command = runtime.mcp()
     if not command or any(type(item) is not str or not item for item in command):
@@ -289,8 +350,17 @@ def _mcp_server(
         "ATC_MCP_PROFILE": CLAUDE_CODE_MCP_PROFILE,
         "ATC_TARGET_URL": _validate_target_url(target_url),
         "ATC_CLIENT_ID": validated_client_id,
+        "ATC_AUTO_START_CORE": "1",
+        "ATC_CORE_COMMAND": json.dumps(runtime.core(), ensure_ascii=False),
+        "ATC_CORE_DATA_DIR": str((core_data_dir or CoreConfig.default().data_dir).resolve()),
     }
-    env.update(_token_environment(validated_client_id, token))
+    env.update(
+        _token_environment(
+            validated_client_id,
+            token,
+            credential_storage=credential_storage,
+        )
+    )
     return {
         "type": "stdio",
         "command": command[0],
@@ -432,8 +502,10 @@ def _updated_disconnect_documents(
 
 
 def _backup(path: Path) -> Path:
+    _reject_linked_path(path)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     backup = path.with_name(f"{path.name}.atc-backup-{timestamp}-{secrets.token_hex(3)}")
+    _reject_linked_path(backup)
     if backup.exists():
         raise RuntimeError("could not allocate a private Claude Code backup path")
     shutil.copy2(path, backup)
@@ -441,11 +513,18 @@ def _backup(path: Path) -> Path:
 
 
 def _atomic_write(path: Path, content: str) -> None:
+    _reject_linked_path(path)
     temporary = path.with_name(f"{path.name}.{secrets.token_hex(6)}.atc-new")
+    _reject_linked_path(temporary)
+    existing_mode: int | None = None
+    if os.name != "nt" and path.exists():
+        existing_mode = stat.S_IMODE(path.stat().st_mode)
     try:
         with temporary.open("w", encoding="utf-8", newline="") as handle:
             handle.write(content)
             handle.flush()
+        if os.name != "nt":
+            os.chmod(temporary, existing_mode if existing_mode is not None else 0o600)
         temporary.replace(path)
     finally:
         with suppress(OSError):
@@ -471,6 +550,14 @@ def _restore(plan: _WritePlan) -> None:
         plan.document.path.unlink()
 
 
+def _revalidate_preimage(plan: _WritePlan) -> None:
+    """Refuse to overwrite a config that changed after its initial read."""
+
+    current, exists = _read_bounded_text(plan.document.path)
+    if exists != plan.document.existed or current != plan.document.original:
+        raise RuntimeError("Claude Code configuration changed during setup; retry safely")
+
+
 def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | None, Path | None]:
     changed = tuple(plan for plan in plans if plan.updated != plan.document.original)
     if not changed:
@@ -483,10 +570,12 @@ def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | Non
     attempted: list[_WritePlan] = []
     try:
         for plan in changed:
-            attempted.append(plan)
+            _revalidate_preimage(plan)
             backups[plan.document.path] = (
                 _backup(plan.document.path) if plan.document.existed else None
             )
+            _revalidate_preimage(plan)
+            attempted.append(plan)
             _atomic_write(plan.document.path, plan.updated)
     except BaseException:
         rollback_error: BaseException | None = None
@@ -500,6 +589,19 @@ def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | Non
             raise RuntimeError(
                 "Claude Code configuration failed and could not be rolled back"
             ) from rollback_error
+        cleanup_error: OSError | None = None
+        for backup in backups.values():
+            if backup is None:
+                continue
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError as candidate:
+                cleanup_error = candidate
+                break
+        if cleanup_error is not None:
+            raise RuntimeError(
+                "Claude Code configuration rolled back but could not clean up its backups"
+            ) from cleanup_error
         raise
 
     return backups.get(plans[0].document.path), backups.get(plans[1].document.path)
@@ -535,13 +637,22 @@ def connect_claude_code(
     target_url: str = "http://127.0.0.1:7337",
     mcp_path: Path | None = None,
     settings_path: Path | None = None,
+    core_data_dir: Path | None = None,
+    credential_storage: str | None = None,
 ) -> ClaudeCodeConfigResult:
     """Install or refresh the exact user-scope Claude Code integration."""
 
     paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
     mcp = _read_document(paths.mcp)
     settings = _read_document(paths.settings)
-    server = _mcp_server(runtime, client_id, token=token, target_url=target_url)
+    server = _mcp_server(
+        runtime,
+        client_id,
+        token=token,
+        target_url=target_url,
+        core_data_dir=core_data_dir,
+        credential_storage=credential_storage,
+    )
     mcp_updated, settings_updated = _updated_connect_documents(mcp, settings, server)
     plans = (_WritePlan(mcp, mcp_updated), _WritePlan(settings, settings_updated))
     backups = _apply_transaction(plans)
@@ -556,6 +667,8 @@ def configure_claude_code(
     target_url: str = "http://127.0.0.1:7337",
     mcp_path: Path | None = None,
     settings_path: Path | None = None,
+    core_data_dir: Path | None = None,
+    credential_storage: str | None = None,
 ) -> ClaudeCodeConfigResult:
     """Compatibility spelling for setup code that uses configure_* adapters."""
 
@@ -566,6 +679,8 @@ def configure_claude_code(
         target_url=target_url,
         mcp_path=mcp_path,
         settings_path=settings_path,
+        core_data_dir=core_data_dir,
+        credential_storage=credential_storage,
     )
 
 
@@ -592,6 +707,7 @@ def disconnect_claude_code_config(
 
 
 __all__ = [
+    "CLAUDE_CODE_EXECUTABLE_ENV",
     "CLAUDE_CODE_HOOK_TOOL",
     "CLAUDE_CODE_MCP_CONFIG_ENV",
     "CLAUDE_CODE_MCP_PROFILE",
@@ -601,6 +717,7 @@ __all__ = [
     "ClaudeCodeConfigPaths",
     "ClaudeCodeConfigResult",
     "claude_code_config_paths",
+    "claude_code_is_detected",
     "claude_code_mcp_config_path",
     "claude_code_settings_path",
     "configure_claude_code",

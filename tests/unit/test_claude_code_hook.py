@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import anyio
 import pytest
 from allthecontext import claude_code_hook as hook
+from allthecontext import http_client as http_client_module
+from allthecontext import mcp_adapter
+from allthecontext.config import CoreConfig
+from allthecontext.desktop_setup import CoreProbe
 from allthecontext.http_client import ContextApiError, ContextHttpClient
 from allthecontext.mcp_adapter import _server_for_profile, build_mcp
 from mcp.server.mcpserver.exceptions import ToolError
@@ -194,6 +199,144 @@ def test_missing_auth_and_non_loopback_target_are_rejected_without_core_contact(
 
     monkeypatch.setenv("ATC_TARGET_URL", "http://[malformed")
     assert hook._hook_client() is None
+
+
+def test_hook_verifies_installation_before_constructing_authenticated_client(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("ATC_TARGET_URL", "http://127.0.0.1:7337")
+    monkeypatch.setenv("ATC_CLIENT_ID", "claude-code-client")
+    monkeypatch.setenv("ATC_CLIENT_TOKEN", "must-not-reach-unverified-listener")
+    monkeypatch.delenv("ATC_AUTO_START_CORE", raising=False)
+    monkeypatch.setattr(
+        mcp_adapter.CoreConfig,
+        "default",
+        lambda: CoreConfig.in_directory(tmp_path),
+    )
+    probed: list[Path] = []
+    monkeypatch.setattr(
+        mcp_adapter,
+        "probe_core",
+        lambda config, **_kwargs: probed.append(config.data_dir) or CoreProbe.UNVERIFIED,
+    )
+    constructed: list[tuple[object, ...]] = []
+
+    class Client:
+        def __init__(self, *args: object, **_kwargs: object) -> None:
+            constructed.append(args)
+
+    monkeypatch.setattr(hook, "ContextHttpClient", Client)
+
+    assert hook._hook_client() is None
+    assert probed == [tmp_path]
+    assert constructed == []
+
+
+def test_hook_verification_and_http_client_bypass_environment_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ATC_TARGET_URL", "http://127.0.0.1:7337")
+    monkeypatch.setenv("ATC_CLIENT_ID", "claude-code-client")
+    monkeypatch.setenv("ATC_CLIENT_TOKEN", "hook-token")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        hook,
+        "_ensure_local_core",
+        lambda _target, **kwargs: seen.update(kwargs),
+    )
+
+    client = hook._hook_client()
+
+    assert client is not None
+    assert seen["ignore_environment_proxy"] is True
+    assert client.trust_env is False
+    assert client.max_response_bytes == hook.HOOK_MAX_RESPONSE_BYTES
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("prompt", "prompt-marker-" + "p" * 4_001),
+        ("cwd", "cwd-marker-" + "c" * 4_096),
+        ("session_id", "session-marker-" + "s" * 128),
+    ],
+)
+def test_hook_validation_errors_do_not_echo_raw_input(field: str, value: str) -> None:
+    arguments: dict[str, Any] = {
+        "prompt": "p",
+        "cwd": "c",
+        "session_id": "s",
+    }
+    arguments[field] = value
+
+    with pytest.raises(ToolError) as failure:
+        anyio.run(
+            hook.build_claude_code_hook_mcp().call_tool,
+            hook.HOOK_TOOL_NAME,
+            arguments,
+        )
+
+    assert value not in str(failure.value)
+    assert value[:64] not in str(failure.value)
+
+
+def test_hook_client_bounds_response_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = False
+
+    class Response:
+        status_code = 200
+        request = None
+
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def iter_bytes(self) -> list[bytes]:
+            return [b"x" * (hook.HOOK_MAX_RESPONSE_BYTES + 1)]
+
+        def json(self) -> object:
+            nonlocal parsed
+            parsed = True
+            raise AssertionError("oversized response was parsed")
+
+    class Stream:
+        def __enter__(self) -> Response:
+            return Response()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class Client:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def stream(self, *_args: object, **_kwargs: object) -> Stream:
+            return Stream()
+
+    monkeypatch.setattr(
+        http_client_module.httpx,
+        "Client",
+        Client,
+    )
+    client = ContextHttpClient(
+        "http://127.0.0.1:7337",
+        "client",
+        "token",
+        max_response_bytes=hook.HOOK_MAX_RESPONSE_BYTES,
+        trust_env=False,
+    )
+
+    with pytest.raises(ContextApiError) as failure:
+        client.bootstrap_context_core_only({"query": "p", "budget_chars": 8_000})
+    assert failure.value.code == "response_too_large"
+    assert parsed is False
 
 
 def test_core_only_bootstrap_never_falls_back_to_relay(monkeypatch) -> None:

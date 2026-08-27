@@ -717,6 +717,20 @@ def _write_headless_setup_failure_report(target: Path, error: Exception) -> Path
         return None
 
 
+def _headless_claude_code_result(result: object) -> dict[str, Any] | None:
+    """Project the Claude Code result without returning its user-file paths."""
+
+    configured = getattr(result, "claude_code", None)
+    if configured is None:
+        return None
+    return {
+        "client": "Claude Code",
+        "changed": bool(getattr(configured, "changed", False)),
+        "mcp_changed": bool(getattr(configured, "mcp_changed", False)),
+        "settings_changed": bool(getattr(configured, "settings_changed", False)),
+    }
+
+
 def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
     target = Path(args.headless_setup).expanduser().resolve()
     try:
@@ -727,6 +741,7 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
                 timezone=args.timezone or local_timezone(),
                 configure_codex=not args.no_codex,
                 configure_claude=not args.no_claude,
+                configure_claude_code=args.configure_claude_code,
                 start_at_login=not args.no_startup,
                 workspace_root=args.workspace_root,
                 workspace_local_only_acknowledged=args.acknowledge_local_workspace,
@@ -744,6 +759,7 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         report["log_path"] = str(result.log_path)
         report["codex"] = asdict(result.codex) if result.codex else None
         report["claude"] = asdict(result.claude) if result.claude else None
+        report["claude_code"] = _headless_claude_code_result(result)
         report["startup"] = asdict(result.startup) if result.startup else None
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
@@ -1034,6 +1050,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timezone", help=argparse.SUPPRESS)
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-claude", action="store_true", help=argparse.SUPPRESS)
+    claude_code = parser.add_mutually_exclusive_group()
+    claude_code.add_argument(
+        "--claude-code",
+        dest="configure_claude_code",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    claude_code.add_argument(
+        "--no-claude-code",
+        dest="configure_claude_code",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_claude_code=False)
     parser.add_argument("--no-startup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--workspace-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(

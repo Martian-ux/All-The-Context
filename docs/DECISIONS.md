@@ -1,5 +1,35 @@
 # Architecture decisions
 
+## ADR-161: Configure Claude Code as a separate read-only pre-generation client
+
+**Status:** accepted locally on 2026-08-26 for the setup integration. This is
+not L1, direct-user capture, durable formation, live/private client acceptance,
+provider support, a product exit, a release claim, or a release exit.
+
+The setup wizard and hidden packaged headless path expose Claude Code separately
+from Claude Desktop. They provision a distinct `Claude Code` principal with
+exactly `context:read`, configure only Claude Code's user-level MCP/settings
+files or their dedicated overrides, and leave existing defaults disabled unless
+the wizard detects an existing Claude Code executable. Project-local Claude
+settings, `.mcp.json`, and `ATC_CLAUDE_CONFIG` are out of scope.
+
+The existing transactional principal/credential machinery owns creation,
+reuse, and cleanup. OS-keyring setup passes no token to JSON configuration;
+only the explicit insecure-development fallback can serialize one. The managed
+environment includes `ATC_AUTO_START_CORE=1`, `ATC_CORE_COMMAND`, and
+`ATC_CORE_DATA_DIR`. The two-file component transaction reads bounded inputs,
+rejects symlink/reparse paths, rechecks exact preimages immediately before
+writes, preserves POSIX modes, and removes operation-created backups after a
+successful rollback. The hook strictly bypasses proxies and redirects for
+identity proof, bounds proof and response bodies, and reprobes after auto-start.
+
+All selected client configuration precedes Core launch/dashboard handoff, while
+optional workspace authorization remains the final setup mutation. This slice
+is setup-only: it does not add Claude Code dashboard status, repair, or
+uninstall integration. Claude Desktop and ordinary L0 MCP behavior remain
+distinct. The final atomic rename still has an unavoidable external-writer
+window; no crash journal or stronger concurrency claim is made.
+
 ## ADR-160: Keep the Claude Code pre-generation hook as an isolated L0 slice
 
 **Status:** accepted locally on 2026-08-26 for the pre-generation-only runtime

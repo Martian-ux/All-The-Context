@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 from allthecontext import claude_code_config
 from allthecontext.claude_code_config import (
+    CLAUDE_CODE_EXECUTABLE_ENV,
     CLAUDE_CODE_HOOK_TOOL,
     CLAUDE_CODE_MCP_CONFIG_ENV,
     CLAUDE_CODE_MCP_PROFILE,
     CLAUDE_CODE_MCP_SERVER_KEY,
     CLAUDE_CODE_SETTINGS_ENV,
+    claude_code_is_detected,
     claude_code_mcp_config_path,
     claude_code_settings_path,
     configure_claude_code,
@@ -84,12 +88,14 @@ def test_connect_writes_exact_schema_preserves_unrelated_data_and_is_idempotent(
         },
     )
 
+    core_data_dir = tmp_path / "core-data"
     first = configure_claude_code(
         _runtime(tmp_path),
         "claude-code-client",
         target_url="http://127.0.0.1:7444",
         mcp_path=mcp_path,
         settings_path=settings_path,
+        core_data_dir=core_data_dir,
     )
 
     mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -103,6 +109,9 @@ def test_connect_writes_exact_schema_preserves_unrelated_data_and_is_idempotent(
             "ATC_MCP_PROFILE": CLAUDE_CODE_MCP_PROFILE,
             "ATC_TARGET_URL": "http://127.0.0.1:7444",
             "ATC_CLIENT_ID": "claude-code-client",
+            "ATC_AUTO_START_CORE": "1",
+            "ATC_CORE_COMMAND": json.dumps(_runtime(tmp_path).core(), ensure_ascii=False),
+            "ATC_CORE_DATA_DIR": str(core_data_dir.resolve()),
         },
     }
     assert mcp["custom"] == {"keep": True}
@@ -125,6 +134,7 @@ def test_connect_writes_exact_schema_preserves_unrelated_data_and_is_idempotent(
         target_url="http://127.0.0.1:7444",
         mcp_path=mcp_path,
         settings_path=settings_path,
+        core_data_dir=core_data_dir,
     )
     assert second.changed is False
     assert second.backup_paths == ()
@@ -244,6 +254,71 @@ def test_first_and_second_write_faults_roll_back_both_files(
     assert calls == (2 if failure_call == 1 else 4)
 
 
+def test_preimage_change_between_writes_rolls_back_only_atc_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mcp_path = tmp_path / ".claude.json"
+    settings_path = tmp_path / "settings.json"
+    mcp_original = '{"keep": "mcp"}\n'
+    settings_original = '{"keep": "settings"}\n'
+    mcp_path.write_text(mcp_original, encoding="utf-8")
+    settings_path.write_text(settings_original, encoding="utf-8")
+
+    real_atomic_write = claude_code_config._atomic_write
+
+    def write_then_user_edit(path: Path, content: str) -> None:
+        real_atomic_write(path, content)
+        if path == mcp_path:
+            settings_path.write_text('{"user_edit": true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(claude_code_config, "_atomic_write", write_then_user_edit)
+    with pytest.raises(RuntimeError, match="changed during setup"):
+        configure_claude_code(
+            _runtime(tmp_path),
+            "client",
+            mcp_path=mcp_path,
+            settings_path=settings_path,
+        )
+
+    assert mcp_path.read_text(encoding="utf-8") == mcp_original
+    assert settings_path.read_text(encoding="utf-8") == '{"user_edit": true}\n'
+
+
+def test_linked_configuration_path_is_rejected_without_following_target(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "unrelated.json"
+    target.write_text('{"user": true}\n', encoding="utf-8")
+    linked = tmp_path / ".claude.json"
+    try:
+        linked.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlinks or reparse points"):
+        configure_claude_code(
+            _runtime(tmp_path),
+            "client",
+            mcp_path=linked,
+            settings_path=tmp_path / "settings.json",
+        )
+
+    assert target.read_text(encoding="utf-8") == '{"user": true}\n'
+    assert not (tmp_path / "settings.json").exists()
+
+
+def test_detection_requires_an_existing_claude_code_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "claude.exe"
+    monkeypatch.setenv(CLAUDE_CODE_EXECUTABLE_ENV, str(executable))
+    monkeypatch.setattr(claude_code_config.shutil, "which", lambda _name: None)
+
+    assert claude_code_is_detected() is False
+    executable.write_text("executable", encoding="utf-8")
+    assert claude_code_is_detected() is True
+
+
 def test_disconnect_removes_only_managed_server_and_exact_hook_handler(
     tmp_path: Path,
 ) -> None:
@@ -336,6 +411,28 @@ def test_default_paths_never_follow_cwd_into_project_local_configuration(
     assert result.settings_path.is_file()
     assert not (project / ".claude.json").exists()
     assert not (project / ".claude").exists()
+
+
+def test_config_replacement_preserves_posix_mode_and_new_files_are_private(
+    tmp_path: Path,
+) -> None:
+    if os.name == "nt":
+        pytest.skip("POSIX mode bits are not enforced on Windows")
+
+    mcp_path = tmp_path / ".claude.json"
+    settings_path = tmp_path / "settings.json"
+    _write_json(mcp_path, {})
+    os.chmod(mcp_path, 0o640)
+
+    configure_claude_code(
+        _runtime(tmp_path),
+        "client",
+        mcp_path=mcp_path,
+        settings_path=settings_path,
+    )
+
+    assert stat.S_IMODE(mcp_path.stat().st_mode) == 0o640
+    assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
 
 
 def test_production_token_is_not_serialized_when_os_credential_lookup_succeeds(
