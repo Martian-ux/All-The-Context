@@ -77,3 +77,43 @@ ACL/audit metadata, and all hook input fields are excluded.
 The installed MCP SDK serializes this tool's result as one text content item
 containing the hook JSON. `structured_content` is intentionally not required
 by this hook contract.
+
+## Explicit memory commands (opt-in)
+
+The write feature is disabled by default. When explicitly selected in setup,
+All The Context also installs three personal user-scope commands under
+`~/.claude/commands/` (or `ATC_CLAUDE_CODE_COMMANDS_DIR`):
+
+| Command | Exact argument meaning |
+|---|---|
+| `/atc-remember <statement>` | The complete `command_args` string is the user statement |
+| `/atc-correct <record-id> <replacement>` | The first token is the record ID; the remaining exact text is the replacement |
+| `/atc-forget <record-id> [reason]` | The first token is the record ID; the remaining exact text is the reason |
+
+The personal command files disable model invocation. Setup refuses to replace
+an existing unrelated command with one of these reserved names and preserves
+all unrelated command files and settings. The explicit hook is registered only
+for the anchored `UserPromptExpansion` matcher
+`^(atc-remember|atc-correct|atc-forget)$`. It binds Claude Code's separate
+`command_name`, `command_args`, `expansion_type`, and `command_source` fields;
+it does not parse or capture the ordinary `prompt`, transcript, session,
+working directory, or attachments. The official contract documents
+`expansion_type=slash_command` and the exact `command_args` field in the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks#userpromptexpansion-input).
+
+The explicit path provisions a separate `Claude Code Explicit Commands`
+principal with exactly `context:propose` and
+`witness:explicit_user_statement`. It calls only Core's
+`/v1/claude-code/memory/remember`, `/v1/claude-code/memory/correct`, and
+`/v1/claude-code/memory/forget` routes. There is no Relay fallback; absent,
+unreachable, unverified, or revoked Core authority blocks the command and
+writes nothing.
+
+Before the Core request, the hook keeps at most eight pending commands in
+memory for 15 seconds. Each has an opaque UUID command ID and a SHA-256
+commitment over the exact action and arguments; it is never persisted. A
+native MCP exact-payload elicitation, when supported by the client, is only
+defense in depth: declining it blocks the write, while lack of elicitation
+support does not replace the typed slash-command gesture. Hook output and
+receipts contain no raw arguments. The command is blocked after handling so
+the exact payload is not sent on as a model prompt.

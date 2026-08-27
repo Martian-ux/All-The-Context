@@ -48,7 +48,24 @@ user evidence; the client lane may bind only its exact expansion metadata
 fields `command_name`, `command_args`, and `expansion_type` as integration data.
 This is Core/API evidence only and does not claim client hook/config/setup,
 live/private data acceptance, a product exit, or macOS support.
+### 2026-08-26 — opt-in Claude Code explicit memory command boundary
 
+The Claude Code client lane now includes an opt-in-only explicit command
+boundary for `/atc-remember`, `/atc-correct`, and `/atc-forget`. Setup keeps
+the existing `Claude Code` read principal exactly `context:read` and, only
+when selected, creates a separate `Claude Code Explicit Commands` principal
+with exactly `context:propose` and `witness:explicit_user_statement`.
+
+The transaction preserves unrelated Claude user settings and command files,
+refuses reserved-name collisions, and configures only user-scope
+`UserPromptExpansion` handling. Ordinary `UserPromptSubmit` retrieval remains
+read-only and never scans or captures ordinary prompts. The handler binds the
+official event's exact `command_name`, `command_args`, `expansion_type`, and
+`command_source` fields, keeps only bounded in-memory pending state, and calls
+Core's narrow Claude Code memory routes without Relay fallback. Missing or
+revoked Core authority fails closed. This is a client/config/setup boundary,
+not Core ingestion/policy/API implementation, macOS work, live/private
+acceptance, or a product/release exit claim.
 ### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
 
 The first-run wizard and hidden packaged headless setup now expose a separate

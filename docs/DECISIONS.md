@@ -1,10 +1,10 @@
 # Architecture decisions
 
-## ADR-162: Keep Claude Code explicit-user memory writes Core-authoritative
+## ADR-162: Keep Claude Code explicit-user memory Core-authoritative, separate, and opt-in
 
-**Status:** accepted locally on 2026-08-26 for the Core/API contract. This is
-not client hook/config/setup work, live/private client acceptance, a product
-exit, a release claim, or macOS support.
+**Status:** accepted locally on 2026-08-26 for the integrated Core/API and
+Claude Code client/config/setup boundary. This is not live/private client
+acceptance, a product exit, a release claim, or macOS support.
 
 Claude Code remember, correct, and reversible forget operations use dedicated
 Core routes and a separate least-privilege registration with exactly
@@ -31,6 +31,27 @@ and native MCP elicitation are not direct-user evidence. The client lane's
 `UserPromptExpansion` integration metadata is limited to the exact fields
 `command_name`, `command_args`, and `expansion_type`; those fields are not
 authority grants and are not accepted as Core mutation payload fields.
+
+The write path is opt-in and uses three reserved personal commands handled by
+the official `UserPromptExpansion` event, whose typed event fields expose the
+command name and exact arguments before expansion. The existing ordinary
+`UserPromptSubmit` hook remains read-only and never inspects ordinary prompts
+for capture. The client accepts only slash-command expansions from the user
+source and blocks the handled expansion after the explicit operation.
+
+The setup transaction preserves unrelated settings and command files, refuses
+unrelated files at reserved command paths, and provisions a separate principal
+with exactly `context:propose` plus `witness:explicit_user_statement`. The
+explicit handler uses only `/v1/claude-code/memory/remember`,
+`/v1/claude-code/memory/correct`, and `/v1/claude-code/memory/forget`, with no
+Relay fallback. A bounded in-memory pending record carries an opaque command
+ID and content commitment for 15 seconds at most. Native MCP exact-payload
+elicitation is a mandatory additional gate: only explicit `confirm=true`
+permits a Core request, while unavailable, failed, timed-out, or declined
+elicitation blocks it. Raw arguments are not placed in hook output or receipts.
+Missing, unverified, unreachable, or revoked Core blocks the operation. The
+official event contract is recorded in the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks#userpromptexpansion-input).
 
 ## ADR-161: Configure Claude Code as a separate read-only pre-generation client
 

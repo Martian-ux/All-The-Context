@@ -32,6 +32,7 @@ from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
 from .claude_code_config import (
     ClaudeCodeConfigResult,
     configure_claude_code,
+    configure_claude_code_explicit_commands,
 )
 from .client_config import (
     ClientConfigResult,
@@ -63,6 +64,7 @@ DESKTOP_CLIENT_NAME = "All The Context Desktop"
 CODEX_CLIENT_NAME = "Codex"
 CLAUDE_CLIENT_NAME = "Claude Desktop"
 CLAUDE_CODE_CLIENT_NAME = "Claude Code"
+CLAUDE_CODE_EXPLICIT_CLIENT_NAME = "Claude Code Explicit Commands"
 SCHEDULER_SETUP_CLIENT_NAME = "All The Context one-time setup scheduler"
 DESKTOP_SCOPES = [
     "*",
@@ -82,6 +84,10 @@ AI_CLIENT_SCOPES = [
     "witness:explicit_user_statement",
 ]
 CLAUDE_CODE_SCOPES = ["context:read"]
+CLAUDE_CODE_EXPLICIT_SCOPES = [
+    "context:propose",
+    "witness:explicit_user_statement",
+]
 ProgressCallback = Callable[[str, str], None]
 
 
@@ -98,6 +104,7 @@ class SetupOptions:
     configure_codex: bool = True
     configure_claude: bool = True
     configure_claude_code: bool = False
+    configure_claude_code_explicit_commands: bool = False
     start_at_login: bool = True
     workspace_root: Path | None = None
     workspace_local_only_acknowledged: bool = False
@@ -118,6 +125,7 @@ class SetupResult:
     warnings: tuple[str, ...] = ()
     workspace_source_id: str | None = None
     continuous_capture_enabled: bool = False
+    claude_code_explicit: ClaudeCodeConfigResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +692,8 @@ def authenticated_dashboard_url(
 
 
 def _validate_workspace_options(options: SetupOptions) -> None:
+    if options.configure_claude_code_explicit_commands and not options.configure_claude_code:
+        raise ValueError("explicit Claude Code commands require the Claude Code connection")
     if options.workspace_root is None:
         if options.workspace_local_only_acknowledged:
             raise ValueError("workspace local-only acknowledgement requires a workspace root")
@@ -938,6 +948,37 @@ def perform_setup(
         except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Claude Code configuration was not changed: {exc}")
 
+    claude_code_explicit_result: ClaudeCodeConfigResult | None = None
+    if options.configure_claude_code_explicit_commands:
+        notify("claude_code_explicit", "Connecting Claude Code explicit memory commands")
+        try:
+            explicit_access, claude_code_explicit_result = configure_client_access_transactionally(
+                store,
+                active_config,
+                name=CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+                scopes=CLAUDE_CODE_EXPLICIT_SCOPES,
+                configure=lambda client_access: configure_claude_code_explicit_commands(
+                    active_runtime,
+                    client_access.client_id,
+                    token=(
+                        None
+                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
+                        else client_access.token
+                    ),
+                    target_url=f"http://{active_config.host}:{active_config.port}",
+                    core_data_dir=active_config.data_dir,
+                    credential_storage=client_access.credential_storage,
+                ),
+            )
+            retire_other_named_clients(
+                store,
+                active_config,
+                name=CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+                keep_id=explicit_access.client_id,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.append(f"Claude Code explicit commands were not configured: {exc}")
+
     startup_result: StartupResult | None = None
     if options.start_at_login:
         notify("startup", "Enabling private per-user startup")
@@ -977,6 +1018,7 @@ def perform_setup(
         warnings=tuple(warnings),
         workspace_source_id=workspace_source_id,
         continuous_capture_enabled=continuous_capture_enabled,
+        claude_code_explicit=claude_code_explicit_result,
     )
 
 

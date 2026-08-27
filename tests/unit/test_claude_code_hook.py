@@ -411,3 +411,183 @@ def test_ordinary_mcp_registry_and_instructions_remain_the_default(monkeypatch) 
         "search_context",
         "submit_context_batch",
     }
+
+
+def test_explicit_profile_binds_exact_user_command_arguments() -> None:
+    server = hook.build_claude_code_explicit_mcp()
+    tool = _tools(server)[hook.EXPLICIT_HOOK_TOOL_NAME]
+
+    assert server.name == "All The Context Claude Code Explicit Commands"
+    assert set(_tools(server)) == {hook.EXPLICIT_HOOK_TOOL_NAME}
+    assert tool.input_schema["required"] == [
+        "expansion_type",
+        "command_name",
+        "command_args",
+        "command_source",
+    ]
+    assert tool.input_schema["additionalProperties"] is False
+    assert tool.input_schema["properties"]["command_args"]["maxLength"] == 8_000
+
+
+def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class Client:
+        def claude_code_remember(self, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append(("remember", payload))
+            return {"accepted": True}
+
+        def claude_code_correct(self, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append(("correct", payload))
+            return {"accepted": True}
+
+        def claude_code_forget(self, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append(("forget", payload))
+            return {"accepted": True}
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    raw_args = "  prefer exact words  "
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        object(),
+        "slash_command",
+        "atc-remember",
+        raw_args,
+        "user",
+    )
+
+    assert output["decision"] == "block"
+    assert output["hookSpecificOutput"] == {
+        "hookEventName": "UserPromptExpansion",
+        "additionalContext": "",
+    }
+    assert raw_args not in json.dumps(output)
+    assert len(calls) == 1
+    action, payload = calls[0]
+    assert action == "remember"
+    assert payload["content"] == raw_args
+    assert payload["explicit_user_statement"] is True
+    assert payload["command_id"] in output["systemMessage"]
+    assert len(payload["content_commitment"]) == 64
+
+
+@pytest.mark.parametrize(
+    ("command_name", "command_args", "method", "expected"),
+    [
+        (
+            "atc-correct",
+            "record-1\tprefer this",
+            "correct",
+            {"record_id": "record-1", "content": "prefer this"},
+        ),
+        (
+            "atc-forget",
+            "record-2 because it is stale",
+            "forget",
+            {"record_id": "record-2", "reason": "because it is stale"},
+        ),
+    ],
+)
+def test_explicit_correction_and_forget_use_exact_target_fields(
+    monkeypatch,
+    command_name: str,
+    command_args: str,
+    method: str,
+    expected: dict[str, str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class Client:
+        def __getattr__(self, name: str):
+            def call(payload: dict[str, Any]) -> None:
+                captured["method"] = name.removeprefix("claude_code_")
+                captured["payload"] = payload
+
+            return call
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        object(),
+        "slash_command",
+        command_name,
+        command_args,
+        "user",
+    )
+
+    assert output["decision"] == "block"
+    assert captured["method"] == method
+    assert all(captured["payload"][key] == value for key, value in expected.items())
+
+
+def test_explicit_native_decline_never_reaches_core(monkeypatch) -> None:
+    called = False
+
+    class Client:
+        def claude_code_remember(self, _payload: dict[str, Any]) -> None:
+            nonlocal called
+            called = True
+
+    class Context:
+        async def elicit(self, message: str, schema: type[object]) -> dict[str, str]:
+            assert "secret phrase" in message
+            del schema
+            return {"action": "decline"}
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        Context(),
+        "slash_command",
+        "atc-remember",
+        "secret phrase",
+        "user",
+    )
+
+    assert called is False
+    assert "declined" in output["reason"]
+    assert "secret phrase" not in json.dumps(output)
+
+
+def test_explicit_missing_core_fails_closed_without_a_write(monkeypatch) -> None:
+    monkeypatch.setattr(hook, "_hook_client", lambda: None)
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        object(),
+        "slash_command",
+        "atc-forget",
+        "record-3",
+        "user",
+    )
+
+    assert output["decision"] == "block"
+    assert "nothing was written" in output["reason"]
+
+
+def test_explicit_http_methods_use_only_narrow_core_routes(monkeypatch) -> None:
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def request(
+        _self: ContextHttpClient,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del params
+        calls.append((method, path, json))
+        return {"accepted": True}
+
+    monkeypatch.setattr(ContextHttpClient, "_request", request)
+    client = ContextHttpClient("http://127.0.0.1:7337", "client", "token")
+    payload = {"command_id": "opaque", "content_commitment": "commitment"}
+
+    assert client.claude_code_remember(payload) == {"accepted": True}
+    assert client.claude_code_correct(payload) == {"accepted": True}
+    assert client.claude_code_forget(payload) == {"accepted": True}
+    assert calls == [
+        ("POST", "/v1/claude-code/memory/remember", payload),
+        ("POST", "/v1/claude-code/memory/correct", payload),
+        ("POST", "/v1/claude-code/memory/forget", payload),
+    ]

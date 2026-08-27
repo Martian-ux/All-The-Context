@@ -235,6 +235,21 @@ class ContextHttpClient:
                 self._request("POST", "/v1/proposals", json=relay_payload)
             )
 
+    def claude_code_remember(self, payload: dict[str, Any]) -> Any:
+        """Submit an explicit Claude Code remember command to Core only."""
+
+        return self._request("POST", "/v1/claude-code/memory/remember", json=payload)
+
+    def claude_code_correct(self, payload: dict[str, Any]) -> Any:
+        """Submit an explicit Claude Code correction command to Core only."""
+
+        return self._request("POST", "/v1/claude-code/memory/correct", json=payload)
+
+    def claude_code_forget(self, payload: dict[str, Any]) -> Any:
+        """Submit an explicit Claude Code forget command to Core only."""
+
+        return self._request("POST", "/v1/claude-code/memory/forget", json=payload)
+
     def report_context_error(self, payload: dict[str, Any]) -> Any:
         status = self.context_status()
         if isinstance(status, dict) and "relay_writable" in status:
