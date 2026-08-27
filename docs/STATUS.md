@@ -15,10 +15,12 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains those foundations plus the merged
-read-only Claude Code pre-generation integration at exact SHA
+At this boundary, protected main contains the merged Import Truth, Memory Truth,
+Retrieval, Continuous Context, and Project Context Capsule foundations plus the
+merged read-only Claude Code pre-generation integration at exact SHA
 `a2607aa2e6031dc806a7704e38eda05c887c7bb5`. Development evidence on this
-branch does not become release, exact-artifact, client/provider, or
+branch does not
+become release, exact-artifact, client/provider, or
 private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
 
