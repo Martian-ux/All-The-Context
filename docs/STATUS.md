@@ -66,6 +66,13 @@ Core's narrow Claude Code memory routes without Relay fallback. Missing or
 revoked Core authority fails closed. This is a client/config/setup boundary,
 not Core ingestion/policy/API implementation, macOS work, live/private
 acceptance, or a product/release exit claim.
+The explicit hook sends only the strict Core route payloads, using the pending
+opaque command ID as `idempotency_key`; commitments and hook event fields stay
+internal. Native exact-payload confirmation is mandatory before a write, even
+when the caller supplies `command_source=user`. An ambiguous transport error
+gets one identical retry; an unresolved result is reported as unknown and
+requires verification before repeating.
+
 ### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
 
 The first-run wizard and hidden packaged headless setup now expose a separate

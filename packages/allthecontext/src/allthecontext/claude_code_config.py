@@ -101,6 +101,7 @@ user-invocable: true
 ---
 
 This reserved command is handled by the All The Context UserPromptExpansion hook.
+Use exactly `/atc-forget <record-id>`; trailing text is rejected.
 Do not paraphrase, summarize, or repeat its arguments.
 """,
 }
@@ -650,10 +651,19 @@ def _updated_disconnect_documents(
             cleaned = [
                 group
                 for group in cleaned
-                if not (group.get("matcher") == hook_matcher and group.get("hooks") == [])
+                if not (
+                    group.get("matcher") == hook_matcher
+                    and group.get("hooks") == []
+                    and set(group) == {"matcher", "hooks"}
+                )
             ]
-        hooks[hook_event_name] = cleaned
-        settings_removed = removed > 0
+        if cleaned:
+            hooks[hook_event_name] = cleaned
+        else:
+            del hooks[hook_event_name]
+        if not hooks:
+            settings_updated.pop("hooks", None)
+        settings_removed = removed > 0 or groups != cleaned
     return (
         _render(mcp_updated) if mcp_removed else mcp.original,
         _render(settings_updated) if settings_removed else settings.original,
@@ -699,7 +709,9 @@ def _restore(plan: _WritePlan) -> None:
             return
         if current == plan.document.original:
             return
-        if not plan.remove and current != plan.updated:
+        if plan.remove:
+            raise RuntimeError("the Claude Code file changed during rollback")
+        if current != plan.updated:
             raise RuntimeError("the Claude Code file changed during rollback")
         _atomic_write(plan.document.path, plan.document.original)
     else:

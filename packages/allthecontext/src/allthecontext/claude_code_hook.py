@@ -20,7 +20,7 @@ from mcp.server.mcpserver.tools import Tool
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 from allthecontext.credentials import KeyringCredentialStore
-from allthecontext.http_client import ContextHttpClient
+from allthecontext.http_client import ContextApiError, ContextHttpClient
 from allthecontext.mcp_adapter import _ensure_local_core, _strict_tool
 
 HOOK_TOOL_NAME = "claude_code_user_prompt_submit"
@@ -243,14 +243,23 @@ def claude_code_user_prompt_submit(
 
 
 def _explicit_hook_output(
-    *, command_id: str | None = None, applied: bool = False, declined: bool = False
+    *, command_id: str | None = None, outcome: str = "failed"
 ) -> dict[str, Any]:
-    if applied:
+    if outcome == "applied":
         reason = "All The Context applied the explicit command."
         status = "completed"
-    elif declined:
+    elif outcome == "declined":
         reason = "All The Context confirmation was declined; nothing was written."
         status = "declined"
+    elif outcome == "confirmation_unavailable":
+        reason = "All The Context confirmation was unavailable; nothing was written."
+        status = "not applied because confirmation was unavailable"
+    elif outcome == "unknown":
+        reason = (
+            "All The Context could not determine whether the explicit command was written; "
+            "verify before repeating."
+        )
+        status = "outcome unknown"
     else:
         reason = "All The Context could not apply the explicit command; nothing was written."
         status = "not applied"
@@ -292,22 +301,13 @@ def _command_record_and_text(raw_args: str) -> tuple[str, str] | None:
 
 
 def _explicit_payload(pending: _PendingExplicitCommand) -> dict[str, Any] | None:
-    base: dict[str, Any] = {
-        "command_id": pending.command_id,
-        "content_commitment": pending.content_commitment,
-        "explicit_user_statement": True,
-    }
     if pending.action == "atc-remember":
         if not pending.raw_args.strip():
             return None
         return {
-            **base,
             "kind": "interaction_preference",
             "content": pending.raw_args,
-            "scopes": [],
-            "confidence": 1.0,
-            "sensitivity": "normal",
-            "availability": "core_available",
+            "idempotency_key": pending.command_id,
         }
     parsed = _command_record_and_text(pending.raw_args)
     if parsed is None:
@@ -316,12 +316,15 @@ def _explicit_payload(pending: _PendingExplicitCommand) -> dict[str, Any] | None
     if pending.action == "atc-correct":
         if not text.strip():
             return None
-        return {**base, "record_id": record_id, "content": text}
+        return {
+            "record_id": record_id,
+            "content": text,
+            "idempotency_key": pending.command_id,
+        }
     if pending.action == "atc-forget":
         return {
-            **base,
             "record_id": record_id,
-            "reason": text or "Explicit user request",
+            "idempotency_key": pending.command_id,
         }
     return None
 
@@ -329,14 +332,14 @@ def _explicit_payload(pending: _PendingExplicitCommand) -> dict[str, Any] | None
 async def _native_exact_payload_confirmation(
     ctx: Context, pending: _PendingExplicitCommand
 ) -> bool | None:
-    """Use MCP elicitation only as optional defense-in-depth confirmation."""
+    """Require native exact-payload confirmation before any Core mutation."""
 
     elicit = getattr(ctx, "elicit", None)
     if not callable(elicit):
         return None
     message = (
         "Confirm the exact payload for All The Context "
-        f"/{pending.action} (this is defense-in-depth; the typed command is the gesture):\n\n"
+        f"/{pending.action}. The typed command and this native confirmation are both required:\n\n"
         f"{pending.raw_args}"
     )
     try:
@@ -354,13 +357,15 @@ async def _native_exact_payload_confirmation(
     return confirmed is True
 
 
-def _apply_explicit_command(pending: _PendingExplicitCommand) -> bool:
-    payload = _explicit_payload(pending)
-    if payload is None or not _PENDING_EXPLICIT_COMMANDS.consume(pending):
-        return False
-    client = _hook_client()
-    if client is None:
-        return False
+def _is_ambiguous_transport_failure(error: Exception) -> bool:
+    if isinstance(error, ContextApiError):
+        return error.status_code >= 500 or error.code == "target_unavailable"
+    return isinstance(error, (ConnectionError, OSError, TimeoutError))
+
+
+def _submit_explicit_command(
+    client: ContextHttpClient, pending: _PendingExplicitCommand, payload: dict[str, Any]
+) -> None:
     if pending.action == "atc-remember":
         client.claude_code_remember(payload)
     elif pending.action == "atc-correct":
@@ -368,8 +373,29 @@ def _apply_explicit_command(pending: _PendingExplicitCommand) -> bool:
     elif pending.action == "atc-forget":
         client.claude_code_forget(payload)
     else:
-        return False
-    return True
+        raise ValueError("unsupported explicit command")
+
+
+def _apply_explicit_command(pending: _PendingExplicitCommand) -> str:
+    if not _PENDING_EXPLICIT_COMMANDS.consume(pending):
+        return "failed"
+    payload = _explicit_payload(pending)
+    if payload is None:
+        return "failed"
+    client = _hook_client()
+    if client is None:
+        return "failed"
+    try:
+        _submit_explicit_command(client, pending, payload)
+    except Exception as first_error:
+        if not _is_ambiguous_transport_failure(first_error):
+            return "failed"
+        try:
+            # Reuse the exact same bounded payload and idempotency key once.
+            _submit_explicit_command(client, pending, payload)
+        except Exception:
+            return "unknown"
+    return "applied"
 
 
 async def claude_code_user_prompt_expansion(
@@ -390,15 +416,21 @@ async def claude_code_user_prompt_expansion(
         return _explicit_hook_output()
 
     pending = _PENDING_EXPLICIT_COMMANDS.prepare(normalized_name, command_args)
-    confirmation = await _native_exact_payload_confirmation(ctx, pending)
-    if confirmation is False:
+    if _explicit_payload(pending) is None:
         _PENDING_EXPLICIT_COMMANDS.consume(pending)
-        return _explicit_hook_output(command_id=pending.command_id, declined=True)
+        return _explicit_hook_output(command_id=pending.command_id)
+    confirmation = await _native_exact_payload_confirmation(ctx, pending)
+    if confirmation is not True:
+        _PENDING_EXPLICIT_COMMANDS.consume(pending)
+        return _explicit_hook_output(
+            command_id=pending.command_id,
+            outcome=("declined" if confirmation is False else "confirmation_unavailable"),
+        )
     try:
-        applied = _apply_explicit_command(pending)
+        outcome = _apply_explicit_command(pending)
     except Exception:
-        applied = False
-    return _explicit_hook_output(command_id=pending.command_id, applied=applied)
+        outcome = "failed"
+    return _explicit_hook_output(command_id=pending.command_id, outcome=outcome)
 
 
 def build_claude_code_hook_mcp() -> MCPServer:

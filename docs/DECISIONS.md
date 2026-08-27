@@ -46,11 +46,13 @@ explicit handler uses only `/v1/claude-code/memory/remember`,
 `/v1/claude-code/memory/correct`, and `/v1/claude-code/memory/forget`, with no
 Relay fallback. A bounded in-memory pending record carries an opaque command
 ID and content commitment for 15 seconds at most. Native MCP exact-payload
-elicitation is a mandatory additional gate: only explicit `confirm=true`
-permits a Core request, while unavailable, failed, timed-out, or declined
-elicitation blocks it. Raw arguments are not placed in hook output or receipts.
-Missing, unverified, unreachable, or revoked Core blocks the operation. The
-official event contract is recorded in the
+elicitation remains defense in depth but is a mandatory gate: only explicit
+`confirm=true` permits a Core request, and unavailable, failed, timed-out, or
+declined elicitation blocks it. Ambiguous transport failure is retried once
+with the identical idempotency key; a second ambiguous failure reports an
+unknown outcome and requires verification before repeating. Raw arguments are
+not placed in hook output or receipts. Missing, unverified, unreachable, or
+revoked Core blocks the operation. The official event contract is recorded in the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks#userpromptexpansion-input).
 
 ## ADR-161: Configure Claude Code as a separate read-only pre-generation client

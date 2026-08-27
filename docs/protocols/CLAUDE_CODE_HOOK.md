@@ -88,7 +88,7 @@ All The Context also installs three personal user-scope commands under
 |---|---|
 | `/atc-remember <statement>` | The complete `command_args` string is the user statement |
 | `/atc-correct <record-id> <replacement>` | The first token is the record ID; the remaining exact text is the replacement |
-| `/atc-forget <record-id> [reason]` | The first token is the record ID; the remaining exact text is the reason |
+| `/atc-forget <record-id>` | The record ID is the only argument; trailing text is rejected |
 
 The personal command files disable model invocation. Setup refuses to replace
 an existing unrelated command with one of these reserved names and preserves
@@ -112,8 +112,11 @@ writes nothing.
 Before the Core request, the hook keeps at most eight pending commands in
 memory for 15 seconds. Each has an opaque UUID command ID and a SHA-256
 commitment over the exact action and arguments; it is never persisted. A
-native MCP exact-payload elicitation, when supported by the client, is only
-defense in depth: declining it blocks the write, while lack of elicitation
-support does not replace the typed slash-command gesture. Hook output and
-receipts contain no raw arguments. The command is blocked after handling so
-the exact payload is not sent on as a model prompt.
+native MCP exact-payload elicitation is defense in depth and an additional
+mandatory gate: only an explicit `confirm=true` response permits the Core
+request; missing, failed, timed-out, or declined elicitation fails closed.
+Hook output and receipts contain no raw arguments. An ambiguous transport
+failure is retried once with the identical idempotency key; if the outcome
+remains ambiguous, the hook reports an unknown outcome and tells the user to
+verify before repeating. The command is blocked after handling so the exact
+payload is not sent on as a model prompt.

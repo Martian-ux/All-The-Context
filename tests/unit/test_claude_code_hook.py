@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -429,6 +430,11 @@ def test_explicit_profile_binds_exact_user_command_arguments() -> None:
     assert tool.input_schema["properties"]["command_args"]["maxLength"] == 8_000
 
 
+class _AcceptingContext:
+    async def elicit(self, _message: str, _schema: type[object]) -> dict[str, Any]:
+        return {"action": "accept", "data": {"confirm": True}}
+
+
 def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -449,7 +455,7 @@ def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(mo
     raw_args = "  prefer exact words  "
     output = anyio.run(
         hook.claude_code_user_prompt_expansion,
-        object(),
+        _AcceptingContext(),
         "slash_command",
         "atc-remember",
         raw_args,
@@ -465,10 +471,10 @@ def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(mo
     assert len(calls) == 1
     action, payload = calls[0]
     assert action == "remember"
+    assert set(payload) == {"kind", "content", "idempotency_key"}
     assert payload["content"] == raw_args
-    assert payload["explicit_user_statement"] is True
-    assert payload["command_id"] in output["systemMessage"]
-    assert len(payload["content_commitment"]) == 64
+    assert payload["idempotency_key"] in output["systemMessage"]
+    assert isinstance(payload["idempotency_key"], str)
 
 
 @pytest.mark.parametrize(
@@ -482,9 +488,9 @@ def test_explicit_commands_forward_only_exact_arguments_to_narrow_core_routes(mo
         ),
         (
             "atc-forget",
-            "record-2 because it is stale",
+            "record-2",
             "forget",
-            {"record_id": "record-2", "reason": "because it is stale"},
+            {"record_id": "record-2"},
         ),
     ],
 )
@@ -508,7 +514,7 @@ def test_explicit_correction_and_forget_use_exact_target_fields(
     monkeypatch.setattr(hook, "_hook_client", lambda: Client())
     output = anyio.run(
         hook.claude_code_user_prompt_expansion,
-        object(),
+        _AcceptingContext(),
         "slash_command",
         command_name,
         command_args,
@@ -517,7 +523,38 @@ def test_explicit_correction_and_forget_use_exact_target_fields(
 
     assert output["decision"] == "block"
     assert captured["method"] == method
+    assert set(captured["payload"]) == set(expected) | {"idempotency_key"}
     assert all(captured["payload"][key] == value for key, value in expected.items())
+    assert isinstance(captured["payload"]["idempotency_key"], str)
+
+
+def test_explicit_forget_rejects_trailing_text_before_confirmation_or_core(monkeypatch) -> None:
+    client_calls: list[dict[str, Any]] = []
+    confirmation_calls = 0
+
+    class Client:
+        def claude_code_forget(self, payload: dict[str, Any]) -> None:
+            client_calls.append(payload)
+
+    class Context:
+        async def elicit(self, _message: str, _schema: type[object]) -> dict[str, Any]:
+            nonlocal confirmation_calls
+            confirmation_calls += 1
+            return {"action": "accept", "data": {"confirm": True}}
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        Context(),
+        "slash_command",
+        "atc-forget",
+        "record-2 stale reason",
+        "user",
+    )
+
+    assert confirmation_calls == 0
+    assert client_calls == []
+    assert "nothing was written" in output["reason"]
 
 
 def test_explicit_native_decline_never_reaches_core(monkeypatch) -> None:
@@ -547,6 +584,119 @@ def test_explicit_native_decline_never_reaches_core(monkeypatch) -> None:
     assert called is False
     assert "declined" in output["reason"]
     assert "secret phrase" not in json.dumps(output)
+
+
+def test_explicit_direct_call_without_native_confirmation_fails_closed(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class Client:
+        def claude_code_remember(self, payload: dict[str, Any]) -> None:
+            calls.append(payload)
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        object(),
+        "slash_command",
+        "atc-remember",
+        "direct call must not write",
+        "user",
+    )
+
+    assert calls == []
+    assert "confirmation was unavailable" in output["reason"]
+
+
+def test_explicit_changed_arguments_cannot_reuse_commitment(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class Client:
+        def claude_code_remember(self, payload: dict[str, Any]) -> None:
+            calls.append(payload)
+
+    pending = hook._PENDING_EXPLICIT_COMMANDS.prepare("atc-remember", "original")
+    changed = replace(pending, raw_args="changed")
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+
+    assert hook._apply_explicit_command(changed) == "failed"
+    assert calls == []
+
+
+def test_explicit_ambiguous_failure_retries_once_with_identical_payload(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class Client:
+        def claude_code_remember(self, payload: dict[str, Any]) -> None:
+            calls.append(payload.copy())
+            if len(calls) == 1:
+                raise ContextApiError(503, "target_unavailable", "temporarily unavailable")
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        _AcceptingContext(),
+        "slash_command",
+        "atc-remember",
+        "retry once",
+        "user",
+    )
+
+    assert output["systemMessage"].startswith("All The Context explicit command completed")
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert set(calls[0]) == {"kind", "content", "idempotency_key"}
+    assert calls[0]["idempotency_key"] == calls[1]["idempotency_key"]
+
+
+def test_explicit_repeated_ambiguous_failure_reports_unknown_without_raw_output(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class Client:
+        def claude_code_remember(self, payload: dict[str, Any]) -> None:
+            calls.append(payload.copy())
+            raise ContextApiError(503, "target_unavailable", "temporarily unavailable")
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        _AcceptingContext(),
+        "slash_command",
+        "atc-remember",
+        "unknown outcome content",
+        "user",
+    )
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert calls[0]["idempotency_key"] == calls[1]["idempotency_key"]
+    assert "outcome unknown" in output["systemMessage"]
+    assert "verify before repeating" in output["reason"]
+    assert "unknown outcome content" not in json.dumps(output)
+
+
+def test_explicit_definite_client_error_is_not_retried(monkeypatch) -> None:
+    calls = 0
+
+    class Client:
+        def claude_code_remember(self, _payload: dict[str, Any]) -> None:
+            nonlocal calls
+            calls += 1
+            raise ContextApiError(422, "validation_error", "invalid")
+
+    monkeypatch.setattr(hook, "_hook_client", lambda: Client())
+    output = anyio.run(
+        hook.claude_code_user_prompt_expansion,
+        _AcceptingContext(),
+        "slash_command",
+        "atc-remember",
+        "definite client error",
+        "user",
+    )
+
+    assert calls == 1
+    assert "nothing was written" in output["reason"]
 
 
 def test_explicit_missing_core_fails_closed_without_a_write(monkeypatch) -> None:
@@ -581,7 +731,11 @@ def test_explicit_http_methods_use_only_narrow_core_routes(monkeypatch) -> None:
 
     monkeypatch.setattr(ContextHttpClient, "_request", request)
     client = ContextHttpClient("http://127.0.0.1:7337", "client", "token")
-    payload = {"command_id": "opaque", "content_commitment": "commitment"}
+    payload = {
+        "kind": "interaction_preference",
+        "content": "opaque",
+        "idempotency_key": "opaque",
+    }
 
     assert client.claude_code_remember(payload) == {"accepted": True}
     assert client.claude_code_correct(payload) == {"accepted": True}

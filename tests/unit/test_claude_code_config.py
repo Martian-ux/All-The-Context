@@ -640,3 +640,19 @@ def test_explicit_command_collision_fails_before_any_config_write(tmp_path: Path
     assert mcp_path.read_text(encoding="utf-8") == before_mcp
     assert settings_path.read_text(encoding="utf-8") == before_settings
     assert command_path.read_text(encoding="utf-8") == "---\nname: atc-correct\n---\nuser-owned\n"
+
+
+def test_remove_rollback_never_overwrites_file_created_after_delete(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    original = '{"keep": true}\n'
+    path.write_text(original, encoding="utf-8")
+    document = claude_code_config._Document(path, original, {"keep": True}, True)
+    plan = claude_code_config._WritePlan(document, "", remove=True)
+
+    path.unlink()
+    external = '{"external": true}\n'
+    path.write_text(external, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="changed during rollback"):
+        claude_code_config._restore(plan)
+    assert path.read_text(encoding="utf-8") == external
