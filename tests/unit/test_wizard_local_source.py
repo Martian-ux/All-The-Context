@@ -14,6 +14,7 @@ class FrozenSetupOptions:
     vault_name: str
     configure_codex: bool
     configure_claude: bool
+    configure_claude_code: bool
     start_at_login: bool
     workspace_root: Path | None = None
     workspace_local_only_acknowledged: bool = False
@@ -23,11 +24,13 @@ def _build_options(
     *,
     root_text: str = "",
     acknowledged: bool = False,
+    claude_code: bool = False,
 ) -> FrozenSetupOptions:
     return wizard.build_setup_options(
         vault_name="My Context",
         configure_codex=True,
         configure_claude=False,
+        configure_claude_code=claude_code,
         start_at_login=True,
         workspace_root_text=root_text,
         workspace_local_only_acknowledged=acknowledged,
@@ -44,6 +47,21 @@ def test_blank_optional_root_builds_existing_setup_options(frozen_options: None)
 
     assert options.workspace_root is None
     assert options.workspace_local_only_acknowledged is False
+    assert options.configure_claude_code is False
+
+
+def test_claude_code_choice_builds_a_separate_setup_option(frozen_options: None) -> None:
+    options = _build_options(claude_code=True)
+
+    assert options.configure_claude_code is True
+
+
+def test_claude_code_completion_distinguishes_failed_and_unselected() -> None:
+    assert wizard.claude_code_completion_text(selected=False, connected=False) == "Not selected"
+    assert wizard.claude_code_completion_text(selected=True, connected=False) == "Not connected"
+    assert wizard.claude_code_completion_text(selected=True, connected=True) == (
+        "UserPromptSubmit hook ready"
+    )
 
 
 def test_workspace_path_and_ack_build_frozen_setup_options(frozen_options: None) -> None:
@@ -105,6 +123,37 @@ def test_progress_and_completion_copy_never_include_workspace_path() -> None:
     assert root_text not in warning
     assert "private-project" not in warning
     assert "Continuous capture is enabled" in complete
+
+
+def test_claude_code_progress_copy_is_content_free() -> None:
+    assert wizard.progress_status_text("claude_code", "private token and path") == (
+        "Connecting the Claude Code hook"
+    )
+
+
+def test_skipped_claude_code_progress_row_is_not_marked_complete() -> None:
+    class FakeLabel:
+        def __init__(self) -> None:
+            self.changes: list[dict[str, object]] = []
+
+        def configure(self, **kwargs: object) -> None:
+            self.changes.append(kwargs)
+
+    controller = wizard.SetupWizard.__new__(wizard.SetupWizard)
+    skipped_icon = FakeLabel()
+    skipped_label = FakeLabel()
+    controller.progress_rows = {
+        "vault": (FakeLabel(), FakeLabel()),
+        "claude_code": (skipped_icon, skipped_label),
+        "startup": (FakeLabel(), FakeLabel()),
+    }
+    controller.skipped_progress_steps = {"claude_code"}
+    controller.status_copy = FakeLabel()
+
+    controller._show_progress("startup", "ignored content")
+
+    assert skipped_icon.changes == []
+    assert skipped_label.changes == []
 
 
 def test_workspace_setup_error_hides_path_and_lower_layer_details() -> None:

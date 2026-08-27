@@ -13,6 +13,7 @@ class FakeSetupOptions:
     timezone: str
     configure_codex: bool
     configure_claude: bool
+    configure_claude_code: bool
     start_at_login: bool
     workspace_root: Path | None
     workspace_local_only_acknowledged: bool
@@ -27,6 +28,7 @@ class FakeSetupResult:
     credential_storage: str = "test"
     codex: object | None = None
     claude: object | None = None
+    claude_code: object | None = None
     startup: object | None = None
     log_path: Path = Path("core.log")
     warnings: tuple[str, ...] = ()
@@ -35,6 +37,15 @@ class FakeSetupResult:
     workspace_root: Path | None = None
     workspace_local_only_acknowledged: bool = False
     acknowledge_local_workspace: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class FakeClaudeCodeResult:
+    changed: bool = True
+    mcp_changed: bool = True
+    settings_changed: bool = True
+    mcp_path: Path = Path("C:/private/.claude.json")
+    settings_path: Path = Path("C:/private/.claude/settings.json")
 
 
 def _stub_setup(
@@ -88,6 +99,7 @@ def test_headless_setup_forwards_packaged_workspace_options_exactly(
     assert options.workspace_local_only_acknowledged is True
     assert options.configure_codex is True
     assert options.configure_claude is False
+    assert options.configure_claude_code is False
 
 
 def test_headless_setup_without_workspace_root_preserves_existing_defaults(
@@ -102,6 +114,39 @@ def test_headless_setup_without_workspace_root_preserves_existing_defaults(
     options, _installed = captured[0]
     assert options.workspace_root is None
     assert options.workspace_local_only_acknowledged is False
+    assert options.configure_claude_code is False
+
+
+def test_headless_setup_forwards_explicit_claude_code_choice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    captured = _stub_setup(monkeypatch, runtime, FakeSetupResult())
+    report_path = tmp_path / "setup-report.json"
+
+    assert desktop.main(["--headless-setup", str(report_path), "--claude-code"]) == 0
+
+    options, _installed = captured[0]
+    assert options.configure_claude_code is True
+
+
+def test_headless_setup_projects_claude_code_result_without_user_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = RuntimeCommand(tmp_path / "AllTheContextSetup.exe")
+    _stub_setup(monkeypatch, runtime, FakeSetupResult(claude_code=FakeClaudeCodeResult()))
+    report_path = tmp_path / "setup-report.json"
+
+    assert desktop.main(["--headless-setup", str(report_path), "--claude-code"]) == 0
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["claude_code"] == {
+        "client": "Claude Code",
+        "changed": True,
+        "mcp_changed": True,
+        "settings_changed": True,
+    }
+    assert "C:/private" not in report_path.read_text(encoding="utf-8")
 
 
 def test_headless_setup_success_report_keeps_workspace_fields_opaque(

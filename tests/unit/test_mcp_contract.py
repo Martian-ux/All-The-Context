@@ -695,6 +695,60 @@ def test_managed_adapter_never_replaces_an_unverified_loopback_service(
     assert not launched
 
 
+def test_verification_required_does_not_use_an_unverified_listener_without_autostart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ATC_AUTO_START_CORE", raising=False)
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.CoreConfig.default",
+        lambda: CoreConfig.in_directory(tmp_path),
+    )
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.probe_core",
+        lambda _config: CoreProbe.UNREACHABLE,
+    )
+    launched: list[bool] = []
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.launch_core",
+        lambda *_args, **_kwargs: launched.append(True),
+    )
+
+    with pytest.raises(RuntimeError, match="could not prove that it belongs"):
+        _ensure_local_core("http://127.0.0.1:7337", require_verified=True)
+
+    assert not launched
+
+
+def test_strict_verification_reprobes_after_bounded_autostart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ATC_AUTO_START_CORE", "1")
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.CoreConfig.default",
+        lambda: CoreConfig.in_directory(tmp_path),
+    )
+    states = iter((CoreProbe.UNREACHABLE, CoreProbe.VERIFIED))
+    probes: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.probe_core",
+        lambda _config, **kwargs: probes.append(kwargs) or next(states),
+    )
+    launches: list[float] = []
+    monkeypatch.setattr(
+        "allthecontext.mcp_adapter.launch_core",
+        lambda *_args, **kwargs: launches.append(kwargs["wait_seconds"]),
+    )
+
+    _ensure_local_core(
+        "http://127.0.0.1:7337",
+        require_verified=True,
+        ignore_environment_proxy=True,
+    )
+
+    assert launches == [30.0]
+    assert probes == [{"ignore_environment_proxy": True}, {"ignore_environment_proxy": True}]
+
+
 def test_managed_adapter_uses_a_bounded_native_startup_window(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ATC_AUTO_START_CORE", "1")
     monkeypatch.setattr(

@@ -50,10 +50,17 @@ def _configured_core_runtime() -> RuntimeCommand:
     return RuntimeCommand(Path(command[0]), tuple(command[1:-1]))
 
 
-def _ensure_local_core(target: str) -> None:
+def _ensure_local_core(
+    target: str,
+    *,
+    wait_seconds: float = MANAGED_CORE_STARTUP_SECONDS,
+    require_verified: bool = False,
+    ignore_environment_proxy: bool = False,
+) -> None:
     """Restart the user's verified local Core for managed MCP connections."""
 
-    if os.environ.get("ATC_AUTO_START_CORE") != "1":
+    auto_start = os.environ.get("ATC_AUTO_START_CORE") == "1"
+    if not auto_start and not require_verified:
         return
     parsed = urlsplit(target)
     try:
@@ -75,18 +82,28 @@ def _ensure_local_core(target: str) -> None:
         )
 
     config = replace(CoreConfig.default(), host="127.0.0.1", port=target_port)
-    state = probe_core(config)
+    state = (
+        probe_core(config, ignore_environment_proxy=True)
+        if ignore_environment_proxy
+        else probe_core(config)
+    )
     if state is CoreProbe.VERIFIED:
         return
     if state is CoreProbe.UNVERIFIED:
         raise RuntimeError(
             f"Port {target_port} is occupied by a service that is not this All The Context Core"
         )
+    if not auto_start:
+        raise RuntimeError("The local Core could not prove that it belongs to this installation")
     launch_core(
         _configured_core_runtime(),
         config,
-        wait_seconds=MANAGED_CORE_STARTUP_SECONDS,
+        wait_seconds=wait_seconds,
     )
+    if ignore_environment_proxy and (
+        probe_core(config, ignore_environment_proxy=True) is not CoreProbe.VERIFIED
+    ):
+        raise RuntimeError("The local Core could not prove that it belongs to this installation")
 
 
 def _client() -> ContextHttpClient:
@@ -120,11 +137,15 @@ def _automatic_proposal_key(_payload: dict[str, Any] | None = None) -> str:
     return str(uuid.uuid4())
 
 
-def _strict_tool(fn: Callable[..., Any], **kwargs: Any) -> Tool:
+def _strict_tool(
+    fn: Callable[..., Any], *, hide_input_in_errors: bool = False, **kwargs: Any
+) -> Tool:
     """Build a v2 tool while retaining the adapter's closed-input contract."""
 
     tool = Tool.from_function(fn, **kwargs)
     tool.parameters["additionalProperties"] = False
+    if hide_input_in_errors:
+        tool.fn_metadata.arg_model.model_config["hide_input_in_errors"] = True
     tool.fn_metadata.arg_model.model_config["extra"] = "forbid"
     tool.fn_metadata.arg_model.model_rebuild(force=True)
     return tool
@@ -414,14 +435,27 @@ async def _run_stdio(server: MCPServer) -> None:
     await server.run_stdio_async()
 
 
+def _server_for_profile() -> MCPServer:
+    """Select the explicitly gated adapter profile without changing ordinary MCP."""
+
+    profile = os.environ.get("ATC_MCP_PROFILE", "")
+    if not profile:
+        return build_mcp()
+    if profile == "claude_code_hook":
+        from allthecontext.claude_code_hook import build_claude_code_hook_mcp
+
+        return build_claude_code_hook_mcp()
+    raise RuntimeError(f"Unsupported ATC_MCP_PROFILE: {profile}")
+
+
 def main() -> None:
     """Run the lightweight local STDIO forwarding adapter."""
-    anyio.run(_run_stdio, build_mcp())
+    anyio.run(_run_stdio, _server_for_profile())
 
 
 def http_main() -> None:
     """Run a bearer-protected Streamable HTTP forwarding adapter."""
-    server = build_mcp()
+    server = _server_for_profile()
     access_token = os.environ.get("ATC_MCP_ACCESS_TOKEN", "")
     if not access_token:
         raise RuntimeError("ATC_MCP_ACCESS_TOKEN is required for HTTP MCP")

@@ -16,7 +16,7 @@ instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
 Continuous Context, and Project Context foundations at exact SHA
-`f3512fe890bf91894a28faa251b3127932c79132`. Development evidence on this
+`0e92083744bd07ed1f8c5ac0e863e9a88474d649`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
@@ -27,6 +27,50 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
+
+The first-run wizard and hidden packaged headless setup now expose a separate
+Claude Code choice from Claude Desktop. When selected, setup provisions a
+distinct `Claude Code` principal with exactly `context:read` and configures the
+user-level `~/.claude.json` and `~/.claude/settings.json` surfaces, subject to
+the dedicated `ATC_CLAUDE_CODE_MCP_CONFIG` and `ATC_CLAUDE_CODE_SETTINGS`
+overrides. It never writes project-local Claude settings or `.mcp.json`, and
+does not use `ATC_CLAUDE_CONFIG`.
+
+The managed environment carries the Core command, data directory, and
+`ATC_AUTO_START_CORE=1`. OS-keyring setup serializes no bearer token; only the
+existing explicit insecure-development fallback may serialize one. The two
+configuration files use bounded reads, reject symlink/reparse paths, recheck
+exact preimages before writes, preserve POSIX modes, and roll back prior ATC
+writes with cleanup when a later write fails. A strict direct loopback identity
+probe ignores system proxies and redirects, bounds the health proof body, and
+reprobes after optional auto-start before the hook can send a bearer request.
+
+All selected client configuration happens before Core launch/dashboard handoff;
+optional workspace authorization remains the final setup mutation. The slice
+claims only a configured Claude Code UserPromptSubmit pre-generation client. It
+does not claim L1, direct-user capture, durable formation, live/private client
+acceptance, provider support, a dashboard connection/status/repair/uninstall
+control, a release exit, or a release claim. Ordinary MCP remains L0. The
+strict hook response path is streamed under a 256 KiB bound before JSON parsing.
+
+### 2026-08-26 — isolated Claude Code UserPromptSubmit pre-generation runtime slice
+
+This branch adds a dedicated `claude_code_hook` MCP profile and one
+`claude_code_user_prompt_submit` tool. It accepts the official hook's bounded
+`prompt`, `cwd`, and `session_id` shape, uses only the prompt as an in-memory
+query to an authenticated loopback Core bootstrap route, and returns only
+bounded authorized record content as untrusted reference data. Missing,
+revoked, unavailable, error, and timeout paths are content-free and
+nonblocking; the profile has no Relay fallback and creates no records or
+proposals.
+
+At that component boundary, this was pre-generation-only runtime evidence and
+did not by itself provide the configured Claude Code setup added above. It does
+not establish an L1 lifecycle claim, a product exit, a release claim, or live
+provider/client acceptance. Ordinary MCP remains the existing L0 tool set and
+instruction contract.
 
 ### 2026-08-26 packaged local-workspace onboarding path
 

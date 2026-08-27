@@ -165,6 +165,8 @@ def test_first_workspace_setup_authorizes_enables_and_persists_scheduler(
     assert "workspace content must not escape" not in rendered
     assert all(str(root) not in message for _step, message in events)
     assert AUTHORIZATION_FILENAME not in rendered
+    steps = [step for step, _message in events]
+    assert steps.index("core") < steps.index("source") < steps.index("complete")
 
 
 @pytest.mark.parametrize("failure_stage", ["credential", "launch", "dashboard"])

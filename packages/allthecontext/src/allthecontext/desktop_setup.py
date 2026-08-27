@@ -29,6 +29,10 @@ from .capture_runtime import (
     compose_capture_coordinator,
 )
 from .capture_scheduler import CAPTURE_SCHEDULER_ENABLED_ENV
+from .claude_code_config import (
+    ClaudeCodeConfigResult,
+    configure_claude_code,
+)
 from .client_config import (
     ClientConfigResult,
     ManagedClientConfig,
@@ -58,6 +62,7 @@ from .user_startup import StartupResult, install_user_startup
 DESKTOP_CLIENT_NAME = "All The Context Desktop"
 CODEX_CLIENT_NAME = "Codex"
 CLAUDE_CLIENT_NAME = "Claude Desktop"
+CLAUDE_CODE_CLIENT_NAME = "Claude Code"
 SCHEDULER_SETUP_CLIENT_NAME = "All The Context one-time setup scheduler"
 DESKTOP_SCOPES = [
     "*",
@@ -76,6 +81,7 @@ AI_CLIENT_SCOPES = [
     # enough; only ATC-configured same-device AI principals receive this class.
     "witness:explicit_user_statement",
 ]
+CLAUDE_CODE_SCOPES = ["context:read"]
 ProgressCallback = Callable[[str, str], None]
 
 
@@ -91,6 +97,7 @@ class SetupOptions:
     timezone: str = field(default_factory=local_timezone)
     configure_codex: bool = True
     configure_claude: bool = True
+    configure_claude_code: bool = False
     start_at_login: bool = True
     workspace_root: Path | None = None
     workspace_local_only_acknowledged: bool = False
@@ -105,6 +112,7 @@ class SetupResult:
     credential_storage: str
     codex: ClientConfigResult | None
     claude: ClientConfigResult | None
+    claude_code: ClaudeCodeConfigResult | None
     startup: StartupResult | None
     log_path: Path
     warnings: tuple[str, ...] = ()
@@ -125,18 +133,44 @@ class CoreProbe(StrEnum):
     UNVERIFIED = "unverified"
 
 
-def probe_core(config: CoreConfig, *, timeout: float = 0.4) -> CoreProbe:
+MAX_CORE_PROBE_RESPONSE_BYTES = 16 * 1024
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        return None
+
+
+def probe_core(
+    config: CoreConfig,
+    *,
+    timeout: float = 0.4,
+    ignore_environment_proxy: bool = False,
+) -> CoreProbe:
     """Identify this installation's Core without trusting a forgeable health body."""
     challenge = secrets.token_urlsafe(24)
     root = f"http://{config.host}:{config.port}"
+    opener = (
+        urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _NoRedirectHandler(),
+        )
+        if ignore_environment_proxy
+        else None
+    )
     try:
-        with urllib.request.urlopen(
+        open_url = opener.open if opener is not None else urllib.request.urlopen
+        with open_url(
             f"{root}/health?{urllib.parse.urlencode({'challenge': challenge})}",
             timeout=timeout,
         ) as response:
             if response.status != 200:
                 return CoreProbe.UNVERIFIED
-            payload = json.loads(response.read().decode("utf-8"))
+            body = response.read(MAX_CORE_PROBE_RESPONSE_BYTES + 1)
+            if len(body) > MAX_CORE_PROBE_RESPONSE_BYTES:
+                return CoreProbe.UNVERIFIED
+            payload = json.loads(body.decode("utf-8"))
             if not isinstance(payload, dict):
                 return CoreProbe.UNVERIFIED
             proof = payload.get("proof")
@@ -458,14 +492,14 @@ def _ensure_client_access_with_state(
     return _create_client_access(store, config, name=name, scopes=scopes), True
 
 
-def configure_client_access_transactionally(
+def configure_client_access_transactionally[TConfigResult](
     store: CoreStore,
     config: CoreConfig,
     *,
     name: str,
     scopes: list[str],
-    configure: Callable[[DesktopAccess], ClientConfigResult],
-) -> tuple[DesktopAccess, ClientConfigResult]:
+    configure: Callable[[DesktopAccess], TConfigResult],
+) -> tuple[DesktopAccess, TConfigResult]:
     """Create/reuse a principal and remove a newly created one if configuration fails."""
 
     access, created = _ensure_client_access_with_state(
@@ -873,6 +907,37 @@ def perform_setup(
         except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Claude Desktop configuration was not changed: {exc}")
 
+    claude_code_result: ClaudeCodeConfigResult | None = None
+    if options.configure_claude_code:
+        notify("claude_code", "Connecting Claude Code UserPromptSubmit hook")
+        try:
+            claude_code_access, claude_code_result = configure_client_access_transactionally(
+                store,
+                active_config,
+                name=CLAUDE_CODE_CLIENT_NAME,
+                scopes=CLAUDE_CODE_SCOPES,
+                configure=lambda client_access: configure_claude_code(
+                    active_runtime,
+                    client_access.client_id,
+                    token=(
+                        None
+                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
+                        else client_access.token
+                    ),
+                    target_url=f"http://{active_config.host}:{active_config.port}",
+                    core_data_dir=active_config.data_dir,
+                    credential_storage=client_access.credential_storage,
+                ),
+            )
+            retire_other_named_clients(
+                store,
+                active_config,
+                name=CLAUDE_CODE_CLIENT_NAME,
+                keep_id=claude_code_access.client_id,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.append(f"Claude Code configuration was not changed: {exc}")
+
     startup_result: StartupResult | None = None
     if options.start_at_login:
         notify("startup", "Enabling private per-user startup")
@@ -906,6 +971,7 @@ def perform_setup(
         credential_storage=access.credential_storage,
         codex=codex_result,
         claude=claude_result,
+        claude_code=claude_code_result,
         startup=startup_result,
         log_path=log_path,
         warnings=tuple(warnings),

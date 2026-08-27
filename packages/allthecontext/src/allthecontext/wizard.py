@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any
 
+from .claude_code_config import claude_code_is_detected
 from .client_config import claude_is_detected, codex_is_detected
 from .config import CoreConfig
 from .desktop_runtime import RuntimeCommand
@@ -49,6 +50,7 @@ _PROGRESS_STATUS_COPY = {
     "credential": "Securing the desktop and MCP credential",
     "source": "Preparing the local workspace source",
     "client": "Connecting your AI client",
+    "claude_code": "Connecting the Claude Code hook",
     "startup": "Enabling private per-user startup",
     "core": "Starting Core on this device",
     "complete": "All The Context is ready",
@@ -74,6 +76,7 @@ def build_setup_options(
     start_at_login: bool,
     workspace_root_text: str,
     workspace_local_only_acknowledged: bool,
+    configure_claude_code: bool = False,
 ) -> SetupOptions:
     """Build immutable setup options from the wizard's user-entered values."""
 
@@ -85,6 +88,7 @@ def build_setup_options(
         vault_name=vault_name,
         configure_codex=configure_codex,
         configure_claude=configure_claude,
+        configure_claude_code=configure_claude_code,
         start_at_login=start_at_login,
         workspace_root=workspace_root,
         workspace_local_only_acknowledged=workspace_local_only_acknowledged,
@@ -112,6 +116,14 @@ def completion_body(continuous_capture_enabled: bool) -> str:
         "Core is running privately on this device. Start by bringing over your ChatGPT, Claude, "
         "or Grok history; normal retrieval and new proposals happen through MCP from then on."
     )
+
+
+def claude_code_completion_text(*, selected: bool, connected: bool) -> str:
+    """Describe the separate Claude Code setup outcome without implying success."""
+
+    if connected:
+        return "UserPromptSubmit hook ready"
+    return "Not connected" if selected else "Not selected"
 
 
 def redact_workspace_path(text: str, workspace_root: Path | None) -> str:
@@ -171,13 +183,17 @@ class SetupWizard:
         self.vault_name = tk.StringVar(value="My Context")
         self.codex_detected = codex_is_detected()
         self.claude_detected = claude_is_detected()
+        self.claude_code_detected = claude_code_is_detected()
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
         self.configure_claude = tk.BooleanVar(value=self.claude_detected)
+        self.configure_claude_code = tk.BooleanVar(value=self.claude_code_detected)
         self.start_at_login = tk.BooleanVar(value=True)
         self.workspace_root = tk.StringVar(value="")
         self.workspace_local_only_acknowledged = tk.BooleanVar(value=False)
         self.selected_workspace_root: Path | None = None
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
+        self.skipped_progress_steps: set[str] = set()
+        self.claude_code_requested = False
 
         self._configure_window()
         self._build_shell()
@@ -550,6 +566,16 @@ class SetupWizard:
             enabled=self.claude_detected,
         )
         self._check(
+            "Connect Claude Code",
+            (
+                "Adds a separate UserPromptSubmit pre-generation hook through the private Core."
+                if self.claude_code_detected
+                else "Claude Code was not found. Install it, then rerun setup to connect it."
+            ),
+            self.configure_claude_code,
+            enabled=self.claude_code_detected,
+        )
+        self._check(
             "Start Core when I sign in",
             "Runs in your user account; no administrator access or Docker.",
             self.start_at_login,
@@ -568,12 +594,14 @@ class SetupWizard:
                 start_at_login=self.start_at_login.get(),
                 workspace_root_text=self.workspace_root.get(),
                 workspace_local_only_acknowledged=self.workspace_local_only_acknowledged.get(),
+                configure_claude_code=self.configure_claude_code.get(),
             )
         except (RuntimeError, ValueError) as error:
             messagebox.showerror("Workspace choice required", str(error), parent=self.root)
             return
         self._clear()
         self._set_step(2)
+        self.claude_code_requested = options.configure_claude_code
         self._eyebrow("Installing")
         self._heading(
             "Setting up your Core.",
@@ -582,6 +610,9 @@ class SetupWizard:
         rows = tk.Frame(self.content, bg=PAPER)
         rows.pack(fill="x", pady=(36, 0))
         self.progress_rows.clear()
+        self.skipped_progress_steps = (
+            {"claude_code"} if not options.configure_claude_code else set()
+        )
         progress_steps = [
             ("vault", "Private local vault"),
             ("credential", "Secure client credential"),
@@ -589,6 +620,7 @@ class SetupWizard:
         progress_steps.extend(
             (
                 ("client", "MCP client connection"),
+                ("claude_code", "Claude Code hook"),
                 ("startup", "Background startup"),
                 ("core", "Core health check"),
             )
@@ -598,9 +630,24 @@ class SetupWizard:
         for key, label in progress_steps:
             row = tk.Frame(rows, bg=PAPER)
             row.pack(fill="x", pady=7)
-            status = tk.Label(row, text="○", bg=PAPER, fg=LINE, width=2, font=("Segoe UI", 11))
+            skipped = key in self.skipped_progress_steps
+            status = tk.Label(
+                row,
+                text="-" if skipped else "○",
+                bg=PAPER,
+                fg=MUTED if skipped else LINE,
+                width=2,
+                font=("Segoe UI", 11),
+            )
             status.pack(side="left")
-            text = tk.Label(row, text=label, bg=PAPER, fg=MUTED, anchor="w", font=("Segoe UI", 9))
+            text = tk.Label(
+                row,
+                text=f"{label} (not selected)" if skipped else label,
+                bg=PAPER,
+                fg=MUTED,
+                anchor="w",
+                font=("Segoe UI", 9),
+            )
             text.pack(side="left", fill="x", padx=(12, 0))
             self.progress_rows[key] = (status, text)
         self.status_copy = tk.Label(
@@ -655,6 +702,8 @@ class SetupWizard:
         canonical_step = _PROGRESS_STEP_ALIASES.get(step, step)
         active_index = keys.index(canonical_step) if canonical_step in keys else len(keys)
         for index, key in enumerate(keys):
+            if key in self.skipped_progress_steps:
+                continue
             icon, label = self.progress_rows[key]
             if index < active_index:
                 icon.configure(text="✓", fg=SUCCESS)
@@ -684,9 +733,16 @@ class SetupWizard:
             ),
             (
                 "AI apps",
-                "Codex and Claude are ready"
+                "Codex and Claude Desktop are ready"
                 if self.result and self.result.codex and self.result.claude
                 else "Manage connections in the dashboard",
+            ),
+            (
+                "Claude Code",
+                claude_code_completion_text(
+                    selected=self.claude_code_requested,
+                    connected=bool(self.result and self.result.claude_code),
+                ),
             ),
             (
                 "Startup",

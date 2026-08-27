@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from allthecontext import claude_code_config
 from allthecontext import client_config as client_config_module
 from allthecontext.capture_runtime import scheduler_config_path
 from allthecontext.capture_scheduler import (
@@ -25,9 +26,12 @@ from allthecontext.credentials import (
 from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import (
     AI_CLIENT_SCOPES,
+    CLAUDE_CODE_CLIENT_NAME,
+    CLAUDE_CODE_SCOPES,
     CODEX_CLIENT_NAME,
     DESKTOP_CLIENT_NAME,
     DESKTOP_SCOPES,
+    MAX_CORE_PROBE_RESPONSE_BYTES,
     CoreProbe,
     SetupOptions,
     configure_client_access_transactionally,
@@ -36,6 +40,7 @@ from allthecontext.desktop_setup import (
     launch_core,
     migrate_existing_integrations,
     perform_setup,
+    probe_core,
     recover_desktop_access,
     retire_other_named_clients,
 )
@@ -43,6 +48,70 @@ from allthecontext.models import ClientCreate
 from allthecontext.storage import CoreStore
 from filelock import FileLock
 from keyring.errors import KeyringError
+
+
+def test_core_probe_rejects_an_oversized_untrusted_health_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    read_sizes: list[int] = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return b"x" * size
+
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    assert probe_core(CoreConfig.in_directory(tmp_path)) is CoreProbe.UNVERIFIED
+    assert read_sizes == [MAX_CORE_PROBE_RESPONSE_BYTES + 1]
+
+
+def test_strict_core_probe_does_not_follow_a_redirect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response:
+        status = 302
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class Opener:
+        def open(self, *_args: object, **_kwargs: object) -> Response:
+            return Response()
+
+    handlers: tuple[object, ...] = ()
+
+    def build_opener(*provided: object) -> Opener:
+        nonlocal handlers
+        handlers = provided
+        return Opener()
+
+    monkeypatch.setattr("allthecontext.desktop_setup.urllib.request.build_opener", build_opener)
+
+    assert (
+        probe_core(
+            CoreConfig.in_directory(tmp_path),
+            ignore_environment_proxy=True,
+        )
+        is CoreProbe.UNVERIFIED
+    )
+    assert len(handlers) == 2
+    assert isinstance(handlers[0], urllib.request.ProxyHandler)
+    assert type(handlers[1]).__name__ == "_NoRedirectHandler"
 
 
 def test_frozen_core_launch_uses_an_independent_pyinstaller_runtime(
@@ -391,6 +460,161 @@ def test_setup_initializes_recoverable_access_and_codex(tmp_path: Path, monkeypa
     assert repeated.client_id == result.client_id
 
 
+def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_442)
+    mcp_path = tmp_path / "user" / ".claude.json"
+    settings_path = tmp_path / "user" / ".claude" / "settings.json"
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ATC_CLAUDE_CODE_MCP_CONFIG", str(mcp_path))
+    monkeypatch.setenv("ATC_CLAUDE_CODE_SETTINGS", str(settings_path))
+    desktop_config = tmp_path / "desktop-claude.json"
+    monkeypatch.setenv("ATC_CLAUDE_CONFIG", str(desktop_config))
+
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.get", lambda *_: None)
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.set", lambda *_: None)
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.KeyringCredentialStore.delete", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.launch_core",
+        lambda _runtime, _config: config.data_dir / "logs" / "core.log",
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.authenticated_dashboard_url",
+        lambda active_config, _token: (
+            f"http://{active_config.host}:{active_config.port}/v1/browser/connect"
+        ),
+    )
+    runtime = RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop"))
+
+    result = perform_setup(
+        SetupOptions(
+            configure_codex=False,
+            configure_claude=False,
+            configure_claude_code=True,
+            start_at_login=False,
+        ),
+        runtime,
+        config=config,
+    )
+
+    assert result.claude is None
+    assert result.claude_code is not None
+    managed = json.loads(mcp_path.read_text(encoding="utf-8"))["mcpServers"][
+        "all-the-context-claude-code"
+    ]
+    assert set(managed["env"]) == {
+        "ATC_MCP_PROFILE",
+        "ATC_TARGET_URL",
+        "ATC_CLIENT_ID",
+        "ATC_CLIENT_TOKEN",
+        "ATC_AUTO_START_CORE",
+        "ATC_CORE_COMMAND",
+        "ATC_CORE_DATA_DIR",
+    }
+    assert managed["env"]["ATC_MCP_PROFILE"] == "claude_code_hook"
+    assert managed["env"]["ATC_CLIENT_TOKEN"]
+    assert managed["env"]["ATC_AUTO_START_CORE"] == "1"
+    assert managed["env"]["ATC_CORE_COMMAND"] == json.dumps(runtime.core(), ensure_ascii=False)
+    assert managed["env"]["ATC_CORE_DATA_DIR"] == str(config.data_dir)
+    assert not desktop_config.exists()
+    assert not (project / ".claude").exists()
+
+    clients = [
+        item
+        for item in CoreStore(config.database_path).list_clients()
+        if item["name"] == CLAUDE_CODE_CLIENT_NAME
+    ]
+    assert len(clients) == 1
+    assert clients[0]["scopes"] == CLAUDE_CODE_SCOPES
+
+    repeated = perform_setup(
+        SetupOptions(
+            configure_codex=False,
+            configure_claude=False,
+            configure_claude_code=True,
+            start_at_login=False,
+        ),
+        runtime,
+        config=config,
+    )
+    assert repeated.claude_code is not None
+    assert repeated.claude_code.changed is False
+    repeated_clients = [
+        item
+        for item in CoreStore(config.database_path).list_clients()
+        if item["name"] == CLAUDE_CODE_CLIENT_NAME and not item["revoked"]
+    ]
+    assert [item["id"] for item in repeated_clients] == [clients[0]["id"]]
+
+
+def test_claude_code_configuration_failure_restores_both_files_and_cleans_principal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_443)
+    mcp_path = tmp_path / "user" / ".claude.json"
+    settings_path = tmp_path / "user" / "settings.json"
+    mcp_original = '{"custom": true}\n'
+    settings_original = '{"hooks": {"UserPromptSubmit": []}}\n'
+    mcp_path.parent.mkdir(parents=True)
+    mcp_path.write_text(mcp_original, encoding="utf-8")
+    settings_path.write_text(settings_original, encoding="utf-8")
+    monkeypatch.setenv("ATC_CLAUDE_CODE_MCP_CONFIG", str(mcp_path))
+    monkeypatch.setenv("ATC_CLAUDE_CODE_SETTINGS", str(settings_path))
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.get", lambda *_: None)
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.set", lambda *_: None)
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.KeyringCredentialStore.delete", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.launch_core",
+        lambda _runtime, _config: config.data_dir / "logs" / "core.log",
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.authenticated_dashboard_url",
+        lambda _config, _token: "http://127.0.0.1:17443/v1/browser/connect",
+    )
+    real_atomic_write = claude_code_config._atomic_write
+    attempts = 0
+
+    def fail_first_write(path: Path, content: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        real_atomic_write(path, content)
+        if attempts == 1:
+            raise OSError("injected Claude Code write fault")
+
+    monkeypatch.setattr(claude_code_config, "_atomic_write", fail_first_write)
+    result = perform_setup(
+        SetupOptions(
+            configure_codex=False,
+            configure_claude=False,
+            configure_claude_code=True,
+            start_at_login=False,
+        ),
+        RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop")),
+        config=config,
+    )
+
+    assert result.claude_code is None
+    assert mcp_path.read_text(encoding="utf-8") == mcp_original
+    assert settings_path.read_text(encoding="utf-8") == settings_original
+    assert list(tmp_path.rglob("*.atc-backup-*")) == []
+    clients = [
+        item
+        for item in CoreStore(config.database_path).list_clients()
+        if item["name"] == CLAUDE_CODE_CLIENT_NAME
+    ]
+    assert len(clients) == 1
+    assert clients[0]["revoked"] is True
+    fallback = DevelopmentFileCredentialStore(config.data_dir / "credentials.development.json")
+    assert fallback.get(f"client:{clients[0]['id']}") is None
+
+
 def test_dashboard_handoff_refuses_an_unverified_service_without_sending_token(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -408,7 +632,7 @@ def test_dashboard_handoff_refuses_an_unverified_service_without_sending_token(
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def read(self) -> bytes:
+        def read(self, _size: int = -1) -> bytes:
             return b'{"status":"ok","component":"core","proof":"forged"}'
 
     def fake_urlopen(request: urllib.request.Request | str, **_kwargs: object) -> FakeResponse:
