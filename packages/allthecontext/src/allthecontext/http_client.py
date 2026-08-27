@@ -170,6 +170,24 @@ class ContextHttpClient:
 
         return self._request("POST", "/v1/context/bootstrap", json=payload)
 
+    def capture_lifecycle_event(self, payload: dict[str, Any]) -> Any:
+        """Submit one bounded lifecycle event to the authenticated local Core.
+
+        The lifecycle adapter owns the request shape and never retries through
+        Relay.  Core integration owns this endpoint and must return an
+        explicit ``captured`` or ``replayed`` status for success.
+        """
+
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > 256 * 1024:
+            raise ContextApiError(413, "request_too_large", "Lifecycle event exceeded its limit")
+        return self._request("POST", "/v1/lifecycle/events", json=payload)
+
     def search_context(self, payload: dict[str, Any]) -> Any:
         try:
             return self._request("POST", "/v1/context/search", json=payload)

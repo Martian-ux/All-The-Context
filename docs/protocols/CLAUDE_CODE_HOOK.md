@@ -1,10 +1,9 @@
-# Claude Code UserPromptSubmit hook
+# Claude Code lifecycle hook
 
-This is a configured Claude Code UserPromptSubmit pre-generation client backed
-by the isolated hook runtime. It is not an L1 lifecycle implementation, direct-
-user capture, durable formation, live/private client acceptance, provider
-support, a product exit, a release claim, or evidence of live Claude Code
-acceptance.
+This is a configured Claude Code UserPromptSubmit/Stop lifecycle client backed
+by the isolated hook runtime. It is not a live/private client acceptance,
+provider support claim, product exit, release claim, or evidence of live Claude
+Code acceptance.
 
 ## Setup integration
 
@@ -28,6 +27,12 @@ ID but no bearer token. A token is serialized only when the existing explicit
 credential storage. Managed configuration also carries the Core start command,
 data directory, and `ATC_AUTO_START_CORE=1`.
 
+The lifecycle capture bridge additionally requires the authenticated Core
+lifecycle-capture capability. This adapter lane does not change principal or
+setup registration; setup integration must provide that capability for the
+configured capture client while keeping any read-principal separation required
+by the client contract.
+
 Setup configures all selected clients before Core launch and dashboard handoff;
 optional workspace authorization remains the final setup mutation. This
 setup-only slice does not add a Claude Code dashboard connection/status,
@@ -38,9 +43,9 @@ principal and configuration behavior. Ordinary MCP remains L0.
 
 Set `ATC_MCP_PROFILE=claude_code_hook` when starting `atc-mcp`. The profile has
 a distinct server identity (`All The Context Claude Code Hook`) and exposes
-only `claude_code_user_prompt_submit`. With no profile set, `atc-mcp` keeps the
-ordinary `All The Context` L0 MCP server and its existing tool set and
-instructions.
+only the lifecycle tools `claude_code_user_prompt_submit` and
+`claude_code_stop`. With no profile set, `atc-mcp` keeps the ordinary `All The
+Context` L0 MCP server and its existing tool set and instructions.
 
 The tool accepts exactly these required string fields:
 
@@ -48,10 +53,14 @@ The tool accepts exactly these required string fields:
 |---|---:|---|
 | `prompt` | 4,000 characters | The only value used as an in-memory Core query |
 | `cwd` | 4,096 characters | Accepted for the official hook contract, then ignored |
-| `session_id` | 128 characters | Accepted for the official hook contract, then ignored |
+| `session_id` | 128 characters | Used only to derive an opaque bounded correlation key |
 
-The adapter never resolves, reads, forwards, logs, audits, or persists `cwd`
-or `session_id`. It does not log, persist, propose, or return `prompt`.
+The adapter never resolves, reads, forwards, logs, audits, or persists `cwd`.
+The raw `session_id` is used only in memory to derive an opaque correlation
+key; it is never sent to Core. The prompt is captured as bounded content by the
+authenticated local Core lifecycle contract and is never logged or returned
+as hook output. No per-turn command or confirmation is needed after setup
+opt-in.
 
 ## Runtime boundary
 
@@ -77,6 +86,12 @@ ACL/audit metadata, and all hook input fields are excluded.
 The installed MCP SDK serializes this tool's result as one text content item
 containing the hook JSON. `structured_content` is intentionally not required
 by this hook contract.
+
+The Stop tool accepts Claude Code's bounded `last_assistant_message`, ignores
+`cwd` and `stop_hook_active`, and returns an empty Stop hook result. Its only
+side effect is an authenticated, bounded `assistant` lifecycle capture. The
+assistant event carries host-observation provenance internally; it is not
+treated as user-authored evidence.
 
 ## Explicit memory commands (opt-in)
 

@@ -37,8 +37,8 @@ def test_hook_profile_exposes_only_its_dedicated_tool_and_identity(monkeypatch) 
     server = _server_for_profile()
 
     assert server.name == "All The Context Claude Code Hook"
-    assert set(_tools(server)) == {hook.HOOK_TOOL_NAME}
-    assert "pre-generation-only" in (server.instructions or "").casefold()
+    assert set(_tools(server)) == {hook.HOOK_TOOL_NAME, hook.STOP_HOOK_TOOL_NAME}
+    assert "lifecycle" in (server.instructions or "").casefold()
 
 
 def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
@@ -147,6 +147,45 @@ def test_hook_context_has_a_fixed_complete_output_budget(monkeypatch) -> None:
     additional_context = output["hookSpecificOutput"]["additionalContext"]
     assert len(additional_context) == hook.HOOK_CONTEXT_BUDGET
     assert additional_context.startswith(hook._REFERENCE_FRAME)
+
+
+def test_claude_stop_captures_rendered_response_without_returning_it(monkeypatch) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.capture_calls: list[dict[str, Any]] = []
+
+        def bootstrap_context_core_only(self, _payload: dict[str, Any]) -> dict[str, Any]:
+            return {"items": []}
+
+        def capture_lifecycle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.capture_calls.append(payload)
+            return {"ok": True, "status": "captured"}
+
+    client = Client()
+    monkeypatch.setattr(hook, "_hook_client", lambda: client)
+    session_id = "claude-stop-session"
+    hook.claude_code_user_prompt_submit(
+        object(),
+        "ordinary prompt",
+        r"C:\private\cwd",
+        session_id,
+    )
+    output = hook.claude_code_stop(
+        object(),
+        "rendered completion",
+        r"C:\private\cwd",
+        session_id,
+    )
+
+    assert output == {
+        "hookSpecificOutput": {
+            "hookEventName": hook.STOP_HOOK_EVENT_NAME,
+            "additionalContext": "",
+        }
+    }
+    assert [payload["role"] for payload in client.capture_calls] == ["user", "assistant"]
+    assert "rendered completion" not in json.dumps(output)
+    assert r"C:\private\cwd" not in json.dumps(client.capture_calls)
 
 
 @pytest.mark.parametrize(
@@ -361,6 +400,46 @@ def test_core_only_bootstrap_never_falls_back_to_relay(monkeypatch) -> None:
     with pytest.raises(ContextApiError, match="missing Core"):
         client.bootstrap_context_core_only({"query": "prompt", "budget_chars": 8_000})
     assert calls == [("POST", "/v1/context/bootstrap", {"query": "prompt", "budget_chars": 8_000})]
+
+
+def test_lifecycle_capture_uses_only_the_core_route_and_bounds_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def request(
+        _self: ContextHttpClient,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del params
+        calls.append((method, path, json))
+        return {"ok": True, "status": "captured"}
+
+    monkeypatch.setattr(ContextHttpClient, "_request", request)
+    client = ContextHttpClient("http://127.0.0.1:7337", "client", "token")
+    payload = {
+        "schema_version": 1,
+        "event_id": "event-opaque",
+        "idempotency_key": "opaque-uuidv4",
+        "session_id": "session-opaque",
+        "conversation_id": "conversation-opaque",
+        "sequence": 1,
+        "role": "user",
+        "content": "ordinary prompt",
+        "observed_at": None,
+    }
+
+    assert client.capture_lifecycle_event(payload) == {"ok": True, "status": "captured"}
+    assert calls == [("POST", "/v1/lifecycle/events", payload)]
+
+    with pytest.raises(ContextApiError) as failure:
+        client.capture_lifecycle_event({"content": "x" * (256 * 1024)})
+    assert failure.value.code == "request_too_large"
+    assert len(calls) == 1
 
 
 def test_ordinary_bootstrap_relay_fallback_remains_unchanged(monkeypatch) -> None:
