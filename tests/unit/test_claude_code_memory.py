@@ -8,11 +8,13 @@ from uuid import uuid4
 import pytest
 from allthecontext.ingestion import IngestionService
 from allthecontext.models import (
+    CandidateInput,
     ClaudeCodeCorrectionRequest,
     ClaudeCodeForgetRequest,
     ClaudeCodeRememberRequest,
     ClientCreate,
     ObservationDisposition,
+    SecretRefusalOut,
     Sensitivity,
 )
 from allthecontext.security import (
@@ -21,7 +23,7 @@ from allthecontext.security import (
     ClientPrincipal,
     principal_may_submit_claude_code_user_mutation,
 )
-from allthecontext.storage import CoreStore, NotFoundError
+from allthecontext.storage import ConflictError, CoreStore, NotFoundError
 from pydantic import ValidationError
 
 
@@ -141,18 +143,87 @@ def test_core_assigns_authority_fields_and_reuses_existing_lifecycle_machinery(
     assert corrected.record_id == remembered.record_id
     assert store.get_record(remembered.record_id).content == "I live in Philadelphia."
 
+    forget_request = ClaudeCodeForgetRequest(
+        record_id=remembered.record_id,
+        idempotency_key=str(uuid4()),
+    )
     forgotten = service.claude_code_forget(
-        ClaudeCodeForgetRequest(
-            record_id=remembered.record_id,
-            idempotency_key=str(uuid4()),
-        ),
+        forget_request,
         principal,
     )
     assert forgotten.disposition == ObservationDisposition.APPLIED
     assert forgotten.record_id == remembered.record_id
+    repeated_forget = service.claude_code_forget(forget_request, principal)
+    assert repeated_forget.id == forgotten.id
+    assert repeated_forget.record_id == forgotten.record_id
     with pytest.raises(NotFoundError):
         store.get_record(remembered.record_id)
     assert store.get_record(remembered.record_id, include_deleted=True).deleted_at is not None
+
+
+def test_forget_checks_target_acl_before_creating_tombstone(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    principal = _writer(store)
+    target = store.add_candidate(
+        CandidateInput(
+            kind="fact",
+            content="The target is only for another client.",
+            allowed_clients=["different-client"],
+            explicit_user_statement=True,
+        )
+    )
+    assert target.record_id is not None
+    service = IngestionService(store)
+
+    with pytest.raises(NotFoundError):
+        service.claude_code_forget(
+            ClaudeCodeForgetRequest(
+                record_id=target.record_id,
+                idempotency_key=str(uuid4()),
+            ),
+            principal,
+        )
+
+    assert store.get_record(target.record_id).content == "The target is only for another client."
+    _observations, total = store.list_observations()
+    assert total == 1
+
+
+def test_remember_rejects_changed_content_for_reused_uuid(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    principal = _writer(store)
+    service = IngestionService(store)
+    key = str(uuid4())
+    service.claude_code_remember(
+        ClaudeCodeRememberRequest(content="Prefer concise answers.", idempotency_key=key),
+        principal,
+    )
+
+    with pytest.raises(ConflictError, match="idempotency key was reused"):
+        service.claude_code_remember(
+            ClaudeCodeRememberRequest(content="Prefer long answers.", idempotency_key=key),
+            principal,
+        )
+
+
+def test_remember_secret_refusal_is_content_free_and_not_ledgered(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    principal = _writer(store)
+    service = IngestionService(store)
+
+    refused = service.claude_code_remember(
+        ClaudeCodeRememberRequest(
+            content="password: test-only-placeholder",
+            idempotency_key=str(uuid4()),
+        ),
+        principal,
+    )
+
+    assert isinstance(refused, SecretRefusalOut)
+    assert refused.reason_code == "direct_secret_like_content"
+    assert "test-only-placeholder" not in refused.model_dump_json()
+    _observations, total = store.list_observations()
+    assert total == 0
 
 
 def test_core_service_rejects_non_opt_in_or_forged_write_identity(tmp_path: Path) -> None:

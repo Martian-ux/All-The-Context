@@ -155,4 +155,38 @@ def test_claude_code_memory_routes_require_separate_write_principal_and_are_core
         assert forgotten.json()["record_id"] == record_id
         assert client.get(f"/v1/context/{record_id}", headers=read_headers).status_code == 404
 
+        acl_target = client.post(
+            "/v1/ingestion/propose",
+            headers=owner_headers,
+            json={
+                "kind": "fact",
+                "content": "Only another client may access this target.",
+                "allowed_clients": [_missing_witness_id],
+                "explicit_user_statement": True,
+            },
+        )
+        assert acl_target.status_code == 200, acl_target.text
+        acl_record_id = acl_target.json()["record_id"]
+        denied_forget = client.post(
+            "/v1/claude-code/memory/forget",
+            headers=write_headers,
+            json={"record_id": acl_record_id, "idempotency_key": str(uuid4())},
+        )
+        assert denied_forget.status_code == 404
+        assert client.app.state.core.store.get_record(acl_record_id).content == (
+            "Only another client may access this target."
+        )
+
+        revoked = client.post(
+            f"/v1/admin/clients/{write_id}/revoke",
+            headers=owner_headers,
+        )
+        assert revoked.status_code == 200, revoked.text
+        revoked_write = client.post(
+            "/v1/claude-code/memory/remember",
+            headers=write_headers,
+            json={"content": "This must not be accepted.", "idempotency_key": str(uuid4())},
+        )
+        assert revoked_write.status_code == 401
+
         assert getattr(client.app.state.legacy_edge_sync, "_thread", None) is None

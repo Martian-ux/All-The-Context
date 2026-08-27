@@ -180,6 +180,7 @@ class IngestionService:
         """Create a reversible tombstone through the existing observation path."""
 
         self._require_claude_code_writer(principal)
+        self._require_target_access(request.record_id, principal, include_deleted=True)
         candidate = CandidateInput(
             kind="context_forget",
             content="Explicit Claude Code user forget request",
