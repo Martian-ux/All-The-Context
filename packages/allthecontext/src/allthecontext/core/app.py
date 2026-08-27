@@ -35,6 +35,8 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -91,6 +93,9 @@ from ..models import (
     BeginIngestionRequest,
     BootstrapRequest,
     CandidateInput,
+    ClaudeCodeCorrectionRequest,
+    ClaudeCodeForgetRequest,
+    ClaudeCodeRememberRequest,
     ClientCreate,
     ContextErrorRequest,
     CorrectionRequest,
@@ -115,7 +120,10 @@ from ..project_runtime import (
     capsule_for_project,
     project_list_payload,
 )
-from ..security import ClientPrincipal
+from ..security import (
+    ClientPrincipal,
+    principal_may_submit_claude_code_user_mutation,
+)
 from ..storage import (
     ConflictError,
     InvalidStateError,
@@ -137,6 +145,11 @@ DashboardPage = Literal[
 
 _SEARCH_CURSOR_VERSION = "atc-search-v1"
 _SEARCH_CURSOR_PART_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
+    "/v1/claude-code/memory/remember": "remember",
+    "/v1/claude-code/memory/correct": "correct",
+    "/v1/claude-code/memory/forget": "forget",
+}
 
 
 class _InvalidSearchCursor(ValueError):
@@ -394,6 +407,24 @@ def create_app(
             },
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        route_name = _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES.get(request.url.path)
+        if route_name is None:
+            return await request_validation_exception_handler(request, error)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "request validation failed",
+                    "route": route_name,
+                }
+            },
+        )
+
     def _credential_from_header(
         request: Request,
         authorization: str | None,
@@ -486,6 +517,16 @@ def create_app(
             and scope not in principal.scopes
         ):
             raise HTTPException(status_code=403, detail=f"Missing required scope: {scope}")
+
+    def require_claude_code_memory_writer(principal: ClientPrincipal) -> None:
+        if not principal_may_submit_claude_code_user_mutation(principal):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Claude Code memory writes require a separate opt-in principal "
+                    "with exactly context:propose and witness:explicit_user_statement"
+                ),
+            )
 
     @app.get("/health")
     def health(challenge: str | None = None) -> dict[str, str]:
@@ -613,6 +654,30 @@ def create_app(
     def forget_context(request: ForgetContextRequest, principal: Principal) -> dict[str, Any]:
         require(principal, "context:propose")
         return core.ingestion.forget(request, principal)
+
+    @app.post("/v1/claude-code/memory/remember")
+    def claude_code_remember(
+        request: ClaudeCodeRememberRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_remember(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/claude-code/memory/correct")
+    def claude_code_correct(
+        request: ClaudeCodeCorrectionRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_correct(request, principal).model_dump(mode="json")
+
+    @app.post("/v1/claude-code/memory/forget")
+    def claude_code_forget(
+        request: ClaudeCodeForgetRequest,
+        principal: Principal,
+    ) -> dict[str, Any]:
+        require_claude_code_memory_writer(principal)
+        return core.ingestion.claude_code_forget(request, principal).model_dump(mode="json")
 
     @app.post("/v1/context/search")
     def search_context(request: SearchRequest, principal: Principal) -> dict[str, Any]:

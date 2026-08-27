@@ -445,6 +445,10 @@ def _server_for_profile() -> MCPServer:
         from allthecontext.claude_code_hook import build_claude_code_hook_mcp
 
         return build_claude_code_hook_mcp()
+    if profile == "claude_code_explicit":
+        from allthecontext.claude_code_hook import build_claude_code_explicit_mcp
+
+        return build_claude_code_explicit_mcp()
     raise RuntimeError(f"Unsupported ATC_MCP_PROFILE: {profile}")
 
 

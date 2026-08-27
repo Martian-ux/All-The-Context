@@ -2,11 +2,12 @@
 
 ## Current milestone
 
-As of 2026-08-26 UTC, this branch evaluates a bounded typed project graph and
-independent safety oracle while adding worker-backed Continuous Context,
-pre-generation lifecycle-context, and direct-user formation continuity
-acceptance journeys on the merged Import Truth, Memory Truth, Retrieval,
-Continuous Context, and deterministic Project Context Capsule foundations.
+As of 2026-08-26 UTC, this branch adds an opt-in Claude Code explicit-memory
+boundary on the merged read-only pre-generation integration while retaining
+the bounded typed project graph, independent safety oracle, worker-backed
+Continuous Context, lifecycle-context, and direct-user formation continuity
+work on the Import Truth, Memory Truth, Retrieval, Continuous Context, and
+deterministic Project Context Capsule foundations.
 Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
@@ -14,11 +15,13 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains the merged Import Truth, Memory Truth, Retrieval,
-Continuous Context, and Project Context foundations at exact SHA
-`0e92083744bd07ed1f8c5ac0e863e9a88474d649`. Development evidence on this
+At this boundary, protected main contains the merged Import Truth, Memory Truth,
+Retrieval, Continuous Context, and Project Context Capsule foundations plus the
+merged read-only Claude Code pre-generation integration at exact SHA
+`a2607aa2e6031dc806a7704e38eda05c887c7bb5`. Development evidence on this
 branch does not
-become release, exact-artifact, client/provider, or private-data acceptance.
+become release, exact-artifact, client/provider, or
+private-data acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
 
 Supported source/package targets for this checkout are Windows and supported Linux. macOS source, tests, and historical preflight/packaging code remain retained for portability and maintenance only; macOS is unsupported and creates no package, CI, release, provider/client, acceptance, or support claim.
@@ -27,6 +30,65 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-26 — Core-only Claude Code explicit-user memory contract
+
+Core now exposes three dedicated HTTP routes for explicit Claude Code user
+operations: remember, correct, and reversible forget. They require a separate
+opt-in principal registered with exactly `context:propose` and
+`witness:explicit_user_statement`; the existing Claude Code read principal
+remains exactly `context:read`. Requests use bounded typed payloads and a
+caller-generated opaque UUIDv4 idempotency key. Core rejects client-supplied
+authority fields and assigns origin, sensitivity, availability, ACL, and
+disposition itself.
+
+Remember and correction reuse the existing candidate/correction policy
+machinery. Forget creates the existing `context_forget` tombstone, so the
+record remains reversibly restorable through the established Core lifecycle.
+These routes have no Relay fallback. Ordinary `UserPromptSubmit` prompt text,
+model/tool/provider output, imported text, and MCP elicitation are not direct
+user evidence; the client lane may bind only its exact expansion metadata
+fields `command_name`, `command_args`, and `expansion_type` as integration data.
+This paragraph records the Core/API evidence; the separate client/config/setup
+evidence is recorded immediately below. Neither establishes live/private data
+acceptance, a product exit, or macOS support.
+
+### 2026-08-26 — opt-in Claude Code explicit memory command boundary
+
+The Claude Code client lane now includes an opt-in-only explicit command
+boundary for `/atc-remember`, `/atc-correct`, and `/atc-forget`. Setup keeps
+the existing `Claude Code` read principal exactly `context:read` and, only
+when selected, creates a separate `Claude Code Explicit Commands` principal
+with exactly `context:propose` and `witness:explicit_user_statement`.
+
+The transaction preserves unrelated Claude user settings and personal skill
+files, refuses reserved-name collisions, installs the three reserved skills at
+`~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, and configures only user-scope
+`UserPromptExpansion` handling. Ordinary `UserPromptSubmit` retrieval remains
+read-only and never scans or captures ordinary prompts. The handler binds the
+official event's exact `command_name`, `command_args`, `expansion_type`, and
+`command_source` fields, keeps only bounded in-memory pending state, and calls
+Core's narrow Claude Code memory routes without Relay fallback. Missing or
+revoked Core authority fails closed. This paragraph records the
+client/config/setup boundary; the Core/API evidence is recorded immediately
+above. Neither establishes macOS work, live/private acceptance, or a
+product/release exit claim.
+
+The explicit hook sends only the strict Core route payloads, using the pending
+opaque command ID as `idempotency_key`; commitments and hook event fields stay
+internal. Native exact-payload confirmation is the authoritative user approval
+and adoption step before a write, even when the caller supplies
+`command_source=user`. Because the MCP tool remains model-visible, hook fields
+do not prove the slash command was personally typed; a direct call must obtain
+the same confirmation and cannot silently write. An ambiguous transport error
+gets one identical retry; an unresolved result is reported as unknown and
+requires verification before repeating.
+
+Validation failures on the three narrow Core routes are content-free and do
+not reflect rejected payload values. Claude documents MCP elicitation generally,
+but nested `Context.elicit` from an `mcp_tool` hook has not yet passed a real
+Claude Code acceptance journey. It fails closed when unavailable, so this
+branch does not claim live Claude Code write support.
 
 ### 2026-08-26 — configured Claude Code UserPromptSubmit pre-generation client
 

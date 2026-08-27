@@ -1,5 +1,68 @@
 # Architecture decisions
 
+## ADR-162: Keep Claude Code explicit-user memory Core-authoritative, separate, and opt-in
+
+**Status:** accepted locally on 2026-08-26 for the integrated Core/API and
+Claude Code client/config/setup boundary. This is not live/private client
+acceptance, a product exit, a release claim, or macOS support.
+
+Claude Code remember, correct, and reversible forget operations use dedicated
+Core routes and a separate least-privilege registration with exactly
+`context:propose` and `witness:explicit_user_statement`. The existing Claude
+Code read registration remains exactly `context:read`; read and write
+authority are not combined. Core also verifies the supplied principal against
+the active durable registration before accepting a mutation, so a forged
+principal shape cannot obtain the write path.
+
+The strict request contracts are bounded and extra-forbid: remember accepts
+`kind`, `content`, and `idempotency_key`; correct accepts `record_id`,
+`content`, and `idempotency_key`; forget accepts `record_id` and
+`idempotency_key`. The key is a caller-generated opaque UUIDv4 reused for
+retries. No client authority, origin, sensitivity, ACL, availability, or
+disposition fields are accepted. Core assigns those values and marks the
+observation as an explicit user statement with `ongoing_client` origin.
+
+Remember uses the existing candidate policy path, correction uses the
+existing correction/error path, and forget uses the existing `context_forget`
+tombstone path. Secret-like direct payloads stop at the existing content
+boundary with a content-free refusal, and route validation errors omit rejected
+input values. There is no Relay fallback or new
+storage table. Ordinary prompts, model/tool/provider output, imported text,
+and native MCP elicitation are not direct-user evidence. The client lane's
+`UserPromptExpansion` integration metadata is limited to the exact fields
+`command_name`, `command_args`, and `expansion_type`; those fields are not
+authority grants and are not accepted as Core mutation payload fields.
+
+The write path is opt-in and uses three reserved personal skills at
+`~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, handled by
+the official `UserPromptExpansion` event, whose typed event fields expose the
+command name and exact arguments before expansion. The existing ordinary
+`UserPromptSubmit` hook remains read-only and never inspects ordinary prompts
+for capture. The normal UX accepts slash-command expansions from the user
+source and blocks the handled expansion after the explicit operation.
+
+The setup transaction preserves unrelated settings and personal skill files,
+refuses unrelated files at reserved skill paths, and provisions a separate principal
+with exactly `context:propose` plus `witness:explicit_user_statement`. The
+explicit handler uses only `/v1/claude-code/memory/remember`,
+`/v1/claude-code/memory/correct`, and `/v1/claude-code/memory/forget`, with no
+Relay fallback. A bounded in-memory pending record carries an opaque command
+ID and content commitment for 15 seconds at most. Native MCP exact-payload
+elicitation is the authoritative user approval and adoption gate: only explicit
+`confirm=true` permits a Core request, and unavailable, failed, timed-out, or
+declined elicitation blocks it. The MCP tool remains model-visible, so
+`command_source` and other event fields do not prove the command was personally
+typed; direct invocation is subject to the identical confirmation gate and
+cannot write silently. Ambiguous transport failure is retried once
+with the identical idempotency key; a second ambiguous failure reports an
+unknown outcome and requires verification before repeating. Raw arguments are
+not placed in hook output or receipts. Missing, unverified, unreachable, or
+revoked Core blocks the operation. The official event contract is recorded in the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks#userpromptexpansion-input).
+Nested `Context.elicit` from an `mcp_tool` hook remains unproved in a real
+Claude Code session. It fails closed when unavailable and is not a live-client
+support claim.
+
 ## ADR-161: Configure Claude Code as a separate read-only pre-generation client
 
 **Status:** accepted locally on 2026-08-26 for the setup integration. This is

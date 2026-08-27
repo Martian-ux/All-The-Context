@@ -8,6 +8,9 @@ from .models import (
     Availability,
     BeginIngestionRequest,
     CandidateInput,
+    ClaudeCodeCorrectionRequest,
+    ClaudeCodeForgetRequest,
+    ClaudeCodeRememberRequest,
     ContextErrorRequest,
     FinishIngestionRequest,
     ForgetContextRequest,
@@ -17,7 +20,12 @@ from .models import (
     Sensitivity,
     SubmitBatchRequest,
 )
-from .security import ClientPrincipal, record_is_allowed
+from .security import (
+    CLAUDE_CODE_USER_WRITE_SCOPES,
+    ClientPrincipal,
+    principal_may_submit_claude_code_user_mutation,
+    record_is_allowed,
+)
 from .storage import CoreStore, NotFoundError
 
 
@@ -63,11 +71,15 @@ class IngestionService:
         )
 
     def propose(
-        self, request: CandidateInput, principal: ClientPrincipal | None = None
+        self,
+        request: CandidateInput,
+        principal: ClientPrincipal | None = None,
+        *,
+        route: str = "propose_memory",
     ) -> ObservationOut | SecretRefusalOut:
         refusal = self.store.refuse_direct_candidate(
             request,
-            route="propose_memory",
+            route=route,
             client=principal,
         )
         if refusal is not None:
@@ -76,12 +88,18 @@ class IngestionService:
         return self.store.get_observation(created.id)
 
     def report_error(
-        self, request: ContextErrorRequest, principal: ClientPrincipal | None = None
+        self,
+        request: ContextErrorRequest,
+        principal: ClientPrincipal | None = None,
+        *,
+        source_service: str | None = None,
+        source_type: str | None = None,
+        route: str = "report_context_error",
     ) -> ObservationOut | SecretRefusalOut:
         self._require_target_access(request.record_id, principal)
         refusal = self.store.refuse_direct_value(
             request.model_dump(mode="json"),
-            route="report_context_error",
+            route=route,
             operation_id=request.idempotency_key,
             client=principal,
         )
@@ -98,6 +116,8 @@ class IngestionService:
             availability=Availability.CORE,
             explicit_user_statement=has_correction,
             idempotency_key=request.idempotency_key,
+            source_service=source_service,
+            source_type=source_type,
         )
         created = self.store.add_context_error_observation(
             candidate,
@@ -107,6 +127,87 @@ class IngestionService:
             client=principal,
         )
         return self.store.get_observation(created.id)
+
+    def claude_code_remember(
+        self,
+        request: ClaudeCodeRememberRequest,
+        principal: ClientPrincipal,
+    ) -> ObservationOut | SecretRefusalOut:
+        """Apply one explicitly user-authored Claude Code memory observation."""
+
+        self._require_claude_code_writer(principal)
+        candidate = CandidateInput(
+            kind=request.kind,
+            content=request.content,
+            confidence=1.0,
+            sensitivity=Sensitivity.NORMAL,
+            availability=Availability.CORE,
+            allowed_clients=[],
+            denied_clients=[],
+            explicit_user_statement=True,
+            idempotency_key=request.idempotency_key,
+            source_service="claude_code",
+            source_type="direct_user_statement",
+        )
+        return self.propose(candidate, principal, route="claude_code_remember")
+
+    def claude_code_correct(
+        self,
+        request: ClaudeCodeCorrectionRequest,
+        principal: ClientPrincipal,
+    ) -> ObservationOut | SecretRefusalOut:
+        """Apply one explicitly user-authored correction through the error path."""
+
+        self._require_claude_code_writer(principal)
+        return self.report_error(
+            ContextErrorRequest(
+                record_id=request.record_id,
+                description="Claude Code explicit user correction",
+                suggested_correction=request.content,
+                idempotency_key=request.idempotency_key,
+            ),
+            principal,
+            source_service="claude_code",
+            source_type="direct_user_statement",
+            route="claude_code_correct",
+        )
+
+    def claude_code_forget(
+        self,
+        request: ClaudeCodeForgetRequest,
+        principal: ClientPrincipal,
+    ) -> ObservationOut | SecretRefusalOut:
+        """Create a reversible tombstone through the existing observation path."""
+
+        self._require_claude_code_writer(principal)
+        self._require_target_access(request.record_id, principal, include_deleted=True)
+        candidate = CandidateInput(
+            kind="context_forget",
+            content="Explicit Claude Code user forget request",
+            confidence=1.0,
+            sensitivity=Sensitivity.NORMAL,
+            availability=Availability.LOCAL,
+            allowed_clients=[],
+            denied_clients=[],
+            supersedes=request.record_id,
+            explicit_user_statement=True,
+            idempotency_key=request.idempotency_key,
+            source_service="claude_code",
+            source_type="direct_user_statement",
+        )
+        return self.propose(candidate, principal, route="claude_code_forget")
+
+    def _require_claude_code_writer(self, principal: ClientPrincipal) -> None:
+        if not principal_may_submit_claude_code_user_mutation(
+            principal
+        ) or not self.store.principal_matches_registration(
+            principal,
+            CLAUDE_CODE_USER_WRITE_SCOPES,
+        ):
+            raise PermissionError(
+                "Claude Code memory writes require the separate context:propose "
+                "and witness:explicit_user_statement principal"
+            )
 
     def forget(
         self,

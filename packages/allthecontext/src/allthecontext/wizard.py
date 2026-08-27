@@ -51,6 +51,7 @@ _PROGRESS_STATUS_COPY = {
     "source": "Preparing the local workspace source",
     "client": "Connecting your AI client",
     "claude_code": "Connecting the Claude Code hook",
+    "claude_code_explicit": "Connecting Claude Code explicit memory commands",
     "startup": "Enabling private per-user startup",
     "core": "Starting Core on this device",
     "complete": "All The Context is ready",
@@ -77,6 +78,7 @@ def build_setup_options(
     workspace_root_text: str,
     workspace_local_only_acknowledged: bool,
     configure_claude_code: bool = False,
+    configure_claude_code_explicit_commands: bool = False,
 ) -> SetupOptions:
     """Build immutable setup options from the wizard's user-entered values."""
 
@@ -84,14 +86,21 @@ def build_setup_options(
         workspace_root_text,
         workspace_local_only_acknowledged,
     )
+    setup_kwargs: dict[str, Any] = {
+        "vault_name": vault_name,
+        "configure_codex": configure_codex,
+        "configure_claude": configure_claude,
+        "configure_claude_code": configure_claude_code,
+        "start_at_login": start_at_login,
+        "workspace_root": workspace_root,
+        "workspace_local_only_acknowledged": workspace_local_only_acknowledged,
+    }
+    # Keep compatibility with embedders that provide a frozen SetupOptions
+    # test double from before this opt-in field existed.
+    if configure_claude_code_explicit_commands:
+        setup_kwargs["configure_claude_code_explicit_commands"] = True
     return SetupOptions(
-        vault_name=vault_name,
-        configure_codex=configure_codex,
-        configure_claude=configure_claude,
-        configure_claude_code=configure_claude_code,
-        start_at_login=start_at_login,
-        workspace_root=workspace_root,
-        workspace_local_only_acknowledged=workspace_local_only_acknowledged,
+        **setup_kwargs,
     )
 
 
@@ -187,6 +196,7 @@ class SetupWizard:
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
         self.configure_claude = tk.BooleanVar(value=self.claude_detected)
         self.configure_claude_code = tk.BooleanVar(value=self.claude_code_detected)
+        self.configure_claude_code_explicit_commands = tk.BooleanVar(value=False)
         self.start_at_login = tk.BooleanVar(value=True)
         self.workspace_root = tk.StringVar(value="")
         self.workspace_local_only_acknowledged = tk.BooleanVar(value=False)
@@ -194,6 +204,7 @@ class SetupWizard:
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
         self.skipped_progress_steps: set[str] = set()
         self.claude_code_requested = False
+        self.claude_code_explicit_requested = False
 
         self._configure_window()
         self._build_shell()
@@ -576,6 +587,18 @@ class SetupWizard:
             enabled=self.claude_code_detected,
         )
         self._check(
+            "Enable explicit Claude Code memory commands",
+            (
+                "Opt in to explicitly confirmed /atc-remember, /atc-correct, and "
+                "/atc-forget commands. Every write requires native exact-payload approval; "
+                "ordinary prompts remain read-only and are never captured."
+                if self.claude_code_detected
+                else "Claude Code was not found."
+            ),
+            self.configure_claude_code_explicit_commands,
+            enabled=self.claude_code_detected,
+        )
+        self._check(
             "Start Core when I sign in",
             "Runs in your user account; no administrator access or Docker.",
             self.start_at_login,
@@ -595,6 +618,7 @@ class SetupWizard:
                 workspace_root_text=self.workspace_root.get(),
                 workspace_local_only_acknowledged=self.workspace_local_only_acknowledged.get(),
                 configure_claude_code=self.configure_claude_code.get(),
+                configure_claude_code_explicit_commands=self.configure_claude_code_explicit_commands.get(),
             )
         except (RuntimeError, ValueError) as error:
             messagebox.showerror("Workspace choice required", str(error), parent=self.root)
@@ -602,6 +626,9 @@ class SetupWizard:
         self._clear()
         self._set_step(2)
         self.claude_code_requested = options.configure_claude_code
+        self.claude_code_explicit_requested = getattr(
+            options, "configure_claude_code_explicit_commands", False
+        )
         self._eyebrow("Installing")
         self._heading(
             "Setting up your Core.",
@@ -610,9 +637,11 @@ class SetupWizard:
         rows = tk.Frame(self.content, bg=PAPER)
         rows.pack(fill="x", pady=(36, 0))
         self.progress_rows.clear()
-        self.skipped_progress_steps = (
-            {"claude_code"} if not options.configure_claude_code else set()
-        )
+        self.skipped_progress_steps = set()
+        if not options.configure_claude_code:
+            self.skipped_progress_steps.add("claude_code")
+        if not self.claude_code_explicit_requested:
+            self.skipped_progress_steps.add("claude_code_explicit")
         progress_steps = [
             ("vault", "Private local vault"),
             ("credential", "Secure client credential"),
@@ -621,6 +650,7 @@ class SetupWizard:
             (
                 ("client", "MCP client connection"),
                 ("claude_code", "Claude Code hook"),
+                ("claude_code_explicit", "Claude Code explicit commands"),
                 ("startup", "Background startup"),
                 ("core", "Core health check"),
             )
@@ -743,6 +773,13 @@ class SetupWizard:
                     selected=self.claude_code_requested,
                     connected=bool(self.result and self.result.claude_code),
                 ),
+            ),
+            (
+                "Memory commands",
+                "Enabled"
+                if self.claude_code_explicit_requested
+                and bool(self.result and getattr(self.result, "claude_code_explicit", None))
+                else ("Not connected" if self.claude_code_explicit_requested else "Not enabled"),
             ),
             (
                 "Startup",

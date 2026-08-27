@@ -3171,6 +3171,25 @@ class CoreStore:
                     )
         return None
 
+    def principal_matches_registration(
+        self,
+        principal: ClientPrincipal,
+        expected_scopes: frozenset[str],
+    ) -> bool:
+        """Check a supplied principal shape against its live Core registration."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT name,scopes_json FROM client_registrations "
+                "WHERE id=? AND vault_id=? AND revoked_at IS NULL",
+                (principal.id, self.vault_id()),
+            ).fetchone()
+        return (
+            row is not None
+            and str(row["name"]) == principal.name
+            and frozenset(cast(list[str], _loads(row["scopes_json"], []))) == expected_scopes
+        )
+
     def authenticate_import_operation_observer(
         self,
         token: str,

@@ -27,6 +27,8 @@ from allthecontext.desktop_runtime import RuntimeCommand
 from allthecontext.desktop_setup import (
     AI_CLIENT_SCOPES,
     CLAUDE_CODE_CLIENT_NAME,
+    CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+    CLAUDE_CODE_EXPLICIT_SCOPES,
     CLAUDE_CODE_SCOPES,
     CODEX_CLIENT_NAME,
     DESKTOP_CLIENT_NAME,
@@ -523,6 +525,7 @@ def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_e
     assert managed["env"]["ATC_CORE_DATA_DIR"] == str(config.data_dir)
     assert not desktop_config.exists()
     assert not (project / ".claude").exists()
+    assert not (settings_path.parent / "commands").exists()
 
     clients = [
         item
@@ -550,6 +553,69 @@ def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_e
         if item["name"] == CLAUDE_CODE_CLIENT_NAME and not item["revoked"]
     ]
     assert [item["id"] for item in repeated_clients] == [clients[0]["id"]]
+
+
+def test_setup_keeps_read_principal_and_opt_in_explicit_principal_separate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(CoreConfig.in_directory(tmp_path / "core"), port=17_444)
+    mcp_path = tmp_path / "user" / ".claude.json"
+    settings_path = tmp_path / "user" / ".claude" / "settings.json"
+    monkeypatch.setenv("ATC_CLAUDE_CODE_MCP_CONFIG", str(mcp_path))
+    monkeypatch.setenv("ATC_CLAUDE_CODE_SETTINGS", str(settings_path))
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.get", lambda *_: None)
+    monkeypatch.setattr("allthecontext.desktop_setup.KeyringCredentialStore.set", lambda *_: None)
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.KeyringCredentialStore.delete", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.launch_core",
+        lambda _runtime, _config: config.data_dir / "logs" / "core.log",
+    )
+    monkeypatch.setattr(
+        "allthecontext.desktop_setup.authenticated_dashboard_url",
+        lambda active_config, _token: (
+            f"http://{active_config.host}:{active_config.port}/v1/browser/connect"
+        ),
+    )
+
+    result = perform_setup(
+        SetupOptions(
+            configure_codex=False,
+            configure_claude=False,
+            configure_claude_code=True,
+            configure_claude_code_explicit_commands=True,
+            start_at_login=False,
+        ),
+        RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop")),
+        config=config,
+    )
+
+    assert result.claude_code is not None
+    assert result.claude_code_explicit is not None
+    clients = {
+        item["name"]: item
+        for item in CoreStore(config.database_path).list_clients()
+        if not item["revoked"]
+    }
+    assert clients[CLAUDE_CODE_CLIENT_NAME]["scopes"] == CLAUDE_CODE_SCOPES
+    assert clients[CLAUDE_CODE_EXPLICIT_CLIENT_NAME]["scopes"] == CLAUDE_CODE_EXPLICIT_SCOPES
+    assert json.loads(mcp_path.read_text(encoding="utf-8"))["mcpServers"].keys() >= {
+        "all-the-context-claude-code",
+        "all-the-context-claude-code-explicit",
+    }
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "UserPromptSubmit" in settings["hooks"]
+    assert "UserPromptExpansion" in settings["hooks"]
+    skills_dir = settings_path.parent / "skills"
+    assert all(
+        (skills_dir / name / "SKILL.md").exists()
+        for name in (
+            "atc-remember",
+            "atc-correct",
+            "atc-forget",
+        )
+    )
 
 
 def test_claude_code_configuration_failure_restores_both_files_and_cleans_principal(

@@ -1,8 +1,9 @@
 """Transactional configuration for the Claude Code user integration.
 
-Claude Code keeps its user-scope MCP registry and settings in separate JSON
-files.  This module owns only the All The Context server and UserPromptSubmit
-hook it creates; all other JSON values are treated as user-owned data.
+Claude Code keeps its user-scope MCP registry, settings, and personal skills in
+separate surfaces. This module owns only the All The Context entries and the
+three reserved explicit skills it creates; all other user data is treated as
+user-owned data.
 """
 
 from __future__ import annotations
@@ -34,9 +35,14 @@ from .desktop_runtime import RuntimeCommand
 CLAUDE_CODE_MCP_SERVER_KEY = "all-the-context-claude-code"
 CLAUDE_CODE_HOOK_TOOL = "claude_code_user_prompt_submit"
 CLAUDE_CODE_MCP_PROFILE = "claude_code_hook"
+CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY = "all-the-context-claude-code-explicit"
+CLAUDE_CODE_EXPLICIT_HOOK_TOOL = "claude_code_user_prompt_expansion"
+CLAUDE_CODE_EXPLICIT_MCP_PROFILE = "claude_code_explicit"
+CLAUDE_CODE_EXPLICIT_COMMANDS = ("atc-remember", "atc-correct", "atc-forget")
 
 CLAUDE_CODE_MCP_CONFIG_ENV = "ATC_CLAUDE_CODE_MCP_CONFIG"
 CLAUDE_CODE_SETTINGS_ENV = "ATC_CLAUDE_CODE_SETTINGS"
+CLAUDE_CODE_SKILLS_DIR_ENV = "ATC_CLAUDE_CODE_SKILLS_DIR"
 CLAUDE_CODE_EXECUTABLE_ENV = "ATC_CLAUDE_CODE_EXECUTABLE"
 
 # Claude Code configuration is normally small.  Refusing unexpectedly large
@@ -52,6 +58,49 @@ _MANAGED_HOOK_HANDLER: dict[str, Any] = {
         "cwd": "${cwd}",
         "session_id": "${session_id}",
     },
+}
+
+_MANAGED_EXPLICIT_HOOK_HANDLER: dict[str, Any] = {
+    "type": "mcp_tool",
+    "server": CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY,
+    "tool": CLAUDE_CODE_EXPLICIT_HOOK_TOOL,
+    "input": {
+        "expansion_type": "${expansion_type}",
+        "command_name": "${command_name}",
+        "command_args": "${command_args}",
+        "command_source": "${command_source}",
+    },
+}
+
+_EXPLICIT_SKILL_FILES: dict[str, str] = {
+    "atc-remember": """---
+description: Store an exact user-stated context item in All The Context
+disable-model-invocation: true
+user-invocable: true
+---
+
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
+Do not paraphrase, summarize, or repeat its arguments.
+""",
+    "atc-correct": """---
+description: Correct one exact All The Context record
+disable-model-invocation: true
+user-invocable: true
+---
+
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
+Do not paraphrase, summarize, or repeat its arguments.
+""",
+    "atc-forget": """---
+description: Forget one exact All The Context record
+disable-model-invocation: true
+user-invocable: true
+---
+
+This reserved skill is handled by the All The Context UserPromptExpansion hook.
+Use exactly `/atc-forget <record-id>`; trailing text is rejected.
+Do not paraphrase, summarize, or repeat its arguments.
+""",
 }
 
 
@@ -73,8 +122,11 @@ class ClaudeCodeConfigResult:
     changed: bool
     mcp_changed: bool
     settings_changed: bool
+    skill_changed: bool = False
     mcp_backup_path: Path | None = None
     settings_backup_path: Path | None = None
+    skill_backup_paths: tuple[Path, ...] = ()
+    skill_paths: tuple[Path, ...] = ()
     managed_client_id: str | None = None
 
     @property
@@ -82,7 +134,13 @@ class ClaudeCodeConfigResult:
         """Return only backups created by this operation."""
 
         return tuple(
-            path for path in (self.mcp_backup_path, self.settings_backup_path) if path is not None
+            path
+            for path in (
+                self.mcp_backup_path,
+                self.settings_backup_path,
+                *self.skill_backup_paths,
+            )
+            if path is not None
         )
 
 
@@ -98,6 +156,7 @@ class _Document:
 class _WritePlan:
     document: _Document
     updated: str
+    remove: bool = False
 
 
 def _user_home() -> Path:
@@ -170,6 +229,23 @@ def claude_code_settings_path(path: Path | None = None) -> Path:
     )
 
 
+def claude_code_skills_dir(path: Path | None = None, *, settings_path: Path | None = None) -> Path:
+    """Return the personal Claude Code skills root.
+
+    A settings override keeps isolated setup callers inside their supplied
+    test/user surface. Production defaults remain under ``~/.claude/skills``.
+    """
+
+    configured = os.environ.get(CLAUDE_CODE_SKILLS_DIR_ENV) if path is None else None
+    if configured:
+        selected = Path(configured)
+    elif path is not None:
+        selected = path
+    else:
+        selected = claude_code_settings_path(settings_path).parent / "skills"
+    return _absolute_path(selected.expanduser())
+
+
 def claude_code_config_paths(
     *, mcp_path: Path | None = None, settings_path: Path | None = None
 ) -> ClaudeCodeConfigPaths:
@@ -188,6 +264,12 @@ def managed_claude_code_hook_handler() -> dict[str, Any]:
     """Return a defensive copy of the exact handler owned by this module."""
 
     return deepcopy(_MANAGED_HOOK_HANDLER)
+
+
+def managed_claude_code_explicit_hook_handler() -> dict[str, Any]:
+    """Return a defensive copy of the explicit-command hook handler."""
+
+    return deepcopy(_MANAGED_EXPLICIT_HOOK_HANDLER)
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -265,8 +347,42 @@ def _read_document(path: Path) -> _Document:
     return _Document(path, text, parsed, True)
 
 
+def _read_skill_document(path: Path) -> _Document:
+    """Read a bounded plain-text personal skill without interpreting it."""
+
+    text, existed = _read_bounded_text(path)
+    return _Document(path, text, {}, existed)
+
+
 def _render(document: dict[str, Any]) -> str:
     return json.dumps(document, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+
+
+def _explicit_skill_plans(
+    skills_dir: Path, *, remove: bool = False
+) -> tuple[tuple[_WritePlan, ...], tuple[Path, ...]]:
+    """Plan reserved personal skills without overwriting user-owned skills."""
+
+    paths = tuple(skills_dir / name / "SKILL.md" for name in CLAUDE_CODE_EXPLICIT_COMMANDS)
+    plans: list[_WritePlan] = []
+    for name, path in zip(CLAUDE_CODE_EXPLICIT_COMMANDS, paths, strict=True):
+        document = _read_skill_document(path)
+        managed_content = _EXPLICIT_SKILL_FILES[name]
+        if document.existed and document.original != managed_content:
+            if remove:
+                plans.append(_WritePlan(document, document.original))
+                continue
+            raise ValueError(
+                f"the reserved Claude Code skill path for {name} belongs to an unrelated skill"
+            )
+        plans.append(
+            _WritePlan(
+                document,
+                "" if remove else managed_content,
+                remove=remove and document.existed,
+            )
+        )
+    return tuple(plans), paths
 
 
 def _validate_text(value: str, *, label: str, maximum: int = 1_000) -> str:
@@ -337,6 +453,7 @@ def _mcp_server(
     runtime: RuntimeCommand,
     client_id: str,
     *,
+    profile: str = CLAUDE_CODE_MCP_PROFILE,
     token: str | None,
     target_url: str,
     core_data_dir: Path | None,
@@ -347,7 +464,7 @@ def _mcp_server(
         raise ValueError("runtime MCP command must contain non-empty strings")
     validated_client_id = _validate_text(client_id, label="client ID")
     env = {
-        "ATC_MCP_PROFILE": CLAUDE_CODE_MCP_PROFILE,
+        "ATC_MCP_PROFILE": _validate_text(profile, label="MCP profile", maximum=128),
         "ATC_TARGET_URL": _validate_target_url(target_url),
         "ATC_CLIENT_ID": validated_client_id,
         "ATC_AUTO_START_CORE": "1",
@@ -369,38 +486,42 @@ def _mcp_server(
     }
 
 
-def _is_managed_server(value: object) -> bool:
+def _is_managed_server(value: object, *, profile: str = CLAUDE_CODE_MCP_PROFILE) -> bool:
     if not isinstance(value, dict):
         return False
     env = value.get("env")
-    return isinstance(env, dict) and env.get("ATC_MCP_PROFILE") == CLAUDE_CODE_MCP_PROFILE
+    return isinstance(env, dict) and env.get("ATC_MCP_PROFILE") == profile
 
 
-def _validate_hook_groups(groups: object) -> list[dict[str, Any]]:
+def _validate_hook_groups(
+    groups: object, *, event_name: str = "UserPromptSubmit"
+) -> list[dict[str, Any]]:
     if not isinstance(groups, list):
-        raise ValueError("hooks.UserPromptSubmit must contain a JSON array")
+        raise ValueError(f"hooks.{event_name} must contain a JSON array")
     validated: list[dict[str, Any]] = []
     for group in groups:
         if not isinstance(group, dict):
-            raise ValueError("hooks.UserPromptSubmit groups must be JSON objects")
+            raise ValueError(f"hooks.{event_name} groups must be JSON objects")
         handlers = group.get("hooks")
         if not isinstance(handlers, list):
-            raise ValueError("hooks.UserPromptSubmit groups must contain a hooks array")
+            raise ValueError(f"hooks.{event_name} groups must contain a hooks array")
         if any(not isinstance(handler, dict) for handler in handlers):
-            raise ValueError("UserPromptSubmit hook handlers must be JSON objects")
+            raise ValueError(f"{event_name} hook handlers must be JSON objects")
         validated.append(group)
     return validated
 
 
 def _remove_managed_handlers(
     groups: list[dict[str, Any]],
+    *,
+    handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
 ) -> tuple[list[dict[str, Any]], int, bool]:
     cleaned: list[dict[str, Any]] = []
     removed = 0
     moved_from_matcher = False
     for original_group in groups:
         handlers = original_group["hooks"]
-        kept = [handler for handler in handlers if handler != _MANAGED_HOOK_HANDLER]
+        kept = [candidate for candidate in handlers if candidate != handler]
         removed_here = len(handlers) - len(kept)
         removed += removed_here
         if removed_here and "matcher" in original_group:
@@ -417,15 +538,29 @@ def _remove_managed_handlers(
     return cleaned, removed, moved_from_matcher
 
 
-def _configured_hook_groups(groups: object) -> list[dict[str, Any]]:
-    validated = _validate_hook_groups(groups)
-    cleaned, count, moved_from_matcher = _remove_managed_handlers(validated)
-    if count == 1 and not moved_from_matcher:
+def _configured_hook_groups(
+    groups: object,
+    *,
+    handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
+    event_name: str = "UserPromptSubmit",
+    matcher: str | None = None,
+) -> list[dict[str, Any]]:
+    validated = _validate_hook_groups(groups, event_name=event_name)
+    cleaned, count, moved_from_matcher = _remove_managed_handlers(validated, handler=handler)
+    already_configured = any(
+        candidate == handler and (matcher is None or group.get("matcher") == matcher)
+        for group in validated
+        for candidate in group["hooks"]
+    )
+    if count == 1 and already_configured and (not moved_from_matcher or matcher is not None):
         # Keep the one exact handler where the user already placed it.  The
         # settings document is already a defensive copy, so returning the
         # validated groups preserves idempotence and all surrounding fields.
         return validated
-    cleaned.append({"hooks": [deepcopy(_MANAGED_HOOK_HANDLER)]})
+    group: dict[str, Any] = {"hooks": [deepcopy(handler)]}
+    if matcher is not None:
+        group["matcher"] = matcher
+    cleaned.append(group)
     return cleaned
 
 
@@ -433,6 +568,12 @@ def _updated_connect_documents(
     mcp: _Document,
     settings: _Document,
     server: dict[str, Any],
+    *,
+    server_key: str = CLAUDE_CODE_MCP_SERVER_KEY,
+    profile: str = CLAUDE_CODE_MCP_PROFILE,
+    hook_handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
+    hook_event_name: str = "UserPromptSubmit",
+    hook_matcher: str | None = None,
 ) -> tuple[str, str]:
     mcp_updated = deepcopy(mcp.parsed)
     servers = mcp_updated.get("mcpServers")
@@ -441,11 +582,9 @@ def _updated_connect_documents(
         mcp_updated["mcpServers"] = servers
     if not isinstance(servers, dict):
         raise ValueError("mcpServers must contain a JSON object")
-    if CLAUDE_CODE_MCP_SERVER_KEY in servers and not _is_managed_server(
-        servers[CLAUDE_CODE_MCP_SERVER_KEY]
-    ):
+    if server_key in servers and not _is_managed_server(servers[server_key], profile=profile):
         raise ValueError("the Claude Code server key belongs to an unrelated server")
-    servers[CLAUDE_CODE_MCP_SERVER_KEY] = server
+    servers[server_key] = server
 
     settings_updated = deepcopy(settings.parsed)
     hooks = settings_updated.get("hooks")
@@ -454,11 +593,16 @@ def _updated_connect_documents(
         settings_updated["hooks"] = hooks
     if not isinstance(hooks, dict):
         raise ValueError("hooks must contain a JSON object")
-    user_prompt_submit = hooks.get("UserPromptSubmit")
-    if "UserPromptSubmit" not in hooks:
-        user_prompt_submit = []
-        hooks["UserPromptSubmit"] = user_prompt_submit
-    hooks["UserPromptSubmit"] = _configured_hook_groups(user_prompt_submit)
+    event_groups = hooks.get(hook_event_name)
+    if hook_event_name not in hooks:
+        event_groups = []
+        hooks[hook_event_name] = event_groups
+    hooks[hook_event_name] = _configured_hook_groups(
+        event_groups,
+        handler=hook_handler,
+        event_name=hook_event_name,
+        matcher=hook_matcher,
+    )
     return (
         _render(mcp_updated) if mcp_updated != mcp.parsed else mcp.original,
         _render(settings_updated) if settings_updated != settings.parsed else settings.original,
@@ -468,6 +612,12 @@ def _updated_connect_documents(
 def _updated_disconnect_documents(
     mcp: _Document,
     settings: _Document,
+    *,
+    server_key: str = CLAUDE_CODE_MCP_SERVER_KEY,
+    profile: str = CLAUDE_CODE_MCP_PROFILE,
+    hook_handler: dict[str, Any] = _MANAGED_HOOK_HANDLER,
+    hook_event_name: str = "UserPromptSubmit",
+    hook_matcher: str | None = None,
 ) -> tuple[str, str, str | None]:
     mcp_updated = deepcopy(mcp.parsed)
     servers = mcp_updated.get("mcpServers")
@@ -476,12 +626,12 @@ def _updated_disconnect_documents(
         raise ValueError("mcpServers must contain a JSON object")
     mcp_removed = False
     if isinstance(servers, dict):
-        current = servers.get(CLAUDE_CODE_MCP_SERVER_KEY)
-        if isinstance(current, dict) and _is_managed_server(current):
+        current = servers.get(server_key)
+        if isinstance(current, dict) and _is_managed_server(current, profile=profile):
             env = current.get("env")
             if isinstance(env, dict) and isinstance(env.get("ATC_CLIENT_ID"), str):
                 managed_client_id = env["ATC_CLIENT_ID"]
-            del servers[CLAUDE_CODE_MCP_SERVER_KEY]
+            del servers[server_key]
             mcp_removed = True
 
     settings_updated = deepcopy(settings.parsed)
@@ -489,11 +639,26 @@ def _updated_disconnect_documents(
     if "hooks" in settings_updated and not isinstance(hooks, dict):
         raise ValueError("hooks must contain a JSON object")
     settings_removed = False
-    if isinstance(hooks, dict) and "UserPromptSubmit" in hooks:
-        groups = _validate_hook_groups(hooks["UserPromptSubmit"])
-        cleaned, removed, _moved = _remove_managed_handlers(groups)
-        hooks["UserPromptSubmit"] = cleaned
-        settings_removed = removed > 0
+    if isinstance(hooks, dict) and hook_event_name in hooks:
+        groups = _validate_hook_groups(hooks[hook_event_name], event_name=hook_event_name)
+        cleaned, removed, _moved = _remove_managed_handlers(groups, handler=hook_handler)
+        if hook_matcher is not None:
+            cleaned = [
+                group
+                for group in cleaned
+                if not (
+                    group.get("matcher") == hook_matcher
+                    and group.get("hooks") == []
+                    and set(group) == {"matcher", "hooks"}
+                )
+            ]
+        if cleaned:
+            hooks[hook_event_name] = cleaned
+        else:
+            del hooks[hook_event_name]
+        if not hooks:
+            settings_updated.pop("hooks", None)
+        settings_removed = removed > 0 or groups != cleaned
     return (
         _render(mcp_updated) if mcp_removed else mcp.original,
         _render(settings_updated) if settings_removed else settings.original,
@@ -535,9 +700,12 @@ def _restore(plan: _WritePlan) -> None:
     if plan.document.existed:
         current, exists = _read_bounded_text(plan.document.path)
         if not exists:
-            raise RuntimeError("the original Claude Code file disappeared during rollback")
+            _atomic_write(plan.document.path, plan.document.original)
+            return
         if current == plan.document.original:
             return
+        if plan.remove:
+            raise RuntimeError("the Claude Code file changed during rollback")
         if current != plan.updated:
             raise RuntimeError("the Claude Code file changed during rollback")
         _atomic_write(plan.document.path, plan.document.original)
@@ -545,7 +713,7 @@ def _restore(plan: _WritePlan) -> None:
         current, exists = _read_bounded_text(plan.document.path)
         if not exists:
             return
-        if current != plan.updated:
+        if plan.remove or current != plan.updated:
             raise RuntimeError("an unrelated Claude Code file appeared during rollback")
         plan.document.path.unlink()
 
@@ -558,10 +726,10 @@ def _revalidate_preimage(plan: _WritePlan) -> None:
         raise RuntimeError("Claude Code configuration changed during setup; retry safely")
 
 
-def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | None, Path | None]:
-    changed = tuple(plan for plan in plans if plan.updated != plan.document.original)
+def _apply_transaction(plans: tuple[_WritePlan, ...]) -> dict[Path, Path | None]:
+    changed = tuple(plan for plan in plans if plan.remove or plan.updated != plan.document.original)
     if not changed:
-        return None, None
+        return {}
 
     for plan in changed:
         plan.document.path.parent.mkdir(parents=True, exist_ok=True)
@@ -576,7 +744,10 @@ def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | Non
             )
             _revalidate_preimage(plan)
             attempted.append(plan)
-            _atomic_write(plan.document.path, plan.updated)
+            if plan.remove:
+                plan.document.path.unlink()
+            else:
+                _atomic_write(plan.document.path, plan.updated)
     except BaseException:
         rollback_error: BaseException | None = None
         for plan in reversed(attempted):
@@ -604,27 +775,47 @@ def _apply_transaction(plans: tuple[_WritePlan, _WritePlan]) -> tuple[Path | Non
             ) from cleanup_error
         raise
 
-    return backups.get(plans[0].document.path), backups.get(plans[1].document.path)
+    return backups
 
 
 def _result(
     paths: ClaudeCodeConfigPaths,
-    plans: tuple[_WritePlan, _WritePlan],
-    backups: tuple[Path | None, Path | None],
+    plans: tuple[_WritePlan, ...],
+    backups: dict[Path, Path | None],
     *,
+    client: str = "Claude Code",
+    skill_paths: tuple[Path, ...] = (),
     managed_client_id: str | None = None,
 ) -> ClaudeCodeConfigResult:
-    mcp_changed = plans[0].updated != plans[0].document.original
-    settings_changed = plans[1].updated != plans[1].document.original
+    mcp_plan = next(plan for plan in plans if plan.document.path == paths.mcp)
+    settings_plan = next(plan for plan in plans if plan.document.path == paths.settings)
+    mcp_changed = mcp_plan.remove or mcp_plan.updated != mcp_plan.document.original
+    settings_changed = (
+        settings_plan.remove or settings_plan.updated != settings_plan.document.original
+    )
+    skill_path_set = set(skill_paths)
+    skill_changed = any(
+        plan.document.path in skill_path_set
+        and (plan.remove or plan.updated != plan.document.original)
+        for plan in plans
+    )
+    skill_backups: list[Path] = []
+    for path in skill_paths:
+        backup = backups.get(path)
+        if backup is not None:
+            skill_backups.append(backup)
     return ClaudeCodeConfigResult(
-        client="Claude Code",
+        client=client,
         mcp_path=paths.mcp,
         settings_path=paths.settings,
-        changed=mcp_changed or settings_changed,
+        changed=mcp_changed or settings_changed or skill_changed,
         mcp_changed=mcp_changed,
         settings_changed=settings_changed,
-        mcp_backup_path=backups[0],
-        settings_backup_path=backups[1],
+        skill_changed=skill_changed,
+        mcp_backup_path=backups.get(paths.mcp),
+        settings_backup_path=backups.get(paths.settings),
+        skill_backup_paths=tuple(skill_backups),
+        skill_paths=skill_paths,
         managed_client_id=managed_client_id,
     )
 
@@ -698,6 +889,113 @@ def disconnect_claude_code(
     return _result(paths, plans, backups, managed_client_id=managed_client_id)
 
 
+def connect_claude_code_explicit_commands(
+    runtime: RuntimeCommand,
+    client_id: str,
+    *,
+    token: str | None = None,
+    target_url: str = "http://127.0.0.1:7337",
+    mcp_path: Path | None = None,
+    settings_path: Path | None = None,
+    core_data_dir: Path | None = None,
+    credential_storage: str | None = None,
+) -> ClaudeCodeConfigResult:
+    """Install the opt-in exact-argument Claude Code command boundary."""
+
+    paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
+    skills_dir = claude_code_skills_dir(settings_path=paths.settings)
+    mcp = _read_document(paths.mcp)
+    settings = _read_document(paths.settings)
+    skill_plans, skill_paths = _explicit_skill_plans(skills_dir)
+    server = _mcp_server(
+        runtime,
+        client_id,
+        profile=CLAUDE_CODE_EXPLICIT_MCP_PROFILE,
+        token=token,
+        target_url=target_url,
+        core_data_dir=core_data_dir,
+        credential_storage=credential_storage,
+    )
+    mcp_updated, settings_updated = _updated_connect_documents(
+        mcp,
+        settings,
+        server,
+        server_key=CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY,
+        profile=CLAUDE_CODE_EXPLICIT_MCP_PROFILE,
+        hook_handler=_MANAGED_EXPLICIT_HOOK_HANDLER,
+        hook_event_name="UserPromptExpansion",
+        hook_matcher="^(atc-remember|atc-correct|atc-forget)$",
+    )
+    plans = (
+        _WritePlan(mcp, mcp_updated),
+        _WritePlan(settings, settings_updated),
+        *skill_plans,
+    )
+    backups = _apply_transaction(plans)
+    return _result(
+        paths,
+        plans,
+        backups,
+        client="Claude Code explicit commands",
+        skill_paths=skill_paths,
+    )
+
+
+def configure_claude_code_explicit_commands(
+    runtime: RuntimeCommand,
+    client_id: str,
+    **kwargs: Any,
+) -> ClaudeCodeConfigResult:
+    """Compatibility spelling for the explicit command setup adapter."""
+
+    return connect_claude_code_explicit_commands(runtime, client_id, **kwargs)
+
+
+def disconnect_claude_code_explicit_commands(
+    mcp_path: Path | None = None,
+    settings_path: Path | None = None,
+) -> ClaudeCodeConfigResult:
+    """Remove only the explicit command integration owned by this module."""
+
+    paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
+    skills_dir = claude_code_skills_dir(settings_path=paths.settings)
+    mcp = _read_document(paths.mcp)
+    settings = _read_document(paths.settings)
+    skill_plans, skill_paths = _explicit_skill_plans(skills_dir, remove=True)
+    mcp_updated, settings_updated, managed_client_id = _updated_disconnect_documents(
+        mcp,
+        settings,
+        server_key=CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY,
+        profile=CLAUDE_CODE_EXPLICIT_MCP_PROFILE,
+        hook_handler=_MANAGED_EXPLICIT_HOOK_HANDLER,
+        hook_event_name="UserPromptExpansion",
+        hook_matcher="^(atc-remember|atc-correct|atc-forget)$",
+    )
+    plans = (
+        _WritePlan(mcp, mcp_updated),
+        _WritePlan(settings, settings_updated),
+        *skill_plans,
+    )
+    backups = _apply_transaction(plans)
+    return _result(
+        paths,
+        plans,
+        backups,
+        client="Claude Code explicit commands",
+        skill_paths=skill_paths,
+        managed_client_id=managed_client_id,
+    )
+
+
+def disconnect_claude_code_explicit_config(
+    mcp_path: Path | None = None,
+    settings_path: Path | None = None,
+) -> ClaudeCodeConfigResult:
+    """Compatibility wrapper for explicit command cleanup callers."""
+
+    return disconnect_claude_code_explicit_commands(mcp_path=mcp_path, settings_path=settings_path)
+
+
 def disconnect_claude_code_config(
     mcp_path: Path | None = None, settings_path: Path | None = None
 ) -> ClaudeCodeConfigResult:
@@ -708,11 +1006,16 @@ def disconnect_claude_code_config(
 
 __all__ = [
     "CLAUDE_CODE_EXECUTABLE_ENV",
+    "CLAUDE_CODE_EXPLICIT_COMMANDS",
+    "CLAUDE_CODE_EXPLICIT_HOOK_TOOL",
+    "CLAUDE_CODE_EXPLICIT_MCP_PROFILE",
+    "CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY",
     "CLAUDE_CODE_HOOK_TOOL",
     "CLAUDE_CODE_MCP_CONFIG_ENV",
     "CLAUDE_CODE_MCP_PROFILE",
     "CLAUDE_CODE_MCP_SERVER_KEY",
     "CLAUDE_CODE_SETTINGS_ENV",
+    "CLAUDE_CODE_SKILLS_DIR_ENV",
     "MAX_CLAUDE_CODE_CONFIG_BYTES",
     "ClaudeCodeConfigPaths",
     "ClaudeCodeConfigResult",
@@ -720,9 +1023,15 @@ __all__ = [
     "claude_code_is_detected",
     "claude_code_mcp_config_path",
     "claude_code_settings_path",
+    "claude_code_skills_dir",
     "configure_claude_code",
+    "configure_claude_code_explicit_commands",
     "connect_claude_code",
+    "connect_claude_code_explicit_commands",
     "disconnect_claude_code",
     "disconnect_claude_code_config",
+    "disconnect_claude_code_explicit_commands",
+    "disconnect_claude_code_explicit_config",
+    "managed_claude_code_explicit_hook_handler",
     "managed_claude_code_hook_handler",
 ]
