@@ -1,5 +1,27 @@
 # Architecture decisions
 
+## ADR-168: Keep beta.6 public while beta.7 remains a private replacement slot
+
+**Status:** accepted on 2026-08-29 as a documentation reconciliation. This
+does not alter the immutable `0.1.0-beta.6` release or close its unresolved
+Windows Defender incident.
+
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release. Source metadata uses `0.1.0-beta.7` only for a private
+replacement-source/candidate slot. No beta.7 candidate has been built,
+executed, scanned, submitted, approved, published, tagged, uploaded, or
+released. The private replacement workflow is artifact-only, exact-allowlist,
+and approval-gated; it is not publication, execution, or AV evidence. Future
+beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware
+reassessment evidence, and none exists.
+
+Codex pre-generation retrieval uses a separate `context:read` principal, exact
+`${prompt}` `mcp_tool` templating, optional `required=false` read/capture/
+explicit server entries, untrusted `additionalContext` framing, and fail-empty
+Core outage behavior. The current stdio test is transport-only; native Codex
+trust and exact packaged/live host acceptance remain open. Historical beta.6
+receipt and template claims are preserved.
+
 ## ADR-167: Candidate-owned evidence precedes Windows reassessment and live-client credit
 
 **Status:** accepted on 2026-08-29 for the replacement-candidate preparation

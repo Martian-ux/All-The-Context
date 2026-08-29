@@ -6,6 +6,14 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-08-29 public beta.6 and private beta.7 replacement-slot reconciliation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Public beta and replacement-source identity remain distinct | Immutable `0.1.0-beta.6` public release; source metadata `0.1.0-beta.7`; `README.md`; `docs/operations/RELEASES.md`; ADR-168 | `0.1.0-beta.6` remains the current downloadable public prerelease and its Defender incident remains unresolved. `0.1.0-beta.7` is only a private replacement-source/candidate slot; no candidate has been built, executed, scanned, submitted, approved, published, tagged, uploaded, or released |
+| Private replacement workflow remains evidence-bounded | Replacement-candidate workflow, exact artifact allowlist, approval gate, `docs/operations/RELEASES.md`, ADR-167/ADR-168 | Artifact-only and exact-allowlist; approval-gated; not publication, execution, or AV evidence. Future beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware reassessment evidence, and no such evidence exists |
+| Codex pre-generation retrieval and evidence boundary | `codex_hook.py`; `client_config.py`; Codex read/capture/explicit profiles; focused hook and stdio tests; `docs/protocols/MCP_API.md` | Separate `context:read` principal, exact `${prompt}` `mcp_tool` templating, optional `required=false` read/capture/explicit servers, untrusted `additionalContext` framing, and fail-empty Core outage behavior are source-level contracts. Current stdio coverage is transport-only; native Codex trust and exact packaged/live host acceptance remain open |
+
 ### 2026-08-29 merged Continuous Capture milestone reconciliation
 
 | Milestone requirement | Implementation/evidence | Status |

@@ -86,6 +86,21 @@ and ADR-167, caller-authored evidence JSON and source-Core client journeys can
 only report `HOLD`; the next acceptance work must exercise the shipped
 candidate-owned runtime.
 
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release, with its Defender incident unresolved. Source metadata uses
+`0.1.0-beta.7` only for the private replacement-source/candidate slot. No
+beta.7 candidate has been built, executed, scanned, submitted, approved,
+published, tagged, uploaded, or released. The private workflow is artifact-only,
+exact-allowlist, and approval-gated, not publication, execution, or AV
+evidence. Future beta.7+ acceptance requires exact candidate-bound Microsoft
+closed no-malware reassessment evidence; none exists.
+
+The source-level Codex pre-generation path uses a separate `context:read`
+principal, exact `${prompt}` `mcp_tool` templating, optional `required=false`
+read/capture/explicit servers, untrusted `additionalContext` framing, and
+fail-empty Core outage behavior. Its current stdio test is transport-only;
+native Codex trust and exact packaged/live host acceptance remain open.
+
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
 sophistication while adding routine user work does not advance the product.

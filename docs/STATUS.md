@@ -97,6 +97,25 @@ client harnesses and caller-authored evidence manifests were deliberately not
 integrated: ADR-060 requires the next client proof to execute the shipped
 candidate and produce candidate-owned, content-free evidence.
 
+### 2026-08-29 — public beta.6 and private beta.7 replacement-slot reconciliation
+
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release, and its Windows Defender incident remains unresolved. Source metadata
+uses `0.1.0-beta.7` only for a private replacement-source/candidate slot. No
+beta.7 candidate has been built, executed, scanned, submitted, approved,
+published, tagged, uploaded, or released. The private replacement workflow is
+artifact-only, exact-allowlist, and approval-gated; it is not publication,
+execution, or AV evidence. Future beta.7+ acceptance requires exact
+candidate-bound Microsoft closed no-malware reassessment evidence, and none
+exists.
+
+Codex pre-generation retrieval uses a separate `context:read` principal. Its
+generated `mcp_tool` input uses the exact `${prompt}` template; optional read,
+capture, and explicit server entries use `required=false`. Returned
+`additionalContext` is framed as untrusted reference data, and a Core outage
+returns empty context without blocking. The current stdio test proves transport
+only; native Codex trust and exact packaged/live host acceptance remain open.
+
 ### 2026-08-29 — unresolved Windows Defender beta.6 incident
 
 Microsoft Defender detected and quarantined the unsigned installed beta.6

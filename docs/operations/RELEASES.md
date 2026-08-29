@@ -118,9 +118,16 @@ is ID `374697784`, source `28b46ea192af76233afe41f0d2b287edc2d59a04`,
 release-candidate run `32530830948`, and candidate digest
 `b0303b24164de987de9eab85caeeba4b460441fbe2c32463589269f4279462bd`.
 Its source retained contradictory active-state prose, so it is also historical,
-unsigned, and unpublished. `0.1.0-beta.6` is the active source slot. Its exact
-post-build identity is recorded in the external exact prepublication ledger;
-no occupied draft is retargeted, deleted, reused, or published.
+unsigned, and unpublished. The immutable `0.1.0-beta.6` prerelease remains the
+current public downloadable release. Its exact post-build identity is recorded
+in the external exact prepublication ledger; no occupied draft is retargeted,
+deleted, reused, or published. Source metadata uses `0.1.0-beta.7` only for a
+private replacement-source/candidate slot. No beta.7 candidate has been built,
+executed, scanned, submitted, approved, published, tagged, uploaded, or
+released. The private replacement workflow is artifact-only, exact-allowlist,
+and approval-gated; it is not publication, execution, or AV evidence. Future
+beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware
+reassessment evidence, and none exists.
 
 The consumer candidate matrix builds exactly Windows x86_64 and Linux x86_64.
 Each job compares the actual OS, CPU, and 64-bit runtime with its label before

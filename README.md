@@ -85,9 +85,16 @@ publisher certificates. Releases must clearly disclose normal operating-system
 warnings and provide SHA-256 checksums, SBOM, provenance, and offline Ed25519
 update metadata.
 
-Public beta downloads do not exist until the exact-commit gates in
-[`docs/operations/BETA_ACCEPTANCE.md`](docs/operations/BETA_ACCEPTANCE.md)
-pass. The initial release uses the explicit six-gate
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release. Its Windows Defender incident remains unresolved; keep the installed
+helper quarantined as described above. The source metadata is now
+`0.1.0-beta.7` only for a private replacement-source/candidate slot. No beta.7
+candidate has been built, executed, scanned, submitted, approved, published,
+tagged, uploaded, or released. The private replacement workflow is
+artifact-only, exact-allowlist, and approval-gated; it is not publication,
+execution, or AV evidence. Future beta.7+ acceptance requires exact
+candidate-bound Microsoft closed no-malware reassessment evidence, and no such
+evidence exists. The initial release used the explicit six-gate
 `lean_public_beta_v1` profile; the unchanged 20-gate `certification_v1` matrix
 remains a visible hardening track. Lean publication does not claim that every
 client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.

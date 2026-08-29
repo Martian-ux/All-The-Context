@@ -106,7 +106,7 @@ typical generated Codex entry is:
 command = "C:\\Users\\user\\AppData\\Local\\Programs\\All The Context\\AllTheContextMCP.exe"
 args = []
 env = { ATC_TARGET_URL = "http://127.0.0.1:7337", ATC_CORE_DATA_DIR = "C:\\Users\\user\\AppData\\Local\\AllTheContext", ATC_CLIENT_ID = "...", ATC_CLIENT_TOKEN = "..." }
-required = true
+required = false
 startup_timeout_sec = 20
 ```
 
@@ -116,6 +116,16 @@ against their own identity. Claude's JSON entry carries the equivalent command,
 arguments, and environment. `atc init` and `atc config-mcp` remain
 contributor/headless alternatives. This local `config.toml` path configures
 Codex, not ChatGPT.
+
+Codex pre-generation retrieval is configured separately from lifecycle capture
+and explicit mutation. It uses a distinct `context:read` principal and an
+optional read server whose `mcp_tool` input uses the exact
+`task_description = "${prompt}"` template; optional capture and explicit
+servers are also `required = false`. The returned hook
+`additionalContext` is untrusted reference data, not instructions. If Core is
+unavailable, the read hook returns empty `additionalContext` without blocking
+generation. The repository's current stdio test proves MCP transport only;
+native Codex trust and exact packaged/live host acceptance remain open.
 
 After the selected client restarts, normal operation requires no recurring
 memory setup or approval work. MCP instructions require automatic
