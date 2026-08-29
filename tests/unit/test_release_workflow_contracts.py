@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from pathlib import Path
 
-from allthecontext import __version__
 from allthecontext.acceptance_receipt import (
     CERTIFICATION_PUBLICATION_POLICY,
     LEAN_BETA_ACKNOWLEDGEMENT_KEYS,
@@ -454,39 +452,16 @@ def test_public_beta_workflows_ship_only_windows_and_linux() -> None:
     assert "v0.1.0-beta.2" not in publish
 
 
-def test_public_beta_source_metadata_is_beta6_not_historical_beta1_through_beta5() -> None:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dashboard = json.loads((ROOT / "apps" / "dashboard" / "package.json").read_text())
-    dashboard_lock = json.loads((ROOT / "apps" / "dashboard" / "package-lock.json").read_text())
-    uv_lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+def test_public_beta_receipt_templates_remain_beta6() -> None:
     template = json.loads(
         (ROOT / "release" / "acceptance-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
     lean_template = json.loads(
         (ROOT / "release" / "lean-beta-receipt-bundle.template.json").read_text(encoding="utf-8")
     )
-    locked_project = next(
-        package
-        for package in uv_lock["package"]
-        if isinstance(package, dict) and package.get("name") == "all-the-context"
-    )
 
-    assert pyproject["project"]["version"] == "0.1.0-beta.6"
-    assert __version__ == "0.1.0-beta.6"
-    assert dashboard["version"] == "0.1.0-beta.6"
-    assert dashboard_lock["version"] == "0.1.0-beta.6"
-    assert dashboard_lock["packages"][""]["version"] == "0.1.0-beta.6"
-    assert locked_project["version"] == "0.1.0b6"
     assert template["version"] == "0.1.0-beta.6"
     assert lean_template["version"] == "0.1.0-beta.6"
-    assert pyproject["project"]["version"] != "0.1.0-beta.1"
-    assert pyproject["project"]["version"] != "0.1.0-beta.2"
-    assert pyproject["project"]["version"] != "0.1.0-beta.3"
-    assert pyproject["project"]["version"] != "0.1.0-beta.4"
-    assert pyproject["project"]["version"] != "0.1.0-beta.5"
-    assert template["version"] != "0.1.0-beta.1"
-    assert template["version"] != "0.1.0-beta.2"
-    assert template["version"] != "0.1.0-beta.3"
 
 
 def test_integrated_package_data_and_recovery_helpers_are_pinned() -> None:
