@@ -27,6 +27,33 @@ def test_replacement_candidate_runbook_is_noncanonical_and_ordered() -> None:
     assert "does not emit attestations" in normalized
     assert "create a draft release" in normalized
     assert "explicitly out of scope" in normalized
+    assert "dist/replacement-candidate-handoff/**" in normalized
+    assert "dist/release/**" not in normalized
+    assert "dist/candidate-evidence/**" not in normalized
+    for handoff_entry in (
+        "release/all-the-context-<VERSION>-windows-x86_64.zip",
+        "release/all-the-context-<VERSION>-windows-x86_64.zip.sha256",
+        "release/all-the-context-<VERSION>-windows-x86_64.zip.spdx.json",
+        "release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe",
+        "release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe.sha256",
+        "release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe.spdx.json",
+        "release/all-the-context-<VERSION>-windows-x86_64-unsigned.package.json",
+        "release/all-the-context-<VERSION>-windows-x86_64-unsigned.IMPORTANT-UNSIGNED.txt",
+        "components/AllTheContextSetup.exe",
+        "components/AllTheContextMCP.exe",
+        "components/AllTheContextRecovery.exe",
+        "components/AllTheContextUpdater.exe",
+        "components/installed-component-manifest-v1.json",
+        "components/installed-component-manifest-v1.json.sha256",
+        "source/matrix-evidence.json",
+        "handoff-inventory-v1.json",
+        "handoff-inventory-v1.json.sha256",
+        "content-hygiene-scan-report.json",
+    ):
+        assert handoff_entry in text
+    assert "four `components/*.exe` entries are the raw component bytes" in normalized
+    assert "content-hygiene report is for secret/path hygiene only" in normalized
+    assert "provides no malware, Defender, or Microsoft credit" in normalized
     assert "artifact ZIP serialization is transport packaging" in normalized
     assert "workflow_run_id" in normalized
     assert "workflow_artifact_name" in normalized

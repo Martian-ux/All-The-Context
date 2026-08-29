@@ -116,10 +116,38 @@ implementation surfaces are the
 This reviewed workflow is Windows x86-64 only and artifact-only. It uploads
 one private Actions artifact named
 `replacement-candidate-windows-<VERSION>-<SOURCE_COMMIT>` containing
-`dist/release/**` and `dist/candidate-evidence/**`. It cannot publish: it does
-not emit attestations, create a draft release, or call a release API. Public
-release inventory, signing, attestations, draft handling, and publication are
-separate behavior and are explicitly out of scope for this ledger.
+only `dist/replacement-candidate-handoff/**`. The handoff allowlist is exact:
+
+```text
+release/all-the-context-<VERSION>-windows-x86_64.zip
+release/all-the-context-<VERSION>-windows-x86_64.zip.sha256
+release/all-the-context-<VERSION>-windows-x86_64.zip.spdx.json
+release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe
+release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe.sha256
+release/all-the-context-<VERSION>-windows-x86_64-unsigned.exe.spdx.json
+release/all-the-context-<VERSION>-windows-x86_64-unsigned.package.json
+release/all-the-context-<VERSION>-windows-x86_64-unsigned.IMPORTANT-UNSIGNED.txt
+components/AllTheContextSetup.exe
+components/AllTheContextMCP.exe
+components/AllTheContextRecovery.exe
+components/AllTheContextUpdater.exe
+components/installed-component-manifest-v1.json
+components/installed-component-manifest-v1.json.sha256
+source/matrix-evidence.json
+handoff-inventory-v1.json
+handoff-inventory-v1.json.sha256
+content-hygiene-scan-report.json
+```
+
+The four `components/*.exe` entries are the raw component bytes. The manifest
+and checksum, source matrix evidence, content-free handoff inventory and
+checksum, and content-hygiene report are included in the same exact handoff.
+The content-hygiene report is for secret/path hygiene only; it provides no
+malware, Defender, or Microsoft credit. The handoff cannot publish: the
+workflow does not emit attestations, create a draft release, or call a release
+API. Public release inventory, signing, attestations, draft handling, and
+publication are separate behavior and are explicitly out of scope for this
+ledger.
 
 For a future operator run, the build sequence is conceptually:
 
@@ -136,9 +164,10 @@ workflow is the source of truth only for the Windows artifact and candidate-
 owned evidence handoff described above. It is not a complete Windows/Linux
 release inventory and it does not produce a candidate inventory, attestations,
 or a draft release. The builder must hand the verifier the exact workflow
-artifact, run identity, archive, direct installer, manifest and checksum,
-source matrix evidence, and the four exact component byte sets. The verifier
-must not rebuild those bytes and call the rebuild equivalent.
+artifact, run identity, allowlisted release files, four raw component bytes,
+manifest and checksum, source matrix evidence, content-free inventory and
+checksum, and content-hygiene report. The verifier must not rebuild those
+bytes and call the rebuild equivalent.
 
 Do not execute an installed beta.6 helper or a replacement candidate while
 producing this ledger. Build output, archive inspection, hashing, JSON
