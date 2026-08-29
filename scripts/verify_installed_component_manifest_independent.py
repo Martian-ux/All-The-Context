@@ -11,6 +11,7 @@ import stat
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, NoReturn, cast
 
@@ -50,6 +51,10 @@ MAX_COMPRESSION_RATIO = 500
 MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
 MAX_PE_OPTIONAL_HEADER_BYTES = 64 * 1024
 MAX_CERTIFICATE_TABLE_BYTES = 16 * 1024 * 1024
+MAX_ZIP_COMMENT_BYTES = 65_535
+MAX_ZIP_TAIL_BYTES = 22 + MAX_ZIP_COMMENT_BYTES
+MAX_ZIP_CENTRAL_DIRECTORY_BYTES = 256 * 1024
+MAX_ZIP_MEMBER_NAME_BYTES = 65_535
 READ_CHUNK_SIZE = 1024 * 1024
 ARCHIVE_MEMBER_PREFIX = "installed-component-package/"
 ARCHIVE_MEMBER_BASENAMES = frozenset(
@@ -60,6 +65,7 @@ ARCHIVE_MEMBER_NAMES = frozenset(
 )
 AMD64_MACHINE = 0x8664
 PE32_PLUS_MAGIC = 0x20B
+EXPECTED_ZIP_COMPRESSION = zipfile.ZIP_DEFLATED
 
 
 class IndependentManifestVerificationError(ValueError):
@@ -120,6 +126,22 @@ class _StreamMeasurement:
 @dataclass(frozen=True)
 class _ExecutableMeasurement(_StreamMeasurement):
     authenticode: str
+
+
+@dataclass(frozen=True)
+class _PrimitiveZipRecord:
+    name_bytes: bytes
+    name: str
+    flags: int
+    compression: int
+    crc: int
+    compressed_size: int
+    uncompressed_size: int
+    local_header_offset: int
+    version_needed: int
+    version_made_by: int
+    disk_number: int
+    external_attributes: int
 
 
 def _failure(message: str) -> NoReturn:
@@ -216,7 +238,13 @@ def _hash_stream(
     digest = hashlib.sha256()
     size = 0
     try:
-        for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+        while True:
+            remaining = maximum_size + 1 - size
+            if remaining <= 0:
+                _failure(f"{label} exceeds the maximum allowed size")
+            chunk = stream.read(min(READ_CHUNK_SIZE, remaining))
+            if chunk == b"":
+                break
             if not isinstance(chunk, bytes):
                 _failure(f"{label} returned a non-binary read")
             size += len(chunk)
@@ -528,19 +556,25 @@ def _validate_expected_header(
 
 
 def _read_range(
-    stream: BinaryIO, *, offset: int, size: int, file_size: int, label: str
+    stream: BinaryIO,
+    *,
+    offset: int,
+    size: int,
+    file_size: int,
+    label: str,
+    maximum_size: int = MAX_PE_OPTIONAL_HEADER_BYTES,
 ) -> bytes:
-    if offset < 0 or size < 0 or size > MAX_PE_OPTIONAL_HEADER_BYTES:
-        _failure(f"{label} has an invalid PE range")
+    if offset < 0 or size < 0 or size > maximum_size:
+        _failure(f"{label} has an invalid bounded range")
     if offset > file_size or size > file_size - offset:
-        _failure(f"{label} has a truncated PE range")
+        _failure(f"{label} has a truncated bounded range")
     try:
         stream.seek(offset)
         raw = stream.read(size)
     except (OSError, ValueError, TypeError) as exc:
         raise IndependentManifestVerificationError(f"could not inspect {label}") from exc
     if not isinstance(raw, bytes) or len(raw) != size:
-        _failure(f"{label} has a truncated PE range")
+        _failure(f"{label} has a truncated bounded range")
     return raw
 
 
@@ -551,6 +585,8 @@ def _authenticode_status_stream(
     if dos_header[:2] != b"MZ":
         _failure(f"{label} is not a valid PE executable")
     pe_offset = int.from_bytes(dos_header[60:64], "little")
+    if pe_offset < 64:
+        _failure(f"{label} has an invalid PE header offset")
     pe_header = _read_range(stream, offset=pe_offset, size=24, file_size=file_size, label=label)
     if pe_header[:4] != b"PE\0\0":
         _failure(f"{label} is missing its PE signature")
@@ -689,6 +725,8 @@ def _validate_archive_member_name(name: str) -> None:
 def _validate_zip_info_metadata(infos: list[zipfile.ZipInfo]) -> None:
     total_size = 0
     for info in infos:
+        if info.flag_bits != 0 or info.compress_type != EXPECTED_ZIP_COMPRESSION:
+            _failure("release ZIP compression metadata is not canonical")
         if info.file_size < 0 or info.file_size > MAX_MEMBER_BYTES:
             _failure("release ZIP member exceeds the maximum allowed size")
         if info.compress_size < 0:
@@ -703,52 +741,242 @@ def _validate_zip_info_metadata(infos: list[zipfile.ZipInfo]) -> None:
             _failure("release ZIP member exceeds the maximum compression ratio")
 
 
-def _validate_raw_zip_member_names(
-    stream: BinaryIO,
-    bundle: zipfile.ZipFile,
-    infos: list[zipfile.ZipInfo],
-    *,
-    file_size: int,
-) -> None:
-    central_offset = getattr(bundle, "start_dir", None)
-    if not isinstance(central_offset, int) or central_offset < 0:
-        _failure("release ZIP central directory is invalid")
+def _decode_primitive_zip_name(raw_name: bytes) -> str:
+    if b"\x00" in raw_name:
+        _failure("release ZIP contains an unsafe path")
+    try:
+        name = raw_name.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise IndependentManifestVerificationError(
+            "release ZIP member filename is not decodable"
+        ) from exc
+    _validate_archive_member_name(name)
+    if raw_name != name.encode("ascii"):
+        _failure("release ZIP member filename is not canonical")
+    return name
+
+
+def _inspect_zip_envelope(
+    stream: BinaryIO, *, file_size: int
+) -> tuple[_PrimitiveZipRecord, ...]:
+    """Bound and inspect the ZIP envelope before invoking ZipFile inventory."""
+
+    if file_size < 22:
+        _failure("release archive is not a complete ZIP envelope")
+    first_local = _read_range(
+        stream,
+        offset=0,
+        size=4,
+        file_size=file_size,
+        label="release archive",
+        maximum_size=4,
+    )
+    if first_local != b"PK\x03\x04":
+        _failure("release ZIP must begin with a local file header")
+
+    tail_size = min(file_size, MAX_ZIP_TAIL_BYTES)
+    tail_start = file_size - tail_size
+    tail = _read_range(
+        stream,
+        offset=tail_start,
+        size=tail_size,
+        file_size=file_size,
+        label="release archive",
+        maximum_size=MAX_ZIP_TAIL_BYTES,
+    )
+    eocd_positions: list[int] = []
+    for position in range(0, len(tail) - 21):
+        if tail[position : position + 4] != b"PK\x05\x06":
+            continue
+        comment_size = int.from_bytes(tail[position + 20 : position + 22], "little")
+        if position + 22 + comment_size == len(tail):
+            eocd_positions.append(position)
+    if len(eocd_positions) != 1:
+        _failure("release ZIP end record is not canonical")
+    eocd_position = eocd_positions[0]
+    eocd_offset = tail_start + eocd_position
+    eocd = tail[eocd_position : eocd_position + 22]
+    if int.from_bytes(eocd[20:22], "little") != 0:
+        _failure("release ZIP comments are not supported")
+    if eocd_offset >= 20:
+        locator = _read_range(
+            stream,
+            offset=eocd_offset - 20,
+            size=20,
+            file_size=file_size,
+            label="release archive",
+            maximum_size=20,
+        )
+        if locator[:4] == b"PK\x06\x07":
+            _failure("release ZIP64 envelopes are not supported")
+
+    disk_number = int.from_bytes(eocd[4:6], "little")
+    central_disk = int.from_bytes(eocd[6:8], "little")
+    entries_on_disk = int.from_bytes(eocd[8:10], "little")
+    entry_count = int.from_bytes(eocd[10:12], "little")
+    central_size = int.from_bytes(eocd[12:16], "little")
+    central_offset = int.from_bytes(eocd[16:20], "little")
+    if (
+        disk_number != 0
+        or central_disk != 0
+        or entries_on_disk != entry_count
+        or entries_on_disk == 0xFFFF
+        or entry_count == 0xFFFF
+        or central_size == 0xFFFFFFFF
+        or central_offset == 0xFFFFFFFF
+    ):
+        _failure("release ZIP multi-disk or ZIP64 envelopes are not supported")
+    if entry_count != MAX_ARCHIVE_MEMBERS:
+        _failure("Windows installed-component archive must contain exactly three files")
+    if central_size > MAX_ZIP_CENTRAL_DIRECTORY_BYTES:
+        _failure("release ZIP central directory exceeds the maximum allowed size")
+    if central_offset <= 0 or central_offset + central_size != eocd_offset:
+        _failure("release ZIP central directory is not canonical")
+
+    records: list[_PrimitiveZipRecord] = []
     cursor = central_offset
-    for info in infos:
+    total_size = 0
+    for _ in range(entry_count):
         header = _read_range(
             stream,
             offset=cursor,
             size=46,
             file_size=file_size,
             label="release archive",
+            maximum_size=46,
         )
         if header[:4] != b"PK\x01\x02":
             _failure("release ZIP central directory is invalid")
+        version_made_by = int.from_bytes(header[4:6], "little")
+        version_needed = int.from_bytes(header[6:8], "little")
+        flags = int.from_bytes(header[8:10], "little")
+        compression = int.from_bytes(header[10:12], "little")
+        crc = int.from_bytes(header[16:20], "little")
+        compressed_size = int.from_bytes(header[20:24], "little")
+        uncompressed_size = int.from_bytes(header[24:28], "little")
         name_size = int.from_bytes(header[28:30], "little")
         extra_size = int.from_bytes(header[30:32], "little")
         comment_size = int.from_bytes(header[32:34], "little")
-        if name_size > MAX_PE_OPTIONAL_HEADER_BYTES:
+        disk_start = int.from_bytes(header[34:36], "little")
+        external_attributes = int.from_bytes(header[38:42], "little")
+        local_header_offset = int.from_bytes(header[42:46], "little")
+        if name_size > MAX_ZIP_MEMBER_NAME_BYTES:
             _failure("release ZIP member filename is too long")
+        if (
+            version_made_by != ((3 << 8) | 20)
+            or version_needed != 20
+            or flags != 0
+            or compression != EXPECTED_ZIP_COMPRESSION
+            or compressed_size == 0xFFFFFFFF
+            or uncompressed_size == 0xFFFFFFFF
+            or disk_start != 0
+            or extra_size != 0
+            or comment_size != 0
+        ):
+            _failure("release ZIP envelope metadata is not canonical")
         raw_name = _read_range(
             stream,
             offset=cursor + 46,
             size=name_size,
             file_size=file_size,
             label="release archive",
+            maximum_size=MAX_ZIP_MEMBER_NAME_BYTES,
         )
-        if b"\x00" in raw_name:
-            _failure("release ZIP contains an unsafe path")
-        try:
-            metadata_encoding = cast(str | None, getattr(bundle, "metadata_encoding", None))
-            encoding = "utf-8" if info.flag_bits & 0x800 else (metadata_encoding or "cp437")
-            decoded_name = raw_name.decode(encoding)
-        except (LookupError, UnicodeDecodeError) as exc:
-            raise IndependentManifestVerificationError(
-                "release ZIP member filename is not decodable"
-            ) from exc
-        if decoded_name != info.orig_filename or decoded_name != info.filename:
-            _failure("release ZIP member filename was normalized")
-        cursor += 46 + name_size + extra_size + comment_size
+        name = _decode_primitive_zip_name(raw_name)
+        records.append(
+            _PrimitiveZipRecord(
+                name_bytes=raw_name,
+                name=name,
+                flags=flags,
+                compression=compression,
+                crc=crc,
+                compressed_size=compressed_size,
+                uncompressed_size=uncompressed_size,
+                local_header_offset=local_header_offset,
+                version_needed=version_needed,
+                version_made_by=version_made_by,
+                disk_number=disk_start,
+                external_attributes=external_attributes,
+            )
+        )
+        cursor += 46 + name_size
+        if cursor > eocd_offset:
+            _failure("release ZIP central directory is truncated")
+        total_size += uncompressed_size
+        if total_size > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            _failure("release ZIP exceeds the maximum uncompressed size")
+        if uncompressed_size > MAX_MEMBER_BYTES:
+            _failure("release ZIP member exceeds the maximum allowed size")
+        if uncompressed_size > 0 and (
+            compressed_size == 0
+            or uncompressed_size > compressed_size * MAX_COMPRESSION_RATIO
+        ):
+            _failure("release ZIP member exceeds the maximum compression ratio")
+    if cursor != eocd_offset:
+        _failure("release ZIP central directory size is not canonical")
+    if len({record.name for record in records}) != MAX_ARCHIVE_MEMBERS:
+        _failure("release ZIP contains duplicate entries")
+    if {record.name for record in records} != ARCHIVE_MEMBER_NAMES:
+        _failure("release ZIP contains an unexpected member set")
+
+    intervals: list[tuple[int, int]] = []
+    for record in records:
+        local_offset = record.local_header_offset
+        if local_offset >= central_offset:
+            _failure("release ZIP local header is outside the file data")
+        local = _read_range(
+            stream,
+            offset=local_offset,
+            size=30,
+            file_size=file_size,
+            label="release archive",
+            maximum_size=30,
+        )
+        if local[:4] != b"PK\x03\x04":
+            _failure("release ZIP local header is invalid")
+        local_version = int.from_bytes(local[4:6], "little")
+        local_flags = int.from_bytes(local[6:8], "little")
+        local_compression = int.from_bytes(local[8:10], "little")
+        local_crc = int.from_bytes(local[14:18], "little")
+        local_compressed_size = int.from_bytes(local[18:22], "little")
+        local_uncompressed_size = int.from_bytes(local[22:26], "little")
+        local_name_size = int.from_bytes(local[26:28], "little")
+        local_extra_size = int.from_bytes(local[28:30], "little")
+        if (
+            local_version != record.version_needed
+            or local_flags != record.flags
+            or local_compression != record.compression
+            or local_crc != record.crc
+            or local_compressed_size != record.compressed_size
+            or local_uncompressed_size != record.uncompressed_size
+            or local_name_size != len(record.name_bytes)
+            or local_extra_size != 0
+        ):
+            _failure("release ZIP local and central headers differ")
+        local_name = _read_range(
+            stream,
+            offset=local_offset + 30,
+            size=local_name_size,
+            file_size=file_size,
+            label="release archive",
+            maximum_size=MAX_ZIP_MEMBER_NAME_BYTES,
+        )
+        if local_name != record.name_bytes:
+            _failure("release ZIP local and central filenames differ")
+        data_start = local_offset + 30 + local_name_size
+        data_end = data_start + record.compressed_size
+        if data_end > central_offset:
+            _failure("release ZIP member data overlaps the central directory")
+        intervals.append((local_offset, data_end))
+    intervals.sort()
+    if not intervals or intervals[0][0] != 0:
+        _failure("release ZIP local data does not begin at byte zero")
+    for previous, current in pairwise(intervals):
+        if previous[1] != current[0]:
+            _failure("release ZIP local data is not contiguous")
+    if intervals[-1][1] != central_offset:
+        _failure("release ZIP local data is not canonical")
+    return tuple(records)
 
 
 def _read_zip_member(
@@ -762,7 +990,13 @@ def _read_zip_member(
         with bundle.open(info, "r") as stream:
             chunks: list[bytes] = []
             size = 0
-            for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+            while True:
+                remaining = maximum_size + 1 - size
+                if remaining <= 0:
+                    _failure(f"ZIP member exceeds the maximum allowed size: {label}")
+                chunk = stream.read(min(READ_CHUNK_SIZE, remaining))
+                if chunk == b"":
+                    break
                 if not isinstance(chunk, bytes):
                     _failure(f"could not read ZIP member: {label}")
                 chunks.append(chunk)
@@ -789,7 +1023,13 @@ def _hash_zip_member(
     size = 0
     try:
         with bundle.open(info, "r") as stream:
-            for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+            while True:
+                remaining = maximum_size + 1 - size
+                if remaining <= 0:
+                    _failure(f"ZIP member exceeds the maximum allowed size: {label}")
+                chunk = stream.read(min(READ_CHUNK_SIZE, remaining))
+                if chunk == b"":
+                    break
                 if not isinstance(chunk, bytes):
                     _failure(f"could not read ZIP member: {label}")
                 digest.update(chunk)
@@ -843,20 +1083,39 @@ def _read_archive_contents(
             )
             stream.seek(0)
             try:
+                primitive_records = _inspect_zip_envelope(
+                    stream, file_size=before_path.size
+                )
+                primitive_by_name = {record.name: record for record in primitive_records}
+                stream.seek(0)
                 with zipfile.ZipFile(stream, "r") as bundle:
                     infos = bundle.infolist()
                     if len(infos) != MAX_ARCHIVE_MEMBERS:
                         _failure(
                             "Windows installed-component archive must contain exactly three files"
                         )
-                    _validate_raw_zip_member_names(
-                        stream, bundle, infos, file_size=before_path.size
-                    )
                     names: set[str] = set()
                     for info in infos:
                         if getattr(info, "orig_filename", info.filename) != info.filename:
                             _failure("release ZIP member filename was normalized")
                         _validate_archive_member_name(info.filename)
+                        primitive = primitive_by_name.get(info.filename)
+                        if primitive is None:
+                            _failure("release ZIP member inventory differs from its envelope")
+                        if (
+                            info.flag_bits != primitive.flags
+                            or info.compress_type != primitive.compression
+                            or primitive.crc != info.CRC
+                            or info.compress_size != primitive.compressed_size
+                            or info.file_size != primitive.uncompressed_size
+                            or info.header_offset != primitive.local_header_offset
+                            or info.create_system != 3
+                            or info.create_version != 20
+                            or info.extract_version != primitive.version_needed
+                            or info.extra != b""
+                            or info.comment != b""
+                        ):
+                            _failure("release ZIP inventory differs from its envelope")
                         folded = info.filename.casefold()
                         if folded in names:
                             _failure("release ZIP contains duplicate entries")

@@ -78,7 +78,11 @@ def _members(
 def _write_archive(path: Path, members: list[tuple[str, bytes]]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for name, raw in members:
-            bundle.writestr(name, raw)
+            info = zipfile.ZipInfo(name)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o100755 << 16
+            bundle.writestr(info, raw)
 
 
 def _candidate(tmp_path: Path) -> _Candidate:
@@ -237,7 +241,7 @@ def test_rejects_duplicate_json_fields(tmp_path: Path) -> None:
         ("traversal", "escaping"),
         ("extra", "exactly three files"),
         ("duplicate", r"duplicate|exactly three files"),
-        ("symlink", "symlink"),
+        ("symlink", r"symlink|envelope"),
     ],
 )
 def test_rejects_unsafe_or_nonexact_archive_members(
@@ -309,7 +313,9 @@ def test_rejects_archive_package_drift_and_malformed_zip(tmp_path: Path) -> None
         _verify(candidate)
 
     candidate.archive.write_bytes(b"not a ZIP")
-    with pytest.raises(verifier.IndependentManifestVerificationError, match="valid ZIP"):
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match=r"valid ZIP|envelope"
+    ):
         _verify(candidate)
 
 
@@ -399,11 +405,15 @@ def _patch_first_central_directory(
 ) -> None:
     raw = bytearray(archive.read_bytes())
     offset = raw.find(b"PK\x01\x02")
+    local_offset = raw.find(b"PK\x03\x04")
     assert offset >= 0
+    assert local_offset == 0
     if compressed_size is not None:
         raw[offset + 20 : offset + 24] = struct.pack("<I", compressed_size)
+        raw[local_offset + 18 : local_offset + 22] = struct.pack("<I", compressed_size)
     if uncompressed_size is not None:
         raw[offset + 24 : offset + 28] = struct.pack("<I", uncompressed_size)
+        raw[local_offset + 22 : local_offset + 26] = struct.pack("<I", uncompressed_size)
     archive.write_bytes(raw)
 
 
@@ -415,6 +425,298 @@ def _patch_first_central_name(archive: Path, replacement: bytes) -> None:
     assert len(replacement) == name_size
     raw[offset + 46 : offset + 46 + name_size] = replacement
     archive.write_bytes(raw)
+
+
+def _patch_first_local_name(archive: Path, replacement: bytes) -> None:
+    raw, local_offset, _central_offset, _eocd_offset = _zip_offsets(archive)
+    name_size = struct.unpack_from("<H", raw, local_offset + 26)[0]
+    assert len(replacement) == name_size
+    raw[local_offset + 30 : local_offset + 30 + name_size] = replacement
+    archive.write_bytes(raw)
+
+
+def _zip_offsets(archive: Path) -> tuple[bytearray, int, int, int]:
+    raw = bytearray(archive.read_bytes())
+    local_offset = raw.find(b"PK\x03\x04")
+    central_offset = raw.find(b"PK\x01\x02")
+    eocd_offset = raw.rfind(b"PK\x05\x06")
+    assert local_offset == 0
+    assert central_offset > 0
+    assert eocd_offset > central_offset
+    return raw, local_offset, central_offset, eocd_offset
+
+
+def _patch_first_local_field(archive: Path, *, offset: int, value: int, width: int = 2) -> None:
+    raw, local_offset, _central_offset, _eocd_offset = _zip_offsets(archive)
+    raw[local_offset + offset : local_offset + offset + width] = value.to_bytes(
+        width, "little"
+    )
+    archive.write_bytes(raw)
+
+
+def _patch_first_entry_field(
+    archive: Path,
+    *,
+    central_field: int,
+    local_field: int,
+    central_value: int,
+    local_value: int,
+    width: int = 2,
+) -> None:
+    raw, local_offset, central_offset, _eocd_offset = _zip_offsets(archive)
+    raw[central_offset + central_field : central_offset + central_field + width] = (
+        central_value.to_bytes(width, "little")
+    )
+    raw[local_offset + local_field : local_offset + local_field + width] = local_value.to_bytes(
+        width, "little"
+    )
+    archive.write_bytes(raw)
+
+
+def _patch_eocd_field(archive: Path, *, offset: int, value: int, width: int) -> None:
+    raw, _local_offset, _central_offset, eocd_offset = _zip_offsets(archive)
+    raw[eocd_offset + offset : eocd_offset + offset + width] = value.to_bytes(
+        width, "little"
+    )
+    archive.write_bytes(raw)
+
+
+def _write_archive_with_first_extra(path: Path, members: list[tuple[str, bytes]]) -> None:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
+        for index, (name, raw) in enumerate(members):
+            info = zipfile.ZipInfo(name)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o100755 << 16
+            if index == 0:
+                info.extra = b"x"
+            bundle.writestr(info, raw)
+
+
+def test_rejects_pe_header_offset_before_dos_header(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    raw = bytearray(candidate.components["main"].read_bytes())
+    raw[60:64] = (2).to_bytes(4, "little")
+    candidate.components["main"].write_bytes(raw)
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="header offset"):
+        _verify(candidate)
+
+
+def test_rejects_oversized_central_directory_before_zipfile_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_eocd_field(
+        candidate.archive,
+        offset=12,
+        value=verifier.MAX_ZIP_CENTRAL_DIRECTORY_BYTES + 1,
+        width=4,
+    )
+
+    def unexpected_inventory(_bundle: object) -> list[zipfile.ZipInfo]:
+        raise AssertionError("ZipFile inventory must follow primitive envelope validation")
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", unexpected_inventory)
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="central directory"):
+        _verify(candidate)
+
+
+def test_rejects_noncanonical_record_count_before_zipfile_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_eocd_field(candidate.archive, offset=8, value=4, width=2)
+    _patch_eocd_field(candidate.archive, offset=10, value=4, width=2)
+
+    def unexpected_inventory(_bundle: object) -> list[zipfile.ZipInfo]:
+        raise AssertionError("ZipFile inventory must follow primitive envelope validation")
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", unexpected_inventory)
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="exactly three"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_STORED, zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_rejects_noncanonical_zip_compression_before_member_read(
+    tmp_path: Path, method: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=10,
+        local_field=8,
+        central_value=method,
+        local_value=method,
+    )
+
+    def unexpected_member_read(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("unsupported compression must be rejected before decompression")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", unexpected_member_read)
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError,
+        match=r"envelope|compression",
+    ):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+def test_rejects_declared_one_byte_unsupported_compression_without_decompression(
+    tmp_path: Path, method: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=10,
+        local_field=8,
+        central_value=method,
+        local_value=method,
+    )
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=20,
+        local_field=18,
+        central_value=1,
+        local_value=1,
+        width=4,
+    )
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=24,
+        local_field=22,
+        central_value=1,
+        local_value=1,
+        width=4,
+    )
+
+    def unexpected_member_read(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("unsupported compression must be rejected before decompression")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", unexpected_member_read)
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError,
+        match=r"envelope|compression",
+    ):
+        _verify(candidate)
+
+
+def test_rejects_prepended_bytes_and_trailing_bytes(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    candidate.archive.write_bytes(b"prefix" + candidate.archive.read_bytes())
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="begin"):
+        _verify(candidate)
+
+    candidate = _candidate(tmp_path / "trailing")
+    candidate.archive.write_bytes(candidate.archive.read_bytes() + b"trailing")
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="end record"):
+        _verify(candidate)
+
+
+def test_rejects_archive_comment_and_member_extra(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    with zipfile.ZipFile(candidate.archive, "a") as bundle:
+        bundle.comment = b"comment"
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match=r"comments|end record"
+    ):
+        _verify(candidate)
+
+    candidate = _candidate(tmp_path / "extra")
+    _write_archive_with_first_extra(candidate.archive, _members(candidate))
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="envelope"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("eocd_field", [4, 6])
+def test_rejects_multi_disk_zip_envelope(tmp_path: Path, eocd_field: int) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_eocd_field(candidate.archive, offset=eocd_field, value=1, width=2)
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="multi-disk"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("flags", [0x1, 0x8])
+def test_rejects_encrypted_or_data_descriptor_zip_entries(tmp_path: Path, flags: int) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=8,
+        local_field=6,
+        central_value=flags,
+        local_value=flags,
+    )
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="envelope"):
+        _verify(candidate)
+
+
+def test_rejects_zip64_sentinel_without_large_artifact(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_eocd_field(candidate.archive, offset=12, value=0xFFFFFFFF, width=4)
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="ZIP64"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize(
+    ("central_field", "local_field", "width"),
+    [(8, 6, 2), (10, 8, 2), (16, 14, 4), (20, 18, 4), (24, 22, 4)],
+)
+def test_rejects_local_central_header_differentials(
+    tmp_path: Path, central_field: int, local_field: int, width: int
+) -> None:
+    candidate = _candidate(tmp_path)
+    raw, local_offset, central_offset, _eocd_offset = _zip_offsets(candidate.archive)
+    central_value = int.from_bytes(
+        raw[central_offset + central_field : central_offset + central_field + width],
+        "little",
+    )
+    local_value = int.from_bytes(
+        raw[local_offset + local_field : local_offset + local_field + width],
+        "little",
+    )
+    _patch_first_entry_field(
+        candidate.archive,
+        central_field=central_field,
+        local_field=local_field,
+        central_value=central_value,
+        local_value=local_value + 1,
+        width=width,
+    )
+
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match=r"local|central|envelope"
+    ):
+        _verify(candidate)
+
+
+def test_rejects_local_central_filename_differential(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    raw, local_offset, _central_offset, _eocd_offset = _zip_offsets(candidate.archive)
+    name_size = struct.unpack_from("<H", raw, local_offset + 26)[0]
+    name = bytes(raw[local_offset + 30 : local_offset + 30 + name_size])
+    _patch_first_local_name(candidate.archive, b"X" + name[1:])
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="filenames"):
+        _verify(candidate)
+
+
+def test_rejects_zipinfo_filename_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    original_infolist = zipfile.ZipFile.infolist
+
+    def normalized_inventory(bundle: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+        infos = original_infolist(bundle)
+        infos[0].orig_filename = infos[0].filename + ".normalized"
+        return infos
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", normalized_inventory)
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="normalized"):
+        _verify(candidate)
 
 
 @pytest.mark.parametrize(
