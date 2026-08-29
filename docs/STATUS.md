@@ -19,8 +19,9 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains those foundations plus the merged
-Claude Code read and explicit-memory integration at exact SHA
+At this boundary, protected main contains the merged Import Truth and the
+subsequent Memory Truth, Retrieval, Continuous Context, Project Context, and
+Claude Code read and explicit-memory foundations at exact SHA
 `688aa595707f15bf8740357e57e20addd46f57ae`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or
