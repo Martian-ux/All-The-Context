@@ -4,9 +4,10 @@
   "content_free": true,
   "overall_status": "HOLD",
   "candidate": {
+    "workflow_run_id": null,
+    "workflow_artifact_name": null,
     "version": null,
     "source_commit": null,
-    "candidate_sha256": null,
     "windows_archive_sha256": null,
     "direct_installer_sha256": null,
     "component_manifest_sha256": null,
@@ -69,7 +70,7 @@
         "fresh_verifier_environment": false,
         "exact_handoff_bytes_rechecked": false,
         "manifest_archive_and_header_verified": false,
-        "provenance_or_attestation_verified": false,
+        "workflow_artifact_and_run_identity_verified": false,
         "unsafe_input_rejected_or_absent": false
       },
       "closed_reason": "template_not_run"
@@ -98,9 +99,9 @@
       "owner": "maintainer",
       "candidate_bound": false,
       "content_free": true,
-      "submission_required": null,
+      "submission_id_present": false,
       "submission_status": "unknown",
-      "case_reference_present": false,
+      "submitted_component_sha256": null,
       "closed_reason": "template_not_run"
     },
     {
@@ -110,6 +111,8 @@
       "candidate_bound": false,
       "content_free": true,
       "result": "unknown",
+      "result_component_sha256": null,
+      "result_artifact_sha256": null,
       "exact_component_identity_confirmed": false,
       "closed_reason": "template_not_run"
     },
@@ -123,12 +126,14 @@
       "identity_unchanged": false,
       "execution_authorized": false,
       "authorization_id_present": false,
+      "decision_time_present": false,
       "closed_reason": "template_not_run"
     }
   ],
   "authorization": {
     "execution_authorized": false,
     "authorization_id_present": false,
+    "decision_time": null,
     "content_free": true
   }
 }
