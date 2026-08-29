@@ -260,6 +260,40 @@ def _validate_header(*, version: str, source_commit: str, platform: str, archite
         )
 
 
+def _expected_header(
+    *,
+    version: str | None,
+    source_commit: str | None,
+    platform: str | None,
+    architecture: str | None,
+) -> tuple[str, str, str, str] | None:
+    values = (version, source_commit, platform, architecture)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise InstalledComponentManifestError(
+            "verification requires all four expected manifest header fields"
+        )
+    return cast(tuple[str, str, str, str], values)
+
+
+def _validate_expected_header(
+    payload: Mapping[str, Any], expected: tuple[str, str, str, str] | None
+) -> None:
+    if expected is None:
+        return
+    actual = (
+        cast(str, payload["version"]),
+        cast(str, payload["source_commit"]),
+        cast(str, payload["platform"]),
+        cast(str, payload["architecture"]),
+    )
+    if actual != expected:
+        raise InstalledComponentManifestError(
+            "installed-component manifest header does not match verification inputs"
+        )
+
+
 def _component_paths(
     values: Mapping[str, Path],
     *,
@@ -347,6 +381,14 @@ def build_manifest(
         direct_measurement.size,
     ):
         raise InstalledComponentManifestError("archive package does not match the direct package")
+    main_measurement = measurements["main executable"]
+    if (main_measurement.digest, main_measurement.size) != (
+        package_measurement.digest,
+        package_measurement.size,
+    ):
+        raise InstalledComponentManifestError(
+            "main executable does not match archive package digest or size"
+        )
     component_values: list[dict[str, Any]] = []
     for role, expected_name in COMPONENTS:
         path = components[role]
@@ -662,11 +704,13 @@ def _verify_payload(
     package_measurement: _FileMeasurement | None,
     package_name: str | None,
     package_path: Path | None,
+    expected_header: tuple[str, str, str, str] | None,
     direct_package_path: Path,
     component_paths: Mapping[str, Path],
     source_root: Path,
 ) -> None:
     _validate_shape(payload)
+    _validate_expected_header(payload, expected_header)
     package_value = cast(dict[str, Any], payload["package"])
     package_descriptor = _descriptor(
         {key: package_value[key] for key in ("filename", "sha256", "size")},
@@ -689,12 +733,20 @@ def _verify_payload(
     if package_path is not None:
         package_identity = package_path.stat(follow_symlinks=False)
         reserved_identities.add((int(package_identity.st_dev), int(package_identity.st_ino)))
+    manifest_components = cast(list[dict[str, Any]], payload["components"])
+    main_value = manifest_components[0]
+    if (
+        main_value["sha256"] != package_descriptor["sha256"]
+        or main_value["size"] != package_descriptor["size"]
+    ):
+        raise InstalledComponentManifestError(
+            "main executable does not match archive package digest or size"
+        )
     components = _validate_component_paths_for_verify(
         component_paths,
         root=source_root,
         reserved_identities=reserved_identities,
     )
-    manifest_components = cast(list[dict[str, Any]], payload["components"])
     for item, (role, _expected_name) in zip(manifest_components, COMPONENTS, strict=True):
         path = components[role]
         _check_measurement(
@@ -733,6 +785,10 @@ def verify_manifest(
     direct_package_path: Path,
     component_paths: Mapping[str, Path],
     source_root: Path,
+    version: str | None = None,
+    source_commit: str | None = None,
+    platform: str | None = None,
+    architecture: str | None = None,
 ) -> dict[str, Any]:
     manifest = _regular_file(manifest_path, root=source_root, label="installed-component manifest")
     if manifest.name != MANIFEST_FILE_NAME:
@@ -749,6 +805,12 @@ def verify_manifest(
     _verify_checksum_bytes(raw_manifest, raw_checksum, name=MANIFEST_FILE_NAME)
     payload = _load_manifest_bytes(raw_manifest)
     _validate_shape(payload)
+    expected_header = _expected_header(
+        version=version,
+        source_commit=source_commit,
+        platform=platform,
+        architecture=architecture,
+    )
     package = _regular_file(package_path, root=source_root, label="archive package")
     package_measurement = _check_measurement(
         package,
@@ -760,6 +822,7 @@ def verify_manifest(
         package_measurement=package_measurement,
         package_name=package.name,
         package_path=package,
+        expected_header=expected_header,
         direct_package_path=direct_package_path,
         component_paths=component_paths,
         source_root=source_root,
@@ -782,6 +845,10 @@ def verify_archive(
     direct_package_path: Path,
     component_paths: Mapping[str, Path],
     source_root: Path,
+    version: str | None = None,
+    source_commit: str | None = None,
+    platform: str | None = None,
+    architecture: str | None = None,
 ) -> dict[str, Any]:
     archive = _regular_file(archive_path, root=source_root, label="release archive")
     try:
@@ -825,6 +892,12 @@ def verify_archive(
             _verify_checksum_bytes(raw_manifest, raw_checksum, name=MANIFEST_FILE_NAME)
             payload = _load_manifest_bytes(raw_manifest)
             _validate_shape(payload)
+            expected_header = _expected_header(
+                version=version,
+                source_commit=source_commit,
+                platform=platform,
+                architecture=architecture,
+            )
             package_digest = hashlib.sha256()
             package_size = 0
             with bundle.open(package_info, "r") as stream:
@@ -856,6 +929,7 @@ def verify_archive(
         package_measurement=package_measurement,
         package_name=package_info.filename.rsplit("/", 1)[-1],
         package_path=None,
+        expected_header=expected_header,
         direct_package_path=direct_package_path,
         component_paths=component_paths,
         source_root=source_root,
@@ -918,6 +992,10 @@ def main() -> int:
                 direct_package_path=arguments.direct_package,
                 component_paths=components,
                 source_root=arguments.source_root,
+                version=arguments.version,
+                source_commit=arguments.source_commit,
+                platform=arguments.platform,
+                architecture=arguments.architecture,
             )
             print(arguments.manifest)
         else:
@@ -926,6 +1004,10 @@ def main() -> int:
                 direct_package_path=arguments.direct_package,
                 component_paths=components,
                 source_root=arguments.source_root,
+                version=arguments.version,
+                source_commit=arguments.source_commit,
+                platform=arguments.platform,
+                architecture=arguments.architecture,
             )
             print(arguments.archive)
     except InstalledComponentManifestError as exc:

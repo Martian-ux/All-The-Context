@@ -294,8 +294,15 @@ def main() -> int:
     parser.add_argument("--source-commit")
     parser.add_argument("--installed-component-output-dir", type=Path)
     arguments = parser.parse_args()
-    if arguments.platform == "windows" and not arguments.source_commit:
-        parser.error("--source-commit is required for Windows installed-component provenance")
+    if (
+        arguments.platform == "windows"
+        and arguments.installed_component_output_dir is not None
+        and not arguments.source_commit
+    ):
+        parser.error(
+            "--source-commit is required with --installed-component-output-dir "
+            "for Windows installed-component provenance"
+        )
     source = arguments.source or default_source(arguments.platform)
     outputs = build_platform_package(
         source,

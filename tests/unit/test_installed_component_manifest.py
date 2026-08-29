@@ -152,6 +152,98 @@ def test_manifest_is_bound_to_deterministic_archive_member(tmp_path: Path) -> No
     )
 
 
+def test_manifest_rejects_main_component_package_mismatch(tmp_path: Path) -> None:
+    package, direct, components = _stage(tmp_path)
+    replacement = _pe_image(certificate_offset=400, certificate_size=8)
+    package.write_bytes(replacement)
+    direct.write_bytes(replacement)
+
+    with pytest.raises(InstalledComponentManifestError, match="main executable"):
+        build_manifest(
+            package_path=package,
+            direct_package_path=direct,
+            component_paths=components,
+            source_root=tmp_path,
+            version=VERSION,
+            source_commit=SOURCE_COMMIT,
+        )
+
+
+def test_windows_package_build_without_provenance_args_still_works(tmp_path: Path) -> None:
+    from scripts.package_desktop import build_platform_package
+
+    source = tmp_path / "AllTheContextSetup.exe"
+    source.write_bytes(_pe_image())
+    outputs = build_platform_package(
+        source,
+        tmp_path / "release",
+        version=VERSION,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+
+    assert outputs[0].is_file()
+    assert not (tmp_path / "installed-component-package").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("version", "0.1.0-beta.8"),
+        ("source_commit", "b" * 40),
+        ("platform", "linux"),
+        ("architecture", "arm64"),
+    ],
+)
+@pytest.mark.parametrize("archive", [False, True])
+def test_verifiers_reject_mismatched_expected_header(
+    tmp_path: Path, field: str, value: str, archive: bool
+) -> None:
+    package, direct, components = _stage(tmp_path)
+    create_manifest(
+        output_dir=package.parent,
+        package_path=package,
+        direct_package_path=direct,
+        component_paths=components,
+        source_root=tmp_path,
+        version=VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
+    archive_path = build_archive(
+        package.parent,
+        tmp_path / "release-assets",
+        version=VERSION,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+    expected = {
+        "version": VERSION,
+        "source_commit": SOURCE_COMMIT,
+        "platform": "windows",
+        "architecture": "x86_64",
+    }
+    expected[field] = value
+
+    with pytest.raises(InstalledComponentManifestError, match="header"):
+        if archive:
+            verify_archive(
+                archive_path=archive_path,
+                direct_package_path=direct,
+                component_paths=components,
+                source_root=tmp_path,
+                **expected,
+            )
+        else:
+            verify_manifest(
+                manifest_path=package.parent / MANIFEST_FILE_NAME,
+                package_path=package,
+                direct_package_path=direct,
+                component_paths=components,
+                source_root=tmp_path,
+                **expected,
+            )
+
+
 @pytest.mark.parametrize(
     ("role", "replacement", "message"),
     [
