@@ -25,6 +25,8 @@ from allthecontext.release_candidate import (
     PUBLICATION_GATE_RECORD_FILE_NAME,
 )
 
+from scripts.installed_component_manifest import MANIFEST_FILE_NAME
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 PRIVILEGED_WORKFLOWS = (
@@ -387,6 +389,35 @@ def test_native_workflows_pin_packaged_recovery_and_locked_python() -> None:
     candidate = _read(WORKFLOWS / "release-candidate.yml")
     assert "scripts/macos_acceptance_preflight.py" not in ci
     assert "scripts/macos_acceptance_preflight.py" not in candidate
+
+
+def test_windows_candidate_publishes_and_verifies_installed_component_manifest() -> None:
+    candidate = _read(WORKFLOWS / "release-candidate.yml")
+    manifest_script = _read(ROOT / "scripts" / "installed_component_manifest.py")
+    schema = json.loads(
+        (ROOT / "release" / "installed-component-manifest.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert schema["properties"]["component_count"]["const"] == 4
+    assert schema["properties"]["platform"]["const"] == "windows"
+    assert schema["properties"]["architecture"]["const"] == "x86_64"
+    assert MANIFEST_FILE_NAME in manifest_script
+    assert "AllTheContext.exe" in manifest_script
+    assert "AllTheContextMCP.exe" in manifest_script
+    assert "AllTheContextRecovery.exe" in manifest_script
+    assert "AllTheContextUpdater.exe" in manifest_script
+    assert "present-unverified" in manifest_script
+    assert "signtool" not in manifest_script.casefold()
+    assert "dist/installed-component-package" in candidate
+    assert "matrix.archive_source" in candidate
+    assert "scripts/installed_component_manifest.py verify-archive" in candidate
+    assert "--direct-package" in candidate
+    assert "--mcp build/desktop/helper-dist/AllTheContextMCP.exe" in candidate
+    assert "--recovery dist/desktop/AllTheContextRecovery.exe" in candidate
+    assert "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe" in candidate
+
 
 
 def test_public_beta_workflows_ship_only_windows_and_linux() -> None:

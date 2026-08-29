@@ -149,11 +149,13 @@ jobs:
             platform: windows
             architecture: x86_64
             source: AllTheContextSetup.exe
+            archive_source: dist/installed-component-package
             package_suffix: .exe
           - os: ubuntu-latest
             platform: linux
             architecture: x86_64
             source: all-the-context
+            archive_source: dist/desktop/all-the-context
             package_suffix: .tar.gz
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
@@ -201,6 +203,8 @@ jobs:
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
           --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --installed-component-output-dir dist/installed-component-package
           --output-dir dist/release
       - name: Verify direct package identity, architecture, and trust boundary
         run: >-
@@ -211,11 +215,26 @@ jobs:
       - name: Build deterministic archive, checksum, and SPDX inventory
         run: >-
           python scripts/build_release_assets.py
-          --source dist/desktop/${{ matrix.source }}
+          --source "${{ matrix.archive_source }}"
           --output-dir dist/release
           --version "${{ inputs.version }}"
           --platform "${{ matrix.platform }}"
           --architecture "${{ matrix.architecture }}"
+      - name: Verify Windows installed-component provenance is bound to the archive
+        if: matrix.platform == 'windows'
+        run: >-
+          python scripts/installed_component_manifest.py verify-archive
+          --archive dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}.zip
+          --direct-package dist/release/all-the-context-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.architecture }}-unsigned.exe
+          --main dist/desktop/AllTheContextSetup.exe
+          --mcp build/desktop/helper-dist/AllTheContextMCP.exe
+          --recovery dist/desktop/AllTheContextRecovery.exe
+          --updater build/desktop/update-helper-dist/AllTheContextUpdater.exe
+          --source-root .
+          --version "${{ inputs.version }}"
+          --source-commit "${{ inputs.source_commit }}"
+          --platform windows
+          --architecture x86_64
       - name: Build SPDX subject document for direct native package
         run: >-
           python scripts/build_release_assets.py
