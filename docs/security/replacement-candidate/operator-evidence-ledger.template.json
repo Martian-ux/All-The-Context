@@ -14,6 +14,19 @@
     "platform": "windows",
     "architecture": "x86_64"
   },
+  "custody_receipt": {
+    "content_free": true,
+    "isolated_custody_confirmed": false,
+    "download_receipt_present": false,
+    "workflow_run_attempt": null,
+    "workflow_artifact_id": null,
+    "workflow_artifact_digest": null,
+    "workflow_artifact_name": null,
+    "archive_size": null,
+    "installer_size": null,
+    "scanner_tool_identity": null,
+    "scanner_run_identity": null
+  },
   "components": [
     {
       "role": "main",
@@ -89,8 +102,41 @@
         "recovery_scanned": false,
         "updater_scanned": false,
         "all_scan_inputs_rechecked": false,
-        "clean": false
+        "scanning_completed": false,
+        "outcome": "unknown",
+        "detection_component_role": null,
+        "detection_component_sha256": null
       },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "submission-preparation",
+      "status": "HOLD",
+      "owner": "candidate-maintainer-and-independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "component_role": null,
+      "component_sha256": null,
+      "sanitized_payload_inventory_present": false,
+      "sanitized_payload_inventory_sha256": null,
+      "isolated_custody_confirmed": false,
+      "preparation_receipt_id_present": false,
+      "preparation_time": null,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "external-submission-authorization",
+      "status": "HOLD",
+      "owner": "noah",
+      "candidate_bound": false,
+      "content_free": true,
+      "component_role": null,
+      "component_sha256": null,
+      "sanitized_payload_inventory_sha256": null,
+      "authorization_id_present": false,
+      "authorization_time": null,
+      "portal_consent_authorized": false,
+      "external_upload_authorized": false,
       "closed_reason": "template_not_run"
     },
     {
@@ -99,6 +145,7 @@
       "owner": "maintainer",
       "candidate_bound": false,
       "content_free": true,
+      "component_role": null,
       "submission_id_present": false,
       "submission_status": "unknown",
       "submitted_component_sha256": null,
@@ -111,6 +158,7 @@
       "candidate_bound": false,
       "content_free": true,
       "result": "unknown",
+      "component_role": null,
       "result_component_sha256": null,
       "result_artifact_sha256": null,
       "exact_component_identity_confirmed": false,

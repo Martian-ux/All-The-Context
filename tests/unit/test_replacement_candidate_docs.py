@@ -36,17 +36,35 @@ def test_replacement_candidate_runbook_is_noncanonical_and_ordered() -> None:
     assert "Clean local scans do not bypass either Microsoft stage" in normalized
     assert "there is no `submission_required=false`/`result=not_required` path" in normalized
     assert "authenticated Microsoft portal/account consent" in normalized
-    assert "Those actions are not performed by repository tooling" in normalized
+    assert "Repository tooling does not consent, authenticate, upload" in normalized
     assert "opaque submission ID" in normalized
     assert "result-artifact digest" in normalized
     assert "receipt, acknowledgement" in normalized
     assert "`Closed` status alone is not a final determination" in normalized
     assert "live-client or execution credit" in normalized
+    assert "bounded outcome is `clean` or `detection`" in normalized
+    assert "routing the exact detected component to submission preparation" in normalized
+    assert "submission-preparation" in normalized
+    assert "external-submission-authorization" in normalized
+    assert "require Noah's explicit approval" in normalized
+    assert "Repository tooling does not consent" in normalized
+    assert "sanitized payload inventory" in normalized
+    assert "workflow run attempt" in normalized
+    assert "artifact ID/digest/name" in normalized
+    assert "scanner/tool/run identity" in normalized
+    assert "not a general ledger subsystem" in normalized
+    assert (
+        "Optional allow-listing and any execution remain separate Noah-authorized actions"
+        in normalized
+    )
+    assert "No allow-listing is implied" in normalized
 
     stage_ids = (
         "private-build",
         "independent-verification",
         "exact-component-scan",
+        "submission-preparation",
+        "external-submission-authorization",
         "microsoft-submission",
         "microsoft-result",
         "execution-authorization",
@@ -98,6 +116,8 @@ def test_replacement_candidate_ledger_template_is_content_free_and_hold() -> Non
         "private-build",
         "independent-verification",
         "exact-component-scan",
+        "submission-preparation",
+        "external-submission-authorization",
         "microsoft-submission",
         "microsoft-result",
         "execution-authorization",
@@ -108,15 +128,53 @@ def test_replacement_candidate_ledger_template_is_content_free_and_hold() -> Non
     independent = stages[1]
     assert independent["checks"]["workflow_artifact_and_run_identity_verified"] is False
     assert "provenance_or_attestation_verified" not in independent["checks"]
-    submission = stages[3]
+    scan = stages[2]
+    assert scan["checks"]["all_scan_inputs_rechecked"] is False
+    assert scan["checks"]["scanning_completed"] is False
+    assert scan["checks"]["outcome"] == "unknown"
+    assert scan["checks"]["detection_component_role"] is None
+    assert scan["checks"]["detection_component_sha256"] is None
+    preparation = stages[3]
+    assert preparation["component_role"] is None
+    assert preparation["component_sha256"] is None
+    assert preparation["sanitized_payload_inventory_present"] is False
+    assert preparation["sanitized_payload_inventory_sha256"] is None
+    assert preparation["isolated_custody_confirmed"] is False
+    assert preparation["preparation_receipt_id_present"] is False
+    assert preparation["preparation_time"] is None
+    external_authorization = stages[4]
+    assert external_authorization["component_role"] is None
+    assert external_authorization["component_sha256"] is None
+    assert external_authorization["sanitized_payload_inventory_sha256"] is None
+    assert external_authorization["authorization_id_present"] is False
+    assert external_authorization["authorization_time"] is None
+    assert external_authorization["portal_consent_authorized"] is False
+    assert external_authorization["external_upload_authorized"] is False
+    submission = stages[5]
     assert "submission_required" not in submission
+    assert submission["component_role"] is None
     assert submission["submission_id_present"] is False
     assert submission["submission_status"] == "unknown"
     assert submission["submitted_component_sha256"] is None
-    result = stages[4]
+    result = stages[6]
     assert result["result"] == "unknown"
+    assert result["component_role"] is None
     assert result["result_component_sha256"] is None
     assert result["result_artifact_sha256"] is None
+    custody = value["custody_receipt"]
+    assert custody == {
+        "content_free": True,
+        "isolated_custody_confirmed": False,
+        "download_receipt_present": False,
+        "workflow_run_attempt": None,
+        "workflow_artifact_id": None,
+        "workflow_artifact_digest": None,
+        "workflow_artifact_name": None,
+        "archive_size": None,
+        "installer_size": None,
+        "scanner_tool_identity": None,
+        "scanner_run_identity": None,
+    }
     assert stages[-1]["decision_time_present"] is False
     assert value["authorization"] == {
         "execution_authorized": False,
@@ -129,13 +187,19 @@ def test_replacement_candidate_ledger_template_is_content_free_and_hold() -> Non
 def test_replacement_candidate_runbook_references_existing_contracts() -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
 
-    for relative in (
+    relatives = (
         "../../DECISIONS.md",
         "../../../release/installed-component-manifest.schema.json",
         "../../../scripts/package_desktop.py",
         "../../../scripts/build_release_assets.py",
         "../../../scripts/installed_component_manifest.py",
-        "../../../.github/workflows/replacement-candidate.yml",
-    ):
+    )
+    for relative in relatives:
         assert relative in text
+        assert (RUNBOOK.parent / relative).resolve().is_file()
+    workflow_relative = "../../../.github/workflows/replacement-candidate.yml"
+    assert workflow_relative in text
+    workflow_target = (RUNBOOK.parent / workflow_relative).resolve()
+    if workflow_target.exists():
+        assert workflow_target.is_file()
     assert "../../../.github/workflows/release-candidate.yml" not in text

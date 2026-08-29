@@ -28,6 +28,9 @@ ledger may contain only bounded metadata:
 - scanner/tool version, run identity, and a Boolean result, without raw output;
 - Microsoft submission status and result status, plus an opaque submission-ID
   presence Boolean and bounded result-artifact digest;
+- isolated-custody and download-receipt metadata: workflow run attempt,
+  artifact ID/digest/name, archive and installer sizes, and scanner/tool/run
+  identity;
 
 Do not put raw scan output, detection text, portal URLs, case text, credentials,
 tokens, private context, user statements, exports, hostnames, usernames,
@@ -43,6 +46,12 @@ stages. The GitHub Actions artifact ZIP serialization is transport packaging,
 not a canonical candidate digest: hash the produced files inside it. A
 filename, tag, branch, mutable URL, or outer archive digest alone is not
 sufficient.
+
+The isolated-custody/download receipt is a bounded transport record for this
+worksheet, not a canonical identity and not a general ledger subsystem. Its
+workflow artifact digest identifies the downloaded transport object only; it
+must not be substituted for the archive, installer, manifest, or component
+digests in the candidate identity.
 
 ```text
 (workflow_run_id, workflow_artifact_name, version, source_commit, target,
@@ -73,6 +82,11 @@ The overall ledger is `fail` if any stage is `fail`, otherwise `HOLD` if any
 stage is `HOLD`, and `pass` only when every stage is `pass`. A later result may
 resolve a `HOLD` for the same immutable candidate. A new build, repackaging,
 manifest change, or component-byte change may not inherit any earlier pass.
+An exact-component scan with `outcome=detection` is a completed scan and may
+pass its scan stage, but it keeps the overall security decision at `HOLD` until
+the mandatory Microsoft stages produce a final clear determination bound to
+the exact digest. Detection routes the exact component into submission; it is
+not a reason to skip or block the submission-preparation path.
 
 ## Ordered evidence stages
 
@@ -82,10 +96,12 @@ The stage order is a dependency, not a checklist that may be rearranged.
 |---|---|---|---|---|
 | `private-build` | Candidate builder | Exact source/version/target are bound; reviewed locked source gates pass; the direct installer, archive package, archive, checksum sidecars, source matrix evidence, candidate-owned component evidence, and component manifest are created without mutation; the manifest binds the four executable roles and the main bytes equal the installer bytes | Build or metadata is incomplete, the source-health identity is unavailable, or a required sidecar/evidence file is not yet available | Any source, version, target, package, manifest, checksum, or byte mismatch. Retire the candidate identity and build a new one if correction is needed |
 | `independent-verification` | A verifier who did not produce the candidate | On a fresh controlled environment, the verifier resolves the workflow run and exact uploaded artifact, recomputes the archive, installer, manifest, checksum, and four component identities; verifies canonical JSON, archive membership, expected header, source matrix evidence, and no links, path escape, duplicate identity, or mutation | The verifier cannot obtain the exact handoff bytes or complete a required verification; never substitute a rebuild or source checkout for the handoff | Any mismatch, unsafe archive/member, changed byte, or rebinding attempt. Do not proceed to scanning |
-| `exact-component-scan` | Security scanner plus verifier | The exact archive, direct installer, and each manifest-bound `main`, `mcp`, `recovery`, and `updater` byte set are scanned; the identity is rechecked around the scan; all required scans are clean and the ledger stores only bounded results | A scan is pending, unavailable, incomplete, or produces a detection that has not been classified by Microsoft | A scanner or Microsoft-classified result identifies the exact component as malicious, or the scanned bytes cannot be bound. Keep the candidate quarantined and do not restore, execute, or allow-list it |
-| `microsoft-submission` | Noah-authorized maintainer action | The exact independently verified component is submitted through the approved Microsoft channel; the bounded submission status and opaque submission-ID presence are recorded; and the submitted component digest matches the manifest-bound digest | Authenticated portal/account consent, the external upload, the exact component binding, or the bounded submission evidence is incomplete or unavailable | The exact sample cannot be reproduced/bound, the submission boundary would disclose private data, or the submission is rejected for an identity reason. Keep the candidate blocked |
-| `microsoft-result` | Microsoft result reconciled by verifier | A final Microsoft determination is bound to the exact submitted component digest and a bounded result-artifact digest is recorded; a receipt, acknowledgement, or `Closed` status alone is not a final determination | The final determination or its exact component/result-artifact binding is pending, unavailable, ambiguous, or tied to a different digest/version | Microsoft confirms malicious content, or the result cannot be tied to the manifest-bound component. Keep the candidate blocked and do not infer a false positive |
-| `execution-authorization` | Separate explicit operator decision | All earlier stages are `pass`; workflow run/artifact and produced-file identity is unchanged; a human operator records an explicit authorization against the exact artifact and four-component manifest before any installed-candidate/client journey | Any earlier stage is not `pass`, authorization is absent, or the identity changed since the last verification | Authorization was attempted despite a failed prerequisite, or the authorized bytes no longer match. Revoke the pending execution and start a new ledger |
+| `exact-component-scan` | Security scanner plus verifier | The exact archive, direct installer, and each manifest-bound `main`, `mcp`, `recovery`, and `updater` byte set are identity-rechecked and scanned to completion; the bounded outcome is `clean` or `detection` | A required byte is missing, identity rechecking or scanning is pending/incomplete, or the outcome cannot be bound to the exact component | Any identity mismatch, mutation, or unbound scan input. Keep the candidate quarantined and do not restore, execute, or allow-list it |
+| `submission-preparation` | Candidate maintainer plus independent verifier | The exact component role/digest selected for mandatory Microsoft reassessment is bound to an isolated, sanitized payload inventory; no private context, credentials, or raw portal data is included | The selected role/digest, isolated custody, sanitized payload inventory, or required bounded receipt is incomplete or unavailable | The payload is not exact, sanitized, or reproducible, or the submission boundary would disclose private data. Keep the candidate blocked |
+| `external-submission-authorization` | Noah | Noah records explicit approval for authenticated Microsoft portal consent and the external upload, bound to the exact component role/digest and sanitized payload inventory, with an opaque authorization-ID presence and authorization time | Noah authorization, exact binding, authorization ID presence, or authorization time is absent or stale | Upload or portal consent was attempted without the required authorization or against different bytes. Revoke the authorization and prepare a new candidate submission |
+| `microsoft-submission` | Noah-authorized maintainer action | The exact prepared component is submitted through the approved Microsoft channel; the bounded submission status and opaque submission-ID presence are recorded; and the submitted component role/digest matches the prepared digest | The external upload, exact component binding, or bounded submission evidence is incomplete or unavailable | The exact sample cannot be reproduced/bound, the submission boundary would disclose private data, or the submission is rejected for an identity reason. Keep the candidate blocked |
+| `microsoft-result` | Microsoft result reconciled by verifier | A final Microsoft determination is bound to the exact submitted component role/digest and a bounded result-artifact digest is recorded; a receipt, acknowledgement, or `Closed` status alone is not a final determination | The final determination or its exact component/result-artifact binding is pending, unavailable, ambiguous, or tied to a different digest/version | Microsoft confirms malicious content, or the result cannot be tied to the manifest-bound component. Keep the candidate blocked and do not infer a false positive |
+| `execution-authorization` | Separate explicit operator decision | All earlier stages are `pass`, including a clean final Microsoft determination bound to the exact component digest; workflow run/artifact and produced-file identity is unchanged; a human operator records an explicit authorization against the exact artifact and four-component manifest before any installed-candidate/client journey | Any earlier stage is not `pass`, authorization is absent, or the identity changed since the last verification | Authorization was attempted despite a failed prerequisite, or the authorized bytes no longer match. Revoke the pending execution and start a new ledger |
 
 ### Private build
 
@@ -153,6 +169,35 @@ unbound file does not clear the candidate. If bytes change between hashing and
 scanning, the result is not clean: record `HOLD` or `fail` according to whether
 the identity can be re-established, and do not continue silently.
 
+The exact-component scan is complete when every required byte set was
+identity-rechecked and scanning finished. Record the bounded outcome as
+`clean` or `detection`; either outcome may pass this scan stage. A `detection`
+is not a clean security result and does not authorize restoration, execution,
+allow-listing, or client credit. It keeps the overall ledger at `HOLD` through
+the downstream Microsoft stages while routing the exact detected component to
+submission preparation.
+
+### Submission preparation and external authorization
+
+Microsoft reassessment is mandatory even when local exact-component scanning
+reports `clean`. The maintainer and independent verifier select the exact
+component role and digest for reassessment, confirm isolated custody, and
+prepare a sanitized payload inventory containing only bounded filenames, roles,
+sizes, and digests. The inventory must not contain private context, credentials,
+raw scan or portal content, or an account identity. A detection selects the
+detected exact component for this same path; it does not prevent submission.
+
+The `submission-preparation` stage records the selected component role/digest,
+the sanitized inventory identity, and the bounded isolated-custody/download
+receipt, using only opaque preparation-receipt-ID presence and preparation
+time. The `external-submission-authorization` stage is a separate Noah
+decision: authenticated Microsoft portal/account consent and the external
+upload require Noah's explicit approval, an opaque authorization-ID presence,
+and an authorization time, all bound to that same role, digest, and inventory.
+Repository tooling does not consent, authenticate, upload, or retain raw
+portal material. Authorization or custody evidence from another candidate may
+not be reused.
+
 ### Microsoft submission and result
 
 Microsoft reassessment is mandatory after exact-component scanning. Clean local
@@ -161,12 +206,11 @@ scans do not bypass either Microsoft stage, and there is no
 component must be submitted and receive a final Microsoft determination before
 live-client or execution credit.
 
-1. Keep `microsoft-submission` `HOLD` until Noah separately authorizes the
-   authenticated Microsoft portal/account consent and external upload. Those
-   actions are not performed by repository tooling. Upload only the exact
+1. Keep `microsoft-submission` `HOLD` until `submission-preparation` and
+   `external-submission-authorization` pass. Then upload only the exact
    independently verified component through the approved Microsoft channel;
    submission must not contain private context, credentials, or raw user data.
-   After the upload, record only the matching component digest, bounded
+   After the upload, record only the matching component role/digest, bounded
    submission status, and presence of an opaque submission ID; do not record the
    account, email address, portal URL, submission ID value, or raw portal text.
 2. Keep `microsoft-result` `HOLD` until Microsoft returns a final determination
@@ -189,6 +233,11 @@ digests, component-manifest digest, decision time, and a bounded authorization
 identifier in the ledger, with no raw context. The authorization covers only the
 exact candidate-owned runtime.
 
+Optional allow-listing and any execution remain separate Noah-authorized actions
+after a clean final Microsoft result bound to the exact component digest. No
+allow-listing is implied by a clean local scan, a submission receipt, a
+Microsoft `Closed` status, or this worksheet.
+
 After authorization, a separate candidate-owned packaged journey may collect
 the ordinary-use client evidence required by the product plan. A source Core,
 synthetic lifecycle primitive, or model-visible mock may be useful for
@@ -207,8 +256,13 @@ identity: workflow run/artifact identity, version, source_commit,
           target, and component role
 stage:    pass | HOLD | fail, owner class, closed reason, required booleans,
           bounded tool/run identity, and exact-component result counts
+submission: selected component role/digest, sanitized payload-inventory
+            digest, opaque authorization-ID presence, authorization time
 vendor:   opaque submission ID presence, bounded submission/result status,
           submitted component SHA-256, result-artifact SHA-256
+custody:  isolated-custody/download receipt Boolean, workflow run attempt,
+          artifact ID/digest/name, archive/installer sizes, scanner/tool/run
+          identity
 decision: explicit authorization boolean, bounded authorization identifier,
           decision time, and unchanged-identity boolean
 ```
