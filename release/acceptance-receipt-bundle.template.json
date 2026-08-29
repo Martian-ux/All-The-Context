@@ -159,7 +159,7 @@
       "severity": null,
       "limitations": [],
       "attempts": [],
-      "notes": "Template only. Repository, dependency, artifact, intake defenses."
+      "notes": "Template only. Repository, dependency, artifact, intake defenses. Beta.7+ pass also requires the candidate-bound MCP Microsoft final-determination record."
     },
     {
       "schema_version": 1,

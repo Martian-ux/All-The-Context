@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from .release_manifest import ManifestError, sha256_file
+from .release_manifest import ManifestError, ReleaseVersion, sha256_file
 
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_BUNDLE_FILE_NAME = "acceptance-receipt-bundle-v1.json"
@@ -33,6 +34,13 @@ FOLLOW_UP_MAX_LENGTH = 200
 CLOSED_REASON_MAX_LENGTH = 200
 APPROVER_MAX_LENGTH = 200
 DECISION_NOTES_MAX_LENGTH = 500
+MICROSOFT_REASSESSMENT_MIN_VERSION = "0.1.0-beta.7"
+MICROSOFT_REASSESSMENT_GATE_ID = "BETA-S06"
+MICROSOFT_REASSESSMENT_COMPONENT_ROLE = "mcp"
+UTC_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?Z"
+)
 
 EvidenceKind = Literal["source", "exact_downloaded_artifact", "skipped", "unavailable"]
 ReceiptStatus = Literal["pass", "fail", "skipped", "unavailable", "not_run"]
@@ -46,6 +54,11 @@ ALLOWED_EVIDENCE_KINDS = frozenset(
 ALLOWED_STATUSES = frozenset({"pass", "fail", "skipped", "unavailable", "not_run"})
 ALLOWED_SEVERITIES = frozenset({"P0", "P1", "P2", "P3"})
 ALLOWED_DECISIONS = frozenset({"approve", "reject"})
+ALLOWED_COMPONENT_ROLES = frozenset({"main", "mcp", "recovery", "updater"})
+ALLOWED_MICROSOFT_STATUSES = frozenset({"submitted", "in_review", "closed"})
+ALLOWED_MICROSOFT_DETERMINATIONS = frozenset(
+    {"pending", "no_malware", "malware", "inconclusive"}
+)
 
 # The certification profile remains the complete pre-publication V1 contract.
 # Public-release smoke and launch-watch closure happen only after the immutable
@@ -155,6 +168,7 @@ RECEIPT_ALLOWED_KEYS = frozenset(
         "artifact_digests",
         "counts",
         "notes",
+        "microsoft_reassessment",
     }
 )
 LIMITATION_ALLOWED_KEYS = frozenset({"id", "summary", "severity", "workaround", "follow_up"})
@@ -194,6 +208,23 @@ DECISION_ALLOWED_KEYS = frozenset(
     }
 )
 
+MICROSOFT_REASSESSMENT_ALLOWED_KEYS = frozenset(
+    {
+        "candidate_version",
+        "source_commit",
+        "candidate_sha256",
+        "component_role",
+        "component_sha256",
+        "component_size",
+        "installed_component_manifest_sha256",
+        "opaque_submission_id_present",
+        "microsoft_status",
+        "final_determination",
+        "determined_at",
+        "redacted_result_artifact_sha256",
+    }
+)
+
 FORBIDDEN_RECEIPT_KEYS = frozenset(
     {
         "conversation",
@@ -210,6 +241,14 @@ FORBIDDEN_RECEIPT_KEYS = frozenset(
         "query_text",
         "full_path",
         "absolute_path",
+        "account_email",
+        "portal_url",
+        "raw_report",
+        "detection_text",
+        "customer_data",
+        "sample_bytes",
+        "submission_id",
+        "submission_identifier",
     }
 )
 
@@ -356,6 +395,94 @@ def _validate_counts(counts: object) -> dict[str, int]:
     return validated
 
 
+def _validate_utc_timestamp(value: object, *, label: str) -> str:
+    if not isinstance(value, str) or UTC_TIMESTAMP.fullmatch(value) is None:
+        raise ManifestError(f"{label} must be a canonical UTC timestamp ending in Z")
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ManifestError(f"{label} is not a valid timestamp") from exc
+    return value
+
+
+def _validate_microsoft_reassessment(value: object) -> dict[str, Any]:
+    record = _require_dict(value, "microsoft_reassessment")
+    _reject_unknown_keys(
+        record,
+        MICROSOFT_REASSESSMENT_ALLOWED_KEYS,
+        "microsoft_reassessment",
+    )
+    missing = sorted(MICROSOFT_REASSESSMENT_ALLOWED_KEYS - set(record))
+    if missing:
+        raise ManifestError(
+            "microsoft_reassessment is missing fields: " + ", ".join(missing)
+        )
+
+    candidate_version = record.get("candidate_version")
+    if not isinstance(candidate_version, str):
+        raise ManifestError("microsoft_reassessment candidate_version is invalid")
+    ReleaseVersion.parse(candidate_version)
+    source_commit = record.get("source_commit")
+    if not isinstance(source_commit, str) or COMMIT.fullmatch(source_commit) is None:
+        raise ManifestError(
+            "microsoft_reassessment source_commit must be a full lowercase SHA"
+        )
+    for field in (
+        "candidate_sha256",
+        "component_sha256",
+        "installed_component_manifest_sha256",
+    ):
+        digest = record.get(field)
+        if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+            raise ManifestError(f"microsoft_reassessment {field} must be a lowercase SHA-256")
+
+    component_role = record.get("component_role")
+    if component_role not in ALLOWED_COMPONENT_ROLES:
+        raise ManifestError("microsoft_reassessment component_role is invalid")
+    component_size = record.get("component_size")
+    if (
+        isinstance(component_size, bool)
+        or not isinstance(component_size, int)
+        or component_size < 1
+    ):
+        raise ManifestError("microsoft_reassessment component_size must be a positive integer")
+    if not isinstance(record.get("opaque_submission_id_present"), bool):
+        raise ManifestError(
+            "microsoft_reassessment opaque_submission_id_present must be a boolean"
+        )
+
+    microsoft_status = record.get("microsoft_status")
+    if microsoft_status not in ALLOWED_MICROSOFT_STATUSES:
+        raise ManifestError("microsoft_reassessment microsoft_status is invalid")
+    final_determination = record.get("final_determination")
+    if final_determination not in ALLOWED_MICROSOFT_DETERMINATIONS:
+        raise ManifestError("microsoft_reassessment final_determination is invalid")
+
+    determined_at = record.get("determined_at")
+    result_digest = record.get("redacted_result_artifact_sha256")
+    if final_determination == "pending":
+        if determined_at is not None or result_digest is not None:
+            raise ManifestError(
+                "pending Microsoft reassessment cannot claim a determination time "
+                "or result artifact"
+            )
+    else:
+        _validate_utc_timestamp(
+            determined_at,
+            label="microsoft_reassessment determined_at",
+        )
+        if not isinstance(result_digest, str) or SHA256.fullmatch(result_digest) is None:
+            raise ManifestError(
+                "microsoft_reassessment redacted_result_artifact_sha256 must be a "
+                "lowercase SHA-256"
+            )
+        if microsoft_status != "closed":
+            raise ManifestError(
+                "a final Microsoft reassessment determination requires closed status"
+            )
+    return record
+
+
 def _has_executed_attempt(attempts: Sequence[Mapping[str, Any]]) -> bool:
     return any(
         isinstance(item, Mapping) and item.get("status") in {"pass", "fail"} for item in attempts
@@ -456,6 +583,14 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
             raise ManifestError("exact downloaded-artifact pass receipts require artifact_digests")
     if "counts" in value:
         value["counts"] = _validate_counts(value.get("counts"))
+    if "microsoft_reassessment" in value:
+        if gate_id != MICROSOFT_REASSESSMENT_GATE_ID:
+            raise ManifestError(
+                "microsoft_reassessment is allowed only on the BETA-S06 receipt"
+            )
+        value["microsoft_reassessment"] = _validate_microsoft_reassessment(
+            value.get("microsoft_reassessment")
+        )
     notes = value.get("notes")
     if notes is not None:
         if not isinstance(notes, str) or len(notes) > NOTES_MAX_LENGTH:
@@ -492,6 +627,90 @@ def _open_p0_p1_limitations(receipts: Sequence[Mapping[str, Any]]) -> list[str]:
     return open_ids
 
 
+def _validate_bundle_microsoft_reassessment(
+    receipts: Sequence[Mapping[str, Any]],
+    *,
+    version: str | None,
+    parsed_version: ReleaseVersion | None,
+    source_commit: str,
+    candidate_sha256: str,
+) -> None:
+    security_receipt = next(
+        (
+            receipt
+            for receipt in receipts
+            if receipt.get("gate_id") == MICROSOFT_REASSESSMENT_GATE_ID
+        ),
+        None,
+    )
+    if security_receipt is None:
+        return
+    record = security_receipt.get("microsoft_reassessment")
+
+    # Missing bundle versions retain the legacy schema-v1 interpretation. They
+    # cannot carry the new claim because it would not be bound to a candidate
+    # version. Historical versions through beta.6 likewise remain immutable.
+    if parsed_version is None:
+        if record is not None:
+            raise ManifestError(
+                "microsoft_reassessment requires an explicit future candidate version"
+            )
+        return
+    threshold = ReleaseVersion.parse(MICROSOFT_REASSESSMENT_MIN_VERSION)
+    if parsed_version < threshold:
+        if record is not None:
+            raise ManifestError(
+                "microsoft_reassessment cannot retroactively upgrade beta.6 or earlier receipts"
+            )
+        return
+
+    if record is None:
+        if security_receipt.get("status") == "pass":
+            raise ManifestError(
+                f"{MICROSOFT_REASSESSMENT_GATE_ID} pass for {version} requires "
+                "candidate-bound Microsoft final-determination evidence"
+            )
+        return
+    if not isinstance(record, Mapping):
+        raise ManifestError("microsoft_reassessment must be a JSON object")
+
+    bindings = {
+        "candidate_version": version,
+        "source_commit": source_commit,
+        "candidate_sha256": candidate_sha256,
+    }
+    for field, expected in bindings.items():
+        if record.get(field) != expected:
+            raise ManifestError(
+                f"microsoft_reassessment {field} does not match the receipt bundle"
+            )
+
+    if security_receipt.get("status") != "pass":
+        return
+    if record.get("component_role") != MICROSOFT_REASSESSMENT_COMPONENT_ROLE:
+        raise ManifestError(
+            f"{MICROSOFT_REASSESSMENT_GATE_ID} Microsoft reassessment must bind the "
+            f"{MICROSOFT_REASSESSMENT_COMPONENT_ROLE} component"
+        )
+    if record.get("opaque_submission_id_present") is not True:
+        raise ManifestError(
+            "BETA-S06 pass requires opaque Microsoft submission identifier presence"
+        )
+    if record.get("microsoft_status") != "closed":
+        raise ManifestError("BETA-S06 pass requires closed Microsoft reassessment status")
+    if record.get("final_determination") != "no_malware":
+        raise ManifestError(
+            "BETA-S06 pass requires an explicit Microsoft no_malware final determination; "
+            "submission acknowledgement or closed status alone is insufficient"
+        )
+    if not isinstance(record.get("determined_at"), str):
+        raise ManifestError("BETA-S06 pass requires a Microsoft determination time")
+    if not isinstance(record.get("redacted_result_artifact_sha256"), str):
+        raise ManifestError(
+            "BETA-S06 pass requires the redacted operator-held result artifact digest"
+        )
+
+
 def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
     value = dict(bundle)
     _assert_content_free(value)
@@ -516,8 +735,11 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(candidate_sha256, str) or SHA256.fullmatch(candidate_sha256) is None:
         raise ManifestError("bundle candidate_sha256 must be a lowercase SHA-256 digest")
     version = value.get("version")
-    if version is not None and (not isinstance(version, str) or not version.strip()):
-        raise ManifestError("bundle version must be a non-empty string when present")
+    parsed_version: ReleaseVersion | None = None
+    if version is not None:
+        if not isinstance(version, str) or not version.strip():
+            raise ManifestError("bundle version must be a non-empty string when present")
+        parsed_version = ReleaseVersion.parse(version)
     publication_policy = value.get("publication_policy", CERTIFICATION_PUBLICATION_POLICY)
     if not isinstance(publication_policy, str):
         raise ManifestError("bundle publication_policy must be a string")
@@ -580,6 +802,13 @@ def validate_receipt_bundle(bundle: Mapping[str, Any]) -> dict[str, Any]:
                     raise ManifestError(f"conflicting artifact_digests for {key} across receipts")
                 shared_artifact_digests[key] = digest
         receipts.append(receipt)
+    _validate_bundle_microsoft_reassessment(
+        receipts,
+        version=version if isinstance(version, str) else None,
+        parsed_version=parsed_version,
+        source_commit=source_commit,
+        candidate_sha256=candidate_sha256,
+    )
     decision = value.get("maintainer_decision")
     decision_obj = _require_dict(decision, "maintainer_decision")
     _reject_unknown_keys(decision_obj, DECISION_ALLOWED_KEYS, "maintainer_decision")
