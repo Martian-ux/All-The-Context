@@ -1,18 +1,30 @@
 # Requirements traceability
 
-"Implemented" means exercised locally. This integrated traceability matrix is
-for the local Import → Memory Truth → Retrieval → Context UI baseline and the
-separately bounded Wave 3 component handoffs; it does not claim hosted CI,
-release publication, exact artifact/client/provider acceptance, or live/private
-data inspection. Earlier evidence is retained only as historical context and
-does not become evidence for this checkout.
+"Implemented" means exercised by repository tests. Protected-main CI and
+CodeQL evidence is credited only when bound to an exact SHA; exact artifact,
+live/private client/provider, and release acceptance remain separate gates.
+Earlier evidence is retained only as historical context and does not become
+evidence for this checkout.
+
+### 2026-08-29 merged Continuous Capture milestone reconciliation
+
+| Milestone requirement | Implementation/evidence | Status |
+|---|---|---|
+| ATC-CC-M01 — Core continuous-capture authorization and ingestion | `security.py` narrow `context:capture` scope; strict `CaptureEventRequest`; `POST /v1/lifecycle/events`; `CoreCaptureService`; migration 018; `tests/integration/test_client_capture_core.py` | Merged in PR #95. The request cannot self-assert witness, provenance, sensitivity, ACL, availability, or authority; Core derives them from the durable capture principal. Relay has no authority or fallback role |
+| ATC-CC-M02 — observation formation and reconciliation | `client_capture.py`; `extract_live_user_claim`; `LIVE_USER_EVIDENCE`; existing candidate, slot-reconciliation, version, provenance, and conflict machinery; formation/replay tests | Merged for a narrow deterministic first-person claim set. Equivalent evidence reinforces/deduplicates and justified slot changes supersede through Core. Assistant, tool, and imported observations cannot independently form user truth; this is not a general semantic extractor |
+| ATC-CC-M03 — Claude Code lifecycle capture and retrieval | distinct `claude_code_read` and `claude_code_capture` profiles; `claude_code_hook.py`; managed `UserPromptSubmit`/`Stop` hooks; adapter-to-Core and focused hook tests | Merged at source level. Retrieval and capture use separate principals. Claude Code supplies no stable turn ID, so session-only callbacks remain bounded, unpaired, and at-least-once with no prompt/session deduplication or exactly-once claim. Exact packaged/live acceptance remains open |
+| ATC-CC-M04 — Codex lifecycle capture and retrieval | distinct read and capture MCP registrations; `codex_hook.py`; managed user-prompt/stop hooks; focused setup/hook tests | Merged at source level with bounded prompt/response capture and pre-generation bootstrap. Read, capture, and explicit mutation authority remain distinct. Exact packaged/live acceptance remains open |
+| ATC-CC-M05 — one-time setup/configuration for both clients | `client_config.py`, `claude_code_config.py`, `desktop_setup.py`, `wizard.py`; transactional configure/repair/opt-out/disconnect tests | Merged false-by-default. One explicit setup choice installs managed surfaces; repeat/repair preserves unrelated settings, and successful opt-out/disconnect removes managed surfaces and retires associated authority |
+| ATC-CC-M06 — explicit remember/correct/forget controls | dedicated Core routes and exact `context:propose` plus `witness:explicit_user_statement` principal; Claude Code and Codex explicit profiles/skills; idempotency, confirmation, correction, and reversible-forget tests | Merged as a separately selected, higher-authority path. Ordinary prompts, model/tool/provider output, imports, and lifecycle capture are not reclassified as explicit durable-memory commands |
+| ATC-CC-M07 — sensitive-context and operational-secret boundaries | Core sensitivity/ACL assignment; pre-ledger secret refusal; export/log absence tests; `LocalSecretReferenceVault` OS-keyring-only raw-value boundary | Merged. Sensitive personal context may be local memory with Core ACLs; raw credentials never enter ordinary memory, retrieval, replication, export, logs, audit text, or model context. The optional raw-secret facility fails closed without an OS credential backend |
+| ATC-CC-M08 — validation, documentation, decisions, and traceability | PR #95 twelve-check result; protected-main CI run `33254733214`; CodeQL run `33254733031`; `STATUS.md`, `DECISIONS.md`, this matrix, and the zero-friction boundary documents | Exact-SHA hosted validation passed at `29b3a19113e498a73c205d12ffff41faed02baa0`. Fresh locked Python 3.12.10 local validation passed Ruff, mypy over 105 source files, the documentation checker and eight documentation contract tests, 110 focused Continuous Capture tests, and full pytest with 2,114 passed, nine platform skips, and two deprecation warnings. Exact artifact/live/release acceptance is not implied |
 
 ### 2026-08-29 Windows installed-component provenance incident
 
 | Requirement | Implementation/evidence | Status |
 |---|---|---|
-| WIN-AV-01 — endpoint-protection findings are not bypassed on outer-artifact provenance alone | Defender events 1116/1117; restored-helper Authenticode and SHA-256 inspection; beta.6 public archive checksum and release-workflow inspection; `docs/KNOWN_ISSUES.md`; ADR-166 | Open: the outer archive matches the published digest and CI provenance, but the unsigned installed MCP helper has no published component digest that independently binds it to the archive. No execution, allow-listing, malware claim, or false-positive claim is credited |
-| WIN-AV-02 — installed Windows executables are individually identifiable and signed | Future installed-component inventory covering main, MCP, recovery, and updater executables; Authenticode verification; exact-component reassessment | Not implemented. This is follow-up packaging/security work and remains outside the current Continuous Capture product PR |
+| WIN-AV-01 — endpoint-protection findings are not bypassed on outer-artifact provenance alone | Defender events 1116/1117; restored-helper Authenticode and SHA-256 inspection; beta.6 public archive checksum and release-workflow inspection; `docs/KNOWN_ISSUES.md`; ADR-166/ADR-167 | Open for beta.6: the outer archive matches its published digest and CI provenance, but that immutable release did not publish component-level bindings. The new future-candidate manifest does not retroactively bind, clear, restore, execute, or allow-list the flagged helper, and no malware or false-positive claim is credited |
+| WIN-AV-02 — installed Windows executables are individually identifiable and reassessed | `release/installed-component-manifest.schema.json`; `scripts/installed_component_manifest.py`; `scripts/package_desktop.py`; `.github/workflows/release-candidate.yml`; focused manifest and release-workflow contract tests | Source implementation prepared in this PR: a future Windows candidate archive contains canonical SHA-256/size identities for the installer and exact installed main, MCP, recovery, and updater bytes, bound to source commit/version/platform/architecture with fail-closed archive verification and non-trust-claiming Authenticode presence. A fresh candidate run, exact-component security scan, and Microsoft reassessment remain open, so the incident and recommendation gate do not close |
 
 ### 2026-08-27 opt-in client Continuous Capture
 
@@ -23,9 +35,11 @@ does not become evidence for this checkout.
 | CC-03 — narrow user formation and retrieval usefulness | `extract_live_user_claim`; `LIVE_USER_EVIDENCE`; existing storage reconciliation/retrieval; integrated adapter-to-Core test | Implemented locally for high-confidence first-person interaction preference, name, location, health, current project, goal, and workflow claims. Repeats reinforce/deduplicate and changed slot values supersede. Assistant/tool/imported content remains observation-only. This is not a general semantic extractor or live-client acceptance |
 | CC-04 — personal sensitivity and operational-secret separation | Core sensitivity/ACL assignment; refusal receipts; `LocalSecretReferenceVault`; focused ACL, export-exclusion, and secret-reference tests | Implemented locally: sensitive and highly-sensitive formed personal claims remain local and are available only to authenticated, non-denied `context:read` principals; raw sensitive lifecycle evidence stays capture-principal-bound. Operational credential values are refused before the capture/observation ledger and excluded from ordinary retrieval/replication/export/log/audit/model surfaces. Optional raw values require an opaque OS-keyring reference and plaintext fallback fails closed; automatic credential routing to the vault is not claimed |
 
-Evidence is focused and synthetic. Full pytest, hosted CI, exact packaged
-artifacts, live/private client journeys, provider support, release acceptance,
-and macOS support remain open.
+The detailed evidence above is focused and synthetic. PR #95 and protected-main
+CI exercised full pytest plus the configured lint, type, documentation,
+security, dashboard, and desktop-artifact jobs at the exact merged SHA. Exact
+packaged installation, live/private client journeys, provider support, release
+acceptance, and macOS support remain open.
 
 ### 2026-08-25 Milestone 5 graph foundation
 

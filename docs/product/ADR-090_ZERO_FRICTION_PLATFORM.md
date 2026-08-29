@@ -1,6 +1,6 @@
 # ADR-090: Adopt zero-routine-friction as the post-V1 product direction
 
-**Status:** accepted 2026-08-20.
+**Status:** accepted 2026-08-20; V1 overlap reconciled 2026-08-29 after PR #95.
 
 ## Decision
 
@@ -15,11 +15,19 @@ The normative product contract is
 evidence-ordered implementation plan is
 [`ZERO_FRICTION_EXECUTION_PLAN.md`](ZERO_FRICTION_EXECUTION_PLAN.md).
 
-This decision does not expand, block, or provide acceptance credit for
-`0.1.0-beta.6`. Continuous connectors, lifecycle-aware client hooks, the broader
-event substrate, automatic project discovery, project graphs, Project Context
-Capsules, working-state continuity, outcome learning, and remote/mobile access
-remain post-V1 behavior until separately implemented and accepted.
+This decision does not automatically expand, block, or provide acceptance
+credit for `0.1.0-beta.6`. PR #95 later brought one deliberately bounded overlap
+into the V1 source target: false-default Claude Code and Codex ordinary-turn
+capture, pre-generation retrieval, and narrow Core-owned formation after one
+explicit setup opt-in. That overlap advances the north star but does not close
+exact packaged/live client acceptance, the controlled L2 checkpoint exit in
+ZF-009, or the broader ZF-010 formation exit.
+
+Continuous source connectors, the broader lifecycle/event substrate, automatic
+project discovery, production graph promotion, working-state continuity,
+outcome learning, and remote/mobile access remain post-V1 behavior until
+separately implemented and accepted. Existing bounded Project Context Capsule
+source work is not complete platform acceptance.
 
 ## Capability-qualified promise
 

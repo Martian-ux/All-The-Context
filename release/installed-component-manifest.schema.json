@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "architecture": {
+      "const": "x86_64"
+    },
+    "component_count": {
+      "const": 4
+    },
+    "components": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "authenticode": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "not-present",
+                  "present-unverified"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "filename": {
+            "enum": [
+              "AllTheContext.exe",
+              "AllTheContextMCP.exe",
+              "AllTheContextRecovery.exe",
+              "AllTheContextUpdater.exe"
+            ],
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "mcp",
+              "recovery",
+              "updater"
+            ],
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "size": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "authenticode",
+          "filename",
+          "role",
+          "sha256",
+          "size"
+        ],
+        "type": "object"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array"
+    },
+    "manifest_type": {
+      "const": "installed-component"
+    },
+    "package": {
+      "additionalProperties": false,
+      "properties": {
+        "direct_package": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "filename": {
+          "const": "AllTheContextSetup.exe"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "size": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "direct_package",
+        "filename",
+        "sha256",
+        "size"
+      ],
+      "type": "object"
+    },
+    "platform": {
+      "const": "windows"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "source_commit": {
+      "pattern": "^[0-9a-f]{40}$",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-beta\\.[1-9][0-9]*)?$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "architecture",
+    "component_count",
+    "components",
+    "manifest_type",
+    "package",
+    "platform",
+    "schema_version",
+    "source_commit",
+    "version"
+  ],
+  "$defs": {
+    "fileDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\\.exe$",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "size": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "filename",
+        "sha256",
+        "size"
+      ],
+      "type": "object"
+    }
+  },
+  "title": "All The Context installed Windows component manifest",
+  "type": "object"
+}

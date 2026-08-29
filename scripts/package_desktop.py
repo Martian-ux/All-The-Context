@@ -16,6 +16,11 @@ from allthecontext import __version__
 from allthecontext.macos_bundle import validate_macos_bundle_links
 from allthecontext.release_manifest import ReleaseVersion, sha256_file
 
+try:
+    from scripts.installed_component_manifest import create_manifest
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from installed_component_manifest import create_manifest
+
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ROOT = ROOT / "dist" / "desktop"
 PACKAGE_ROOT = ROOT / "dist" / "platform"
@@ -52,6 +57,8 @@ adjacent SHA-256 metadata and the release's offline Ed25519 signature when the
 signed channel manifest is available. No warning bypass is performed by the
 application.
 """
+
+WINDOWS_INSTALLED_COMPONENT_PACKAGE_DIR = "installed-component-package"
 
 
 def unsigned_notice(platform_name: str) -> str:
@@ -150,6 +157,43 @@ def _write_macos_dmg(source: Path, output: Path, *, version: str) -> None:
             )
 
 
+def _stage_windows_installed_component_package(
+    package: Path,
+    *,
+    output_dir: Path,
+    source: Path,
+    version: str,
+    source_commit: str,
+) -> None:
+    """Stage the exact Windows package members covered by component provenance."""
+
+    if output_dir.exists():
+        if output_dir.is_symlink() or not output_dir.is_dir() or any(output_dir.iterdir()):
+            raise RuntimeError("installed-component package directory must be new or empty")
+    else:
+        output_dir.mkdir(parents=True)
+    archive_package = output_dir / "AllTheContextSetup.exe"
+    shutil.copy2(package, archive_package)
+    create_manifest(
+        output_dir=output_dir,
+        package_path=archive_package,
+        direct_package_path=package,
+        component_paths={
+            "main": source,
+            "mcp": ROOT / "build" / "desktop" / "helper-dist" / "AllTheContextMCP.exe",
+            "recovery": DESKTOP_ROOT / "AllTheContextRecovery.exe",
+            "updater": ROOT
+            / "build"
+            / "desktop"
+            / "update-helper-dist"
+            / "AllTheContextUpdater.exe",
+        },
+        source_root=ROOT,
+        version=version,
+        source_commit=source_commit,
+    )
+
+
 def build_platform_package(
     source: Path,
     output_dir: Path,
@@ -157,6 +201,8 @@ def build_platform_package(
     version: str,
     platform_name: str,
     architecture: str,
+    source_commit: str | None = None,
+    installed_component_output_dir: Path | None = None,
 ) -> tuple[Path, Path, Path, Path]:
     ReleaseVersion.parse(version)
     if platform_name not in PLATFORMS:
@@ -224,6 +270,17 @@ def build_platform_package(
         encoding="utf-8",
         newline="\n",
     )
+    if platform_name == "windows" and source_commit is not None:
+        _stage_windows_installed_component_package(
+            package,
+            output_dir=(
+                installed_component_output_dir
+                or output_dir.parent / WINDOWS_INSTALLED_COMPONENT_PACKAGE_DIR
+            ),
+            source=source,
+            version=version,
+            source_commit=source_commit,
+        )
     return package, checksum, notice, report
 
 
@@ -234,7 +291,18 @@ def main() -> int:
     parser.add_argument("--version", default=__version__)
     parser.add_argument("--platform", choices=sorted(PLATFORMS), required=True)
     parser.add_argument("--architecture", choices=sorted(ARCHITECTURES), required=True)
+    parser.add_argument("--source-commit")
+    parser.add_argument("--installed-component-output-dir", type=Path)
     arguments = parser.parse_args()
+    if (
+        arguments.platform == "windows"
+        and arguments.installed_component_output_dir is not None
+        and not arguments.source_commit
+    ):
+        parser.error(
+            "--source-commit is required with --installed-component-output-dir "
+            "for Windows installed-component provenance"
+        )
     source = arguments.source or default_source(arguments.platform)
     outputs = build_platform_package(
         source,
@@ -242,6 +310,8 @@ def main() -> int:
         version=arguments.version,
         platform_name=arguments.platform,
         architecture=arguments.architecture,
+        source_commit=arguments.source_commit,
+        installed_component_output_dir=arguments.installed_component_output_dir,
     )
     for output in outputs:
         print(output)
