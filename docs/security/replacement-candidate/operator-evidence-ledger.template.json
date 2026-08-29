@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "ledger_type": "replacement-candidate-operator-evidence",
+  "content_free": true,
+  "overall_status": "HOLD",
+  "candidate": {
+    "version": null,
+    "source_commit": null,
+    "candidate_sha256": null,
+    "windows_archive_sha256": null,
+    "direct_installer_sha256": null,
+    "component_manifest_sha256": null,
+    "platform": "windows",
+    "architecture": "x86_64"
+  },
+  "components": [
+    {
+      "role": "main",
+      "filename": "AllTheContext.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "mcp",
+      "filename": "AllTheContextMCP.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "recovery",
+      "filename": "AllTheContextRecovery.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "updater",
+      "filename": "AllTheContextUpdater.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    }
+  ],
+  "stages": [
+    {
+      "stage_id": "private-build",
+      "status": "HOLD",
+      "owner": "candidate-builder",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "source_version_target_bound": false,
+        "locked_source_gates_pass": false,
+        "manifest_created_and_checksummed": false,
+        "archive_and_direct_installer_match": false,
+        "main_matches_installer": false
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "independent-verification",
+      "status": "HOLD",
+      "owner": "independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "fresh_verifier_environment": false,
+        "exact_handoff_bytes_rechecked": false,
+        "manifest_archive_and_header_verified": false,
+        "provenance_or_attestation_verified": false,
+        "unsafe_input_rejected_or_absent": false
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "exact-component-scan",
+      "status": "HOLD",
+      "owner": "security-scanner",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "archive_scanned": false,
+        "direct_installer_scanned": false,
+        "main_scanned": false,
+        "mcp_scanned": false,
+        "recovery_scanned": false,
+        "updater_scanned": false,
+        "all_scan_inputs_rechecked": false,
+        "clean": false
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "microsoft-submission",
+      "status": "HOLD",
+      "owner": "maintainer",
+      "candidate_bound": false,
+      "content_free": true,
+      "submission_required": null,
+      "submission_status": "unknown",
+      "case_reference_present": false,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "microsoft-result",
+      "status": "HOLD",
+      "owner": "independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "result": "unknown",
+      "exact_component_identity_confirmed": false,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "execution-authorization",
+      "status": "HOLD",
+      "owner": "explicit-operator-decision",
+      "candidate_bound": false,
+      "content_free": true,
+      "all_prior_stages_pass": false,
+      "identity_unchanged": false,
+      "execution_authorized": false,
+      "authorization_id_present": false,
+      "closed_reason": "template_not_run"
+    }
+  ],
+  "authorization": {
+    "execution_authorized": false,
+    "authorization_id_present": false,
+    "content_free": true
+  }
+}
