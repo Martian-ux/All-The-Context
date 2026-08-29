@@ -44,7 +44,12 @@ WORKSPACE_ACKNOWLEDGEMENT_ERROR = (
 )
 WORKSPACE_ROOT_REQUIRED_ERROR = "Select a workspace folder before enabling local workspace capture."
 
-_PROGRESS_STEP_ALIASES = {"workspace": "source"}
+_PROGRESS_STEP_ALIASES = {
+    "workspace": "source",
+    "codex_capture": "client",
+    "codex_explicit": "client",
+    "claude_code_capture": "claude_code",
+}
 _PROGRESS_STATUS_COPY = {
     "vault": "Creating your private local Core",
     "credential": "Securing the desktop and MCP credential",
@@ -78,7 +83,10 @@ def build_setup_options(
     workspace_root_text: str,
     workspace_local_only_acknowledged: bool,
     configure_claude_code: bool = False,
+    configure_claude_code_continuous_capture: bool = False,
     configure_claude_code_explicit_commands: bool = False,
+    configure_codex_continuous_capture: bool = False,
+    configure_codex_explicit_commands: bool = False,
 ) -> SetupOptions:
     """Build immutable setup options from the wizard's user-entered values."""
 
@@ -99,6 +107,12 @@ def build_setup_options(
     # test double from before this opt-in field existed.
     if configure_claude_code_explicit_commands:
         setup_kwargs["configure_claude_code_explicit_commands"] = True
+    if configure_claude_code_continuous_capture:
+        setup_kwargs["configure_claude_code_continuous_capture"] = True
+    if configure_codex_continuous_capture:
+        setup_kwargs["configure_codex_continuous_capture"] = True
+    if configure_codex_explicit_commands:
+        setup_kwargs["configure_codex_explicit_commands"] = True
     return SetupOptions(
         **setup_kwargs,
     )
@@ -111,7 +125,11 @@ def progress_status_text(step: str, _message: str = "") -> str:
     return _PROGRESS_STATUS_COPY.get(canonical_step, "Continuing setup")
 
 
-def completion_body(continuous_capture_enabled: bool) -> str:
+def completion_body(
+    continuous_capture_enabled: bool,
+    *,
+    client_capture_enabled: bool = False,
+) -> str:
     """Describe the normal or continuously captured setup outcome without a path."""
 
     if continuous_capture_enabled:
@@ -121,17 +139,30 @@ def completion_body(continuous_capture_enabled: bool) -> str:
             "stays on this device. Start by bringing over your ChatGPT, Claude, or Grok history; "
             "normal retrieval and new proposals happen through MCP from then on."
         )
+    if client_capture_enabled:
+        return (
+            "Core is running privately on this device. Continuous Capture is enabled for the "
+            "selected AI client: lifecycle hooks read before generation and observe ordinary "
+            "turns without per-turn prompts. Explicit memory commands remain optional precision "
+            "overrides."
+        )
     return (
         "Core is running privately on this device. Start by bringing over your ChatGPT, Claude, "
         "or Grok history; normal retrieval and new proposals happen through MCP from then on."
     )
 
 
-def claude_code_completion_text(*, selected: bool, connected: bool) -> str:
+def claude_code_completion_text(
+    *, selected: bool, connected: bool, capture_enabled: bool = False
+) -> str:
     """Describe the separate Claude Code setup outcome without implying success."""
 
     if connected:
-        return "UserPromptSubmit hook ready"
+        return (
+            "UserPromptSubmit hook and Continuous Capture ready"
+            if capture_enabled
+            else "UserPromptSubmit hook ready"
+        )
     return "Not connected" if selected else "Not selected"
 
 
@@ -194,8 +225,11 @@ class SetupWizard:
         self.claude_detected = claude_is_detected()
         self.claude_code_detected = claude_code_is_detected()
         self.configure_codex = tk.BooleanVar(value=self.codex_detected)
+        self.configure_codex_continuous_capture = tk.BooleanVar(value=False)
+        self.configure_codex_explicit_commands = tk.BooleanVar(value=False)
         self.configure_claude = tk.BooleanVar(value=self.claude_detected)
         self.configure_claude_code = tk.BooleanVar(value=self.claude_code_detected)
+        self.configure_claude_code_continuous_capture = tk.BooleanVar(value=False)
         self.configure_claude_code_explicit_commands = tk.BooleanVar(value=False)
         self.start_at_login = tk.BooleanVar(value=True)
         self.workspace_root = tk.StringVar(value="")
@@ -204,7 +238,10 @@ class SetupWizard:
         self.progress_rows: dict[str, tuple[tk.Label, tk.Label]] = {}
         self.skipped_progress_steps: set[str] = set()
         self.claude_code_requested = False
+        self.claude_code_capture_requested = False
         self.claude_code_explicit_requested = False
+        self.codex_capture_requested = False
+        self.codex_explicit_requested = False
 
         self._configure_window()
         self._build_shell()
@@ -567,6 +604,28 @@ class SetupWizard:
             enabled=self.codex_detected,
         )
         self._check(
+            "Enable Continuous Capture for Codex",
+            (
+                "One-time opt-in: lifecycle hooks automatically read before generation and "
+                "capture direct turns and responses afterward; ordinary turns need no prompts."
+                if self.codex_detected
+                else "Codex was not found."
+            ),
+            self.configure_codex_continuous_capture,
+            enabled=self.codex_detected,
+        )
+        self._check(
+            "Enable Codex precision commands",
+            (
+                "Adds explicit-only atc-remember, atc-correct, and atc-forget skills. Each "
+                "mutation remains separately approval-gated."
+                if self.codex_detected
+                else "Codex was not found."
+            ),
+            self.configure_codex_explicit_commands,
+            enabled=self.codex_detected,
+        )
+        self._check(
             "Connect Claude Desktop",
             (
                 "Adds the same private local Core while preserving every existing Claude setting."
@@ -579,7 +638,8 @@ class SetupWizard:
         self._check(
             "Connect Claude Code",
             (
-                "Adds a separate UserPromptSubmit pre-generation hook through the private Core."
+                "Adds a read-only UserPromptSubmit pre-generation hook through the private Core; "
+                "capture is a separate one-time choice."
                 if self.claude_code_detected
                 else "Claude Code was not found. Install it, then rerun setup to connect it."
             ),
@@ -587,11 +647,23 @@ class SetupWizard:
             enabled=self.claude_code_detected,
         )
         self._check(
+            "Enable Continuous Capture for Claude Code",
+            (
+                "One-time opt-in: lifecycle hooks capture ordinary prompts and responses without "
+                "per-turn prompts; retrieval stays automatic."
+                if self.claude_code_detected
+                else "Claude Code was not found."
+            ),
+            self.configure_claude_code_continuous_capture,
+            enabled=self.claude_code_detected,
+        )
+        self._check(
             "Enable explicit Claude Code memory commands",
             (
                 "Opt in to explicitly confirmed /atc-remember, /atc-correct, and "
                 "/atc-forget commands. Every write requires native exact-payload approval; "
-                "ordinary prompts remain read-only and are never captured."
+                "Continuous Capture is a separate one-time choice, and these commands "
+                "remain high-authority precision overrides."
                 if self.claude_code_detected
                 else "Claude Code was not found."
             ),
@@ -618,7 +690,10 @@ class SetupWizard:
                 workspace_root_text=self.workspace_root.get(),
                 workspace_local_only_acknowledged=self.workspace_local_only_acknowledged.get(),
                 configure_claude_code=self.configure_claude_code.get(),
+                configure_claude_code_continuous_capture=self.configure_claude_code_continuous_capture.get(),
                 configure_claude_code_explicit_commands=self.configure_claude_code_explicit_commands.get(),
+                configure_codex_continuous_capture=self.configure_codex_continuous_capture.get(),
+                configure_codex_explicit_commands=self.configure_codex_explicit_commands.get(),
             )
         except (RuntimeError, ValueError) as error:
             messagebox.showerror("Workspace choice required", str(error), parent=self.root)
@@ -626,6 +701,11 @@ class SetupWizard:
         self._clear()
         self._set_step(2)
         self.claude_code_requested = options.configure_claude_code
+        self.claude_code_capture_requested = getattr(
+            options, "configure_claude_code_continuous_capture", False
+        )
+        self.codex_capture_requested = getattr(options, "configure_codex_continuous_capture", False)
+        self.codex_explicit_requested = getattr(options, "configure_codex_explicit_commands", False)
         self.claude_code_explicit_requested = getattr(
             options, "configure_claude_code_explicit_commands", False
         )
@@ -640,6 +720,8 @@ class SetupWizard:
         self.skipped_progress_steps = set()
         if not options.configure_claude_code:
             self.skipped_progress_steps.add("claude_code")
+        if not self.claude_code_capture_requested:
+            self.skipped_progress_steps.add("claude_code_capture")
         if not self.claude_code_explicit_requested:
             self.skipped_progress_steps.add("claude_code_explicit")
         progress_steps = [
@@ -649,12 +731,22 @@ class SetupWizard:
         progress_steps.extend(
             (
                 ("client", "MCP client connection"),
+                ("codex_capture", "Codex Continuous Capture")
+                if self.codex_capture_requested
+                else ("", ""),
+                ("codex_explicit", "Codex precision commands")
+                if self.codex_explicit_requested
+                else ("", ""),
                 ("claude_code", "Claude Code hook"),
+                ("claude_code_capture", "Claude Code Continuous Capture")
+                if self.claude_code_capture_requested
+                else ("", ""),
                 ("claude_code_explicit", "Claude Code explicit commands"),
                 ("startup", "Background startup"),
                 ("core", "Core health check"),
             )
         )
+        progress_steps = [item for item in progress_steps if item[0]]
         if self.workspace_root.get().strip():
             progress_steps.append(("source", "Local workspace source"))
         for key, label in progress_steps:
@@ -750,7 +842,10 @@ class SetupWizard:
         self._heading(
             "You're ready.",
             completion_body(
-                bool(self.result and getattr(self.result, "continuous_capture_enabled", False))
+                bool(self.result and getattr(self.result, "continuous_capture_enabled", False)),
+                client_capture_enabled=bool(
+                    self.result and getattr(self.result, "continuous_capture_clients", ())
+                ),
             ),
         )
         summary = tk.Frame(self.content, bg=PAPER)
@@ -772,14 +867,41 @@ class SetupWizard:
                 claude_code_completion_text(
                     selected=self.claude_code_requested,
                     connected=bool(self.result and self.result.claude_code),
+                    capture_enabled=self.claude_code_capture_requested
+                    and bool(
+                        self.result
+                        and "Claude Code" in getattr(self.result, "continuous_capture_clients", ())
+                    ),
                 ),
             ),
             (
                 "Memory commands",
+                (
+                    "Enabled"
+                    if self.claude_code_explicit_requested
+                    and bool(self.result and getattr(self.result, "claude_code_explicit", None))
+                    else ("Not connected" if self.claude_code_explicit_requested else "Not enabled")
+                ),
+            ),
+            (
+                "Codex capture",
                 "Enabled"
-                if self.claude_code_explicit_requested
-                and bool(self.result and getattr(self.result, "claude_code_explicit", None))
-                else ("Not connected" if self.claude_code_explicit_requested else "Not enabled"),
+                if self.codex_capture_requested
+                and bool(
+                    self.result
+                    and "Codex" in getattr(self.result, "continuous_capture_clients", ())
+                )
+                else ("Not connected" if self.codex_capture_requested else "Not enabled"),
+            ),
+            (
+                "Claude capture",
+                "Enabled"
+                if self.claude_code_capture_requested
+                and bool(
+                    self.result
+                    and "Claude Code" in getattr(self.result, "continuous_capture_clients", ())
+                )
+                else ("Not connected" if self.claude_code_capture_requested else "Not enabled"),
             ),
             (
                 "Startup",

@@ -25,9 +25,11 @@ from .memory_policy import (
     REGISTERED_SOURCE_TYPE,
     UNKEYED_CONFLICT_KINDS,
     AutomaticMemoryPolicy,
+    LiveUserClaim,
     MemoryPolicy,
     ObservationOrigin,
     archive_lineage_key,
+    classify_sensitivity,
     normalized_observation_text,
     registered_source_reference,
 )
@@ -40,6 +42,7 @@ from .models import (
     Availability,
     CandidateInput,
     CandidateOut,
+    CaptureEventRequest,
     ClientCreate,
     ContextRecordOut,
     CoverageReport,
@@ -68,6 +71,7 @@ from .secret_boundary import (
     opaque_operation_id,
 )
 from .security import (
+    CONTEXT_CAPTURE,
     ClientPrincipal,
     generate_token,
     hash_token,
@@ -830,7 +834,7 @@ class CoreStore:
                 int(row["version"])
                 for row in connection.execute("SELECT version FROM schema_migrations")
             }
-            capture_migration_versions = (15, 16, 17)
+            capture_migration_versions = (15, 16, 17, 18)
             for migration in migrations:
                 version = int(migration.name.split("_", 1)[0])
                 if version in applied:
@@ -2401,7 +2405,7 @@ class CoreStore:
                     (source_id,),
                 ).fetchall()
                 return {
-                    "source_id": source_id,
+                    "source_id": None,
                     "deleted_at": str(source["deleted_at"]),
                     "reason": "source_deleted",
                     "deleted_record_ids": [str(row["record_id"]) for row in member_rows],
@@ -3317,13 +3321,44 @@ class CoreStore:
     def revoke_client(self, client_id: str) -> None:
         vault_id = self.vault_id()
         with self.transaction() as connection:
+            now = utc_now()
             result = connection.execute(
                 "UPDATE client_registrations SET revoked_at=? "
                 "WHERE id=? AND vault_id=? AND revoked_at IS NULL",
-                (utc_now(), client_id, vault_id),
+                (now, client_id, vault_id),
             )
             if result.rowcount != 1:
                 raise NotFoundError("client not found or already revoked")
+
+            # Client-runtime capture is owned by the capture principal.  Keep
+            # revocation and the corresponding source shutdown in one write
+            # transaction so a revoked principal can never leave an enabled
+            # source or an active lease behind.
+            source_rows = connection.execute(
+                "SELECT id FROM capture_sources WHERE vault_id=? AND client_principal_id=?",
+                (vault_id, client_id),
+            ).fetchall()
+            source_ids = tuple(str(row["id"]) for row in source_rows)
+            if not source_ids:
+                return
+            placeholders = ",".join("?" for _ in source_ids)
+            connection.execute(
+                f"UPDATE capture_runs SET state='abandoned',"
+                "error_code='capture_disconnected',completed_at=?,lease_expires_at=? "
+                f"WHERE source_id IN ({placeholders}) AND state='running'",
+                (now, now, *source_ids),
+            )
+            connection.execute(
+                f"UPDATE capture_checkpoints SET pending_generation=NULL,pending_cursor=NULL,"
+                f"pending_event_ids_json=NULL,updated_at=? WHERE source_id IN ({placeholders})",
+                (now, *source_ids),
+            )
+            connection.execute(
+                f"UPDATE capture_sources SET lifecycle_state='revoked',credential_ref=NULL,"
+                f"next_retry_at=NULL,last_error_code='capture_disconnected',last_error_at=?,"
+                f"updated_at=? WHERE vault_id=? AND id IN ({placeholders})",
+                (now, now, vault_id, *source_ids),
+            )
 
     def begin_ingestion(
         self,
@@ -3576,6 +3611,343 @@ class CoreStore:
                 session_id=session_id,
                 client=client,
             )
+
+    @staticmethod
+    def client_capture_source_id(client_id: str) -> str:
+        """Derive an opaque, stable source ID from a registered principal ID."""
+
+        return "client-capture-" + _hash_text(client_id)
+
+    def build_client_capture_candidate(
+        self,
+        *,
+        event: Any,
+        request: CaptureEventRequest,
+        sensitivity: Sensitivity,
+        principal: ClientPrincipal,
+        source_id: str,
+        observed_at: str,
+    ) -> CandidateInput:
+        """Build the Core-owned candidate shape from a validated lifecycle event."""
+
+        del principal
+        role = event.payload.get("role")
+        content = event.payload.get("content")
+        if role not in {"user", "assistant", "tool", "imported"} or not isinstance(content, str):
+            raise InvalidStateError("capture event payload is invalid")
+        if role != request.role or content != request.content:
+            raise ConflictError("capture event content does not match the request")
+        hook = event.payload.get("hook")
+        witness = event.payload.get("witness")
+        if not isinstance(hook, str) or not isinstance(witness, str):
+            raise InvalidStateError("capture event provenance is invalid")
+        return CandidateInput(
+            kind={
+                "user": "captured_user_turn",
+                "assistant": "captured_assistant_response",
+                "tool": "captured_tool_result",
+                "imported": "captured_imported_text",
+            }[role],
+            content=content,
+            structured_value={
+                "capture_role": role,
+                "conversation_id": request.conversation_id,
+                "hook": hook,
+                "session_id": request.session_id,
+                "witness": witness,
+            },
+            source_id=None,
+            source_reference=(
+                "client-capture-event-" + _hash_text(f"{source_id}\0{request.event_id}")
+            ),
+            source_service="allthecontext-core",
+            source_type="client_capture",
+            evidence=f"Core-owned lifecycle capture; hook={hook}; witness={witness}",
+            confidence=1.0,
+            sensitivity=sensitivity,
+            availability=Availability.LOCAL,
+            observed_at=observed_at,
+            idempotency_key=request.idempotency_key,
+        )
+
+    def build_live_user_candidate(
+        self,
+        *,
+        request: CaptureEventRequest,
+        claim: LiveUserClaim,
+        sensitivity: Sensitivity,
+        principal: ClientPrincipal,
+        source_id: str,
+        observed_at: str,
+    ) -> CandidateInput:
+        """Build a Core-only durable candidate from a formed user claim."""
+
+        del principal
+        if request.role != "user":
+            raise InvalidStateError("only user turns may form live user evidence")
+        return CandidateInput(
+            kind=claim.kind,
+            content=claim.content,
+            structured_value={
+                "capture_role": "user",
+                "formation": "live-user-evidence-v1",
+                **claim.structured_value,
+            },
+            entity_key="user",
+            attribute_key=claim.attribute_key,
+            source_id=None,
+            source_reference=(
+                "client-capture-formation-" + _hash_text(f"{source_id}\0{request.event_id}")
+            ),
+            source_service="allthecontext-core",
+            source_type="client_capture_formation",
+            evidence="Core-formed live user evidence from a direct user turn",
+            confidence=1.0,
+            sensitivity=sensitivity,
+            availability=Availability.LOCAL,
+            # Formed personal memory is shared through the authenticated local
+            # read boundary. The capture principal intentionally has no read
+            # capability, so binding the record to it would make the memory
+            # unreachable from the separately provisioned read principal.
+            allowed_clients=[],
+            denied_clients=[],
+            observed_at=observed_at,
+            explicit_user_statement=False,
+            idempotency_key=request.idempotency_key + ":formed",
+        )
+
+    def record_client_capture(
+        self,
+        *,
+        event: Any,
+        candidate: CandidateInput,
+        principal: ClientPrincipal,
+        formed_candidate: CandidateInput | None = None,
+    ) -> tuple[CandidateOut, bool, str]:
+        """Atomically stage, form, and bind one client event to one observation."""
+
+        if (
+            contains_secret_like_value(event.payload)
+            or contains_direct_secret(candidate)
+            or (formed_candidate is not None and contains_direct_secret(formed_candidate))
+        ):
+            raise InvalidStateError("direct secret-like content cannot enter the capture ledger")
+        from .capture import CaptureLedger
+
+        with self.transaction() as connection:
+            registered = self._policy_principal_tx(connection, principal)
+            if (
+                registered is None
+                or registered.id != principal.id
+                or not (
+                    CONTEXT_CAPTURE in registered.scopes
+                    or "admin" in registered.scopes
+                    or "*" in registered.scopes
+                )
+            ):
+                raise InvalidStateError("capture principal is not registered for capture")
+            source_id = self.client_capture_source_id(registered.id)
+            source = connection.execute(
+                "SELECT client_principal_id,provider,local_only,"
+                "local_only_acknowledged,lifecycle_state FROM capture_sources WHERE id=?",
+                (source_id,),
+            ).fetchone()
+            now = utc_now()
+            if source is None:
+                connection.execute(
+                    "INSERT INTO capture_sources"
+                    "(id,vault_id,provider,account_label,account_fingerprint,"
+                    "requested_scopes_json,local_only,local_only_acknowledged,lifecycle_state,"
+                    "credential_ref,retry_count,lag_events,lag_pages,created_at,updated_at,"
+                    "client_principal_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        source_id,
+                        self.vault_id(),
+                        "client-runtime",
+                        "registered-client",
+                        registered.id,
+                        _json(["conversation"]),
+                        1,
+                        1,
+                        "enabled",
+                        None,
+                        0,
+                        0,
+                        0,
+                        now,
+                        now,
+                        registered.id,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO capture_checkpoints(source_id,generation,updated_at) "
+                    "VALUES(?,?,?)",
+                    (source_id, 0, now),
+                )
+            elif (
+                str(source["client_principal_id"]) != registered.id
+                or str(source["provider"]) != "client-runtime"
+                or not bool(source["local_only"])
+                or not bool(source["local_only_acknowledged"])
+                or str(source["lifecycle_state"]) != "enabled"
+            ):
+                raise InvalidStateError("client capture source is not enabled")
+
+            payload_json, payload_hash = event.normalized()
+            del payload_json
+            event_id, replayed, _attempts = CaptureLedger._stage_event_tx(
+                connection,
+                source_id=source_id,
+                event=event,
+                now=now,
+                idempotency_key=candidate.idempotency_key,
+            )
+            if replayed:
+                row = connection.execute(
+                    "SELECT * FROM context_candidates WHERE capture_event_id=? "
+                    "ORDER BY CASE WHEN source_type='client_capture_formation' THEN 0 ELSE 1 END,"
+                    "created_at,id LIMIT 1",
+                    (event_id,),
+                ).fetchone()
+                if row is None:
+                    raise ConflictError("capture event has no bound observation")
+                return self._candidate_out(row), True, event_id
+
+            role = event.payload.get("role")
+            if role not in {"user", "assistant", "tool", "imported"}:
+                raise InvalidStateError("capture event role is invalid")
+            content = event.payload.get("content")
+            if not isinstance(content, str) or content != candidate.content:
+                raise ConflictError("capture event content does not match the observation")
+            sensitivity = classify_sensitivity(content)
+            core_candidate = candidate.model_copy(
+                update={
+                    "kind": {
+                        "user": "captured_user_turn",
+                        "assistant": "captured_assistant_response",
+                        "tool": "captured_tool_result",
+                        "imported": "captured_imported_text",
+                    }[role],
+                    "source_id": None,
+                    "source_reference": (
+                        "client-capture-event-"
+                        + _hash_text(f"{source_id}\0{event.provider_event_id}")
+                    ),
+                    "source_service": "allthecontext-core",
+                    "source_type": "client_capture",
+                    "evidence": "Core-owned lifecycle capture observation",
+                    "scopes": [],
+                    "tags": [],
+                    "confidence": 1.0,
+                    "sensitivity": sensitivity,
+                    "availability": Availability.LOCAL,
+                    "allowed_clients": (
+                        [registered.id] if sensitivity != Sensitivity.NORMAL else []
+                    ),
+                    "denied_clients": [],
+                    "supersedes": None,
+                    "explicit_user_statement": False,
+                }
+            )
+            binding_hash = _hash_text(
+                _json(
+                    [
+                        "client-capture-binding-v1",
+                        source_id,
+                        event_id,
+                        candidate.idempotency_key,
+                        payload_hash,
+                    ]
+                )
+            )
+            candidate_id = self._insert_candidate(
+                connection,
+                core_candidate,
+                None,
+                registered,
+                capture_source_id=source_id,
+                capture_event_id=event_id,
+                capture_binding_hash=binding_hash,
+            )
+            raw_created = self._evaluate_observation_tx(
+                connection,
+                candidate_id,
+                origin=ObservationOrigin.CLIENT_CAPTURE,
+                actor=registered.id,
+                principal=registered,
+            )
+            created = raw_created
+            if formed_candidate is not None:
+                if event.payload.get("role") != "user":
+                    raise InvalidStateError("only user turns may form live user evidence")
+                if (
+                    formed_candidate.entity_key != "user"
+                    or formed_candidate.kind
+                    not in {
+                        "interaction_preference",
+                        "name",
+                        "personal_context",
+                        "project",
+                        "goal",
+                        "workflow",
+                    }
+                    or not formed_candidate.attribute_key
+                ):
+                    raise InvalidStateError("formed live user evidence is invalid")
+                formed_sensitivity = classify_sensitivity(formed_candidate.content)
+                core_formed_candidate = formed_candidate.model_copy(
+                    update={
+                        "source_id": None,
+                        "source_reference": (
+                            "client-capture-formation-"
+                            + _hash_text(f"{source_id}\0{event.provider_event_id}")
+                        ),
+                        "source_service": "allthecontext-core",
+                        "source_type": "client_capture_formation",
+                        "evidence": "Core-formed live user evidence from a direct user turn",
+                        "scopes": [],
+                        "tags": [],
+                        "confidence": 1.0,
+                        "sensitivity": formed_sensitivity,
+                        "availability": Availability.LOCAL,
+                        # Keep the raw sensitive turn capture-principal-bound,
+                        # but expose the formed local memory to authenticated
+                        # non-denied context readers. Operational credentials
+                        # are refused before either candidate is persisted.
+                        "allowed_clients": [],
+                        "denied_clients": [],
+                        "supersedes": None,
+                        "explicit_user_statement": False,
+                        "idempotency_key": (
+                            candidate.idempotency_key + ":formed"
+                            if candidate.idempotency_key is not None
+                            else None
+                        ),
+                    }
+                )
+                formed_id = self._insert_candidate(
+                    connection,
+                    core_formed_candidate,
+                    None,
+                    registered,
+                    capture_source_id=source_id,
+                    capture_event_id=event_id,
+                    capture_binding_hash=binding_hash,
+                )
+                created = self._evaluate_observation_tx(
+                    connection,
+                    formed_id,
+                    origin=ObservationOrigin.LIVE_USER_EVIDENCE,
+                    actor=registered.id,
+                    principal=registered,
+                )
+            receipt = "capture-observation-" + _hash_text(f"{source_id}\0{event_id}")
+            connection.execute(
+                "UPDATE capture_events SET status='applied',application_receipt=?,"
+                "error_code=NULL,applied_at=? WHERE id=? AND source_id=?",
+                (receipt, now, event_id, source_id),
+            )
+            return created, False, event_id
 
     def _add_candidate_tx(
         self,
@@ -5422,7 +5794,9 @@ class CoreStore:
                 (IngestionMode.ARCHIVE.value, min(max(limit, 1), 100_000)),
             ).fetchall()
             for row in rows:
-                if str(row["source_type"] or "") == "queued_proposal":
+                if str(row["source_type"] or "") == "client_capture":
+                    origin = ObservationOrigin.CLIENT_CAPTURE
+                elif str(row["source_type"] or "") == "queued_proposal":
                     origin = ObservationOrigin.RELAY_QUEUE
                 elif str(row["mode"] or "") == IngestionMode.ARCHIVE.value:
                     origin = ObservationOrigin.ARCHIVE_IMPORT

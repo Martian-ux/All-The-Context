@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from allthecontext import claude_code_config
+from allthecontext import claude_code_config, desktop_setup
 from allthecontext import client_config as client_config_module
 from allthecontext.capture_runtime import scheduler_config_path
 from allthecontext.capture_scheduler import (
@@ -30,7 +30,10 @@ from allthecontext.desktop_setup import (
     CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
     CLAUDE_CODE_EXPLICIT_SCOPES,
     CLAUDE_CODE_SCOPES,
+    CODEX_CAPTURE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
+    CODEX_EXPLICIT_CLIENT_NAME,
+    CODEX_READ_SCOPES,
     DESKTOP_CLIENT_NAME,
     DESKTOP_SCOPES,
     MAX_CORE_PROBE_RESPONSE_BYTES,
@@ -241,6 +244,67 @@ def test_revoked_client_cleanup_tolerates_missing_linux_secret_service(
     retired = next(item for item in store.list_clients() if item["id"] == stale.id)
     assert retired["revoked"] is True
     assert fallback.get(f"client:{stale.id}") is None
+
+
+def test_revoke_managed_clients_revokes_all_before_partial_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = CoreConfig.in_directory(tmp_path / "core")
+    store = CoreStore(config.database_path)
+    store.initialize_vault()
+    managed = [
+        store.create_client(ClientCreate(name=name, scopes=AI_CLIENT_SCOPES))[0]
+        for name in (
+            CODEX_CLIENT_NAME,
+            CODEX_CAPTURE_CLIENT_NAME,
+            CODEX_EXPLICIT_CLIENT_NAME,
+        )
+    ]
+    unrelated, _token = store.create_client(
+        ClientCreate(name="Unrelated integration", scopes=AI_CLIENT_SCOPES)
+    )
+    cleanup_attempts: list[str] = []
+    failed_once = False
+
+    def delete_with_one_failure(client_id: str, _config: CoreConfig) -> None:
+        nonlocal failed_once
+        cleanup_attempts.append(client_id)
+        if client_id == managed[0].id and not failed_once:
+            failed_once = True
+            raise RuntimeError("synthetic credential cleanup failure")
+
+    monkeypatch.setattr(desktop_setup, "delete_client_credential", delete_with_one_failure)
+
+    with pytest.raises(RuntimeError, match="credential cleanup was incomplete"):
+        desktop_setup.revoke_managed_clients(
+            store,
+            config,
+            managed_client_ids=(client.id for client in managed),
+            managed_names=(
+                CODEX_CLIENT_NAME,
+                CODEX_CAPTURE_CLIENT_NAME,
+                CODEX_EXPLICIT_CLIENT_NAME,
+            ),
+        )
+
+    rows = {row["id"]: row for row in store.list_clients()}
+    assert all(rows[client.id]["revoked"] for client in managed)
+    assert rows[unrelated.id]["revoked"] is False
+    assert set(cleanup_attempts) == {client.id for client in managed}
+    assert (
+        desktop_setup.revoke_managed_clients(
+            store,
+            config,
+            managed_client_ids=(),
+            managed_names=(
+                CODEX_CLIENT_NAME,
+                CODEX_CAPTURE_CLIENT_NAME,
+                CODEX_EXPLICIT_CLIENT_NAME,
+            ),
+        )
+        == ()
+    )
+    assert cleanup_attempts.count(managed[0].id) == 2
 
 
 def test_null_keyring_without_explicit_fallback_fails_closed(
@@ -518,7 +582,7 @@ def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_e
         "ATC_CORE_COMMAND",
         "ATC_CORE_DATA_DIR",
     }
-    assert managed["env"]["ATC_MCP_PROFILE"] == "claude_code_hook"
+    assert managed["env"]["ATC_MCP_PROFILE"] == "claude_code_read"
     assert managed["env"]["ATC_CLIENT_TOKEN"]
     assert managed["env"]["ATC_AUTO_START_CORE"] == "1"
     assert managed["env"]["ATC_CORE_COMMAND"] == json.dumps(runtime.core(), ensure_ascii=False)
@@ -828,7 +892,7 @@ def test_existing_legacy_admin_config_is_repaired_and_rotated(tmp_path: Path, mo
     assert managed["env"]["ATC_CORE_DATA_DIR"] == str(config.data_dir)
     mcp_principal = store.authenticate(managed["env"]["ATC_CLIENT_TOKEN"])
     assert mcp_principal is not None
-    assert mcp_principal.scopes == frozenset(AI_CLIENT_SCOPES)
+    assert mcp_principal.scopes == frozenset(CODEX_READ_SCOPES)
     assert replacement.client_id != desktop_access.client_id
     assert store.authenticate(desktop_access.token) is None
     assert store.authenticate(replacement.token) is not None

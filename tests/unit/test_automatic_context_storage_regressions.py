@@ -161,8 +161,8 @@ def test_migration_005_recovers_after_partial_application_and_restart(
         )
 
     store = CoreStore(database)
-    assert store.migrate() == 17
-    assert store.migrate() == 17
+    assert store.migrate() == 18
+    assert store.migrate() == 18
 
     with store.connect() as connection:
         assert (
@@ -216,8 +216,8 @@ def test_memory_truth_migrations_recover_after_unrecorded_alter_and_restart(
         connection.execute("ALTER TABLE context_candidates ADD COLUMN record_key TEXT")
 
     restarted = CoreStore(database)
-    assert restarted.migrate() == 17
-    assert restarted.migrate() == 17
+    assert restarted.migrate() == 18
+    assert restarted.migrate() == 18
     with restarted.connect() as connection:
         candidate_columns = {
             str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")

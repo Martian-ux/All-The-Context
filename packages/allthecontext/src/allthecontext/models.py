@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
@@ -20,12 +21,18 @@ from pydantic import (
     model_validator,
 )
 
+from .lifecycle_contract import MAX_LIFECYCLE_CONTENT_BYTES, MAX_LIFECYCLE_CONTENT_CHARS
+
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
 MAX_CLAUDE_CODE_MEMORY_CHARS = 8_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
+# Keep the public model name for callers while deriving it from the shared
+# lifecycle contract used by provider hooks and the runtime adapter.
+MAX_CAPTURE_EVENT_CONTENT_CHARS = MAX_LIFECYCLE_CONTENT_CHARS
+MAX_CAPTURE_EVENT_REFERENCE_CHARS = 128
 MAX_CLOSED_COVERAGE_COUNT = 2_147_483_647
 CLOSED_COVERAGE_KEYS = (
     "recognized",
@@ -117,6 +124,66 @@ def _normalized_timestamp(value: str | None) -> str | None:
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+CaptureRole = Literal["user", "assistant", "tool", "imported"]
+_CAPTURE_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+?=&%-]{0,127}$")
+_CAPTURE_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+class CaptureEventRequest(StrictModel):
+    """Strict client-runtime capture input with Core-owned authority fields.
+
+    Role is evidence metadata, not a truth or authorization claim. Sensitivity,
+    ACL, source identity, provenance, and explicitness are intentionally absent
+    from this wire shape and are assigned by Core.
+    """
+
+    schema_version: StrictInt = Field(default=1, ge=1, le=1)
+    event_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
+    idempotency_key: StrictStr = Field(min_length=1, max_length=36)
+    session_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
+    conversation_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
+    sequence: StrictInt = Field(ge=1, le=(1 << 63) - 1)
+    role: CaptureRole
+    content: StrictStr = Field(
+        min_length=1,
+        max_length=MAX_CAPTURE_EVENT_CONTENT_CHARS,
+    )
+    observed_at: str | None = Field(default=None, max_length=100)
+
+    @field_validator("event_id", "session_id", "conversation_id")
+    @classmethod
+    def validate_capture_reference(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or _CAPTURE_REFERENCE_RE.fullmatch(normalized) is None:
+            raise ValueError("capture references must be bounded opaque identifiers")
+        return normalized
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_capture_idempotency(cls, value: str) -> str:
+        try:
+            parsed = UUID(value)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("capture idempotency_key must be UUIDv4") from exc
+        if parsed.version != 4 or str(parsed) != value.casefold():
+            raise ValueError("capture idempotency_key must be canonical UUIDv4")
+        return str(parsed)
+
+    @field_validator("content")
+    @classmethod
+    def validate_capture_content(cls, value: str) -> str:
+        if not value.strip() or _CAPTURE_CONTROL_RE.search(value) is not None:
+            raise ValueError("capture content is empty or contains control characters")
+        if len(value.encode("utf-8")) > MAX_LIFECYCLE_CONTENT_BYTES:
+            raise ValueError("capture content exceeds its byte bound")
+        return value
+
+    @field_validator("observed_at")
+    @classmethod
+    def normalize_capture_timestamp(cls, value: str | None) -> str | None:
+        return _normalized_timestamp(value)
 
 
 class Availability(StrEnum):

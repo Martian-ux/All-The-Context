@@ -113,7 +113,7 @@ export interface ClientRegistration {
 }
 
 export interface DesktopIntegration {
-  id: "chatgpt_codex" | "claude";
+  id: "chatgpt_codex" | "claude" | "claude_code";
   name: string;
   detected: boolean;
   install_url: string;

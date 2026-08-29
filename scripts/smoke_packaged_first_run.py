@@ -177,11 +177,11 @@ def stop_core(base_url: str, admin_token: str) -> None:
     raise RuntimeError("installed Core did not shut down within ten seconds")
 
 
-def wait_for_core(base_url: str, token: str) -> None:
+def wait_for_core(base_url: str, admin_token: str) -> None:
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         try:
-            if api_request(f"{base_url}/v1/context/status", token).get("core_online") is True:
+            if api_request(f"{base_url}/v1/context/status", admin_token).get("core_online") is True:
                 return
         except (OSError, httpx.HTTPError):
             pass
@@ -349,6 +349,26 @@ def run_packaged_rollback_smoke(
     )
 
 
+_PACKAGED_MCP_PROFILE = "codex_read"
+_PACKAGED_MCP_TOOLS = frozenset(
+    {"bootstrap_context", "context_status", "get_context_item", "search_context"}
+)
+
+
+def validate_packaged_mcp_surface(profile: str, names: set[str]) -> None:
+    """Require the packaged Codex connection to remain exactly read-only."""
+
+    if profile != _PACKAGED_MCP_PROFILE:
+        raise RuntimeError("packaged MCP did not use the managed read-only profile")
+    missing = _PACKAGED_MCP_TOOLS - names
+    unexpected = names - _PACKAGED_MCP_TOOLS
+    if missing or unexpected:
+        raise RuntimeError(
+            "packaged MCP tool surface did not match the read-only profile: "
+            f"missing={sorted(missing)}; unexpected={sorted(unexpected)}"
+        )
+
+
 async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> None:
     async with (
         stdio_client(parameters, errlog=errlog) as streams,
@@ -357,14 +377,14 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
         await session.initialize()
         tools = await session.list_tools()
         names = {tool.name for tool in tools.tools}
-        required = {"context_status", "bootstrap_context", "propose_memory"}
-        if not names.issuperset(required):
-            raise RuntimeError(f"packaged MCP tools are missing: {sorted(required - names)}")
-        status = await session.call_tool("context_status", {})
-        if status.is_error is True or not status.structured_content:
-            raise RuntimeError(f"packaged MCP status failed: {status}")
-        if status.structured_content.get("core_online") is not True:
-            raise RuntimeError(f"packaged MCP did not reach Core: {status.structured_content}")
+        profile = str((parameters.env or {}).get("ATC_MCP_PROFILE", ""))
+        validate_packaged_mcp_surface(profile, names)
+        searched = await session.call_tool(
+            "search_context",
+            {"query": "packaged smoke readiness", "limit": 1},
+        )
+        if searched.is_error is True or searched.structured_content is None:
+            raise RuntimeError("packaged read-only MCP query failed")
 
 
 def redact_smoke_diagnostic_text(value: str) -> str:
@@ -932,7 +952,10 @@ def main() -> int:
         if json.loads(browser_content.decode("utf-8")).get("core_online") is not True:
             raise SystemExit("browser session did not authenticate to Core")
 
-        status = api_request(f"{base_url}/v1/context/status", token)
+        # The MCP principal is deliberately read-only. Use the separately
+        # retained disposable desktop administrator for readiness probes;
+        # exercise_mcp below proves the MCP credential itself works.
+        status = api_request(f"{base_url}/v1/context/status", admin_token)
         if status.get("core_online") is not True:
             raise SystemExit(f"installed Core status was not ready: {status}")
         updates = api_request(f"{base_url}/v1/admin/updates", admin_token)
@@ -997,7 +1020,7 @@ def main() -> int:
             "validate-reopen-credentials",
             "reopen_credential_storage_changed",
         )
-    if api_request(f"{base_url}/v1/context/status", token).get("core_online") is not True:
+    if api_request(f"{base_url}/v1/context/status", admin_token).get("core_online") is not True:
         fail_smoke("validate-reopen-core", "reopened_core_not_ready")
     stop_core(base_url, admin_token)
 
@@ -1034,7 +1057,7 @@ def main() -> int:
             check=True,
             timeout=180,
         )
-        wait_for_core(base_url, token)
+        wait_for_core(base_url, admin_token)
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
             raise SystemExit("packaged updater did not commit after crash recovery")
         stop_core(base_url, admin_token)
@@ -1059,7 +1082,7 @@ def main() -> int:
             journal=rollback_journal,
             environment=rollback_environment,
         )
-        wait_for_core(base_url, token)
+        wait_for_core(base_url, admin_token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
         if rollback_status.get("phase") != "rolled_back":
             raise SystemExit(f"packaged updater did not roll back: {rollback_status}")

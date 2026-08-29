@@ -171,6 +171,87 @@ def test_registered_client_lookup_is_scoped_to_the_authoritative_vault(
         core.store.revoke_client(principal.id)
 
 
+def test_revoke_capture_client_disables_source_checkpoint_and_lease_atomically(
+    core: CoreService,
+) -> None:
+    principal, _token = core.store.create_client(
+        ClientCreate(name="capture-client", scopes=["context:capture"])
+    )
+    source_id = core.store.client_capture_source_id(principal.id)
+    now = "2026-01-01T00:00:00.000000Z"
+    with core.store.transaction() as connection:
+        connection.execute(
+            "INSERT INTO capture_sources"
+            "(id,vault_id,provider,account_label,account_fingerprint,requested_scopes_json,"
+            "local_only,local_only_acknowledged,lifecycle_state,credential_ref,retry_count,"
+            "lag_events,lag_pages,created_at,updated_at,client_principal_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                source_id,
+                core.store.vault_id(),
+                "client-runtime",
+                "registered-client",
+                principal.id,
+                '["conversation"]',
+                1,
+                1,
+                "reconciling",
+                "credential-ref",
+                0,
+                0,
+                0,
+                now,
+                now,
+                principal.id,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO capture_checkpoints"
+            "(source_id,generation,pending_generation,pending_cursor,pending_event_ids_json,"
+            "updated_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (source_id, 3, 4, "cursor-4", '["event-4"]', now),
+        )
+        connection.execute(
+            "INSERT INTO capture_runs"
+            "(id,source_id,state,lease_token,lease_expires_at,attempt_count,started_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("capture-run", source_id, "running", "lease", "2099-01-01T00:00:00.000000Z", 1, now),
+        )
+
+    core.store.revoke_client(principal.id)
+
+    with core.store.connect() as connection:
+        source = connection.execute(
+            "SELECT lifecycle_state,credential_ref,next_retry_at,last_error_code,last_error_at,"
+            "updated_at "
+            "FROM capture_sources WHERE id=?",
+            (source_id,),
+        ).fetchone()
+        checkpoint = connection.execute(
+            "SELECT generation,pending_generation,pending_cursor,pending_event_ids_json "
+            "FROM capture_checkpoints WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+        run = connection.execute(
+            "SELECT state,error_code,lease_expires_at FROM capture_runs WHERE id=?",
+            ("capture-run",),
+        ).fetchone()
+    assert source is not None and tuple(source[:5]) == (
+        "revoked",
+        None,
+        None,
+        "capture_disconnected",
+        source["updated_at"],
+    )
+    assert checkpoint is not None and tuple(checkpoint) == (3, None, None, None)
+    assert run is not None and tuple(run) == (
+        "abandoned",
+        "capture_disconnected",
+        source["updated_at"],
+    )
+
+
 def test_approval_fts_version_correction_and_tombstone(core: CoreService) -> None:
     candidate = core.ingestion.propose(
         CandidateInput(

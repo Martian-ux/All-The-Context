@@ -52,6 +52,7 @@ atc = "allthecontext.cli:main"
 atc-core = "allthecontext.core.app:main"
 atc-mcp = "allthecontext.mcp_adapter:main"
 atc-mcp-http = "allthecontext.mcp_adapter:http_main"
+atc-codex-hook = "allthecontext.codex_hook:main"
 atc-desktop = "allthecontext.desktop:main"
 
 [tool.setuptools]

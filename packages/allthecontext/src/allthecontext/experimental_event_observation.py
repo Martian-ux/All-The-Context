@@ -20,6 +20,7 @@ MAX_DERIVATION_REFERENCES = 16
 MAX_AUTHORIZATION_LABELS = 64
 
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTENT_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _SECRET_LIKE_RE = re.compile(
     r"(?i)(bearer\s+[a-z0-9._~+/=-]+|basic\s+[a-z0-9._~+/=-]+|"
     r"sk-[a-z0-9]{4,}|gh[pousr]_[a-z0-9]{4,}|AIza[a-z0-9_-]{8,}|"
@@ -330,7 +331,7 @@ def _validate_observation_contract(
     if content is not None:
         if not isinstance(content, str) or not content.strip():
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-        if len(content) > MAX_CONTENT_CHARS or _CONTROL_CHARACTER_RE.search(content):
+        if len(content) > MAX_CONTENT_CHARS or _CONTENT_CONTROL_CHARACTER_RE.search(content):
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     if payload_kind is not None:
         if not isinstance(payload_kind, PayloadKind):

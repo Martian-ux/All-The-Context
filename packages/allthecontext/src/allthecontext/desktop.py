@@ -37,7 +37,11 @@ from .credentials import FALLBACK_CREDENTIAL_STORAGE, verify_isolated_os_credent
 from .desktop_runtime import RuntimeCommand
 from .desktop_setup import (
     CLAUDE_CLIENT_NAME,
+    CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+    CLAUDE_CODE_CLIENT_NAME,
+    CODEX_CAPTURE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
+    CODEX_EXPLICIT_CLIENT_NAME,
     CoreProbe,
     SetupOptions,
     authenticated_dashboard_url,
@@ -79,7 +83,14 @@ def _retire_installed_ai_clients(
             clients = store.list_clients()
         except sqlite3.DatabaseError:
             database_readable = False
-    managed_names = {CODEX_CLIENT_NAME, CLAUDE_CLIENT_NAME}
+    managed_names = {
+        CODEX_CLIENT_NAME,
+        CODEX_CAPTURE_CLIENT_NAME,
+        CODEX_EXPLICIT_CLIENT_NAME,
+        CLAUDE_CLIENT_NAME,
+        CLAUDE_CODE_CLIENT_NAME,
+        CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+    }
     managed_client_ids = set(configured_client_storages)
     for client in clients:
         if client["name"] not in managed_names:
@@ -723,12 +734,17 @@ def _headless_claude_code_result(result: object) -> dict[str, Any] | None:
     configured = getattr(result, "claude_code", None)
     if configured is None:
         return None
-    return {
+    payload = {
         "client": "Claude Code",
         "changed": bool(getattr(configured, "changed", False)),
         "mcp_changed": bool(getattr(configured, "mcp_changed", False)),
         "settings_changed": bool(getattr(configured, "settings_changed", False)),
     }
+    if hasattr(result, "continuous_capture_clients"):
+        payload["continuous_capture"] = "Claude Code" in getattr(
+            result, "continuous_capture_clients", ()
+        )
+    return payload
 
 
 def _headless_claude_code_explicit_result(result: object) -> dict[str, Any] | None:
@@ -762,6 +778,12 @@ def _headless_setup(args: argparse.Namespace, runtime: RuntimeCommand) -> int:
         }
         if args.configure_claude_code_explicit_commands:
             setup_kwargs["configure_claude_code_explicit_commands"] = True
+        if getattr(args, "configure_codex_continuous_capture", False):
+            setup_kwargs["configure_codex_continuous_capture"] = True
+        if getattr(args, "configure_codex_explicit_commands", False):
+            setup_kwargs["configure_codex_explicit_commands"] = True
+        if getattr(args, "configure_claude_code_continuous_capture", False):
+            setup_kwargs["configure_claude_code_continuous_capture"] = True
         result = perform_setup(SetupOptions(**setup_kwargs), installed)
         report = asdict(result)
         for field_name in (
@@ -1065,6 +1087,34 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--vault-name", default="My Context", help=argparse.SUPPRESS)
     parser.add_argument("--timezone", help=argparse.SUPPRESS)
     parser.add_argument("--no-codex", action="store_true", help=argparse.SUPPRESS)
+    codex_capture = parser.add_mutually_exclusive_group()
+    codex_capture.add_argument(
+        "--codex-continuous-capture",
+        dest="configure_codex_continuous_capture",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    codex_capture.add_argument(
+        "--no-codex-continuous-capture",
+        dest="configure_codex_continuous_capture",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_codex_continuous_capture=False)
+    codex_explicit = parser.add_mutually_exclusive_group()
+    codex_explicit.add_argument(
+        "--codex-explicit-commands",
+        dest="configure_codex_explicit_commands",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    codex_explicit.add_argument(
+        "--no-codex-explicit-commands",
+        dest="configure_codex_explicit_commands",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_codex_explicit_commands=False)
     parser.add_argument("--no-claude", action="store_true", help=argparse.SUPPRESS)
     claude_code = parser.add_mutually_exclusive_group()
     claude_code.add_argument(
@@ -1080,6 +1130,20 @@ def _parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.set_defaults(configure_claude_code=False)
+    claude_code_capture = parser.add_mutually_exclusive_group()
+    claude_code_capture.add_argument(
+        "--claude-code-continuous-capture",
+        dest="configure_claude_code_continuous_capture",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    claude_code_capture.add_argument(
+        "--no-claude-code-continuous-capture",
+        dest="configure_claude_code_continuous_capture",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(configure_claude_code_continuous_capture=False)
     claude_code_explicit = parser.add_mutually_exclusive_group()
     claude_code_explicit.add_argument(
         "--claude-code-explicit-commands",

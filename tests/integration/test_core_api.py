@@ -17,14 +17,27 @@ from allthecontext.browser_session import (
     DASHBOARD_REQUEST_HEADER,
     LEGACY_BROWSER_COOKIE,
 )
+from allthecontext.claude_code_config import (
+    CLAUDE_CODE_EXECUTABLE_ENV,
+    CLAUDE_CODE_MCP_CONFIG_ENV,
+    CLAUDE_CODE_SETTINGS_ENV,
+    configure_claude_code,
+    configure_claude_code_explicit_commands,
+)
 from allthecontext.client_config import configure_codex
 from allthecontext.config import CoreConfig
 from allthecontext.core import app as core_app
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
 from allthecontext.desktop_runtime import RuntimeCommand
+from allthecontext.desktop_setup import (
+    CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+    CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+    CODEX_CAPTURE_SCOPE,
+    CODEX_EXPLICIT_SCOPES,
+)
 from allthecontext.export import restore_export
-from allthecontext.models import CandidateInput
+from allthecontext.models import CandidateInput, ClientCreate
 from allthecontext.updater import PreparedArtifact, UpdatePhase
 from fastapi.testclient import TestClient
 
@@ -465,12 +478,20 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     codex_executable = tmp_path / "Codex.exe"
     claude_executable = tmp_path / "Claude.exe"
+    claude_code_executable = tmp_path / "ClaudeCode.exe"
     codex_executable.write_bytes(b"test application marker")
     claude_executable.write_bytes(b"test application marker")
+    claude_code_executable.write_bytes(b"test application marker")
     monkeypatch.setenv("ATC_CODEX_EXECUTABLE", str(codex_executable))
     monkeypatch.setenv("ATC_CLAUDE_DESKTOP_EXECUTABLE", str(claude_executable))
+    monkeypatch.setenv(CLAUDE_CODE_EXECUTABLE_ENV, str(claude_code_executable))
+    claude_code_mcp = tmp_path / "claude-code" / ".claude.json"
+    claude_code_settings = tmp_path / "claude-code" / "settings.json"
+    monkeypatch.setenv(CLAUDE_CODE_MCP_CONFIG_ENV, str(claude_code_mcp))
+    monkeypatch.setenv(CLAUDE_CODE_SETTINGS_ENV, str(claude_code_settings))
     config = CoreConfig.in_directory(tmp_path, require_auth=True)
-    with TestClient(create_app(config)) as client:
+    app = create_app(config)
+    with TestClient(app) as client:
         assert client.get("/v1/context/status").status_code == 401
         setup = client.post("/v1/setup", json={"name": "Dashboard", "scopes": []})
         assert setup.status_code == 200
@@ -580,6 +601,40 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert claude_env["ATC_CLIENT_ID"] == claude_connection.json()["client_id"]
         assert claude_env["ATC_CORE_DATA_DIR"] == str(config.data_dir)
         assert claude_env["ATC_CLIENT_ID"] != codex_env["ATC_CLIENT_ID"]
+        claude_code_connection = client.post(
+            "/v1/admin/integrations/claude_code", headers=dashboard_headers
+        )
+        assert claude_code_connection.status_code == 200
+        claude_code_read_id = claude_code_connection.json()["client_id"]
+        claude_code_capture, _capture_token = app.state.core.store.create_client(
+            ClientCreate(
+                name=CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+                scopes=[CODEX_CAPTURE_SCOPE],
+            )
+        )
+        claude_code_explicit, _explicit_token = app.state.core.store.create_client(
+            ClientCreate(
+                name=CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+                scopes=CODEX_EXPLICIT_SCOPES,
+            )
+        )
+        configure_claude_code(
+            RuntimeCommand.current(),
+            claude_code_read_id,
+            capture_client_id=claude_code_capture.id,
+            mcp_path=claude_code_mcp,
+            settings_path=claude_code_settings,
+            target_url="http://127.0.0.1:7337",
+            core_data_dir=config.data_dir,
+        )
+        configure_claude_code_explicit_commands(
+            RuntimeCommand.current(),
+            claude_code_explicit.id,
+            mcp_path=claude_code_mcp,
+            settings_path=claude_code_settings,
+            target_url="http://127.0.0.1:7337",
+            core_data_dir=config.data_dir,
+        )
         registered = {
             item["id"]: item
             for item in client.get("/v1/admin/clients", headers=browser_auth).json()["items"]
@@ -594,6 +649,7 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert all(
             item["configured"]
             for item in client.get("/v1/admin/integrations", headers=browser_auth).json()["apps"]
+            if item["id"] in {"chatgpt_codex", "claude"}
         )
         disconnected = client.delete("/v1/admin/integrations/claude", headers=dashboard_headers)
         assert disconnected.status_code == 200
@@ -607,6 +663,25 @@ def test_setup_auth_browser_handoff_and_app_connections(tmp_path: Path, monkeypa
         assert next(item for item in integration_items if item["id"] == "claude")["state"] == (
             "disconnected"
         )
+        claude_code_disconnected = client.delete(
+            "/v1/admin/integrations/claude_code", headers=dashboard_headers
+        )
+        assert claude_code_disconnected.status_code == 200
+        assert set(claude_code_disconnected.json()["revoked_client_ids"]) == {
+            claude_code_read_id,
+            claude_code_capture.id,
+            claude_code_explicit.id,
+        }
+        claude_code_mcp_json = json.loads(claude_code_mcp.read_text(encoding="utf-8"))
+        claude_code_settings_json = json.loads(claude_code_settings.read_text(encoding="utf-8"))
+        assert "mcpServers" not in claude_code_mcp_json
+        assert "hooks" not in claude_code_settings_json
+        assert not list((claude_code_settings.parent / "skills").glob("*/SKILL.md"))
+        second_claude_code_disconnect = client.delete(
+            "/v1/admin/integrations/claude_code", headers=dashboard_headers
+        )
+        assert second_claude_code_disconnect.status_code == 200
+        assert second_claude_code_disconnect.json()["revoked_client_ids"] == []
         monkeypatch.setattr("allthecontext.core.app.claude_is_detected", lambda: False)
         unavailable = client.get("/v1/admin/integrations", headers=browser_auth).json()["apps"]
         claude_status = next(item for item in unavailable if item["id"] == "claude")

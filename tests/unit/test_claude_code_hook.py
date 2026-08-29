@@ -13,6 +13,7 @@ from allthecontext import mcp_adapter
 from allthecontext.config import CoreConfig
 from allthecontext.desktop_setup import CoreProbe
 from allthecontext.http_client import ContextApiError, ContextHttpClient
+from allthecontext.lifecycle_runtime import MAX_LIFECYCLE_CONTENT_CHARS
 from allthecontext.mcp_adapter import _server_for_profile, build_mcp
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -33,12 +34,63 @@ def _call_hook(arguments: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
 
 
 def test_hook_profile_exposes_only_its_dedicated_tool_and_identity(monkeypatch) -> None:
-    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_hook")
+    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_read")
     server = _server_for_profile()
 
-    assert server.name == "All The Context Claude Code Hook"
+    assert server.name == "All The Context Claude Code Read"
     assert set(_tools(server)) == {hook.HOOK_TOOL_NAME}
-    assert "pre-generation-only" in (server.instructions or "").casefold()
+    assert "read" in (server.instructions or "").casefold()
+
+
+def test_capture_profile_exposes_only_capture_entrypoints(monkeypatch) -> None:
+    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_capture")
+    server = _server_for_profile()
+
+    assert server.name == "All The Context Claude Code Capture"
+    tools = _tools(server)
+    assert set(tools) == {hook.HOOK_TOOL_NAME, hook.STOP_HOOK_TOOL_NAME}
+    assert (
+        tools[hook.HOOK_TOOL_NAME].input_schema["properties"]["prompt"]["maxLength"]
+        == MAX_LIFECYCLE_CONTENT_CHARS
+    )
+    assert (
+        tools[hook.STOP_HOOK_TOOL_NAME].input_schema["properties"]["last_assistant_message"][
+            "anyOf"
+        ][0]["maxLength"]
+        == MAX_LIFECYCLE_CONTENT_CHARS
+    )
+    assert "does not retrieve" in (server.instructions or "").casefold()
+
+
+def test_read_and_capture_entrypoints_do_not_cross_call_scopes(monkeypatch) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.bootstrap_calls: list[dict[str, Any]] = []
+            self.capture_calls: list[dict[str, Any]] = []
+
+        def bootstrap_context_core_only(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.bootstrap_calls.append(payload)
+            return {"items": [{"content": "read-only fact"}]}
+
+        def capture_lifecycle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.capture_calls.append(payload)
+            return {"ok": True, "status": "captured"}
+
+    client = Client()
+    monkeypatch.setattr(hook, "_hook_client", lambda: client)
+
+    read_output = hook.claude_code_user_prompt_submit_read(
+        object(), "read prompt", "cwd", "session"
+    )
+    capture_output = hook.claude_code_user_prompt_submit_capture(
+        object(), "capture prompt", "cwd", "session"
+    )
+
+    assert read_output["hookSpecificOutput"]["additionalContext"].endswith("read-only fact")
+    assert capture_output["hookSpecificOutput"]["additionalContext"] == ""
+    assert len(client.bootstrap_calls) == 1
+    assert len(client.capture_calls) == 1
+    assert client.capture_calls[0]["content"] == "capture prompt"
 
 
 def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
@@ -48,7 +100,7 @@ def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
     assert schema["required"] == ["prompt", "cwd", "session_id"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["prompt"] == {
-        "maxLength": 4_000,
+        "maxLength": MAX_LIFECYCLE_CONTENT_CHARS,
         "title": "Prompt",
         "type": "string",
     }
@@ -71,7 +123,11 @@ def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
         {"prompt": "p", "cwd": "C:\\work"},
         {"prompt": "p", "cwd": "C:\\work", "session_id": "session", "extra": "x"},
         {"prompt": 1, "cwd": "C:\\work", "session_id": "session"},
-        {"prompt": "p" * 4_001, "cwd": "C:\\work", "session_id": "session"},
+        {
+            "prompt": "p" * (MAX_LIFECYCLE_CONTENT_CHARS + 1),
+            "cwd": "C:\\work",
+            "session_id": "session",
+        },
         {"prompt": "p", "cwd": "C:\\work" * 1_025, "session_id": "session"},
         {"prompt": "p", "cwd": "C:\\work", "session_id": "s" * 129},
     ],
@@ -147,6 +203,45 @@ def test_hook_context_has_a_fixed_complete_output_budget(monkeypatch) -> None:
     additional_context = output["hookSpecificOutput"]["additionalContext"]
     assert len(additional_context) == hook.HOOK_CONTEXT_BUDGET
     assert additional_context.startswith(hook._REFERENCE_FRAME)
+
+
+def test_claude_stop_captures_rendered_response_without_returning_it(monkeypatch) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.capture_calls: list[dict[str, Any]] = []
+
+        def bootstrap_context_core_only(self, _payload: dict[str, Any]) -> dict[str, Any]:
+            return {"items": []}
+
+        def capture_lifecycle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.capture_calls.append(payload)
+            return {"ok": True, "status": "captured"}
+
+    client = Client()
+    monkeypatch.setattr(hook, "_hook_client", lambda: client)
+    session_id = "claude-stop-session"
+    hook.claude_code_user_prompt_submit_capture(
+        object(),
+        "ordinary prompt",
+        r"C:\private\cwd",
+        session_id,
+    )
+    output = hook.claude_code_stop_capture(
+        object(),
+        "rendered completion",
+        r"C:\private\cwd",
+        session_id,
+    )
+
+    assert output == {
+        "hookSpecificOutput": {
+            "hookEventName": hook.STOP_HOOK_EVENT_NAME,
+            "additionalContext": "",
+        }
+    }
+    assert [payload["role"] for payload in client.capture_calls] == ["user", "assistant"]
+    assert "rendered completion" not in json.dumps(output)
+    assert r"C:\private\cwd" not in json.dumps(client.capture_calls)
 
 
 @pytest.mark.parametrize(
@@ -257,7 +352,10 @@ def test_hook_verification_and_http_client_bypass_environment_proxies(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("prompt", "prompt-marker-" + "p" * 4_001),
+        (
+            "prompt",
+            "prompt-marker-" + "p" * (MAX_LIFECYCLE_CONTENT_CHARS + 1),
+        ),
         ("cwd", "cwd-marker-" + "c" * 4_096),
         ("session_id", "session-marker-" + "s" * 128),
     ],
@@ -361,6 +459,46 @@ def test_core_only_bootstrap_never_falls_back_to_relay(monkeypatch) -> None:
     with pytest.raises(ContextApiError, match="missing Core"):
         client.bootstrap_context_core_only({"query": "prompt", "budget_chars": 8_000})
     assert calls == [("POST", "/v1/context/bootstrap", {"query": "prompt", "budget_chars": 8_000})]
+
+
+def test_lifecycle_capture_uses_only_the_core_route_and_bounds_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def request(
+        _self: ContextHttpClient,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del params
+        calls.append((method, path, json))
+        return {"ok": True, "status": "captured"}
+
+    monkeypatch.setattr(ContextHttpClient, "_request", request)
+    client = ContextHttpClient("http://127.0.0.1:7337", "client", "token")
+    payload = {
+        "schema_version": 1,
+        "event_id": "event-opaque",
+        "idempotency_key": "opaque-uuidv4",
+        "session_id": "session-opaque",
+        "conversation_id": "conversation-opaque",
+        "sequence": 1,
+        "role": "user",
+        "content": "ordinary prompt",
+        "observed_at": None,
+    }
+
+    assert client.capture_lifecycle_event(payload) == {"ok": True, "status": "captured"}
+    assert calls == [("POST", "/v1/lifecycle/events", payload)]
+
+    with pytest.raises(ContextApiError) as failure:
+        client.capture_lifecycle_event({"content": "x" * (MAX_LIFECYCLE_CONTENT_CHARS + 1)})
+    assert failure.value.code == "request_too_large"
+    assert len(calls) == 1
 
 
 def test_ordinary_bootstrap_relay_fallback_remains_unchanged(monkeypatch) -> None:

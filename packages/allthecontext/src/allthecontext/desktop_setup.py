@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -33,16 +33,19 @@ from .claude_code_config import (
     ClaudeCodeConfigResult,
     configure_claude_code,
     configure_claude_code_explicit_commands,
+    read_claude_code_registration_ids,
 )
 from .client_config import (
+    CODEX_CAPTURE_SCOPE,
     ClientConfigResult,
     ManagedClientConfig,
     claude_config_path,
     codex_config_path,
     configure_claude,
-    configure_codex,
+    configure_codex_integration,
     read_claude_config,
     read_codex_config,
+    read_codex_registration_ids,
 )
 from .config import CoreConfig
 from .credentials import (
@@ -57,13 +60,16 @@ from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
-from .storage import CoreStore, StorageError
+from .storage import CoreStore, NotFoundError, StorageError
 from .user_startup import StartupResult, install_user_startup
 
 DESKTOP_CLIENT_NAME = "All The Context Desktop"
 CODEX_CLIENT_NAME = "Codex"
+CODEX_CAPTURE_CLIENT_NAME = "Codex Continuous Capture"
+CODEX_EXPLICIT_CLIENT_NAME = "Codex Explicit Commands"
 CLAUDE_CLIENT_NAME = "Claude Desktop"
 CLAUDE_CODE_CLIENT_NAME = "Claude Code"
+CLAUDE_CODE_CAPTURE_CLIENT_NAME = "Claude Code Continuous Capture"
 CLAUDE_CODE_EXPLICIT_CLIENT_NAME = "Claude Code Explicit Commands"
 SCHEDULER_SETUP_CLIENT_NAME = "All The Context one-time setup scheduler"
 DESKTOP_SCOPES = [
@@ -83,7 +89,11 @@ AI_CLIENT_SCOPES = [
     # enough; only ATC-configured same-device AI principals receive this class.
     "witness:explicit_user_statement",
 ]
+CODEX_READ_SCOPES = ["context:read"]
+CODEX_CAPTURE_SCOPES = [CODEX_CAPTURE_SCOPE]
+CODEX_EXPLICIT_SCOPES = ["context:propose", "witness:explicit_user_statement"]
 CLAUDE_CODE_SCOPES = ["context:read"]
+CLAUDE_CODE_CAPTURE_SCOPES = [CODEX_CAPTURE_SCOPE]
 CLAUDE_CODE_EXPLICIT_SCOPES = [
     "context:propose",
     "witness:explicit_user_statement",
@@ -102,8 +112,11 @@ class SetupOptions:
     vault_name: str = "My Context"
     timezone: str = field(default_factory=local_timezone)
     configure_codex: bool = True
+    configure_codex_continuous_capture: bool = False
+    configure_codex_explicit_commands: bool = False
     configure_claude: bool = True
     configure_claude_code: bool = False
+    configure_claude_code_continuous_capture: bool = False
     configure_claude_code_explicit_commands: bool = False
     start_at_login: bool = True
     workspace_root: Path | None = None
@@ -126,6 +139,7 @@ class SetupResult:
     workspace_source_id: str | None = None
     continuous_capture_enabled: bool = False
     claude_code_explicit: ClaudeCodeConfigResult | None = None
+    continuous_capture_clients: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,6 +559,118 @@ def retire_other_named_clients(
             delete_client_credential(client_id, config)
 
 
+def revoke_managed_clients(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    managed_client_ids: Iterable[str],
+    managed_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Revoke an integration's principals before attempting secret cleanup.
+
+    Config-derived IDs are accepted only when they belong to the integration's
+    reserved Core names.  Name matching also retires stale principals whose
+    managed config entry was already removed.  Revocation is completed for all
+    candidates before any credential deletion is attempted, and cleanup errors
+    are aggregated only after every safely revoked credential was attempted.
+    """
+
+    names = frozenset(managed_names)
+    clients = store.list_clients()
+    by_id = {str(client["id"]): client for client in clients}
+    candidate_ids: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(client_id: str) -> None:
+        client = by_id.get(client_id)
+        if client is None or client["name"] not in names or client_id in seen:
+            return
+        seen.add(client_id)
+        candidate_ids.append(client_id)
+
+    for client_id in managed_client_ids:
+        if isinstance(client_id, str):
+            add_candidate(client_id)
+    for client in clients:
+        if client["name"] in names:
+            add_candidate(str(client["id"]))
+
+    revoked_ids: list[str] = []
+    cleanup_ids: list[str] = []
+    revoke_error: Exception | None = None
+    for client_id in candidate_ids:
+        client = by_id[client_id]
+        if client["revoked"]:
+            cleanup_ids.append(client_id)
+            continue
+        try:
+            store.revoke_client(client_id)
+        except NotFoundError:
+            # A concurrent/idempotent revocation has already disabled this
+            # principal; its credential is still safe to clean up.
+            cleanup_ids.append(client_id)
+        except Exception as exc:
+            revoke_error = revoke_error or exc
+            continue
+        revoked_ids.append(client_id)
+        cleanup_ids.append(client_id)
+
+    cleanup_error: Exception | None = None
+    for client_id in cleanup_ids:
+        try:
+            delete_client_credential(client_id, config)
+        except Exception as exc:
+            cleanup_error = cleanup_error or exc
+
+    if revoke_error is not None:
+        raise RuntimeError(
+            "Managed client authority could not be fully revoked; credential cleanup was partial"
+        ) from revoke_error
+    if cleanup_error is not None:
+        raise RuntimeError(
+            "Managed client authority was revoked but credential cleanup was incomplete"
+        ) from cleanup_error
+    return tuple(revoked_ids)
+
+
+def retire_managed_client_group(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    accesses: dict[str, DesktopAccess],
+    managed_names: tuple[str, ...],
+) -> None:
+    """Retain the configured principals and revoke omitted managed authority.
+
+    This runs only after the client configuration transaction succeeds.  A
+    later setup with capture or explicit controls disabled must therefore
+    remove both the hook surface and the no-longer-selected Core principal.
+    """
+
+    retired_ids: list[str] = []
+    for name in managed_names:
+        selected = accesses.get(name)
+        for client in store.list_clients():
+            client_id = str(client["id"])
+            if (
+                client["name"] == name
+                and not client["revoked"]
+                and (selected is None or client_id != selected.client_id)
+            ):
+                store.revoke_client(client_id)
+                retired_ids.append(client_id)
+    cleanup_error: BaseException | None = None
+    for client_id in retired_ids:
+        try:
+            delete_client_credential(client_id, config)
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+    if cleanup_error is not None:
+        raise RuntimeError(
+            "Managed client authority was revoked but credential cleanup was incomplete"
+        ) from cleanup_error
+
+
 def ensure_client_access(
     store: CoreStore,
     config: CoreConfig,
@@ -560,6 +686,148 @@ def ensure_client_access(
         scopes=scopes,
     )
     return access
+
+
+def _configure_codex_accesses(
+    store: CoreStore,
+    config: CoreConfig,
+    runtime: RuntimeCommand,
+    *,
+    capture: bool,
+    explicit: bool,
+    target_url: str,
+) -> tuple[dict[str, DesktopAccess], ClientConfigResult]:
+    """Create distinct Codex principals, then commit their shared config atomically."""
+
+    specifications = [(CODEX_CLIENT_NAME, CODEX_READ_SCOPES)]
+    if capture:
+        specifications.append((CODEX_CAPTURE_CLIENT_NAME, CODEX_CAPTURE_SCOPES))
+    if explicit:
+        specifications.append((CODEX_EXPLICIT_CLIENT_NAME, CODEX_EXPLICIT_SCOPES))
+    accesses: dict[str, DesktopAccess] = {}
+    created: list[DesktopAccess] = []
+    try:
+        for name, scopes in specifications:
+            access, was_created = _ensure_client_access_with_state(
+                store,
+                config,
+                name=name,
+                scopes=scopes,
+            )
+            accesses[name] = access
+            if was_created:
+                created.append(access)
+
+        def token_for(name: str) -> str | None:
+            access = accesses[name]
+            return None if access.credential_storage == OS_CREDENTIAL_STORAGE else access.token
+
+        result = configure_codex_integration(
+            runtime,
+            read_client_id=accesses[CODEX_CLIENT_NAME].client_id,
+            read_token=token_for(CODEX_CLIENT_NAME),
+            read_credential_storage=accesses[CODEX_CLIENT_NAME].credential_storage,
+            capture_client_id=(accesses[CODEX_CAPTURE_CLIENT_NAME].client_id if capture else None),
+            capture_token=token_for(CODEX_CAPTURE_CLIENT_NAME) if capture else None,
+            capture_credential_storage=(
+                accesses[CODEX_CAPTURE_CLIENT_NAME].credential_storage if capture else None
+            ),
+            explicit_client_id=(
+                accesses[CODEX_EXPLICIT_CLIENT_NAME].client_id if explicit else None
+            ),
+            explicit_token=token_for(CODEX_EXPLICIT_CLIENT_NAME) if explicit else None,
+            explicit_credential_storage=(
+                accesses[CODEX_EXPLICIT_CLIENT_NAME].credential_storage if explicit else None
+            ),
+            target_url=target_url,
+            core_data_dir=config.data_dir,
+        )
+    except BaseException:
+        rollback_error: BaseException | None = None
+        for access in reversed(created):
+            try:
+                store.revoke_client(access.client_id)
+                delete_client_credential(
+                    access.client_id,
+                    config,
+                    strict_storage=access.credential_storage,
+                )
+            except BaseException as candidate:
+                rollback_error = candidate
+                break
+        if rollback_error is not None:
+            raise RuntimeError(
+                "Codex setup failed and its newly created client could not be rolled back"
+            ) from rollback_error
+        raise
+    return accesses, result
+
+
+def _configure_claude_code_accesses(
+    store: CoreStore,
+    config: CoreConfig,
+    runtime: RuntimeCommand,
+    *,
+    capture: bool,
+    target_url: str,
+) -> tuple[dict[str, DesktopAccess], ClaudeCodeConfigResult]:
+    """Create separate read/capture Claude Code principals and commit both hooks atomically."""
+
+    specifications = [(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_SCOPES)]
+    if capture:
+        specifications.append((CLAUDE_CODE_CAPTURE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_SCOPES))
+    accesses: dict[str, DesktopAccess] = {}
+    created: list[DesktopAccess] = []
+    try:
+        for name, scopes in specifications:
+            access, was_created = _ensure_client_access_with_state(
+                store,
+                config,
+                name=name,
+                scopes=scopes,
+            )
+            accesses[name] = access
+            if was_created:
+                created.append(access)
+
+        def token_for(name: str) -> str | None:
+            access = accesses[name]
+            return None if access.credential_storage == OS_CREDENTIAL_STORAGE else access.token
+
+        result = configure_claude_code(
+            runtime,
+            accesses[CLAUDE_CODE_CLIENT_NAME].client_id,
+            token=token_for(CLAUDE_CODE_CLIENT_NAME),
+            target_url=target_url,
+            core_data_dir=config.data_dir,
+            credential_storage=accesses[CLAUDE_CODE_CLIENT_NAME].credential_storage,
+            capture_client_id=(
+                accesses[CLAUDE_CODE_CAPTURE_CLIENT_NAME].client_id if capture else None
+            ),
+            capture_token=token_for(CLAUDE_CODE_CAPTURE_CLIENT_NAME) if capture else None,
+            capture_credential_storage=(
+                accesses[CLAUDE_CODE_CAPTURE_CLIENT_NAME].credential_storage if capture else None
+            ),
+        )
+    except BaseException:
+        rollback_error: BaseException | None = None
+        for access in reversed(created):
+            try:
+                store.revoke_client(access.client_id)
+                delete_client_credential(
+                    access.client_id,
+                    config,
+                    strict_storage=access.credential_storage,
+                )
+            except BaseException as candidate:
+                rollback_error = candidate
+                break
+        if rollback_error is not None:
+            raise RuntimeError(
+                "Claude Code setup failed and its newly created client could not be rolled back"
+            ) from rollback_error
+        raise
+    return accesses, result
 
 
 def _desktop_client(store: CoreStore, config: CoreConfig) -> DesktopAccess:
@@ -590,16 +858,73 @@ def migrate_existing_integrations(
     store = CoreStore(config.database_path)
     target_url = f"http://{config.host}:{config.port}"
     used_desktop_credential = False
-    integrations = (
-        (CODEX_CLIENT_NAME, codex_config_path, read_codex_config, configure_codex),
-        (CLAUDE_CLIENT_NAME, claude_config_path, read_claude_config, configure_claude),
-    )
+    try:
+        current_codex = read_codex_config()
+    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError):
+        current_codex = None
+        with suppress(OSError):
+            raw = codex_config_path().read_text(encoding="utf-8")
+            used_desktop_credential = desktop_access.client_id in raw or desktop_access.token in raw
+    if current_codex is not None:
+        legacy = _configuration_uses_access(current_codex, desktop_access)
+        try:
+            registration_ids = read_codex_registration_ids()
+            capture = "capture" in registration_ids
+            explicit = "explicit" in registration_ids
+            accesses, _result = _configure_codex_accesses(
+                store,
+                config,
+                runtime,
+                capture=capture,
+                explicit=explicit,
+                target_url=target_url,
+            )
+        except (OSError, ValueError):
+            # If an old config exposed the desktop administrator, rotating it
+            # below makes that stale config harmless even when the user-owned
+            # config file cannot currently be repaired.
+            used_desktop_credential = used_desktop_credential or legacy
+        else:
+            retire_managed_client_group(
+                store,
+                config,
+                accesses=accesses,
+                managed_names=(
+                    CODEX_CLIENT_NAME,
+                    CODEX_CAPTURE_CLIENT_NAME,
+                    CODEX_EXPLICIT_CLIENT_NAME,
+                ),
+            )
+            used_desktop_credential = used_desktop_credential or legacy
+
+    try:
+        claude_code_registrations = read_claude_code_registration_ids()
+    except (OSError, ValueError, json.JSONDecodeError):
+        claude_code_registrations = {}
+    if "read" in claude_code_registrations:
+        try:
+            claude_code_accesses, _claude_code_result = _configure_claude_code_accesses(
+                store,
+                config,
+                runtime,
+                capture="capture" in claude_code_registrations,
+                target_url=target_url,
+            )
+        except (OSError, ValueError):
+            pass
+        else:
+            retire_managed_client_group(
+                store,
+                config,
+                accesses=claude_code_accesses,
+                managed_names=(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME),
+            )
+
+    integrations = ((CLAUDE_CLIENT_NAME, claude_config_path, read_claude_config, configure_claude),)
     for name, config_path, read_config, configure in integrations:
         try:
             current = read_config()
         except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError):
-            # Preserve an invalid user-owned config. The dashboard reports it as
-            # degraded and its explicit Repair action will surface the parse error.
             with suppress(OSError):
                 raw = config_path().read_text(encoding="utf-8")
                 used_desktop_credential = used_desktop_credential or (
@@ -622,9 +947,6 @@ def migrate_existing_integrations(
                 core_data_dir=config.data_dir,
             )
         except (OSError, ValueError):
-            # If an old config exposed the desktop administrator, rotating it
-            # below makes that stale config harmless even when the user-owned
-            # config file cannot currently be repaired.
             used_desktop_credential = used_desktop_credential or legacy
             continue
         retire_other_named_clients(store, config, name=name, keep_id=access.client_id)
@@ -692,8 +1014,14 @@ def authenticated_dashboard_url(
 
 
 def _validate_workspace_options(options: SetupOptions) -> None:
+    if options.configure_codex_continuous_capture and not options.configure_codex:
+        raise ValueError("Codex Continuous Capture requires the Codex connection")
+    if options.configure_codex_explicit_commands and not options.configure_codex:
+        raise ValueError("Codex explicit commands require the Codex connection")
     if options.configure_claude_code_explicit_commands and not options.configure_claude_code:
         raise ValueError("explicit Claude Code commands require the Claude Code connection")
+    if options.configure_claude_code_continuous_capture and not options.configure_claude_code:
+        raise ValueError("Claude Code Continuous Capture requires the Claude Code connection")
     if options.workspace_root is None:
         if options.workspace_local_only_acknowledged:
             raise ValueError("workspace local-only acknowledgement requires a workspace root")
@@ -842,6 +1170,7 @@ def perform_setup(
     active_config = config or CoreConfig.default()
     notify = progress or (lambda _step, _message: None)
     warnings: list[str] = []
+    continuous_capture_clients: list[str] = []
 
     notify("vault", "Creating your private local Core")
     active_config.prepare()
@@ -859,31 +1188,32 @@ def perform_setup(
 
     codex_result: ClientConfigResult | None = None
     if options.configure_codex:
-        notify("client", "Connecting Codex to All The Context")
+        notify(
+            "client",
+            "Connecting Codex to All The Context"
+            + (" with Continuous Capture" if options.configure_codex_continuous_capture else ""),
+        )
         try:
-            codex_access, codex_result = configure_client_access_transactionally(
+            codex_accesses, codex_result = _configure_codex_accesses(
                 store,
                 active_config,
-                name=CODEX_CLIENT_NAME,
-                scopes=AI_CLIENT_SCOPES,
-                configure=lambda client_access: configure_codex(
-                    active_runtime,
-                    client_access.client_id,
-                    token=(
-                        None
-                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
-                        else client_access.token
-                    ),
-                    target_url=f"http://{active_config.host}:{active_config.port}",
-                    core_data_dir=active_config.data_dir,
+                active_runtime,
+                capture=options.configure_codex_continuous_capture,
+                explicit=options.configure_codex_explicit_commands,
+                target_url=f"http://{active_config.host}:{active_config.port}",
+            )
+            retire_managed_client_group(
+                store,
+                active_config,
+                accesses=codex_accesses,
+                managed_names=(
+                    CODEX_CLIENT_NAME,
+                    CODEX_CAPTURE_CLIENT_NAME,
+                    CODEX_EXPLICIT_CLIENT_NAME,
                 ),
             )
-            retire_other_named_clients(
-                store,
-                active_config,
-                name=CODEX_CLIENT_NAME,
-                keep_id=codex_access.client_id,
-            )
+            if options.configure_codex_continuous_capture:
+                continuous_capture_clients.append(CODEX_CLIENT_NAME)
         except (OSError, RuntimeError, ValueError, tomllib.TOMLDecodeError) as exc:
             warnings.append(f"Codex configuration was not changed: {exc}")
 
@@ -919,32 +1249,31 @@ def perform_setup(
 
     claude_code_result: ClaudeCodeConfigResult | None = None
     if options.configure_claude_code:
-        notify("claude_code", "Connecting Claude Code UserPromptSubmit hook")
+        notify(
+            "claude_code",
+            "Connecting Claude Code UserPromptSubmit hook"
+            + (
+                " with Continuous Capture"
+                if options.configure_claude_code_continuous_capture
+                else ""
+            ),
+        )
         try:
-            claude_code_access, claude_code_result = configure_client_access_transactionally(
+            claude_code_accesses, claude_code_result = _configure_claude_code_accesses(
                 store,
                 active_config,
-                name=CLAUDE_CODE_CLIENT_NAME,
-                scopes=CLAUDE_CODE_SCOPES,
-                configure=lambda client_access: configure_claude_code(
-                    active_runtime,
-                    client_access.client_id,
-                    token=(
-                        None
-                        if client_access.credential_storage == OS_CREDENTIAL_STORAGE
-                        else client_access.token
-                    ),
-                    target_url=f"http://{active_config.host}:{active_config.port}",
-                    core_data_dir=active_config.data_dir,
-                    credential_storage=client_access.credential_storage,
-                ),
+                active_runtime,
+                capture=options.configure_claude_code_continuous_capture,
+                target_url=f"http://{active_config.host}:{active_config.port}",
             )
-            retire_other_named_clients(
+            retire_managed_client_group(
                 store,
                 active_config,
-                name=CLAUDE_CODE_CLIENT_NAME,
-                keep_id=claude_code_access.client_id,
+                accesses=claude_code_accesses,
+                managed_names=(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_CLIENT_NAME),
             )
+            if options.configure_claude_code_continuous_capture:
+                continuous_capture_clients.append(CLAUDE_CODE_CLIENT_NAME)
         except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Claude Code configuration was not changed: {exc}")
 
@@ -1019,6 +1348,7 @@ def perform_setup(
         workspace_source_id=workspace_source_id,
         continuous_capture_enabled=continuous_capture_enabled,
         claude_code_explicit=claude_code_explicit_result,
+        continuous_capture_clients=tuple(continuous_capture_clients),
     )
 
 

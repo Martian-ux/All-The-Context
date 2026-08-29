@@ -9,6 +9,12 @@ from typing import Any
 
 import httpx2 as httpx
 
+from .lifecycle_contract import (
+    MAX_LIFECYCLE_BODY_BYTES,
+    MAX_LIFECYCLE_CONTENT_BYTES,
+    MAX_LIFECYCLE_CONTENT_CHARS,
+)
+
 
 class ContextApiError(RuntimeError):
     """A stable API error that is safe to return through MCP."""
@@ -169,6 +175,32 @@ class ContextHttpClient:
         """Retrieve bootstrap context from Core without the ordinary Relay fallback."""
 
         return self._request("POST", "/v1/context/bootstrap", json=payload)
+
+    def capture_lifecycle_event(self, payload: dict[str, Any]) -> Any:
+        """Submit one bounded lifecycle event to the authenticated local Core.
+
+        The lifecycle adapter owns the request shape and never retries through
+        Relay.  Core integration owns this endpoint and must return an
+        explicit ``captured`` or ``replayed`` status for success.
+        """
+
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        content = payload.get("content")
+        if (
+            type(content) is not str
+            or not content
+            or len(content) > MAX_LIFECYCLE_CONTENT_CHARS
+            or len(content.encode("utf-8")) > MAX_LIFECYCLE_CONTENT_BYTES
+        ):
+            raise ContextApiError(413, "request_too_large", "Lifecycle content exceeded its limit")
+        if len(encoded) > MAX_LIFECYCLE_BODY_BYTES:
+            raise ContextApiError(413, "request_too_large", "Lifecycle event exceeded its limit")
+        return self._request("POST", "/v1/lifecycle/events", json=payload)
 
     def search_context(self, payload: dict[str, Any]) -> Any:
         try:

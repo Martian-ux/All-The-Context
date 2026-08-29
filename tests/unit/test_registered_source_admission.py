@@ -1080,10 +1080,16 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
         }
         assert {"capture_source_id", "capture_event_id", "capture_binding_hash"} <= columns
+        unique_index = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND name='uq_context_candidates_capture_event'"
+        ).fetchone()
+        assert unique_index is not None
+        assert "client_capture_formation" in str(unique_index["sql"])
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='index' "
-                "AND name='uq_context_candidates_capture_event'"
+                "AND name='ix_context_candidates_capture_event'"
             ).fetchone()
             is not None
         )
@@ -1094,7 +1100,7 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             ).fetchone()
         ) == (4, 4)
     restarted = CoreStore(store.database_path)
-    assert restarted.migrate() == 17
+    assert restarted.migrate() == 18
     with restarted.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM capture_events").fetchone()[0] == 4
         assert (

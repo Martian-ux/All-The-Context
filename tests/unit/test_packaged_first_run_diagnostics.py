@@ -424,13 +424,33 @@ def test_source_contract_never_retains_full_work_tree() -> None:
     assert "recover_disposable_admin_token" in text
     assert "scrub_sensitive_work_tree" in text
     assert "remove_work_tree" in text
-    assert "status.is_error" in text
-    assert "status.structured_content" in text
+    assert "searched.is_error" in text
+    assert "searched.structured_content" in text
     assert "status.isError" not in text
     assert "status.structuredContent" not in text
     assert "raise SystemExit(str(exc))" not in text
     assert "packaged-first-run-diagnostics" in text
+    assert 'context/status", token' not in text
+    assert "wait_for_core(base_url, token)" not in text
     # Must not print raw subprocess streams.
     assert "completed.stdout" not in text or "stdout_present" in text
     assert 'print(f"{label} stdout' not in text
     assert 'print(f"{label} stderr' not in text
+
+
+def test_packaged_mcp_surface_is_exactly_read_only() -> None:
+    expected = {
+        "bootstrap_context",
+        "context_status",
+        "get_context_item",
+        "search_context",
+    }
+
+    smoke.validate_packaged_mcp_surface("codex_read", expected)
+
+    with pytest.raises(RuntimeError, match="read-only profile"):
+        smoke.validate_packaged_mcp_surface("", expected)
+    with pytest.raises(RuntimeError, match=r"unexpected=\['propose_memory'\]"):
+        smoke.validate_packaged_mcp_surface("codex_read", expected | {"propose_memory"})
+    with pytest.raises(RuntimeError, match=r"missing=\['search_context'\]"):
+        smoke.validate_packaged_mcp_surface("codex_read", expected - {"search_context"})

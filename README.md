@@ -51,16 +51,26 @@ bearer token, or a hand-edited MCP configuration. Windows uses the
 one-click installer with no routine terminal use. Supported Ubuntu remains
 a portable `tar.gz` requiring documented manual extract and launch.
 
-On Windows 11, the intended path is to download `AllTheContextSetup.exe` and
-double-click it. The first-run wizard:
+> **Windows beta.6 security notice (2026-08-29):** Microsoft Defender
+> quarantined the unsigned installed `AllTheContextMCP.exe` helper as
+> `Trojan:Win32/Sabsik.EN.A!ml`. The outer release archive matches its
+> published digest, but the installed helper does not yet have an independently
+> published component digest. Do not restore, run, or allow-list that helper
+> while the incident remains unresolved. See [known issues](docs/KNOWN_ISSUES.md).
+
+After a replacement Windows build closes that incident, the intended Windows
+11 path is to download `AllTheContextSetup.exe` and double-click it. The
+first-run wizard:
 
 1. installs for the current user without administrator access;
 2. creates the vault in the platform-appropriate per-user application-data
    directory;
 3. stores credentials through the operating-system credential abstraction;
-4. detects Codex and Claude Desktop and connects only the apps the user selects;
+4. detects Codex, Claude Code, and Claude Desktop and connects only the apps
+   the user selects; optional Codex/Claude Code Continuous Capture is a
+   separate false-by-default choice;
 5. enables per-user startup when selected;
-6. starts Core and opens an authenticated local dashboard; and
+6. starts Core without opening the optional dashboard; and
 7. finishes without asking for timezone, hosting, provider accounts, or Edge
    setup.
 
@@ -92,7 +102,10 @@ client, provider, browser, 2 GB, privacy, recovery, or replacement cell passed.
   import and automatic memory evaluation for ChatGPT, Claude, Grok, generic
   JSON/JSONL, Markdown, and text;
 - required MCP tools over local HTTP and a lightweight STDIO forwarding adapter;
-- one-click local Codex and Claude Desktop configuration;
+- one-click local Codex, Claude Code, and Claude Desktop configuration;
+- optional one-time Codex/Claude Code Continuous Capture: ordinary prompts and
+  rendered responses become local evidence without per-turn commands, while
+  Core alone decides what narrow user claims become memory;
 - deterministic Core-derived Project Context Capsules with automatic,
   principal-filtered MCP activation and explicit ambiguity abstention;
 - optional local context/activity/search/backup/update dashboard;

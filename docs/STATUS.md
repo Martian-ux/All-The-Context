@@ -2,12 +2,16 @@
 
 ## Current milestone
 
-As of 2026-08-26 UTC, this branch adds an opt-in Claude Code explicit-memory
-boundary on the merged read-only pre-generation integration while retaining
-the bounded typed project graph, independent safety oracle, worker-backed
-Continuous Context, lifecycle-context, and direct-user formation continuity
-work on the Import Truth, Memory Truth, Retrieval, Continuous Context, and
-deterministic Project Context Capsule foundations.
+As of 2026-08-27 UTC, this branch adds false-by-default Continuous Capture for
+Claude Code and Codex on top of the merged read-only and explicit-memory
+boundaries. After one setup opt-in, ordinary user prompts and rendered
+assistant responses are observed locally without per-turn commands. Core alone
+may form a narrow high-confidence user claim into current memory; explicit
+remember/correct/forget remains a separate higher-authority path. The branch
+retains the bounded typed project graph, independent safety oracle,
+worker-backed Continuous Context, lifecycle-context, and direct-user formation
+continuity work on the Import Truth, Memory Truth, Retrieval, Continuous
+Context, and deterministic Project Context Capsule foundations.
 Ordinary healthy use keeps
 the ATC dashboard closed: an authenticated MCP bootstrap activates one
 authorized project automatically when Core has an explicit project signal, one
@@ -15,10 +19,10 @@ safe host display-name hint, one unique project label in the task, or exactly
 one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
-At this boundary, protected main contains the merged Import Truth, Memory Truth,
-Retrieval, Continuous Context, and Project Context Capsule foundations plus the
-merged read-only Claude Code pre-generation integration at exact SHA
-`a2607aa2e6031dc806a7704e38eda05c887c7bb5`. Development evidence on this
+At this boundary, protected main contains the merged Import Truth and the
+subsequent Memory Truth, Retrieval, Continuous Context, Project Context, and
+Claude Code read and explicit-memory foundations at exact SHA
+`688aa595707f15bf8740357e57e20addd46f57ae`. Development evidence on this
 branch does not
 become release, exact-artifact, client/provider, or
 private-data acceptance.
@@ -30,6 +34,94 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-29 — unresolved Windows Defender beta.6 incident
+
+Microsoft Defender detected and quarantined the unsigned installed beta.6
+`AllTheContextMCP.exe` as `Trojan:Win32/Sabsik.EN.A!ml`. Read-only inspection
+confirmed one incident sequence, an unsigned restored helper with SHA-256
+`62fcf5436988053aa4e43efa81483cfa5b200b0c71c567c96f5dff78c90c37ba`,
+and an exact match between the public Windows archive and its published outer
+digest. The public metadata does not expose a digest for each installed helper,
+so the restored executable is not yet independently bound to that release.
+No antivirus exclusion was added, the helper was not executed during this
+review, and neither malware nor false-positive status is claimed. Installed
+component manifests, Authenticode signing, and exact-component reassessment
+remain required follow-up.
+
+### 2026-08-29 — operational credential shape hardening
+
+The direct-secret boundary now refuses unlabeled compact JWT/JWE and PASETO
+values, selected provider-prefixed tokens, and structurally contextual
+bearer/token values before capture-ledger staging. Detection remains based on
+recognized format or context rather than entropy alone, so ordinary health,
+address, and SSN context remains admissible. Focused synthetic tests prove
+content-free refusal and absence from capture events, candidates, records,
+exports, responses, and logs.
+
+### 2026-08-29 — lifecycle contract and Claude profile reconciliation
+
+Lifecycle provider schemas, the runtime adapter, `CaptureEventRequest`, the
+HTTP client, and Core now share a 16,384-character/65,536-byte content bound;
+the serialized lifecycle request body is bounded at 131,072 bytes. Claude Code
+read and capture registrations use distinct profiles and entrypoints, so the
+read principal retrieves only and the capture principal captures only. Claude
+Code has no stable per-turn identifier: session-only observations are not
+deduplicated or reported as paired, and no exactly-once retry claim is made for
+them. Focused tests cover these boundaries; no live-provider acceptance is
+claimed.
+
+The integrated migration preserves a partial unique capture-event index for
+registered-source and raw lifecycle observations while allowing only
+`client_capture_formation` projections to share the originating event. This
+keeps raw-event replay database-enforced without blocking Core-owned formation.
+
+### 2026-08-27 — opt-in Claude Code and Codex Continuous Capture
+
+Setup now keeps read, lifecycle capture, and explicit mutation authority in
+separate registered principals. Continuous Capture is disabled by default for
+both clients. Selecting it installs exact `UserPromptSubmit` and `Stop` hooks;
+ordinary turns then require no ATC command or repeated approval. Repeating,
+repairing, or opting out through setup preserves unrelated user settings and
+retires omitted managed authority after a successful configuration
+transaction.
+
+The Connections dashboard now recognizes Claude Code separately. Disconnecting
+Codex or Claude Code removes every ATC-managed surface for that integration,
+revokes its read/capture/explicit principals, deletes their credentials after
+revocation, and atomically revokes any capture source owned by a revoked
+capture principal. Active runs become abandoned and pending checkpoint state is
+cleared; repeated disconnect is idempotent and unrelated configuration is kept.
+
+The capture-only hook sends a strict bounded flat request to authenticated
+loopback Core at `POST /v1/lifecycle/events`. The request cannot declare its
+provider identity, provenance, witness, sensitivity, ACL, availability, or
+memory authority. Core derives those fields from the registered
+`context:capture` principal, stages the raw turn as local evidence, and never
+uses Relay as an authority or fallback. Assistant, tool, and imported content
+remain observation-only and cannot establish user facts.
+
+For direct user turns, the first production formation slice recognizes only a
+narrow deterministic set of first-person claims: interaction preference,
+name, location, health, current project, goal, and workflow. Repeated evidence
+deduplicates; a changed value for the same slot supersedes the prior current
+value through the existing reconciliation path. This is deliberately not a
+general semantic extractor. Normal personal context follows ordinary
+retrieval; sensitive and highly-sensitive personal context stays local and is
+available only through authenticated, non-denied `context:read` principals.
+The raw sensitive turn remains restricted to the capture principal.
+Operational credential values are refused before the capture ledger and
+excluded from ordinary memory,
+retrieval, replication, export, logs, audit text, and model context. The
+optional secret-reference abstraction accepts raw values only through an OS
+credential store and fails closed on plaintext development fallback; automatic
+credential capture into that vault is not claimed.
+
+Focused synthetic tests cover exact setup contracts, authorization, retries,
+correlation, formation/reconciliation, ACLs, secret refusal/export exclusion,
+transactional preservation, and adapter-to-Core retrieval. Full repository
+pytest, hosted CI, exact packaged artifacts, live/private client acceptance,
+provider support, release acceptance, and macOS support remain unclaimed.
 
 ### 2026-08-26 — Core-only Claude Code explicit-user memory contract
 
@@ -46,8 +138,8 @@ Remember and correction reuse the existing candidate/correction policy
 machinery. Forget creates the existing `context_forget` tombstone, so the
 record remains reversibly restorable through the established Core lifecycle.
 These routes have no Relay fallback. Ordinary `UserPromptSubmit` prompt text,
-model/tool/provider output, imported text, and MCP elicitation are not direct
-user evidence; the client lane may bind only its exact expansion metadata
+model/tool/provider output, imported text, and MCP elicitation are not explicit
+memory commands; the client lane may bind only its exact expansion metadata
 fields `command_name`, `command_args`, and `expansion_type` as integration data.
 This paragraph records the Core/API evidence; the separate client/config/setup
 evidence is recorded immediately below. Neither establishes live/private data
@@ -64,8 +156,9 @@ with exactly `context:propose` and `witness:explicit_user_statement`.
 The transaction preserves unrelated Claude user settings and personal skill
 files, refuses reserved-name collisions, installs the three reserved skills at
 `~/.claude/skills/atc-{remember,correct,forget}/SKILL.md`, and configures only user-scope
-`UserPromptExpansion` handling. Ordinary `UserPromptSubmit` retrieval remains
-read-only and never scans or captures ordinary prompts. The handler binds the
+`UserPromptExpansion` handling. This explicit-command handler does not scan or
+capture ordinary prompts; the separately selected Continuous Capture lifecycle
+principal governs that lower-authority observation path. The handler binds the
 official event's exact `command_name`, `command_args`, `expansion_type`, and
 `command_source` fields, keeps only bounded in-memory pending state, and calls
 Core's narrow Claude Code memory routes without Relay fallback. Missing or

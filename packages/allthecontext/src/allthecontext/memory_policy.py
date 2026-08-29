@@ -20,7 +20,7 @@ from .models import (
     ObservationDisposition,
     Sensitivity,
 )
-from .secret_boundary import contains_direct_secret
+from .secret_boundary import contains_direct_secret, contains_secret_like_text
 from .security import ClientPrincipal, principal_may_attest_explicit_user_statement
 
 AUTOMATIC_POLICY_VERSION = "automatic-v1"
@@ -43,6 +43,8 @@ UNKEYED_CONFLICT_KINDS = frozenset(
 
 class ObservationOrigin(StrEnum):
     ONGOING_CLIENT = "ongoing_client"
+    CLIENT_CAPTURE = "client_capture"
+    LIVE_USER_EVIDENCE = "live_user_evidence"
     ARCHIVE_IMPORT = "archive_import"
     RELAY_QUEUE = "relay_queue"
     CONTEXT_ERROR = "context_error"
@@ -317,6 +319,186 @@ _QUANTITY_BOUND = re.compile(
 _PREFERENCE_VALUE = re.compile(rf"\b(?:{_PREFERENCE_VALUE_TERMS})\b", flags=re.IGNORECASE)
 _CHOICE_BEFORE_FOR = re.compile(r"\b[\w.+-]+(?=\s+for\b)", flags=re.IGNORECASE)
 
+_LIVE_PREFERENCE = re.compile(
+    r"^(?:(?:i|we)\s+(?:(?:now|currently|still)\s+)?"
+    r"(?:prefer|like|love|hate|dislike)|my\s+preference\s+is|prefer)\s+"
+    r"(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_NAME = re.compile(r"^my\s+name\s+is\s+(?P<value>.+)$", flags=re.IGNORECASE)
+_LIVE_LOCATION = re.compile(
+    r"^(?:i\s+(?:live|reside)\s+(?:in|at)|my\s+address\s+is)\s+(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_SSN = re.compile(
+    r"^my\s+social\s+security(?:\s+number)?\s+is\s+(?P<value>.+)$|"
+    r"^my\s+ssn\s+is\s+(?P<value_alt>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_HEALTH = re.compile(
+    r"^(?:i\s+(?:was|am)\s+diagnosed\s+with|"
+    r"i\s+(?:have|had|live\s+with|am\s+living\s+with))\s+(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_PROJECT = re.compile(
+    r"^(?:i\s+(?:am|['`]m)\s+working\s+on|"
+    r"we\s+(?:are|['`]re)\s+working\s+on|"
+    r"(?:my|our)\s+current\s+project\s+is)\s+(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_GOAL = re.compile(
+    r"^(?:my\s+goal\s+is(?:\s+to)?|i\s+aim\s+to|i\s+plan\s+to)\s+"
+    r"(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+_LIVE_WORKFLOW = re.compile(
+    r"^(?:i|we)\s+use\s+(?P<value>.+)$|"
+    r"^(?:my|our)\s+(?:workflow|stack)\s+is\s+(?P<value_alt>.+)$",
+    flags=re.IGNORECASE,
+)
+_PREFERENCE_FORMAT_VALUES = frozenset({"tabs", "spaces"})
+_PREFERENCE_STYLE_VALUES = frozenset(
+    {"brief", "concise", "detailed", "verbose", "thorough", "quick", "simple", "complex"}
+)
+_PREFERENCE_THEME_VALUES = frozenset({"dark", "light"})
+
+
+@dataclass(frozen=True, slots=True)
+class LiveUserClaim:
+    """A deterministic, Core-formed claim extracted from one user turn."""
+
+    kind: str
+    content: str
+    value: str
+    attribute_key: str
+    structured_value: dict[str, str]
+
+
+def _claim_value(value: str) -> str:
+    return value.strip().rstrip(".!?").strip()
+
+
+def _preference_attribute(value: str) -> str:
+    normalized = normalized_observation_text(value)
+    first = normalized.split(maxsplit=1)[0] if normalized else ""
+    if first in _PREFERENCE_FORMAT_VALUES:
+        return "response_format"
+    if first in _PREFERENCE_STYLE_VALUES:
+        return "response_style"
+    if first in _PREFERENCE_THEME_VALUES:
+        return "interface_theme"
+    subject_match = re.search(r"\s+for\s+(.+)$", normalized, flags=re.IGNORECASE)
+    if subject_match is not None:
+        subject = re.sub(r"[^a-z0-9]+", "_", subject_match.group(1)).strip("_")
+        if subject:
+            return f"preference_{subject}"[:256]
+    return "preference"
+
+
+def extract_live_user_claim(content: str) -> LiveUserClaim | None:
+    """Extract only high-confidence first-person durable claims.
+
+    This is deliberately narrower than a general prompt parser.  It reuses the
+    same normalized wording and sensitivity classifier as archive formation,
+    while keeping assistant/tool/imported text outside the user-claim path.
+    """
+
+    normalized = " ".join(unicodedata.normalize("NFKC", content).split()).strip()
+    if not normalized or contains_secret_like_text(normalized):
+        return None
+
+    match = _LIVE_PREFERENCE.fullmatch(normalized)
+    if match is not None:
+        value = _claim_value(match.group("value"))
+        if value:
+            return LiveUserClaim(
+                kind="interaction_preference",
+                content=normalized,
+                value=value,
+                attribute_key=_preference_attribute(value),
+                structured_value={"claim_type": "interaction_preference", "value": value},
+            )
+
+    match = _LIVE_NAME.fullmatch(normalized)
+    if match is not None:
+        value = _claim_value(match.group("value"))
+        if value:
+            return LiveUserClaim(
+                kind="name",
+                content=normalized,
+                value=value,
+                attribute_key="name",
+                structured_value={"claim_type": "name", "value": value},
+            )
+
+    match = _LIVE_LOCATION.fullmatch(normalized)
+    if match is not None:
+        value = _claim_value(match.group("value"))
+        if value:
+            return LiveUserClaim(
+                kind="personal_context",
+                content=normalized,
+                value=value,
+                attribute_key="location",
+                structured_value={"claim_type": "location", "value": value},
+            )
+
+    match = _LIVE_SSN.fullmatch(normalized)
+    if match is not None:
+        value = _claim_value(match.group("value") or match.group("value_alt") or "")
+        if value:
+            return LiveUserClaim(
+                kind="personal_context",
+                content=normalized,
+                value=value,
+                attribute_key="ssn",
+                structured_value={"claim_type": "ssn", "value": value},
+            )
+
+    match = _LIVE_HEALTH.fullmatch(normalized)
+    if (
+        match is not None
+        and re.search(_PERSONAL_HEALTH_HINT, normalized, flags=re.IGNORECASE) is not None
+    ):
+        value = _claim_value(match.group("value"))
+        if value:
+            return LiveUserClaim(
+                kind="personal_context",
+                content=normalized,
+                value=value,
+                attribute_key="health",
+                structured_value={"claim_type": "health", "value": value},
+            )
+
+    for pattern, kind, attribute_key in (
+        (_LIVE_PROJECT, "project", "current_project"),
+        (_LIVE_GOAL, "goal", "current_goal"),
+    ):
+        match = pattern.fullmatch(normalized)
+        if match is not None:
+            value = _claim_value(match.group("value"))
+            if value:
+                return LiveUserClaim(
+                    kind=kind,
+                    content=normalized,
+                    value=value,
+                    attribute_key=attribute_key,
+                    structured_value={"claim_type": kind, "value": value},
+                )
+
+    match = _LIVE_WORKFLOW.fullmatch(normalized)
+    if match is not None:
+        value = _claim_value(match.group("value") or match.group("value_alt") or "")
+        if value:
+            return LiveUserClaim(
+                kind="workflow",
+                content=normalized,
+                value=value,
+                attribute_key="tooling",
+                structured_value={"claim_type": "workflow", "value": value},
+            )
+    return None
+
 
 def normalized_observation_text(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
@@ -502,6 +684,26 @@ class AutomaticMemoryPolicy:
                 "secret-like content is never promoted to current context",
                 Availability.LOCAL,
             )
+        if origin == ObservationOrigin.CLIENT_CAPTURE:
+            # A captured turn is evidence for the formation worker, never an
+            # implicit durable-memory command. Preserve the Core-derived
+            # sensitivity and local boundary while requiring later formation /
+            # reconciliation before canonical memory can change.
+            return decide(
+                ObservationDisposition.TENTATIVE,
+                "captured client evidence requires formation before current context",
+                Availability.LOCAL,
+            )
+        if origin == ObservationOrigin.LIVE_USER_EVIDENCE:
+            # Core-derived claims from a direct user turn are durable evidence,
+            # not explicit remember/correct/forget commands.  The extractor is
+            # intentionally narrow and this origin is never assigned to model,
+            # tool, imported, Relay, or caller-authored candidates.
+            return decide(
+                ObservationDisposition.APPLIED,
+                "Core-formed live user evidence applied",
+                Availability.LOCAL if sensitivity != Sensitivity.NORMAL else availability,
+            )
         if sensitivity == Sensitivity.HIGHLY_SENSITIVE:
             return decide(
                 ObservationDisposition.IGNORED,
@@ -559,6 +761,8 @@ class AutomaticMemoryPolicy:
             ObservationOrigin.LOCAL_ADMIN: "local administrator observation applied",
             ObservationOrigin.LEGACY_MIGRATION: "legacy explicit observation applied by policy",
             ObservationOrigin.ONGOING_CLIENT: "explicit user observation applied automatically",
+            ObservationOrigin.CLIENT_CAPTURE: "captured client evidence applied by Core",
+            ObservationOrigin.LIVE_USER_EVIDENCE: "Core-formed live user evidence applied",
             ObservationOrigin.REGISTERED_SOURCE: "registered source structural fact applied",
         }[origin]
         return decide(ObservationDisposition.APPLIED, reason, availability)
