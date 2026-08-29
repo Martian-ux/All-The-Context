@@ -51,8 +51,16 @@ bearer token, or a hand-edited MCP configuration. Windows uses the
 one-click installer with no routine terminal use. Supported Ubuntu remains
 a portable `tar.gz` requiring documented manual extract and launch.
 
-On Windows 11, the intended path is to download `AllTheContextSetup.exe` and
-double-click it. The first-run wizard:
+> **Windows beta.6 security notice (2026-08-29):** Microsoft Defender
+> quarantined the unsigned installed `AllTheContextMCP.exe` helper as
+> `Trojan:Win32/Sabsik.EN.A!ml`. The outer release archive matches its
+> published digest, but the installed helper does not yet have an independently
+> published component digest. Do not restore, run, or allow-list that helper
+> while the incident remains unresolved. See [known issues](docs/KNOWN_ISSUES.md).
+
+After a replacement Windows build closes that incident, the intended Windows
+11 path is to download `AllTheContextSetup.exe` and double-click it. The
+first-run wizard:
 
 1. installs for the current user without administrator access;
 2. creates the vault in the platform-appropriate per-user application-data

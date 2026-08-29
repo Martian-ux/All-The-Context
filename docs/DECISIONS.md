@@ -1,5 +1,21 @@
 # Architecture decisions
 
+## ADR-166: Windows AV findings require installed-component provenance
+
+**Status:** accepted locally on 2026-08-29 after a real beta.6 Defender event.
+This is an incident-handling and future packaging decision, not a declaration
+that the flagged helper is malicious or a false positive.
+
+An unsigned one-file packaging format, a matching outer release archive,
+successful CI, and artifact-level provenance are insufficient grounds to
+override an endpoint-protection detection. Windows packages must publish a
+digest inventory for every installed executable, and official packages should
+Authenticode-sign the main application, MCP helper, recovery helper, and
+updater. A persistent detection should be submitted to Microsoft using the
+exact signed component only after its release identity is independently
+verified. Until that chain exists, the product must not recommend restoration
+or an antivirus exclusion and must keep the incident visibly unresolved.
+
 ## ADR-165: Lifecycle bounds and Claude pairing claims fail closed
 
 **Status:** accepted locally on 2026-08-29 for the integrated lifecycle
@@ -60,6 +76,14 @@ skills remain separately selected and approval-gated. A successful later
 opt-out removes the managed hooks and retires omitted managed principals;
 unrelated client configuration and skills are preserved.
 
+Dashboard disconnect is integration-wide rather than read-profile-only. It
+removes the managed Codex or Claude Code surfaces transactionally, revokes all
+matching read, capture, and explicit principals, then attempts every associated
+credential deletion. Revoking a capture principal atomically revokes its
+capture source, abandons active runs, and clears pending checkpoint state, so a
+removed client cannot leave background capture enabled. Unrelated client
+configuration, skills, and principals remain untouched.
+
 The client sends one bounded flat lifecycle event to authenticated loopback
 Core. Provider/source identity, witness, provenance, sensitivity, availability,
 ACL, explicitness, and disposition are absent from the wire shape and derived
@@ -70,6 +94,11 @@ Core-owned `live_user_evidence` candidate only through the narrow deterministic
 first-person claim extractor; this is evidence, not an explicit remember or
 correction command. Existing slot reconciliation performs reinforcement and
 replacement before authorized retrieval.
+
+The capture-event index remains unique for registered-source and raw lifecycle
+observations. Core formation projections are the only excluded class, allowing
+one event to retain its raw observation and derived evidence without weakening
+the database invariant for every other capture candidate.
 
 Sensitive and highly-sensitive personal claims may be retained locally and
 read only by authenticated, non-denied `context:read` principals. Their raw

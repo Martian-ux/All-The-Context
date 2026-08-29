@@ -601,7 +601,7 @@ def revoke_managed_clients(
 
     revoked_ids: list[str] = []
     cleanup_ids: list[str] = []
-    revoke_error: BaseException | None = None
+    revoke_error: Exception | None = None
     for client_id in candidate_ids:
         client = by_id[client_id]
         if client["revoked"]:
@@ -613,17 +613,17 @@ def revoke_managed_clients(
             # A concurrent/idempotent revocation has already disabled this
             # principal; its credential is still safe to clean up.
             cleanup_ids.append(client_id)
-        except BaseException as exc:
+        except Exception as exc:
             revoke_error = revoke_error or exc
             continue
         revoked_ids.append(client_id)
         cleanup_ids.append(client_id)
 
-    cleanup_error: BaseException | None = None
+    cleanup_error: Exception | None = None
     for client_id in cleanup_ids:
         try:
             delete_client_credential(client_id, config)
-        except BaseException as exc:
+        except Exception as exc:
             cleanup_error = cleanup_error or exc
 
     if revoke_error is not None:

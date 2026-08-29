@@ -34,6 +34,20 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-29 — unresolved Windows Defender beta.6 incident
+
+Microsoft Defender detected and quarantined the unsigned installed beta.6
+`AllTheContextMCP.exe` as `Trojan:Win32/Sabsik.EN.A!ml`. Read-only inspection
+confirmed one incident sequence, an unsigned restored helper with SHA-256
+`62fcf5436988053aa4e43efa81483cfa5b200b0c71c567c96f5dff78c90c37ba`,
+and an exact match between the public Windows archive and its published outer
+digest. The public metadata does not expose a digest for each installed helper,
+so the restored executable is not yet independently bound to that release.
+No antivirus exclusion was added, the helper was not executed during this
+review, and neither malware nor false-positive status is claimed. Installed
+component manifests, Authenticode signing, and exact-component reassessment
+remain required follow-up.
+
 ### 2026-08-29 — operational credential shape hardening
 
 The direct-secret boundary now refuses unlabeled compact JWT/JWE and PASETO
@@ -56,6 +70,11 @@ deduplicated or reported as paired, and no exactly-once retry claim is made for
 them. Focused tests cover these boundaries; no live-provider acceptance is
 claimed.
 
+The integrated migration preserves a partial unique capture-event index for
+registered-source and raw lifecycle observations while allowing only
+`client_capture_formation` projections to share the originating event. This
+keeps raw-event replay database-enforced without blocking Core-owned formation.
+
 ### 2026-08-27 — opt-in Claude Code and Codex Continuous Capture
 
 Setup now keeps read, lifecycle capture, and explicit mutation authority in
@@ -65,6 +84,13 @@ ordinary turns then require no ATC command or repeated approval. Repeating,
 repairing, or opting out through setup preserves unrelated user settings and
 retires omitted managed authority after a successful configuration
 transaction.
+
+The Connections dashboard now recognizes Claude Code separately. Disconnecting
+Codex or Claude Code removes every ATC-managed surface for that integration,
+revokes its read/capture/explicit principals, deletes their credentials after
+revocation, and atomically revokes any capture source owned by a revoked
+capture principal. Active runs become abandoned and pending checkpoint state is
+cleared; repeated disconnect is idempotent and unrelated configuration is kept.
 
 The capture-only hook sends a strict bounded flat request to authenticated
 loopback Core at `POST /v1/lifecycle/events`. The request cannot declare its

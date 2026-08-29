@@ -575,7 +575,7 @@ def test_setup_connects_claude_code_with_exact_read_only_principal_and_managed_e
         "ATC_CORE_COMMAND",
         "ATC_CORE_DATA_DIR",
     }
-    assert managed["env"]["ATC_MCP_PROFILE"] == "claude_code_hook"
+    assert managed["env"]["ATC_MCP_PROFILE"] == "claude_code_read"
     assert managed["env"]["ATC_CLIENT_TOKEN"]
     assert managed["env"]["ATC_AUTO_START_CORE"] == "1"
     assert managed["env"]["ATC_CORE_COMMAND"] == json.dumps(runtime.core(), ensure_ascii=False)

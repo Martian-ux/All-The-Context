@@ -61,7 +61,6 @@ from ..capture_runtime import (
     reject_reserved_workspace_provider,
 )
 from ..capture_scheduler import scheduler_update_health_forced_off
-from ..client_capture import CAPTURE_ROUTE
 from ..claude_code_config import (
     ClaudeCodeConfigResult,
     claude_code_is_detected,
@@ -69,6 +68,7 @@ from ..claude_code_config import (
     disconnect_claude_code_integration,
     read_claude_code_registration_ids,
 )
+from ..client_capture import CAPTURE_ROUTE
 from ..client_config import (
     ClientConfigResult,
     claude_is_detected,

@@ -1080,10 +1080,16 @@ def test_registered_source_event_id_uniqueness_and_restart_retain_capture_state(
             str(row["name"]) for row in connection.execute("PRAGMA table_info(context_candidates)")
         }
         assert {"capture_source_id", "capture_event_id", "capture_binding_hash"} <= columns
+        unique_index = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND name='uq_context_candidates_capture_event'"
+        ).fetchone()
+        assert unique_index is not None
+        assert "client_capture_formation" in str(unique_index["sql"])
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='index' "
-                "AND name='uq_context_candidates_capture_event'"
+                "AND name='ix_context_candidates_capture_event'"
             ).fetchone()
             is not None
         )
