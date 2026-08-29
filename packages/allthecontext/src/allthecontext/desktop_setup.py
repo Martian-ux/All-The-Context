@@ -583,11 +583,7 @@ def revoke_managed_clients(
 
     def add_candidate(client_id: str) -> None:
         client = by_id.get(client_id)
-        if (
-            client is None
-            or client["name"] not in names
-            or client_id in seen
-        ):
+        if client is None or client["name"] not in names or client_id in seen:
             return
         seen.add(client_id)
         candidate_ids.append(client_id)
@@ -731,9 +727,7 @@ def _configure_codex_accesses(
             read_client_id=accesses[CODEX_CLIENT_NAME].client_id,
             read_token=token_for(CODEX_CLIENT_NAME),
             read_credential_storage=accesses[CODEX_CLIENT_NAME].credential_storage,
-            capture_client_id=(
-                accesses[CODEX_CAPTURE_CLIENT_NAME].client_id if capture else None
-            ),
+            capture_client_id=(accesses[CODEX_CAPTURE_CLIENT_NAME].client_id if capture else None),
             capture_token=token_for(CODEX_CAPTURE_CLIENT_NAME) if capture else None,
             capture_credential_storage=(
                 accesses[CODEX_CAPTURE_CLIENT_NAME].credential_storage if capture else None
@@ -781,9 +775,7 @@ def _configure_claude_code_accesses(
 
     specifications = [(CLAUDE_CODE_CLIENT_NAME, CLAUDE_CODE_SCOPES)]
     if capture:
-        specifications.append(
-            (CLAUDE_CODE_CAPTURE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_SCOPES)
-        )
+        specifications.append((CLAUDE_CODE_CAPTURE_CLIENT_NAME, CLAUDE_CODE_CAPTURE_SCOPES))
     accesses: dict[str, DesktopAccess] = {}
     created: list[DesktopAccess] = []
     try:
@@ -1028,10 +1020,7 @@ def _validate_workspace_options(options: SetupOptions) -> None:
         raise ValueError("Codex explicit commands require the Codex connection")
     if options.configure_claude_code_explicit_commands and not options.configure_claude_code:
         raise ValueError("explicit Claude Code commands require the Claude Code connection")
-    if (
-        options.configure_claude_code_continuous_capture
-        and not options.configure_claude_code
-    ):
+    if options.configure_claude_code_continuous_capture and not options.configure_claude_code:
         raise ValueError("Claude Code Continuous Capture requires the Claude Code connection")
     if options.workspace_root is None:
         if options.workspace_local_only_acknowledged:

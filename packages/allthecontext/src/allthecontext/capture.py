@@ -985,11 +985,15 @@ def ensure_capture_schema(connection: Any, *, through_version: int | None = None
             # A full repair must not recreate that obsolete unique index before
             # migration 018 has a chance to drop it; this also keeps repair safe
             # for databases that already contain both projections.
-            if full_repair and version == 16 and re.search(
-                r"CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+"
-                r"uq_context_candidates_capture_event",
-                statement,
-                flags=re.IGNORECASE,
+            if (
+                full_repair
+                and version == 16
+                and re.search(
+                    r"CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+"
+                    r"uq_context_candidates_capture_event",
+                    statement,
+                    flags=re.IGNORECASE,
+                )
             ):
                 continue
             added_column = _added_column(statement)

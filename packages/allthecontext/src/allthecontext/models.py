@@ -143,9 +143,7 @@ class CaptureEventRequest(StrictModel):
     event_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
     idempotency_key: StrictStr = Field(min_length=1, max_length=36)
     session_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
-    conversation_id: StrictStr = Field(
-        min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS
-    )
+    conversation_id: StrictStr = Field(min_length=1, max_length=MAX_CAPTURE_EVENT_REFERENCE_CHARS)
     sequence: StrictInt = Field(ge=1, le=(1 << 63) - 1)
     role: CaptureRole
     content: StrictStr = Field(

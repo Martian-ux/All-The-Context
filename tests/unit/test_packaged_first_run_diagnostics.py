@@ -430,6 +430,8 @@ def test_source_contract_never_retains_full_work_tree() -> None:
     assert "status.structuredContent" not in text
     assert "raise SystemExit(str(exc))" not in text
     assert "packaged-first-run-diagnostics" in text
+    assert 'context/status", token' not in text
+    assert "wait_for_core(base_url, token)" not in text
     # Must not print raw subprocess streams.
     assert "completed.stdout" not in text or "stdout_present" in text
     assert 'print(f"{label} stdout' not in text

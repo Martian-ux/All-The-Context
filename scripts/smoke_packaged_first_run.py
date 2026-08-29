@@ -177,11 +177,11 @@ def stop_core(base_url: str, admin_token: str) -> None:
     raise RuntimeError("installed Core did not shut down within ten seconds")
 
 
-def wait_for_core(base_url: str, token: str) -> None:
+def wait_for_core(base_url: str, admin_token: str) -> None:
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         try:
-            if api_request(f"{base_url}/v1/context/status", token).get("core_online") is True:
+            if api_request(f"{base_url}/v1/context/status", admin_token).get("core_online") is True:
                 return
         except (OSError, httpx.HTTPError):
             pass
@@ -932,7 +932,10 @@ def main() -> int:
         if json.loads(browser_content.decode("utf-8")).get("core_online") is not True:
             raise SystemExit("browser session did not authenticate to Core")
 
-        status = api_request(f"{base_url}/v1/context/status", token)
+        # The MCP principal is deliberately read-only. Use the separately
+        # retained disposable desktop administrator for readiness probes;
+        # exercise_mcp below proves the MCP credential itself works.
+        status = api_request(f"{base_url}/v1/context/status", admin_token)
         if status.get("core_online") is not True:
             raise SystemExit(f"installed Core status was not ready: {status}")
         updates = api_request(f"{base_url}/v1/admin/updates", admin_token)
@@ -997,7 +1000,7 @@ def main() -> int:
             "validate-reopen-credentials",
             "reopen_credential_storage_changed",
         )
-    if api_request(f"{base_url}/v1/context/status", token).get("core_online") is not True:
+    if api_request(f"{base_url}/v1/context/status", admin_token).get("core_online") is not True:
         fail_smoke("validate-reopen-core", "reopened_core_not_ready")
     stop_core(base_url, admin_token)
 
@@ -1034,7 +1037,7 @@ def main() -> int:
             check=True,
             timeout=180,
         )
-        wait_for_core(base_url, token)
+        wait_for_core(base_url, admin_token)
         if json.loads(crash_journal.read_text(encoding="utf-8")).get("phase") != "committed":
             raise SystemExit("packaged updater did not commit after crash recovery")
         stop_core(base_url, admin_token)
@@ -1059,7 +1062,7 @@ def main() -> int:
             journal=rollback_journal,
             environment=rollback_environment,
         )
-        wait_for_core(base_url, token)
+        wait_for_core(base_url, admin_token)
         rollback_status = json.loads(rollback_journal.read_text(encoding="utf-8"))
         if rollback_status.get("phase") != "rolled_back":
             raise SystemExit(f"packaged updater did not roll back: {rollback_status}")

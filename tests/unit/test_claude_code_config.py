@@ -645,11 +645,7 @@ def test_disconnect_integration_removes_all_managed_surfaces_and_is_idempotent(
         settings_path,
         {
             "permissions": {"allow": ["Bash(git status)"]},
-            "hooks": {
-                "UserPromptSubmit": [
-                    {"hooks": [{"type": "command", "command": "keep"}]}
-                ]
-            },
+            "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "keep"}]}]},
         },
     )
     configure_claude_code(
@@ -679,11 +675,7 @@ def test_disconnect_integration_removes_all_managed_surfaces_and_is_idempotent(
     }
     assert settings == {
         "permissions": {"allow": ["Bash(git status)"]},
-        "hooks": {
-            "UserPromptSubmit": [
-                {"hooks": [{"type": "command", "command": "keep"}]}
-            ]
-        },
+        "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "keep"}]}]},
     }
     assert result.managed_client_ids == ("read-client", "capture-client", "explicit-client")
     assert result.changed is True

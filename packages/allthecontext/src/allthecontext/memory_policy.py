@@ -456,9 +456,10 @@ def extract_live_user_claim(content: str) -> LiveUserClaim | None:
             )
 
     match = _LIVE_HEALTH.fullmatch(normalized)
-    if match is not None and re.search(
-        _PERSONAL_HEALTH_HINT, normalized, flags=re.IGNORECASE
-    ) is not None:
+    if (
+        match is not None
+        and re.search(_PERSONAL_HEALTH_HINT, normalized, flags=re.IGNORECASE) is not None
+    ):
         value = _claim_value(match.group("value"))
         if value:
             return LiveUserClaim(

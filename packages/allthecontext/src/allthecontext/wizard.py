@@ -870,8 +870,7 @@ class SetupWizard:
                     capture_enabled=self.claude_code_capture_requested
                     and bool(
                         self.result
-                        and "Claude Code"
-                        in getattr(self.result, "continuous_capture_clients", ())
+                        and "Claude Code" in getattr(self.result, "continuous_capture_clients", ())
                     ),
                 ),
             ),
@@ -900,14 +899,9 @@ class SetupWizard:
                 if self.claude_code_capture_requested
                 and bool(
                     self.result
-                    and "Claude Code"
-                    in getattr(self.result, "continuous_capture_clients", ())
+                    and "Claude Code" in getattr(self.result, "continuous_capture_clients", ())
                 )
-                else (
-                    "Not connected"
-                    if self.claude_code_capture_requested
-                    else "Not enabled"
-                ),
+                else ("Not connected" if self.claude_code_capture_requested else "Not enabled"),
             ),
             (
                 "Startup",

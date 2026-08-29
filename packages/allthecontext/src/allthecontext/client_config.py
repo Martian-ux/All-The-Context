@@ -969,9 +969,7 @@ def _render_codex_server(
         )
     )
     rendered_args = ", ".join(json.dumps(argument) for argument in command[1:])
-    rendered_env = ", ".join(
-        f"{name} = {json.dumps(value)}" for name, value in environment.items()
-    )
+    rendered_env = ", ".join(f"{name} = {json.dumps(value)}" for name, value in environment.items())
     lines = [
         f"[mcp_servers.{server_key}]",
         f"command = {json.dumps(command[0])}",
@@ -998,7 +996,7 @@ def _render_codex_hooks_inline(*, capture_enabled: bool) -> list[str]:
         "[[hooks.UserPromptSubmit]]",
         "[[hooks.UserPromptSubmit.hooks]]",
         'type = "mcp_tool"',
-        f'server = {json.dumps(CODEX_READ_SERVER_KEY)}',
+        f"server = {json.dumps(CODEX_READ_SERVER_KEY)}",
         'tool = "bootstrap_context"',
         'input = { task_description = "${prompt}", character_budget = 8000, '
         'session_id = "${session_id}", turn_id = "${turn_id}" }',
@@ -1009,15 +1007,15 @@ def _render_codex_hooks_inline(*, capture_enabled: bool) -> list[str]:
                 "[[hooks.UserPromptSubmit]]",
                 "[[hooks.UserPromptSubmit.hooks]]",
                 'type = "mcp_tool"',
-                f'server = {json.dumps(CODEX_CAPTURE_SERVER_KEY)}',
-                f'tool = {json.dumps(CODEX_CAPTURE_USER_PROMPT_TOOL)}',
+                f"server = {json.dumps(CODEX_CAPTURE_SERVER_KEY)}",
+                f"tool = {json.dumps(CODEX_CAPTURE_USER_PROMPT_TOOL)}",
                 'input = { prompt = "${prompt}", session_id = "${session_id}", '
                 'turn_id = "${turn_id}" }',
                 "[[hooks.Stop]]",
                 "[[hooks.Stop.hooks]]",
                 'type = "mcp_tool"',
-                f'server = {json.dumps(CODEX_CAPTURE_SERVER_KEY)}',
-                f'tool = {json.dumps(CODEX_CAPTURE_STOP_TOOL)}',
+                f"server = {json.dumps(CODEX_CAPTURE_SERVER_KEY)}",
+                f"tool = {json.dumps(CODEX_CAPTURE_STOP_TOOL)}",
                 'input = { last_assistant_message = "${last_assistant_message}", '
                 'session_id = "${session_id}", turn_id = "${turn_id}" }',
             ]
@@ -1080,9 +1078,7 @@ def _codex_is_managed_server(value: object, *, expected_profile: str | None = No
     return expected_profile is None and isinstance(env.get("ATC_CLIENT_ID"), str)
 
 
-def _codex_existing_hook_layer(
-    config: _CodexDocument, hooks: _CodexDocument
-) -> str:
+def _codex_existing_hook_layer(config: _CodexDocument, hooks: _CodexDocument) -> str:
     config_has_hooks = "hooks" in config.parsed
     hooks_exists = hooks.existed
     if config_has_hooks and hooks_exists:
@@ -1427,9 +1423,7 @@ def configure_codex_integration(
         skill_plans, skill_paths = _codex_skill_plans(selected_skills_dir)
         plans.extend(skill_plans)
     backups = _codex_apply_transaction(tuple(plans))
-    changed = any(
-        plan.remove or plan.updated != plan.document.original for plan in plans
-    )
+    changed = any(plan.remove or plan.updated != plan.document.original for plan in plans)
     return ClientConfigResult(
         "Codex",
         config_path,
@@ -1508,9 +1502,9 @@ def disconnect_codex_integration(
                 hook_map.pop(event_name, None)
         if not hook_map:
             updated_hooks.pop("hooks", None)
-        rendered_hooks = json.dumps(
-            updated_hooks, indent=2, ensure_ascii=False, allow_nan=False
-        ) + "\n"
+        rendered_hooks = (
+            json.dumps(updated_hooks, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+        )
         plans.append(_CodexWritePlan(hooks, rendered_hooks, remove=not updated_hooks))
     skill_plans, skill_paths = _codex_skill_plans(selected_skills_dir, remove=True)
     plans.extend(skill_plans)

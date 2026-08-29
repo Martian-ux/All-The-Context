@@ -291,12 +291,19 @@ def test_revoke_managed_clients_revokes_all_before_partial_cleanup_failure(
     assert all(rows[client.id]["revoked"] for client in managed)
     assert rows[unrelated.id]["revoked"] is False
     assert set(cleanup_attempts) == {client.id for client in managed}
-    assert desktop_setup.revoke_managed_clients(
-        store,
-        config,
-        managed_client_ids=(),
-        managed_names=(CODEX_CLIENT_NAME, CODEX_CAPTURE_CLIENT_NAME, CODEX_EXPLICIT_CLIENT_NAME),
-    ) == ()
+    assert (
+        desktop_setup.revoke_managed_clients(
+            store,
+            config,
+            managed_client_ids=(),
+            managed_names=(
+                CODEX_CLIENT_NAME,
+                CODEX_CAPTURE_CLIENT_NAME,
+                CODEX_EXPLICIT_CLIENT_NAME,
+            ),
+        )
+        == ()
+    )
     assert cleanup_attempts.count(managed[0].id) == 2
 
 

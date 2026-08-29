@@ -2004,8 +2004,7 @@ def create_app(
                     **base,
                     "state": "degraded",
                     "reason": (
-                        "The Claude Code connection credential cannot be recovered. "
-                        "Choose Repair."
+                        "The Claude Code connection credential cannot be recovered. Choose Repair."
                     ),
                 }
             return {**base, "configured": True, "state": "connected"}
@@ -2051,7 +2050,7 @@ def create_app(
             raise HTTPException(
                 status_code=409,
                 detail=f"{name} is not installed on this computer.",
-        )
+            )
         runtime = RuntimeCommand.current()
         target_url = f"http://{active_config.host}:{active_config.port}"
         name = (
@@ -2105,8 +2104,7 @@ def create_app(
                 changed = claude_code_result.changed
                 config_path = claude_code_result.mcp_path
                 backup_path = (
-                    claude_code_result.mcp_backup_path
-                    or claude_code_result.settings_backup_path
+                    claude_code_result.mcp_backup_path or claude_code_result.settings_backup_path
                 )
             else:
                 client_access, client_result = configure_client_access_transactionally(

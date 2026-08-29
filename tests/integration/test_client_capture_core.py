@@ -184,9 +184,7 @@ def test_capture_preserves_roles_and_allows_sensitive_personal_context(tmp_path:
             ).fetchall()
             assert len(rows) == 7
             raw_rows = [row for row in rows if row["source_type"] == "client_capture"]
-            formed_rows = [
-                row for row in rows if row["source_type"] == "client_capture_formation"
-            ]
+            formed_rows = [row for row in rows if row["source_type"] == "client_capture_formation"]
             assert len(raw_rows) == 5
             assert len(formed_rows) == 2
             assert all(row["explicit_user_statement"] == 0 for row in raw_rows)
@@ -200,9 +198,7 @@ def test_capture_preserves_roles_and_allows_sensitive_personal_context(tmp_path:
             assert json.loads(ssn["allowed_clients_json"]) == []
 
             raw_private_rows = [
-                row
-                for row in raw_rows
-                if row["sensitivity"] in {"sensitive", "highly_sensitive"}
+                row for row in raw_rows if row["sensitivity"] in {"sensitive", "highly_sensitive"}
             ]
             assert len(raw_private_rows) == 2
             assert all(
@@ -243,18 +239,22 @@ def test_live_user_reconciliation_deduplicates_and_replaces_preferences(
                 json={"query": "prefer", "kinds": ["interaction_preference"]},
             )
             assert search.status_code == 200, search.text
-            assert [item["content"] for item in search.json()["items"]] == [
-                "I now prefer spaces"
-            ]
+            assert [item["content"] for item in search.json()["items"]] == ["I now prefer spaces"]
 
         with service.store.connect() as connection:
-            assert connection.execute(
-                "SELECT COUNT(*) FROM context_records WHERE kind='interaction_preference'"
-            ).fetchone()[0] == 1
-            assert connection.execute(
-                "SELECT COUNT(*) FROM context_candidates "
-                "WHERE source_type='client_capture_formation'"
-            ).fetchone()[0] == 3
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM context_records WHERE kind='interaction_preference'"
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM context_candidates "
+                    "WHERE source_type='client_capture_formation'"
+                ).fetchone()[0]
+                == 3
+            )
             assistant = connection.execute(
                 "SELECT COUNT(*) FROM context_candidates "
                 "WHERE source_type='client_capture_formation' AND content=?",

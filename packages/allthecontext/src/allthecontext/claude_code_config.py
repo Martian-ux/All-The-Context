@@ -1002,9 +1002,7 @@ def disconnect_claude_code(
     mcp_updated, settings_updated, managed_client_ids = _updated_disconnect_documents(
         mcp,
         settings,
-        additional_servers=(
-            (CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY, CLAUDE_CODE_CAPTURE_MCP_PROFILE),
-        ),
+        additional_servers=((CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY, CLAUDE_CODE_CAPTURE_MCP_PROFILE),),
         additional_hooks=(
             ("UserPromptSubmit", _MANAGED_CAPTURE_USER_HOOK_HANDLER, None),
             ("Stop", _MANAGED_CAPTURE_STOP_HOOK_HANDLER, None),

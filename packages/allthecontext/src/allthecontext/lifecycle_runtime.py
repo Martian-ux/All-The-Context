@@ -131,6 +131,7 @@ class LifecycleProvenance:
         if self.explicit_memory_command is not False or self.formation_policy != "event_only":
             raise LifecycleRuntimeError("automatic lifecycle events cannot claim memory mutation")
 
+
 @dataclass(frozen=True, slots=True)
 class LifecycleCaptureRequest:
     """Narrow Core request containing one bounded event payload."""
@@ -158,9 +159,7 @@ class LifecycleCaptureRequest:
         if self.event.conversation_id is None:
             raise LifecycleRuntimeError("lifecycle event requires an opaque conversation ID")
         expected_hook = (
-            "direct_user_turn"
-            if self.event_family == "user_turn_observed"
-            else "response_emission"
+            "direct_user_turn" if self.event_family == "user_turn_observed" else "response_emission"
         )
         if self.event.hook != expected_hook:
             raise LifecycleRuntimeError("lifecycle event family does not match envelope hook")
@@ -711,9 +710,7 @@ class LifecycleRuntimeAdapter:
         if not callable(bootstrap):
             return ""
         try:
-            response = bootstrap(
-                {"query": prompt, "budget_chars": MAX_LIFECYCLE_CONTEXT_CHARS}
-            )
+            response = bootstrap({"query": prompt, "budget_chars": MAX_LIFECYCLE_CONTEXT_CHARS})
         except Exception:
             return ""
         return _format_context(_bounded_context_items(response))

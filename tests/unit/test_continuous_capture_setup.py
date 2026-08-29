@@ -359,18 +359,12 @@ def test_setup_principals_have_exact_read_and_capture_scopes(tmp_path: Path, mon
         desktop_setup.CLAUDE_CODE_CLIENT_NAME,
         desktop_setup.CLAUDE_CODE_CAPTURE_CLIENT_NAME,
     }
-    clients = {
-        item["name"]: item
-        for item in store.list_clients()
-        if not item["revoked"]
-    }
+    clients = {item["name"]: item for item in store.list_clients() if not item["revoked"]}
     assert clients[desktop_setup.CLAUDE_CODE_CLIENT_NAME]["scopes"] == ["context:read"]
     assert clients[desktop_setup.CLAUDE_CODE_CAPTURE_CLIENT_NAME]["scopes"] == ["context:capture"]
 
 
-def test_successful_opt_out_retires_omitted_managed_authority(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_successful_opt_out_retires_omitted_managed_authority(tmp_path: Path, monkeypatch) -> None:
     config = CoreConfig.in_directory(tmp_path / "core")
     store = CoreStore(config.database_path)
     store.initialize_vault()

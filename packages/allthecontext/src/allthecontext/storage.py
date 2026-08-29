@@ -3335,8 +3335,7 @@ class CoreStore:
             # transaction so a revoked principal can never leave an enabled
             # source or an active lease behind.
             source_rows = connection.execute(
-                "SELECT id FROM capture_sources "
-                "WHERE vault_id=? AND client_principal_id=?",
+                "SELECT id FROM capture_sources WHERE vault_id=? AND client_principal_id=?",
                 (vault_id, client_id),
             ).fetchall()
             source_ids = tuple(str(row["id"]) for row in source_rows)
@@ -3634,9 +3633,7 @@ class CoreStore:
         del principal
         role = event.payload.get("role")
         content = event.payload.get("content")
-        if role not in {"user", "assistant", "tool", "imported"} or not isinstance(
-            content, str
-        ):
+        if role not in {"user", "assistant", "tool", "imported"} or not isinstance(content, str):
             raise InvalidStateError("capture event payload is invalid")
         if role != request.role or content != request.content:
             raise ConflictError("capture event content does not match the request")
@@ -3700,8 +3697,7 @@ class CoreStore:
             attribute_key=claim.attribute_key,
             source_id=None,
             source_reference=(
-                "client-capture-formation-"
-                + _hash_text(f"{source_id}\0{request.event_id}")
+                "client-capture-formation-" + _hash_text(f"{source_id}\0{request.event_id}")
             ),
             source_service="allthecontext-core",
             source_type="client_capture_formation",
@@ -3735,17 +3731,19 @@ class CoreStore:
             or contains_direct_secret(candidate)
             or (formed_candidate is not None and contains_direct_secret(formed_candidate))
         ):
-            raise InvalidStateError(
-                "direct secret-like content cannot enter the capture ledger"
-            )
+            raise InvalidStateError("direct secret-like content cannot enter the capture ledger")
         from .capture import CaptureLedger
 
         with self.transaction() as connection:
             registered = self._policy_principal_tx(connection, principal)
-            if registered is None or registered.id != principal.id or not (
-                CONTEXT_CAPTURE in registered.scopes
-                or "admin" in registered.scopes
-                or "*" in registered.scopes
+            if (
+                registered is None
+                or registered.id != principal.id
+                or not (
+                    CONTEXT_CAPTURE in registered.scopes
+                    or "admin" in registered.scopes
+                    or "*" in registered.scopes
+                )
             ):
                 raise InvalidStateError("capture principal is not registered for capture")
             source_id = self.client_capture_source_id(registered.id)

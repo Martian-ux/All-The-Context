@@ -455,9 +455,7 @@ def _server_for_profile() -> MCPServer:
         )
     if profile == "codex_explicit":
         return build_mcp(
-            enabled_tools=frozenset(
-                {"propose_memory", "report_context_error", "forget_context"}
-            )
+            enabled_tools=frozenset({"propose_memory", "report_context_error", "forget_context"})
         )
     if profile in {"claude_code_read", "claude_code_hook"}:
         from allthecontext.claude_code_hook import build_claude_code_read_mcp

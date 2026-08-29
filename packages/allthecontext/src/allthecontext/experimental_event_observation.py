@@ -331,10 +331,7 @@ def _validate_observation_contract(
     if content is not None:
         if not isinstance(content, str) or not content.strip():
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
-        if (
-            len(content) > MAX_CONTENT_CHARS
-            or _CONTENT_CONTROL_CHARACTER_RE.search(content)
-        ):
+        if len(content) > MAX_CONTENT_CHARS or _CONTENT_CONTROL_CHARACTER_RE.search(content):
             raise ContractViolation(ContractErrorCode.INVALID_FIELD)
     if payload_kind is not None:
         if not isinstance(payload_kind, PayloadKind):
