@@ -1247,11 +1247,11 @@ export const api = {
     return { ...result, items: result.items.map((item) => ({ ...item, transport: "MCP", enabled: !item.revoked, last_seen_at: item.last_used_at })) };
   },
   integrations: () => request<IntegrationsStatus>("/admin/integrations"),
-  connectIntegration: (id: "chatgpt_codex" | "claude") =>
+  connectIntegration: (id: "chatgpt_codex" | "claude" | "claude_code") =>
     request<IntegrationConnectResult>(`/admin/integrations/${encodeURIComponent(id)}`, {
       method: "POST",
     }),
-  disconnectIntegration: (id: "chatgpt_codex" | "claude") =>
+  disconnectIntegration: (id: "chatgpt_codex" | "claude" | "claude_code") =>
     request<IntegrationConnectResult>(`/admin/integrations/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),

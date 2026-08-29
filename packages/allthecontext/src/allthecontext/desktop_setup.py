@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -60,7 +60,7 @@ from .desktop_runtime import RuntimeCommand
 from .instance_identity import ensure_instance_secret, proof_matches
 from .models import ClientCreate
 from .platform_compat import windows_creation_flags
-from .storage import CoreStore, StorageError
+from .storage import CoreStore, NotFoundError, StorageError
 from .user_startup import StartupResult, install_user_startup
 
 DESKTOP_CLIENT_NAME = "All The Context Desktop"
@@ -557,6 +557,84 @@ def retire_other_named_clients(
         if client["name"] == name and client_id != keep_id and not client["revoked"]:
             store.revoke_client(client_id)
             delete_client_credential(client_id, config)
+
+
+def revoke_managed_clients(
+    store: CoreStore,
+    config: CoreConfig,
+    *,
+    managed_client_ids: Iterable[str],
+    managed_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Revoke an integration's principals before attempting secret cleanup.
+
+    Config-derived IDs are accepted only when they belong to the integration's
+    reserved Core names.  Name matching also retires stale principals whose
+    managed config entry was already removed.  Revocation is completed for all
+    candidates before any credential deletion is attempted, and cleanup errors
+    are aggregated only after every safely revoked credential was attempted.
+    """
+
+    names = frozenset(managed_names)
+    clients = store.list_clients()
+    by_id = {str(client["id"]): client for client in clients}
+    candidate_ids: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(client_id: str) -> None:
+        client = by_id.get(client_id)
+        if (
+            client is None
+            or client["name"] not in names
+            or client_id in seen
+        ):
+            return
+        seen.add(client_id)
+        candidate_ids.append(client_id)
+
+    for client_id in managed_client_ids:
+        if isinstance(client_id, str):
+            add_candidate(client_id)
+    for client in clients:
+        if client["name"] in names:
+            add_candidate(str(client["id"]))
+
+    revoked_ids: list[str] = []
+    cleanup_ids: list[str] = []
+    revoke_error: BaseException | None = None
+    for client_id in candidate_ids:
+        client = by_id[client_id]
+        if client["revoked"]:
+            cleanup_ids.append(client_id)
+            continue
+        try:
+            store.revoke_client(client_id)
+        except NotFoundError:
+            # A concurrent/idempotent revocation has already disabled this
+            # principal; its credential is still safe to clean up.
+            cleanup_ids.append(client_id)
+        except BaseException as exc:
+            revoke_error = revoke_error or exc
+            continue
+        revoked_ids.append(client_id)
+        cleanup_ids.append(client_id)
+
+    cleanup_error: BaseException | None = None
+    for client_id in cleanup_ids:
+        try:
+            delete_client_credential(client_id, config)
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+
+    if revoke_error is not None:
+        raise RuntimeError(
+            "Managed client authority could not be fully revoked; credential cleanup was partial"
+        ) from revoke_error
+    if cleanup_error is not None:
+        raise RuntimeError(
+            "Managed client authority was revoked but credential cleanup was incomplete"
+        ) from cleanup_error
+    return tuple(revoked_ids)
 
 
 def retire_managed_client_group(

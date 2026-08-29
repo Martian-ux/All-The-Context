@@ -3321,13 +3321,45 @@ class CoreStore:
     def revoke_client(self, client_id: str) -> None:
         vault_id = self.vault_id()
         with self.transaction() as connection:
+            now = utc_now()
             result = connection.execute(
                 "UPDATE client_registrations SET revoked_at=? "
                 "WHERE id=? AND vault_id=? AND revoked_at IS NULL",
-                (utc_now(), client_id, vault_id),
+                (now, client_id, vault_id),
             )
             if result.rowcount != 1:
                 raise NotFoundError("client not found or already revoked")
+
+            # Client-runtime capture is owned by the capture principal.  Keep
+            # revocation and the corresponding source shutdown in one write
+            # transaction so a revoked principal can never leave an enabled
+            # source or an active lease behind.
+            source_rows = connection.execute(
+                "SELECT id FROM capture_sources "
+                "WHERE vault_id=? AND client_principal_id=?",
+                (vault_id, client_id),
+            ).fetchall()
+            source_ids = tuple(str(row["id"]) for row in source_rows)
+            if not source_ids:
+                return
+            placeholders = ",".join("?" for _ in source_ids)
+            connection.execute(
+                f"UPDATE capture_runs SET state='abandoned',"
+                "error_code='capture_disconnected',completed_at=?,lease_expires_at=? "
+                f"WHERE source_id IN ({placeholders}) AND state='running'",
+                (now, now, *source_ids),
+            )
+            connection.execute(
+                f"UPDATE capture_checkpoints SET pending_generation=NULL,pending_cursor=NULL,"
+                f"pending_event_ids_json=NULL,updated_at=? WHERE source_id IN ({placeholders})",
+                (now, *source_ids),
+            )
+            connection.execute(
+                f"UPDATE capture_sources SET lifecycle_state='revoked',credential_ref=NULL,"
+                f"next_retry_at=NULL,last_error_code='capture_disconnected',last_error_at=?,"
+                f"updated_at=? WHERE vault_id=? AND id IN ({placeholders})",
+                (now, now, vault_id, *source_ids),
+            )
 
     def begin_ingestion(
         self,

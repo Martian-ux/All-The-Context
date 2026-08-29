@@ -2,6 +2,7 @@ import {
   Archive,
   BookOpenText,
   Check,
+  Code2,
   ChevronRight,
   CircleHelp,
   Database,
@@ -1479,7 +1480,7 @@ function ConnectionsView() {
         <div className="section-heading"><div><h2>On this computer</h2><p>Installed apps connect directly to your private Core.</p></div><button className="quiet-button" disabled={loading || working !== null} onClick={() => void load()}>Check again</button></div>
         {loading ? <LoadingRows /> : <div className="integration-list">
           {integrations?.apps.map((integration) => {
-            const Icon = integration.id === "chatgpt_codex" ? MonitorSmartphone : Laptop;
+            const Icon = integration.id === "chatgpt_codex" ? MonitorSmartphone : integration.id === "claude_code" ? Code2 : Laptop;
             const unavailable = integration.state === "not_installed";
             const stateLabel = integration.state === "connected" ? "Connected" : integration.state === "degraded" ? "Needs repair" : unavailable ? "Not installed" : "Not connected";
             return <div className="integration-row" key={integration.id}>

@@ -26,6 +26,7 @@ from allthecontext.claude_code_config import (
     configure_claude_code_explicit_commands,
     disconnect_claude_code,
     disconnect_claude_code_explicit_commands,
+    disconnect_claude_code_integration,
     managed_claude_code_hook_handler,
 )
 from allthecontext.desktop_runtime import RuntimeCommand
@@ -626,6 +627,77 @@ def test_explicit_commands_are_opt_in_transactional_and_idempotent(tmp_path: Pat
     assert "UserPromptExpansion" not in json.loads(settings_path.read_text(encoding="utf-8")).get(
         "hooks", {}
     )
+
+
+def test_disconnect_integration_removes_all_managed_surfaces_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    mcp_path = tmp_path / ".claude.json"
+    settings_path = tmp_path / ".claude" / "settings.json"
+    _write_json(
+        mcp_path,
+        {
+            "custom": {"keep": True},
+            "mcpServers": {"other": {"type": "stdio", "command": "keep"}},
+        },
+    )
+    _write_json(
+        settings_path,
+        {
+            "permissions": {"allow": ["Bash(git status)"]},
+            "hooks": {
+                "UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": "keep"}]}
+                ]
+            },
+        },
+    )
+    configure_claude_code(
+        _runtime(tmp_path),
+        "read-client",
+        capture_client_id="capture-client",
+        mcp_path=mcp_path,
+        settings_path=settings_path,
+    )
+    configure_claude_code_explicit_commands(
+        _runtime(tmp_path),
+        "explicit-client",
+        mcp_path=mcp_path,
+        settings_path=settings_path,
+    )
+
+    result = disconnect_claude_code_integration(
+        mcp_path=mcp_path,
+        settings_path=settings_path,
+    )
+
+    mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert mcp == {
+        "custom": {"keep": True},
+        "mcpServers": {"other": {"type": "stdio", "command": "keep"}},
+    }
+    assert settings == {
+        "permissions": {"allow": ["Bash(git status)"]},
+        "hooks": {
+            "UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": "keep"}]}
+            ]
+        },
+    }
+    assert result.managed_client_ids == ("read-client", "capture-client", "explicit-client")
+    assert result.changed is True
+    assert all(
+        not (settings_path.parent / "skills" / name / "SKILL.md").exists()
+        for name in ("atc-remember", "atc-correct", "atc-forget")
+    )
+
+    second = disconnect_claude_code_integration(
+        mcp_path=mcp_path,
+        settings_path=settings_path,
+    )
+    assert second.changed is False
+    assert second.managed_client_ids == ()
 
 
 def test_explicit_skill_collision_fails_before_any_config_write(tmp_path: Path) -> None:

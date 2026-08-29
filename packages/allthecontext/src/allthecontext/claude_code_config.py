@@ -1021,6 +1021,50 @@ def disconnect_claude_code(
     )
 
 
+def disconnect_claude_code_integration(
+    mcp_path: Path | None = None, settings_path: Path | None = None
+) -> ClaudeCodeConfigResult:
+    """Remove every ATC-managed Claude Code surface in one file transaction."""
+
+    paths = claude_code_config_paths(mcp_path=mcp_path, settings_path=settings_path)
+    skills_dir = claude_code_skills_dir(settings_path=paths.settings)
+    mcp = _read_document(paths.mcp)
+    settings = _read_document(paths.settings)
+    skill_plans, skill_paths = _explicit_skill_plans(skills_dir, remove=True)
+    mcp_updated, settings_updated, managed_client_ids = _updated_disconnect_documents(
+        mcp,
+        settings,
+        additional_servers=(
+            (CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY, CLAUDE_CODE_CAPTURE_MCP_PROFILE),
+            (CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY, CLAUDE_CODE_EXPLICIT_MCP_PROFILE),
+        ),
+        additional_hooks=(
+            ("UserPromptSubmit", _MANAGED_CAPTURE_USER_HOOK_HANDLER, None),
+            ("Stop", _MANAGED_CAPTURE_STOP_HOOK_HANDLER, None),
+            (
+                "UserPromptExpansion",
+                _MANAGED_EXPLICIT_HOOK_HANDLER,
+                "^(atc-remember|atc-correct|atc-forget)$",
+            ),
+        ),
+    )
+    plans = (
+        _WritePlan(mcp, mcp_updated),
+        _WritePlan(settings, settings_updated),
+        *skill_plans,
+    )
+    backups = _apply_transaction(plans)
+    return _result(
+        paths,
+        plans,
+        backups,
+        client="Claude Code",
+        skill_paths=skill_paths,
+        managed_client_id=managed_client_ids[0] if managed_client_ids else None,
+        managed_client_ids=managed_client_ids,
+    )
+
+
 def connect_claude_code_continuous_capture(
     runtime: RuntimeCommand,
     read_client_id: str,
@@ -1227,6 +1271,7 @@ __all__ = [
     "disconnect_claude_code_continuous_capture",
     "disconnect_claude_code_explicit_commands",
     "disconnect_claude_code_explicit_config",
+    "disconnect_claude_code_integration",
     "managed_claude_code_explicit_hook_handler",
     "managed_claude_code_hook_handler",
     "read_claude_code_registration_ids",

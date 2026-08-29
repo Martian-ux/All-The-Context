@@ -62,13 +62,21 @@ from ..capture_runtime import (
 )
 from ..capture_scheduler import scheduler_update_health_forced_off
 from ..client_capture import CAPTURE_ROUTE
+from ..claude_code_config import (
+    ClaudeCodeConfigResult,
+    claude_code_is_detected,
+    configure_claude_code,
+    disconnect_claude_code_integration,
+    read_claude_code_registration_ids,
+)
 from ..client_config import (
+    ClientConfigResult,
     claude_is_detected,
     codex_is_detected,
     configure_claude,
     configure_codex,
     disconnect_claude,
-    disconnect_codex,
+    disconnect_codex_integration,
     read_claude_config,
     read_codex_config,
 )
@@ -77,11 +85,17 @@ from ..desktop_runtime import RuntimeCommand
 from ..desktop_setup import (
     AI_CLIENT_SCOPES,
     CLAUDE_CLIENT_NAME,
+    CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+    CLAUDE_CODE_CLIENT_NAME,
+    CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+    CLAUDE_CODE_SCOPES,
+    CODEX_CAPTURE_CLIENT_NAME,
     CODEX_CLIENT_NAME,
+    CODEX_EXPLICIT_CLIENT_NAME,
     configure_client_access_transactionally,
-    delete_client_credential,
     recover_client_access,
     retire_other_named_clients,
+    revoke_managed_clients,
 )
 from ..edge_connection import EdgeConnectionStore, EdgeSyncManager
 from ..export import create_export
@@ -1931,10 +1945,76 @@ def create_app(
                 }
             return {**base, "configured": True, "state": "connected"}
 
+        def claude_code_status() -> dict[str, Any]:
+            detected = claude_code_is_detected()
+            base = {
+                "id": "claude_code",
+                "name": CLAUDE_CODE_CLIENT_NAME,
+                "detected": detected,
+                "install_url": "https://code.claude.com/docs/en/overview",
+                "configured": False,
+                "state": "disconnected" if detected else "not_installed",
+                "reason": None,
+                "mode": "local",
+                "detail": "A separate Claude Code UserPromptSubmit connection to the local Core.",
+            }
+            try:
+                registrations = read_claude_code_registration_ids()
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                return {
+                    **base,
+                    "state": "degraded",
+                    "reason": "The Claude Code configuration could not be read. Choose Repair.",
+                }
+            read_client_id = registrations.get("read")
+            if read_client_id is None:
+                if registrations:
+                    return {
+                        **base,
+                        "state": "degraded",
+                        "reason": "The Claude Code read connection is missing. Choose Repair.",
+                    }
+                return base
+            matching_client = next(
+                (
+                    client
+                    for client in core.store.list_clients()
+                    if str(client["id"]) == read_client_id
+                ),
+                None,
+            )
+            if (
+                matching_client is None
+                or matching_client["revoked"]
+                or matching_client["name"] != CLAUDE_CODE_CLIENT_NAME
+                or set(matching_client.get("scopes", [])) != set(CLAUDE_CODE_SCOPES)
+            ):
+                return {
+                    **base,
+                    "state": "degraded",
+                    "reason": (
+                        "The Claude Code connection credential is missing, revoked, "
+                        "or over-scoped. Choose Repair."
+                    ),
+                }
+            access = recover_client_access(read_client_id, active_config)
+            authenticated = core.store.authenticate(access.token) if access else None
+            if authenticated is None or authenticated.id != read_client_id:
+                return {
+                    **base,
+                    "state": "degraded",
+                    "reason": (
+                        "The Claude Code connection credential cannot be recovered. "
+                        "Choose Repair."
+                    ),
+                }
+            return {**base, "configured": True, "state": "connected"}
+
         return {
             "apps": [
                 desktop_status("chatgpt_codex"),
                 desktop_status("claude"),
+                claude_code_status(),
             ],
             "mobile": {
                 "mode": "direct_core",
@@ -1951,23 +2031,39 @@ def create_app(
     @app.post("/v1/admin/integrations/{integration_id}")
     def connect_integration(integration_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        if integration_id not in {"chatgpt_codex", "claude"}:
+        if integration_id not in {"chatgpt_codex", "claude", "claude_code"}:
             raise HTTPException(status_code=404, detail="Unknown desktop integration")
         detected = (
-            codex_is_detected() if integration_id == "chatgpt_codex" else claude_is_detected()
+            codex_is_detected()
+            if integration_id == "chatgpt_codex"
+            else claude_is_detected()
+            if integration_id == "claude"
+            else claude_code_is_detected()
         )
         if not detected:
-            name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
+            name = (
+                CODEX_CLIENT_NAME
+                if integration_id == "chatgpt_codex"
+                else CLAUDE_CLIENT_NAME
+                if integration_id == "claude"
+                else CLAUDE_CODE_CLIENT_NAME
+            )
             raise HTTPException(
                 status_code=409,
                 detail=f"{name} is not installed on this computer.",
-            )
+        )
         runtime = RuntimeCommand.current()
         target_url = f"http://{active_config.host}:{active_config.port}"
-        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
+        name = (
+            CODEX_CLIENT_NAME
+            if integration_id == "chatgpt_codex"
+            else CLAUDE_CLIENT_NAME
+            if integration_id == "claude"
+            else CLAUDE_CODE_CLIENT_NAME
+        )
         try:
             if integration_id == "chatgpt_codex":
-                client_access, result = configure_client_access_transactionally(
+                client_access, client_result = configure_client_access_transactionally(
                     core.store,
                     active_config,
                     name=name,
@@ -1984,8 +2080,36 @@ def create_app(
                         core_data_dir=active_config.data_dir,
                     ),
                 )
+                changed = client_result.changed
+                config_path = client_result.path
+                backup_path = client_result.backup_path
+            elif integration_id == "claude_code":
+                client_access, claude_code_result = configure_client_access_transactionally(
+                    core.store,
+                    active_config,
+                    name=name,
+                    scopes=CLAUDE_CODE_SCOPES,
+                    configure=lambda access: configure_claude_code(
+                        runtime,
+                        access.client_id,
+                        token=(
+                            None
+                            if access.credential_storage == "operating-system credential store"
+                            else access.token
+                        ),
+                        target_url=target_url,
+                        core_data_dir=active_config.data_dir,
+                        credential_storage=access.credential_storage,
+                    ),
+                )
+                changed = claude_code_result.changed
+                config_path = claude_code_result.mcp_path
+                backup_path = (
+                    claude_code_result.mcp_backup_path
+                    or claude_code_result.settings_backup_path
+                )
             else:
-                client_access, result = configure_client_access_transactionally(
+                client_access, client_result = configure_client_access_transactionally(
                     core.store,
                     active_config,
                     name=name,
@@ -2002,6 +2126,9 @@ def create_app(
                         core_data_dir=active_config.data_dir,
                     ),
                 )
+                changed = client_result.changed
+                config_path = client_result.path
+                backup_path = client_result.backup_path
         except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         retire_other_named_clients(
@@ -2014,38 +2141,63 @@ def create_app(
             "id": integration_id,
             "client_id": client_access.client_id,
             "configured": True,
-            "changed": result.changed,
-            "config_path": str(result.path),
-            "backup_path": str(result.backup_path) if result.backup_path else None,
+            "changed": changed,
+            "config_path": str(config_path),
+            "backup_path": str(backup_path) if backup_path else None,
             "restart_required": True,
         }
 
     @app.delete("/v1/admin/integrations/{integration_id}")
     def disconnect_integration(integration_id: str, principal: Principal) -> dict[str, Any]:
         require(principal, "admin")
-        if integration_id not in {"chatgpt_codex", "claude"}:
+        if integration_id not in {"chatgpt_codex", "claude", "claude_code"}:
             raise HTTPException(status_code=404, detail="Unknown desktop integration")
-        name = CODEX_CLIENT_NAME if integration_id == "chatgpt_codex" else CLAUDE_CLIENT_NAME
-        try:
-            result = (
-                disconnect_codex() if integration_id == "chatgpt_codex" else disconnect_claude()
+        managed_names: tuple[str, ...]
+        if integration_id == "chatgpt_codex":
+            managed_names = (
+                CODEX_CLIENT_NAME,
+                CODEX_CAPTURE_CLIENT_NAME,
+                CODEX_EXPLICIT_CLIENT_NAME,
             )
-        except (OSError, ValueError) as exc:
+        elif integration_id == "claude":
+            managed_names = (CLAUDE_CLIENT_NAME,)
+        else:
+            managed_names = (
+                CLAUDE_CODE_CLIENT_NAME,
+                CLAUDE_CODE_CAPTURE_CLIENT_NAME,
+                CLAUDE_CODE_EXPLICIT_CLIENT_NAME,
+            )
+        result: ClientConfigResult | ClaudeCodeConfigResult
+        try:
+            if integration_id == "chatgpt_codex":
+                result = disconnect_codex_integration()
+                config_path = result.path
+                backup_path = result.backup_path
+            elif integration_id == "claude":
+                result = disconnect_claude()
+                config_path = result.path
+                backup_path = result.backup_path
+            else:
+                result = disconnect_claude_code_integration()
+                config_path = result.mcp_path
+                backup_path = result.mcp_backup_path or result.settings_backup_path
+        except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        revoked: list[str] = []
-        for client in core.store.list_clients():
-            if client["name"] != name or client["revoked"]:
-                continue
-            client_id = str(client["id"])
-            core.store.revoke_client(client_id)
-            delete_client_credential(client_id, active_config)
-            revoked.append(client_id)
+        try:
+            revoked = revoke_managed_clients(
+                core.store,
+                active_config,
+                managed_client_ids=result.managed_client_ids,
+                managed_names=managed_names,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             "id": integration_id,
             "configured": False,
             "changed": result.changed,
-            "config_path": str(result.path),
-            "backup_path": str(result.backup_path) if result.backup_path else None,
+            "config_path": str(config_path),
+            "backup_path": str(backup_path) if backup_path else None,
             "revoked_client_ids": revoked,
             "restart_required": True,
         }
