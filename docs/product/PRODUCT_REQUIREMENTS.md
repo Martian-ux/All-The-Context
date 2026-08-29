@@ -120,7 +120,7 @@ retained in source but is not a supported V1 beta journey or release target.
   security, restart persistence, and safe offline failure before it is called
   complete.
 
-## Post-V1 zero-friction direction
+## Zero-friction direction and V1 overlap
 
 V1 establishes the local authoritative Core and safe memory foundation.
 [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) accepts the post-V1 direction:
@@ -139,7 +139,14 @@ pre-generation delivery, complete automatic capture, working continuity, and
 consequence guarantees require the corresponding accepted connector/client
 capabilities.
 
-These documents do not expand the `0.1.0-beta.6` release boundary or make
-continuous connectors, lifecycle-aware client hooks, the broader event
-substrate, project graphs, Project Context Capsules, working-state continuity,
-outcome learning, or remote access V1 claims.
+PR #95 deliberately advances one bounded part of that direction inside the V1
+source target: false-default Claude Code and Codex ordinary-turn capture,
+pre-generation retrieval, and narrow Core-owned formation after one explicit
+setup opt-in. This source integration does not by itself make an exact packaged
+artifact, live/private client, provider-support, or release-acceptance claim.
+
+The broader contract still does not make continuous source connectors, the full
+lifecycle/checkpoint event substrate, ZF-009/ZF-010 product exits, project
+graphs, working-state continuity, outcome learning, or remote access V1 claims.
+Project Context Capsules remain a bounded Core-derived projection already in
+source, not proof that the wider zero-friction platform is complete.

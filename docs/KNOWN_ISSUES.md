@@ -25,9 +25,11 @@ do not prove either malware or a false positive.
 Do not restore, execute, or allow-list that helper solely because it came from
 the beta archive. Leave it quarantined, use a trusted source checkout if needed,
 or wait for a replacement whose installed executables have component-level
-digests and Authenticode signatures. This incident remains open until the exact
-installed helper is tied to reproducible release evidence and independently
-reassessed. Microsoft’s current detection guidance is available in the
+digests and reproducible per-component provenance. Authenticode is useful
+defense in depth when a free, donated, or sponsored path is available, but paid
+signing is not required. This incident remains open until the exact installed
+helper is tied to reproducible release evidence and independently reassessed.
+Microsoft’s current detection guidance is available in the
 [malware encyclopedia](https://www.microsoft.com/en-us/wdsi/threats/malware-encyclopedia-description?Name=Trojan%3AWin32%2FSabsik.EN.A%21ml&threatId=-2147156305).
 
 | Severity | Limitation and impact | Workaround | Owner | Post-V1 follow-up |

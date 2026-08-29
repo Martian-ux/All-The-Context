@@ -2,12 +2,12 @@
 
 ## Current milestone
 
-As of 2026-08-27 UTC, this branch adds false-by-default Continuous Capture for
-Claude Code and Codex on top of the merged read-only and explicit-memory
+As of 2026-08-29 UTC, protected main integrates false-by-default Continuous
+Capture for Claude Code and Codex on top of the read-only and explicit-memory
 boundaries. After one setup opt-in, ordinary user prompts and rendered
 assistant responses are observed locally without per-turn commands. Core alone
 may form a narrow high-confidence user claim into current memory; explicit
-remember/correct/forget remains a separate higher-authority path. The branch
+remember/correct/forget remains a separate higher-authority path. Protected main
 retains the bounded typed project graph, independent safety oracle,
 worker-backed Continuous Context, lifecycle-context, and direct-user formation
 continuity work on the Import Truth, Memory Truth, Retrieval, Continuous
@@ -20,20 +20,55 @@ one content-bearing project. Every ambiguous or unauthorized case abstains
 instead of guessing.
 
 At this boundary, protected main contains the merged Import Truth and the
-subsequent Memory Truth, Retrieval, Continuous Context, Project Context, and
-Claude Code read and explicit-memory foundations at exact SHA
-`688aa595707f15bf8740357e57e20addd46f57ae`. Development evidence on this
-branch does not
-become release, exact-artifact, client/provider, or
-private-data acceptance.
+subsequent Memory Truth, Retrieval, Continuous Context, Project Context,
+client read/explicit-memory foundations, and PR #95 Continuous Capture slice at
+exact SHA `29b3a19113e498a73c205d12ffff41faed02baa0`. Protected-main CI run
+`33254733214` and CodeQL run `33254733031` completed successfully for that exact
+SHA. Source and hosted evidence does not
+become release, exact-artifact, live client/provider, or private-data
+acceptance.
 The separately published immutable `0.1.0-beta.6` remains the current downloadable release.
 
 Supported source/package targets for this checkout are Windows and supported Linux. macOS source, tests, and historical preflight/packaging code remain retained for portability and maintenance only; macOS is unsupported and creates no package, CI, release, provider/client, acceptance, or support claim.
 
-Evidence is aggregate local evaluation only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
+Local evaluation evidence is aggregate only, over sanitized synthetic or disposable local state. Repository documentation may record aggregate scores/counts, pass/fail results, test node IDs, fixture revisions, and evidence-boundary facts. Do not commit raw exports, workspace files, personal context, credentials, database files, per-record traces, generated reports, or other evaluation artifacts. No local result implies live provider, client, platform, release, or private-data acceptance.
 
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
+
+### 2026-08-29 — protected-main integration and next proof frontier
+
+PR #95 merged the Core capture route and least-privilege authority, narrow
+formation/reconciliation, Claude Code and Codex lifecycle adapters, one-time
+false-default setup, explicit remember/correct/forget controls, and the
+personal-context/operational-secret boundary. Its twelve PR checks passed, and
+the protected-main CI and CodeQL runs named above are green. The implementation
+lanes are therefore integrated rather than active or awaiting another code
+merge.
+
+Successor-readiness validation used a fresh Python 3.12.10 environment installed
+from the reviewed `uv.lock` with pinned `uv==0.11.32` and hash enforcement.
+Ruff passed, mypy passed 105 source files, the standalone documentation checker
+and eight documentation contract tests passed, and the focused Continuous
+Capture slice passed 110 tests. Full pytest passed 2,114 tests with nine
+Windows-appropriate platform skips and two Starlette deprecation warnings in
+460.88 seconds. No exact packaged or live client was invoked by that validation.
+
+The remaining product gap is ordinary-use proof, not another memory subsystem.
+No exact packaged Windows or Ubuntu artifact has yet demonstrated, in a clean
+disposable client journey, one-time opt-in, prompt/response capture, later
+pre-generation retrieval, correction, reversible forget, restart continuity,
+opt-out cleanup, nonblocking Core outage, and secret refusal without dashboard
+or per-turn work. Claude Code's lack of stable per-turn identity also remains an
+explicit at-least-once/unpaired limitation, not an exactly-once claim.
+
+The recommended next slice is to close that exact-artifact client journey on
+Windows and supported Ubuntu before expanding extractors, graphs, embeddings,
+connectors, or learned retrieval. A replacement Windows candidate must first
+publish per-executable digests, bind each installed helper to reproducible
+release provenance, and undergo Microsoft reassessment. Authenticode is useful
+defense in depth when available without making paid signing a community-release
+requirement. The current beta.6 Defender incident remains unresolved meanwhile.
 
 ### 2026-08-29 — unresolved Windows Defender beta.6 incident
 
@@ -46,8 +81,9 @@ digest. The public metadata does not expose a digest for each installed helper,
 so the restored executable is not yet independently bound to that release.
 No antivirus exclusion was added, the helper was not executed during this
 review, and neither malware nor false-positive status is claimed. Installed
-component manifests, Authenticode signing, and exact-component reassessment
-remain required follow-up.
+component manifests, reproducible per-component provenance, and exact-component
+reassessment remain required follow-up. Authenticode may be added through a
+free, donated, or sponsored path but paid signing is not required.
 
 ### 2026-08-29 — operational credential shape hardening
 
@@ -119,9 +155,12 @@ credential capture into that vault is not claimed.
 
 Focused synthetic tests cover exact setup contracts, authorization, retries,
 correlation, formation/reconciliation, ACLs, secret refusal/export exclusion,
-transactional preservation, and adapter-to-Core retrieval. Full repository
-pytest, hosted CI, exact packaged artifacts, live/private client acceptance,
-provider support, release acceptance, and macOS support remain unclaimed.
+transactional preservation, and adapter-to-Core retrieval. PR #95's twelve
+checks passed; protected-main CI ran Ruff, mypy, documentation checks, full
+pytest, dashboard checks, repository security gates, and Windows/Linux desktop
+artifact jobs successfully at the exact merged SHA. Exact packaged-artifact
+installation, live/private client acceptance, provider support, release
+acceptance, and macOS support remain unclaimed.
 
 ### 2026-08-26 — Core-only Claude Code explicit-user memory contract
 

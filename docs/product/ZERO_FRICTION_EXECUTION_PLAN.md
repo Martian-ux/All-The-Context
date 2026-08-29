@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted post-V1 execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
+| Status | Accepted zero-friction execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md), with the bounded PR #95 V1-source overlap reconciled below |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Accept the optional packaged local-workspace setup on exact artifacts, add the first supported lifecycle-aware client, complete Wave 4 E–G product acceptance (complete Packet H), and run Phase 2 |
-| Early interface status | Experimental v0; Wave 3 E/F/G remain component-complete; PR #78 closed the local registered-source admission contract; PRs #82/#84 wired CoreService/startup capture-runtime composition and the opt-in Packet E scheduler; Packet H-D is a merged disposable Packet F + admission + Memory Truth + Retrieval V3 proof and is not complete Packet H/Phase 2 acceptance; later clean-vault journeys exercise the real Core worker through retry, initial snapshot, incremental update/deletion, and restart, then carry worker-produced records through authenticated Packet G pre-generation delivery and controlled ZF-010 preference formation, correction, forget, Core restart, principal reauthentication, and caller-owned L2 checkpoint restore; this branch also adds optional first-run authorization plus verified scheduler activation for one local workspace without a dashboard. These close local developer and packaged-setup code seams, not exact packaged/live acceptance, supported lifecycle-client capture, or ZF-007/ZF-008/ZF-009/ZF-010 product exits |
+| Current execution frontier | Prove PR #95's Claude Code and Codex ordinary-use slice on exact packaged Windows and supported Ubuntu artifacts, close the Windows installed-component provenance/reassessment gap, then complete Wave 4 E–G product acceptance and Phase 2 |
+| Early interface status | Experimental v0. PR #95 merged a bounded source-level lifecycle slice for Claude Code and Codex with exact-SHA CI, but exact packaged/live acceptance remains open and the slice does not close the controlled L2 checkpoint exit in ZF-009 or the broader ZF-010 formation exit. Wave 3 E/F/G remain component-complete; prior worker-backed clean-vault journeys close local developer seams, not ZF-007/ZF-008/ZF-009/ZF-010 product exits |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
 
@@ -50,14 +50,32 @@ worker-driven update/deletion. A companion clean-vault journey carries the
 worker-created truth through controlled ZF-010 preference formation,
 correction, forget, Core restart, scope reauthentication, and restored host
 checkpoint advancement. These close the local Packet G and ZF-010 developer
-gaps, not supported-client or product exits. This branch also provides the
+gaps, not supported-client or product exits. That checkpoint also added the
 optional packaged setup code path for one explicit local workspace: it
 authorizes and enables the source, starts/wakes the durable scheduler, keeps the
-dashboard closed, and reports success only for a running worker. Exact-artifact
-acceptance and the lifecycle-aware client half remain open. Remaining work is
-that artifact acceptance, the first supported lifecycle-aware client, complete
-Wave 4 E–G product acceptance, and Phase 2. This plan does not turn the component seams
-or local proofs into support, a stable SDK, or complete Packet H acceptance.
+dashboard closed, and reports success only for a running worker. Before PR #95,
+exact-artifact acceptance and the lifecycle-aware client half remained open.
+Those local proofs still do not create support, a stable SDK, complete Packet H,
+or Phase 2 acceptance.
+
+**Boundary reconciliation (2026-08-29):** PR #95 merged at protected-main SHA
+`29b3a19113e498a73c205d12ffff41faed02baa0` with green CI and CodeQL. It adds
+false-default Claude Code and Codex user-prompt/response lifecycle adapters,
+pre-generation bootstrap, one-time setup, and narrow Core-owned direct-user
+formation. This is real source-level L1 progress and must no longer be described
+as a missing lifecycle-client implementation.
+
+The next gate is an exact packaged ordinary-use journey on Windows and supported
+Ubuntu: opt in once, use each client normally, retrieve a formed memory in a
+later session, correct and forget it, restart, opt out cleanly, tolerate Core
+outage without blocking generation, and refuse operational secrets without a
+dashboard or per-turn ATC action. That evidence still does not satisfy the full
+controlled L2 checkpoint/session-transition contract in ZF-009, the broader
+formation classes and retained-event lifecycle in ZF-010, complete Packet H, or
+Phase 2. The unresolved Windows Defender incident also requires installed
+component digests, reproducible provenance, and Microsoft reassessment before a
+replacement Windows candidate is recommended; paid Authenticode remains out of
+scope under ADR-028/ADR-166.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal
@@ -783,7 +801,8 @@ forget, Core restart, principal reauthentication, and checkpoint restoration.
 It closes the local ZF-010 developer gap, not supported-client or product
 acceptance. Optional packaged first-run local-workspace setup is now implemented
 on this branch and activates the real scheduler without opening the dashboard,
-but exact-artifact/live acceptance and the lifecycle-aware client remain open.
+but exact-artifact and live supported lifecycle-client acceptance remained open
+at that checkpoint.
 Packet E and Packet G remain component-complete; remaining work is complete
 Wave 4 E–G product acceptance, that client/artifact acceptance, and Phase 2.
 Packet H-D is not complete Packet H or Phase 2 acceptance.

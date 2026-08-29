@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted post-V1 product contract under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md) |
-| Relationship to V1 | Does not expand or block `0.1.0-beta.6` |
+| Relationship to V1 | Does not mutate the published `0.1.0-beta.6`; PR #95 implements one bounded V1-source overlap whose exact packaged/live acceptance remains open |
 | Authority | The user-owned Core remains the sole canonical authority |
 | Normal interaction model | Install once, authorize accounts and clients once, then use AI tools normally |
 | Capability rule | Guarantees are limited to the declared and accepted connector/client capability level |
@@ -723,10 +723,12 @@ This contract does not require:
 
 ## 13. Relationship to V1
 
-`0.1.0-beta.6` remains the immediate release target and the foundation for this
-contract. Its same-device Core, provider imports, automatic policy, retrieval,
-client configuration, backup, recovery, and release acceptance must finish
-without adding post-V1 connector, graph, working-state, or outcome claims.
+`0.1.0-beta.6` remains the current published release and the foundation for this
+contract. PR #95 adds one bounded source-level overlap—false-default Claude Code
+and Codex ordinary-turn capture, pre-generation retrieval, and narrow Core-owned
+formation—but does not change the immutable beta.6 artifacts or provide exact
+packaged/live acceptance. Broader connector, graph, working-state, and outcome
+claims remain outside that release boundary.
 
 Post-V1 implementation follows the evidence-gated sequence in
 [`ZERO_FRICTION_EXECUTION_PLAN.md`](ZERO_FRICTION_EXECUTION_PLAN.md).

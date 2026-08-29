@@ -2,25 +2,29 @@
 
 ## ADR-166: Windows AV findings require installed-component provenance
 
-**Status:** accepted locally on 2026-08-29 after a real beta.6 Defender event.
-This is an incident-handling and future packaging decision, not a declaration
-that the flagged helper is malicious or a false positive.
+**Status:** accepted on 2026-08-29 after a real beta.6 Defender event and
+amended on 2026-08-29 to reconcile the incident response with ADR-028. This is
+an incident-handling and future packaging decision, not a declaration that the
+flagged helper is malicious or a false positive.
 
 An unsigned one-file packaging format, a matching outer release archive,
 successful CI, and artifact-level provenance are insufficient grounds to
 override an endpoint-protection detection. Windows packages must publish a
-digest inventory for every installed executable, and official packages should
-Authenticode-sign the main application, MCP helper, recovery helper, and
-updater. A persistent detection should be submitted to Microsoft using the
-exact signed component only after its release identity is independently
-verified. Until that chain exists, the product must not recommend restoration
-or an antivirus exclusion and must keep the incident visibly unresolved.
+digest inventory for every installed executable and bind those bytes to
+reproducible release provenance. Authenticode signing of the main application,
+MCP helper, recovery helper, and updater is useful defense in depth when a free,
+donated, or sponsored path is available; paid signing is not a community-release
+requirement. A persistent detection should be submitted to Microsoft using the
+exact independently verified component, signed when such signing is available.
+Until the component-provenance and reassessment chain exists, the product must
+not recommend restoration or an antivirus exclusion and must keep the incident
+visibly unresolved.
 
 ## ADR-165: Lifecycle bounds and Claude pairing claims fail closed
 
-**Status:** accepted locally on 2026-08-29 for the integrated lifecycle
-contract and Claude Code profile boundary. This is not live/private client,
-provider, release, or macOS acceptance.
+**Status:** accepted into protected main on 2026-08-29 at
+`29b3a19113e498a73c205d12ffff41faed02baa0`; exact-SHA CI and CodeQL passed.
+This is not live/private client, provider, release, or macOS acceptance.
 
 All provider lifecycle content uses one shared inclusive limit of 16,384
 characters and 65,536 UTF-8 bytes. The provider schemas, runtime adapter,
@@ -40,9 +44,9 @@ loss of reliable pairing can only reduce evidence authority.
 
 ## ADR-164: Operational credential shape detection stays structural
 
-**Status:** accepted locally on 2026-08-29 after focused synthetic boundary
-tests. This is not provider, client, release, hosted CI, private-data, or
-macOS acceptance.
+**Status:** accepted into protected main on 2026-08-29 at
+`29b3a19113e498a73c205d12ffff41faed02baa0`; exact-SHA CI and CodeQL passed.
+This is not provider, live/private client, release, or macOS acceptance.
 
 The pre-ledger direct-secret detector is versioned as `direct-secret-v4` and
 recognizes defensible high-confidence operational credential shapes without an
@@ -63,9 +67,11 @@ is unchanged, and automatic routing of rejected values into it is not claimed.
 
 ## ADR-163: Continuous Capture is separate, opt-in evidence with Core-owned formation
 
-**Status:** accepted locally on 2026-08-27 for the integrated Core, lifecycle
-adapter, and transactional setup boundary. This is not live/private client,
-packaged-artifact, hosted CI, release, provider, or macOS acceptance.
+**Status:** accepted into protected main on 2026-08-29 at
+`29b3a19113e498a73c205d12ffff41faed02baa0`; exact-SHA CI and CodeQL passed for
+the integrated Core, lifecycle adapter, and transactional setup boundary. This
+is not live/private client, exact packaged-artifact, release, provider, or macOS
+acceptance.
 
 Claude Code and Codex Continuous Capture is false by default. One explicit
 setup choice installs managed `UserPromptSubmit` and `Stop` hooks and separate
