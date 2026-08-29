@@ -20,6 +20,8 @@ def test_workflow_is_manual_windows_only_and_sha_bound_before_checkout() -> None
     assert "workflow_dispatch:" in text
     assert "    inputs:\n      version:" in text
     assert "      source_commit:" in text
+    assert "      approval:" in text
+    assert "description: Type BUILD PRIVATE REPLACEMENT CANDIDATE" in text
     assert "    push:" not in text
     assert "    schedule:" not in text
     assert "    runs-on: windows-latest" in text
@@ -27,10 +29,15 @@ def test_workflow_is_manual_windows_only_and_sha_bound_before_checkout() -> None
     assert "DEFAULT_BRANCH_REF: refs/heads/${{ github.event.repository.default_branch }}" in text
     assert "SOURCE_COMMIT: ${{ inputs.source_commit }}" in text
     assert "DISPATCH_SHA: ${{ github.sha }}" in text
+    assert "APPROVAL: ${{ inputs.approval }}" in text
+    assert 'BUILD PRIVATE REPLACEMENT CANDIDATE' in text
     assert "source_commit must equal the triggering protected-main SHA" in text
 
     precheck_end = text.index("      - uses: actions/checkout@")
     precheck = text[:precheck_end]
+    assert precheck.index("APPROVAL: ${{ inputs.approval }}") < precheck.index("REQUESTED_REF:")
+    assert precheck.index("BUILD PRIVATE REPLACEMENT CANDIDATE") < precheck_end
+    assert '$env:APPROVAL -cne "BUILD PRIVATE REPLACEMENT CANDIDATE"' in precheck
     assert "REQUESTED_REF -cne $env:DEFAULT_BRANCH_REF" in precheck
     assert "$env:SOURCE_COMMIT -cne $env:DISPATCH_SHA" in precheck
     checkout = text[precheck_end : text.index("      - uses: actions/setup-python@", precheck_end)]
@@ -41,14 +48,16 @@ def test_workflow_is_manual_windows_only_and_sha_bound_before_checkout() -> None
 def test_workflow_has_read_only_repository_access_and_one_artifact_upload() -> None:
     text = _read_workflow()
 
-    assert "permissions:\n  contents: read" in text
-    assert "      artifact-metadata: write\n      contents: read" in text
+    assert "permissions:\n  actions: read\n  contents: read" in text
+    assert "      actions: read\n      contents: read" in text
+    assert "artifact-metadata:" not in text
     assert "contents: write" not in text
     assert "id-token:" not in text
     assert "attestations:" not in text
     assert len(re.findall(r"uses:\s+actions/upload-artifact@[0-9a-f]{40}", text)) == 1
     assert "name: replacement-candidate-windows-${{ inputs.version }}-${{ github.sha }}" in text
     assert "dist/release/**" in text
+    assert "dist/candidate-evidence/**" in text
     assert "retention-days: 7" in text
 
 
@@ -59,6 +68,14 @@ def test_workflow_uses_pinned_actions_and_existing_static_packaging_provenance()
     assert action_uses
     assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", action) for action in action_uses)
     assert "python scripts/install_locked_python.py --extra packaging" in text
+    assert "python scripts/exact_source_gate.py hosted-matrix" in text
+    assert "GITHUB_TOKEN: ${{ github.token }}" in text
+    assert '--repository "$env:REPOSITORY"' in text
+    assert '--source-commit "$env:SOURCE_COMMIT"' in text
+    assert "--output dist/source-evidence/matrix-evidence.json" in text
+    assert text.index("exact_source_gate.py hosted-matrix") < text.index(
+        "python scripts/build_desktop.py"
+    )
     assert "python scripts/build_desktop.py" in text
     assert "python scripts/package_desktop.py" in text
     assert "--installed-component-output-dir dist/installed-component-package" in text
@@ -67,6 +84,31 @@ def test_workflow_uses_pinned_actions_and_existing_static_packaging_provenance()
     assert "python scripts/installed_component_manifest.py verify-archive" in text
     assert "python scripts/repository_security_scan.py" in text
     assert "--scope artifacts" in text
+    assert "dist/candidate-evidence" in text
+
+
+def test_workflow_stages_exact_raw_windows_components_and_matrix_evidence() -> None:
+    text = _read_workflow()
+
+    stage_start = text.index("Stage candidate-owned security evidence")
+    scan_start = text.index("Scan candidate files without executing them")
+    stage = text[stage_start:scan_start]
+    assert '"dist/candidate-evidence"' in stage
+    for source in (
+        "dist/desktop/AllTheContextSetup.exe",
+        "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe",
+        "build/desktop/helper-dist/AllTheContextMCP.exe",
+        "dist/desktop/AllTheContextRecovery.exe",
+        "build/desktop/update-helper-dist/AllTheContextUpdater.exe",
+        "dist/installed-component-package/installed-component-manifest-v1.json",
+        "dist/installed-component-package/installed-component-manifest-v1.json.sha256",
+    ):
+        assert source in stage
+    assert "Copy-Item -LiteralPath $source -Destination $components" in stage
+    assert "dist/source-evidence/matrix-evidence.json" in stage
+    assert "Copy-Item -LiteralPath $matrixEvidence -Destination $evidence" in stage
+    assert "--artifact-dir dist/candidate-evidence" in text[scan_start:]
+    assert stage_start < scan_start < text.index("Upload private Windows candidate artifact")
 
 
 def test_workflow_never_invokes_release_publication_or_produced_binary_smokes() -> None:

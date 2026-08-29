@@ -11,12 +11,17 @@ on:
         description: Full 40-character SHA of the protected-main dispatch head
         required: true
         type: string
+      approval:
+        description: Type BUILD PRIVATE REPLACEMENT CANDIDATE
+        required: true
+        type: string
 
 concurrency:
   group: replacement-candidate-${{ inputs.version }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -24,9 +29,18 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     permissions:
-      artifact-metadata: write
+      actions: read
       contents: read
     steps:
+      - name: Require deliberate private replacement phrase
+        shell: pwsh
+        env:
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:APPROVAL -cne "BUILD PRIVATE REPLACEMENT CANDIDATE") {
+            throw "The exact private replacement-candidate approval phrase is required"
+          }
       - name: Bind source to protected-main dispatch SHA
         shell: pwsh
         env:
@@ -62,6 +76,16 @@ jobs:
           enable-cache: false
       - name: Install packaging dependencies from the reviewed lock
         run: python scripts/install_locked_python.py --extra packaging
+      - name: Verify exact green source-health matrix on this SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/exact_source_gate.py hosted-matrix
+          --repository "$env:REPOSITORY"
+          --source-commit "$env:SOURCE_COMMIT"
+          --output dist/source-evidence/matrix-evidence.json
       - name: Validate exact source metadata and Windows runner
         env:
           VERSION: ${{ inputs.version }}
@@ -128,13 +152,45 @@ jobs:
           --source-commit "$env:SOURCE_COMMIT"
           --platform windows
           --architecture x86_64
+      - name: Stage candidate-owned security evidence without executing binaries
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $evidence = "dist/candidate-evidence"
+          if (Test-Path -LiteralPath $evidence) {
+            throw "candidate evidence directory already exists"
+          }
+          $components = Join-Path $evidence "components"
+          New-Item -ItemType Directory -Path $components | Out-Null
+          $componentSources = @(
+            "dist/desktop/AllTheContextSetup.exe",
+            "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe",
+            "build/desktop/helper-dist/AllTheContextMCP.exe",
+            "dist/desktop/AllTheContextRecovery.exe",
+            "build/desktop/update-helper-dist/AllTheContextUpdater.exe",
+            "dist/installed-component-package/installed-component-manifest-v1.json",
+            "dist/installed-component-package/installed-component-manifest-v1.json.sha256"
+          )
+          foreach ($source in $componentSources) {
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "candidate security evidence input is missing: $source"
+            }
+            Copy-Item -LiteralPath $source -Destination $components
+          }
+          $matrixEvidence = "dist/source-evidence/matrix-evidence.json"
+          if (-not (Test-Path -LiteralPath $matrixEvidence -PathType Leaf)) {
+            throw "exact source matrix evidence is missing"
+          }
+          Copy-Item -LiteralPath $matrixEvidence -Destination $evidence
       - name: Scan candidate files without executing them
         env:
           SOURCE_COMMIT: ${{ github.sha }}
         run: >-
           python scripts/repository_security_scan.py
           --scope artifacts
-          --artifact-dir dist/release
+          --artifact-dir dist/candidate-evidence
           --source-commit "$env:SOURCE_COMMIT"
       - name: Upload private Windows candidate artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # pin: actions/upload-artifact@v4
@@ -142,6 +198,7 @@ jobs:
           name: replacement-candidate-windows-${{ inputs.version }}-${{ github.sha }}
           path: |
             dist/release/**
+            dist/candidate-evidence/**
           if-no-files-found: error
           include-hidden-files: false
           retention-days: 7
