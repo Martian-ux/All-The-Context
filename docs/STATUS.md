@@ -44,6 +44,18 @@ address, and SSN context remains admissible. Focused synthetic tests prove
 content-free refusal and absence from capture events, candidates, records,
 exports, responses, and logs.
 
+### 2026-08-29 — lifecycle contract and Claude profile reconciliation
+
+Lifecycle provider schemas, the runtime adapter, `CaptureEventRequest`, the
+HTTP client, and Core now share a 16,384-character/65,536-byte content bound;
+the serialized lifecycle request body is bounded at 131,072 bytes. Claude Code
+read and capture registrations use distinct profiles and entrypoints, so the
+read principal retrieves only and the capture principal captures only. Claude
+Code has no stable per-turn identifier: session-only observations are not
+deduplicated or reported as paired, and no exactly-once retry claim is made for
+them. Focused tests cover these boundaries; no live-provider acceptance is
+claimed.
+
 ### 2026-08-27 — opt-in Claude Code and Codex Continuous Capture
 
 Setup now keeps read, lifecycle capture, and explicit mutation authority in

@@ -24,6 +24,11 @@ from .client_runtime import (
     UnsupportedHookReport,
 )
 from .experimental_reference_host import ControlledReferenceHostV0
+from .lifecycle_contract import (
+    MAX_LIFECYCLE_BODY_BYTES,
+    MAX_LIFECYCLE_CONTENT_BYTES,
+    MAX_LIFECYCLE_CONTENT_CHARS,
+)
 from .secret_boundary import contains_secret_like_text
 
 LifecycleProvider = Literal["claude_code", "codex"]
@@ -32,8 +37,6 @@ LifecycleContentRole = Literal["user_prompt", "assistant_response"]
 CaptureStatus = Literal["captured", "replayed", "unavailable", "rejected"]
 PairingStatus = Literal["paired", "correlation_available", "unpaired"]
 
-MAX_LIFECYCLE_CONTENT_CHARS = 64 * 1024
-MAX_LIFECYCLE_CONTENT_BYTES = 64 * 1024
 MAX_LIFECYCLE_CONTEXT_CHARS = 8_000
 MAX_LIFECYCLE_RESPONSE_BYTES = 256 * 1024
 MAX_LIFECYCLE_CORRELATIONS = 256
@@ -198,7 +201,7 @@ class LifecycleCaptureRequest:
             "content": self.content,
             "observed_at": self.event.observed_at,
         }
-        if _json_size(payload) > MAX_LIFECYCLE_RESPONSE_BYTES:
+        if _json_size(payload) > MAX_LIFECYCLE_BODY_BYTES:
             raise LifecycleRuntimeError("lifecycle capture request is too large")
         return payload
 
@@ -250,6 +253,7 @@ class _CorrelationState:
     user_capture: LifecycleCaptureResponse | None = None
     user_content_sha256: str | None = None
     assistant_content_sha256: str | None = None
+    stable_turn_identity: bool = False
 
 
 class OpaqueCorrelationStore:
@@ -262,7 +266,6 @@ class OpaqueCorrelationStore:
         self._lock = threading.Lock()
         self._entries: OrderedDict[str, _CorrelationState] = OrderedDict()
         self._active_by_session: OrderedDict[str, str] = OrderedDict()
-        self._session_counters: OrderedDict[str, int] = OrderedDict()
 
     def begin(
         self,
@@ -275,20 +278,23 @@ class OpaqueCorrelationStore:
         with self._lock:
             session_key = _correlation_key(provider, client_id, session_id, None)
             if turn_id is None:
-                next_turn = self._session_counters.get(session_key, 0) + 1
-                self._session_counters[session_key] = next_turn
-                self._session_counters.move_to_end(session_key)
                 key = _correlation_key(
                     provider,
                     client_id,
                     session_id,
-                    f"opaque-turn-{next_turn}",
+                    f"opaque-turn-{uuid.uuid4()}",
                 )
             else:
                 key = _correlation_key(provider, client_id, session_id, turn_id)
             state = self._entries.get(key)
             if state is None:
-                state = _new_state(provider, client_id, key, session_key=session_key)
+                state = _new_state(
+                    provider,
+                    client_id,
+                    key,
+                    session_key=session_key,
+                    stable_turn_identity=turn_id is not None,
+                )
             self._entries[key] = state
             self._entries.move_to_end(key)
             self._active_by_session[session_key] = key
@@ -307,16 +313,8 @@ class OpaqueCorrelationStore:
         key = _correlation_key(provider, client_id, session_id, turn_id)
         with self._lock:
             state = self._entries.get(key)
-            if state is None and turn_id is None:
-                session_key = _correlation_key(provider, client_id, session_id, None)
-                active_key = self._active_by_session.get(session_key)
-                state = self._entries.get(active_key) if active_key is not None else None
             if state is not None:
-                active_key = key
-                if key not in self._entries:
-                    session_key = _correlation_key(provider, client_id, session_id, None)
-                    active_key = self._active_by_session.get(session_key, key)
-                self._entries.move_to_end(active_key)
+                self._entries.move_to_end(key)
             return state
 
     def _trim(self) -> None:
@@ -325,7 +323,6 @@ class OpaqueCorrelationStore:
             for session_key, active_key in tuple(self._active_by_session.items()):
                 if active_key == old_key:
                     del self._active_by_session[session_key]
-                    self._session_counters.pop(session_key, None)
 
 
 def _correlation_key(
@@ -348,6 +345,7 @@ def _new_state(
     key: str,
     *,
     session_key: str | None = None,
+    stable_turn_identity: bool = False,
 ) -> _CorrelationState:
     del provider
     session_ref = _opaque_reference(
@@ -360,7 +358,12 @@ def _new_state(
         client_id=client_id,
         session_id=session_ref,
     )
-    return _CorrelationState(correlation_id=correlation_id, session_ref=session_ref, host=host)
+    return _CorrelationState(
+        correlation_id=correlation_id,
+        session_ref=session_ref,
+        host=host,
+        stable_turn_identity=stable_turn_identity,
+    )
 
 
 def _opaque_event_id(
@@ -402,6 +405,11 @@ def _content_reference(state: _CorrelationState, *, role: str, content: str) -> 
 
 
 def _event_idempotency(state: _CorrelationState, *, role: str) -> str:
+    if not state.stable_turn_identity:
+        # Claude Code does not provide a stable per-turn identifier.  A later
+        # callback with the same prompt/session may be a new turn, so it must
+        # not be deduplicated as an exactly-once retry.
+        return str(uuid.uuid4())
     return _stable_uuid4(f"{state.correlation_id}\0{role}")
 
 
@@ -581,27 +589,48 @@ class LifecycleRuntimeAdapter:
             return LifecycleRuntimeResult(
                 capture=LifecycleCaptureResponse("rejected", "secret_like_content")
             )
-        state = self.correlations.find(
-            provider=self.provider,
-            client_id=self.client_id,
-            session_id=session_id,
-            turn_id=turn_id,
-        )
-        if state is None:
-            key = _correlation_key(self.provider, self.client_id, session_id, turn_id)
+        if turn_id is None:
+            # Claude Code supplies only a session identifier.  Never attach a
+            # completion to the session's latest prompt: that would turn an
+            # unreliable session-only guess into a claimed turn pairing.
+            key = _correlation_key(
+                self.provider,
+                self.client_id,
+                session_id,
+                f"unpaired-response-{uuid.uuid4()}",
+            )
             state = _new_state(
                 self.provider,
                 self.client_id,
                 key,
                 session_key=_correlation_key(self.provider, self.client_id, session_id, None),
+                stable_turn_identity=False,
             )
-            pairing: PairingStatus = "correlation_available" if turn_id else "unpaired"
+            pairing: PairingStatus = "unpaired"
         else:
-            pairing = "paired" if state.user_event is not None else "correlation_available"
+            found_state = self.correlations.find(
+                provider=self.provider,
+                client_id=self.client_id,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+            if found_state is None:
+                key = _correlation_key(self.provider, self.client_id, session_id, turn_id)
+                state = _new_state(
+                    self.provider,
+                    self.client_id,
+                    key,
+                    session_key=_correlation_key(self.provider, self.client_id, session_id, None),
+                    stable_turn_identity=True,
+                )
+                pairing = "correlation_available"
+            else:
+                state = found_state
+                pairing = "paired" if state.user_event is not None else "correlation_available"
         try:
             content_digest = _content_sha256(response)
             event: ClientLifecycleEnvelope
-            if state.assistant_event is not None:
+            if state.stable_turn_identity and state.assistant_event is not None:
                 if state.assistant_content_sha256 != content_digest:
                     return LifecycleRuntimeResult(
                         capture=LifecycleCaptureResponse("rejected", "retry_payload_conflict")
@@ -632,11 +661,16 @@ class LifecycleRuntimeAdapter:
                     witness="host_observation",
                 ),
                 pairing=pairing,
-                paired_event_id=state.user_event.event_id if state.user_event is not None else None,
+                paired_event_id=(
+                    state.user_event.event_id
+                    if pairing == "paired" and state.user_event is not None
+                    else None
+                ),
             )
             capture = self._capture(request)
-            with self.correlations._lock:
-                state.assistant_event = event
+            if state.stable_turn_identity:
+                with self.correlations._lock:
+                    state.assistant_event = event
             return LifecycleRuntimeResult(capture=capture, event=event, pairing=pairing)
         except Exception:
             return LifecycleRuntimeResult(
@@ -701,6 +735,8 @@ class LifecycleRuntimeAdapter:
 __all__ = [
     "LIFECYCLE_CONTRACT_VERSION",
     "LIFECYCLE_SCHEMA_VERSION",
+    "MAX_LIFECYCLE_BODY_BYTES",
+    "MAX_LIFECYCLE_CONTENT_BYTES",
     "MAX_LIFECYCLE_CONTENT_CHARS",
     "MAX_LIFECYCLE_CONTEXT_CHARS",
     "MAX_LIFECYCLE_RESPONSE_BYTES",

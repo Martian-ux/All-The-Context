@@ -34,13 +34,16 @@ from .desktop_runtime import RuntimeCommand
 
 CLAUDE_CODE_MCP_SERVER_KEY = "all-the-context-claude-code"
 CLAUDE_CODE_HOOK_TOOL = "claude_code_user_prompt_submit"
-CLAUDE_CODE_MCP_PROFILE = "claude_code_hook"
+CLAUDE_CODE_READ_MCP_PROFILE = "claude_code_read"
+# Compatibility name retained for callers that treated the original hook
+# profile as the read path.  New setup writes the explicit read profile.
+CLAUDE_CODE_MCP_PROFILE = CLAUDE_CODE_READ_MCP_PROFILE
 CLAUDE_CODE_CAPTURE_MCP_SERVER_KEY = "all-the-context-claude-code-capture"
 # Stable setup seam for the lifecycle-adapter lane.  The capture principal
-# uses the same hook profile but is kept separate from the read principal.
+# uses a distinct profile so it never attempts read-principal calls.
 CLAUDE_CODE_CAPTURE_USER_PROMPT_HOOK_TOOL = "claude_code_user_prompt_submit"
 CLAUDE_CODE_CAPTURE_STOP_HOOK_TOOL = "claude_code_stop"
-CLAUDE_CODE_CAPTURE_MCP_PROFILE = "claude_code_hook"
+CLAUDE_CODE_CAPTURE_MCP_PROFILE = "claude_code_capture"
 CLAUDE_CODE_EXPLICIT_MCP_SERVER_KEY = "all-the-context-claude-code-explicit"
 CLAUDE_CODE_EXPLICIT_HOOK_TOOL = "claude_code_user_prompt_expansion"
 CLAUDE_CODE_EXPLICIT_MCP_PROFILE = "claude_code_explicit"
@@ -520,7 +523,13 @@ def _is_managed_server(value: object, *, profile: str = CLAUDE_CODE_MCP_PROFILE)
     if not isinstance(value, dict):
         return False
     env = value.get("env")
-    return isinstance(env, dict) and env.get("ATC_MCP_PROFILE") == profile
+    if not isinstance(env, dict):
+        return False
+    accepted_profiles = {profile}
+    if profile in {CLAUDE_CODE_READ_MCP_PROFILE, CLAUDE_CODE_CAPTURE_MCP_PROFILE}:
+        # Migrate the pre-split profile in place during the next setup run.
+        accepted_profiles.add("claude_code_hook")
+    return env.get("ATC_MCP_PROFILE") in accepted_profiles
 
 
 def _validate_hook_groups(
@@ -1197,6 +1206,7 @@ __all__ = [
     "CLAUDE_CODE_MCP_CONFIG_ENV",
     "CLAUDE_CODE_MCP_PROFILE",
     "CLAUDE_CODE_MCP_SERVER_KEY",
+    "CLAUDE_CODE_READ_MCP_PROFILE",
     "CLAUDE_CODE_SETTINGS_ENV",
     "CLAUDE_CODE_SKILLS_DIR_ENV",
     "MAX_CLAUDE_CODE_CONFIG_BYTES",

@@ -459,10 +459,14 @@ def _server_for_profile() -> MCPServer:
                 {"propose_memory", "report_context_error", "forget_context"}
             )
         )
-    if profile == "claude_code_hook":
-        from allthecontext.claude_code_hook import build_claude_code_hook_mcp
+    if profile in {"claude_code_read", "claude_code_hook"}:
+        from allthecontext.claude_code_hook import build_claude_code_read_mcp
 
-        return build_claude_code_hook_mcp()
+        return build_claude_code_read_mcp()
+    if profile == "claude_code_capture":
+        from allthecontext.claude_code_hook import build_claude_code_capture_mcp
+
+        return build_claude_code_capture_mcp()
     if profile == "claude_code_explicit":
         from allthecontext.claude_code_hook import build_claude_code_explicit_mcp
 

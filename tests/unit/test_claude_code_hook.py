@@ -13,6 +13,7 @@ from allthecontext import mcp_adapter
 from allthecontext.config import CoreConfig
 from allthecontext.desktop_setup import CoreProbe
 from allthecontext.http_client import ContextApiError, ContextHttpClient
+from allthecontext.lifecycle_runtime import MAX_LIFECYCLE_CONTENT_CHARS
 from allthecontext.mcp_adapter import _server_for_profile, build_mcp
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -33,12 +34,63 @@ def _call_hook(arguments: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
 
 
 def test_hook_profile_exposes_only_its_dedicated_tool_and_identity(monkeypatch) -> None:
-    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_hook")
+    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_read")
     server = _server_for_profile()
 
-    assert server.name == "All The Context Claude Code Hook"
-    assert set(_tools(server)) == {hook.HOOK_TOOL_NAME, hook.STOP_HOOK_TOOL_NAME}
-    assert "lifecycle" in (server.instructions or "").casefold()
+    assert server.name == "All The Context Claude Code Read"
+    assert set(_tools(server)) == {hook.HOOK_TOOL_NAME}
+    assert "read" in (server.instructions or "").casefold()
+
+
+def test_capture_profile_exposes_only_capture_entrypoints(monkeypatch) -> None:
+    monkeypatch.setenv("ATC_MCP_PROFILE", "claude_code_capture")
+    server = _server_for_profile()
+
+    assert server.name == "All The Context Claude Code Capture"
+    tools = _tools(server)
+    assert set(tools) == {hook.HOOK_TOOL_NAME, hook.STOP_HOOK_TOOL_NAME}
+    assert (
+        tools[hook.HOOK_TOOL_NAME].input_schema["properties"]["prompt"]["maxLength"]
+        == MAX_LIFECYCLE_CONTENT_CHARS
+    )
+    assert (
+        tools[hook.STOP_HOOK_TOOL_NAME].input_schema["properties"]["last_assistant_message"][
+            "anyOf"
+        ][0]["maxLength"]
+        == MAX_LIFECYCLE_CONTENT_CHARS
+    )
+    assert "does not retrieve" in (server.instructions or "").casefold()
+
+
+def test_read_and_capture_entrypoints_do_not_cross_call_scopes(monkeypatch) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.bootstrap_calls: list[dict[str, Any]] = []
+            self.capture_calls: list[dict[str, Any]] = []
+
+        def bootstrap_context_core_only(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.bootstrap_calls.append(payload)
+            return {"items": [{"content": "read-only fact"}]}
+
+        def capture_lifecycle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+            self.capture_calls.append(payload)
+            return {"ok": True, "status": "captured"}
+
+    client = Client()
+    monkeypatch.setattr(hook, "_hook_client", lambda: client)
+
+    read_output = hook.claude_code_user_prompt_submit_read(
+        object(), "read prompt", "cwd", "session"
+    )
+    capture_output = hook.claude_code_user_prompt_submit_capture(
+        object(), "capture prompt", "cwd", "session"
+    )
+
+    assert read_output["hookSpecificOutput"]["additionalContext"].endswith("read-only fact")
+    assert capture_output["hookSpecificOutput"]["additionalContext"] == ""
+    assert len(client.bootstrap_calls) == 1
+    assert len(client.capture_calls) == 1
+    assert client.capture_calls[0]["content"] == "capture prompt"
 
 
 def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
@@ -48,7 +100,7 @@ def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
     assert schema["required"] == ["prompt", "cwd", "session_id"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["prompt"] == {
-        "maxLength": 4_000,
+        "maxLength": MAX_LIFECYCLE_CONTENT_CHARS,
         "title": "Prompt",
         "type": "string",
     }
@@ -71,7 +123,11 @@ def test_hook_schema_is_required_bounded_strict_and_closed() -> None:
         {"prompt": "p", "cwd": "C:\\work"},
         {"prompt": "p", "cwd": "C:\\work", "session_id": "session", "extra": "x"},
         {"prompt": 1, "cwd": "C:\\work", "session_id": "session"},
-        {"prompt": "p" * 4_001, "cwd": "C:\\work", "session_id": "session"},
+        {
+            "prompt": "p" * (MAX_LIFECYCLE_CONTENT_CHARS + 1),
+            "cwd": "C:\\work",
+            "session_id": "session",
+        },
         {"prompt": "p", "cwd": "C:\\work" * 1_025, "session_id": "session"},
         {"prompt": "p", "cwd": "C:\\work", "session_id": "s" * 129},
     ],
@@ -164,13 +220,13 @@ def test_claude_stop_captures_rendered_response_without_returning_it(monkeypatch
     client = Client()
     monkeypatch.setattr(hook, "_hook_client", lambda: client)
     session_id = "claude-stop-session"
-    hook.claude_code_user_prompt_submit(
+    hook.claude_code_user_prompt_submit_capture(
         object(),
         "ordinary prompt",
         r"C:\private\cwd",
         session_id,
     )
-    output = hook.claude_code_stop(
+    output = hook.claude_code_stop_capture(
         object(),
         "rendered completion",
         r"C:\private\cwd",
@@ -296,7 +352,10 @@ def test_hook_verification_and_http_client_bypass_environment_proxies(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("prompt", "prompt-marker-" + "p" * 4_001),
+        (
+            "prompt",
+            "prompt-marker-" + "p" * (MAX_LIFECYCLE_CONTENT_CHARS + 1),
+        ),
         ("cwd", "cwd-marker-" + "c" * 4_096),
         ("session_id", "session-marker-" + "s" * 128),
     ],
@@ -437,7 +496,7 @@ def test_lifecycle_capture_uses_only_the_core_route_and_bounds_request(
     assert calls == [("POST", "/v1/lifecycle/events", payload)]
 
     with pytest.raises(ContextApiError) as failure:
-        client.capture_lifecycle_event({"content": "x" * (256 * 1024)})
+        client.capture_lifecycle_event({"content": "x" * (MAX_LIFECYCLE_CONTENT_CHARS + 1)})
     assert failure.value.code == "request_too_large"
     assert len(calls) == 1
 

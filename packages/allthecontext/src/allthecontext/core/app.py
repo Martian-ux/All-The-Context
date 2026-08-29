@@ -43,6 +43,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__
 from ..browser_session import (
@@ -60,6 +61,7 @@ from ..capture_runtime import (
     reject_reserved_workspace_provider,
 )
 from ..capture_scheduler import scheduler_update_health_forced_off
+from ..client_capture import CAPTURE_ROUTE
 from ..client_config import (
     claude_is_detected,
     codex_is_detected,
@@ -86,6 +88,7 @@ from ..export import create_export
 from ..ids import new_id
 from ..instance_identity import ensure_instance_secret, instance_proof
 from ..lifecycle import CoreInstanceLock
+from ..lifecycle_contract import MAX_LIFECYCLE_BODY_BYTES
 from ..models import (
     ApprovalRequest,
     ApprovalStatus,
@@ -153,6 +156,62 @@ _CLAUDE_CODE_MEMORY_VALIDATION_ROUTES = {
     "/v1/claude-code/memory/correct": "correct",
     "/v1/claude-code/memory/forget": "forget",
 }
+
+
+class _LifecycleBodyTooLarge(Exception):
+    """Internal signal used to stop reading an oversized lifecycle request."""
+
+
+class _LifecycleBodyLimitMiddleware:
+    """Apply the lifecycle JSON body bound before FastAPI parses its model."""
+
+    def __init__(self, app: ASGIApp, max_body_bytes: int = MAX_LIFECYCLE_BODY_BYTES) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http" or scope.get("path") != CAPTURE_ROUTE:
+            await self.app(scope, receive, send)
+            return
+
+        content_length = dict(scope.get("headers", ())).get(b"content-length")
+        if content_length is not None:
+            try:
+                declared_length = int(content_length)
+            except (TypeError, ValueError):
+                declared_length = None
+            if declared_length is not None and declared_length > self.max_body_bytes:
+                await self._reject(scope, receive, send)
+                return
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                body = message.get("body", b"")
+                received += len(body)
+                if received > self.max_body_bytes:
+                    raise _LifecycleBodyTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _LifecycleBodyTooLarge:
+            await self._reject(scope, receive, send)
+
+    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse(
+            {
+                "error": {
+                    "code": "request_too_large",
+                    "message": "Lifecycle event exceeded its limit",
+                }
+            },
+            status_code=413,
+        )
+        await response(scope, receive, send)
 
 
 class _InvalidSearchCursor(ValueError):
@@ -374,6 +433,7 @@ def create_app(
         TrustedHostMiddleware,
         allowed_hosts=[active_config.host, "localhost", "[::1]", "testserver"],
     )
+    app.add_middleware(_LifecycleBodyLimitMiddleware)
     app.state.core = core
     app.state.legacy_edge_connections = legacy_edge_connections
     app.state.legacy_edge_sync = legacy_edge_sync

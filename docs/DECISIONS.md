@@ -1,5 +1,27 @@
 # Architecture decisions
 
+## ADR-165: Lifecycle bounds and Claude pairing claims fail closed
+
+**Status:** accepted locally on 2026-08-29 for the integrated lifecycle
+contract and Claude Code profile boundary. This is not live/private client,
+provider, release, or macOS acceptance.
+
+All provider lifecycle content uses one shared inclusive limit of 16,384
+characters and 65,536 UTF-8 bytes. The provider schemas, runtime adapter,
+`CaptureEventRequest`, HTTP client, and Core route enforce that same content
+bound; the serialized lifecycle request body is separately capped at 131,072
+bytes before Core parsing. This prevents a provider from accepting content the
+authoritative Core model will reject while keeping request metadata bounded.
+
+Claude Code's read and capture registrations use separate profiles and
+entrypoints. The read profile performs retrieval only, and the capture profile
+performs lifecycle observation only, preserving the separate least-privilege
+principals without predictable cross-scope calls. Claude Code exposes no stable
+per-turn identifier, so session-only callbacks never deduplicate by prompt or
+session and never claim a paired completion or exactly-once retry. Each such
+observation receives fresh process-local opaque identity and remains bounded;
+loss of reliable pairing can only reduce evidence authority.
+
 ## ADR-164: Operational credential shape detection stays structural
 
 **Status:** accepted locally on 2026-08-29 after focused synthetic boundary

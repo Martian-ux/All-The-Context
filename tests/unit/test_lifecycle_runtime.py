@@ -5,6 +5,7 @@ from uuid import UUID
 
 from allthecontext.lifecycle_runtime import (
     LIFECYCLE_SCHEMA_VERSION,
+    MAX_LIFECYCLE_CONTENT_CHARS,
     LifecycleRuntimeAdapter,
     OpaqueCorrelationStore,
 )
@@ -135,7 +136,7 @@ def test_adapter_wire_event_does_not_mutate_reference_host_public_history() -> N
     assert result.event.event_id != state.host.events[0].event_id
 
 
-def test_claude_without_turn_id_starts_distinct_turns_and_stop_uses_latest() -> None:
+def test_without_turn_id_does_not_dedupe_or_claim_session_pairing() -> None:
     core = FakeCore()
     runtime = LifecycleRuntimeAdapter(
         provider="claude_code",
@@ -156,9 +157,23 @@ def test_claude_without_turn_id_starts_distinct_turns_and_stop_uses_latest() -> 
     assert first.event.session_id == second.event.session_id
     assert first.event.conversation_id != second.event.conversation_id
     assert core.capture_calls[0]["idempotency_key"] != core.capture_calls[1]["idempotency_key"]
-    assert completion.pairing == "paired"
+    assert completion.pairing == "unpaired"
     assert completion.event is not None
-    assert completion.event.conversation_id == second.event.conversation_id
+    assert completion.event.conversation_id not in {
+        first.event.conversation_id,
+        second.event.conversation_id,
+    }
+    assert core.capture_calls[2]["idempotency_key"] not in {
+        core.capture_calls[0]["idempotency_key"],
+        core.capture_calls[1]["idempotency_key"],
+    }
+
+    repeated_stop = runtime.observe_assistant_response(
+        response="latest completion",
+        session_id="session",
+    )
+    assert repeated_stop.pairing == "unpaired"
+    assert core.capture_calls[2]["idempotency_key"] != core.capture_calls[3]["idempotency_key"]
 
 
 def test_capture_only_turn_never_bootstraps_context() -> None:
@@ -200,7 +215,7 @@ def test_malformed_oversized_and_secret_content_never_reaches_core() -> None:
 
     malformed = runtime.observe_user_turn(prompt="", session_id="session")
     oversized = runtime.observe_assistant_response(
-        response="x" * (64 * 1024 + 1),
+        response="x" * (MAX_LIFECYCLE_CONTENT_CHARS + 1),
         session_id="session",
     )
     secret = runtime.observe_user_turn(

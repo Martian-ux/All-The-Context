@@ -21,6 +21,7 @@ from pydantic import Field, StrictStr
 from .claude_code_hook import _is_managed_loopback_core
 from .credentials import KeyringCredentialStore
 from .http_client import ContextHttpClient
+from .lifecycle_contract import MAX_LIFECYCLE_BODY_BYTES, MAX_LIFECYCLE_CONTENT_CHARS
 from .lifecycle_runtime import (
     LifecycleCaptureResponse,
     LifecycleRuntimeAdapter,
@@ -31,13 +32,13 @@ from .mcp_adapter import _ensure_local_core, _strict_tool
 
 CODEX_USER_PROMPT_SUBMIT = "UserPromptSubmit"
 CODEX_STOP = "Stop"
-CODEX_HOOK_INPUT_MAX_BYTES = 256 * 1024
+CODEX_HOOK_INPUT_MAX_BYTES = MAX_LIFECYCLE_BODY_BYTES
 CODEX_HOOK_CORE_TIMEOUT_SECONDS = 2.0
 CODEX_HOOK_MAX_RESPONSE_BYTES = 256 * 1024
 CODEX_SESSION_ID_MAX_CHARS = 128
 CODEX_TURN_ID_MAX_CHARS = 128
-CODEX_PROMPT_MAX_CHARS = 64 * 1024
-CODEX_RESPONSE_MAX_CHARS = 64 * 1024
+CODEX_PROMPT_MAX_CHARS = MAX_LIFECYCLE_CONTENT_CHARS
+CODEX_RESPONSE_MAX_CHARS = MAX_LIFECYCLE_CONTENT_CHARS
 _LIFECYCLE_CORRELATIONS = OpaqueCorrelationStore()
 
 

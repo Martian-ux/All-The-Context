@@ -8,6 +8,7 @@ from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
 from allthecontext.export import _decrypt_file, create_export
+from allthecontext.lifecycle_contract import MAX_LIFECYCLE_BODY_BYTES, MAX_LIFECYCLE_CONTENT_CHARS
 from allthecontext.lifecycle_runtime import LifecycleRuntimeAdapter
 from allthecontext.models import ClientCreate
 from fastapi.testclient import TestClient
@@ -27,6 +28,30 @@ def _event(*, event_id: str = "evt-1", role: str = "user", content: str = "I pre
 
 def _headers(token: str, client_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-ATC-Client-ID": client_id}
+
+
+def test_lifecycle_content_and_http_body_bounds_are_core_consistent(tmp_path: Path) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with CoreService(config) as service:
+        principal, token = service.store.create_client(
+            ClientCreate(name="Bounded capture", scopes=["context:capture"])
+        )
+        with TestClient(create_app(config, service=service)) as client:
+            headers = _headers(token, principal.id)
+            oversized_content = client.post(
+                "/v1/lifecycle/events",
+                headers=headers,
+                json=_event(content="x" * (MAX_LIFECYCLE_CONTENT_CHARS + 1)),
+            )
+            assert oversized_content.status_code == 422
+
+            oversized_body = client.post(
+                "/v1/lifecycle/events",
+                headers=headers,
+                json={"extra": "x" * MAX_LIFECYCLE_BODY_BYTES},
+            )
+            assert oversized_body.status_code == 413
+            assert oversized_body.json()["error"]["code"] == "request_too_large"
 
 
 def test_capture_scope_is_provisioned_only_when_explicitly_requested(tmp_path: Path) -> None:

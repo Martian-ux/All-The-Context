@@ -9,6 +9,12 @@ from typing import Any
 
 import httpx2 as httpx
 
+from .lifecycle_contract import (
+    MAX_LIFECYCLE_BODY_BYTES,
+    MAX_LIFECYCLE_CONTENT_BYTES,
+    MAX_LIFECYCLE_CONTENT_CHARS,
+)
+
 
 class ContextApiError(RuntimeError):
     """A stable API error that is safe to return through MCP."""
@@ -184,7 +190,15 @@ class ContextHttpClient:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        if len(encoded) > 256 * 1024:
+        content = payload.get("content")
+        if (
+            type(content) is not str
+            or not content
+            or len(content) > MAX_LIFECYCLE_CONTENT_CHARS
+            or len(content.encode("utf-8")) > MAX_LIFECYCLE_CONTENT_BYTES
+        ):
+            raise ContextApiError(413, "request_too_large", "Lifecycle content exceeded its limit")
+        if len(encoded) > MAX_LIFECYCLE_BODY_BYTES:
             raise ContextApiError(413, "request_too_large", "Lifecycle event exceeded its limit")
         return self._request("POST", "/v1/lifecycle/events", json=payload)
 

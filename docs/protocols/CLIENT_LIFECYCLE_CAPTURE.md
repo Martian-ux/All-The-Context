@@ -53,6 +53,12 @@ receipt. Any other response is non-success. The Core route and capability are
 owned by the Core lane; this component only supplies the injectable typed
 bridge and client method.
 
+The shared lifecycle content limit is 16,384 characters and 65,536 UTF-8
+bytes, inclusive. Provider schemas, the runtime adapter, `CaptureEventRequest`,
+the client, and the Core route enforce the same content bound. The serialized
+lifecycle request body is bounded at 131,072 bytes, including its envelope
+metadata.
+
 ## Boundaries and failure behavior
 
 - Only direct `http://127.0.0.1:<port>` Core targets are accepted. Credentials,
@@ -70,10 +76,11 @@ bridge and client method.
   bounded. The in-memory ledger is capped at 256 turns and stores no raw client
   session ID, cwd, transcript path, attachment, or prompt/response text.
 - When both lifecycle events share a reliable client turn identity and the
-  adapter observes the prompt, the completion is paired to that prompt. A
-  completion arriving without the prompt in the bounded runtime state is
-  marked only as correlation-available or unpaired; it is never promoted to a
-  direct-user witness.
+  adapter observes the prompt, the completion is paired to that prompt. Claude
+  Code supplies no stable per-turn identifier: repeated prompts in one session
+  are therefore distinct observations, Stop observations are marked unpaired,
+  and no exactly-once retry claim is made for them. A completion arriving
+  without a reliable turn identity is never promoted to a direct-user witness.
 
 Automatic lifecycle events are evidence for Core policy. They are not direct
 canonical-memory mutations, and the existing explicit mutation path remains

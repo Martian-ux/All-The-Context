@@ -21,13 +21,17 @@ from pydantic import (
     model_validator,
 )
 
+from .lifecycle_contract import MAX_LIFECYCLE_CONTENT_BYTES, MAX_LIFECYCLE_CONTENT_CHARS
+
 MAX_CONTEXT_CHARS = 64_000
 MAX_EVIDENCE_CHARS = 16_000
 MAX_CLAUDE_CODE_MEMORY_CHARS = 8_000
 MAX_STRUCTURED_VALUE_BYTES = 64 * 1024
 MAX_RECORD_LIST_ITEM_CHARS = 200
 MAX_SLOT_KEY_CHARS = 256
-MAX_CAPTURE_EVENT_CONTENT_CHARS = 16_384
+# Keep the public model name for callers while deriving it from the shared
+# lifecycle contract used by provider hooks and the runtime adapter.
+MAX_CAPTURE_EVENT_CONTENT_CHARS = MAX_LIFECYCLE_CONTENT_CHARS
 MAX_CAPTURE_EVENT_REFERENCE_CHARS = 128
 MAX_CLOSED_COVERAGE_COUNT = 2_147_483_647
 CLOSED_COVERAGE_KEYS = (
@@ -174,7 +178,7 @@ class CaptureEventRequest(StrictModel):
     def validate_capture_content(cls, value: str) -> str:
         if not value.strip() or _CAPTURE_CONTROL_RE.search(value) is not None:
             raise ValueError("capture content is empty or contains control characters")
-        if len(value.encode("utf-8")) > 64 * 1024:
+        if len(value.encode("utf-8")) > MAX_LIFECYCLE_CONTENT_BYTES:
             raise ValueError("capture content exceeds its byte bound")
         return value
 

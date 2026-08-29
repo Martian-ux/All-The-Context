@@ -43,28 +43,34 @@ setup-only slice does not add a Claude Code dashboard connection/status,
 repair, or uninstall control. Claude Desktop keeps its existing distinct
 principal and configuration behavior. Ordinary MCP remains L0.
 
-## Profile
+## Profiles
 
-Set `ATC_MCP_PROFILE=claude_code_hook` when starting `atc-mcp`. The profile has
-a distinct server identity (`All The Context Claude Code Hook`) and exposes
-only the lifecycle tools `claude_code_user_prompt_submit` and
-`claude_code_stop`. With no profile set, `atc-mcp` keeps the ordinary `All The
-Context` L0 MCP server and its existing tool set and instructions.
+The read server sets `ATC_MCP_PROFILE=claude_code_read` and exposes only
+`claude_code_user_prompt_submit`; it retrieves context with the read principal
+and never submits lifecycle capture. The separately configured capture server
+sets `ATC_MCP_PROFILE=claude_code_capture` and exposes
+`claude_code_user_prompt_submit` plus `claude_code_stop`; it submits capture
+events only and never retrieves context. The old `claude_code_hook` profile is
+accepted only as a read-profile migration alias. With no profile set,
+`atc-mcp` keeps the ordinary `All The Context` L0 MCP server and its existing
+tool set and instructions.
 
 The tool accepts exactly these required string fields:
 
 | Field | Maximum | Runtime use |
 |---|---:|---|
-| `prompt` | 4,000 characters | The only value used as an in-memory Core query |
+| `prompt` | 16,384 characters | Read profile: the only value used as an in-memory Core query; capture profile: bounded user evidence |
 | `cwd` | 4,096 characters | Accepted for the official hook contract, then ignored |
 | `session_id` | 128 characters | Used only to derive an opaque bounded correlation key |
 
 The adapter never resolves, reads, forwards, logs, audits, or persists `cwd`.
-The raw `session_id` is used only in memory to derive an opaque correlation
-key; it is never sent to Core. The prompt is captured as bounded content by the
-authenticated local Core lifecycle contract and is never logged or returned
-as hook output. No per-turn command or confirmation is needed after setup
-opt-in.
+The read profile ignores `session_id`; the capture profile uses it only in
+bounded in-memory correlation. Claude Code supplies no stable per-turn
+identifier, so repeated prompts in one session are not deduplicated, Stop
+observations remain unpaired, and the adapter makes no exactly-once retry claim
+for them. The prompt and rendered response share the lifecycle contract's
+16,384-character/65,536-byte content bound and are never logged or returned as
+hook output. No per-turn command or confirmation is needed after setup opt-in.
 
 ## Runtime boundary
 
@@ -91,11 +97,11 @@ The installed MCP SDK serializes this tool's result as one text content item
 containing the hook JSON. `structured_content` is intentionally not required
 by this hook contract.
 
-The Stop tool accepts Claude Code's bounded `last_assistant_message`, ignores
-`cwd` and `stop_hook_active`, and returns an empty Stop hook result. Its only
-side effect is an authenticated, bounded `assistant` lifecycle capture. The
-assistant event carries host-observation provenance internally; it is not
-treated as user-authored evidence.
+The capture-profile Stop tool accepts Claude Code's bounded
+`last_assistant_message`, ignores `cwd` and `stop_hook_active`, and returns an
+empty Stop hook result. Its only side effect is an authenticated, bounded
+`assistant` lifecycle capture. The assistant event carries host-observation
+provenance internally; it is not treated as user-authored evidence.
 
 ## Explicit memory commands (opt-in)
 
