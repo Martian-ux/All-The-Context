@@ -349,6 +349,26 @@ def run_packaged_rollback_smoke(
     )
 
 
+_PACKAGED_MCP_PROFILE = "codex_read"
+_PACKAGED_MCP_TOOLS = frozenset(
+    {"bootstrap_context", "context_status", "get_context_item", "search_context"}
+)
+
+
+def validate_packaged_mcp_surface(profile: str, names: set[str]) -> None:
+    """Require the packaged Codex connection to remain exactly read-only."""
+
+    if profile != _PACKAGED_MCP_PROFILE:
+        raise RuntimeError("packaged MCP did not use the managed read-only profile")
+    missing = _PACKAGED_MCP_TOOLS - names
+    unexpected = names - _PACKAGED_MCP_TOOLS
+    if missing or unexpected:
+        raise RuntimeError(
+            "packaged MCP tool surface did not match the read-only profile: "
+            f"missing={sorted(missing)}; unexpected={sorted(unexpected)}"
+        )
+
+
 async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> None:
     async with (
         stdio_client(parameters, errlog=errlog) as streams,
@@ -357,14 +377,14 @@ async def exercise_mcp(parameters: StdioServerParameters, errlog: TextIO) -> Non
         await session.initialize()
         tools = await session.list_tools()
         names = {tool.name for tool in tools.tools}
-        required = {"context_status", "bootstrap_context", "propose_memory"}
-        if not names.issuperset(required):
-            raise RuntimeError(f"packaged MCP tools are missing: {sorted(required - names)}")
-        status = await session.call_tool("context_status", {})
-        if status.is_error is True or not status.structured_content:
-            raise RuntimeError(f"packaged MCP status failed: {status}")
-        if status.structured_content.get("core_online") is not True:
-            raise RuntimeError(f"packaged MCP did not reach Core: {status.structured_content}")
+        profile = str((parameters.env or {}).get("ATC_MCP_PROFILE", ""))
+        validate_packaged_mcp_surface(profile, names)
+        searched = await session.call_tool(
+            "search_context",
+            {"query": "packaged smoke readiness", "limit": 1},
+        )
+        if searched.is_error is True or searched.structured_content is None:
+            raise RuntimeError("packaged read-only MCP query failed")
 
 
 def redact_smoke_diagnostic_text(value: str) -> str:
