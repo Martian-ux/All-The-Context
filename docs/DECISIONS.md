@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## ADR-164: Operational credential shape detection stays structural
+
+**Status:** accepted locally on 2026-08-29 after focused synthetic boundary
+tests. This is not provider, client, release, hosted CI, private-data, or
+macOS acceptance.
+
+The pre-ledger direct-secret detector is versioned as `direct-secret-v4` and
+recognizes defensible high-confidence operational credential shapes without an
+entropy-only rejection rule. In addition to labeled credentials, the shared
+boundary recognizes compact JWT/JWE only when a candidate has a JSON JOSE
+header, PASETO v1-v4 local/public forms, selected provider-prefixed tokens,
+and bearer/token values with explicit token context. Unicode compatibility,
+format, and combining obfuscations are normalized before these checks while
+case-sensitive JWT header content is preserved for in-memory validation.
+
+Rejected content still receives only the existing content-free opaque receipt;
+no secret-derived digest or verifier is introduced, and the capture normalizer
+uses the same boundary before ledger staging. Focused canary tests cover
+capture events, candidates, records, encrypted and decrypted export bytes,
+responses, and logs. Ordinary health, address, and SSN context remains outside
+the operational-credential class. The OS-backed opaque secret-reference vault
+is unchanged, and automatic routing of rejected values into it is not claimed.
+
 ## ADR-163: Continuous Capture is separate, opt-in evidence with Core-owned formation
 
 **Status:** accepted locally on 2026-08-27 for the integrated Core, lifecycle

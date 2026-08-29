@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from .ids import new_id, utc_now
+from .secret_boundary import contains_secret_like_text
 from .storage import (
     ConflictError,
     CoreStore,
@@ -125,10 +126,6 @@ CAPTURE_ERROR_CODES = frozenset(
 
 _SAFE_TEXT_RE = re.compile(r"^[^\x00-\x1f\x7f]+$")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._:@/+-]+$")
-_SECRET_MARKER_RE = re.compile(
-    r"(?i)(bearer\s+|basic\s+|sk-[a-z0-9]|gh[pousr]_[a-z0-9]|AIza[a-z0-9]|"
-    r"secret\s*[:=]|password\s*[:=]|credential\s*[:=]|token\s*[:=])"
-)
 _SENSITIVE_KEY_RE = re.compile(r"(?i)(token|secret|password|credential|authorization|api[_-]?key)")
 
 
@@ -174,7 +171,7 @@ def _bounded_text(value: str, *, maximum: int, code: str = "capture_page_malform
     text = value.strip()
     if not text or len(text) > maximum or _SAFE_TEXT_RE.fullmatch(text) is None:
         raise CaptureError(code)
-    if _SECRET_MARKER_RE.search(_secret_scan_text(text)):
+    if contains_secret_like_text(text):
         raise CaptureError("capture_payload_rejected")
     return text
 
@@ -201,7 +198,7 @@ def _bounded_content(value: str) -> str:
         not value.strip()
         or len(value) > MAX_CAPTURE_CONTENT_CHARS
         or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", value) is not None
-        or _SECRET_MARKER_RE.search(_secret_scan_text(value))
+        or contains_secret_like_text(value)
     ):
         raise CaptureError("capture_payload_rejected")
     return value

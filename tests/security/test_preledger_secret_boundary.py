@@ -13,20 +13,132 @@ from allthecontext import cli
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
-from allthecontext.export import _database_to_zip, _encrypt_file, create_export, restore_export
-from allthecontext.models import CandidateInput
+from allthecontext.export import (
+    _database_to_zip,
+    _decrypt_file,
+    _encrypt_file,
+    create_export,
+    restore_export,
+)
+from allthecontext.models import CandidateInput, ClientCreate
 from allthecontext.relay.service import (
     ClientIdentity,
     RelayService,
     SecretLikeProposalRefused,
     SQLiteRelayStore,
 )
-from allthecontext.secret_boundary import contains_secret_like_text, contains_secret_like_value
+from allthecontext.secret_boundary import (
+    SECRET_DETECTOR_VERSION,
+    contains_secret_like_text,
+    contains_secret_like_value,
+)
 from fastapi.testclient import TestClient
 
 PASSPHRASE = "synthetic boundary passphrase"
 CANARY = "ATC_SYNTHETIC_SECRET_7Q2Z9M"
 SECRET_TEXT = f"password: {CANARY}"
+JWT_CANARY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJzdWIiOiJhdGMtc3ludGhldGljLWNhbmFyeSIsImlhdCI6MTcyMDAwMDAwMH0."
+    "ATC_JWT_SIGNATURE_CANARY_7Q2Z9M"
+)
+PASETO_CANARY = "v4.local.ATC_PASETO_PAYLOAD_CANARY_7Q2Z9M"
+PROVIDER_CANARY = "ASIA7Q2Z9M2K8N4P6R0T"
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        JWT_CANARY,
+        (
+            "eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkExMjhHQ00ifQ."
+            "AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAA"
+        ),
+        PASETO_CANARY,
+        "v4.public.ATC_PASETO_PUBLIC_PAYLOAD_7Q2Z9M.footer_7Q2Z9M",
+        "gho_" + "A" * 36,
+        "glpat-" + "A1" * 16,
+        "AIza" + "A" * 35,
+        PROVIDER_CANARY,
+        "npm_" + "A" * 36,
+        "hf_" + "A" * 32,
+        "token: ATC_CONTEXT_TOKEN_7Q2Z9M",
+        "refresh token was refresh_token_7Q2Z9M",
+        "Authorization: Bearer ATC_BEARER_CANARY_7Q2Z9M",
+        "\uff45\uff59\u200b\uff2ahbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiJhdGMtc3ludGhldGljLWNhbmFyeSIsImlhdCI6MTcyMDAwMDAwMH0."
+        "ATC_JWT_SIGNATURE_CANARY_7Q2Z9M",
+    ),
+)
+def test_high_confidence_operational_credential_shapes_are_detected(value: str) -> None:
+    assert contains_secret_like_text(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "I have diabetes and take insulin.",
+        "My SSN is 123-45-6789.",
+        "I live at 123 Main Street, Apt 4B.",
+        "JWTs use compact serialization with dot-separated segments.",
+        "PASETO is a versioned token format for application protocols.",
+        "The token is useful for tracking a sentence.",
+        "v4.local.example",
+        "eyJnot-json.segment.signature",
+    ),
+)
+def test_sensitive_personal_and_ordinary_token_text_is_not_detected(value: str) -> None:
+    assert not contains_secret_like_text(value)
+
+
+@pytest.mark.parametrize("credential", (JWT_CANARY, PASETO_CANARY, PROVIDER_CANARY))
+def test_unlabeled_operational_credential_is_refused_before_every_persistent_surface(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, credential: str
+) -> None:
+    config = CoreConfig.in_directory(tmp_path, require_auth=True)
+    with CoreService(config) as service:
+        principal, token = service.store.create_client(
+            ClientCreate(name="Credential boundary test", scopes=["context:capture"])
+        )
+        with TestClient(create_app(config, service=service)) as client:
+            response = client.post(
+                "/v1/lifecycle/events",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-ATC-Client-ID": principal.id,
+                },
+                json={
+                    "event_id": "unlabeled-credential",
+                    "idempotency_key": str(uuid.uuid4()),
+                    "session_id": "session-credential",
+                    "conversation_id": "conversation-credential",
+                    "sequence": 1,
+                    "role": "user",
+                    "content": f"Retain this diagnostic value: {credential}",
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json() == {
+                "ok": False,
+                "status": "refused",
+                "reason": "direct_secret_like_content",
+                "refusal_id": response.json()["refusal_id"],
+                "replayed": False,
+            }
+            assert credential not in response.text
+            assert credential not in caplog.text
+
+        with service.store.connect() as connection:
+            for table in ("capture_events", "context_candidates", "context_records"):
+                assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+
+        package = tmp_path / "credential-boundary.atcexp"
+        create_export(config.database_path, package, PASSPHRASE)
+        decrypted = tmp_path / "credential-boundary.zip"
+        _decrypt_file(package, decrypted, PASSPHRASE)
+        assert credential.encode() not in package.read_bytes()
+        assert credential.encode() not in decrypted.read_bytes()
+        _assert_absent_from_paths(tmp_path, (credential.encode(),))
 
 
 def _assert_absent_from_paths(root: Path, needles: tuple[bytes, ...]) -> None:
@@ -88,7 +200,7 @@ def test_direct_secret_refusal_is_content_free_and_replayable(tmp_path: Path) ->
             "refused": True,
             "disposition": "ignored",
             "reason_code": "direct_secret_like_content",
-            "detector_version": "direct-secret-v3",
+            "detector_version": SECRET_DETECTOR_VERSION,
             "created_at": first.json()["created_at"],
             "replayed": False,
             "user_action_required": True,
@@ -256,7 +368,7 @@ def test_unicode_credential_obfuscations_fail_closed_before_storage(
         )
         assert response.status_code == 200, response.text
         assert response.json()["refused"] is True
-        assert response.json()["detector_version"] == "direct-secret-v3"
+        assert response.json()["detector_version"] == SECRET_DETECTOR_VERSION
         assert client.get("/v1/admin/observations").json()["total"] == 0
 
     _assert_absent_from_paths(tmp_path, (CANARY.encode(),))

@@ -34,6 +34,16 @@ Evidence is aggregate local evaluation only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-29 — operational credential shape hardening
+
+The direct-secret boundary now refuses unlabeled compact JWT/JWE and PASETO
+values, selected provider-prefixed tokens, and structurally contextual
+bearer/token values before capture-ledger staging. Detection remains based on
+recognized format or context rather than entropy alone, so ordinary health,
+address, and SSN context remains admissible. Focused synthetic tests prove
+content-free refusal and absence from capture events, candidates, records,
+exports, responses, and logs.
+
 ### 2026-08-27 — opt-in Claude Code and Codex Continuous Capture
 
 Setup now keeps read, lifecycle capture, and explicit mutation authority in
