@@ -18,17 +18,20 @@ classified the unsigned beta.6 installed helper
 and has SHA-256
 `62fcf5436988053aa4e43efa81483cfa5b200b0c71c567c96f5dff78c90c37ba`.
 The public beta.6 Windows archive still matches its published SHA-256 and its
-release workflow is green, but the published package metadata does not contain
-an independently comparable digest for every installed executable. Those facts
-do not prove either malware or a false positive.
+release workflow is green, but that immutable release's package metadata does
+not contain an independently comparable digest for every installed executable.
+The source now prepares a canonical per-executable manifest for a future
+replacement candidate; it does not retroactively bind beta.6. Those facts do
+not prove either malware or a false positive.
 
 Do not restore, execute, or allow-list that helper solely because it came from
 the beta archive. Leave it quarantined, use a trusted source checkout if needed,
 or wait for a replacement whose installed executables have component-level
 digests and reproducible per-component provenance. Authenticode is useful
 defense in depth when a free, donated, or sponsored path is available, but paid
-signing is not required. This incident remains open until the exact installed
-helper is tied to reproducible release evidence and independently reassessed.
+signing is not required. This incident remains open until a fresh replacement
+candidate actually emits and verifies that manifest, its exact helper is
+independently scanned and reassessed, and the resulting candidate is accepted.
 Microsoft’s current detection guidance is available in the
 [malware encyclopedia](https://www.microsoft.com/en-us/wdsi/threats/malware-encyclopedia-description?Name=Trojan%3AWin32%2FSabsik.EN.A%21ml&threatId=-2147156305).
 

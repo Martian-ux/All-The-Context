@@ -5,7 +5,7 @@
 | Status | Accepted zero-friction execution direction under [`ADR-090`](ADR-090_ZERO_FRICTION_PLATFORM.md), with the bounded PR #95 V1-source overlap reconciled below |
 | Product contract | [`ZERO_FRICTION_PLATFORM.md`](ZERO_FRICTION_PLATFORM.md) |
 | Immediate release boundary | `0.1.0-beta.6` remains unchanged |
-| Current execution frontier | Prove PR #95's Claude Code and Codex ordinary-use slice on exact packaged Windows and supported Ubuntu artifacts, close the Windows installed-component provenance/reassessment gap, then complete Wave 4 E–G product acceptance and Phase 2 |
+| Current execution frontier | Build and verify a replacement Windows candidate with the new installed-component manifest, complete exact-component security scanning/Microsoft reassessment, then prove PR #95's Claude Code and Codex ordinary-use slice on accepted packaged Windows and supported Ubuntu artifacts before Wave 4 E–G product acceptance and Phase 2 |
 | Early interface status | Experimental v0. PR #95 merged a bounded source-level lifecycle slice for Claude Code and Codex with exact-SHA CI, but exact packaged/live acceptance remains open and the slice does not close the controlled L2 checkpoint exit in ZF-009 or the broader ZF-010 formation exit. Wave 3 E/F/G remain component-complete; prior worker-backed clean-vault journeys close local developer seams, not ZF-007/ZF-008/ZF-009/ZF-010 product exits |
 | Scheduling rule | Dependency and evidence determine readiness; no calendar or effort estimates |
 | Promotion rule | A more complex mechanism must beat the strongest simpler accepted baseline |
@@ -76,6 +76,15 @@ Phase 2. The unresolved Windows Defender incident also requires installed
 component digests, reproducible provenance, and Microsoft reassessment before a
 replacement Windows candidate is recommended; paid Authenticode remains out of
 scope under ADR-028/ADR-166.
+
+**Replacement-candidate preparation (2026-08-29):** the release-candidate path
+now embeds a canonical manifest and checksum that bind the Windows installer
+and four installed executables to exact source/version/platform/architecture
+inputs. This is source preparation only. No replacement candidate, scan,
+Microsoft reassessment, or exact live-client receipt exists yet. Under ADR-060
+and ADR-167, caller-authored evidence JSON and source-Core client journeys can
+only report `HOLD`; the next acceptance work must exercise the shipped
+candidate-owned runtime.
 
 Project graphs, capsules, learned retrieval, mobile access, and external memory
 systems are subordinate to that sequence. A feature that increases internal

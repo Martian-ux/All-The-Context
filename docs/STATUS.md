@@ -70,6 +70,33 @@ release provenance, and undergo Microsoft reassessment. Authenticode is useful
 defense in depth when available without making paid signing a community-release
 requirement. The current beta.6 Defender incident remains unresolved meanwhile.
 
+### 2026-08-29 — replacement-candidate component provenance prepared
+
+This change prepares the first prerequisite for that next slice. Windows
+release-candidate archives now carry a canonical installed-component manifest
+and checksum beside `AllTheContextSetup.exe`. The manifest binds the direct and
+archived installer, installed main executable, MCP helper, recovery helper, and
+updater by SHA-256 and size to the exact source commit, product version,
+platform, and architecture. The installed main bytes must equal the installer
+bytes. Authenticode reporting is limited to `not-present` or
+`present-unverified`; it does not claim a valid or trusted publisher.
+
+Creation and archive verification reject linked/reparse inputs, path escape,
+duplicate file identities or JSON keys, mutation while hashing, noncanonical
+metadata, unexpected archive members, header mismatch, and component/package
+drift. Ordinary Windows CI packaging remains available without provenance
+arguments; the release-candidate workflow opts into the fail-closed manifest
+path explicitly. The manifest is embedded in the existing Windows archive, so
+the published release asset allowlist is unchanged.
+
+No replacement candidate has been built, published, scanned, or submitted to
+Microsoft by this source change. It does not retroactively bind the beta.6 MCP
+helper, clear the Defender finding, authorize restoration or an exclusion, or
+close exact packaged/live Claude Code or Codex acceptance. Broad synthetic
+client harnesses and caller-authored evidence manifests were deliberately not
+integrated: ADR-060 requires the next client proof to execute the shipped
+candidate and produce candidate-owned, content-free evidence.
+
 ### 2026-08-29 — unresolved Windows Defender beta.6 incident
 
 Microsoft Defender detected and quarantined the unsigned installed beta.6

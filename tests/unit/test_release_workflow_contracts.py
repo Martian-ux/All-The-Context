@@ -395,9 +395,7 @@ def test_windows_candidate_publishes_and_verifies_installed_component_manifest()
     candidate = _read(WORKFLOWS / "release-candidate.yml")
     manifest_script = _read(ROOT / "scripts" / "installed_component_manifest.py")
     schema = json.loads(
-        (ROOT / "release" / "installed-component-manifest.schema.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "release" / "installed-component-manifest.schema.json").read_text(encoding="utf-8")
     )
 
     assert schema["properties"]["component_count"]["const"] == 4
@@ -417,7 +415,6 @@ def test_windows_candidate_publishes_and_verifies_installed_component_manifest()
     assert "--mcp build/desktop/helper-dist/AllTheContextMCP.exe" in candidate
     assert "--recovery dist/desktop/AllTheContextRecovery.exe" in candidate
     assert "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe" in candidate
-
 
 
 def test_public_beta_workflows_ship_only_windows_and_linux() -> None:

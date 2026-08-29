@@ -1,5 +1,32 @@
 # Architecture decisions
 
+## ADR-167: Candidate-owned evidence precedes Windows reassessment and live-client credit
+
+**Status:** accepted on 2026-08-29 for the replacement-candidate preparation
+path. This does not change or repair the immutable `0.1.0-beta.6` artifacts,
+close the open Defender incident, or grant exact packaged/live acceptance.
+
+Future Windows release-candidate archives include one canonical
+`installed-component-manifest-v1.json` plus its checksum beside the installer.
+The manifest binds the exact direct/archive installer bytes, installed main,
+MCP, recovery, and updater executable digests and sizes, source commit, product
+version, platform, architecture, and only the Authenticode state that can be
+observed without claiming publisher trust. Verification fails closed on path
+escape, links/reparse points, duplicate inputs or JSON keys, mutation while
+hashing, noncanonical metadata, a main/installer mismatch, or any mismatch
+against the workflow's expected header. The manifest remains inside the
+existing candidate archive; it does not widen the release asset allowlist.
+
+Acceptance-shaped evidence cannot substitute for exercising the shipped
+candidate. An unsigned caller-authored JSON manifest cannot turn a Claude Code
+journey into a live pass, and a Codex journey driven by a source Core cannot be
+reported as packaged acceptance. Those exploratory shapes remain unintegrated
+under ADR-060. A replacement candidate must first produce and verify the new
+component manifest, undergo exact-component security scanning and Microsoft
+reassessment, and then run the ordinary-use client journey against the
+candidate-owned runtime. Content-free receipts may report `HOLD`; they may not
+manufacture candidate, client, or release credit.
+
 ## ADR-166: Windows AV findings require installed-component provenance
 
 **Status:** accepted on 2026-08-29 after a real beta.6 Defender event and
