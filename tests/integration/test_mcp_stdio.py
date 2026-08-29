@@ -11,6 +11,7 @@ from pathlib import Path
 import anyio
 import httpx2 as httpx
 import uvicorn
+from allthecontext import codex_hook
 from allthecontext.config import CoreConfig
 from allthecontext.core.app import create_app
 from allthecontext.core.service import CoreService
@@ -129,6 +130,67 @@ async def _exercise_adapter(parameters: StdioServerParameters) -> None:
         assert forgotten.structured_content["deleted_at"]
 
 
+async def _exercise_generated_codex_read_hook(parameters: StdioServerParameters) -> None:
+    async with (
+        stdio_client(parameters) as streams,
+        ClientSession(*streams) as session,
+    ):
+        await session.initialize()
+        listed = await session.list_tools()
+        read_tool = next(
+            tool for tool in listed.tools if tool.name == codex_hook.CODEX_READ_HOOK_TOOL
+        )
+        assert set(read_tool.input_schema["properties"]) == {
+            "task_description",
+            "character_budget",
+            "session_id",
+            "turn_id",
+        }
+        result = await session.call_tool(
+            codex_hook.CODEX_READ_HOOK_TOOL,
+            {
+                "task_description": "Continue the Integration Atlas project.",
+                "character_budget": codex_hook.CODEX_HOOK_CONTEXT_BUDGET,
+                "session_id": "synthetic-session",
+                "turn_id": "synthetic-turn",
+            },
+        )
+        assert result.is_error is not True
+        assert result.structured_content is None
+        assert len(result.content) == 1
+        output = json.loads(result.content[0].text)
+        assert output["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+        assert isinstance(output["hookSpecificOutput"]["additionalContext"], str)
+        assert "synthetic-session" not in result.content[0].text
+        assert "synthetic-turn" not in result.content[0].text
+
+
+async def _exercise_unavailable_codex_read_hook(parameters: StdioServerParameters) -> None:
+    async with (
+        stdio_client(parameters) as streams,
+        ClientSession(*streams) as session,
+    ):
+        await session.initialize()
+        result = await session.call_tool(
+            codex_hook.CODEX_READ_HOOK_TOOL,
+            {
+                "task_description": "synthetic unavailable-core task",
+                "character_budget": codex_hook.CODEX_HOOK_CONTEXT_BUDGET,
+                "session_id": "synthetic-session",
+                "turn_id": "synthetic-turn",
+            },
+        )
+        assert result.is_error is not True
+        assert result.structured_content is None
+        output = json.loads(result.content[0].text)
+        assert output == {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "",
+            }
+        }
+
+
 def _request_shutdown(base_url: str, admin_token: str) -> None:
     response = httpx.post(
         f"{base_url}/v1/admin/shutdown",
@@ -219,12 +281,54 @@ def test_real_stdio_mcp_handshake_and_tool_call(tmp_path: Path) -> None:
         env=environment,
         cwd=str(Path(__file__).resolve().parents[2]),
     )
+    read_environment = dict(environment)
+    read_environment.update(
+        {
+            "ATC_MCP_PROFILE": "codex_read",
+            "ATC_AUTO_START_CORE": "0",
+            "PYTHONPATH": str(
+                Path(__file__).resolve().parents[2] / "packages" / "allthecontext" / "src"
+            ),
+        }
+    )
+    read_parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "allthecontext.mcp_adapter"],
+        env=read_environment,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
     try:
         anyio.run(_exercise_adapter, parameters)
+        anyio.run(_exercise_generated_codex_read_hook, read_parameters)
     finally:
         server.should_exit = True
         thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+def test_stdio_codex_read_hook_starts_without_core(tmp_path: Path) -> None:
+    port = _port()
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "ATC_TARGET_URL": f"http://127.0.0.1:{port}",
+            "ATC_CLIENT_ID": "synthetic-client",
+            "ATC_CLIENT_TOKEN": "synthetic-token",
+            "ATC_AUTO_START_CORE": "0",
+            "ATC_MCP_PROFILE": "codex_read",
+            "PYTHONPATH": str(
+                Path(__file__).resolve().parents[2] / "packages" / "allthecontext" / "src"
+            ),
+        }
+    )
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "allthecontext.mcp_adapter"],
+        env=environment,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+
+    anyio.run(_exercise_unavailable_codex_read_hook, parameters)
 
 
 def test_stdio_adapter_restarts_a_crashed_managed_core(tmp_path: Path) -> None:

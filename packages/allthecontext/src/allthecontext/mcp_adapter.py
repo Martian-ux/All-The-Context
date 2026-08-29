@@ -30,6 +30,7 @@ from allthecontext.desktop_setup import CoreProbe, launch_core, probe_core
 from allthecontext.http_client import ContextApiError, ContextHttpClient
 
 MANAGED_CORE_STARTUP_SECONDS = 30.0
+CODEX_READ_HOOK_TOOL = "codex_user_prompt_submit_read"
 
 
 def _configured_core_runtime() -> RuntimeCommand:
@@ -406,6 +407,18 @@ def build_mcp(*, enabled_tools: frozenset[str] | None = None) -> MCPServer:
             )
         )
 
+    if enabled_tools is not None and CODEX_READ_HOOK_TOOL in enabled_tools:
+        from allthecontext.codex_hook import codex_user_prompt_submit_read
+
+        registered_tools.append(
+            _strict_tool(
+                codex_user_prompt_submit_read,
+                name=CODEX_READ_HOOK_TOOL,
+                structured_output=False,
+                hide_input_in_errors=True,
+            )
+        )
+
     if enabled_tools is not None:
         available = {tool.name for tool in registered_tools}
         unknown = enabled_tools - available
@@ -450,7 +463,13 @@ def _server_for_profile() -> MCPServer:
     if profile == "codex_read":
         return build_mcp(
             enabled_tools=frozenset(
-                {"bootstrap_context", "search_context", "get_context_item", "context_status"}
+                {
+                    "bootstrap_context",
+                    "search_context",
+                    "get_context_item",
+                    "context_status",
+                    CODEX_READ_HOOK_TOOL,
+                }
             )
         )
     if profile == "codex_explicit":

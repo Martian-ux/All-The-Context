@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 from allthecontext import client_config
 from allthecontext.client_config import (
+    CODEX_CAPTURE_SERVER_KEY,
+    CODEX_EXPLICIT_SERVER_KEY,
+    CODEX_READ_HOOK_TOOL,
+    CODEX_READ_SERVER_KEY,
     MANAGED_BEGIN,
     apply_managed_client_cleanup,
     claude_config_path,
@@ -15,6 +19,7 @@ from allthecontext.client_config import (
     codex_is_configured,
     configure_claude,
     configure_codex,
+    configure_codex_integration,
     disconnect_claude,
     disconnect_codex,
     plan_managed_client_cleanup,
@@ -436,3 +441,50 @@ def test_disconnect_claude_preserves_other_servers(tmp_path: Path) -> None:
     assert read_claude_config(config) is None
     assert result.changed is True
     assert result.managed_client_id == "claude-client"
+
+
+def test_codex_integration_uses_optional_servers_and_exact_read_hook_payload(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.toml"
+    configure_codex_integration(
+        RuntimeCommand(Path("python"), ("-m", "allthecontext.desktop")),
+        read_client_id="read-client",
+        capture_client_id="capture-client",
+        explicit_client_id="explicit-client",
+        path=config,
+        hooks_path=tmp_path / "hooks.json",
+        skills_dir=tmp_path / "skills",
+    )
+
+    parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+    servers = parsed["mcp_servers"]
+    assert all(
+        servers[key]["required"] is False
+        for key in (
+            CODEX_READ_SERVER_KEY,
+            CODEX_CAPTURE_SERVER_KEY,
+            CODEX_EXPLICIT_SERVER_KEY,
+        )
+    )
+    assert CODEX_READ_HOOK_TOOL in servers[CODEX_READ_SERVER_KEY]["enabled_tools"]
+
+    hooks = parsed["hooks"]
+    user_prompt_hooks = hooks["UserPromptSubmit"]
+    read_hook = next(
+        hook
+        for group in user_prompt_hooks
+        for hook in group["hooks"]
+        if hook["server"] == CODEX_READ_SERVER_KEY
+    )
+    assert read_hook == {
+        "type": "mcp_tool",
+        "server": CODEX_READ_SERVER_KEY,
+        "tool": CODEX_READ_HOOK_TOOL,
+        "input": {
+            "task_description": "${prompt}",
+            "character_budget": 8000,
+            "session_id": "${session_id}",
+            "turn_id": "${turn_id}",
+        },
+    }

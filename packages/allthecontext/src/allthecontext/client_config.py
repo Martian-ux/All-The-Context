@@ -37,6 +37,7 @@ CODEX_READ_SERVER_KEY = "all_the_context"
 CODEX_CAPTURE_SERVER_KEY = "all_the_context_capture"
 CODEX_EXPLICIT_SERVER_KEY = "all_the_context_explicit"
 CODEX_READ_PROFILE = "codex_read"
+CODEX_READ_HOOK_TOOL = "codex_user_prompt_submit_read"
 # Stable setup seam for the lifecycle-adapter lane.  That lane owns the
 # codex_hook profile and its capture-only tool implementation.
 CODEX_CAPTURE_PROFILE = "codex_hook"
@@ -44,7 +45,13 @@ CODEX_EXPLICIT_PROFILE = "codex_explicit"
 CODEX_CAPTURE_USER_PROMPT_TOOL = "codex_user_prompt_submit"
 CODEX_CAPTURE_STOP_TOOL = "codex_stop"
 CODEX_EXPLICIT_COMMANDS = ("atc-remember", "atc-correct", "atc-forget")
-CODEX_READ_TOOLS = ("bootstrap_context", "search_context", "get_context_item", "context_status")
+CODEX_READ_TOOLS = (
+    "bootstrap_context",
+    "search_context",
+    "get_context_item",
+    "context_status",
+    CODEX_READ_HOOK_TOOL,
+)
 CODEX_CAPTURE_TOOLS = (CODEX_CAPTURE_USER_PROMPT_TOOL, CODEX_CAPTURE_STOP_TOOL)
 CODEX_EXPLICIT_TOOLS = ("propose_memory", "report_context_error", "forget_context")
 CODEX_SKILLS_DIR_ENV = "ATC_CODEX_SKILLS_DIR"
@@ -429,7 +436,7 @@ def render_codex_mcp_block(
             f"command = {json.dumps(mcp_command[0])}",
             f"args = [{rendered_args}]",
             f"env = {{ {rendered_env} }}",
-            "required = true",
+            "required = false",
             "startup_timeout_sec = 20",
             'default_tools_approval_mode = "approve"',
             MANAGED_END,
@@ -757,7 +764,7 @@ _CODEX_READ_HOOKS = (
     {
         "type": "mcp_tool",
         "server": CODEX_READ_SERVER_KEY,
-        "tool": "bootstrap_context",
+        "tool": CODEX_READ_HOOK_TOOL,
         "input": {
             "task_description": "${prompt}",
             "character_budget": 8000,
@@ -975,7 +982,7 @@ def _render_codex_server(
         f"command = {json.dumps(command[0])}",
         f"args = [{rendered_args}]",
         f"env = {{ {rendered_env} }}",
-        "required = true",
+        "required = false",
         "startup_timeout_sec = 20",
         f"enabled_tools = [{', '.join(json.dumps(tool) for tool in enabled_tools)}]",
         f"default_tools_approval_mode = {json.dumps(approval_mode)}",
@@ -997,7 +1004,7 @@ def _render_codex_hooks_inline(*, capture_enabled: bool) -> list[str]:
         "[[hooks.UserPromptSubmit.hooks]]",
         'type = "mcp_tool"',
         f"server = {json.dumps(CODEX_READ_SERVER_KEY)}",
-        'tool = "bootstrap_context"',
+        f"tool = {json.dumps(CODEX_READ_HOOK_TOOL)}",
         'input = { task_description = "${prompt}", character_budget = 8000, '
         'session_id = "${session_id}", turn_id = "${turn_id}" }',
     ]
