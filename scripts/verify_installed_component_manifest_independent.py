@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import os
 import re
@@ -13,7 +12,7 @@ import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, NoReturn, cast
+from typing import Any, BinaryIO, NoReturn, cast
 
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_TYPE = "installed-component"
@@ -43,11 +42,33 @@ SOURCE_BASENAMES: dict[str, frozenset[str]] = {
 }
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_CHECKSUM_BYTES = 256
+MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 3
+MAX_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 500
+MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
+MAX_PE_OPTIONAL_HEADER_BYTES = 64 * 1024
+MAX_CERTIFICATE_TABLE_BYTES = 16 * 1024 * 1024
 READ_CHUNK_SIZE = 1024 * 1024
+ARCHIVE_MEMBER_PREFIX = "installed-component-package/"
+ARCHIVE_MEMBER_BASENAMES = frozenset(
+    {"AllTheContextSetup.exe", MANIFEST_FILE_NAME, CHECKSUM_FILE_NAME}
+)
+ARCHIVE_MEMBER_NAMES = frozenset(
+    ARCHIVE_MEMBER_PREFIX + name for name in ARCHIVE_MEMBER_BASENAMES
+)
+AMD64_MACHINE = 0x8664
+PE32_PLUS_MAGIC = 0x20B
 
 
 class IndependentManifestVerificationError(ValueError):
     """Raised when an installed-component archive cannot be trusted."""
+
+
+class _ContentFreeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message: str) -> NoReturn:
+        self.exit(2, f"{self.prog}: error: verification arguments are invalid\n")
 
 
 @dataclass(frozen=True)
@@ -78,10 +99,27 @@ class _FileSnapshot:
 @dataclass(frozen=True)
 class _StableFile:
     path: Path
-    raw: bytes
     digest: str
     size: int
     identity: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _ValidatedPath:
+    path: Path
+    identity: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _StreamMeasurement:
+    digest: str
+    size: int
+    identity: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _ExecutableMeasurement(_StreamMeasurement):
+    authenticode: str
 
 
 def _failure(message: str) -> NoReturn:
@@ -100,9 +138,7 @@ def _is_link_or_reparse(value: Path) -> bool:
     try:
         information = value.stat(follow_symlinks=False)
     except (OSError, RuntimeError) as exc:
-        raise IndependentManifestVerificationError(
-            f"cannot inspect verification input: {value}"
-        ) from exc
+        raise IndependentManifestVerificationError("cannot inspect verification input") from exc
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     return value.is_symlink() or bool(getattr(information, "st_file_attributes", 0) & reparse_flag)
 
@@ -114,9 +150,7 @@ def _validate_root(root: Path) -> tuple[Path, Path]:
     try:
         resolved = lexical.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
-        raise IndependentManifestVerificationError(
-            f"source root is unavailable: {lexical}"
-        ) from exc
+        raise IndependentManifestVerificationError("source root is unavailable") from exc
     if not resolved.is_dir():
         _failure("source root must be a directory")
     return lexical, resolved
@@ -127,23 +161,25 @@ def _reject_linked_path(lexical: Path, root: Path) -> None:
         relative = lexical.relative_to(root)
     except ValueError as exc:
         raise IndependentManifestVerificationError(
-            f"verification input escapes the source root: {lexical.name}"
+            "verification input escapes the source root"
         ) from exc
     current = root
     for part in relative.parts:
         current /= part
         if current.exists() and _is_link_or_reparse(current):
-            _failure(f"verification input uses a symlink or reparse point: {current.name}")
+            _failure("verification input uses a symlink or reparse point")
 
 
-def _regular_file(value: Path, *, root: Path, label: str) -> Path:
+def _regular_file(
+    value: Path, *, root: Path, label: str, maximum_size: int | None = None
+) -> Path:
     lexical_root, resolved_root = _validate_root(root)
     lexical = _absolute(value)
     _reject_linked_path(lexical, lexical_root)
     try:
         resolved = lexical.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
-        raise IndependentManifestVerificationError(f"{label} is missing: {lexical}") from exc
+        raise IndependentManifestVerificationError(f"{label} is missing") from exc
     try:
         resolved.relative_to(resolved_root)
     except ValueError as exc:
@@ -156,74 +192,132 @@ def _regular_file(value: Path, *, root: Path, label: str) -> Path:
         raise IndependentManifestVerificationError(f"{label} cannot be inspected") from exc
     if not stat.S_ISREG(information.st_mode):
         _failure(f"{label} must be a regular file")
+    if information.st_nlink != 1:
+        _failure(f"{label} must not be a hardlink")
+    if maximum_size is not None and information.st_size > maximum_size:
+        _failure(f"{label} exceeds the maximum allowed size")
     return resolved
 
 
-def _read_once(path: Path, *, label: str) -> bytes:
+def _identity(snapshot: _FileSnapshot) -> tuple[int, int]:
+    return snapshot.device, snapshot.inode
+
+
+def _assert_regular_snapshot(snapshot: _FileSnapshot, *, label: str) -> None:
+    if not stat.S_ISREG(snapshot.mode):
+        _failure(f"{label} must be a regular file")
+    if snapshot.links != 1:
+        _failure(f"{label} must not be a hardlink")
+
+
+def _hash_stream(
+    stream: BinaryIO, *, label: str, maximum_size: int
+) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+            if not isinstance(chunk, bytes):
+                _failure(f"{label} returned a non-binary read")
+            size += len(chunk)
+            if size > maximum_size:
+                _failure(f"{label} exceeds the maximum allowed size")
+            digest.update(chunk)
+    except IndependentManifestVerificationError:
+        raise
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        raise IndependentManifestVerificationError(f"could not read {label}") from exc
+    return digest.hexdigest(), size
+
+
+def _measure_once(
+    path: Path,
+    *,
+    label: str,
+    maximum_size: int,
+    expected_identity: tuple[int, int] | None = None,
+) -> _StreamMeasurement:
     try:
         before_path = _snapshot(path.stat(follow_symlinks=False))
-        if path.is_symlink() or before_path.attributes & getattr(
-            stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
-        ):
-            _failure(f"{label} is a symlink or reparse point")
-        if not stat.S_ISREG(before_path.mode):
-            _failure(f"{label} must be a regular file")
+        _assert_regular_snapshot(before_path, label=label)
+        if expected_identity is not None and _identity(before_path) != expected_identity:
+            _failure(f"{label} changed after path validation")
+        if before_path.size > maximum_size:
+            _failure(f"{label} exceeds the maximum allowed size")
         with path.open("rb") as stream:
             before_handle = _snapshot(os.fstat(stream.fileno()))
+            _assert_regular_snapshot(before_handle, label=label)
             if (
-                (before_handle.device, before_handle.inode)
-                != (before_path.device, before_path.inode)
+                _identity(before_handle) != _identity(before_path)
                 or before_handle.size != before_path.size
+                or (
+                    expected_identity is not None
+                    and _identity(before_handle) != expected_identity
+                )
             ):
                 _failure(f"{label} changed before it was read")
-            if not stat.S_ISREG(before_handle.mode):
-                _failure(f"{label} must be a regular file")
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
-                if not isinstance(chunk, bytes):
-                    _failure(f"{label} returned a non-binary read")
-                chunks.append(chunk)
-                size += len(chunk)
+            digest, size = _hash_stream(stream, label=label, maximum_size=maximum_size)
             after_handle = _snapshot(os.fstat(stream.fileno()))
         after_path = _snapshot(path.stat(follow_symlinks=False))
     except IndependentManifestVerificationError:
         raise
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
         raise IndependentManifestVerificationError(f"could not read {label}") from exc
+    _assert_regular_snapshot(after_handle, label=label)
     if before_handle != after_handle or before_path != after_path:
         _failure(f"{label} changed while it was read")
-    if path.is_symlink() or after_path.attributes & getattr(
-        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+    final_identity = _identity(after_path)
+    if final_identity != _identity(before_path) or (
+        expected_identity is not None and final_identity != expected_identity
     ):
-        _failure(f"{label} is a symlink or reparse point")
-    if not stat.S_ISREG(after_path.mode):
-        _failure(f"{label} must be a regular file")
+        _failure(f"{label} changed while it was read")
     if size != before_path.size:
         _failure(f"{label} changed while it was read")
-    return b"".join(chunks)
+    return _StreamMeasurement(digest, size, final_identity)
 
 
-def _stable_read(path: Path, *, label: str) -> bytes:
-    first = _read_once(path, label=label)
-    second = _read_once(path, label=label)
-    if first != second:
+def _stable_measurement(
+    path: Path,
+    *,
+    label: str,
+    maximum_size: int,
+    expected_identity: tuple[int, int] | None = None,
+) -> _StreamMeasurement:
+    first = _measure_once(
+        path,
+        label=label,
+        maximum_size=maximum_size,
+        expected_identity=expected_identity,
+    )
+    second = _measure_once(
+        path,
+        label=label,
+        maximum_size=maximum_size,
+        expected_identity=first.identity if expected_identity is None else expected_identity,
+    )
+    if (first.digest, first.size, first.identity) != (
+        second.digest,
+        second.size,
+        second.identity,
+    ):
         _failure(f"{label} changed between stable reads")
     return first
 
 
-def _stable_file(path: Path, *, label: str) -> _StableFile:
-    raw = _stable_read(path, label=label)
-    try:
-        information = path.stat(follow_symlinks=False)
-    except (OSError, RuntimeError) as exc:
-        raise IndependentManifestVerificationError(f"{label} changed after it was read") from exc
+def _stable_file(
+    path: Path, *, label: str, expected_identity: tuple[int, int] | None = None
+) -> _StableFile:
+    measurement = _stable_measurement(
+        path,
+        label=label,
+        maximum_size=MAX_EXECUTABLE_BYTES,
+        expected_identity=expected_identity,
+    )
     return _StableFile(
         path=path,
-        raw=raw,
-        digest=hashlib.sha256(raw).hexdigest(),
-        size=len(raw),
-        identity=(int(information.st_dev), int(information.st_ino)),
+        digest=measurement.digest,
+        size=measurement.size,
+        identity=measurement.identity,
     )
 
 
@@ -252,8 +346,8 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _reject_nonfinite_json(value: str) -> NoReturn:
-    _failure(f"manifest contains non-finite JSON value: {value}")
+def _reject_nonfinite_json(_value: str) -> NoReturn:
+    _failure("manifest contains a non-finite JSON value")
 
 
 def _load_manifest(raw: bytes) -> dict[str, Any]:
@@ -300,6 +394,8 @@ def _descriptor(value: object, *, label: str) -> dict[str, Any]:
         _failure(f"{label} digest is malformed")
     if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
         _failure(f"{label} size is malformed")
+    if size > MAX_EXECUTABLE_BYTES:
+        _failure(f"{label} exceeds the maximum allowed size")
     return {"filename": filename, "sha256": digest, "size": size}
 
 
@@ -380,10 +476,16 @@ def _validate_manifest_shape(value: Mapping[str, Any]) -> None:
             _failure("installed-component entry is malformed")
         role = item["role"]
         filename = item["filename"]
-        if role != expected_role or filename != expected_name or role in seen_roles:
+        if (
+            not isinstance(role, str)
+            or not isinstance(filename, str)
+            or role != expected_role
+            or filename != expected_name
+            or role in seen_roles
+        ):
             _failure("installed-component ordering or role is invalid")
-        seen_roles.add(cast(str, role))
-        folded_name = cast(str, filename).casefold()
+        seen_roles.add(role)
+        folded_name = filename.casefold()
         if folded_name in seen_names:
             _failure("installed-component filenames are duplicated")
         seen_names.add(folded_name)
@@ -395,6 +497,7 @@ def _validate_manifest_shape(value: Mapping[str, Any]) -> None:
         if (
             not isinstance(auth, dict)
             or set(auth) != {"status"}
+            or not isinstance(auth["status"], str)
             or auth["status"] not in AUTHENTICODE_STATUSES
         ):
             _failure("installed-component Authenticode status is invalid")
@@ -402,24 +505,18 @@ def _validate_manifest_shape(value: Mapping[str, Any]) -> None:
 
 def _expected_header(
     *,
-    version: str | None,
-    source_commit: str | None,
-    platform: str | None,
-    architecture: str | None,
-) -> tuple[str, str, str, str] | None:
+    version: str,
+    source_commit: str,
+    platform: str,
+    architecture: str,
+) -> tuple[str, str, str, str]:
     values = (version, source_commit, platform, architecture)
-    if all(value is None for value in values):
-        return None
-    if any(value is None for value in values):
-        _failure("verification requires all four expected manifest header fields")
-    return cast(tuple[str, str, str, str], values)
+    return values
 
 
 def _validate_expected_header(
-    payload: Mapping[str, Any], expected: tuple[str, str, str, str] | None
+    payload: Mapping[str, Any], expected: tuple[str, str, str, str]
 ) -> None:
-    if expected is None:
-        return
     actual = (
         cast(str, payload["version"]),
         cast(str, payload["source_commit"]),
@@ -430,30 +527,52 @@ def _validate_expected_header(
         _failure("installed-component manifest header does not match verification inputs")
 
 
-def _authenticode_status(raw: bytes, *, name: str) -> str:
-    if len(raw) < 64 or raw[:2] != b"MZ":
-        _failure(f"{name} is not a valid PE executable")
-    pe_offset = int.from_bytes(raw[60:64], "little")
-    if pe_offset < 64 or pe_offset > len(raw) - 24:
-        _failure(f"{name} has an invalid PE header")
-    pe_header = raw[pe_offset : pe_offset + 24]
-    if len(pe_header) != 24 or pe_header[:4] != b"PE\0\0":
-        _failure(f"{name} is missing its PE signature")
+def _read_range(
+    stream: BinaryIO, *, offset: int, size: int, file_size: int, label: str
+) -> bytes:
+    if offset < 0 or size < 0 or size > MAX_PE_OPTIONAL_HEADER_BYTES:
+        _failure(f"{label} has an invalid PE range")
+    if offset > file_size or size > file_size - offset:
+        _failure(f"{label} has a truncated PE range")
+    try:
+        stream.seek(offset)
+        raw = stream.read(size)
+    except (OSError, ValueError, TypeError) as exc:
+        raise IndependentManifestVerificationError(f"could not inspect {label}") from exc
+    if not isinstance(raw, bytes) or len(raw) != size:
+        _failure(f"{label} has a truncated PE range")
+    return raw
+
+
+def _authenticode_status_stream(
+    stream: BinaryIO, *, file_size: int, label: str
+) -> str:
+    dos_header = _read_range(stream, offset=0, size=64, file_size=file_size, label=label)
+    if dos_header[:2] != b"MZ":
+        _failure(f"{label} is not a valid PE executable")
+    pe_offset = int.from_bytes(dos_header[60:64], "little")
+    pe_header = _read_range(stream, offset=pe_offset, size=24, file_size=file_size, label=label)
+    if pe_header[:4] != b"PE\0\0":
+        _failure(f"{label} is missing its PE signature")
+    if int.from_bytes(pe_header[4:6], "little") != AMD64_MACHINE:
+        _failure(f"{label} is not an AMD64 PE executable")
     optional_size = int.from_bytes(pe_header[20:22], "little")
+    if optional_size < 2 or optional_size > MAX_PE_OPTIONAL_HEADER_BYTES:
+        _failure(f"{label} has an invalid PE optional header")
     optional_start = pe_offset + 24
-    optional_end = optional_start + optional_size
-    if optional_size < 2 or optional_size > 64 * 1024 or optional_end > len(raw):
-        _failure(f"{name} has an invalid PE optional header")
-    optional = raw[optional_start:optional_end]
+    optional = _read_range(
+        stream,
+        offset=optional_start,
+        size=optional_size,
+        file_size=file_size,
+        label=label,
+    )
     magic = int.from_bytes(optional[:2], "little")
-    if magic == 0x10B:
-        directory_count_offset, directory_offset = 92, 96
-    elif magic == 0x20B:
-        directory_count_offset, directory_offset = 108, 112
-    else:
-        _failure(f"{name} has an unsupported PE format")
+    if magic != PE32_PLUS_MAGIC:
+        _failure(f"{label} is not a PE32+ executable")
+    directory_count_offset, directory_offset = 108, 112
     if len(optional) < directory_count_offset + 4:
-        _failure(f"{name} lacks PE data-directory metadata")
+        _failure(f"{label} lacks PE data-directory metadata")
     directory_count = int.from_bytes(
         optional[directory_count_offset : directory_count_offset + 4], "little"
     )
@@ -461,13 +580,27 @@ def _authenticode_status(raw: bytes, *, name: str) -> str:
         return "not-present"
     certificate_entry = directory_offset + (4 * 8)
     if len(optional) < certificate_entry + 8:
-        _failure(f"{name} has a truncated certificate table")
+        _failure(f"{label} has a truncated certificate table")
     location = int.from_bytes(optional[certificate_entry : certificate_entry + 4], "little")
-    size = int.from_bytes(optional[certificate_entry + 4 : certificate_entry + 8], "little")
-    if location == 0 and size == 0:
+    certificate_size = int.from_bytes(
+        optional[certificate_entry + 4 : certificate_entry + 8], "little"
+    )
+    if location == 0 and certificate_size == 0:
         return "not-present"
-    if location <= 0 or size <= 0 or location + size > len(raw):
-        _failure(f"{name} has an invalid certificate table")
+    if (
+        location <= 0
+        or certificate_size <= 0
+        or certificate_size > MAX_CERTIFICATE_TABLE_BYTES
+        or location > file_size
+        or certificate_size > file_size - location
+    ):
+        _failure(f"{label} has an invalid certificate table")
+    # The status is intentionally presence-only. Seek across the bounded table to
+    # ensure the advertised range is addressable without retaining certificate bytes.
+    try:
+        stream.seek(location + certificate_size)
+    except (OSError, ValueError, TypeError) as exc:
+        raise IndependentManifestVerificationError(f"could not inspect {label}") from exc
     return "present-unverified"
 
 
@@ -477,30 +610,57 @@ def _validate_source_paths(
     component_paths: Mapping[str, Path],
     source_root: Path,
     archive_path: Path,
-) -> tuple[_StableFile, dict[str, Path]]:
+) -> tuple[_StableFile, dict[str, _ValidatedPath], tuple[int, int]]:
     if set(component_paths) != COMPONENT_ROLES:
         _failure("verification requires exactly four executable inputs")
-    archive = _regular_file(archive_path, root=source_root, label="release archive")
-    direct = _regular_file(direct_package_path, root=source_root, label="direct package")
-    components: dict[str, Path] = {}
+    archive = _regular_file(
+        archive_path,
+        root=source_root,
+        label="release archive",
+        maximum_size=MAX_ARCHIVE_BYTES,
+    )
+    direct = _regular_file(
+        direct_package_path,
+        root=source_root,
+        label="direct package",
+        maximum_size=MAX_EXECUTABLE_BYTES,
+    )
+    components: dict[str, _ValidatedPath] = {}
     identities: dict[tuple[int, int], str] = {}
+    direct_identity: tuple[int, int] | None = None
+    archive_identity: tuple[int, int] | None = None
     for label, path in (("release archive", archive), ("direct package", direct)):
         identity = _file_identity(path, label=label)
         if identity in identities:
             _failure(f"verification contains duplicate inputs: {identities[identity]} and {label}")
         identities[identity] = label
+        if label == "release archive":
+            archive_identity = identity
+        if label == "direct package":
+            direct_identity = identity
     for role, _expected_name in COMPONENTS:
-        path = _regular_file(component_paths[role], root=source_root, label=f"{role} executable")
+        path = _regular_file(
+            component_paths[role],
+            root=source_root,
+            label=f"{role} executable",
+            maximum_size=MAX_EXECUTABLE_BYTES,
+        )
         if path.name.casefold() not in SOURCE_BASENAMES[role]:
             _failure(f"{role} executable has an unexpected source filename")
         identity = _file_identity(path, label=f"{role} executable")
         if identity in identities:
             _failure(
                 f"verification contains duplicate inputs: {identities[identity]} and {role}"
-            )
+        )
         identities[identity] = role
-        components[role] = path
-    return _stable_file(direct, label="direct package"), components
+        components[role] = _ValidatedPath(path, identity)
+    if direct_identity is None or archive_identity is None:
+        _failure("verification input identity is unavailable")
+    return (
+        _stable_file(direct, label="direct package", expected_identity=direct_identity),
+        components,
+        archive_identity,
+    )
 
 
 def _file_identity(path: Path, *, label: str) -> tuple[int, int]:
@@ -508,13 +668,15 @@ def _file_identity(path: Path, *, label: str) -> tuple[int, int]:
         information = path.stat(follow_symlinks=False)
     except (OSError, RuntimeError) as exc:
         raise IndependentManifestVerificationError(f"{label} changed before verification") from exc
+    if information.st_nlink != 1:
+        _failure(f"{label} must not be a hardlink")
     return int(information.st_dev), int(information.st_ino)
 
 
 def _validate_archive_member_name(name: str) -> None:
-    if not name or "\\" in name or "\x00" in name:
+    if not isinstance(name, str) or not name or "\\" in name or "\x00" in name:
         _failure("release ZIP contains an unsafe path")
-    if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+    if name.startswith("/") or ":" in name or not name.startswith(ARCHIVE_MEMBER_PREFIX):
         _failure("release ZIP contains an escaping path")
     raw_parts = name.split("/")
     if any(part in {"", ".", ".."} for part in raw_parts):
@@ -524,15 +686,92 @@ def _validate_archive_member_name(name: str) -> None:
         _failure("release ZIP contains an escaping path")
 
 
-def _read_zip_member(bundle: zipfile.ZipFile, info: zipfile.ZipInfo, *, label: str) -> bytes:
+def _validate_zip_info_metadata(infos: list[zipfile.ZipInfo]) -> None:
+    total_size = 0
+    for info in infos:
+        if info.file_size < 0 or info.file_size > MAX_MEMBER_BYTES:
+            _failure("release ZIP member exceeds the maximum allowed size")
+        if info.compress_size < 0:
+            _failure("release ZIP member has invalid compressed size")
+        total_size += info.file_size
+        if total_size > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            _failure("release ZIP exceeds the maximum uncompressed size")
+        if info.file_size > 0 and (
+            info.compress_size == 0
+            or info.file_size > info.compress_size * MAX_COMPRESSION_RATIO
+        ):
+            _failure("release ZIP member exceeds the maximum compression ratio")
+
+
+def _validate_raw_zip_member_names(
+    stream: BinaryIO,
+    bundle: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+    *,
+    file_size: int,
+) -> None:
+    central_offset = getattr(bundle, "start_dir", None)
+    if not isinstance(central_offset, int) or central_offset < 0:
+        _failure("release ZIP central directory is invalid")
+    cursor = central_offset
+    for info in infos:
+        header = _read_range(
+            stream,
+            offset=cursor,
+            size=46,
+            file_size=file_size,
+            label="release archive",
+        )
+        if header[:4] != b"PK\x01\x02":
+            _failure("release ZIP central directory is invalid")
+        name_size = int.from_bytes(header[28:30], "little")
+        extra_size = int.from_bytes(header[30:32], "little")
+        comment_size = int.from_bytes(header[32:34], "little")
+        if name_size > MAX_PE_OPTIONAL_HEADER_BYTES:
+            _failure("release ZIP member filename is too long")
+        raw_name = _read_range(
+            stream,
+            offset=cursor + 46,
+            size=name_size,
+            file_size=file_size,
+            label="release archive",
+        )
+        if b"\x00" in raw_name:
+            _failure("release ZIP contains an unsafe path")
+        try:
+            metadata_encoding = cast(str | None, getattr(bundle, "metadata_encoding", None))
+            encoding = "utf-8" if info.flag_bits & 0x800 else (metadata_encoding or "cp437")
+            decoded_name = raw_name.decode(encoding)
+        except (LookupError, UnicodeDecodeError) as exc:
+            raise IndependentManifestVerificationError(
+                "release ZIP member filename is not decodable"
+            ) from exc
+        if decoded_name != info.orig_filename or decoded_name != info.filename:
+            _failure("release ZIP member filename was normalized")
+        cursor += 46 + name_size + extra_size + comment_size
+
+
+def _read_zip_member(
+    bundle: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    label: str,
+    maximum_size: int,
+) -> bytes:
     try:
         with bundle.open(info, "r") as stream:
             chunks: list[bytes] = []
             size = 0
             for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+                if not isinstance(chunk, bytes):
+                    _failure(f"could not read ZIP member: {label}")
                 chunks.append(chunk)
                 size += len(chunk)
+                if size > maximum_size:
+                    _failure(f"ZIP member exceeds the maximum allowed size: {label}")
     except Exception as exc:
+        if isinstance(exc, IndependentManifestVerificationError):
+            raise
         raise IndependentManifestVerificationError(f"could not read ZIP member: {label}") from exc
     if size != info.file_size:
         _failure(f"ZIP member size changed while it was read: {label}")
@@ -540,93 +779,250 @@ def _read_zip_member(bundle: zipfile.ZipFile, info: zipfile.ZipInfo, *, label: s
 
 
 def _hash_zip_member(
-    bundle: zipfile.ZipFile, info: zipfile.ZipInfo, *, label: str
+    bundle: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    label: str,
+    maximum_size: int,
 ) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
     try:
         with bundle.open(info, "r") as stream:
             for chunk in iter(lambda: stream.read(READ_CHUNK_SIZE), b""):
+                if not isinstance(chunk, bytes):
+                    _failure(f"could not read ZIP member: {label}")
                 digest.update(chunk)
                 size += len(chunk)
+                if size > maximum_size:
+                    _failure(f"ZIP member exceeds the maximum allowed size: {label}")
     except Exception as exc:
+        if isinstance(exc, IndependentManifestVerificationError):
+            raise
         raise IndependentManifestVerificationError(f"could not read ZIP member: {label}") from exc
     if size != info.file_size:
         _failure(f"ZIP member size changed while it was read: {label}")
     return digest.hexdigest(), size
 
 
-def verify_archive(
+def _assert_open_file_matches(
+    stream: BinaryIO,
+    *,
+    before_path: _FileSnapshot,
+    expected_identity: tuple[int, int],
+    label: str,
+) -> _FileSnapshot:
+    before_handle = _snapshot(os.fstat(stream.fileno()))
+    _assert_regular_snapshot(before_handle, label=label)
+    if (
+        _identity(before_path) != expected_identity
+        or _identity(before_handle) != expected_identity
+        or before_handle.size != before_path.size
+    ):
+        _failure(f"{label} changed before it was read")
+    return before_handle
+
+
+def _read_archive_contents(
+    archive: Path, *, expected_identity: tuple[int, int]
+) -> tuple[bytes, bytes, str, int, str]:
+    try:
+        before_path = _snapshot(archive.stat(follow_symlinks=False))
+        _assert_regular_snapshot(before_path, label="release archive")
+        if before_path.size > MAX_ARCHIVE_BYTES:
+            _failure("release archive exceeds the maximum allowed size")
+        with archive.open("rb") as stream:
+            before_handle = _assert_open_file_matches(
+                stream,
+                before_path=before_path,
+                expected_identity=expected_identity,
+                label="release archive",
+            )
+            first_digest, first_size = _hash_stream(
+                stream, label="release archive", maximum_size=MAX_ARCHIVE_BYTES
+            )
+            stream.seek(0)
+            try:
+                with zipfile.ZipFile(stream, "r") as bundle:
+                    infos = bundle.infolist()
+                    if len(infos) != MAX_ARCHIVE_MEMBERS:
+                        _failure(
+                            "Windows installed-component archive must contain exactly three files"
+                        )
+                    _validate_raw_zip_member_names(
+                        stream, bundle, infos, file_size=before_path.size
+                    )
+                    names: set[str] = set()
+                    for info in infos:
+                        if getattr(info, "orig_filename", info.filename) != info.filename:
+                            _failure("release ZIP member filename was normalized")
+                        _validate_archive_member_name(info.filename)
+                        folded = info.filename.casefold()
+                        if folded in names:
+                            _failure("release ZIP contains duplicate entries")
+                        names.add(folded)
+                    by_name: dict[str, zipfile.ZipInfo] = {}
+                    for info in infos:
+                        if info.is_dir():
+                            _failure("release ZIP contains a directory entry")
+                        if info.flag_bits & 0x1:
+                            _failure("release ZIP contains an encrypted entry")
+                        mode = (info.external_attr >> 16) & 0o170000
+                        if mode == stat.S_IFLNK:
+                            _failure("release ZIP contains a symlink entry")
+                        if mode not in {0, stat.S_IFREG}:
+                            _failure("release ZIP contains a special-file entry")
+                        by_name[info.filename] = info
+                    if set(by_name) != ARCHIVE_MEMBER_NAMES:
+                        _failure("release ZIP contains an unexpected member set")
+                    _validate_zip_info_metadata(infos)
+                    manifest_info = by_name[ARCHIVE_MEMBER_PREFIX + MANIFEST_FILE_NAME]
+                    checksum_info = by_name[ARCHIVE_MEMBER_PREFIX + CHECKSUM_FILE_NAME]
+                    package_info = by_name[ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe"]
+                    if manifest_info.file_size > MAX_MANIFEST_BYTES:
+                        _failure("installed-component manifest is too large")
+                    if checksum_info.file_size > MAX_CHECKSUM_BYTES:
+                        _failure("installed-component checksum is too large")
+                    raw_manifest = _read_zip_member(
+                        bundle,
+                        manifest_info,
+                        label=MANIFEST_FILE_NAME,
+                        maximum_size=MAX_MANIFEST_BYTES,
+                    )
+                    raw_checksum = _read_zip_member(
+                        bundle,
+                        checksum_info,
+                        label=CHECKSUM_FILE_NAME,
+                        maximum_size=MAX_CHECKSUM_BYTES,
+                    )
+                    package_digest, package_size = _hash_zip_member(
+                        bundle,
+                        package_info,
+                        label="AllTheContextSetup.exe",
+                        maximum_size=MAX_MEMBER_BYTES,
+                    )
+            except IndependentManifestVerificationError:
+                raise
+            except (
+                OSError,
+                RuntimeError,
+                ValueError,
+                KeyError,
+                IndexError,
+                zipfile.BadZipFile,
+            ) as exc:
+                raise IndependentManifestVerificationError(
+                    "release archive is not a valid ZIP"
+                ) from exc
+            stream.seek(0)
+            second_digest, second_size = _hash_stream(
+                stream, label="release archive", maximum_size=MAX_ARCHIVE_BYTES
+            )
+            after_handle = _snapshot(os.fstat(stream.fileno()))
+        after_path = _snapshot(archive.stat(follow_symlinks=False))
+    except IndependentManifestVerificationError:
+        raise
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        zipfile.BadZipFile,
+    ) as exc:
+        raise IndependentManifestVerificationError("release archive is not a valid ZIP") from exc
+    _assert_regular_snapshot(after_handle, label="release archive")
+    if before_handle != after_handle or before_path != after_path:
+        _failure("release archive changed while it was read")
+    if _identity(after_path) != expected_identity:
+        _failure("release archive changed while it was read")
+    if (first_digest, first_size) != (second_digest, second_size):
+        _failure("release archive changed between stable reads")
+    return raw_manifest, raw_checksum, package_digest, package_size, package_info.filename
+
+
+def _stable_executable(
+    path: Path, *, label: str, expected_identity: tuple[int, int]
+) -> _ExecutableMeasurement:
+    def measure() -> _ExecutableMeasurement:
+        try:
+            before_path = _snapshot(path.stat(follow_symlinks=False))
+            _assert_regular_snapshot(before_path, label=label)
+            if before_path.size > MAX_EXECUTABLE_BYTES:
+                _failure(f"{label} exceeds the maximum allowed size")
+            if _identity(before_path) != expected_identity:
+                _failure(f"{label} changed after path validation")
+            with path.open("rb") as stream:
+                before_handle = _assert_open_file_matches(
+                    stream,
+                    before_path=before_path,
+                    expected_identity=expected_identity,
+                    label=label,
+                )
+                status = _authenticode_status_stream(
+                    stream, file_size=before_path.size, label=label
+                )
+                stream.seek(0)
+                digest, size = _hash_stream(
+                    stream, label=label, maximum_size=MAX_EXECUTABLE_BYTES
+                )
+                after_handle = _snapshot(os.fstat(stream.fileno()))
+            after_path = _snapshot(path.stat(follow_symlinks=False))
+        except IndependentManifestVerificationError:
+            raise
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            raise IndependentManifestVerificationError(f"could not read {label}") from exc
+        _assert_regular_snapshot(after_handle, label=label)
+        if before_handle != after_handle or before_path != after_path:
+            _failure(f"{label} changed while it was read")
+        if _identity(after_path) != expected_identity or size != before_path.size:
+            _failure(f"{label} changed while it was read")
+        return _ExecutableMeasurement(digest, size, expected_identity, status)
+
+    first = measure()
+    second = measure()
+    if first != second:
+        _failure(f"{label} changed between stable reads")
+    return first
+
+
+def _verify_archive(
     *,
     archive_path: Path,
     direct_package_path: Path,
     component_paths: Mapping[str, Path],
     source_root: Path,
-    version: str | None = None,
-    source_commit: str | None = None,
-    platform: str | None = None,
-    architecture: str | None = None,
+    version: str,
+    source_commit: str,
+    platform: str,
+    architecture: str,
 ) -> dict[str, Any]:
     """Verify a candidate archive and its four installed executable inputs."""
 
-    direct, components = _validate_source_paths(
+    expected = _expected_header(
+        version=version,
+        source_commit=source_commit,
+        platform=platform,
+        architecture=architecture,
+    )
+    direct, components, archive_identity = _validate_source_paths(
         direct_package_path=direct_package_path,
         component_paths=component_paths,
         source_root=source_root,
         archive_path=archive_path,
     )
-    archive = _regular_file(archive_path, root=source_root, label="release archive")
-    archive_raw = _stable_read(archive, label="release archive")
-    try:
-        bundle = zipfile.ZipFile(io.BytesIO(archive_raw), "r")
-    except Exception as exc:
-        raise IndependentManifestVerificationError("release archive is not a valid ZIP") from exc
-    with bundle:
-        try:
-            infos = bundle.infolist()
-        except Exception as exc:
-            raise IndependentManifestVerificationError(
-                "release archive is not a valid ZIP"
-            ) from exc
-        names: set[str] = set()
-        by_name: dict[str, zipfile.ZipInfo] = {}
-        for info in infos:
-            _validate_archive_member_name(info.filename)
-            folded = info.filename.casefold()
-            if folded in names:
-                _failure("release ZIP contains duplicate entries")
-            names.add(folded)
-            if info.is_dir():
-                _failure("release ZIP contains a directory entry")
-            if info.flag_bits & 0x1:
-                _failure("release ZIP contains an encrypted entry")
-            mode = (info.external_attr >> 16) & 0o170000
-            if mode == stat.S_IFLNK:
-                _failure("release ZIP contains a symlink entry")
-            if mode not in {0, stat.S_IFREG}:
-                _failure("release ZIP contains a special-file entry")
-            by_name[info.filename] = info
-        if len(infos) != 3:
-            _failure("Windows installed-component archive must contain exactly three files")
-        expected_names = {
-            "AllTheContextSetup.exe",
-            MANIFEST_FILE_NAME,
-            CHECKSUM_FILE_NAME,
-        }
-        if set(by_name) != expected_names:
-            _failure("release ZIP contains an unexpected member set")
-        manifest_info = by_name[MANIFEST_FILE_NAME]
-        checksum_info = by_name[CHECKSUM_FILE_NAME]
-        package_info = by_name["AllTheContextSetup.exe"]
-        if manifest_info.file_size > MAX_MANIFEST_BYTES:
-            _failure("installed-component manifest is too large")
-        if checksum_info.file_size > MAX_CHECKSUM_BYTES:
-            _failure("installed-component checksum is too large")
-        raw_manifest = _read_zip_member(bundle, manifest_info, label=MANIFEST_FILE_NAME)
-        raw_checksum = _read_zip_member(bundle, checksum_info, label=CHECKSUM_FILE_NAME)
-        package_digest, package_size = _hash_zip_member(
-            bundle, package_info, label="AllTheContextSetup.exe"
-        )
+    archive = _regular_file(
+        archive_path,
+        root=source_root,
+        label="release archive",
+        maximum_size=MAX_ARCHIVE_BYTES,
+    )
+    if _file_identity(archive, label="release archive") != archive_identity:
+        _failure("release archive changed after path validation")
+    raw_manifest, raw_checksum, package_digest, package_size, package_name = (
+        _read_archive_contents(archive, expected_identity=archive_identity)
+    )
 
     manifest_digest = hashlib.sha256(raw_manifest).hexdigest()
     expected_checksum = f"{manifest_digest}  {MANIFEST_FILE_NAME}\n".encode("ascii")
@@ -634,15 +1030,7 @@ def verify_archive(
         _failure("installed-component checksum does not match the manifest")
     payload = _load_manifest(raw_manifest)
     _validate_manifest_shape(payload)
-    _validate_expected_header(
-        payload,
-        _expected_header(
-            version=version,
-            source_commit=source_commit,
-            platform=platform,
-            architecture=architecture,
-        ),
-    )
+    _validate_expected_header(payload, expected)
 
     package_value = cast(dict[str, Any], payload["package"])
     package_descriptor = _descriptor(
@@ -650,11 +1038,20 @@ def verify_archive(
         label="archive package",
     )
     direct_descriptor = _descriptor(package_value["direct_package"], label="direct package")
-    if package_info.filename != package_descriptor["filename"]:
+    expected_archive_name = f"all-the-context-{version}-{platform}-{architecture}.zip"
+    expected_direct_name = f"all-the-context-{version}-{platform}-{architecture}-unsigned.exe"
+    if archive.name != expected_archive_name:
+        _failure("release archive filename does not match verification inputs")
+    if package_name != ARCHIVE_MEMBER_PREFIX + package_descriptor["filename"]:
         _failure("release archive package filename does not match the manifest")
     if package_digest != package_descriptor["sha256"] or package_size != package_descriptor["size"]:
         _failure("release archive package does not match the manifest")
-    if direct.path.name != direct_descriptor["filename"]:
+    if direct_descriptor["filename"] != expected_direct_name:
+        _failure("direct package filename does not match verification inputs")
+    if (
+        direct.path.name != expected_direct_name
+        or direct.path.name != direct_descriptor["filename"]
+    ):
         _failure("direct package filename does not match the manifest")
     if direct.digest != direct_descriptor["sha256"] or direct.size != direct_descriptor["size"]:
         _failure("direct package does not match the manifest")
@@ -670,17 +1067,24 @@ def verify_archive(
         _failure("main executable does not match archive package digest or size")
 
     for item, (role, _expected_name) in zip(manifest_components, COMPONENTS, strict=True):
-        source = _stable_file(components[role], label=f"{role} executable")
+        validated = components[role]
         descriptor = _descriptor(
             {key: item[key] for key in ("filename", "sha256", "size")},
             label=f"{role} executable",
         )
-        if source.path.name.casefold() not in SOURCE_BASENAMES[role]:
+        source = _stable_executable(
+            validated.path,
+            label=f"{role} executable",
+            expected_identity=validated.identity,
+        )
+        if source.identity != validated.identity:
+            _failure(f"{role} executable changed after path validation")
+        if validated.path.name.casefold() not in SOURCE_BASENAMES[role]:
             _failure(f"{role} executable has an unexpected source filename")
         if source.digest != descriptor["sha256"] or source.size != descriptor["size"]:
             _failure(f"{role} executable does not match the manifest")
         status = cast(dict[str, str], item["authenticode"])["status"]
-        if _authenticode_status(source.raw, name=source.path.name) != status:
+        if source.authenticode != status:
             _failure(f"{role} Authenticode status changed")
         if role == "main" and (source.digest, source.size) != (
             package_descriptor["sha256"],
@@ -690,20 +1094,53 @@ def verify_archive(
     return payload
 
 
+def verify_archive(
+    *,
+    archive_path: Path,
+    direct_package_path: Path,
+    component_paths: Mapping[str, Path],
+    source_root: Path,
+    version: str,
+    source_commit: str,
+    platform: str,
+    architecture: str,
+) -> dict[str, Any]:
+    """Verify a candidate archive with mandatory expected release identity."""
+
+    try:
+        return _verify_archive(
+            archive_path=archive_path,
+            direct_package_path=direct_package_path,
+            component_paths=component_paths,
+            source_root=source_root,
+            version=version,
+            source_commit=source_commit,
+            platform=platform,
+            architecture=architecture,
+        )
+    except IndependentManifestVerificationError:
+        raise
+    except Exception as exc:
+        raise IndependentManifestVerificationError("verification failed closed") from exc
+
+
 def _component_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--direct-package", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--platform", default=WINDOWS_PLATFORM)
-    parser.add_argument("--architecture", default=WINDOWS_ARCHITECTURE)
+    parser.add_argument("--platform", required=True)
+    parser.add_argument("--architecture", required=True)
     for role, _filename in COMPONENTS:
         parser.add_argument(f"--{role}", type=Path, required=True)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _ContentFreeArgumentParser(
+        prog="verify-installed-component-manifest",
+        description=__doc__,
+    )
     parser.add_argument(
         "command",
         nargs="?",
@@ -728,7 +1165,9 @@ def main() -> int:
         )
     except IndependentManifestVerificationError as exc:
         parser.error(str(exc))
-    print(arguments.archive)
+    except Exception:
+        parser.error("verification failed closed")
+    print("verified installed-component archive: pass")
     return 0
 
 

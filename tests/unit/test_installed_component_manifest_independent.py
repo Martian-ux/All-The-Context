@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import struct
 import subprocess
 import sys
 import zipfile
@@ -12,6 +14,7 @@ from typing import Any
 import pytest
 
 from scripts import verify_installed_component_manifest_independent as verifier
+from scripts.build_release_assets import build_archive
 
 SOURCE_COMMIT = "a" * 40
 VERSION = "0.1.0-beta.7"
@@ -37,6 +40,7 @@ def _pe_image(*, certificate_offset: int = 0, certificate_size: int = 0) -> byte
     image[:2] = b"MZ"
     image[60:64] = pe_offset.to_bytes(4, "little")
     image[pe_offset : pe_offset + 4] = b"PE\0\0"
+    image[pe_offset + 4 : pe_offset + 6] = verifier.AMD64_MACHINE.to_bytes(2, "little")
     image[pe_offset + 20 : pe_offset + 22] = optional_size.to_bytes(2, "little")
     optional_offset = pe_offset + 24
     image[optional_offset : optional_offset + 2] = (0x20B).to_bytes(2, "little")
@@ -62,9 +66,12 @@ def _members(
     manifest = raw_manifest or _canonical(candidate.payload)
     checksum = f"{hashlib.sha256(manifest).hexdigest()}  {verifier.MANIFEST_FILE_NAME}\n".encode()
     return [
-        ("AllTheContextSetup.exe", candidate.components["main"].read_bytes()),
-        (verifier.MANIFEST_FILE_NAME, manifest),
-        (verifier.CHECKSUM_FILE_NAME, checksum),
+        (
+            verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe",
+            candidate.components["main"].read_bytes(),
+        ),
+        (verifier.ARCHIVE_MEMBER_PREFIX + verifier.MANIFEST_FILE_NAME, manifest),
+        (verifier.ARCHIVE_MEMBER_PREFIX + verifier.CHECKSUM_FILE_NAME, checksum),
     ]
 
 
@@ -135,7 +142,7 @@ def _candidate(tmp_path: Path) -> _Candidate:
         "source_commit": SOURCE_COMMIT,
         "version": VERSION,
     }
-    archive = root / "candidate.zip"
+    archive = root / f"all-the-context-{VERSION}-windows-x86_64.zip"
     candidate = _Candidate(root, archive, direct, components, payload)
     _write_archive(archive, _members(candidate))
     return candidate
@@ -166,6 +173,24 @@ def test_independent_verifier_accepts_synthetic_candidate_archive(tmp_path: Path
     assert _verify(candidate) == candidate.payload
 
 
+def test_independent_verifier_accepts_build_release_assets_archive(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    archive_source = candidate.root / verifier.ARCHIVE_MEMBER_PREFIX.rstrip("/")
+    archive_source.mkdir()
+    for name, raw in _members(candidate):
+        (archive_source / name.removeprefix(verifier.ARCHIVE_MEMBER_PREFIX)).write_bytes(raw)
+    candidate.archive = build_archive(
+        archive_source,
+        candidate.root / "release-assets",
+        version=VERSION,
+        platform_name="windows",
+        architecture="x86_64",
+    )
+
+    assert candidate.archive.name == f"all-the-context-{VERSION}-windows-x86_64.zip"
+    assert _verify(candidate) == candidate.payload
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -191,7 +216,7 @@ def test_rejects_noncanonical_manifest_and_bad_checksum(tmp_path: Path) -> None:
 
     members = _members(candidate)
     checksum = b"0" * 64 + b"  " + verifier.MANIFEST_FILE_NAME.encode() + b"\n"
-    members[2] = (verifier.CHECKSUM_FILE_NAME, checksum)
+    members[2] = (verifier.ARCHIVE_MEMBER_PREFIX + verifier.CHECKSUM_FILE_NAME, checksum)
     _write_archive(candidate.archive, members)
     with pytest.raises(verifier.IndependentManifestVerificationError, match="checksum"):
         _verify(candidate)
@@ -211,7 +236,7 @@ def test_rejects_duplicate_json_fields(tmp_path: Path) -> None:
     [
         ("traversal", "escaping"),
         ("extra", "exactly three files"),
-        ("duplicate", "duplicate"),
+        ("duplicate", r"duplicate|exactly three files"),
         ("symlink", "symlink"),
     ],
 )
@@ -221,19 +246,30 @@ def test_rejects_unsafe_or_nonexact_archive_members(
     candidate = _candidate(tmp_path)
     valid = _members(candidate)
     if members == "traversal":
-        entries = [("../AllTheContextSetup.exe", valid[0][1]), valid[1], valid[2]]
+        entries = [
+            (verifier.ARCHIVE_MEMBER_PREFIX + "../AllTheContextSetup.exe", valid[0][1]),
+            valid[1],
+            valid[2],
+        ]
     elif members == "extra":
-        entries = [*valid, ("extra.txt", b"unexpected")]
+        entries = [
+            *valid,
+            (verifier.ARCHIVE_MEMBER_PREFIX + "extra.txt", b"unexpected"),
+        ]
     elif members == "duplicate":
         entries = [valid[0], valid[0], valid[1], valid[2]]
     else:
-        link = zipfile.ZipInfo("AllTheContextSetup.exe")
+        link = zipfile.ZipInfo(verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe")
         link.external_attr = 0o120777 << 16
         entries = valid
         with zipfile.ZipFile(candidate.archive, "w") as bundle:
             bundle.writestr(link, b"target")
-            bundle.writestr(verifier.MANIFEST_FILE_NAME, valid[1][1])
-            bundle.writestr(verifier.CHECKSUM_FILE_NAME, valid[2][1])
+            bundle.writestr(
+                verifier.ARCHIVE_MEMBER_PREFIX + verifier.MANIFEST_FILE_NAME, valid[1][1]
+            )
+            bundle.writestr(
+                verifier.ARCHIVE_MEMBER_PREFIX + verifier.CHECKSUM_FILE_NAME, valid[2][1]
+            )
     if members != "symlink":
         if members == "duplicate":
             with pytest.warns(UserWarning, match="Duplicate name"):
@@ -291,7 +327,9 @@ def test_rejects_component_path_escape_and_duplicate_identity(tmp_path: Path) ->
         candidate.components["recovery"].hardlink_to(candidate.components["mcp"])
     except (OSError, NotImplementedError):
         pytest.skip("hardlink creation is unavailable on this host")
-    with pytest.raises(verifier.IndependentManifestVerificationError, match="duplicate"):
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match=r"hardlink|duplicate"
+    ):
         _verify(candidate)
 
 
@@ -299,19 +337,24 @@ def test_rejects_mutation_between_stable_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     candidate = _candidate(tmp_path)
-    original = verifier._read_once
+    original = verifier._hash_stream
     mutated = False
 
-    def mutate_once(path: Path, *, label: str) -> bytes:
+    def mutate_once(stream: Any, *, label: str, maximum_size: int) -> tuple[str, int]:
         nonlocal mutated
-        raw = original(path, label=label)
+        measurement = original(stream, label=label, maximum_size=maximum_size)
         if label == "mcp executable" and not mutated:
-            path.write_bytes(raw + b"changed")
+            candidate.components["mcp"].write_bytes(
+                candidate.components["mcp"].read_bytes() + b"changed"
+            )
             mutated = True
-        return raw
+        return measurement
 
-    monkeypatch.setattr(verifier, "_read_once", mutate_once)
-    with pytest.raises(verifier.IndependentManifestVerificationError, match="between stable reads"):
+    monkeypatch.setattr(verifier, "_hash_stream", mutate_once)
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError,
+        match=r"between stable reads|while it was read",
+    ):
         _verify(candidate)
 
 
@@ -331,6 +374,10 @@ def test_cli_verifies_without_project_imports(tmp_path: Path) -> None:
         VERSION,
         "--source-commit",
         SOURCE_COMMIT,
+        "--platform",
+        "windows",
+        "--architecture",
+        "x86_64",
         "--main",
         str(candidate.components["main"]),
         "--mcp",
@@ -343,4 +390,289 @@ def test_cli_verifies_without_project_imports(tmp_path: Path) -> None:
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert completed.returncode == 0
-    assert str(candidate.archive) in completed.stdout
+    assert completed.stdout == "verified installed-component archive: pass\n"
+    assert str(candidate.archive) not in completed.stdout
+
+
+def _patch_first_central_directory(
+    archive: Path, *, compressed_size: int | None = None, uncompressed_size: int | None = None
+) -> None:
+    raw = bytearray(archive.read_bytes())
+    offset = raw.find(b"PK\x01\x02")
+    assert offset >= 0
+    if compressed_size is not None:
+        raw[offset + 20 : offset + 24] = struct.pack("<I", compressed_size)
+    if uncompressed_size is not None:
+        raw[offset + 24 : offset + 28] = struct.pack("<I", uncompressed_size)
+    archive.write_bytes(raw)
+
+
+def _patch_first_central_name(archive: Path, replacement: bytes) -> None:
+    raw = bytearray(archive.read_bytes())
+    offset = raw.find(b"PK\x01\x02")
+    assert offset >= 0
+    name_size = struct.unpack_from("<H", raw, offset + 28)[0]
+    assert len(replacement) == name_size
+    raw[offset + 46 : offset + 46 + name_size] = replacement
+    archive.write_bytes(raw)
+
+
+@pytest.mark.parametrize(
+    "member_name",
+    [
+        "AllTheContextSetup.exe",
+        "other/AllTheContextSetup.exe",
+        verifier.ARCHIVE_MEMBER_PREFIX + "./AllTheContextSetup.exe",
+        verifier.ARCHIVE_MEMBER_PREFIX + "C:/AllTheContextSetup.exe",
+        verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe\x00suffix",
+        verifier.ARCHIVE_MEMBER_PREFIX.replace("installed", "Installed")
+        + "AllTheContextSetup.exe",
+        verifier.ARCHIVE_MEMBER_PREFIX.replace("/", "\\") + "AllTheContextSetup.exe",
+    ],
+)
+def test_rejects_noncanonical_archive_member_paths(tmp_path: Path, member_name: str) -> None:
+    candidate = _candidate(tmp_path)
+    valid = _members(candidate)
+    entries = [(member_name, valid[0][1]), valid[1], valid[2]]
+    _write_archive(candidate.archive, entries)
+    if "\x00" in member_name:
+        _patch_first_central_name(
+            candidate.archive,
+            (verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.ex").encode()
+            + b"\x00",
+        )
+    elif "\\" in member_name:
+        _patch_first_central_name(
+            candidate.archive,
+            (verifier.ARCHIVE_MEMBER_PREFIX + "AllTheContextSetup.exe")
+            .replace("/", "\\", 1)
+            .encode(),
+        )
+
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError,
+        match=r"unsafe|escaping|unexpected|normalized",
+    ):
+        _verify(candidate)
+
+
+def test_rejects_oversized_declared_zip_member_without_allocating_it(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_first_central_directory(
+        candidate.archive, uncompressed_size=verifier.MAX_MEMBER_BYTES + 1
+    )
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="member"):
+        _verify(candidate)
+
+
+def test_rejects_zip_bomb_like_compression_ratio_before_member_read(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    _patch_first_central_directory(
+        candidate.archive,
+        compressed_size=1,
+        uncompressed_size=verifier.MAX_COMPRESSION_RATIO + 1,
+    )
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="compression ratio"):
+        _verify(candidate)
+
+
+def _pretend_oversized(path: Path, monkeypatch: pytest.MonkeyPatch, size: int) -> None:
+    original_stat = Path.stat
+
+    class _OversizedStat:
+        def __init__(self, real: os.stat_result) -> None:
+            self._real = real
+            self.st_size = size
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    def stat(value: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+        result = original_stat(value, *args, **kwargs)
+        if value == path:
+            return _OversizedStat(result)  # type: ignore[return-value]
+        return result
+
+    monkeypatch.setattr(Path, "stat", stat)
+
+
+def test_rejects_oversized_regular_input_without_large_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _pretend_oversized(
+        candidate.components["mcp"], monkeypatch, verifier.MAX_EXECUTABLE_BYTES + 1
+    )
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="maximum"):
+        _verify(candidate)
+
+
+def test_rejects_oversized_archive_without_large_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    _pretend_oversized(candidate.archive, monkeypatch, verifier.MAX_ARCHIVE_BYTES + 1)
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="maximum"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["package"].update(size=True),
+        lambda payload: payload["package"].update(size=1.0),
+        lambda payload: payload.update(component_count=True),
+        lambda payload: payload.update(component_count=4.0),
+        lambda payload: payload.update(schema_version=True),
+        lambda payload: payload.update(schema_version=1.0),
+        lambda payload: payload["components"][1]["authenticode"].update(status=True),
+        lambda payload: payload.update(
+            components=[*payload["components"][1:], payload["components"][0]]
+        ),
+        lambda payload: payload.update(
+            components=[
+                payload["components"][0],
+                payload["components"][0],
+                *payload["components"][2:],
+            ]
+        ),
+    ],
+)
+def test_rejects_manifest_schema_differentials(tmp_path: Path, mutate: Any) -> None:
+    candidate = _candidate(tmp_path)
+    altered = json.loads(_canonical(candidate.payload))
+    mutate(altered)
+    _write_archive(candidate.archive, _members(candidate, raw_manifest=_canonical(altered)))
+
+    with pytest.raises(verifier.IndependentManifestVerificationError):
+        _verify(candidate)
+
+
+def test_rejects_nonfinite_manifest_json(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    raw = b'{"schema_version":NaN}'
+    _write_archive(candidate.archive, _members(candidate, raw_manifest=raw))
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="non-finite"):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("role", ["main", "mcp", "recovery", "updater"])
+@pytest.mark.parametrize("field", ["machine", "magic"])
+def test_rejects_non_amd64_or_non_pe32_plus_components(
+    tmp_path: Path, role: str, field: str
+) -> None:
+    candidate = _candidate(tmp_path)
+    raw = bytearray(candidate.components[role].read_bytes())
+    if field == "machine":
+        raw[128 + 4 : 128 + 6] = (0x14C).to_bytes(2, "little")
+    else:
+        raw[128 + 24 : 128 + 26] = (0x10B).to_bytes(2, "little")
+    candidate.components[role].write_bytes(raw)
+
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match=r"AMD64|PE32"
+    ):
+        _verify(candidate)
+
+
+def test_rejects_component_path_swap_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = _candidate(tmp_path)
+    original = verifier._stable_executable
+    swapped = False
+
+    def swap_before_read(
+        path: Path, *, label: str, expected_identity: tuple[int, int]
+    ) -> verifier._ExecutableMeasurement:
+        nonlocal swapped
+        if label == "mcp executable" and not swapped:
+            replacement = path.with_name("replacement.exe")
+            replacement.write_bytes(path.read_bytes())
+            path.unlink()
+            replacement.replace(path)
+            swapped = True
+        return original(path, label=label, expected_identity=expected_identity)
+
+    monkeypatch.setattr(verifier, "_stable_executable", swap_before_read)
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match="path validation"
+    ):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("asset", ["archive", "direct"])
+def test_rejects_release_asset_filename_differential(tmp_path: Path, asset: str) -> None:
+    candidate = _candidate(tmp_path)
+    if asset == "archive":
+        replacement = candidate.root / "wrong.zip"
+        candidate.archive.rename(replacement)
+        candidate.archive = replacement
+    else:
+        replacement = candidate.direct.with_name("wrong.exe")
+        candidate.direct.rename(replacement)
+        candidate.direct = replacement
+
+    with pytest.raises(verifier.IndependentManifestVerificationError, match="filename"):
+        _verify(candidate)
+
+
+def test_expected_header_fields_are_required_by_public_api() -> None:
+    import inspect
+
+    signature = inspect.signature(verifier.verify_archive)
+    for name in ("version", "source_commit", "platform", "architecture"):
+        assert signature.parameters[name].default is inspect.Parameter.empty
+
+
+def test_cli_errors_are_content_free(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    missing = candidate.root / "missing.exe"
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "verify-archive",
+        "--archive",
+        str(candidate.archive),
+        "--direct-package",
+        str(missing),
+        "--source-root",
+        str(candidate.root),
+        "--version",
+        VERSION,
+        "--source-commit",
+        SOURCE_COMMIT,
+        "--platform",
+        "windows",
+        "--architecture",
+        "x86_64",
+        "--main",
+        str(candidate.components["main"]),
+        "--mcp",
+        str(candidate.components["mcp"]),
+        "--recovery",
+        str(candidate.components["recovery"]),
+        "--updater",
+        str(candidate.components["updater"]),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert completed.returncode == 2
+    assert str(candidate.root) not in completed.stderr
+    assert completed.stderr == (
+        "verify-installed-component-manifest: error: verification arguments are invalid\n"
+    )
+
+    invalid_command = subprocess.run(
+        [sys.executable, str(SCRIPT), str(candidate.root / "not-a-command")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert invalid_command.returncode == 2
+    assert str(candidate.root) not in invalid_command.stderr
