@@ -46,11 +46,13 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+
 ## ADR-175: Packet A binds an executable power reference and closes source reads
 
-**Status:** recorded on 2026-08-30 as one non-amending continuation from exact
-clean commit `f37398e421c039e61c57b3c9021c5cf85629aff8`; independent reviewer
-acceptance remains pending. This remains an L0, non-displacing research change
+**Status:** accepted on 2026-08-30 in the final Packet A chain through exact
+clean commit `605330ce5564346a666dfa08418e6d87badad5c3`, after two fresh reviewers
+independently approved that exact commit and parent. This remains an L0,
+non-displacing research change
 and does not authorize execution, production or client changes, external
 access, promotion, or frontier advancement.
 
@@ -205,59 +207,6 @@ receipt. The hard-safety `S_h` schema has five complete statuses and prevents a
 zero-failure claim without complete rule/arm dispositions. Packet CAOS is bound
 component-for-component to the root CAOS endpoint, including action/currentness,
 purge, prerequisites/exceptions, budget, and stale-state semantics.
-
-## ADR-169: Packet A semantic freeze is code-owned and fail-closed
-
-**Status:** accepted on 2026-08-30 as a remediation of the rejected first
-freeze attempt. This remains an L0, non-displacing research decision and does
-not authorize execution, production data, schema/runtime changes, external
-access, promotion, or frontier advancement.
-
-The Packet A validator now requires a code-owned canonical semantic digest for
-the complete JSON document. The candidate self-digest is checked only for
-internal consistency, so changing any semantic leaf and recomputing that field
-cannot pass. Strict JSON loading rejects duplicate keys and non-finite values;
-closed root/packet structures, strict type-aware equality, exact validator
-version/source binding, exact-byte narrative binding, proposal correction
-binding, and future receipt requirements are all part of the freeze.
-
-The hard-safety contract defines the pre-execution rule-by-arm universe
-independently of outcomes. `NOT_APPLICABLE` is never exposure and requires a
-preregistered reason/capability boundary; every applicable rule/arm has a
-minimum real `EXPOSED` opportunity and outcome report. `E_w` uses a complete
-one-status-per-eligible-opportunity partition, with non-abstention exactly
-`count(SUPPORTED response statuses) / E_w`.
-
-**Erratum PACKET-A-ERRATUM-2026-08-30:** the proposal's earlier subtraction
-formula is superseded by that exact `SUPPORTED`-status formula. The provisional
-planning value 384 is non-authoritative; final N is independently derived by
-the future power simulation and is not required to equal 384. The correction is
-bound to the proposal source digest in the machine-readable freeze.
-
-## ADR-168: Packet A freezes an L0 specification without advancing the frontier
-
-**Status:** accepted on 2026-08-30 as a non-displacing research decision. It
-does not authorize benchmark execution, production data collection, schema or
-runtime changes, external access, promotion, or advancement of the active
-product frontier.
-
-Packet A has one canonical machine-readable authority at
-[`bench/memory_reliability_spec.json`](../bench/memory_reliability_spec.json),
-bound to the narrative freeze and checked by the independently authored
-`bench/validate_memory_reliability_spec.py`. The contract requires an
-independent pre-execution hard-safety exposure denominator with nonzero
-coverage; absent, indeterminate, or unexercised exposure cannot support a
-zero-failure claim. Cell statuses, arms, provenance, estimands, hard-safety
-rules, trust/content policies, structured mutation/ablation/matched-hybrid
-cells, and execution boundaries are closed vocabularies.
-
-The provisional planning value 384 remains explicitly non-authoritative. A
-future manifest must bind to the independently emitted derived N and to each
-future fixture repository/source state by immutable commit/ref, file inventory,
-and SHA-256 digest. The 15% nonrecoverable infrastructure-loss allowance is a
-frozen power input. The existing product DAG and active frontier remain
-binding; Packet A evidence is L0 specification-only and creates no product or
-promotion credit.
 
 ## ADR-167: Candidate-owned evidence precedes Windows reassessment and live-client credit
 

@@ -52,11 +52,13 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
-### 2026-08-30 — Packet A embedded-JSON parser remediation is prepared, uncommitted, and L0-only
-### 2026-08-30 — Packet A authority-source, parser, structure, and power-policy continuation is L0-only
 
-Starting from exact clean commit `f37398e421c039e61c57b3c9021c5cf85629aff8`,
-this non-amending continuation removes the contract module's self-source
+### 2026-08-30 — Packet A L0 specification is frozen and independently approved
+
+The final authored chain ends at exact clean commit
+`605330ce5564346a666dfa08418e6d87badad5c3`. Two fresh reviewers independently
+approved that exact commit and parent after the infrastructure-loss correction.
+The final continuation removes the contract module's self-source
 anchor and binds its normalized source digest to a validator-owned literal.
 It adds an independently source-bound executable power-method reference with
 fixed counter serialization, golden vectors, 96-cell mapping, explicit
@@ -74,11 +76,13 @@ The continuation also closes bounded reads against links/reparse points,
 special files, hard links, root escapes, and before/after identity changes;
 the caller may only lower the exact integer byte ceiling. Public failures are
 raised from minimal safe frames so raw bytes, duplicate pairs, candidate
-objects, exception graphs, and supplied paths are not retained. Independent
-reviewer acceptance remains pending; no experiment, manifest, result, private
-data, product/runtime path, or Packet A acceptance claim is involved.
+objects, exception graphs, and supplied paths are not retained. The author
+reported 39 focused tests plus the validator, Ruff, mypy, digest, and diff
+checks passing at the final commit. No benchmark/provider experiment,
+manifest, result, private data, product/runtime path, promotion, or
+frontier-advancement claim is involved.
 
-### 2026-08-30 — Packet A recursive structure and power-policy foundation remains L0-only
+### 2026-08-30 — Historical Packet A structure/power remediation checkpoint
 
 Starting from exact clean commit `850ef9d50cce157f3639f45c1b9b5335da6cd369` and
 recorded in the prior committed follow-up through
@@ -108,7 +112,7 @@ The focused structure, alias, UTF-8, and power-policy regressions pass. This
 remains validator/documentation work only; no experiment, manifest, result,
 private data, product/runtime path, or Packet A acceptance claim is involved.
 
-### 2026-08-30 — Packet A fourth semantic remediation remains L0 and non-displacing
+### 2026-08-30 — Historical Packet A fourth semantic-remediation checkpoint
 
 The Packet A validator now enforces an independently authored field-level
 contract for the full root and Packet A vocabulary, rather than relying on the
@@ -137,7 +141,7 @@ rebound-digest semantic-leaf probe. This remains documentation/validator work
 only: no fixture/task manifest, experiment, product, client, updater,
 workflow, integration, promotion, or Packet A evidence claim was created.
 
-### 2026-08-30 — Packet A third semantic remediation remains L0 and non-displacing
+### 2026-08-30 — Historical Packet A third semantic-remediation checkpoint
 
 The Packet A contract now separates its 96 base cells (six task families × four
 fixture repositories × four client/model-build strata) from the provisional
@@ -157,7 +161,7 @@ state, and exact Packet A/root CAOS component bindings are explicit and
 fail-closed. This remains documentation/validator work only; no product,
 client, updater, workflow, benchmark, or integration path changed.
 
-### 2026-08-30 — Packet A semantic freeze remediation remains L0 and non-displacing
+### 2026-08-30 — Historical Packet A semantic-freeze remediation checkpoint
 
 The first Packet A freeze validator was rejected because a candidate could
 change semantic fields and recompute the document self-digest. The remediation
@@ -176,7 +180,7 @@ removes any requirement that the provisional planning value 384 be reproduced;
 future final N remains simulation-derived and non-authoritative until the later
 manifest gate.
 
-### 2026-08-30 — Packet A specification freeze remains L0 and non-displacing
+### 2026-08-30 — Historical Packet A initial specification-freeze checkpoint
 
 Packet A is frozen as a single machine-readable research contract in
 [`bench/memory_reliability_spec.json`](../bench/memory_reliability_spec.json),
