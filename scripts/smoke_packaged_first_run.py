@@ -351,7 +351,13 @@ def run_packaged_rollback_smoke(
 
 _PACKAGED_MCP_PROFILE = "codex_read"
 _PACKAGED_MCP_TOOLS = frozenset(
-    {"bootstrap_context", "context_status", "get_context_item", "search_context"}
+    {
+        "bootstrap_context",
+        "codex_user_prompt_submit_read",
+        "context_status",
+        "get_context_item",
+        "search_context",
+    }
 )
 
 
