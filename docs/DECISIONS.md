@@ -1,5 +1,28 @@
 # Architecture decisions
 
+## ADR-169: Keep the private replacement workflow contract closed to semantic bypasses
+
+**Status:** accepted locally on 2026-08-30 after the replacement-workflow
+contract re-review. This does not build or accept a beta.7 candidate, change
+the immutable beta.6 release, or close the Windows Defender incident.
+
+The workflow contract parses the `jobs.build-windows.steps` structure using a
+deliberately small YAML subset. Comments, duplicate keys, malformed entries,
+anchors, aliases, merge keys, tags, document directives, and unsupported
+scalar styles fail closed because the contract does not model their semantics.
+Security-critical producer, verifier, and consumer steps use exact allowed
+fields, expected environment bindings, and actual producer-before-verifier-
+before-consumer ordering. The uniquely named independent verifier must use
+`pwsh` and one exact canonical script body, including the native exit-code
+guard and explicit propagation; any duplicate or detached invocation fails.
+
+The workflow itself contains no YAML comments and explicitly propagates the
+native verifier exit code. Focused tests cover merge-alias field injection,
+here-strings, comments, duplicate keys, conditional/continue-on-error fields,
+extra statements, duplicate/detached invocations, and folded or multiline
+scalar mutations. This remains source-level contract evidence only; it is not
+candidate, artifact, security-scan, Microsoft, client, or release acceptance.
+
 ## ADR-168: Keep beta.6 public while beta.7 remains a private replacement slot
 
 **Status:** accepted on 2026-08-29 as a documentation reconciliation. This

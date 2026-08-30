@@ -6,6 +6,12 @@ live/private client/provider, and release acceptance remain separate gates.
 Earlier evidence is retained only as historical context and does not become
 evidence for this checkout.
 
+### 2026-08-30 replacement workflow contract re-review remediation
+
+| Requirement | Implementation/evidence | Status |
+|---|---|---|
+| Private replacement workflow must not accept parser or shell semantic bypasses | `.github/workflows/replacement-candidate.yml`; `_WorkflowYamlParser` and exact producer/verifier/consumer contract in `tests/unit/test_replacement_candidate_workflow.py`; 24 focused contract tests | Implemented locally: unsupported YAML indirection/comments/scalar styles, duplicate keys, security-critical field changes, conditional bypasses, duplicate/detached verifier invocations, and noncanonical verifier scripts fail closed while real producer-before/verifier-before-consumer ordering remains checked. The workflow explicitly propagates the native verifier exit code. No beta.7 candidate, security scan, Microsoft reassessment, client, or release acceptance is claimed |
+
 ### 2026-08-29 public beta.6 and private beta.7 replacement-slot reconciliation
 
 | Requirement | Implementation/evidence | Status |

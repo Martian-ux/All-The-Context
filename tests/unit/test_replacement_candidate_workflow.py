@@ -10,13 +10,39 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "replacement-candidate.yml"
 ACTION_USE = re.compile(r"^\s+uses:\s+([^\s]+)", re.MULTILINE)
+INDEPENDENT_VERIFIER_SCRIPT = "verify_installed_component_manifest_independent.py"
+
+CANONICAL_INDEPENDENT_VERIFIER_RUN = "\n".join(
+    (
+        '$ErrorActionPreference = "Stop"',
+        "python scripts/verify_installed_component_manifest_independent.py verify-archive `",
+        '  --archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip" `',
+        "  --direct-package "
+        '"dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe" `',
+        "  --main dist/desktop/AllTheContextSetup.exe `",
+        "  --mcp build/desktop/helper-dist/AllTheContextMCP.exe `",
+        "  --recovery dist/desktop/AllTheContextRecovery.exe `",
+        "  --updater build/desktop/update-helper-dist/AllTheContextUpdater.exe `",
+        "  --source-root . `",
+        '  --version "$env:VERSION" `',
+        '  --source-commit "$env:SOURCE_COMMIT" `',
+        "  --platform windows `",
+        "  --architecture x86_64",
+        "if ($LASTEXITCODE -ne 0) {",
+        '  throw "Independent installed-component verification failed closed"',
+        "}",
+        "exit $LASTEXITCODE",
+    )
+) + "\n"
 
 
 class _WorkflowYamlParser:
     """Parse the small YAML subset used by the workflow contract fixture."""
 
     def __init__(self, text: str) -> None:
+        assert "#" not in text, "workflow YAML comments are not supported by this contract"
         self._lines = text.splitlines()
+        self._reject_unsupported_yaml_syntax()
 
     def parse(self) -> dict[str, object]:
         index = self._next_content(0)
@@ -115,6 +141,7 @@ class _WorkflowYamlParser:
         return index
 
     def _block_scalar(self, style: str, index: int, parent_indent: int) -> tuple[str, int]:
+        assert style in {"|", ">-"}, f"unsupported YAML block style: {style}"
         content: list[str] = []
         block_indent: int | None = None
         while index < len(self._lines):
@@ -131,8 +158,6 @@ class _WorkflowYamlParser:
             assert current_indent >= block_indent
             content.append(line[block_indent:])
             index += 1
-        if style.startswith("|!"):
-            raise AssertionError(f"unsupported YAML block style: {style}")
         if style.startswith(">"):
             value = " ".join(part.strip() for part in content).strip()
         else:
@@ -140,6 +165,59 @@ class _WorkflowYamlParser:
         if style.endswith("-"):
             return value.rstrip("\n"), index
         return value + "\n", index
+
+    def _reject_unsupported_yaml_syntax(self) -> None:
+        """Reject YAML features whose semantics this small parser does not model."""
+
+        block_parent_indent: int | None = None
+        for line in self._lines:
+            if not line.strip():
+                continue
+            current_indent = self._indent(line)
+            if block_parent_indent is not None:
+                if current_indent > block_parent_indent:
+                    continue
+                block_parent_indent = None
+
+            content = line[current_indent:]
+            structural = self._mask_quoted_scalars(content).strip()
+            assert structural not in {"---", "..."}, "YAML document markers are unsupported"
+            assert not structural.startswith("%"), "YAML directives are unsupported"
+            assert not re.match(r"^\?\s", structural), "explicit YAML keys are unsupported"
+            assert not re.search(r"(?:^|\s|-)<<\s*:", structural), (
+                "YAML merge keys are unsupported"
+            )
+            assert not re.search(r"(?<![\w])[&*][A-Za-z0-9_-]+", structural), (
+                "YAML anchors and aliases are unsupported"
+            )
+            assert not re.search(r"(?<![\w-])!{1,2}(?:[A-Za-z<])", structural), (
+                "YAML tags are unsupported"
+            )
+
+            if re.search(r":\s*[|>]", structural):
+                block_parent_indent = current_indent
+
+    @staticmethod
+    def _mask_quoted_scalars(value: str) -> str:
+        masked: list[str] = []
+        quoted: str | None = None
+        escaped = False
+        for character in value:
+            if quoted is not None:
+                if quoted == '"' and escaped:
+                    escaped = False
+                elif quoted == '"' and character == "\\":
+                    escaped = True
+                elif character == quoted:
+                    quoted = None
+                masked.append(" ")
+            elif character in {'"', "'"}:
+                quoted = character
+                masked.append(" ")
+            else:
+                masked.append(character)
+        assert quoted is None, "unterminated YAML quoted scalar"
+        return "".join(masked)
 
     def _next_content(self, index: int) -> int | None:
         while index < len(self._lines):
@@ -222,6 +300,14 @@ def _required_string(mapping: dict[str, object], key: str) -> str:
     return value
 
 
+def _normalize_script_body(value: str) -> str:
+    return value.replace("\r\n", "\n")
+
+
+def _normalize_command(value: str) -> str:
+    return " ".join(_normalize_script_body(value).split())
+
+
 def _active_run_text(run: str) -> str:
     return "\n".join(line for line in run.splitlines() if not line.lstrip().startswith("#"))
 
@@ -244,58 +330,136 @@ def _semantic_step_text(step: dict[str, object]) -> str:
     return "\n".join(values)
 
 
+EXPECTED_SECURITY_STEP_KEYS = {
+    "Build native desktop bytes without executing them": {"name", "run"},
+    "Build direct unsigned package and installed-component provenance": {"name", "env", "run"},
+    "Build deterministic Windows archive and metadata": {"name", "env", "run"},
+    "Build direct package SPDX subject metadata": {"name", "env", "run"},
+    "Verify installed-component manifest and archive statically": {"name", "env", "run"},
+    "Independently verify exact Windows candidate archive and manifest": {
+        "name",
+        "shell",
+        "env",
+        "run",
+    },
+    "Stage exact replacement-candidate handoff without executing binaries": {
+        "name",
+        "shell",
+        "env",
+        "run",
+    },
+    "Run content-hygiene scan (not malware or Defender scanning)": {"name", "env", "run"},
+    "Rehash every allowlisted handoff file after content-hygiene scan": {
+        "name",
+        "shell",
+        "env",
+        "run",
+    },
+    "Upload private Windows candidate artifact": {"name", "uses", "with"},
+}
+
+EXPECTED_PRODUCER_COMMANDS = {
+    "Build native desktop bytes without executing them": "python scripts/build_desktop.py",
+    "Build direct unsigned package and installed-component provenance": (
+        'python scripts/package_desktop.py --platform windows --architecture x86_64 '
+        '--version "$env:VERSION" --source-commit "$env:SOURCE_COMMIT" '
+        "--installed-component-output-dir dist/installed-component-package "
+        "--output-dir dist/release"
+    ),
+    "Build deterministic Windows archive and metadata": (
+        "python scripts/build_release_assets.py --source dist/installed-component-package "
+        '--output-dir dist/release --version "$env:VERSION" --platform windows '
+        "--architecture x86_64"
+    ),
+    "Build direct package SPDX subject metadata": (
+        "python scripts/build_release_assets.py "
+        '--source "dist/release/all-the-context-$env:VERSION-'
+        'windows-x86_64-unsigned.exe" --output-dir dist/release --version "$env:VERSION" '
+        "--platform windows --architecture x86_64 --subject-metadata-only"
+    ),
+    "Verify installed-component manifest and archive statically": (
+        'python scripts/installed_component_manifest.py verify-archive --archive '
+        '"dist/release/all-the-context-$env:VERSION-windows-x86_64.zip" --direct-package '
+        '"dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe" --main '
+        "dist/desktop/AllTheContextSetup.exe --mcp build/desktop/helper-dist/AllTheContextMCP.exe "
+        "--recovery dist/desktop/AllTheContextRecovery.exe --updater "
+        'build/desktop/update-helper-dist/AllTheContextUpdater.exe --source-root . --version '
+        '"$env:VERSION" --source-commit "$env:SOURCE_COMMIT" --platform windows '
+        "--architecture x86_64"
+    ),
+}
+
+EXPECTED_SECURITY_STEP_ENVS = {
+    "Build direct unsigned package and installed-component provenance": {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+    "Build deterministic Windows archive and metadata": {"VERSION": "${{ inputs.version }}"},
+    "Build direct package SPDX subject metadata": {"VERSION": "${{ inputs.version }}"},
+    "Verify installed-component manifest and archive statically": {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+    "Independently verify exact Windows candidate archive and manifest": {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+    "Stage exact replacement-candidate handoff without executing binaries": {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+    "Run content-hygiene scan (not malware or Defender scanning)": {
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+    "Rehash every allowlisted handoff file after content-hygiene scan": {
+        "VERSION": "${{ inputs.version }}",
+        "SOURCE_COMMIT": "${{ github.sha }}",
+    },
+}
+
+
 def _assert_independent_verifier_contract(text: str) -> None:
     steps = _build_windows_steps(text)
     identities = [_step_identity(step) for step in steps]
     assert len(identities) == len(set(identities)), "workflow step identities must be unique"
 
+    for name, expected_keys in EXPECTED_SECURITY_STEP_KEYS.items():
+        _, step = _step_by_name(steps, name)
+        assert set(step) == expected_keys, f"security-critical step {name!r} has unexpected fields"
+
+    for name, expected_env in EXPECTED_SECURITY_STEP_ENVS.items():
+        _, step = _step_by_name(steps, name)
+        assert _mapping(step.get("env"), f"{name} environment mapping is required") == expected_env
+
     verifier_name = "Independently verify exact Windows candidate archive and manifest"
     verifier_index, verifier = _step_by_name(steps, verifier_name)
-    verifier_run = _active_run_text(_required_string(verifier, "run"))
+    verifier_run = _normalize_script_body(_required_string(verifier, "run"))
     assert verifier.get("shell") == "pwsh"
-    verifier_env = _mapping(verifier.get("env"), "verifier environment mapping is required")
-    assert verifier_env == {
-        "VERSION": "${{ inputs.version }}",
-        "SOURCE_COMMIT": "${{ github.sha }}",
-    }
-    verifier_arguments = (
-        "python scripts/verify_installed_component_manifest_independent.py verify-archive",
-        '--archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip"',
-        '--direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"',
-        "--main dist/desktop/AllTheContextSetup.exe",
-        "--mcp build/desktop/helper-dist/AllTheContextMCP.exe",
-        "--recovery dist/desktop/AllTheContextRecovery.exe",
-        "--updater build/desktop/update-helper-dist/AllTheContextUpdater.exe",
-        "--source-root .",
-        '--version "$env:VERSION"',
-        '--source-commit "$env:SOURCE_COMMIT"',
-        "--platform windows",
-        "--architecture x86_64",
-    )
-    assert any(
-        line.strip().startswith(verifier_arguments[0]) for line in verifier_run.splitlines()
-    )
-    assert all(argument in verifier_run for argument in verifier_arguments[1:])
-    assert "$LASTEXITCODE -ne 0" in verifier_run
-    assert "Independent installed-component verification failed closed" in verifier_run
-    assert "exit 0" not in verifier_run
-    assert "|| true" not in verifier_run
+    assert verifier_run == CANONICAL_INDEPENDENT_VERIFIER_RUN
 
-    producer_commands = {
-        "Build native desktop bytes without executing them": "python scripts/build_desktop.py",
-        "Build direct unsigned package and installed-component provenance": (
-            "python scripts/package_desktop.py"
-        ),
-        "Build deterministic Windows archive and metadata": (
-            "python scripts/build_release_assets.py"
-        ),
-        "Build direct package SPDX subject metadata": "python scripts/build_release_assets.py",
-    }
-    for name, command in producer_commands.items():
+    independent_invocations = [
+        (index, run)
+        for index, step in enumerate(steps)
+        for run in [step.get("run")]
+        if isinstance(run, str) and INDEPENDENT_VERIFIER_SCRIPT in run
+    ]
+    assert len(independent_invocations) == 1, (
+        "independent verifier invocation must be unique and attached to its named step"
+    )
+    assert independent_invocations[0][0] == verifier_index
+
+    for name in (
+        "Stage exact replacement-candidate handoff without executing binaries",
+        "Rehash every allowlisted handoff file after content-hygiene scan",
+    ):
+        _, step = _step_by_name(steps, name)
+        assert step.get("shell") == "pwsh"
+
+    for name, command in EXPECTED_PRODUCER_COMMANDS.items():
         producer_index, producer = _step_by_name(steps, name)
         assert producer_index < verifier_index
-        producer_run = _active_run_text(_required_string(producer, "run"))
-        assert any(line.strip().startswith(command) for line in producer_run.splitlines())
+        producer_run = _required_string(producer, "run")
+        assert _normalize_command(producer_run) == command
 
     static_verifier_index, _ = _step_by_name(
         steps, "Verify installed-component manifest and archive statically"
@@ -343,6 +507,23 @@ def _assert_independent_verifier_contract(text: str) -> None:
 
 def _read_workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _replace_verifier_run(text: str, run: str) -> str:
+    canonical_yaml = "\n".join(
+        f"          {line}" for line in CANONICAL_INDEPENDENT_VERIFIER_RUN.splitlines()
+    )
+    canonical_yaml += "\n"
+    assert text.count(canonical_yaml) == 1
+    replacement = "\n".join(f"          {line}" for line in run.splitlines()) + "\n"
+    return text.replace(canonical_yaml, replacement, 1)
+
+
+def _verifier_section(text: str) -> tuple[str, str, str]:
+    marker = "      - name: Independently verify exact Windows candidate archive and manifest"
+    start = text.index(marker)
+    end = text.index("      - name: Stage exact replacement-candidate handoff", start)
+    return text[:start], text[start:end], text[end:]
 
 
 def test_workflow_is_manual_windows_only_and_sha_bound_before_checkout() -> None:
@@ -516,6 +697,155 @@ def test_workflow_semantic_contract_rejects_commented_independent_verifier() -> 
         "      # - name: Independently verify exact Windows candidate archive and manifest",
         1,
     )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    ("feature", "injected_yaml"),
+    (
+        ("anchor", "        verifier_defaults: &verifier_defaults {}\n"),
+        ("alias", "        verifier_defaults: *verifier_defaults\n"),
+        ("merge key", "        <<: *verifier_defaults\n"),
+        ("tag", "        verifier_defaults: !verifier-defaults {}\n"),
+    ),
+)
+def test_workflow_contract_rejects_yaml_indirection(
+    feature: str, injected_yaml: str
+) -> None:
+    del feature
+    before, verifier, after = _verifier_section(_read_workflow())
+    mutated_verifier = verifier.replace(
+        "        shell: pwsh\n", injected_yaml + "        shell: pwsh\n", 1
+    )
+    mutated = before + mutated_verifier + after
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_commented_verifier_body() -> None:
+    mutated = _replace_verifier_run(
+        _read_workflow(),
+        CANONICAL_INDEPENDENT_VERIFIER_RUN.replace(
+            "python scripts/verify_installed_component_manifest_independent.py",
+            "# verifier invocation\n"
+            "python scripts/verify_installed_component_manifest_independent.py",
+            1,
+        ),
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_duplicate_mapping_key() -> None:
+    before, verifier, after = _verifier_section(_read_workflow())
+    mutated = before + verifier.replace(
+        "        shell: pwsh\n", "        shell: pwsh\n        shell: pwsh\n", 1
+    ) + after
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("if", "${{ always() }}"), ("continue-on-error", "true")),
+)
+def test_workflow_contract_rejects_verifier_bypass_fields(field: str, value: str) -> None:
+    before, verifier, after = _verifier_section(_read_workflow())
+    injected = f"        {field}: {value}\n"
+    mutated_verifier = verifier.replace(
+        "        shell: pwsh\n", injected + "        shell: pwsh\n", 1
+    )
+    mutated = before + mutated_verifier + after
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_extra_verifier_statement() -> None:
+    mutated = _replace_verifier_run(
+        _read_workflow(),
+        CANONICAL_INDEPENDENT_VERIFIER_RUN.replace(
+            'if ($LASTEXITCODE -ne 0) {',
+            "Write-Output 'unexpected statement'\nif ($LASTEXITCODE -ne 0) {",
+            1,
+        ),
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_duplicate_verifier_invocation() -> None:
+    mutated = _replace_verifier_run(
+        _read_workflow(),
+        CANONICAL_INDEPENDENT_VERIFIER_RUN.replace(
+            "if ($LASTEXITCODE -ne 0) {",
+            "python scripts/verify_installed_component_manifest_independent.py verify-archive `\n"
+            "if ($LASTEXITCODE -ne 0) {",
+            1,
+        ),
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_detached_verifier_invocation() -> None:
+    text = _read_workflow()
+    detached = (
+        "      - name: Detached independent verifier invocation\n"
+        "        run: python scripts/verify_installed_component_manifest_independent.py "
+        "verify-archive\n"
+    )
+    mutated = text.replace(
+        "      - name: Stage exact replacement-candidate handoff",
+        detached + "      - name: Stage exact replacement-candidate handoff",
+        1,
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    ("scalar_style", "replacement"),
+    (
+        ("folded", "run: >-"),
+        ("chomped literal", "run: |-"),
+        ("indented literal", "run: |2"),
+        ("plain multiline", "run:"),
+    ),
+)
+def test_workflow_contract_rejects_verifier_scalar_tricks(
+    scalar_style: str, replacement: str
+) -> None:
+    del scalar_style
+    before, verifier, after = _verifier_section(_read_workflow())
+    mutated = before + verifier.replace("        run: |\n", f"        {replacement}\n", 1) + after
+
+    with pytest.raises(AssertionError):
+        _assert_independent_verifier_contract(mutated)
+
+
+def test_workflow_contract_rejects_here_string_and_last_exit_code_assignment() -> None:
+    lines = CANONICAL_INDEPENDENT_VERIFIER_RUN.splitlines()
+    here_string_run = "\n".join(
+        (
+            lines[0],
+            "$verifier = @'",
+            *lines[1:13],
+            "'@",
+            "& ([scriptblock]::Create($verifier))",
+            "$LASTEXITCODE = 0",
+            *lines[13:],
+        )
+    ) + "\n"
+    mutated = _replace_verifier_run(_read_workflow(), here_string_run)
 
     with pytest.raises(AssertionError):
         _assert_independent_verifier_contract(mutated)

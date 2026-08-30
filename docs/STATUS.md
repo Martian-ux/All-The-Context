@@ -36,6 +36,19 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-30 — replacement workflow contract re-review remediation
+
+The private Windows replacement-candidate workflow contract now rejects YAML
+comments, anchors, aliases, merge keys, tags, document directives, and other
+unsupported indirection before semantic parsing. Its security-critical
+producer, verifier, and consumer steps are bound to exact fields and ordering;
+the independent verifier has one exact PowerShell body with explicit native
+exit propagation, and detached or duplicate invocations are refused. The
+focused replacement-workflow contract suite passes 24 tests. This is source
+and contract-test hardening only: no beta.7 candidate has been built,
+executed, scanned, submitted, approved, published, tagged, uploaded, or
+released, and no Defender or release-acceptance claim is made.
+
 ### 2026-08-29 — protected-main integration and next proof frontier
 
 PR #95 merged the Core capture route and least-privilege authority, narrow
