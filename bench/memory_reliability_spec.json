@@ -3224,13 +3224,13 @@
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
       "validator_version": "packet-a-validator-v4",
-      "validator_source_sha256": "201ed6491dca850ad8131b7404b1f3d2143cc742a6c110966ebbe5fb717e02a8",
+      "validator_source_sha256": "04a12e01977a30ab3f4d87b1ceec46891810c2b780e5a93aa76b18c67657b22d",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
         "validator_version": "packet-a-validator-v4",
-        "semantic_sha256": "605ce93aafaec7e0b6b27726bfeafcd530b3f0e34501cf31877209f2621148b1",
+        "semantic_sha256": "875b27da67ad0c1b69cf8a6680e42cd7282a380ed52a0bd6718876a8f7187277",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
@@ -3243,7 +3243,7 @@
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "89e45473f3caa3908561817a9d901d9877b2af35cf25af44d375ffb5b5fa32c1"
+      "specification_digest": "6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a"
     }
   }
 }

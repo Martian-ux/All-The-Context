@@ -52,6 +52,22 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
+### 2026-08-30 — Packet A embedded-JSON parser remediation is prepared, uncommitted, and L0-only
+
+Starting from exact clean commit `16697b849751a6dd1e739aaca44492ce6fe1d338`,
+the follow-up hardening routes the fenced narrative JSON binding through the
+same bounded parser as the top-level document. It rejects duplicate keys,
+non-finite values, malformed/deep discarded values, oversized fragments, and
+unknown keys without reflecting attacker-controlled names, values, or paths in
+exceptions. The recursive in-memory finite walk was removed because the
+iterative JSON-limit walk already enforces depth, node, string, numeric, and
+finite-value policy.
+
+Targeted follow-up validation passes 28 tests. This work is intentionally held
+for the fresh reviewer’s additional final findings before a follow-up commit;
+no experiment, manifest, result, private data, product/runtime path, or Packet
+A acceptance claim is involved.
+
 ### 2026-08-30 — Packet A fourth semantic remediation remains L0 and non-displacing
 
 The Packet A validator now enforces an independently authored field-level

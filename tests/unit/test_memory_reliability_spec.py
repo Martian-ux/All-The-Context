@@ -580,13 +580,113 @@ def test_packet_a_json_loader_enforces_bounded_input_limits(tmp_path: Path) -> N
 
     malformed_path = tmp_path / "malformed.json"
     malformed_path.write_text('{"value":', encoding="utf-8")
-    with pytest.raises(SpecificationValidationError, match="invalid JSON"):
+    with pytest.raises(SpecificationValidationError, match="invalid JSON") as malformed_error:
         validator_module.load_json_document(malformed_path)
+    assert str(malformed_error.value) == "invalid JSON document"
 
     with pytest.raises(SpecificationValidationError, match="byte limit"):
         compute_narrative_semantic_digest(
             b"x" * (validator_module.MAX_INPUT_BYTES + 1), specification_digest="0" * 64
         )
+
+
+def test_packet_a_embedded_json_parser_rejects_content_free_malformed_fragments() -> None:
+    expected_keys = {"specification_digest", "evidence_level", "execution_boundary"}
+
+    duplicate = b'{"specification_digest":"x","specification_digest":"y"}'
+    with pytest.raises(SpecificationValidationError, match="duplicate JSON key") as duplicate_error:
+        validator_module._parse_bounded_json_bytes(duplicate)
+    assert "specification_digest" not in str(duplicate_error.value)
+
+    for nonfinite in (b"NaN", b"Infinity", b"-Infinity"):
+        with pytest.raises(SpecificationValidationError, match="non-finite") as nonfinite_error:
+            validator_module._parse_bounded_json_bytes(b'{"value":' + nonfinite + b"}")
+        assert nonfinite.decode() not in str(nonfinite_error.value)
+
+    very_deep = (
+        b'{"specification_digest":"x","evidence_level":"L0",'
+        b'"execution_boundary":{},"discarded":' + b"[" * 1100 + b"0" + b"]" * 1100 + b"}"
+    )
+    with pytest.raises(SpecificationValidationError) as deep_error:
+        validator_module._parse_bounded_json_bytes(very_deep)
+    assert "discarded" not in str(deep_error.value)
+
+    unknown_secret_like = (
+        b'{"specification_digest":"x","evidence_level":"L0",'
+        b'"execution_boundary":{},"api_key":"PRIVATE_SENTINEL"}'
+    )
+    parsed = validator_module._parse_bounded_json_bytes(unknown_secret_like)
+    with pytest.raises(SpecificationValidationError, match="object keys differ") as key_error:
+        validator_module._require_keys(parsed, expected_keys, "narrative machine-readable binding")
+    assert "api_key" not in str(key_error.value)
+    assert "PRIVATE_SENTINEL" not in str(key_error.value)
+
+
+def test_packet_a_public_digest_helpers_preflight_cycles_types_and_limits() -> None:
+    deep: dict[str, Any] = {}
+    current = deep
+    for _ in range(1100):
+        child: dict[str, Any] = {}
+        current["discarded"] = child
+        current = child
+
+    cyclic: dict[str, Any] = {}
+    cyclic["self"] = cyclic
+    for invalid in (deep, cyclic):
+        for helper in (
+            validator_module.canonical_json_bytes,
+            validator_module.compute_specification_digest,
+            validator_module.with_recomputed_digest,
+        ):
+            with pytest.raises(SpecificationValidationError) as error:
+                helper(invalid)
+            assert "discarded" not in str(error.value)
+            assert "self" not in str(error.value)
+
+    oversized_collection = {"values": [0] * (validator_module.MAX_JSON_NODES + 1)}
+    oversized_string = {"value": "x" * (validator_module.MAX_JSON_STRING_CHARS + 1)}
+    oversized_number = {"value": 10**validator_module.MAX_JSON_NUMBER_DIGITS}
+    for invalid in (oversized_collection, oversized_string, oversized_number):
+        with pytest.raises(SpecificationValidationError):
+            validator_module.canonical_json_bytes(invalid)
+
+    assert validator_module.canonical_json_bytes(True) == b"true"
+    assert validator_module.canonical_json_bytes(1) == b"1"
+    assert validator_module.canonical_json_bytes(True) != validator_module.canonical_json_bytes(1)
+
+    class DictSubclass(dict[str, Any]):
+        pass
+
+    class ListSubclass(list[int]):
+        pass
+
+    class StringSubclass(str):
+        pass
+
+    class IntSubclass(int):
+        pass
+
+    class FloatSubclass(float):
+        pass
+
+    class BytesSubclass(bytes):
+        pass
+
+    for subclass in (
+        DictSubclass(),
+        ListSubclass(),
+        StringSubclass("safe"),
+        IntSubclass(1),
+        FloatSubclass(1.0),
+    ):
+        with pytest.raises(SpecificationValidationError) as error:
+            validator_module.canonical_json_bytes(subclass)
+        assert "Subclass" not in str(error.value)
+
+    with pytest.raises(SpecificationValidationError):
+        compute_narrative_semantic_digest(BytesSubclass(b""), specification_digest="0" * 64)
+    with pytest.raises(SpecificationValidationError):
+        compute_narrative_semantic_digest(b"", specification_digest=StringSubclass("0" * 64))
 
 
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:
@@ -662,6 +762,18 @@ def test_packet_a_narrative_and_proposal_correction_are_content_bound() -> None:
         spec["packet_a"]["content_binding"]["proposal_correction"]["source_sha256"]
         == (EXPECTED_PROVENANCE[0][2])
     )
+
+
+def test_packet_a_rebound_narrative_digest_cannot_authorize_semantic_drift() -> None:
+    spec = _load(SPEC_PATH)
+    candidate = deepcopy(spec)
+    candidate["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"] = "0" * 64
+    with pytest.raises(SpecificationValidationError):
+        validate_spec(
+            with_recomputed_digest(candidate),
+            require_golden_digest=False,
+            validate_narrative=False,
+        )
 
 
 def test_spec_is_explicitly_non_executable_and_fixes_first_five_order() -> None:

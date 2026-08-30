@@ -56,7 +56,9 @@ FREEZE_DOCUMENT_PATH = (
 MAX_INPUT_BYTES = 2_000_000
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 50_000
+MAX_JSON_MEMBERS = 50_000
 MAX_JSON_STRING_CHARS = 100_000
+MAX_JSON_TOTAL_STRING_CHARS = 500_000
 MAX_JSON_NUMBER_DIGITS = 128
 
 # Code-owned authority: the candidate's self-digest is never used as the
@@ -821,9 +823,7 @@ def _keys(value: Any, path: str) -> set[str]:
 
 def _require_keys(value: Any, expected: set[str], path: str) -> None:
     actual = _keys(value, path)
-    _require(
-        actual == expected, f"{path} keys differ: expected {sorted(expected)}, got {sorted(actual)}"
-    )
+    _require(actual == expected, "object keys differ")
 
 
 def _strict_equal(actual: Any, expected: Any) -> bool:
@@ -880,32 +880,71 @@ def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> b
 
 
 def _validate_json_limits(value: Any) -> None:
-    """Reject oversized in-memory JSON trees without unbounded recursion."""
+    """Reject non-JSON, cyclic, or oversized values without unbounded recursion."""
 
     nodes = 0
-    pending: list[tuple[Any, int]] = [(value, 0)]
+    members = 0
+    string_chars = 0
+    active_containers: set[int] = set()
+    pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
     while pending:
-        current, depth = pending.pop()
+        current, depth, exiting = pending.pop()
+        current_type = type(current)
+        if exiting:
+            active_containers.remove(id(current))
+            continue
         nodes += 1
         _require(nodes <= MAX_JSON_NODES, "document exceeds JSON node limit")
         _require(depth <= MAX_JSON_DEPTH, "document exceeds JSON depth limit")
-        if isinstance(current, str):
+        if current_type is str:
+            string_chars += len(current)
             _require(len(current) <= MAX_JSON_STRING_CHARS, "document exceeds string limit")
-        elif isinstance(current, dict):
+            _require(
+                string_chars <= MAX_JSON_TOTAL_STRING_CHARS,
+                "document exceeds total string limit",
+            )
+        elif current_type is dict:
+            container_id = id(current)
+            _require(container_id not in active_containers, "document contains a cycle")
+            active_containers.add(container_id)
+            members += len(current)
+            _require(members <= MAX_JSON_MEMBERS, "document exceeds member limit")
+            pending.append((current, depth, True))
             for key, child in current.items():
-                _require(isinstance(key, str), "document contains a non-text object key")
+                _require(type(key) is str, "document contains a non-text object key")
+                string_chars += len(key)
                 _require(len(key) <= MAX_JSON_STRING_CHARS, "document exceeds string limit")
-                pending.append((child, depth + 1))
-        elif isinstance(current, list):
-            pending.extend((child, depth + 1) for child in current)
-        elif isinstance(current, int) and not isinstance(current, bool):
+                _require(
+                    string_chars <= MAX_JSON_TOTAL_STRING_CHARS,
+                    "document exceeds total string limit",
+                )
+                pending.append((child, depth + 1, False))
+        elif current_type is list:
+            container_id = id(current)
+            _require(container_id not in active_containers, "document contains a cycle")
+            active_containers.add(container_id)
+            pending.append((current, depth, True))
+            for child in current:
+                pending.append((child, depth + 1, False))
+        elif current_type is int:
             try:
                 digits = len(str(abs(current)))
             except ValueError as exc:
                 raise SpecificationValidationError("document exceeds number digit limit") from exc
             _require(digits <= MAX_JSON_NUMBER_DIGITS, "document exceeds number digit limit")
-        elif isinstance(current, float):
+        elif current_type is float:
             _require(math.isfinite(current), "document contains a non-finite number")
+        elif current_type is bool or current is None:
+            continue
+        else:
+            raise SpecificationValidationError("document contains an unsupported JSON value")
+
+
+def _bounded_deepcopy(value: Any) -> Any:
+    try:
+        return deepcopy(value)
+    except (MemoryError, RecursionError, TypeError, ValueError) as exc:
+        raise SpecificationValidationError("document copy failed") from exc
 
 
 def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
@@ -914,27 +953,16 @@ def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
     _require(_UNSAFE_TEXT.search(value) is None, f"{path} contains unsafe content")
 
 
-def _assert_finite(value: Any, path: str = "document") -> None:
-    if isinstance(value, float):
-        _require(math.isfinite(value), f"{path} contains a non-finite number")
-    elif isinstance(value, dict):
-        for key, child in value.items():
-            _assert_finite(child, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            _assert_finite(child, f"{path}[{index}]")
-
-
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
-        _require(key not in result, f"duplicate JSON key: {key}")
+        _require(key not in result, "duplicate JSON key")
         result[key] = value
     return result
 
 
 def _reject_nonfinite_json_constant(value: str) -> Any:
-    raise SpecificationValidationError(f"non-finite JSON constant is forbidden: {value}")
+    raise SpecificationValidationError("non-finite JSON constant is forbidden")
 
 
 def _parse_bounded_int(value: str) -> int:
@@ -955,11 +983,12 @@ def _parse_bounded_float(value: str) -> float:
     return parsed
 
 
-def load_json_document(path: Path) -> dict[str, Any]:
-    """Load a JSON document without silently accepting duplicate or non-finite data."""
+def _parse_bounded_json_bytes(document: bytes) -> Any:
+    """Parse bounded JSON with one fail-closed policy for all JSON fragments."""
 
+    _require(type(document) is bytes, "invalid JSON document")
+    _require(len(document) <= MAX_INPUT_BYTES, "input exceeds byte limit")
     try:
-        document = _read_bounded_file(path)
         value = json.loads(
             document.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_keys,
@@ -970,8 +999,15 @@ def load_json_document(path: Path) -> dict[str, Any]:
     except SpecificationValidationError:
         raise
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise SpecificationValidationError(f"invalid JSON document: {path}") from exc
+        raise SpecificationValidationError("invalid JSON document") from exc
     _validate_json_limits(value)
+    return value
+
+
+def load_json_document(path: Path) -> dict[str, Any]:
+    """Load a JSON document without silently accepting duplicate or non-finite data."""
+
+    value = _parse_bounded_json_bytes(_read_bounded_file(path))
     _require(isinstance(value, dict), "specification root must be an object")
     return value
 
@@ -2674,6 +2710,7 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
 
 
 def canonical_json_bytes(value: Any) -> bytes:
+    _validate_json_limits(value)
     try:
         return json.dumps(
             value,
@@ -2682,14 +2719,16 @@ def canonical_json_bytes(value: Any) -> bytes:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError) as exc:
         raise SpecificationValidationError("document is not finite canonical JSON") from exc
 
 
 def compute_specification_digest(spec: dict[str, Any]) -> str:
     """Return the content digest after omitting only the declared digest field."""
 
-    candidate = deepcopy(spec)
+    _validate_json_limits(spec)
+    _require(type(spec) is dict, "document must be an object")
+    candidate = _bounded_deepcopy(spec)
     packet = candidate.get("packet_a")
     _require(isinstance(packet, dict), "document.packet_a must be an object")
     binding = packet.get("content_binding")
@@ -2705,10 +2744,14 @@ def compute_specification_digest(spec: dict[str, Any]) -> str:
 def with_recomputed_digest(spec: dict[str, Any]) -> dict[str, Any]:
     """Copy a candidate and update its self-digest for semantic mutation tests."""
 
-    candidate = deepcopy(spec)
-    candidate["packet_a"]["content_binding"]["specification_digest"] = compute_specification_digest(
-        candidate
-    )
+    _validate_json_limits(spec)
+    _require(type(spec) is dict, "document must be an object")
+    candidate = _bounded_deepcopy(spec)
+    packet = candidate.get("packet_a")
+    _require(type(packet) is dict, "document.packet_a must be an object")
+    binding = packet.get("content_binding")
+    _require(type(binding) is dict, "packet_a.content_binding must be an object")
+    binding["specification_digest"] = compute_specification_digest(candidate)
     return candidate
 
 
@@ -3374,7 +3417,12 @@ _NARRATIVE_DIGEST_JSON = re.compile(rb"(\"specification_digest\"\s*:\s*\")[0-9a-
 def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
     """Hash exact Markdown bytes while normalizing only its self-binding digest."""
 
-    _require(isinstance(document, bytes), "narrative must be bytes")
+    _require(type(document) is bytes, "narrative must be bytes")
+    _require(
+        type(specification_digest) is str
+        and re.fullmatch(r"[0-9a-f]{64}", specification_digest) is not None,
+        "narrative specification digest is invalid",
+    )
     _require(len(document) <= MAX_INPUT_BYTES, "narrative exceeds byte limit")
     expected = specification_digest.encode("ascii")
     normalized, row_count = _NARRATIVE_DIGEST_ROW.subn(rb"\1<SPECIFICATION_DIGEST>\2", document)
@@ -3410,10 +3458,7 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
         r"### Machine-readable binding\s+.*?```json\s*(\{.*?\})\s*```", document, flags=re.DOTALL
     )
     _require(match is not None, "narrative machine-readable binding block is missing")
-    try:
-        narrative_binding = json.loads(match.group(1))
-    except json.JSONDecodeError as exc:
-        raise SpecificationValidationError("narrative binding is not valid JSON") from exc
+    narrative_binding = _parse_bounded_json_bytes(match.group(1).encode("utf-8"))
     _require_keys(
         narrative_binding,
         {"specification_digest", "evidence_level", "execution_boundary"},
@@ -3453,7 +3498,6 @@ def validate_spec(
 
     _require(isinstance(spec, dict), "document must be an object")
     _validate_json_limits(spec)
-    _assert_finite(spec)
     _require_keys(spec, EXPECTED_ROOT_KEYS, "document")
     _require_value(spec.get("schema_version"), 1, "schema_version")
     _require_value(

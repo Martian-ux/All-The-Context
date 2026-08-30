@@ -46,6 +46,24 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-172: Packet A uses one bounded, content-free JSON parser
+
+**Status:** prepared on 2026-08-30 from exact clean commit
+`16697b849751a6dd1e739aaca44492ce6fe1d338`; follow-up commit intentionally
+held pending final review. This remains an L0, non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+Top-level Packet A JSON and the fenced JSON binding in the freeze narrative
+share one bounded byte parser with duplicate-key, non-finite-number,
+malformed-input, depth, node, string, and numeric limits. Exact expected-key
+checks remain active, while duplicate/unknown-key, parse, and non-finite
+diagnostics are fixed content-free messages that do not echo attacker names,
+values, or paths. In-memory validation uses an iterative limit walk, so deeply
+nested discarded values cannot escape through a recursive finite-value check.
+The focused regression set covers these attacks and rebound narrative/code
+digests; no experiment or manifest was run.
+
 ## ADR-171: Packet A freezes M1 evidence, ACL, secret, and receipt topology
 
 **Status:** accepted on 2026-08-30 as a fourth semantic remediation of the

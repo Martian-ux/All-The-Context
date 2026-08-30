@@ -5,7 +5,7 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `89e45473f3caa3908561817a9d901d9877b2af35cf25af44d375ffb5b5fa32c1` |
+| Specification digest | `6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -245,16 +245,19 @@ self-digest is only an internal consistency check: changing JSON and
 recomputing that field cannot pass. Public JSON, narrative, and provenance
 reads are bounded before parsing or hashing, with byte, depth, node, string,
 number, duplicate-key, non-finite, malformed-input, and read-identity checks.
-The validator also validates this freeze Markdown's exact-byte semantic digest,
-evidence level, and execution-boundary block, and binds the proposal erratum
-and future power/fixture/manifest/execution/evidence receipts. It is
-deliberately fail-closed for circular or after-outcome denominators, missing
-or undeclared cells, inconsistent relative/difference units, bad
-permission/safety boundaries, incomplete M1/receipt/ACL/sensitivity/secret
-contracts, unknown statuses/categories, source/specification/narrative digest
-drift, and accidental execution, manifest, result, production, or L2/L3
-claims. These are specification-integrity checks; a rejection is not a
-benchmark result.
+The same bounded parser is used for the fenced JSON binding embedded in this
+Markdown. Exact expected keys remain enforced without echoing unknown or
+secret-like key names, duplicate keys, non-finite values, parse errors, or
+discarded deep values in diagnostics. The validator also validates this freeze
+Markdown's exact-byte semantic digest, evidence level, and execution-boundary
+block, and binds the proposal erratum and future
+power/fixture/manifest/execution/evidence receipts. It is deliberately
+fail-closed for circular or after-outcome denominators, missing or undeclared
+cells, inconsistent relative/difference units, bad permission/safety
+boundaries, incomplete M1/receipt/ACL/sensitivity/secret contracts, unknown
+statuses/categories, source/specification/narrative digest drift, and
+accidental execution, manifest, result, production, or L2/L3 claims. These
+are specification-integrity checks; a rejection is not a benchmark result.
 
 ### Machine-readable binding
 
@@ -263,7 +266,7 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "89e45473f3caa3908561817a9d901d9877b2af35cf25af44d375ffb5b5fa32c1",
+  "specification_digest": "6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,
