@@ -1178,6 +1178,12 @@ def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
     assert utility_method["control_mean"] == 0.83
     assert utility_method["alternative_mean"] == 0.895
     assert utility_method["target_relative_effect"] == 0.05
+    assert power["computation_method"]["power_gate"] == {
+        "threshold_per_primary_contrast": 0.9,
+        "rule": "caos_power_at_least_0.90_AND_utility_power_at_least_0.90",
+        "attainability": "power_pair_(1.0,1.0)_passes",
+        "monotonicity": "increasing_either_contrast_power_cannot_change_true_to_false",
+    }
     assert power["interim_and_stopping_policy"] == {
         "interim_looks": "none",
         "interim_peeking": "prohibited",
@@ -1270,6 +1276,13 @@ def test_packet_a_power_reference_has_golden_vectors_axes_and_exact_decisions(
     assert power_reference.cell_coordinates(95) == (5, 3, 3)
     assert power_reference.candidate_n_grid() == tuple(range(384, 9601, 96))
     assert power_reference.holm_adjusted_p_values((0.01, 0.01)) == (0.02, 0.02)
+    assert power_reference.power_gate_passes(1.0, 1.0)
+    assert not power_reference.power_gate_passes(0.899999, 1.0)
+    assert not power_reference.power_gate_passes(1.0, 0.899999)
+    assert power_reference.power_gate_passes(0.91, 0.90)
+    assert power_reference.power_gate_passes(0.90, 0.91)
+    assert pytest.approx(0.85 - 0.75) == power_reference.CAOS_TARGET_EFFECT
+    assert power_reference.UTILITY_TARGET_RELATIVE_EFFECT <= (0.895 - 0.83) / 0.83
 
     evaluated_candidates: list[int] = []
 
@@ -1288,6 +1301,13 @@ def test_packet_a_power_reference_has_golden_vectors_axes_and_exact_decisions(
         power_reference.PairObservation(1, power_reference.VALID_STATUS, 0, 0),
     )
     assert power_reference.exact_paired_binary_pvalue(caos_observations) == 0.75
+    unavailable_caos_observations = (
+        power_reference.PairObservation(0, power_reference.VALID_STATUS, 0, 1),
+        power_reference.PairObservation(1, power_reference.VALID_STATUS, 1, 0),
+        power_reference.PairObservation(2, power_reference.LOST_STATUS, 0, 1),
+    )
+    assert power_reference.effective_pair_count(unavailable_caos_observations) == 2
+    assert power_reference.paired_binary_difference(unavailable_caos_observations) == 0.0
     utility_observations = (
         power_reference.PairObservation(0, power_reference.VALID_STATUS, 0.5, 0.75),
         power_reference.PairObservation(1, power_reference.LOST_STATUS, 0.75, 1.0),
@@ -1318,6 +1338,31 @@ def test_packet_a_power_reference_has_golden_vectors_axes_and_exact_decisions(
             require_golden_digest=False,
             validate_narrative=False,
         )
+
+
+def test_packet_a_nonzero_infrastructure_loss_flows_through_reference_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def all_lost_counter_uniform(
+        simulation_seed: int,
+        replicate_index: int,
+        candidate_n: int,
+        resample_index: int,
+        episode_index: int,
+        draw_kind: str,
+    ) -> float:
+        del simulation_seed, replicate_index, candidate_n, resample_index, episode_index
+        return 0.0 if draw_kind == "infrastructure_loss" else 1.0
+
+    monkeypatch.setattr(power_reference, "counter_uniform", all_lost_counter_uniform)
+    monkeypatch.setattr(power_reference, "SIMULATION_REPETITIONS", 1)
+
+    evaluation = power_reference.simulate_replicate(20260829, 0, 384)
+    assert evaluation.caos.lower_bound is None
+    assert evaluation.utility.lower_bound is None
+    assert not evaluation.joint_holm_pass
+    assert power_reference.estimate_candidate_power(20260829, 384) == (0.0, 0.0, 0.0)
+    assert power_reference.select_derived_n(20260829) is None
 
 
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:

@@ -18,6 +18,7 @@ SIMULATION_REPETITIONS = 100_000
 BOOTSTRAP_REPLICATES = 10_000
 PERMUTATION_REPLICATES = 10_000
 ALPHA = 0.05
+POWER_TARGET = 0.90
 CAOS_TARGET_EFFECT = 0.10
 UTILITY_TARGET_RELATIVE_EFFECT = 0.05
 CAOS_NONINFERIORITY_MARGIN = -0.02
@@ -264,14 +265,22 @@ def _usable_pairs(
     excluded = False
     pairs: list[tuple[float, float, int]] = []
     for observation in _validated_observations(observations):
+        if observation.status == LOST_STATUS:
+            # Infrastructure loss is unavailable efficacy data: retain it in
+            # the opportunity/loss ledger, but never manufacture a zero pair.
+            continue
         if observation.status in (MISSING_STATUS, INVALID_STATUS):
             excluded = True
             continue
-        if observation.status == LOST_STATUS:
-            pairs.append((0.0, 0.0, observation.cell_index))
-        else:
-            pairs.append((observation.control, observation.alternative, observation.cell_index))
+        pairs.append((observation.control, observation.alternative, observation.cell_index))
     return tuple(pairs), excluded
+
+
+def effective_pair_count(observations: tuple[PairObservation, ...]) -> int:
+    """Return the VALID-pair denominator after unavailable data is removed."""
+
+    pairs, _ = _usable_pairs(observations)
+    return len(pairs)
 
 
 def _binary_pairs(
@@ -592,12 +601,27 @@ def estimate_candidate_power(simulation_seed: int, candidate_n: int) -> tuple[fl
     return caos_passes / denominator, utility_passes / denominator, joint_passes / denominator
 
 
+def power_gate_passes(caos_power: float, utility_power: float) -> bool:
+    """Apply the declared per-contrast power gate monotonically."""
+
+    _require(
+        type(caos_power) is float
+        and type(utility_power) is float
+        and math.isfinite(caos_power)
+        and math.isfinite(utility_power)
+        and 0.0 <= caos_power <= 1.0
+        and 0.0 <= utility_power <= 1.0,
+        "power estimate is invalid",
+    )
+    return caos_power >= POWER_TARGET and utility_power >= POWER_TARGET
+
+
 def select_derived_n(simulation_seed: int) -> int | None:
     """Select the smallest eligible grid value after evaluating the full grid."""
 
     selected: int | None = None
     for candidate_n in candidate_n_grid():
         caos_power, utility_power, _ = estimate_candidate_power(simulation_seed, candidate_n)
-        if selected is None and caos_power >= 0.90 and utility_power >= 0.90:
+        if selected is None and power_gate_passes(caos_power, utility_power):
             selected = candidate_n
     return selected

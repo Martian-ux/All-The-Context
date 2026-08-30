@@ -95,7 +95,7 @@ GOLDEN_SPECIFICATION_DIGEST = EXPECTED_CANONICAL_SPECIFICATION_DIGEST
 VALIDATOR_VERSION = EXPECTED_VALIDATOR_VERSION
 POWER_REFERENCE_SOURCE_PATH = ROOT / "bench" / "packet_a_power_reference.py"
 EXPECTED_POWER_REFERENCE_SOURCE_SHA256 = (
-    "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500"
+    "fada14dcf00737fe3411819972deb8fccd8717e6afdb3cc087e006ed38b869fb"
 )
 EXPECTED_POWER_COMPUTATION_METHOD = {
     "algorithm": "deterministic_counter_stream_monte_carlo",
@@ -106,7 +106,14 @@ EXPECTED_POWER_COMPUTATION_METHOD = {
     "reference_functions": {
         "replicate": "simulate_replicate",
         "candidate_power": "estimate_candidate_power",
+        "power_gate": "power_gate_passes",
         "derived_n_selection": "select_derived_n",
+    },
+    "power_gate": {
+        "threshold_per_primary_contrast": 0.9,
+        "rule": "caos_power_at_least_0.90_AND_utility_power_at_least_0.90",
+        "attainability": "power_pair_(1.0,1.0)_passes",
+        "monotonicity": "increasing_either_contrast_power_cannot_change_true_to_false",
     },
     "counter_serialization": {
         "domain_separator": "ATC-PACKET-A-POWER",
@@ -210,7 +217,11 @@ EXPECTED_POWER_COMPUTATION_METHOD = {
     "loss_and_missing_disposition": {
         "loss_draw_kind": "infrastructure_loss",
         "loss_rule": "uniform_draw_less_than_0.15",
-        "lost_pair": "append_zero_zero_pair_to_both_contrasts_and_retain_denominator",
+        "lost_pair": "unavailable_pair_excluded_from_efficacy_estimator_test_and_bootstrap",
+        "lost_effect": "never_converted_to_zero_pair_or_efficacy_failure",
+        "lost_ledger": "retain_in_E_w_and_report_separate_E_eff",
+        "effective_pair_denominator": ("VALID_pairs_only_after_LOST_MISSING_INVALID_exclusion"),
+        "zero_valid_pairs": "lower_bound_unset_and_contrast_non_pass",
         "missing_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
         "invalid_pair": "exclude_from_estimator_test_and_bootstrap_and_force_non_pass",
         "imputation": "forbidden",
@@ -224,7 +235,9 @@ EXPECTED_POWER_COMPUTATION_METHOD = {
                 "control_1_alternative_0",
                 "control_1_alternative_1",
             ],
-            "statistic": "mean(alternative-control) over VALID and LOST_ZERO_PAIRS",
+            "statistic": (
+                "mean(alternative-control) over VALID_pairs_only_after_unavailable_exclusion"
+            ),
             "null": "mean_difference_less_than_or_equal_to_zero",
             "alternative": "mean_difference_at_least_0.10",
             "test": {
@@ -253,7 +266,7 @@ EXPECTED_POWER_COMPUTATION_METHOD = {
                 "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
                 "zero_valid_pairs": "lower_bound_unset_and_contrast_non_pass",
                 "missing_or_invalid": "exclude_and_contrast_non_pass",
-                "lost": "zero_pair_included_and_denominator_retained",
+                "lost": "unavailable_excluded_from_resampling_and_efficacy_denominator",
             },
             "resampling_counter_inputs": [
                 "simulation_seed",
@@ -319,7 +332,7 @@ EXPECTED_POWER_COMPUTATION_METHOD = {
                 "bootstrap_counter_episode_index": "zero_based_output_ordinal_within_cell",
                 "control_mean_zero": "lower_bound_unset_and_contrast_non_pass",
                 "missing_or_invalid": "exclude_and_contrast_non_pass",
-                "lost": "zero_pair_included_and_denominator_retained",
+                "lost": "unavailable_excluded_from_resampling_and_efficacy_denominator",
             },
             "resampling_counter_inputs": [
                 "simulation_seed",
@@ -780,7 +793,7 @@ EXPECTED_PROVENANCE = [
     (
         "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "Packet A section 6 and non-displacing boundary",
-        "42f0ad040588a144e4fa81d9b51f594796cda1644278bb336d599494312e3b0e",
+        "b2a92210d4e557dec50bb4ca067bf00057840d51e5a6302f8278e4f74e7f927b",
     ),
     (
         "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -3290,8 +3303,15 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
             ),
             "infrastructure_loss_draw": (
                 "independent_uniform_draw_per_paired_episode_loss_if_draw_is_less_than_"
-                "allowance_and_episode_remains_in_denominator"
+                "allowance; lost_pair_is_unavailable_and_excluded_from_efficacy_but_"
+                "retained_in_E_w_with_separate_E_eff_report"
             ),
+            "power_gate": {
+                "threshold_per_primary_contrast": 0.9,
+                "rule": "caos_power_at_least_0.90_AND_utility_power_at_least_0.90",
+                "attainability": "power_pair_(1.0,1.0)_passes",
+                "monotonicity": "increasing_either_contrast_power_cannot_change_true_to_false",
+            },
             "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
             "reference_method_contract": EXPECTED_POWER_COMPUTATION_METHOD,
             "primary_contrast_methods": {

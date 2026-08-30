@@ -5,9 +5,9 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `cb050608e87fd150141a8678bed586bd7bcf90a1d7256e7f0b430551031b259e` |
+| Specification digest | `1a6c3bee632d06254d458a52ba3041c9bafc122d525cf9cd71face8cb14eb7a5` |
 | Contract source digest | `a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213` |
-| Power reference source digest | `747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500` |
+| Power reference source digest | `fada14dcf00737fe3411819972deb8fccd8717e6afdb3cc087e006ed38b869fb` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -221,7 +221,10 @@ SHA-256 counter-stream draws use an explicit domain, version, typed fields,
 lengths, delimiters, big-endian integer encoding, draw-kind allowlist, and
 golden digest/uniform vectors. Episodes map exactly to 96 cells; utility rows
 are control levels and columns are alternative levels. Infrastructure loss,
-missing, and invalid dispositions are explicit. The paired-binary CAOS
+missing, and invalid dispositions are explicit: infrastructure-loss pairs are
+unavailable for efficacy estimation, testing, and bootstrap resampling, remain
+in `E_w`, and receive a separate `E_eff` report rather than becoming zero
+pairs. The paired-binary CAOS
 contrast uses an exact conditional sign tail and stratified paired percentile
 bootstrap; scheduler outcome utility uses a relative-effect statistic,
 studentized sign-flip test, and stratified relative-effect bootstrap. Holm
@@ -229,8 +232,9 @@ ordering, ties, conjunctions, zero variance, zero ratio, quantile
 interpolation, and counter ordinals are all fixed. The candidate estimator
 evaluates 100,000 fixed replicates across the balanced grid and selects the
 smallest candidate meeting both contrast targets; if none meets the target,
-derived N remains unset and no receipt is emitted. The binary CAOS method is
-not reused for utility.
+derived N remains unset and no receipt is emitted. The reference power gate is
+true at `(1.0, 1.0)` and is monotone in either per-contrast power estimate.
+The binary CAOS method is not reused for utility.
 
 The closed interim and stopping policy is also frozen: interim peeking,
 optional stopping, adaptive sampling, reallocation, early stopping, futility
@@ -299,9 +303,9 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "cb050608e87fd150141a8678bed586bd7bcf90a1d7256e7f0b430551031b259e",
+  "specification_digest": "1a6c3bee632d06254d458a52ba3041c9bafc122d525cf9cd71face8cb14eb7a5",
   "contract_source_sha256": "a8a4089915bd7575d186ea0f71a0dad950fd4690558611c0caaef999ba79f213",
-  "power_reference_source_sha256": "747833273182110b65a230dcef2b290327265d3c7b340959898935044d475500",
+  "power_reference_source_sha256": "fada14dcf00737fe3411819972deb8fccd8717e6afdb3cc087e006ed38b869fb",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

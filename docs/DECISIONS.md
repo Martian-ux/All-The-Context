@@ -65,6 +65,13 @@ bootstrap/permutation counts, fixed 100,000-replicate estimation, and a
 deterministic no-result selection rule. It has no filesystem, product,
 provider, fixture, manifest, or result side effects.
 
+Infrastructure loss is modeled as unavailable efficacy data: the pair remains
+in the eligible-opportunity ledger and is reported separately through `E_eff`,
+but is excluded from efficacy estimators, tests, and bootstrap resampling
+instead of being fabricated as a zero pair. The bound reference gate passes at
+`(1.0, 1.0)` and cannot turn false when either per-contrast power estimate
+increases.
+
 The validator's bounded reader accepts only exact concrete pathlib paths,
 requires root containment for bound sources, rejects link/reparse, special,
 and multiply-linked files, and compares path-chain and descriptor identity

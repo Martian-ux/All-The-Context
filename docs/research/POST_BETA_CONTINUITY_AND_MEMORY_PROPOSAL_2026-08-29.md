@@ -734,7 +734,7 @@ base_cell_count: 96 (six families x four repositories x four strata)
 provisional_minimum_paired_episode_count: 384
 allocation: final_N = 96 * ceil(max(N_power, 384) / 96); final repetitions per base cell = final_N / 96
 estimand: stratified paired CAOS difference, alternative minus control
-test_statistic: stratified paired difference with exact/randomization reference
+test_statistic: CAOS exact conditional paired sign test over cell blocks with convolved binomial counts; scheduler utility studentized paired sign-flip test
 alpha: familywise 0.05 with Holm control over two primary contrasts
 directional_bound: one-sided 95% confidence bound for each promotion gate
 power_target: 0.90
@@ -749,7 +749,7 @@ cell_mapping: 16*task_family_index + 4*repository_index + stratum_index; episode
 utility_axes: rows control utility, columns alternative utility; row-major five-level matrix with control mean 0.83 and alternative mean 0.895
 bootstrap_and_permutation: 10000 each; complete paired episodes resampled within cell; q=0.05 uses (B-1)*q linear interpolation; sign flips use uniform >= 0.5 as positive
 decision_rule: Holm ascending raw p with declared-order tie-break; CAOS lower bound > -0.02 AND >= 0.10; utility lower bound >= 0.05; joint pass requires both
-missing_loss_rule: lost pairs become zero/zero and remain in the denominator; missing or invalid pairs are excluded and force non-pass; no imputation
+missing_loss_rule: infrastructure-loss pairs are unavailable and excluded from efficacy estimators, tests, and bootstraps; they remain in E_w and receive a separate E_eff report; missing or invalid pairs are excluded and force non-pass; no imputation
 ~~~
 
 The script path is a required future reproducibility artifact; this proposal

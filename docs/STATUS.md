@@ -65,6 +65,11 @@ bootstrap/permutation rules, Holm decisions, and deterministic candidate-N
 selection functions. The future confirmatory driver, manifests, derived N,
 and results remain absent and unexecuted.
 
+Infrastructure-loss draws now mark pairs unavailable for efficacy estimation,
+testing, and bootstrap resampling; they remain in `E_w` with a separate `E_eff`
+report and are never converted to zero pairs. The reference power gate is
+explicitly attainable at `(1.0, 1.0)` and monotone in either contrast estimate.
+
 The continuation also closes bounded reads against links/reparse points,
 special files, hard links, root escapes, and before/after identity changes;
 the caller may only lower the exact integer byte ceiling. Public failures are
