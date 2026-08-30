@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import struct
@@ -78,7 +79,7 @@ def _members(
 def _write_archive(path: Path, members: list[tuple[str, bytes]]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for name, raw in members:
-            info = zipfile.ZipInfo(name)
+            info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
             info.external_attr = 0o100755 << 16
@@ -446,6 +447,20 @@ def _zip_offsets(archive: Path) -> tuple[bytearray, int, int, int]:
     return raw, local_offset, central_offset, eocd_offset
 
 
+def _central_offsets(archive: Path) -> list[int]:
+    raw, _local_offset, central_offset, _eocd_offset = _zip_offsets(archive)
+    offsets: list[int] = []
+    cursor = central_offset
+    for _ in range(3):
+        assert raw[cursor : cursor + 4] == b"PK\x01\x02"
+        offsets.append(cursor)
+        name_size = struct.unpack_from("<H", raw, cursor + 28)[0]
+        extra_size = struct.unpack_from("<H", raw, cursor + 30)[0]
+        comment_size = struct.unpack_from("<H", raw, cursor + 32)[0]
+        cursor += 46 + name_size + extra_size + comment_size
+    return offsets
+
+
 def _patch_first_local_field(archive: Path, *, offset: int, value: int, width: int = 2) -> None:
     raw, local_offset, _central_offset, _eocd_offset = _zip_offsets(archive)
     raw[local_offset + offset : local_offset + offset + width] = value.to_bytes(
@@ -484,13 +499,86 @@ def _patch_eocd_field(archive: Path, *, offset: int, value: int, width: int) -> 
 def _write_archive_with_first_extra(path: Path, members: list[tuple[str, bytes]]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for index, (name, raw) in enumerate(members):
-            info = zipfile.ZipInfo(name)
+            info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
             info.external_attr = 0o100755 << 16
             if index == 0:
                 info.extra = b"x"
             bundle.writestr(info, raw)
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
+def test_enforces_canonical_member_order(
+    tmp_path: Path, order: tuple[int, int, int]
+) -> None:
+    candidate = _candidate(tmp_path)
+    members = _members(candidate)
+    _write_archive(candidate.archive, [members[index] for index in order])
+
+    if order == (0, 1, 2):
+        assert _verify(candidate) == candidate.payload
+    else:
+        with pytest.raises(
+            verifier.IndependentManifestVerificationError, match="member order"
+        ):
+            _verify(candidate)
+
+
+def test_rejects_noncanonical_physical_local_member_order(tmp_path: Path) -> None:
+    candidate = _candidate(tmp_path)
+    raw, _local_offset, _central_offset, _eocd_offset = _zip_offsets(candidate.archive)
+    offsets = _central_offsets(candidate.archive)
+    first_local = bytes(raw[offsets[0] + 42 : offsets[0] + 46])
+    second_local = bytes(raw[offsets[1] + 42 : offsets[1] + 46])
+    raw[offsets[0] + 42 : offsets[0] + 46] = second_local
+    raw[offsets[1] + 42 : offsets[1] + 46] = first_local
+    candidate.archive.write_bytes(raw)
+
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError, match="local member order"
+    ):
+        _verify(candidate)
+
+
+@pytest.mark.parametrize("member_index", range(3))
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "external_attr",
+        "internal_attr",
+        "create_system",
+        "create_version",
+        "extract_version",
+        "flags",
+    ],
+)
+def test_rejects_noncanonical_member_attributes(
+    tmp_path: Path, member_index: int, attribute: str
+) -> None:
+    candidate = _candidate(tmp_path)
+    raw, _local_offset, _central_offset, _eocd_offset = _zip_offsets(candidate.archive)
+    offset = _central_offsets(candidate.archive)[member_index]
+    if attribute == "external_attr":
+        field, width, value = 38, 4, 0
+    elif attribute == "internal_attr":
+        field, width, value = 36, 2, 1
+    elif attribute == "create_system":
+        field, width, value = 4, 2, (2 << 8) | verifier.EXPECTED_ZIP_CREATE_VERSION
+    elif attribute == "create_version":
+        field, width, value = 4, 2, (verifier.EXPECTED_ZIP_CREATE_SYSTEM << 8) | 19
+    elif attribute == "extract_version":
+        field, width, value = 6, 2, 19
+    else:
+        field, width, value = 8, 2, 1
+    raw[offset + field : offset + field + width] = value.to_bytes(width, "little")
+    candidate.archive.write_bytes(raw)
+
+    with pytest.raises(
+        verifier.IndependentManifestVerificationError,
+        match=r"envelope|metadata|canonical|inventory",
+    ):
+        _verify(candidate)
 
 
 def test_rejects_pe_header_offset_before_dos_header(tmp_path: Path) -> None:

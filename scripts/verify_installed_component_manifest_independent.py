@@ -63,9 +63,19 @@ ARCHIVE_MEMBER_BASENAMES = frozenset(
 ARCHIVE_MEMBER_NAMES = frozenset(
     ARCHIVE_MEMBER_PREFIX + name for name in ARCHIVE_MEMBER_BASENAMES
 )
+ARCHIVE_MEMBER_ORDER = tuple(sorted(ARCHIVE_MEMBER_NAMES, key=str.casefold))
 AMD64_MACHINE = 0x8664
 PE32_PLUS_MAGIC = 0x20B
 EXPECTED_ZIP_COMPRESSION = zipfile.ZIP_DEFLATED
+EXPECTED_ZIP_CREATE_SYSTEM = 3
+EXPECTED_ZIP_CREATE_VERSION = 20
+EXPECTED_ZIP_EXTRACT_VERSION = 20
+EXPECTED_ZIP_FLAGS = 0
+EXPECTED_ZIP_INTERNAL_ATTRIBUTES = 0
+EXPECTED_ZIP_EXTERNAL_ATTRIBUTES = 0o100755 << 16
+EXPECTED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
+EXPECTED_ZIP_DOS_TIME = 0
+EXPECTED_ZIP_DOS_DATE = 0x21
 
 
 class IndependentManifestVerificationError(ValueError):
@@ -141,7 +151,10 @@ class _PrimitiveZipRecord:
     version_needed: int
     version_made_by: int
     disk_number: int
+    internal_attributes: int
     external_attributes: int
+    modified_time: int
+    modified_date: int
 
 
 def _failure(message: str) -> NoReturn:
@@ -851,6 +864,8 @@ def _inspect_zip_envelope(
         version_needed = int.from_bytes(header[6:8], "little")
         flags = int.from_bytes(header[8:10], "little")
         compression = int.from_bytes(header[10:12], "little")
+        modified_time = int.from_bytes(header[12:14], "little")
+        modified_date = int.from_bytes(header[14:16], "little")
         crc = int.from_bytes(header[16:20], "little")
         compressed_size = int.from_bytes(header[20:24], "little")
         uncompressed_size = int.from_bytes(header[24:28], "little")
@@ -858,18 +873,24 @@ def _inspect_zip_envelope(
         extra_size = int.from_bytes(header[30:32], "little")
         comment_size = int.from_bytes(header[32:34], "little")
         disk_start = int.from_bytes(header[34:36], "little")
+        internal_attributes = int.from_bytes(header[36:38], "little")
         external_attributes = int.from_bytes(header[38:42], "little")
         local_header_offset = int.from_bytes(header[42:46], "little")
         if name_size > MAX_ZIP_MEMBER_NAME_BYTES:
             _failure("release ZIP member filename is too long")
         if (
-            version_made_by != ((3 << 8) | 20)
-            or version_needed != 20
-            or flags != 0
+            version_made_by
+            != ((EXPECTED_ZIP_CREATE_SYSTEM << 8) | EXPECTED_ZIP_CREATE_VERSION)
+            or version_needed != EXPECTED_ZIP_EXTRACT_VERSION
+            or flags != EXPECTED_ZIP_FLAGS
             or compression != EXPECTED_ZIP_COMPRESSION
+            or modified_time != EXPECTED_ZIP_DOS_TIME
+            or modified_date != EXPECTED_ZIP_DOS_DATE
             or compressed_size == 0xFFFFFFFF
             or uncompressed_size == 0xFFFFFFFF
             or disk_start != 0
+            or internal_attributes != EXPECTED_ZIP_INTERNAL_ATTRIBUTES
+            or external_attributes != EXPECTED_ZIP_EXTERNAL_ATTRIBUTES
             or extra_size != 0
             or comment_size != 0
         ):
@@ -896,7 +917,10 @@ def _inspect_zip_envelope(
                 version_needed=version_needed,
                 version_made_by=version_made_by,
                 disk_number=disk_start,
+                internal_attributes=internal_attributes,
                 external_attributes=external_attributes,
+                modified_time=modified_time,
+                modified_date=modified_date,
             )
         )
         cursor += 46 + name_size
@@ -918,8 +942,13 @@ def _inspect_zip_envelope(
         _failure("release ZIP contains duplicate entries")
     if {record.name for record in records} != ARCHIVE_MEMBER_NAMES:
         _failure("release ZIP contains an unexpected member set")
+    if tuple(record.name for record in records) != ARCHIVE_MEMBER_ORDER:
+        _failure("release ZIP member order is not canonical")
 
     intervals: list[tuple[int, int]] = []
+    for previous, current in pairwise(records):
+        if current.local_header_offset <= previous.local_header_offset:
+            _failure("release ZIP local member order is not canonical")
     for record in records:
         local_offset = record.local_header_offset
         if local_offset >= central_offset:
@@ -937,6 +966,8 @@ def _inspect_zip_envelope(
         local_version = int.from_bytes(local[4:6], "little")
         local_flags = int.from_bytes(local[6:8], "little")
         local_compression = int.from_bytes(local[8:10], "little")
+        local_modified_time = int.from_bytes(local[10:12], "little")
+        local_modified_date = int.from_bytes(local[12:14], "little")
         local_crc = int.from_bytes(local[14:18], "little")
         local_compressed_size = int.from_bytes(local[18:22], "little")
         local_uncompressed_size = int.from_bytes(local[22:26], "little")
@@ -946,6 +977,8 @@ def _inspect_zip_envelope(
             local_version != record.version_needed
             or local_flags != record.flags
             or local_compression != record.compression
+            or local_modified_time != record.modified_time
+            or local_modified_date != record.modified_date
             or local_crc != record.crc
             or local_compressed_size != record.compressed_size
             or local_uncompressed_size != record.uncompressed_size
@@ -968,11 +1001,10 @@ def _inspect_zip_envelope(
         if data_end > central_offset:
             _failure("release ZIP member data overlaps the central directory")
         intervals.append((local_offset, data_end))
-    intervals.sort()
     if not intervals or intervals[0][0] != 0:
         _failure("release ZIP local data does not begin at byte zero")
-    for previous, current in pairwise(intervals):
-        if previous[1] != current[0]:
+    for previous_interval, current_interval in pairwise(intervals):
+        if previous_interval[1] != current_interval[0]:
             _failure("release ZIP local data is not contiguous")
     if intervals[-1][1] != central_offset:
         _failure("release ZIP local data is not canonical")
@@ -1109,9 +1141,13 @@ def _read_archive_contents(
                             or info.compress_size != primitive.compressed_size
                             or info.file_size != primitive.uncompressed_size
                             or info.header_offset != primitive.local_header_offset
-                            or info.create_system != 3
-                            or info.create_version != 20
+                            or info.create_system != EXPECTED_ZIP_CREATE_SYSTEM
+                            or info.create_version != EXPECTED_ZIP_CREATE_VERSION
                             or info.extract_version != primitive.version_needed
+                            or info.flag_bits != EXPECTED_ZIP_FLAGS
+                            or info.internal_attr != EXPECTED_ZIP_INTERNAL_ATTRIBUTES
+                            or info.external_attr != EXPECTED_ZIP_EXTERNAL_ATTRIBUTES
+                            or info.date_time != EXPECTED_ZIP_TIME
                             or info.extra != b""
                             or info.comment != b""
                         ):
