@@ -6,22 +6,24 @@
 contract re-review. This does not build or accept a beta.7 candidate, change
 the immutable beta.6 release, or close the Windows Defender incident.
 
-The workflow contract parses the `jobs.build-windows.steps` structure using a
-deliberately small YAML subset. Comments, duplicate keys, malformed entries,
-anchors, aliases, merge keys, tags, document directives, and unsupported
-scalar styles fail closed because the contract does not model their semantics.
-Security-critical producer, verifier, and consumer steps use exact allowed
-fields, expected environment bindings, and actual producer-before-verifier-
-before-consumer ordering. The uniquely named independent verifier must use
-`pwsh` and one exact canonical script body, including the native exit-code
-guard and explicit propagation; any duplicate or detached invocation fails.
+The workflow contract is owned by the reviewed test code's
+`EXPECTED_WORKFLOW_SHA256`, which covers the complete workflow as UTF-8 bytes.
+The reader preserves bytes and Unicode rather than applying YAML parsing,
+`splitlines()` reconstruction, comment removal, scalar folding, or a mutable
+workflow self-attestation. Any changed tracked workflow therefore fails closed,
+including quoted GitHub control keys, comments, duplicate keys or steps,
+anchors, aliases, merge keys, bare or tagged scalars, alternate inputs or
+handoff paths, extra post-verifier statements, scalar-style changes, and
+Unicode line separators such as U+2028.
 
-The workflow itself contains no YAML comments and explicitly propagates the
-native verifier exit code. Focused tests cover merge-alias field injection,
-here-strings, comments, duplicate keys, conditional/continue-on-error fields,
-extra statements, duplicate/detached invocations, and folded or multiline
-scalar mutations. This remains source-level contract evidence only; it is not
-candidate, artifact, security-scan, Microsoft, client, or release acceptance.
+Readable assertions over that exact file separately record the approved
+semantics: manual Windows-only dispatch, source SHA binding before checkout,
+least permissions, pinned actions, no publication, an exact independent
+`pwsh` verifier with native exit propagation, exact producer/verifier/consumer
+ordering, and exact handoff/upload paths. The 35-test focused suite includes
+these adversarial mutations. This remains source-level contract evidence only;
+it is not candidate, artifact, security-scan, Microsoft, client, or release
+acceptance.
 
 ## ADR-168: Keep beta.6 public while beta.7 remains a private replacement slot
 

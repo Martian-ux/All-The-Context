@@ -38,14 +38,18 @@ only, not as evidence for this integrated checkout.
 
 ### 2026-08-30 — replacement workflow contract re-review remediation
 
-The private Windows replacement-candidate workflow contract now rejects YAML
-comments, anchors, aliases, merge keys, tags, document directives, and other
-unsupported indirection before semantic parsing. Its security-critical
-producer, verifier, and consumer steps are bound to exact fields and ordering;
-the independent verifier has one exact PowerShell body with explicit native
-exit propagation, and detached or duplicate invocations are refused. The
-focused replacement-workflow contract suite passes 24 tests. This is source
-and contract-test hardening only: no beta.7 candidate has been built,
+The private Windows replacement-candidate workflow contract now uses a
+code-owned SHA-256 over the complete reviewed UTF-8 workflow
+(`c469bedbfe13e74a5831cd50ba5cd51616057c955d29398a2a98b0dfcd7527dc`) as its
+immutable authority; it does not reconstruct GitHub semantics through a hand
+parser or trust a value stored only in the mutable workflow. Readable semantic
+assertions still bind the manual Windows-only trigger, pre-checkout SHA gate,
+least permissions, pinned actions, exact independent verifier, exact handoff
+sources, and verifier-before-upload ordering. The focused replacement-workflow
+contract suite passes 35 tests, including quoted control keys, alternate paths,
+post-verifier mutation, duplicate steps/keys, YAML indirection and tags,
+scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
+source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
 
