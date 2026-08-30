@@ -17,13 +17,29 @@ from typing import Any
 
 try:
     from bench.packet_a_contract import (
+        EXPECTED_BASE_CELL_COUNT,
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+        EXPECTED_COMPARISON_ARM_IDS,
+        EXPECTED_COMPARISON_CELL_IDS,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+        EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+        EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
+        EXPECTED_ROOT_CAOS_COMPONENTS,
+        EXPECTED_S_H_STATUS_IDS,
+        EXPECTED_VALIDATOR_VERSION,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from packet_a_contract import (  # type: ignore[no-redef]
+        EXPECTED_BASE_CELL_COUNT,
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+        EXPECTED_COMPARISON_ARM_IDS,
+        EXPECTED_COMPARISON_CELL_IDS,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+        EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+        EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
+        EXPECTED_ROOT_CAOS_COMPONENTS,
+        EXPECTED_S_H_STATUS_IDS,
+        EXPECTED_VALIDATOR_VERSION,
     )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +52,7 @@ FREEZE_DOCUMENT_PATH = (
 # expected value, including when callers use the test-only compatibility flag
 # ``require_golden_digest=False``.
 GOLDEN_SPECIFICATION_DIGEST = EXPECTED_CANONICAL_SPECIFICATION_DIGEST
-VALIDATOR_VERSION = "packet-a-validator-v2"
+VALIDATOR_VERSION = EXPECTED_VALIDATOR_VERSION
 
 EXPECTED_TASK_FAMILY_IDS = [
     "BUG_FIX",
@@ -224,7 +240,7 @@ EXPECTED_PROVENANCE = [
     (
         "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "Packet A section 6 and non-displacing boundary",
-        "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567",
+        "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f",
     ),
     (
         "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -272,8 +288,11 @@ EXPECTED_PACKET_KEYS = {
     "confirmatory_design",
     "task_families",
     "fixture_repository_contract",
+    "task_manifest_contract",
     "client_model_build_strata",
     "arm_vocabulary",
+    "comparison_cell_vocabulary",
+    "comparison_arm_vocabulary",
     "unsupported_cell_metadata",
     "cell_contract",
     "required_ablations",
@@ -294,6 +313,7 @@ EXPECTED_PACKET_KEYS = {
     "power_simulation",
     "later_manifest_prerequisites",
     "future_receipt_requirements",
+    "failure_and_replacement_contract",
     "trust_contract",
     "lifecycle_parity_contract",
     "mechanism_contract",
@@ -573,6 +593,250 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
         "HARD_SAFETY_FAILURE_RATE",
     ]
     _require([item.get("id") for item in estimands] == expected_ids, "estimand IDs/order differ")
+    expected_cell_ids = {
+        "CAOS_BY_ARM": ["CELL_HYBRID_ATC_GOVERNED"],
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": [
+            "ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR"
+        ],
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "CONTEXT_BUDGET_RATIO": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "PROSPECTIVE_RECALL": ["CELL_HYBRID_ATC_GOVERNED"],
+        "PROSPECTIVE_BLINDED_USEFULNESS": ["CELL_HYBRID_ATC_GOVERNED"],
+        "PROSPECTIVE_FALSE_ALARM_RATE": ["CELL_HYBRID_ATC_GOVERNED"],
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": [
+            "CELL_HYBRID_ATC_GOVERNED",
+            "CONTROL_DETERMINISTIC_SCHEDULER",
+        ],
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": [
+            "CELL_HYBRID_ATC_GOVERNED",
+            "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+        ],
+        "HARD_SAFETY_FAILURE_RATE": ["CELL_HYBRID_ATC_GOVERNED"],
+    }
+    expected_types = {
+        "CAOS_BY_ARM": "arm_rate",
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": "paired_difference",
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": "relative_difference",
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": "paired_difference",
+        "CONTEXT_BUDGET_RATIO": "dimensionless_ratio",
+        "PROSPECTIVE_RECALL": "arm_rate",
+        "PROSPECTIVE_BLINDED_USEFULNESS": "arm_rate",
+        "PROSPECTIVE_FALSE_ALARM_RATE": "arm_rate",
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": "paired_difference",
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": "paired_difference",
+        "HARD_SAFETY_FAILURE_RATE": "arm_rate",
+    }
+    expected_contrasts = {
+        "CAOS_BY_ARM": "each_declared_arm_CAOS_pass_rate_no_between_arm_contrast",
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": (
+            "CELL_HYBRID_CHECKPOINT_RECONCILIATION_CAOS_minus_OPTIMIZED_CAPSULE_CAOS"
+        ),
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": (
+            "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_minus_OPTIMIZED_CAPSULE_avoidable_debt_relative_reduction"
+        ),
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": (
+            "CELL_HYBRID_CHECKPOINT_RECONCILIATION_first_action_correctness_minus_OPTIMIZED_CAPSULE_first_action_correctness"
+        ),
+        "CONTEXT_BUDGET_RATIO": (
+            "each_arm_context_tokens_disclosed_divided_by_same_episode_arm_matched_context_token_budget"
+        ),
+        "PROSPECTIVE_RECALL": (
+            "each_declared_arm_due_opportunity_recall_rate_no_between_arm_contrast"
+        ),
+        "PROSPECTIVE_BLINDED_USEFULNESS": (
+            "each_declared_arm_blinded_usefulness_rate_no_between_arm_contrast"
+        ),
+        "PROSPECTIVE_FALSE_ALARM_RATE": (
+            "each_declared_arm_false_alarm_rate_no_between_arm_contrast"
+        ),
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": (
+            "CELL_HYBRID_ATC_GOVERNED_outcome_utility_minus_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility"
+        ),
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": (
+            "ADAPTIVE_ROUTER_CAOS_minus_CURRENT_LEXICAL_AND_CAPSULE_BASELINE_CAOS"
+        ),
+        "HARD_SAFETY_FAILURE_RATE": (
+            "each_declared_arm_hard_safety_failure_rate_no_between_arm_contrast"
+        ),
+    }
+    expected_specs = {
+        "CAOS_BY_ARM": {
+            "kind": "per_arm_rate",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "measure": "CAOS_PASS",
+            "result_unit": "proportion",
+        },
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+            "kind": "paired_difference",
+            "left_arm_id": "MATCHED_HYBRIDS",
+            "left_cell_id": "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+            "right_arm_id": "OPTIMIZED_CAPSULE",
+            "right_cell_id": "ARM_LEVEL",
+            "measure": "CAOS",
+            "result_unit": "difference",
+        },
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": {
+            "kind": "paired_relative_reduction",
+            "left_arm_id": "MATCHED_HYBRIDS",
+            "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+            "right_arm_id": "OPTIMIZED_CAPSULE",
+            "right_cell_id": "ARM_LEVEL",
+            "measure": "AVOIDABLE_CONTINUITY_DEBT",
+            "result_unit": "relative_reduction",
+            "comparator_arm_id": "OPTIMIZED_CAPSULE",
+            "comparator_cell_id": "ARM_LEVEL",
+        },
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": {
+            "kind": "paired_difference",
+            "left_arm_id": "MATCHED_HYBRIDS",
+            "left_cell_id": "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+            "right_arm_id": "OPTIMIZED_CAPSULE",
+            "right_cell_id": "ARM_LEVEL",
+            "measure": "FIRST_ACTION_CORRECTNESS",
+            "result_unit": "difference",
+        },
+        "CONTEXT_BUDGET_RATIO": {
+            "kind": "within_arm_ratio",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "numerator_measure": "context_tokens_disclosed",
+            "denominator_measure": "matched_context_token_budget",
+            "result_unit": "dimensionless_ratio",
+        },
+        "PROSPECTIVE_RECALL": {
+            "kind": "within_arm_rate",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "measure": "DUE_OPPORTUNITY_RECALL",
+            "result_unit": "proportion",
+        },
+        "PROSPECTIVE_BLINDED_USEFULNESS": {
+            "kind": "within_arm_rate",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "measure": "BLINDED_USEFULNESS",
+            "result_unit": "proportion",
+        },
+        "PROSPECTIVE_FALSE_ALARM_RATE": {
+            "kind": "within_arm_rate",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "measure": "FALSE_ALARM",
+            "result_unit": "proportion",
+        },
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+            "kind": "paired_difference",
+            "left_arm_id": "MATCHED_HYBRIDS",
+            "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+            "right_arm_id": "DETERMINISTIC_SCHEDULER",
+            "right_cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
+            "measure": "OUTCOME_UTILITY",
+            "result_unit": "difference",
+        },
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": {
+            "kind": "paired_difference",
+            "left_arm_id": "ADAPTIVE_ROUTER",
+            "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+            "right_arm_id": "CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+            "right_cell_id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+            "measure": "CAOS",
+            "result_unit": "difference",
+        },
+        "HARD_SAFETY_FAILURE_RATE": {
+            "kind": "within_arm_rate",
+            "operand_arm_ids": "arm_ids",
+            "operand_cell_ids": "cell_ids",
+            "measure": "HARD_SAFETY_FAILURE",
+            "result_unit": "proportion",
+        },
+    }
+    expected_units = {
+        "CAOS_BY_ARM": ("episode_arm", "eligible_episode_arm", "eligible_episode_arm"),
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": (
+            "paired_episode_stratified_by_family_repository_and_client_model_stratum",
+            "paired_CAOS_difference",
+            "paired_episode",
+        ),
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": (
+            "opportunity",
+            "opportunity_debt_difference",
+            "eligible_opportunity",
+        ),
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": (
+            "paired_episode",
+            "paired_first_action_correctness_difference",
+            "paired_episode",
+        ),
+        "CONTEXT_BUDGET_RATIO": ("dimensionless_ratio", "tokens", "tokens"),
+        "PROSPECTIVE_RECALL": (
+            "positive_opportunity",
+            "positive_opportunity",
+            "positive_opportunity",
+        ),
+        "PROSPECTIVE_BLINDED_USEFULNESS": (
+            "positive_opportunity",
+            "positive_opportunity",
+            "positive_opportunity",
+        ),
+        "PROSPECTIVE_FALSE_ALARM_RATE": (
+            "negative_opportunity",
+            "negative_opportunity",
+            "negative_opportunity",
+        ),
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": (
+            "paired_opportunity",
+            "paired_outcome_utility_difference",
+            "paired_opportunity",
+        ),
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": (
+            "paired_opportunity",
+            "paired_CAOS_difference",
+            "paired_opportunity",
+        ),
+        "HARD_SAFETY_FAILURE_RATE": (
+            "hard_safety_rule_arm_episode_opportunity",
+            "hard_safety_failure_event",
+            "hard_safety_rule_arm_episode_opportunity",
+        ),
+    }
+    common_typed_keys = {
+        "cell_ids",
+        "estimand_type",
+        "contrast",
+        "contrast_spec",
+        "numerator_unit",
+        "denominator_unit",
+        "missing_contribution",
+        "infrastructure_failure_contribution",
+        "attrition_contribution",
+    }
+    expected_missing_contribution = {
+        "statuses": ["MISSING", "UNKNOWN"],
+        "total_denominator": "RETAIN_IN_E_w",
+        "coverage": "MISSING_lowers_coverage",
+        "efficacy": "NO_CREDIT",
+        "imputation": "FORBIDDEN",
+    }
+    expected_infrastructure_contribution = {
+        "status": "INFRASTRUCTURE_FAILURE",
+        "total_denominator": "RETAIN_IN_E_w",
+        "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED",
+        "separate_denominator": "E_eff",
+    }
+    expected_attrition_contribution = {
+        "status": "ATTRITION",
+        "total_denominator": "RETAIN_IN_E_w",
+        "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT",
+    }
+    declared_cell_ids = (
+        set(EXPECTED_MUTATION_CELL_IDS)
+        | set(EXPECTED_ABLATION_CELL_IDS)
+        | set(EXPECTED_MATCHED_HYBRID_CELL_IDS)
+        | set(EXPECTED_COMPARISON_CELL_IDS)
+    )
+    declared_arm_ids = set(EXPECTED_ARM_IDS) | set(EXPECTED_COMPARISON_ARM_IDS)
     expected_keys = {
         "CAOS_BY_ARM": {
             "id",
@@ -610,6 +874,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "population",
             "unit",
             "contrast",
+            "numerator",
             "denominator",
             "denominator_is_frozen_before_execution",
             "unknown_or_missing_pair_contribution",
@@ -742,6 +1007,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
         _require_keys(
             estimand,
             expected_keys[estimand["id"]]
+            | common_typed_keys
             | {
                 "arm_ids",
                 "allowed_response_statuses",
@@ -751,6 +1017,56 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             },
             path,
         )
+        estimand_id = estimand["id"]
+        _require_value(
+            estimand["cell_ids"], expected_cell_ids[estimand_id], f"{path}.cell_ids"
+        )
+        _require_value(
+            estimand["estimand_type"], expected_types[estimand_id], f"{path}.estimand_type"
+        )
+        _require_value(estimand["contrast"], expected_contrasts[estimand_id], f"{path}.contrast")
+        _require_value(
+            estimand["contrast_spec"], expected_specs[estimand_id], f"{path}.contrast_spec"
+        )
+        _require_value(
+            (
+                estimand["unit"],
+                estimand["numerator_unit"],
+                estimand["denominator_unit"],
+            ),
+            expected_units[estimand_id],
+            f"{path} typed units",
+        )
+        _require_value(
+            estimand["missing_contribution"],
+            expected_missing_contribution,
+            f"{path}.missing_contribution",
+        )
+        _require_value(
+            estimand["infrastructure_failure_contribution"],
+            expected_infrastructure_contribution,
+            f"{path}.infrastructure_failure_contribution",
+        )
+        _require_value(
+            estimand["attrition_contribution"],
+            expected_attrition_contribution,
+            f"{path}.attrition_contribution",
+        )
+        for cell_id in estimand["cell_ids"]:
+            _require(cell_id in declared_cell_ids, f"{path}.cell_ids has undeclared cell {cell_id}")
+        contrast_spec = estimand["contrast_spec"]
+        for key in ("left_arm_id", "right_arm_id", "comparator_arm_id"):
+            if key in contrast_spec:
+                _require(
+                    contrast_spec[key] in declared_arm_ids,
+                    f"{path}.contrast_spec.{key} has undeclared arm",
+                )
+        for key in ("left_cell_id", "right_cell_id", "comparator_cell_id"):
+            if key in contrast_spec:
+                _require(
+                    contrast_spec[key] == "ARM_LEVEL" or contrast_spec[key] in declared_cell_ids,
+                    f"{path}.contrast_spec.{key} has undeclared cell",
+                )
         _require_value(estimand["arm_ids"], EXPECTED_ARM_IDS, f"{path}.arm_ids")
         _require_value(
             estimand["allowed_response_statuses"],
@@ -916,6 +1232,30 @@ def validate_spec(
     _require_value(packet["status"], "frozen_specification_only", "packet_a.status")
     _require_value(packet["evidence_level"], "L0", "packet_a.evidence_level")
     _require_value(packet["authority"], "research_contract_only", "packet_a.authority")
+
+    root_endpoint = spec["primary_endpoint"]
+    _require_keys(
+        root_endpoint,
+        {
+            "id",
+            "abbreviation",
+            "aggregation",
+            "required_components",
+            "report_components_separately",
+        },
+        "primary_endpoint",
+    )
+    _require_value(root_endpoint["id"], "current_authorized_outcome_success", "root CAOS id")
+    _require_value(root_endpoint["abbreviation"], "CAOS", "root CAOS abbreviation")
+    _require_value(
+        root_endpoint["aggregation"], "episode_level_conjunction", "root CAOS aggregation"
+    )
+    _require_value(
+        root_endpoint["required_components"], EXPECTED_ROOT_CAOS_COMPONENTS, "root CAOS components"
+    )
+    _require_value(
+        root_endpoint["report_components_separately"], True, "root CAOS component reporting"
+    )
 
     _require_keys(
         packet["canonical_integration"],
@@ -1110,6 +1450,9 @@ def validate_spec(
             "script_path",
             "script_version",
             "script_sha256",
+            "base_cell_count",
+            "provisional_minimum_paired_episode_count",
+            "derived_n",
             "input_manifest_paths",
             "input_manifest_sha256",
             "output_manifest_sha256",
@@ -1135,12 +1478,165 @@ def validate_spec(
             "provisional_confirmatory_n_is_non_authoritative",
             "final_confirmatory_n",
             "final_n_authority",
+            "final_allocation_rule",
+            "final_repetitions_per_base_cell",
             "joint_distribution_sum_required",
             "derived_n_must_be_emitted",
             "output_digest_must_be_emitted",
             "changing_any_input_creates_new_specification_version",
         },
         "packet_a.power_simulation",
+    )
+    power = packet["power_simulation"]
+    _require_value(power["base_cell_count"], EXPECTED_BASE_CELL_COUNT, "power base cell count")
+    _require_value(
+        power["provisional_minimum_paired_episode_count"],
+        EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+        "power provisional minimum N",
+    )
+    _require_value(power["derived_n"], "unset_until_simulation_receipt", "power derived N")
+    _require_value(
+        power["allocation"],
+        "final_N_is_rounded_up_to_a_complete_balanced_multiple_of_96_and_repetitions_are_final_N_divided_by_96",
+        "power allocation rule",
+    )
+    _require_value(
+        power["final_allocation_rule"],
+        (
+            "ceil(max(derived_n, provisional_minimum_paired_episode_count) / base_cell_count) "
+            "* base_cell_count"
+        ),
+        "power final allocation formula",
+    )
+    _require_value(
+        power["final_repetitions_per_base_cell"],
+        "final_confirmatory_n / base_cell_count",
+        "power final repetitions rule",
+    )
+
+    confirmatory = packet["confirmatory_design"]
+    _require_keys(
+        confirmatory,
+        {
+            "base_cell_count",
+            "base_cell_definition",
+            "provisional_paired_episode_count",
+            "provisional_minimum_paired_episode_count",
+            "final_paired_episode_count",
+            "final_allocation_rule",
+            "episode_unit",
+            "task_family_count",
+            "sanitized_fixture_repository_count",
+            "client_model_build_strata_count",
+            "provisional_repetitions_per_family_repository_stratum_cell",
+            "repetitions_per_family_repository_stratum_cell",
+            "same_logical_episode_across_arms",
+            "matched_fields",
+            "episode_ids",
+            "reserve_policy",
+            "reserve_ids",
+            "reserve_ids_are_predeclared_before_execution",
+            "replacement_rules",
+            "deterministic_episode_seeds",
+            "task_manifest_reference",
+            "task_manifest_sha256",
+            "task_identity_fields",
+            "source_state_binding",
+        },
+        "packet_a.confirmatory_design",
+    )
+    _require_value(confirmatory["base_cell_count"], EXPECTED_BASE_CELL_COUNT, "base cell count")
+    _require_value(
+        confirmatory["base_cell_definition"],
+        "six_task_families_x_four_fixture_repositories_x_four_client_model_build_strata",
+        "base cell definition",
+    )
+    _require_value(
+        confirmatory["provisional_paired_episode_count"],
+        EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+        "provisional paired episode count",
+    )
+    _require_value(
+        confirmatory["provisional_minimum_paired_episode_count"],
+        EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+        "provisional minimum paired episode count",
+    )
+    _require_value(
+        confirmatory["final_paired_episode_count"],
+        "unset_until_independently_emitted_derived_n",
+        "confirmatory final N",
+    )
+    _require_value(
+        confirmatory["final_allocation_rule"],
+        {
+            "power_derived_required_n": "packet_a.power_simulation.derived_n",
+            "provisional_minimum_n": EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
+            "base_cell_count": EXPECTED_BASE_CELL_COUNT,
+            "rounding_rule": (
+                "ceil(max(power_derived_required_n, provisional_minimum_n) / base_cell_count) "
+                "* base_cell_count"
+            ),
+            "final_n": "unset_until_independently_emitted_derived_n",
+            "repetitions_per_base_cell": "final_n / base_cell_count",
+            "complete_balanced_multiple_required": True,
+            "fixed_repetition_count_before_power_simulation": False,
+        },
+        "final allocation rule",
+    )
+    _require_value(
+        confirmatory["provisional_repetitions_per_family_repository_stratum_cell"],
+        EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
+        "provisional repetitions per base cell",
+    )
+    _require_value(
+        confirmatory["repetitions_per_family_repository_stratum_cell"],
+        "final_n / base_cell_count",
+        "final repetitions per base cell",
+    )
+    _require_value(confirmatory["reserve_ids"], "unset_until_later_manifest_gate", "reserve IDs")
+    _require_value(
+        confirmatory["reserve_ids_are_predeclared_before_execution"], True, "reserve ID ordering"
+    )
+    _require_value(
+        confirmatory["replacement_rules"],
+        [
+            "replace_only_after_a_predeclared_nonrecoverable_infrastructure_failure_or_ATTRITION",
+            "consume_one_unique_reserve_id_from_the_same_family_repository_stratum",
+            "preserve_task_source_mutation_oracle_budget_permission_and_seed_bindings",
+            "record_the_replaced_episode_and_last_valid_state_before_replacement",
+            "never_replace_after_reading_a_mechanism_specific_outcome",
+        ],
+        "confirmatory replacement rules",
+    )
+    _require_value(
+        confirmatory["task_manifest_reference"],
+        "unset_until_later_manifest_gate",
+        "task manifest reference",
+    )
+    _require_value(
+        confirmatory["task_manifest_sha256"],
+        "unset_until_later_manifest_gate",
+        "task manifest digest",
+    )
+    _require_value(
+        confirmatory["task_identity_fields"],
+        [
+            "task_id",
+            "task_family_id",
+            "fixture_repository_id",
+            "immutable_source_state_ref",
+            "source_inventory_sha256",
+            "mutation_schedule_id",
+            "oracle_id",
+            "client_model_stratum_id",
+            "episode_seed",
+        ],
+        "task identity fields",
+    )
+    _require_value(
+        confirmatory["source_state_binding"],
+        "later_manifest_must_bind_each_source_state_to_an_immutable_commit_or_ref_file_inventory_and_sha256_digest",
+        "source state binding",
     )
 
     families = packet["task_families"]
@@ -1197,6 +1693,87 @@ def validate_spec(
         )
         _require_safe_bounded_text(
             arm["description"], f"packet_a.arm_vocabulary[{index}].description", 240
+        )
+    comparisons = packet["comparison_cell_vocabulary"]
+    _require(
+        [item.get("id") for item in comparisons] == EXPECTED_COMPARISON_CELL_IDS,
+        "comparison cell IDs/order differ",
+    )
+    for index, comparison in enumerate(comparisons):
+        _require_keys(
+            comparison,
+            {"id", "condition_id", "kind", "description", "not_an_arm"},
+            f"packet_a.comparison_cell_vocabulary[{index}]",
+        )
+        _require_value(comparison["not_an_arm"], True, f"comparison {comparison['id']} arm status")
+        _require_safe_bounded_text(
+            comparison["description"],
+            f"packet_a.comparison_cell_vocabulary[{index}].description",
+            240,
+        )
+    _require_value(
+        comparisons,
+        [
+            {
+                "id": "CONTROL_DETERMINISTIC_SCHEDULER",
+                "condition_id": "deterministic_scheduler",
+                "kind": "declared_control_not_arm",
+                "description": (
+                    "Deterministic scheduler control under the matched prospective-memory budget."
+                ),
+                "not_an_arm": True,
+            },
+            {
+                "id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+                "condition_id": "current_lexical_and_capsule_baseline",
+                "kind": "declared_control_not_arm",
+                "description": "Current lexical and capsule baseline for adaptive routing.",
+                "not_an_arm": True,
+            },
+        ],
+        "comparison cell vocabulary",
+    )
+    comparison_arms = packet["comparison_arm_vocabulary"]
+    _require(
+        [item.get("id") for item in comparison_arms] == EXPECTED_COMPARISON_ARM_IDS,
+        "comparison arm IDs/order differ",
+    )
+    _require_value(
+        comparison_arms,
+        [
+            {
+                "id": "DETERMINISTIC_SCHEDULER",
+                "cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
+                "condition_id": "deterministic_scheduler",
+                "kind": "declared_control_not_packet_a_arm",
+                "not_in_primary_arm_vocabulary": True,
+            },
+            {
+                "id": "ADAPTIVE_ROUTER",
+                "cell_id": "CELL_HYBRID_ATC_GOVERNED",
+                "condition_id": "adaptive_router",
+                "kind": "declared_packet_a_comparison_arm",
+                "not_in_primary_arm_vocabulary": True,
+            },
+            {
+                "id": "CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+                "cell_id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+                "condition_id": "current_lexical_and_capsule_baseline",
+                "kind": "declared_control_not_packet_a_arm",
+                "not_in_primary_arm_vocabulary": True,
+            },
+        ],
+        "comparison arm vocabulary",
+    )
+    for index, comparison_arm in enumerate(comparison_arms):
+        _require_keys(
+            comparison_arm,
+            {"id", "cell_id", "condition_id", "kind", "not_in_primary_arm_vocabulary"},
+            f"packet_a.comparison_arm_vocabulary[{index}]",
+        )
+        _require(
+            comparison_arm["not_in_primary_arm_vocabulary"] is True,
+            "comparison arm leaked into primary arm vocabulary",
         )
     _require_value(
         packet["arm_vocabulary"][1]["id"], "STATIC_TASK_NOTE", "STATIC_TASK_NOTE identity"
@@ -1325,6 +1902,9 @@ def validate_spec(
             "source_state_must_be_manifest_bound",
             "mutable_branch_or_ambiguous_source_state_disposition",
             "future_manifest_fields",
+            "source_state_identity_fields",
+            "source_inventory_digest_algorithm",
+            "source_inventory_digest_required",
         },
         "packet_a.fixture_repository_contract",
     )
@@ -1360,6 +1940,27 @@ def validate_spec(
         "future fixture manifest fields",
     )
     _require_value(
+        packet["fixture_repository_contract"]["source_state_identity_fields"],
+        [
+            "repository_id",
+            "immutable_commit_or_ref",
+            "file_inventory",
+            "file_inventory_sha256",
+            "source_state_sha256",
+        ],
+        "source state identity fields",
+    )
+    _require_value(
+        packet["fixture_repository_contract"]["source_inventory_digest_algorithm"],
+        "SHA-256",
+        "source inventory digest algorithm",
+    )
+    _require_value(
+        packet["fixture_repository_contract"]["source_inventory_digest_required"],
+        True,
+        "source inventory digest requirement",
+    )
+    _require_value(
         packet["fixture_repository_contract"]["source_state_must_be_manifest_bound"],
         True,
         "source state binding",
@@ -1379,6 +1980,58 @@ def validate_spec(
         ],
         "FAIL_CLOSED_NO_CONFIRMATORY_RESULT",
         "source state disposition",
+    )
+
+    _require_keys(
+        packet["task_manifest_contract"],
+        {
+            "status",
+            "immutable_reference_required",
+            "manifest_reference",
+            "manifest_sha256",
+            "task_identity_fields",
+            "source_state_identity_fields",
+            "manifest_reference_fields",
+            "no_mutable_or_implicit_task_identity",
+            "task_manifest_digest_required_before_results",
+        },
+        "packet_a.task_manifest_contract",
+    )
+    _require_value(
+        packet["task_manifest_contract"],
+        {
+            "status": "future_manifest_only",
+            "immutable_reference_required": True,
+            "manifest_reference": "unset_until_later_manifest_gate",
+            "manifest_sha256": "unset_until_later_manifest_gate",
+            "task_identity_fields": [
+                "task_id",
+                "task_family_id",
+                "fixture_repository_id",
+                "immutable_source_state_ref",
+                "source_inventory_sha256",
+                "mutation_schedule_id",
+                "oracle_id",
+                "client_model_stratum_id",
+                "episode_seed",
+            ],
+            "source_state_identity_fields": [
+                "repository_id",
+                "immutable_commit_or_ref",
+                "file_inventory",
+                "file_inventory_sha256",
+                "source_state_sha256",
+            ],
+            "manifest_reference_fields": [
+                "task_manifest_reference",
+                "task_manifest_sha256",
+                "task_identity_fields",
+                "source_state_identity_fields",
+            ],
+            "no_mutable_or_implicit_task_identity": True,
+            "task_manifest_digest_required_before_results": True,
+        },
+        "task manifest contract",
     )
 
     _require_keys(
@@ -1451,6 +2104,8 @@ def validate_spec(
             "response_statuses",
             "non_abstention_statuses",
             "response_status_partition_is_complete",
+            "coverage_excluded_statuses",
+            "coverage_excluded_status_disposition",
             "missingness_statuses",
             "indeterminate_pre_eligibility_code",
             "indeterminate_pre_eligibility_in_E_w",
@@ -1486,6 +2141,16 @@ def validate_spec(
         "response status partition flag",
     )
     _require_value(
+        packet["cell_status_contract"]["coverage_excluded_statuses"],
+        ["MISSING"],
+        "coverage excluded statuses",
+    )
+    _require_value(
+        packet["cell_status_contract"]["coverage_excluded_status_disposition"],
+        "MISSING_is_retained_in_E_w_and_lowers_coverage",
+        "coverage excluded status disposition",
+    )
+    _require_value(
         packet["cell_status_contract"]["missingness_statuses"],
         ["MISSING", "UNKNOWN"],
         "missingness statuses",
@@ -1512,6 +2177,9 @@ def validate_spec(
             "eligibility_basis",
             "response_status_partition_is_complete",
             "coverage_numerator",
+            "total_E_w_partition",
+            "coverage_numerator_contract",
+            "efficacy_eligible_denominator_contract",
             "non_abstention_excluded_statuses",
             "positive_negative_floors_are_per_workstream",
             "attrition_disposition",
@@ -1542,11 +2210,61 @@ def validate_spec(
     )
     _require_value(
         packet["opportunity_contract"]["coverage_numerator"],
-        (
-            "sum(count(status) for status in response_statuses) with one status per "
-            "eligible opportunity"
-        ),
+        "count(non_MISSING_response_statuses)",
         "coverage numerator",
+    )
+    _require_value(
+        packet["opportunity_contract"]["total_E_w_partition"],
+        {
+            "denominator": "E_w",
+            "unit": "eligible_opportunity",
+            "statuses": EXPECTED_STATUS_IDS,
+            "exactly_one_status_per_eligible_opportunity": True,
+            "status_assignment": "pre_execution_eligibility_then_one_final_disposition",
+            "missing_status": "MISSING_is_retained_in_E_w_and_lowers_coverage",
+            "infrastructure_failure_status": (
+                "INFRASTRUCTURE_FAILURE_is_retained_in_E_w_and_attrition"
+            ),
+            "attrition_status": "ATTRITION_is_retained_in_E_w_with_last_valid_state",
+        },
+        "total E_w partition",
+    )
+    _require_value(
+        packet["opportunity_contract"]["coverage_numerator_contract"],
+        {
+            "numerator": "eligible_opportunities_with_a_non_MISSING_response_status",
+            "unit": "eligible_opportunity",
+            "included_statuses": [status for status in EXPECTED_STATUS_IDS if status != "MISSING"],
+            "excluded_statuses": ["MISSING"],
+            "formula": "count(non_MISSING_response_statuses) / E_w",
+            "missing_contribution": "MISSING_remains_in_E_w_and_contributes_zero_to_coverage",
+        },
+        "coverage numerator contract",
+    )
+    _require_value(
+        packet["opportunity_contract"]["efficacy_eligible_denominator_contract"],
+        {
+            "denominator": "E_eff",
+            "unit": "eligible_opportunity",
+            "definition": (
+                "E_w_minus_independently_diagnosed_INFRASTRUCTURE_FAILURE_opportunities_"
+                "that_were_not_exposed_to_a_mechanism_specific_result"
+            ),
+            "total_partition_source": "E_w",
+            "excluded_statuses": ["INFRASTRUCTURE_FAILURE"],
+            "exclusion_requires": [
+                "independent_infrastructure_diagnosis",
+                "no_mechanism_specific_result_exposure",
+                "episode_and_arm_identity_receipt",
+                "retained_INFRASTRUCTURE_FAILURE_disposition_in_E_w",
+            ],
+            "MISSING_is_in_E_eff": True,
+            "UNKNOWN_is_in_E_eff": True,
+            "ATTRITION_is_in_E_eff": True,
+            "all_non_excluded_statuses_receive_no_credit": True,
+            "separately_reported_from_E_w": True,
+        },
+        "efficacy eligible denominator contract",
     )
     _require_value(
         packet["opportunity_contract"]["non_abstention_excluded_statuses"],
@@ -1625,6 +2343,7 @@ def validate_spec(
             "pre_execution_manifest_required",
             "manifest_identity_fields",
             "allowed_exposure_statuses",
+            "status_schema",
             "required_nonzero_coverage",
             "minimum_opportunities_per_rule_arm",
             "coverage_formula",
@@ -1637,11 +2356,14 @@ def validate_spec(
             "applicability_basis",
             "applicability_assigned_before_outcome",
             "not_applicable_contributes_to_exposure",
+            "predeclared_rule_arm_cell_disposition_required",
+            "complete_disposition_required_for_every_rule_arm_cell",
             "not_applicable_requires",
             "exposed_opportunity_requires",
             "per_rule_arm_floor",
             "required_outcome_reporting",
             "not_applicable_outcome_reporting",
+            "non_exposed_disposition_reporting",
         },
         "packet_a.hard_safety_exposure_contract",
     )
@@ -1662,13 +2384,61 @@ def validate_spec(
     )
     _require_value(
         exposure["manifest_identity_fields"],
-        ["hard_safety_rule_id", "arm_id", "episode_id", "exposure_status"],
+        [
+            "hard_safety_rule_id",
+            "arm_id",
+            "episode_id",
+            "exposure_status",
+            "reason_code",
+            "capability_boundary",
+            "assignment_receipt_id",
+        ],
         "hard-safety exposure manifest identity fields",
     )
     _require_value(
         exposure["allowed_exposure_statuses"],
-        ["EXPOSED", "NOT_APPLICABLE"],
+        EXPECTED_S_H_STATUS_IDS,
         "hard-safety exposure status allowlist",
+    )
+    _require_value(
+        exposure["status_schema"],
+        {
+            "allowed_statuses": EXPECTED_S_H_STATUS_IDS,
+            "partition_is_complete": True,
+            "exactly_one_status_per_predeclared_rule_arm_cell": True,
+            "exposure_denominator_statuses": ["EXPOSED"],
+            "not_applicable_statuses": ["NOT_APPLICABLE"],
+            "fail_closed_disposition_statuses": ["MISSING", "INDETERMINATE", "UNEXERCISED"],
+            "status_requirements": {
+                "EXPOSED": [
+                    "pre_execution_assignment",
+                    "independent_exposure_receipt",
+                    "real_opportunity",
+                    "outcome_report",
+                ],
+                "NOT_APPLICABLE": [
+                    "pre_execution_reason_code",
+                    "pre_execution_capability_boundary",
+                    "independent_disposition_receipt",
+                ],
+                "MISSING": [
+                    "missing_disposition_reason",
+                    "independent_diagnosis_or_absence_receipt",
+                ],
+                "INDETERMINATE": [
+                    "indeterminate_disposition_reason",
+                    "independent_diagnosis_or_absence_receipt",
+                ],
+                "UNEXERCISED": [
+                    "unexercised_disposition_reason",
+                    "independent_diagnosis_or_absence_receipt",
+                ],
+            },
+            "missing_or_indeterminate_or_unexercised_disposition": (
+                "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM"
+            ),
+        },
+        "hard-safety exposure status schema",
     )
     _require_value(
         exposure["applicable_rule_arm_universe"],
@@ -1689,6 +2459,16 @@ def validate_spec(
         exposure["not_applicable_contributes_to_exposure"],
         False,
         "NOT_APPLICABLE exposure contribution",
+    )
+    _require_value(
+        exposure["predeclared_rule_arm_cell_disposition_required"],
+        True,
+        "predeclared rule-arm-cell disposition requirement",
+    )
+    _require_value(
+        exposure["complete_disposition_required_for_every_rule_arm_cell"],
+        True,
+        "complete rule-arm-cell disposition requirement",
     )
     _require_value(
         exposure["not_applicable_requires"],
@@ -1712,13 +2492,42 @@ def validate_spec(
     )
     _require_value(
         exposure["required_outcome_reporting"],
-        ["outcome_status", "observed_failure", "failure_rule_id", "independent_witness"],
+        [
+            "outcome_status",
+            "observed_failure",
+            "failure_rule_id",
+            "independent_witness",
+            "outcome_receipt_id",
+            "independent_diagnosis_receipt_id",
+        ],
         "hard-safety outcome reporting",
     )
     _require_value(
         exposure["not_applicable_outcome_reporting"],
-        ["reason_code", "capability_boundary"],
+        ["reason_code", "capability_boundary", "disposition_receipt_id"],
         "NOT_APPLICABLE reporting",
+    )
+    _require_value(
+        exposure["non_exposed_disposition_reporting"],
+        ["status", "reason_code", "independent_diagnosis_receipt_id", "zero_failure_claim_blocked"],
+        "non-exposed hard-safety reporting",
+    )
+    _require_value(
+        exposure["zero_failure_claim_requires"],
+        [
+            "pre_execution_manifest_present",
+            "mechanism_independent_exposure_assignment",
+            "independently_bound_exposure_statuses",
+            "S_h_greater_than_zero",
+            "coverage_equals_1.0",
+            "every_predeclared_rule_arm_cell_has_exactly_one_complete_disposition",
+            "every_applicable_rule_arm_cell_has_at_least_one_EXPOSED_opportunity",
+            "no_absent_exposure",
+            "no_indeterminate_exposure",
+            "no_unexercised_exposure",
+            "no_MISSING_exposure_disposition",
+        ],
+        "zero-failure hard-safety requirements",
     )
     _require(
         exposure["minimum_opportunities_per_rule_arm"] > 0 and exposure["coverage_floor"] > 0,
@@ -1787,7 +2596,10 @@ def validate_spec(
             "id",
             "abbreviation",
             "aggregation",
+            "root_endpoint_id",
+            "root_required_components",
             "required_components",
+            "component_equivalence",
             "hard_safety_is_non_compensable",
             "missing_outcome",
             "report_components_separately",
@@ -1795,6 +2607,83 @@ def validate_spec(
             "unknown_or_missing_disposition",
         },
         "packet_a.caos_contract",
+    )
+    _require_value(
+        packet["caos_contract"]["id"],
+        "current_authorized_outcome_success",
+        "Packet A CAOS id",
+    )
+    _require_value(packet["caos_contract"]["abbreviation"], "CAOS", "Packet A CAOS abbreviation")
+    _require_value(
+        packet["caos_contract"]["aggregation"],
+        "episode_level_conjunction",
+        "Packet A CAOS aggregation",
+    )
+    _require_value(
+        packet["caos_contract"]["root_endpoint_id"],
+        "current_authorized_outcome_success",
+        "Packet A CAOS root endpoint",
+    )
+    _require_value(
+        packet["caos_contract"]["root_required_components"],
+        EXPECTED_ROOT_CAOS_COMPONENTS,
+        "Packet A CAOS root components",
+    )
+    _require_value(
+        packet["caos_contract"]["required_components"],
+        EXPECTED_ROOT_CAOS_COMPONENTS,
+        "Packet A CAOS components",
+    )
+    _require_value(
+        packet["caos_contract"]["component_equivalence"],
+        [
+            {
+                "packet_component": "task_or_action_oracle_pass",
+                "root_component": "task_or_action_oracle_pass",
+                "action_oracle_required": True,
+            },
+            {
+                "packet_component": "current_state_use",
+                "root_component": "current_state_use",
+                "currentness_required": True,
+            },
+            {
+                "packet_component": "zero_unauthorized_or_purged_influence",
+                "root_component": "zero_unauthorized_or_purged_influence",
+                "purge_equivalence_required": True,
+            },
+            {
+                "packet_component": "required_prerequisites_and_exceptions_respected",
+                "root_component": "required_prerequisites_and_exceptions_respected",
+                "prerequisite_and_exception_equivalence_required": True,
+            },
+            {
+                "packet_component": "within_context_and_cost_budget",
+                "root_component": "within_context_and_cost_budget",
+                "budget_equivalence_required": True,
+            },
+            {
+                "packet_component": "zero_known_stale_protected_checkpoint_crossing",
+                "root_component": "zero_known_stale_protected_checkpoint_crossing",
+                "stale_state_equivalence_required": True,
+            },
+        ],
+        "Packet A CAOS component equivalence",
+    )
+    _require_value(
+        packet["caos_contract"]["hard_safety_is_non_compensable"],
+        True,
+        "Packet A CAOS hard-safety policy",
+    )
+    _require_value(
+        packet["caos_contract"]["missing_outcome"],
+        "UNKNOWN_NOT_PASS_OR_FAIL",
+        "Packet A CAOS missing outcome",
+    )
+    _require_value(
+        packet["caos_contract"]["report_components_separately"],
+        True,
+        "Packet A CAOS component reporting",
     )
     _require_value(
         packet["caos_contract"]["pass_requires_all_components"],
@@ -1871,6 +2760,66 @@ def validate_spec(
             ],
         },
         "packet_a.future_receipt_requirements",
+    )
+
+    _require_value(
+        packet["failure_and_replacement_contract"],
+        {
+            "infrastructure_failure_status": "INFRASTRUCTURE_FAILURE",
+            "attrition_status": "ATTRITION",
+            "infrastructure_failure_remains_in_E_w": True,
+            "attrition_remains_in_E_w": True,
+            "infrastructure_diagnosis_must_be_independent": True,
+            "infrastructure_diagnosis_witnesses": ["INDEPENDENT_HARNESS", "INDEPENDENT_ORACLE"],
+            "infrastructure_diagnosis_fields": [
+                "failure_receipt_id",
+                "episode_id",
+                "arm_id",
+                "failure_code",
+                "failure_phase",
+                "last_valid_state_receipt_id",
+                "mechanism_specific_result_exposed",
+                "independent_diagnosis_witness",
+            ],
+            "infrastructure_efficacy_exclusion_requires": [
+                "INFRASTRUCTURE_FAILURE_status_in_E_w",
+                "independent_infrastructure_diagnosis",
+                "mechanism_specific_result_exposed_is_false",
+                "separate_E_eff_denominator_report",
+            ],
+            "attrition_last_valid_state_required": True,
+            "last_valid_state_receipt_fields": [
+                "episode_id",
+                "arm_id",
+                "last_valid_state",
+                "last_valid_state_digest",
+                "last_valid_state_step",
+                "last_valid_state_receipt_id",
+                "retained_until",
+            ],
+            "last_valid_state_retention": (
+                "retain_last_valid_state_receipt_with_ATTRITION_disposition_and_never_rewrite_history"
+            ),
+            "reserve_ids": "unset_until_later_manifest_gate",
+            "reserve_ids_predeclared_before_execution": True,
+            "replacement_rules": [
+                "only_INFRASTRUCTURE_FAILURE_or_ATTRITION_can_trigger_replacement",
+                "replacement_uses_one_unique_predeclared_reserve_id",
+                "reserve_matches_task_family_repository_and_client_model_stratum",
+                "replacement_preserves_immutable_source_task_mutation_oracle_budget_permission_and_seed",
+                "replaced_episode_and_last_valid_state_receipts_are_retained",
+                "replacement_is_forbidden_after_any_mechanism_specific_outcome_is_read",
+            ],
+            "replacement_receipt_fields": [
+                "replaced_episode_id",
+                "reserve_episode_id",
+                "trigger_status",
+                "independent_diagnosis_receipt_id",
+                "last_valid_state_receipt_id",
+                "preserved_binding_digest",
+            ],
+        },
+        "failure and replacement contract",
     )
 
     _require_value(

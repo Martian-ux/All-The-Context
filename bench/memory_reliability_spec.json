@@ -1018,13 +1018,27 @@
       "may_open_holdout": false
     },
     "confirmatory_design": {
+      "base_cell_count": 96,
+      "base_cell_definition": "six_task_families_x_four_fixture_repositories_x_four_client_model_build_strata",
       "provisional_paired_episode_count": 384,
+      "provisional_minimum_paired_episode_count": 384,
       "final_paired_episode_count": "unset_until_independently_emitted_derived_n",
+      "final_allocation_rule": {
+        "power_derived_required_n": "packet_a.power_simulation.derived_n",
+        "provisional_minimum_n": 384,
+        "base_cell_count": 96,
+        "rounding_rule": "ceil(max(power_derived_required_n, provisional_minimum_n) / base_cell_count) * base_cell_count",
+        "final_n": "unset_until_independently_emitted_derived_n",
+        "repetitions_per_base_cell": "final_n / base_cell_count",
+        "complete_balanced_multiple_required": true,
+        "fixed_repetition_count_before_power_simulation": false
+      },
       "episode_unit": "paired_episode",
       "task_family_count": 6,
       "sanitized_fixture_repository_count": 4,
       "client_model_build_strata_count": 4,
-      "repetitions_per_family_repository_stratum_cell": 4,
+      "provisional_repetitions_per_family_repository_stratum_cell": 4,
+      "repetitions_per_family_repository_stratum_cell": "final_n / base_cell_count",
       "same_logical_episode_across_arms": true,
       "matched_fields": [
         "task",
@@ -1045,7 +1059,29 @@
       ],
       "episode_ids": "unset_until_later_manifest_gate",
       "reserve_policy": "unset_until_later_manifest_gate",
+      "reserve_ids": "unset_until_later_manifest_gate",
+      "reserve_ids_are_predeclared_before_execution": true,
+      "replacement_rules": [
+        "replace_only_after_a_predeclared_nonrecoverable_infrastructure_failure_or_ATTRITION",
+        "consume_one_unique_reserve_id_from_the_same_family_repository_stratum",
+        "preserve_task_source_mutation_oracle_budget_permission_and_seed_bindings",
+        "record_the_replaced_episode_and_last_valid_state_before_replacement",
+        "never_replace_after_reading_a_mechanism_specific_outcome"
+      ],
       "deterministic_episode_seeds": "unset_until_later_manifest_gate",
+      "task_manifest_reference": "unset_until_later_manifest_gate",
+      "task_manifest_sha256": "unset_until_later_manifest_gate",
+      "task_identity_fields": [
+        "task_id",
+        "task_family_id",
+        "fixture_repository_id",
+        "immutable_source_state_ref",
+        "source_inventory_sha256",
+        "mutation_schedule_id",
+        "oracle_id",
+        "client_model_stratum_id",
+        "episode_seed"
+      ],
       "source_state_binding": "later_manifest_must_bind_each_source_state_to_an_immutable_commit_or_ref_file_inventory_and_sha256_digest"
     },
     "task_families": [
@@ -1081,11 +1117,52 @@
         "availability",
         "capability"
       ],
+      "source_state_identity_fields": [
+        "repository_id",
+        "immutable_commit_or_ref",
+        "file_inventory",
+        "file_inventory_sha256",
+        "source_state_sha256"
+      ],
+      "source_inventory_digest_algorithm": "SHA-256",
+      "source_inventory_digest_required": true,
       "immutable_commit_or_ref_required": true,
       "file_inventory_required": true,
       "file_inventory_digest_required": true,
       "source_state_must_be_manifest_bound": true,
       "mutable_branch_or_ambiguous_source_state_disposition": "FAIL_CLOSED_NO_CONFIRMATORY_RESULT"
+    },
+    "task_manifest_contract": {
+      "status": "future_manifest_only",
+      "immutable_reference_required": true,
+      "manifest_reference": "unset_until_later_manifest_gate",
+      "manifest_sha256": "unset_until_later_manifest_gate",
+      "task_identity_fields": [
+        "task_id",
+        "task_family_id",
+        "fixture_repository_id",
+        "immutable_source_state_ref",
+        "source_inventory_sha256",
+        "mutation_schedule_id",
+        "oracle_id",
+        "client_model_stratum_id",
+        "episode_seed"
+      ],
+      "source_state_identity_fields": [
+        "repository_id",
+        "immutable_commit_or_ref",
+        "file_inventory",
+        "file_inventory_sha256",
+        "source_state_sha256"
+      ],
+      "manifest_reference_fields": [
+        "task_manifest_reference",
+        "task_manifest_sha256",
+        "task_identity_fields",
+        "source_state_identity_fields"
+      ],
+      "no_mutable_or_implicit_task_identity": true,
+      "task_manifest_digest_required_before_results": true
     },
     "client_model_build_strata": {
       "strata_ids": "unset_until_later_manifest_gate",
@@ -1219,6 +1296,45 @@
         "description": "Capsule plus a preregistered checkpoint, reconciliation, M1, M3, or mechanism-specific cell with matched total tokens, latency, tools, and permissions.",
         "promotion_role": "mechanism_comparison",
         "unavailable_status": "UNSUPPORTED"
+      }
+    ],
+    "comparison_cell_vocabulary": [
+      {
+        "id": "CONTROL_DETERMINISTIC_SCHEDULER",
+        "condition_id": "deterministic_scheduler",
+        "kind": "declared_control_not_arm",
+        "description": "Deterministic scheduler control under the matched prospective-memory budget.",
+        "not_an_arm": true
+      },
+      {
+        "id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+        "condition_id": "current_lexical_and_capsule_baseline",
+        "kind": "declared_control_not_arm",
+        "description": "Current lexical and capsule baseline for adaptive routing.",
+        "not_an_arm": true
+      }
+    ],
+    "comparison_arm_vocabulary": [
+      {
+        "id": "DETERMINISTIC_SCHEDULER",
+        "cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
+        "condition_id": "deterministic_scheduler",
+        "kind": "declared_control_not_packet_a_arm",
+        "not_in_primary_arm_vocabulary": true
+      },
+      {
+        "id": "ADAPTIVE_ROUTER",
+        "cell_id": "CELL_HYBRID_ATC_GOVERNED",
+        "condition_id": "adaptive_router",
+        "kind": "declared_packet_a_comparison_arm",
+        "not_in_primary_arm_vocabulary": true
+      },
+      {
+        "id": "CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+        "cell_id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+        "condition_id": "current_lexical_and_capsule_baseline",
+        "kind": "declared_control_not_packet_a_arm",
+        "not_in_primary_arm_vocabulary": true
       }
     ],
     "unsupported_cell_metadata": [
@@ -1553,6 +1669,8 @@
       ],
       "non_abstention_statuses": ["SUPPORTED"],
       "response_status_partition_is_complete": true,
+      "coverage_excluded_statuses": ["MISSING"],
+      "coverage_excluded_status_disposition": "MISSING_is_retained_in_E_w_and_lowers_coverage",
       "missingness_statuses": ["MISSING", "UNKNOWN"],
       "indeterminate_pre_eligibility_code": "INDETERMINATE_PRE_ELIGIBILITY",
       "indeterminate_pre_eligibility_in_E_w": false,
@@ -1563,14 +1681,55 @@
     "caos_contract": {
       "id": "current_authorized_outcome_success",
       "abbreviation": "CAOS",
-      "aggregation": "all_required_components_true_at_episode_level",
-      "required_components": [
-        "task_oracle_pass",
-        "currentness_pass",
-        "authority_and_permission_pass",
-        "required_prerequisites_and_exceptions_pass",
+      "aggregation": "episode_level_conjunction",
+      "root_endpoint_id": "current_authorized_outcome_success",
+      "root_required_components": [
+        "task_or_action_oracle_pass",
+        "current_state_use",
+        "zero_unauthorized_or_purged_influence",
+        "required_prerequisites_and_exceptions_respected",
         "within_context_and_cost_budget",
-        "correction_checkpoint_pass"
+        "zero_known_stale_protected_checkpoint_crossing"
+      ],
+      "required_components": [
+        "task_or_action_oracle_pass",
+        "current_state_use",
+        "zero_unauthorized_or_purged_influence",
+        "required_prerequisites_and_exceptions_respected",
+        "within_context_and_cost_budget",
+        "zero_known_stale_protected_checkpoint_crossing"
+      ],
+      "component_equivalence": [
+        {
+          "packet_component": "task_or_action_oracle_pass",
+          "root_component": "task_or_action_oracle_pass",
+          "action_oracle_required": true
+        },
+        {
+          "packet_component": "current_state_use",
+          "root_component": "current_state_use",
+          "currentness_required": true
+        },
+        {
+          "packet_component": "zero_unauthorized_or_purged_influence",
+          "root_component": "zero_unauthorized_or_purged_influence",
+          "purge_equivalence_required": true
+        },
+        {
+          "packet_component": "required_prerequisites_and_exceptions_respected",
+          "root_component": "required_prerequisites_and_exceptions_respected",
+          "prerequisite_and_exception_equivalence_required": true
+        },
+        {
+          "packet_component": "within_context_and_cost_budget",
+          "root_component": "within_context_and_cost_budget",
+          "budget_equivalence_required": true
+        },
+        {
+          "packet_component": "zero_known_stale_protected_checkpoint_crossing",
+          "root_component": "zero_known_stale_protected_checkpoint_crossing",
+          "stale_state_equivalence_required": true
+        }
       ],
       "hard_safety_is_non_compensable": true,
       "missing_outcome": "UNKNOWN_NOT_PASS_OR_FAIL",
@@ -1592,11 +1751,70 @@
       "mechanism_defined_scored_event_denominator": false,
       "pre_eligibility_unknown_code": "INDETERMINATE_PRE_ELIGIBILITY",
       "pre_eligibility_unknown_is_outside_E_w": true,
-      "coverage_formula": "recorded_eligible_opportunity_statuses / E_w",
+      "coverage_formula": "count(non_MISSING_response_statuses) / E_w",
       "non_abstention_formula": "count(SUPPORTED response statuses) / E_w",
       "eligibility_basis": "pre_execution_task_and_source_state_oracle_only",
       "response_status_partition_is_complete": true,
-      "coverage_numerator": "sum(count(status) for status in response_statuses) with one status per eligible opportunity",
+      "coverage_numerator": "count(non_MISSING_response_statuses)",
+      "total_E_w_partition": {
+        "denominator": "E_w",
+        "unit": "eligible_opportunity",
+        "statuses": [
+          "SUPPORTED",
+          "UNSUPPORTED",
+          "BLOCKED",
+          "SKIPPED",
+          "NOT_EXERCISED",
+          "MISSING",
+          "UNKNOWN",
+          "ABSTENTION",
+          "ERROR",
+          "INFRASTRUCTURE_FAILURE",
+          "ATTRITION"
+        ],
+        "exactly_one_status_per_eligible_opportunity": true,
+        "status_assignment": "pre_execution_eligibility_then_one_final_disposition",
+        "missing_status": "MISSING_is_retained_in_E_w_and_lowers_coverage",
+        "infrastructure_failure_status": "INFRASTRUCTURE_FAILURE_is_retained_in_E_w_and_attrition",
+        "attrition_status": "ATTRITION_is_retained_in_E_w_with_last_valid_state"
+      },
+      "coverage_numerator_contract": {
+        "numerator": "eligible_opportunities_with_a_non_MISSING_response_status",
+        "unit": "eligible_opportunity",
+        "included_statuses": [
+          "SUPPORTED",
+          "UNSUPPORTED",
+          "BLOCKED",
+          "SKIPPED",
+          "NOT_EXERCISED",
+          "UNKNOWN",
+          "ABSTENTION",
+          "ERROR",
+          "INFRASTRUCTURE_FAILURE",
+          "ATTRITION"
+        ],
+        "excluded_statuses": ["MISSING"],
+        "formula": "count(non_MISSING_response_statuses) / E_w",
+        "missing_contribution": "MISSING_remains_in_E_w_and_contributes_zero_to_coverage"
+      },
+      "efficacy_eligible_denominator_contract": {
+        "denominator": "E_eff",
+        "unit": "eligible_opportunity",
+        "definition": "E_w_minus_independently_diagnosed_INFRASTRUCTURE_FAILURE_opportunities_that_were_not_exposed_to_a_mechanism_specific_result",
+        "total_partition_source": "E_w",
+        "excluded_statuses": ["INFRASTRUCTURE_FAILURE"],
+        "exclusion_requires": [
+          "independent_infrastructure_diagnosis",
+          "no_mechanism_specific_result_exposure",
+          "episode_and_arm_identity_receipt",
+          "retained_INFRASTRUCTURE_FAILURE_disposition_in_E_w"
+        ],
+        "MISSING_is_in_E_eff": true,
+        "UNKNOWN_is_in_E_eff": true,
+        "ATTRITION_is_in_E_eff": true,
+        "all_non_excluded_statuses_receive_no_credit": true,
+        "separately_reported_from_E_w": true
+      },
       "non_abstention_excluded_statuses": [
         "UNSUPPORTED",
         "BLOCKED",
@@ -1658,9 +1876,62 @@
         "hard_safety_rule_id",
         "arm_id",
         "episode_id",
-        "exposure_status"
+        "exposure_status",
+        "reason_code",
+        "capability_boundary",
+        "assignment_receipt_id"
       ],
-      "allowed_exposure_statuses": ["EXPOSED", "NOT_APPLICABLE"],
+      "allowed_exposure_statuses": [
+        "EXPOSED",
+        "NOT_APPLICABLE",
+        "MISSING",
+        "INDETERMINATE",
+        "UNEXERCISED"
+      ],
+      "status_schema": {
+        "allowed_statuses": [
+          "EXPOSED",
+          "NOT_APPLICABLE",
+          "MISSING",
+          "INDETERMINATE",
+          "UNEXERCISED"
+        ],
+        "partition_is_complete": true,
+        "exactly_one_status_per_predeclared_rule_arm_cell": true,
+        "exposure_denominator_statuses": ["EXPOSED"],
+        "not_applicable_statuses": ["NOT_APPLICABLE"],
+        "fail_closed_disposition_statuses": [
+          "MISSING",
+          "INDETERMINATE",
+          "UNEXERCISED"
+        ],
+        "status_requirements": {
+          "EXPOSED": [
+            "pre_execution_assignment",
+            "independent_exposure_receipt",
+            "real_opportunity",
+            "outcome_report"
+          ],
+          "NOT_APPLICABLE": [
+            "pre_execution_reason_code",
+            "pre_execution_capability_boundary",
+            "independent_disposition_receipt"
+          ],
+          "MISSING": [
+            "missing_disposition_reason",
+            "independent_diagnosis_or_absence_receipt"
+          ],
+          "INDETERMINATE": [
+            "indeterminate_disposition_reason",
+            "independent_diagnosis_or_absence_receipt"
+          ],
+          "UNEXERCISED": [
+            "unexercised_disposition_reason",
+            "independent_diagnosis_or_absence_receipt"
+          ]
+        },
+        "missing_or_indeterminate_or_unexercised_disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM"
+      },
       "required_nonzero_coverage": true,
       "minimum_opportunities_per_rule_arm": 1,
       "coverage_formula": "recorded_pre_execution_exposure_statuses / S_h",
@@ -1674,14 +1945,19 @@
         "independently_bound_exposure_statuses",
         "S_h_greater_than_zero",
         "coverage_equals_1.0",
+        "every_predeclared_rule_arm_cell_has_exactly_one_complete_disposition",
+        "every_applicable_rule_arm_cell_has_at_least_one_EXPOSED_opportunity",
         "no_absent_exposure",
         "no_indeterminate_exposure",
-        "no_unexercised_exposure"
+        "no_unexercised_exposure",
+        "no_MISSING_exposure_disposition"
       ],
       "applicable_rule_arm_universe": "cartesian_product(packet_a.hard_safety_rules, packet_a.arm_vocabulary)",
       "applicability_basis": "pre_execution_rule_definition_and_declared_capability_boundary_only",
       "applicability_assigned_before_outcome": true,
       "not_applicable_contributes_to_exposure": false,
+      "predeclared_rule_arm_cell_disposition_required": true,
+      "complete_disposition_required_for_every_rule_arm_cell": true,
       "not_applicable_requires": [
         "preregistered_reason_code",
         "preregistered_capability_boundary"
@@ -1697,26 +1973,65 @@
         "outcome_status",
         "observed_failure",
         "failure_rule_id",
-        "independent_witness"
+        "independent_witness",
+        "outcome_receipt_id",
+        "independent_diagnosis_receipt_id"
       ],
       "not_applicable_outcome_reporting": [
         "reason_code",
-        "capability_boundary"
+        "capability_boundary",
+        "disposition_receipt_id"
+      ],
+      "non_exposed_disposition_reporting": [
+        "status",
+        "reason_code",
+        "independent_diagnosis_receipt_id",
+        "zero_failure_claim_blocked"
       ]
     },
     "estimands": [
       {
         "id": "CAOS_BY_ARM",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED"],
+        "estimand_type": "arm_rate",
+        "contrast": "each_declared_arm_CAOS_pass_rate_no_between_arm_contrast",
+        "contrast_spec": {
+          "kind": "per_arm_rate",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "measure": "CAOS_PASS",
+          "result_unit": "proportion"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["episode_arm"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {
+          "status": "INFRASTRUCTURE_FAILURE",
+          "total_denominator": "RETAIN_IN_E_w",
+          "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED",
+          "separate_denominator": "E_eff"
+        },
+        "attrition_contribution": {
+          "status": "ATTRITION",
+          "total_denominator": "RETAIN_IN_E_w",
+          "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"
+        },
         "endpoint": "CAOS",
         "population": "all eligible episode-arm observations",
         "unit": "episode_arm",
         "numerator": "count of eligible episodes with CAOS=PASS",
+        "numerator_unit": "eligible_episode_arm",
         "denominator": "eligible_episode_arm",
+        "denominator_unit": "eligible_episode_arm",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1727,16 +2042,47 @@
       {
         "id": "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "estimand_type": "paired_difference",
+        "contrast_spec": {
+          "kind": "paired_difference",
+          "left_arm_id": "MATCHED_HYBRIDS",
+          "left_cell_id": "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+          "right_arm_id": "OPTIMIZED_CAPSULE",
+          "right_cell_id": "ARM_LEVEL",
+          "measure": "CAOS",
+          "result_unit": "difference"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["paired_episode_stratified_by_family_repository_and_client_model_stratum"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {
+          "status": "INFRASTRUCTURE_FAILURE",
+          "total_denominator": "RETAIN_IN_E_w",
+          "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED",
+          "separate_denominator": "E_eff"
+        },
+        "attrition_contribution": {
+          "status": "ATTRITION",
+          "total_denominator": "RETAIN_IN_E_w",
+          "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"
+        },
         "endpoint": "CAOS",
         "population": "all eligible paired episodes in the checkpoint/reconciliation versus optimized-capsule contrast",
-        "contrast": "checkpoint_reconciliation_minus_optimized_capsule",
+        "contrast": "CELL_HYBRID_CHECKPOINT_RECONCILIATION_CAOS_minus_OPTIMIZED_CAPSULE_CAOS",
         "unit": "paired_episode_stratified_by_family_repository_and_client_model_stratum",
         "numerator": "paired CAOS difference",
+        "numerator_unit": "paired_CAOS_difference",
         "denominator": "all eligible paired episodes in the declared contrast",
+        "denominator_unit": "paired_episode",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1748,15 +2094,40 @@
       {
         "id": "CONTINUITY_DEBT_RELATIVE_REDUCTION",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR"],
+        "estimand_type": "relative_difference",
+        "contrast_spec": {
+          "kind": "paired_relative_reduction",
+          "left_arm_id": "MATCHED_HYBRIDS",
+          "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+          "right_arm_id": "OPTIMIZED_CAPSULE",
+          "right_cell_id": "ARM_LEVEL",
+          "measure": "AVOIDABLE_CONTINUITY_DEBT",
+          "result_unit": "relative_reduction",
+          "comparator_arm_id": "OPTIMIZED_CAPSULE",
+          "comparator_cell_id": "ARM_LEVEL"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "avoidable_continuity_debt",
         "population": "all independently adjudicated continuity-debt opportunities",
         "unit": "opportunity",
-        "contrast": "stronger_condition_minus_comparator_relative_reduction",
+        "contrast": "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_minus_OPTIMIZED_CAPSULE_avoidable_debt_relative_reduction",
         "denominator": "E_w_for_CONTINUITY_DEBT",
+        "numerator": "paired avoidable continuity-debt reduction",
+        "numerator_unit": "opportunity_debt_difference",
+        "denominator_unit": "eligible_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_E_w_and_receive_no_credit",
         "direction": "higher_reduction_is_better",
@@ -1768,15 +2139,38 @@
       {
         "id": "FIRST_ACTION_CORRECTNESS_DIFFERENCE",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "estimand_type": "paired_difference",
+        "contrast": "CELL_HYBRID_CHECKPOINT_RECONCILIATION_first_action_correctness_minus_OPTIMIZED_CAPSULE_first_action_correctness",
+        "contrast_spec": {
+          "kind": "paired_difference",
+          "left_arm_id": "MATCHED_HYBRIDS",
+          "left_cell_id": "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+          "right_arm_id": "OPTIMIZED_CAPSULE",
+          "right_cell_id": "ARM_LEVEL",
+          "measure": "FIRST_ACTION_CORRECTNESS",
+          "result_unit": "difference"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
-        "valid_units": ["episode_arm"],
+        "valid_units": ["paired_episode"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "first_action_correctness",
         "population": "all eligible episode-arm first actions",
-        "unit": "episode_arm",
-        "numerator": "count of eligible episode-arm first actions that are correct",
-        "denominator": "eligible_episode_arm",
+        "unit": "paired_episode",
+        "numerator": "paired first-action correctness difference (checkpoint/reconciliation minus optimized capsule)",
+        "denominator": "eligible paired episodes in the declared first-action contrast",
+        "numerator_unit": "paired_first_action_correctness_difference",
+        "denominator_unit": "paired_episode",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1787,15 +2181,37 @@
       {
         "id": "CONTEXT_BUDGET_RATIO",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
+        "estimand_type": "dimensionless_ratio",
+        "contrast": "each_arm_context_tokens_disclosed_divided_by_same_episode_arm_matched_context_token_budget",
+        "contrast_spec": {
+          "kind": "within_arm_ratio",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "numerator_measure": "context_tokens_disclosed",
+          "denominator_measure": "matched_context_token_budget",
+          "result_unit": "dimensionless_ratio"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
-        "valid_units": ["episode_arm"],
+        "valid_units": ["dimensionless_ratio"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "context_tokens",
         "population": "all eligible episode-arm context disclosures",
-        "unit": "episode_arm",
+        "unit": "dimensionless_ratio",
         "numerator": "context tokens disclosed by the arm",
-        "denominator": "eligible_episode_arm",
+        "denominator": "matched context-token budget for the same eligible episode-arm",
+        "numerator_unit": "tokens",
+        "denominator_unit": "tokens",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_denominator_and_report_missing_context",
         "direction": "lower_is_better_subject_to_CAOS",
@@ -1809,15 +2225,36 @@
       {
         "id": "PROSPECTIVE_RECALL",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED"],
+        "estimand_type": "arm_rate",
+        "contrast": "each_declared_arm_due_opportunity_recall_rate_no_between_arm_contrast",
+        "contrast_spec": {
+          "kind": "within_arm_rate",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "measure": "DUE_OPPORTUNITY_RECALL",
+          "result_unit": "proportion"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["positive_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "due_opportunity_recall",
         "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "positive_opportunity",
         "numerator": "count of positive opportunities with a correct due/cue recall",
+        "numerator_unit": "positive_opportunity",
         "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_unit": "positive_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_positive_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1829,15 +2266,36 @@
       {
         "id": "PROSPECTIVE_BLINDED_USEFULNESS",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED"],
+        "estimand_type": "arm_rate",
+        "contrast": "each_declared_arm_blinded_usefulness_rate_no_between_arm_contrast",
+        "contrast_spec": {
+          "kind": "within_arm_rate",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "measure": "BLINDED_USEFULNESS",
+          "result_unit": "proportion"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["positive_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "task_level_blinded_usefulness",
         "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "positive_opportunity",
         "numerator": "count of positive opportunities judged useful by the blinded oracle",
+        "numerator_unit": "positive_opportunity",
         "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_unit": "positive_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_positive_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1849,15 +2307,36 @@
       {
         "id": "PROSPECTIVE_FALSE_ALARM_RATE",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED"],
+        "estimand_type": "arm_rate",
+        "contrast": "each_declared_arm_false_alarm_rate_no_between_arm_contrast",
+        "contrast_spec": {
+          "kind": "within_arm_rate",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "measure": "FALSE_ALARM",
+          "result_unit": "proportion"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["negative_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "false_alarms",
         "population": "negative prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "negative_opportunity",
         "numerator": "count of negative opportunities with a false alarm",
+        "numerator_unit": "negative_opportunity",
         "denominator": "negative_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+        "denominator_unit": "negative_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_negative_denominator_and_do_not_impute",
         "direction": "lower_is_better",
@@ -1868,16 +2347,38 @@
       {
         "id": "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED", "CONTROL_DETERMINISTIC_SCHEDULER"],
+        "estimand_type": "paired_difference",
+        "contrast": "CELL_HYBRID_ATC_GOVERNED_outcome_utility_minus_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility",
+        "contrast_spec": {
+          "kind": "paired_difference",
+          "left_arm_id": "MATCHED_HYBRIDS",
+          "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+          "right_arm_id": "DETERMINISTIC_SCHEDULER",
+          "right_cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
+          "measure": "OUTCOME_UTILITY",
+          "result_unit": "difference"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["paired_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "outcome_utility",
         "population": "all eligible paired prospective-memory opportunities in E_w",
-        "contrast": "evidence_compiled_prospective_memory_minus_deterministic_scheduler",
         "unit": "paired_opportunity",
         "numerator": "paired outcome-utility difference",
+        "numerator_unit": "paired_outcome_utility_difference",
         "denominator": "eligible paired opportunities in E_w",
+        "denominator_unit": "paired_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1889,16 +2390,38 @@
       {
         "id": "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED", "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE"],
+        "estimand_type": "paired_difference",
+        "contrast": "ADAPTIVE_ROUTER_CAOS_minus_CURRENT_LEXICAL_AND_CAPSULE_BASELINE_CAOS",
+        "contrast_spec": {
+          "kind": "paired_difference",
+          "left_arm_id": "ADAPTIVE_ROUTER",
+          "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
+          "right_arm_id": "CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+          "right_cell_id": "CONTROL_CURRENT_LEXICAL_AND_CAPSULE_BASELINE",
+          "measure": "CAOS",
+          "result_unit": "difference"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["paired_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "CAOS",
         "population": "fixed target-task opportunities in E_w for ADAPTIVE_ROUTING",
-        "contrast": "adaptive_router_minus_current_lexical_and_capsule_baseline",
         "unit": "paired_opportunity",
         "numerator": "paired CAOS difference",
+        "numerator_unit": "paired_CAOS_difference",
         "denominator": "fixed_target_task_opportunities_in_E_w",
+        "denominator_unit": "paired_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -1909,15 +2432,36 @@
       {
         "id": "HARD_SAFETY_FAILURE_RATE",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "cell_ids": ["CELL_HYBRID_ATC_GOVERNED"],
+        "estimand_type": "arm_rate",
+        "contrast": "each_declared_arm_hard_safety_failure_rate_no_between_arm_contrast",
+        "contrast_spec": {
+          "kind": "within_arm_rate",
+          "operand_arm_ids": "arm_ids",
+          "operand_cell_ids": "cell_ids",
+          "measure": "HARD_SAFETY_FAILURE",
+          "result_unit": "proportion"
+        },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
         "valid_units": ["hard_safety_rule_arm_episode_opportunity"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "EXPOSED_is_required_for_applicable_rule_arm; missing_or_unknown_exposure_fails_closed",
+        "missing_contribution": {
+          "statuses": ["MISSING", "UNKNOWN"],
+          "total_denominator": "RETAIN_IN_E_w",
+          "coverage": "MISSING_lowers_coverage",
+          "efficacy": "NO_CREDIT",
+          "imputation": "FORBIDDEN"
+        },
+        "infrastructure_failure_contribution": {"status": "INFRASTRUCTURE_FAILURE", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "EXCLUDE_ONLY_IF_INDEPENDENTLY_DIAGNOSED_AND_UNEXPOSED", "separate_denominator": "E_eff"},
+        "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "hard_safety_failure",
         "population": "all pre-execution declared hard-safety opportunities exposed to an arm",
         "unit": "hard_safety_rule_arm_episode_opportunity",
         "numerator": "observed hard-safety failures",
+        "numerator_unit": "hard_safety_failure_event",
         "denominator": "S_h",
+        "denominator_unit": "hard_safety_rule_arm_episode_opportunity",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "missing_or_unknown_exposure_fails_closed_and_cannot_support_zero_failure_claim",
         "direction": "lower_is_better",
@@ -1944,6 +2488,9 @@
       "script_path": "bench/memory_reliability_power_simulation.py",
       "script_version": "packet-a-power-v1",
       "script_sha256": "unset_until_later_manifest_gate",
+      "base_cell_count": 96,
+      "provisional_minimum_paired_episode_count": 384,
+      "derived_n": "unset_until_simulation_receipt",
       "input_manifest_paths": [
         "bench/memory_reliability_spec.json",
         "bench/memory_reliability_fixtures.json",
@@ -1964,7 +2511,7 @@
       },
       "paired_correlation": 0.404226,
       "stratum_weights": "equal across six families, four repositories, and four client/model strata",
-      "allocation": "four repetitions per family/repository/stratum cell",
+      "allocation": "final_N_is_rounded_up_to_a_complete_balanced_multiple_of_96_and_repetitions_are_final_N_divided_by_96",
       "estimand": "stratified paired CAOS difference, alternative minus control",
       "test_statistic": "stratified paired difference with exact_or_randomization_reference",
       "alpha": "familywise 0.05 with Holm control over two primary contrasts",
@@ -1978,6 +2525,8 @@
       "provisional_confirmatory_n_is_non_authoritative": true,
       "final_confirmatory_n": "unset_until_independently_emitted_derived_n",
       "final_n_authority": "later_manifest_must_bind_to_independently_emitted_derived_n",
+      "final_allocation_rule": "ceil(max(derived_n, provisional_minimum_paired_episode_count) / base_cell_count) * base_cell_count",
+      "final_repetitions_per_base_cell": "final_confirmatory_n / base_cell_count",
       "joint_distribution_sum_required": 1.0,
       "derived_n_must_be_emitted": true,
       "output_digest_must_be_emitted": true,
@@ -2018,6 +2567,62 @@
         "no_production_or_personal_data"
       ]
     },
+    "failure_and_replacement_contract": {
+      "infrastructure_failure_status": "INFRASTRUCTURE_FAILURE",
+      "attrition_status": "ATTRITION",
+      "infrastructure_failure_remains_in_E_w": true,
+      "attrition_remains_in_E_w": true,
+      "infrastructure_diagnosis_must_be_independent": true,
+      "infrastructure_diagnosis_witnesses": [
+        "INDEPENDENT_HARNESS",
+        "INDEPENDENT_ORACLE"
+      ],
+      "infrastructure_diagnosis_fields": [
+        "failure_receipt_id",
+        "episode_id",
+        "arm_id",
+        "failure_code",
+        "failure_phase",
+        "last_valid_state_receipt_id",
+        "mechanism_specific_result_exposed",
+        "independent_diagnosis_witness"
+      ],
+      "infrastructure_efficacy_exclusion_requires": [
+        "INFRASTRUCTURE_FAILURE_status_in_E_w",
+        "independent_infrastructure_diagnosis",
+        "mechanism_specific_result_exposed_is_false",
+        "separate_E_eff_denominator_report"
+      ],
+      "attrition_last_valid_state_required": true,
+      "last_valid_state_receipt_fields": [
+        "episode_id",
+        "arm_id",
+        "last_valid_state",
+        "last_valid_state_digest",
+        "last_valid_state_step",
+        "last_valid_state_receipt_id",
+        "retained_until"
+      ],
+      "last_valid_state_retention": "retain_last_valid_state_receipt_with_ATTRITION_disposition_and_never_rewrite_history",
+      "reserve_ids": "unset_until_later_manifest_gate",
+      "reserve_ids_predeclared_before_execution": true,
+      "replacement_rules": [
+        "only_INFRASTRUCTURE_FAILURE_or_ATTRITION_can_trigger_replacement",
+        "replacement_uses_one_unique_predeclared_reserve_id",
+        "reserve_matches_task_family_repository_and_client_model_stratum",
+        "replacement_preserves_immutable_source_task_mutation_oracle_budget_permission_and_seed",
+        "replaced_episode_and_last_valid_state_receipts_are_retained",
+        "replacement_is_forbidden_after_any_mechanism_specific_outcome_is_read"
+      ],
+      "replacement_receipt_fields": [
+        "replaced_episode_id",
+        "reserve_episode_id",
+        "trigger_status",
+        "independent_diagnosis_receipt_id",
+        "last_valid_state_receipt_id",
+        "preserved_binding_digest"
+      ]
+    },
     "not_frozen_by_packet_a": [
       "confirmatory_fixture_ids",
       "benchmark_manifest",
@@ -2044,7 +2649,7 @@
         {
           "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
           "role": "Packet A section 6 and non-displacing boundary",
-          "sha256": "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567"
+          "sha256": "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f"
         },
         {
           "path": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -2111,27 +2716,27 @@
       "algorithm": "SHA-256",
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
-      "validator_version": "packet-a-validator-v2",
-      "validator_source_sha256": "f535074fddd00e4c576261e8c97282c12dbb6ba6fb924d956a5ec7c971db9298",
+      "validator_version": "packet-a-validator-v3",
+      "validator_source_sha256": "dde2e9afb75715dfa71dde207b3978150640a026ac6539325f11192f8167d5a1",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
-        "validator_version": "packet-a-validator-v2",
-        "semantic_sha256": "57abd5119f4c4e9c1358a5fae9e61ebcc99bd9101a1d40782e874592fe9823a1",
+        "validator_version": "packet-a-validator-v3",
+        "semantic_sha256": "0aa72c45a12ddf26f183627826eab008d80ffd67408c4b5197e19405a416f0da",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
         "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "erratum_id": "PACKET-A-ERRATUM-2026-08-30",
-        "source_sha256": "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567",
+        "source_sha256": "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f",
         "corrected_sections": ["6.5", "6.8"],
         "corrections": [
           "NON_ABSTENTION_COUNTS_SUPPORTED_RESPONSE_STATUSES_OVER_E_w",
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2"
+      "specification_digest": "74869640c0bc0c863e6840ceaafd5a09aca4b2c535dbbc00f03dfa1d6f3ef43b"
     }
   }
 }

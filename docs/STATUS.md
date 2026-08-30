@@ -52,6 +52,26 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
+### 2026-08-30 — Packet A third semantic remediation remains L0 and non-displacing
+
+The Packet A contract now separates its 96 base cells (six task families × four
+fixture repositories × four client/model-build strata) from the provisional
+minimum of 384 paired episodes. Final allocation is deferred to the independent
+power receipt: `N_final = 96 * ceil(max(N_power, 384) / 96)`, with repetitions
+`N_final / 96`. The specification does not freeze a final N or execute a run.
+
+Every estimand is now bound to exact arm/cell vocabulary IDs, typed contrast
+operands, numerator/denominator units, response statuses, and explicit missing,
+infrastructure-failure, and attrition contributions. `E_w` is a complete
+one-status partition; `MISSING` remains in `E_w` and lowers coverage, while a
+separate `E_eff` excludes only independently diagnosed, unexposed infrastructure
+failures. The `S_h` schema covers `EXPOSED`, `NOT_APPLICABLE`, `MISSING`,
+`INDETERMINATE`, and `UNEXERCISED`, and zero-failure claims require complete
+rule/arm dispositions. Task/source identity, reserve replacement, last-valid
+state, and exact Packet A/root CAOS component bindings are explicit and
+fail-closed. This remains documentation/validator work only; no product,
+client, updater, workflow, benchmark, or integration path changed.
+
 ### 2026-08-30 — Packet A semantic freeze remediation remains L0 and non-displacing
 
 The first Packet A freeze validator was rejected because a candidate could

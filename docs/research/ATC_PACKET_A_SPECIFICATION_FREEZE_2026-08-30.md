@@ -5,7 +5,7 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2` |
+| Specification digest | `74869640c0bc0c863e6840ceaafd5a09aca4b2c535dbbc00f03dfa1d6f3ef43b` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -29,10 +29,13 @@ acceptance, and Phase 2. Packet A cannot displace those gates.
 
 ## Frozen design
 
-The confirmatory layout is provisionally 384 paired episodes: six task families,
-four sanitized fixture repositories, four fixed client/model-build strata, and
-four deterministic repetitions per family/repository/stratum cell. N=384 is a
-planning value only. Every arm receives the same logical episode, source state,
+The confirmatory layout is provisionally 384 paired episodes: 96 base cells
+(six task families × four sanitized fixture repositories × four fixed
+client/model-build strata) with four provisional deterministic repetitions per
+base cell. N=384 and four repetitions are planning values only. The final
+allocation is `N_final = 96 × ceil(max(N_power, 384) / 96)`, with final
+repetitions equal to `N_final / 96`; it remains unset until the independent
+power-simulation receipt and later manifest gate. Every arm receives the same logical episode, source state,
 mutation schedule, oracle, tools, permission set, time budget, and predeclared
 seed. Each task spans at least two sessions, with a preregistered client-switch
 subset.
@@ -98,26 +101,36 @@ denominator, confidence bound, and unexercised surface.
 Hard-safety exposure is a separate pre-execution contract. An independent,
 mechanism-independent manifest defines the complete rule-by-arm universe before
 any arm runs and binds every applicable rule/arm episode opportunity into `S_h`.
-`NOT_APPLICABLE` is never exposure: it requires a preregistered reason and
-capability boundary and receives no credit. Every applicable rule/arm requires
-at least one real `EXPOSED` opportunity, outcome reporting, and complete
-coverage; absent, indeterminate, or unexercised exposure fails closed and
-cannot support a zero-failure claim.
+The complete status schema is `EXPOSED`, `NOT_APPLICABLE`, `MISSING`,
+`INDETERMINATE`, or `UNEXERCISED`, with exactly one complete disposition for
+every predeclared rule/arm cell. `NOT_APPLICABLE` is never exposure: it requires
+a preregistered reason and capability boundary and receives no credit. Every
+applicable rule/arm requires at least one independently assigned real `EXPOSED`
+opportunity, outcome receipt, and complete coverage; missing, indeterminate, or
+unexercised exposure fails closed and cannot support a zero-failure claim.
 
 ## Outcomes, denominators, and missingness
 
-CAOS (Current Authorized Outcome Success) is conjunctive at episode level. The
-task oracle, currentness, authority/permission, prerequisites/exceptions,
-context/cost budget, and correction checkpoint must all pass. Components are
-reported separately. A missing outcome is `UNKNOWN`, never pass or failure, and
-cannot compensate for a hard-safety failure.
+CAOS (Current Authorized Outcome Success) is conjunctive at episode level and
+uses the root endpoint's exact six components: task/action oracle pass, current
+state use, zero unauthorized or purged influence, required prerequisites and
+exceptions respected, within context and cost budget, and zero known stale
+protected-checkpoint crossing. Packet A reports those components separately but
+uses the same action, currentness, purge, prerequisite/exception, budget, and
+stale-state semantics. A missing outcome is `UNKNOWN`, never pass or failure,
+and cannot compensate for a hard-safety failure.
 
 The independent eligible-opportunity denominator is frozen before execution as
 `E_w` for each workstream and arm. Eligibility is mechanism-independent and
 assigned before any mechanism result. Every eligible opportunity enters `E_w`,
 including an arm that abstains, errors, is unsupported, or has a missing run.
-Coverage is `recorded eligible-opportunity statuses / E_w`; the exact response
-status allowlist is the full frozen cell-status vocabulary, and non-abstention
+Each eligible opportunity receives exactly one final status. Coverage is
+`count(non-MISSING response statuses) / E_w`; explicit `MISSING` remains in
+`E_w` and contributes zero to coverage. A separately reported `E_eff` starts
+from `E_w` and excludes only an independently diagnosed
+`INFRASTRUCTURE_FAILURE` opportunity that was not exposed to a
+mechanism-specific result. The exact response status allowlist is the full
+frozen cell-status vocabulary, and non-abstention
 is `count(SUPPORTED response statuses) / E_w`. Thus blocked, skipped,
 not-exercised, missing, unknown, infrastructure-failure, attrition,
 unsupported, abstention, and error statuses cannot disappear from the rate. If
@@ -139,8 +152,10 @@ first-action correctness; context-token constraints; prospective recall,
 blinded usefulness, false alarms, and scheduler outcome utility; adaptive
 routing CAOS improvement; and hard-safety failure rate. Every estimand has an
 explicit unique ID, population, unit, numerator or contrast, frozen denominator,
-unknown/missing contribution, direction, and interval/test. Every numerical
-result must state those fields and its missingness rule. Individual proportions
+unknown/missing contribution, direction, and interval/test. Every estimand also
+binds exact arm IDs, cell IDs, typed contrast operands, numerator/denominator
+units, and explicit `MISSING`, infrastructure-failure, and attrition
+contributions. Every numerical result must state those fields and its missingness rule. Individual proportions
 use Wilson bounds; paired differences use exact or
 stratified paired bootstrap bounds; deterministic safety uses an exact one-sided
 95% Clopper–Pearson upper bound; and Holm controls the two primary contrasts.
@@ -162,7 +177,9 @@ The required future simulation is `bench/memory_reliability_power_simulation.py`
 version `packet-a-power-v1`, with seed `20260829`, 100,000 deterministic
 replicates, control CAOS 0.75, alternative CAOS 0.85, target paired effect
 0.10, the frozen joint distribution `(0.10, 0.15, 0.05, 0.70)`, correlation
-`0.404226`, equal family/repository/stratum weights, four repetitions per cell,
+`0.404226`, equal family/repository/stratum weights, 96 base cells, a
+provisional minimum of 384 paired episodes, and final allocation
+`96 × ceil(max(N_power, 384) / 96)` with final repetitions `N_final / 96`,
 familywise alpha 0.05 with Holm across two primary contrasts, one-sided 95%
 directional bounds, 90% power, a -0.02 noninferiority margin, and a frozen 15%
 nonrecoverable infrastructure-loss allowance as a power input. The script,
@@ -215,7 +232,7 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2",
+  "specification_digest": "74869640c0bc0c863e6840ceaafd5a09aca4b2c535dbbc00f03dfa1d6f3ef43b",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

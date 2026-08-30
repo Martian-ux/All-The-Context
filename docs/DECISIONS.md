@@ -46,6 +46,31 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-170: Packet A semantic remediation binds final allocation and estimands
+
+**Status:** accepted on 2026-08-30 as a third semantic remediation of the
+Packet A freeze. This remains an L0, non-displacing research decision and does
+not authorize execution, production or client changes, external access,
+promotion, or frontier advancement.
+
+Packet A freezes 96 balanced base cells (six task families, four sanitized
+fixture repositories, and four client/model-build strata) and a provisional
+minimum of 384 paired episodes, but not a final repetition count. The later
+power receipt determines `N_power`; the final balanced allocation is
+`N_final = 96 * ceil(max(N_power, 384) / 96)`, with repetitions `N_final / 96`.
+The final N and task manifest remain future-gated.
+
+Each estimand has exact arm/cell IDs, typed contrast operands, numerator and
+denominator units, complete response-status handling, and explicit missing,
+infrastructure-failure, and attrition dispositions. `MISSING` remains in the
+complete `E_w` partition and lowers coverage. A separately reported `E_eff`
+excludes only independently diagnosed infrastructure failures with no
+mechanism-specific result exposure; attrition retains its last-valid-state
+receipt. The hard-safety `S_h` schema has five complete statuses and prevents a
+zero-failure claim without complete rule/arm dispositions. Packet CAOS is bound
+component-for-component to the root CAOS endpoint, including action/currentness,
+purge, prerequisites/exceptions, budget, and stale-state semantics.
+
 ## ADR-169: Packet A semantic freeze is code-owned and fail-closed
 
 **Status:** accepted on 2026-08-30 as a remediation of the rejected first

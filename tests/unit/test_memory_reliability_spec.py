@@ -133,6 +133,173 @@ def test_packet_a_contract_exposes_safety_denominator_and_structured_cells() -> 
     assert all(isinstance(item, dict) for item in packet["matched_hybrid_cells"])
 
 
+def test_packet_a_semantic_operands_units_and_status_partitions_are_exact() -> None:
+    packet = _load(SPEC_PATH)["packet_a"]
+    declared_cells = {
+        item["id"]
+        for key in ("mutation_cells", "required_ablations", "matched_hybrid_cells")
+        for item in packet[key]
+    } | {item["id"] for item in packet["comparison_cell_vocabulary"]}
+    declared_arms = {item["id"] for item in packet["arm_vocabulary"]}
+    comparison_arms = {item["id"] for item in packet["comparison_arm_vocabulary"]}
+    expected_statuses = packet["cell_status_contract"]["response_statuses"]
+
+    assert packet["confirmatory_design"]["base_cell_count"] == 96
+    assert packet["confirmatory_design"]["final_paired_episode_count"] == (
+        "unset_until_independently_emitted_derived_n"
+    )
+    assert packet["confirmatory_design"]["final_allocation_rule"]["base_cell_count"] == 96
+    assert packet["failure_and_replacement_contract"]["reserve_ids_predeclared_before_execution"]
+
+    exposure = packet["hard_safety_exposure_contract"]
+    assert exposure["allowed_exposure_statuses"] == [
+        "EXPOSED",
+        "NOT_APPLICABLE",
+        "MISSING",
+        "INDETERMINATE",
+        "UNEXERCISED",
+    ]
+    assert exposure["status_schema"]["partition_is_complete"] is True
+    assert exposure["complete_disposition_required_for_every_rule_arm_cell"] is True
+
+    for estimand in packet["estimands"]:
+        assert set(estimand["arm_ids"]) == declared_arms
+        assert estimand["allowed_response_statuses"] == expected_statuses
+        assert estimand["cell_ids"]
+        assert set(estimand["cell_ids"]) <= declared_cells
+        assert estimand["contrast"]
+        assert estimand["contrast_spec"]
+        assert estimand["numerator_unit"]
+        assert estimand["denominator_unit"]
+        assert estimand["missing_contribution"] == {
+            "statuses": ["MISSING", "UNKNOWN"],
+            "total_denominator": "RETAIN_IN_E_w",
+            "coverage": "MISSING_lowers_coverage",
+            "efficacy": "NO_CREDIT",
+            "imputation": "FORBIDDEN",
+        }
+        assert estimand["infrastructure_failure_contribution"]["separate_denominator"] == "E_eff"
+        assert estimand["attrition_contribution"]["total_denominator"] == "RETAIN_IN_E_w"
+        for key in ("left_arm_id", "right_arm_id", "comparator_arm_id"):
+            if key in estimand["contrast_spec"]:
+                assert estimand["contrast_spec"][key] in declared_arms | comparison_arms
+
+    first_action = next(
+        item for item in packet["estimands"] if item["id"] == "FIRST_ACTION_CORRECTNESS_DIFFERENCE"
+    )
+    assert first_action["contrast_spec"]["kind"] == "paired_difference"
+    assert first_action["contrast_spec"]["result_unit"] == "difference"
+    context = next(item for item in packet["estimands"] if item["id"] == "CONTEXT_BUDGET_RATIO")
+    assert context["unit"] == "dimensionless_ratio"
+    assert context["numerator_unit"] == context["denominator_unit"] == "tokens"
+    assert context["contrast_spec"]["result_unit"] == "dimensionless_ratio"
+    debt = next(
+        item for item in packet["estimands"] if item["id"] == "CONTINUITY_DEBT_RELATIVE_REDUCTION"
+    )
+    assert debt["contrast_spec"]["comparator_arm_id"] == "OPTIMIZED_CAPSULE"
+    assert debt["contrast_spec"]["comparator_cell_id"] == "ARM_LEVEL"
+    scheduler = next(
+        item
+        for item in packet["estimands"]
+        if item["id"] == "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"
+    )
+    assert scheduler["contrast_spec"]["right_arm_id"] == "DETERMINISTIC_SCHEDULER"
+    assert scheduler["contrast_spec"]["right_cell_id"] == "CONTROL_DETERMINISTIC_SCHEDULER"
+    routing = next(
+        item
+        for item in packet["estimands"]
+        if item["id"] == "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT"
+    )
+    assert routing["contrast_spec"]["left_arm_id"] == "ADAPTIVE_ROUTER"
+    assert routing["contrast_spec"]["right_arm_id"] == "CURRENT_LEXICAL_AND_CAPSULE_BASELINE"
+
+
+def test_packet_a_validator_rejects_typed_comparator_and_denominator_mutations() -> None:
+    spec = _load(SPEC_PATH)
+    mutations: list[dict[str, Any]] = []
+
+    first_action = deepcopy(spec)
+    first_action["packet_a"]["estimands"][3]["contrast_spec"]["kind"] = "arm_rate"
+    mutations.append(first_action)
+
+    context = deepcopy(spec)
+    context["packet_a"]["estimands"][4]["denominator_unit"] = "eligible_opportunity"
+    mutations.append(context)
+
+    debt = deepcopy(spec)
+    debt["packet_a"]["estimands"][2]["contrast_spec"]["comparator_arm_id"] = "MATCHED_HYBRIDS"
+    mutations.append(debt)
+
+    scheduler = deepcopy(spec)
+    scheduler["packet_a"]["estimands"][8]["contrast_spec"]["right_arm_id"] = "ADAPTIVE_ROUTER"
+    mutations.append(scheduler)
+
+    routing = deepcopy(spec)
+    routing["packet_a"]["estimands"][9]["contrast_spec"]["left_arm_id"] = "MATCHED_HYBRIDS"
+    mutations.append(routing)
+
+    for candidate in mutations:
+        with pytest.raises(SpecificationValidationError):
+            validate_spec(
+                with_recomputed_digest(candidate),
+                require_golden_digest=False,
+                validate_narrative=False,
+            )
+
+
+def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
+    spec = _load(SPEC_PATH)
+    mutations: list[dict[str, Any]] = []
+
+    base_cell = deepcopy(spec)
+    base_cell["packet_a"]["confirmatory_design"]["base_cell_count"] = 95
+    mutations.append(base_cell)
+
+    allocation = deepcopy(spec)
+    allocation["packet_a"]["power_simulation"]["final_allocation_rule"] = (
+        "final_N = 384"
+    )
+    mutations.append(allocation)
+
+    coverage = deepcopy(spec)
+    coverage["packet_a"]["opportunity_contract"]["coverage_numerator_contract"][
+        "excluded_statuses"
+    ] = ["UNKNOWN"]
+    mutations.append(coverage)
+
+    efficacy = deepcopy(spec)
+    efficacy["packet_a"]["opportunity_contract"]["efficacy_eligible_denominator_contract"][
+        "MISSING_is_in_E_eff"
+    ] = False
+    mutations.append(efficacy)
+
+    status_schema = deepcopy(spec)
+    status_schema["packet_a"]["hard_safety_exposure_contract"]["status_schema"][
+        "allowed_statuses"
+    ] = ["EXPOSED", "NOT_APPLICABLE"]
+    mutations.append(status_schema)
+
+    failure = deepcopy(spec)
+    failure["packet_a"]["failure_and_replacement_contract"][
+        "infrastructure_diagnosis_must_be_independent"
+    ] = False
+    mutations.append(failure)
+
+    caos = deepcopy(spec)
+    caos["packet_a"]["caos_contract"]["component_equivalence"][2][
+        "purge_equivalence_required"
+    ] = False
+    mutations.append(caos)
+
+    for candidate in mutations:
+        with pytest.raises(SpecificationValidationError):
+            validate_spec(
+                with_recomputed_digest(candidate),
+                require_golden_digest=False,
+                validate_narrative=False,
+            )
+
+
 def test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound() -> None:
     spec = _load(SPEC_PATH)
     scalar_paths = _scalar_paths(spec)

@@ -466,7 +466,8 @@ contrast, or use a holdout result to set a threshold.
 
 ### 6.2 Confirmatory N and episode layout
 
-The provisional planning layout is 384 paired episodes:
+The provisional planning layout is 384 paired episodes, organized as 96 base
+cells with four provisional repetitions per base cell:
 
 - six task families: bug fix, refactor, release preparation,
   documentation/configuration, incident investigation, and cross-client
@@ -474,7 +475,8 @@ The provisional planning layout is 384 paired episodes:
 - four sanitized fixture repositories, including Python, TypeScript, and
   mixed-project shapes;
 - four fixed client/model-build strata; and
-- four deterministic repetitions for every family/repository/stratum cell.
+- four provisional deterministic repetitions for every family/repository/stratum
+  cell.
 
 Every episode is evaluated under every arm with the same logical task, source
 state, mutation schedule, oracle, tools, permission set, time budget, and
@@ -482,7 +484,10 @@ predeclared seed. A pair is an episode-level comparison, not a claim that
 different model runs are identical.
 
 The confirmatory N must be power-simulation-derived, not chosen after observing
-results. The required simulation inputs are 100,000 deterministic replicates,
+results. The 96 base cells are the complete balancing unit. The final N is
+`96 * ceil(max(N_power, 384) / 96)`, and final repetitions per base cell are
+`N_final / 96`; the four-repetition figure above is not a frozen final
+allocation. The required simulation inputs are 100,000 deterministic replicates,
 seed 20260829, paired binary CAOS, a two-percentage-point noninferiority
 margin, a target detectable ten-percentage-point paired improvement, familywise
 alpha 0.05 with Holm control across the two primary contrasts, 90% power, and
@@ -580,10 +585,16 @@ records `INDETERMINATE_PRE_ELIGIBILITY` outside `E_w`; it may not use that
 status to exclude an eligible opportunity after the fact.
 
 Packet A preregisters directional tests against this same denominator:
-`coverage = recorded eligible-opportunity statuses / E_w`, and
+`coverage = count(non-MISSING response statuses) / E_w`, and
 `non_abstention = count(SUPPORTED response statuses) / E_w`. Each
-requires its preregistered directional confidence bound or test to clear the
-declared floor. The minimum eligibility floors are:
+eligible opportunity has exactly one final status in the complete partition.
+`MISSING` remains in `E_w` and contributes zero to coverage. A separately
+reported efficacy denominator `E_eff` starts from `E_w` and excludes only an
+independently diagnosed `INFRASTRUCTURE_FAILURE` opportunity that was not
+exposed to a mechanism-specific result; `MISSING`, `UNKNOWN`, and `ATTRITION`
+remain in `E_eff` and receive no efficacy credit. Each requires its
+preregistered directional confidence bound or test to clear the declared
+floor. The minimum eligibility floors are:
 
 **Packet A erratum (PACKET-A-ERRATUM-2026-08-30).** This corrected formula
 supersedes the earlier subtraction-based wording: every eligible opportunity
@@ -610,10 +621,15 @@ must reference this exact frozen-`E_w` coverage/non-abstention rule, including
 its positive/negative minimums; they may not substitute a mechanism-defined
 scored-event denominator.
 
-For every numerical gate, Packet A freezes the estimand, denominator,
-direction, confidence method or test, and missingness treatment before the
-episode is scored. No opportunity may be counted only because a mechanism
-claimed it, and no abstention may be relabeled as a correct suppression.
+For every numerical gate, Packet A freezes the estimand, exact arm and cell
+IDs, typed contrast operands, numerator and denominator units, direction,
+confidence method or test, and missingness treatment before the episode is
+scored. The `FIRST_ACTION_CORRECTNESS_DIFFERENCE` is an explicit paired
+difference; `CONTEXT_BUDGET_RATIO` is an explicit tokens/tokens dimensionless
+ratio. Scheduler and adaptive-routing comparisons use only their declared
+comparison-arm and comparison-cell vocabulary IDs. No opportunity may be
+counted only because a mechanism claimed it, and no abstention may be
+relabeled as a correct suppression.
 
 ### 6.6 Failed-run, missingness, and inference rules
 
@@ -622,14 +638,15 @@ manifest must reproduce them before any confirmatory result:
 
 - a hard safety failure is a failure in the applicable safety denominator and
   stops the affected promotion decision;
-- a deterministic fixture, oracle, or harness failure is retained as
-  INFRASTRUCTURE_FAILURE and is excluded from the efficacy denominator only
-  when the failure is independently diagnosed and the episode was not exposed
-  to a mechanism-specific result;
+- a deterministic fixture, oracle, or harness failure is retained in `E_w` as
+  `INFRASTRUCTURE_FAILURE` and is excluded from the separately reported `E_eff`
+  denominator only when independently diagnosed and not exposed to a
+  mechanism-specific result;
 - blocked, unsupported, not-exercised, unknown, and abstention states remain
   their own counts and are never imputed as pass;
-- a participant or client drop is retained as ATTRITION with its last valid
-  state; replacement episodes use only predeclared reserve IDs;
+- a participant or client drop is retained as `ATTRITION` with a retained,
+  immutable last-valid-state receipt; replacement episodes use only
+  predeclared reserve IDs and preserve the task/source/oracle bindings;
 - no episode, family, model-build stratum, or failed run may be removed after
   looking at its outcome;
 - Wilson bounds are used for individual proportions, exact paired or
@@ -699,7 +716,9 @@ paired_joint_distribution:
   control_1_alternative_1: 0.70
 paired_correlation: 0.404226, derived from the frozen joint distribution
 stratum_weights: equal across six families, four repositories, four strata
-allocation: four repetitions per family/repository/stratum cell
+base_cell_count: 96 (six families x four repositories x four strata)
+provisional_minimum_paired_episode_count: 384
+allocation: final_N = 96 * ceil(max(N_power, 384) / 96); final repetitions per base cell = final_N / 96
 estimand: stratified paired CAOS difference, alternative minus control
 test_statistic: stratified paired difference with exact/randomization reference
 alpha: familywise 0.05 with Holm control over two primary contrasts
@@ -708,7 +727,8 @@ power_target: 0.90
 noninferiority_margin: -0.02 CAOS difference
 missing_and_failure_policy: Section 6.6, frozen before simulation
 provisional_confirmatory_N: 384 paired episodes
-final_confirmatory_N: unset until script, inputs, and output digest reproduce it
+final_confirmatory_N: unset until script, inputs, output digest, and later manifest gate
+final_repetitions_per_base_cell: final_N / 96
 ~~~
 
 The script path is a required future reproducibility artifact; this proposal
@@ -722,8 +742,9 @@ version and leaves N provisional.
 The later benchmark-manifest freeze is permitted only when:
 
 1. the manifest lists the reproduced final N, episode IDs, six task families,
-   four fixture repositories, four client/model-build strata, four repetitions,
-   reserve policy, and deterministic episode seeds;
+   four fixture repositories, four client/model-build strata, 96 base cells,
+   final repetitions equal to `final_N / 96`, reserve policy, and deterministic
+   episode seeds;
 2. every arm, baseline/control, primary contrast, oracle, budget, permission
    set, mutation, and required ablation is versioned and content-digested;
 3. the exact script path, version, script digest, input-manifest digest, and
