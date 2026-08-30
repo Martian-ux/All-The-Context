@@ -22,7 +22,8 @@
     },
     "version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-beta\\.[1-9][0-9]*)?$"
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-beta\\.[1-9][0-9]*)?$",
+      "description": "Candidate version. The runtime validator preserves omitted/through-beta.6 legacy interpretation and requires candidate-bound Microsoft reassessment evidence for a beta.7-or-later BETA-S06 pass."
     },
     "receipts": {
       "type": "array",
@@ -55,5 +56,58 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "pattern": "^(?:0\\.1\\.0-beta\\.(?:[7-9]|[1-9][0-9]+)|0\\.1\\.0|0\\.1\\.[1-9][0-9]*(?:-beta\\.[1-9][0-9]*)?|0\\.(?:[2-9]|[1-9][0-9]+)\\.(?:0|[1-9][0-9]*)(?:-beta\\.[1-9][0-9]*)?|[1-9][0-9]*\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-beta\\.[1-9][0-9]*)?)$"
+          }
+        },
+        "required": ["version"]
+      },
+      "then": {
+        "properties": {
+          "receipts": {
+            "items": {
+              "if": {
+                "properties": {
+                  "gate_id": { "const": "BETA-S06" },
+                  "status": { "const": "pass" }
+                },
+                "required": ["gate_id", "status"]
+              },
+              "then": {
+                "required": ["microsoft_reassessment"],
+                "properties": {
+                  "microsoft_reassessment": {
+                    "properties": {
+                      "component_role": { "const": "mcp" },
+                      "opaque_submission_id_present": { "const": true },
+                      "microsoft_status": { "const": "closed" },
+                      "final_determination": { "const": "no_malware" },
+                      "determined_at": { "type": "string" },
+                      "redacted_result_artifact_sha256": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receipts": {
+            "items": {
+              "not": {
+                "required": ["microsoft_reassessment"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

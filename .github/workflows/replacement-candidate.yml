@@ -1,0 +1,408 @@
+name: Private Windows replacement candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact 0.1.0-beta.7 version for the private replacement candidate
+        required: true
+        type: string
+      source_commit:
+        description: Full 40-character SHA of the protected-main dispatch head
+        required: true
+        type: string
+      approval:
+        description: Type BUILD PRIVATE REPLACEMENT CANDIDATE
+        required: true
+        type: string
+
+concurrency:
+  group: replacement-candidate-${{ inputs.version }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require deliberate private replacement phrase
+        shell: pwsh
+        env:
+          APPROVAL: ${{ inputs.approval }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:APPROVAL -cne "BUILD PRIVATE REPLACEMENT CANDIDATE") {
+            throw "The exact private replacement-candidate approval phrase is required"
+          }
+          if ($env:VERSION -cne "0.1.0-beta.7") {
+            throw "The private replacement candidate version must be exactly 0.1.0-beta.7"
+          }
+      - name: Bind source to protected-main dispatch SHA
+        shell: pwsh
+        env:
+          REQUESTED_REF: ${{ github.ref }}
+          DEFAULT_BRANCH_REF: refs/heads/${{ github.event.repository.default_branch }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:REQUESTED_REF -cne $env:DEFAULT_BRANCH_REF) {
+            throw "Replacement candidates must be dispatched from the default branch"
+          }
+          if ($env:SOURCE_COMMIT -cnotmatch '^[0-9a-f]{40}$') {
+            throw "source_commit must be a full lowercase commit SHA"
+          }
+          if ($env:DISPATCH_SHA -cnotmatch '^[0-9a-f]{40}$') {
+            throw "github.sha must be a full lowercase commit SHA"
+          }
+          if ($env:SOURCE_COMMIT -cne $env:DISPATCH_SHA) {
+            throw "source_commit must equal the triggering protected-main SHA"
+          }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Install packaging dependencies from the reviewed lock
+        run: python scripts/install_locked_python.py --extra packaging
+      - name: Require unused beta.7 release slot before build
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python scripts/github_release_gate.py --repository "$env:REPOSITORY" --version "$env:VERSION" --source-commit "$env:SOURCE_COMMIT" --operator-verified-immutability
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub release gate failed closed"
+          }
+      - name: Verify exact green source-health matrix on this SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/exact_source_gate.py hosted-matrix
+          --repository "$env:REPOSITORY"
+          --source-commit "$env:SOURCE_COMMIT"
+          --output dist/source-evidence/matrix-evidence.json
+      - name: Validate exact source metadata and Windows runner
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/release_candidate.py validate-source
+          --version "$env:VERSION"
+          --channel beta
+          --source-commit "$env:SOURCE_COMMIT"
+      - name: Validate native Windows x86-64 runner
+        run: >-
+          python scripts/release_candidate.py validate-runner
+          --platform windows
+          --architecture x86_64
+      - name: Build native desktop bytes without executing them
+        run: python scripts/build_desktop.py
+      - name: Build direct unsigned package and installed-component provenance
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/package_desktop.py
+          --platform windows
+          --architecture x86_64
+          --version "$env:VERSION"
+          --source-commit "$env:SOURCE_COMMIT"
+          --installed-component-output-dir dist/installed-component-package
+          --output-dir dist/release
+      - name: Build deterministic Windows archive and metadata
+        env:
+          VERSION: ${{ inputs.version }}
+        run: >-
+          python scripts/build_release_assets.py
+          --source dist/installed-component-package
+          --output-dir dist/release
+          --version "$env:VERSION"
+          --platform windows
+          --architecture x86_64
+      - name: Build direct package SPDX subject metadata
+        env:
+          VERSION: ${{ inputs.version }}
+        run: >-
+          python scripts/build_release_assets.py
+          --source "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"
+          --output-dir dist/release
+          --version "$env:VERSION"
+          --platform windows
+          --architecture x86_64
+          --subject-metadata-only
+      - name: Verify installed-component manifest and archive statically
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/installed_component_manifest.py verify-archive
+          --archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip"
+          --direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"
+          --main dist/desktop/AllTheContextSetup.exe
+          --mcp build/desktop/helper-dist/AllTheContextMCP.exe
+          --recovery dist/desktop/AllTheContextRecovery.exe
+          --updater build/desktop/update-helper-dist/AllTheContextUpdater.exe
+          --source-root .
+          --version "$env:VERSION"
+          --source-commit "$env:SOURCE_COMMIT"
+          --platform windows
+          --architecture x86_64
+      - name: Independently verify exact Windows candidate archive and manifest
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python scripts/verify_installed_component_manifest_independent.py verify-archive `
+            --archive "dist/release/all-the-context-$env:VERSION-windows-x86_64.zip" `
+            --direct-package "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.exe" `
+            --main dist/desktop/AllTheContextSetup.exe `
+            --mcp build/desktop/helper-dist/AllTheContextMCP.exe `
+            --recovery dist/desktop/AllTheContextRecovery.exe `
+            --updater build/desktop/update-helper-dist/AllTheContextUpdater.exe `
+            --source-root . `
+            --version "$env:VERSION" `
+            --source-commit "$env:SOURCE_COMMIT" `
+            --platform windows `
+            --architecture x86_64
+          if ($LASTEXITCODE -ne 0) {
+            throw "Independent installed-component verification failed closed"
+          }
+          exit $LASTEXITCODE
+      - name: Stage exact replacement-candidate handoff without executing binaries
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $handoff = "dist/replacement-candidate-handoff"
+          if (Test-Path -LiteralPath $handoff) {
+            throw "replacement-candidate handoff directory already exists"
+          }
+          $archiveName = "all-the-context-$env:VERSION-windows-x86_64.zip"
+          $directName = "all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"
+          $expectedSources = [ordered]@{
+            "release/$archiveName" = "dist/release/$archiveName"
+            "release/$archiveName.sha256" = "dist/release/$archiveName.sha256"
+            "release/$archiveName.spdx.json" = "dist/release/$archiveName.spdx.json"
+            "release/$directName" = "dist/release/$directName"
+            "release/$directName.sha256" = "dist/release/$directName.sha256"
+            "release/$directName.spdx.json" = "dist/release/$directName.spdx.json"
+            "release/all-the-context-$env:VERSION-windows-x86_64-unsigned.package.json" =
+              "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.package.json"
+            "release/all-the-context-$env:VERSION-windows-x86_64-unsigned.IMPORTANT-UNSIGNED.txt" =
+              "dist/release/all-the-context-$env:VERSION-windows-x86_64-unsigned.IMPORTANT-UNSIGNED.txt"
+            "components/AllTheContextSetup.exe" = "dist/desktop/AllTheContextSetup.exe"
+            "components/AllTheContextMCP.exe" = "build/desktop/helper-dist/AllTheContextMCP.exe"
+            "components/AllTheContextRecovery.exe" = "dist/desktop/AllTheContextRecovery.exe"
+            "components/AllTheContextUpdater.exe" =
+              "build/desktop/update-helper-dist/AllTheContextUpdater.exe"
+            "components/installed-component-manifest-v1.json" =
+              "dist/installed-component-package/installed-component-manifest-v1.json"
+            "components/installed-component-manifest-v1.json.sha256" =
+              "dist/installed-component-package/installed-component-manifest-v1.json.sha256"
+            "source/matrix-evidence.json" = "dist/source-evidence/matrix-evidence.json"
+          }
+          $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+          function Get-FileIdentity {
+            param([string]$Path)
+            $file = Get-Item -LiteralPath $Path -Force
+            if ($file.PSIsContainer -or ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+              throw "handoff input must be a regular non-reparse file: $Path"
+            }
+            $digest = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            return [pscustomobject]@{
+              sha256 = $digest
+              size = [int64]$file.Length
+            }
+          }
+          New-Item -ItemType Directory -Path $handoff | Out-Null
+          $copiedIdentities = [ordered]@{}
+          foreach ($relative in $expectedSources.Keys) {
+            $source = $expectedSources[$relative]
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "expected handoff source is missing: $source"
+            }
+            $destination = Join-Path $handoff $relative
+            $parent = Split-Path -Parent $destination
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $destination
+            $sourceIdentity = Get-FileIdentity -Path $source
+            $destinationIdentity = Get-FileIdentity -Path $destination
+            if (
+              $sourceIdentity.sha256 -cne $destinationIdentity.sha256 -or
+              $sourceIdentity.size -ne $destinationIdentity.size
+            ) {
+              throw "source and handoff digest/size differ: $relative"
+            }
+            $copiedIdentities[$relative] = $destinationIdentity
+          }
+          $inventoryPath = Join-Path $handoff "handoff-inventory-v1.json"
+          $inventoryChecksumPath = Join-Path $handoff "handoff-inventory-v1.json.sha256"
+          if (Test-Path -LiteralPath $inventoryPath -or Test-Path -LiteralPath $inventoryChecksumPath) {
+            throw "refusing to replace an existing handoff inventory"
+          }
+          $artifactName = "replacement-candidate-windows-$env:VERSION-$env:SOURCE_COMMIT"
+          $inventory = [ordered]@{
+            artifact_name = $artifactName
+            files = @(
+              foreach ($relative in ($expectedSources.Keys | Sort-Object)) {
+                [ordered]@{
+                  name = $relative
+                  sha256 = $copiedIdentities[$relative].sha256
+                  size = $copiedIdentities[$relative].size
+                }
+              }
+            )
+            run_attempt = [int]$env:GITHUB_RUN_ATTEMPT
+            run_id = [int64]$env:GITHUB_RUN_ID
+            schema_version = 1
+            source_commit = $env:SOURCE_COMMIT
+            target = "windows:x86_64"
+            version = $env:VERSION
+          }
+          $inventoryJson = ($inventory | ConvertTo-Json -Depth 5) + "`n"
+          [System.IO.File]::WriteAllText($inventoryPath, $inventoryJson, $utf8NoBom)
+          $inventoryDigest = (Get-FileHash -LiteralPath $inventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $inventoryChecksum = "$inventoryDigest  handoff-inventory-v1.json`n"
+          [System.IO.File]::WriteAllText($inventoryChecksumPath, $inventoryChecksum, $utf8NoBom)
+      - name: Run content-hygiene scan (not malware or Defender scanning)
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: >-
+          python scripts/repository_security_scan.py
+          --scope artifacts
+          --artifact-dir dist/replacement-candidate-handoff
+          --source-commit "$env:SOURCE_COMMIT"
+          --report dist/replacement-candidate-handoff/content-hygiene-scan-report.json
+      - name: Rehash every allowlisted handoff file after content-hygiene scan
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $handoff = "dist/replacement-candidate-handoff"
+          $archiveName = "all-the-context-$env:VERSION-windows-x86_64.zip"
+          $directName = "all-the-context-$env:VERSION-windows-x86_64-unsigned.exe"
+          $inventoryFiles = @(
+            "release/$archiveName",
+            "release/$archiveName.sha256",
+            "release/$archiveName.spdx.json",
+            "release/$directName",
+            "release/$directName.sha256",
+            "release/$directName.spdx.json",
+            "release/all-the-context-$env:VERSION-windows-x86_64-unsigned.package.json",
+            "release/all-the-context-$env:VERSION-windows-x86_64-unsigned.IMPORTANT-UNSIGNED.txt",
+            "components/AllTheContextSetup.exe",
+            "components/AllTheContextMCP.exe",
+            "components/AllTheContextRecovery.exe",
+            "components/AllTheContextUpdater.exe",
+            "components/installed-component-manifest-v1.json",
+            "components/installed-component-manifest-v1.json.sha256",
+            "source/matrix-evidence.json"
+          ) | Sort-Object
+          $finalFiles = @($inventoryFiles + "content-hygiene-scan-report.json" +
+            "handoff-inventory-v1.json" + "handoff-inventory-v1.json.sha256") | Sort-Object
+          function Get-FileIdentity {
+            param([string]$Path)
+            $file = Get-Item -LiteralPath $Path -Force
+            if ($file.PSIsContainer -or ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+              throw "handoff output must be a regular non-reparse file: $Path"
+            }
+            return [pscustomobject]@{
+              sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = [int64]$file.Length
+            }
+          }
+          $inventoryPath = Join-Path $handoff "handoff-inventory-v1.json"
+          $checksumPath = Join-Path $handoff "handoff-inventory-v1.json.sha256"
+          $reportPath = Join-Path $handoff "content-hygiene-scan-report.json"
+          foreach ($required in @($inventoryPath, $checksumPath, $reportPath)) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+              throw "required post-scan handoff file is missing: $required"
+            }
+          }
+          $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json
+          $artifactName = "replacement-candidate-windows-$env:VERSION-$env:SOURCE_COMMIT"
+          if (
+            $inventory.schema_version -ne 1 -or
+            $inventory.artifact_name -cne $artifactName -or
+            [int64]$inventory.run_id -ne [int64]$env:GITHUB_RUN_ID -or
+            [int]$inventory.run_attempt -ne [int]$env:GITHUB_RUN_ATTEMPT -or
+            $inventory.source_commit -cne $env:SOURCE_COMMIT -or
+            $inventory.version -cne $env:VERSION -or
+            $inventory.target -cne "windows:x86_64"
+          ) {
+            throw "handoff inventory identity does not match this workflow run"
+          }
+          $observedNames = @($inventory.files | ForEach-Object { [string]$_.name } | Sort-Object)
+          if (($observedNames -join "`n") -cne ($inventoryFiles -join "`n")) {
+            throw "handoff inventory file allowlist is not exact"
+          }
+          foreach ($entry in $inventory.files) {
+            $properties = @($entry.PSObject.Properties.Name | Sort-Object)
+            if (($properties -join ",") -cne "name,sha256,size") {
+              throw "handoff inventory file descriptor is not canonical"
+            }
+            $name = [string]$entry.name
+            if ([System.IO.Path]::IsPathRooted($name) -or $name.Contains("..")) {
+              throw "handoff inventory contains a non-relative name"
+            }
+            $path = Join-Path $handoff $name
+            $identity = Get-FileIdentity -Path $path
+            if ($identity.sha256 -cne [string]$entry.sha256 -or $identity.size -ne [int64]$entry.size) {
+              throw "handoff file changed after content-hygiene scan: $name"
+            }
+          }
+          $handoffRoot = (Get-Item -LiteralPath $handoff -Force).FullName
+          $actualFiles = @(Get-ChildItem -LiteralPath $handoff -File -Recurse | ForEach-Object {
+            if ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+              throw "handoff contains a reparse-point file: $($_.Name)"
+            }
+            $_.FullName.Substring($handoffRoot.Length + 1).Replace("\", "/")
+          } | Sort-Object)
+          if (($actualFiles -join "`n") -cne ($finalFiles -join "`n")) {
+            throw "handoff directory contains an unexpected or missing file"
+          }
+          foreach ($relative in $finalFiles) {
+            $null = Get-FileIdentity -Path (Join-Path $handoff $relative)
+          }
+          $inventoryIdentity = Get-FileIdentity -Path $inventoryPath
+          $expectedChecksum = "$($inventoryIdentity.sha256)  handoff-inventory-v1.json`n"
+          if ([System.IO.File]::ReadAllText($checksumPath) -cne $expectedChecksum) {
+            throw "handoff inventory checksum sidecar is invalid"
+          }
+      - name: Upload private Windows candidate artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: replacement-candidate-windows-${{ inputs.version }}-${{ github.sha }}
+          path: |
+            dist/replacement-candidate-handoff/**
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 7

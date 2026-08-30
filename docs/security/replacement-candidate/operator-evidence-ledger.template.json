@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "ledger_type": "replacement-candidate-operator-evidence",
+  "content_free": true,
+  "overall_status": "HOLD",
+  "candidate": {
+    "workflow_run_id": null,
+    "workflow_artifact_name": null,
+    "version": null,
+    "source_commit": null,
+    "windows_archive_sha256": null,
+    "direct_installer_sha256": null,
+    "component_manifest_sha256": null,
+    "platform": "windows",
+    "architecture": "x86_64"
+  },
+  "custody_receipt": {
+    "content_free": true,
+    "isolated_custody_confirmed": false,
+    "download_receipt_present": false,
+    "workflow_run_attempt": null,
+    "workflow_artifact_id": null,
+    "workflow_artifact_digest": null,
+    "workflow_artifact_name": null,
+    "archive_size": null,
+    "installer_size": null,
+    "scanner_tool_identity": null,
+    "scanner_run_identity": null
+  },
+  "components": [
+    {
+      "role": "main",
+      "filename": "AllTheContext.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "mcp",
+      "filename": "AllTheContextMCP.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "recovery",
+      "filename": "AllTheContextRecovery.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    },
+    {
+      "role": "updater",
+      "filename": "AllTheContextUpdater.exe",
+      "sha256": null,
+      "size": null,
+      "authenticode": "unknown"
+    }
+  ],
+  "stages": [
+    {
+      "stage_id": "private-build",
+      "status": "HOLD",
+      "owner": "candidate-builder",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "source_version_target_bound": false,
+        "locked_source_gates_pass": false,
+        "manifest_created_and_checksummed": false,
+        "archive_and_direct_installer_match": false,
+        "main_matches_installer": false
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "independent-verification",
+      "status": "HOLD",
+      "owner": "independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "fresh_verifier_environment": false,
+        "exact_handoff_bytes_rechecked": false,
+        "manifest_archive_and_header_verified": false,
+        "workflow_artifact_and_run_identity_verified": false,
+        "unsafe_input_rejected_or_absent": false
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "exact-component-scan",
+      "status": "HOLD",
+      "owner": "security-scanner",
+      "candidate_bound": false,
+      "content_free": true,
+      "checks": {
+        "archive_scanned": false,
+        "direct_installer_scanned": false,
+        "main_scanned": false,
+        "mcp_scanned": false,
+        "recovery_scanned": false,
+        "updater_scanned": false,
+        "all_scan_inputs_rechecked": false,
+        "scanning_completed": false,
+        "outcome": "unknown",
+        "detection_component_role": null,
+        "detection_component_sha256": null
+      },
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "submission-preparation",
+      "status": "HOLD",
+      "owner": "candidate-maintainer-and-independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "component_role": null,
+      "component_sha256": null,
+      "sanitized_payload_inventory_present": false,
+      "sanitized_payload_inventory_sha256": null,
+      "isolated_custody_confirmed": false,
+      "preparation_receipt_id_present": false,
+      "preparation_time": null,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "external-submission-authorization",
+      "status": "HOLD",
+      "owner": "noah",
+      "candidate_bound": false,
+      "content_free": true,
+      "component_role": null,
+      "component_sha256": null,
+      "sanitized_payload_inventory_sha256": null,
+      "authorization_id_present": false,
+      "authorization_time": null,
+      "portal_consent_authorized": false,
+      "external_upload_authorized": false,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "microsoft-submission",
+      "status": "HOLD",
+      "owner": "maintainer",
+      "candidate_bound": false,
+      "content_free": true,
+      "component_role": null,
+      "submission_id_present": false,
+      "submission_status": "unknown",
+      "submitted_component_sha256": null,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "microsoft-result",
+      "status": "HOLD",
+      "owner": "independent-verifier",
+      "candidate_bound": false,
+      "content_free": true,
+      "result": "unknown",
+      "component_role": null,
+      "result_component_sha256": null,
+      "result_artifact_sha256": null,
+      "exact_component_identity_confirmed": false,
+      "closed_reason": "template_not_run"
+    },
+    {
+      "stage_id": "execution-authorization",
+      "status": "HOLD",
+      "owner": "explicit-operator-decision",
+      "candidate_bound": false,
+      "content_free": true,
+      "all_prior_stages_pass": false,
+      "identity_unchanged": false,
+      "execution_authorized": false,
+      "authorization_id_present": false,
+      "decision_time_present": false,
+      "closed_reason": "template_not_run"
+    }
+  ],
+  "authorization": {
+    "execution_authorized": false,
+    "authorization_id_present": false,
+    "decision_time": null,
+    "content_free": true
+  }
+}

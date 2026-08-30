@@ -24,6 +24,7 @@ from allthecontext.release_manifest import ManifestError
 
 SOURCE = "a" * 40
 DIGEST = "b" * 64
+_UNSET = object()
 
 
 def _receipt(**overrides: object) -> dict[str, object]:
@@ -42,6 +43,51 @@ def _receipt(**overrides: object) -> dict[str, object]:
     }
     base.update(overrides)
     return base
+
+
+def _microsoft_reassessment(**overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "candidate_version": "0.1.0-beta.7",
+        "source_commit": SOURCE,
+        "candidate_sha256": DIGEST,
+        "component_role": "mcp",
+        "component_sha256": "c" * 64,
+        "component_size": 4096,
+        "installed_component_manifest_sha256": "d" * 64,
+        "opaque_submission_id_present": True,
+        "microsoft_status": "closed",
+        "final_determination": "no_malware",
+        "determined_at": "2026-08-29T15:30:00Z",
+        "redacted_result_artifact_sha256": "e" * 64,
+    }
+    record.update(overrides)
+    return record
+
+
+def _s06_bundle(
+    *,
+    version: str,
+    microsoft_reassessment: object = _UNSET,
+) -> dict[str, object]:
+    receipt = _receipt(
+        receipt_id="artifact-beta-s06",
+        gate_id="BETA-S06",
+        evidence_kind="exact_downloaded_artifact",
+        artifact_digests={"all-the-context-windows-x86_64.zip": "f" * 64},
+    )
+    if microsoft_reassessment is not _UNSET:
+        receipt["microsoft_reassessment"] = microsoft_reassessment
+    return {
+        "schema_version": 1,
+        "source_commit": SOURCE,
+        "candidate_sha256": DIGEST,
+        "version": version,
+        "receipts": [receipt],
+        "maintainer_decision": {
+            "decision": None,
+            "independent_human_review_claimed": False,
+        },
+    }
 
 
 def test_template_receipt_is_not_run_and_not_pass() -> None:
@@ -93,6 +139,151 @@ def test_pass_requires_candidate_digest_and_executed_attempt() -> None:
 def test_skipped_evidence_cannot_claim_pass() -> None:
     with pytest.raises(ManifestError, match="cannot claim pass"):
         validate_receipt(_receipt(evidence_kind="skipped", status="pass"))
+
+
+def test_beta7_s06_pass_requires_candidate_bound_microsoft_final_determination() -> None:
+    with pytest.raises(ManifestError, match="requires candidate-bound Microsoft"):
+        validate_receipt_bundle(_s06_bundle(version="0.1.0-beta.7"))
+
+    validated = validate_receipt_bundle(
+        _s06_bundle(
+            version="0.1.0-beta.7",
+            microsoft_reassessment=_microsoft_reassessment(),
+        )
+    )
+    record = validated["receipts"][0]["microsoft_reassessment"]
+    assert record["candidate_version"] == "0.1.0-beta.7"
+    assert record["source_commit"] == SOURCE
+    assert record["candidate_sha256"] == DIGEST
+    assert record["component_role"] == "mcp"
+    assert record["component_sha256"] == "c" * 64
+    assert record["component_size"] == 4096
+    assert record["installed_component_manifest_sha256"] == "d" * 64
+    assert record["opaque_submission_id_present"] is True
+    assert record["microsoft_status"] == "closed"
+    assert record["final_determination"] == "no_malware"
+    assert record["determined_at"] == "2026-08-29T15:30:00Z"
+    assert record["redacted_result_artifact_sha256"] == "e" * 64
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("candidate_version", "0.1.0-beta.8"),
+        ("source_commit", "c" * 40),
+        ("candidate_sha256", "d" * 64),
+    ],
+)
+def test_beta7_s06_reassessment_rejects_bundle_binding_mismatch(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ManifestError, match=rf"{field} does not match"):
+        validate_receipt_bundle(
+            _s06_bundle(
+                version="0.1.0-beta.7",
+                microsoft_reassessment=_microsoft_reassessment(**{field: value}),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        (
+            {
+                "microsoft_status": "submitted",
+                "final_determination": "pending",
+                "determined_at": None,
+                "redacted_result_artifact_sha256": None,
+            },
+            "closed Microsoft reassessment status",
+        ),
+        (
+            {
+                "final_determination": "pending",
+                "determined_at": None,
+                "redacted_result_artifact_sha256": None,
+            },
+            "explicit Microsoft no_malware",
+        ),
+        ({"final_determination": "inconclusive"}, "explicit Microsoft no_malware"),
+        ({"opaque_submission_id_present": False}, "identifier presence"),
+        ({"component_role": "updater"}, "must bind the mcp component"),
+    ],
+)
+def test_beta7_s06_submission_acknowledgement_or_ambiguous_result_cannot_pass(
+    overrides: dict[str, object],
+    error: str,
+) -> None:
+    with pytest.raises(ManifestError, match=error):
+        validate_receipt_bundle(
+            _s06_bundle(
+                version="0.1.0-beta.7",
+                microsoft_reassessment=_microsoft_reassessment(**overrides),
+            )
+        )
+
+
+def test_beta6_s06_receipt_interpretation_is_preserved_without_retroactive_upgrade() -> None:
+    validated = validate_receipt_bundle(_s06_bundle(version="0.1.0-beta.6"))
+    assert "microsoft_reassessment" not in validated["receipts"][0]
+
+    with pytest.raises(ManifestError, match=r"cannot retroactively upgrade beta\.6"):
+        validate_receipt_bundle(
+            _s06_bundle(
+                version="0.1.0-beta.6",
+                microsoft_reassessment=_microsoft_reassessment(candidate_version="0.1.0-beta.6"),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "forbidden_field",
+    [
+        "account_email",
+        "portal_url",
+        "raw_report",
+        "detection_text",
+        "customer_data",
+        "sample_bytes",
+        "submission_id",
+    ],
+)
+def test_microsoft_reassessment_rejects_non_content_free_fields(
+    forbidden_field: str,
+) -> None:
+    record = _microsoft_reassessment()
+    record[forbidden_field] = "operator-held-only"
+    with pytest.raises(ManifestError, match="content-free"):
+        validate_receipt(
+            _receipt(
+                receipt_id="artifact-beta-s06",
+                gate_id="BETA-S06",
+                evidence_kind="exact_downloaded_artifact",
+                artifact_digests={"all-the-context-windows-x86_64.zip": "f" * 64},
+                microsoft_reassessment=record,
+            )
+        )
+
+
+def test_acceptance_schema_exposes_only_bounded_microsoft_reassessment_metadata() -> None:
+    root = Path(__file__).resolve().parents[2]
+    receipt_schema = json.loads(
+        (root / "release" / "acceptance-receipt.schema.json").read_text(encoding="utf-8")
+    )
+    bundle_schema = json.loads(
+        (root / "release" / "acceptance-receipt-bundle.schema.json").read_text(encoding="utf-8")
+    )
+    reassessment = receipt_schema["$defs"]["microsoftReassessment"]
+    assert receipt_schema["properties"]["microsoft_reassessment"] == {
+        "$ref": "#/$defs/microsoftReassessment"
+    }
+    assert set(reassessment["properties"]) == set(reassessment["required"])
+    assert "opaque_submission_id_present" in reassessment["properties"]
+    assert "submission_id" not in reassessment["properties"]
+    assert "raw_report" not in reassessment["properties"]
+    assert bundle_schema["allOf"]
 
 
 def test_required_publication_gates_are_complete() -> None:

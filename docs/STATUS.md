@@ -36,6 +36,175 @@ Local evaluation evidence is aggregate only, over sanitized synthetic or disposa
 Historical release and CI notes lower in this file are retained as provenance
 only, not as evidence for this integrated checkout.
 
+### 2026-08-30 — replacement workflow contract re-review remediation
+
+The private Windows replacement-candidate workflow contract now uses a
+code-owned SHA-256 over the complete reviewed UTF-8 workflow
+(`c469bedbfe13e74a5831cd50ba5cd51616057c955d29398a2a98b0dfcd7527dc`) as its
+immutable authority; it does not reconstruct GitHub semantics through a hand
+parser or trust a value stored only in the mutable workflow. Readable semantic
+assertions still bind the manual Windows-only trigger, pre-checkout SHA gate,
+least permissions, pinned actions, exact independent verifier, exact handoff
+sources, and verifier-before-upload ordering. The focused replacement-workflow
+contract suite passes 35 tests, including quoted control keys, alternate paths,
+post-verifier mutation, duplicate steps/keys, YAML indirection and tags,
+scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
+source and contract-test hardening only: no beta.7 candidate has been built,
+executed, scanned, submitted, approved, published, tagged, uploaded, or
+released, and no Defender or release-acceptance claim is made.
+
+### 2026-08-30 — Packet A L0 specification is frozen and independently approved
+
+The final authored chain ends at exact clean commit
+`605330ce5564346a666dfa08418e6d87badad5c3`. Two fresh reviewers independently
+approved that exact commit and parent after the infrastructure-loss correction.
+The final continuation removes the contract module's self-source
+anchor and binds its normalized source digest to a validator-owned literal.
+It adds an independently source-bound executable power-method reference with
+fixed counter serialization, golden vectors, 96-cell mapping, explicit
+rows-control/columns-alternative utility axes, exact contrast-specific tests,
+bootstrap/permutation rules, Holm decisions, and deterministic candidate-N
+selection functions. The future confirmatory driver, manifests, derived N,
+and results remain absent and unexecuted.
+
+Infrastructure-loss draws now mark pairs unavailable for efficacy estimation,
+testing, and bootstrap resampling; they remain in `E_w` with a separate `E_eff`
+report and are never converted to zero pairs. The reference power gate is
+explicitly attainable at `(1.0, 1.0)` and monotone in either contrast estimate.
+
+The continuation also closes bounded reads against links/reparse points,
+special files, hard links, root escapes, and before/after identity changes;
+the caller may only lower the exact integer byte ceiling. Public failures are
+raised from minimal safe frames so raw bytes, duplicate pairs, candidate
+objects, exception graphs, and supplied paths are not retained. The author
+reported 39 focused tests plus the validator, Ruff, mypy, digest, and diff
+checks passing at the final commit. No benchmark/provider experiment,
+manifest, result, private data, product/runtime path, promotion, or
+frontier-advancement claim is involved.
+
+### 2026-08-30 — Historical Packet A structure/power remediation checkpoint
+
+Starting from exact clean commit `850ef9d50cce157f3639f45c1b9b5335da6cd369` and
+recorded in the prior committed follow-up through
+`ec57058e36a111f41ef24e73c6827d59f324e436`,
+the validator now performs a code-owned recursive structure check before any
+semantic field access. It rejects unknown or missing nested keys, wrong object
+and list shapes, list append/reorder/identity drift, shared in-memory container
+aliases, invalid UTF-8 narrative bytes, and malformed-input causes with fixed
+content-free errors. Object key ordering remains harmless; array order and all
+frozen scalar/container identity remains exact.
+
+The power section now freezes a reproducible counter-stream computation method
+and a closed interim/stopping policy: 100,000 fixed replicates, a fixed balanced
+candidate-N grid from 384 through 9,600, deterministic SHA-256 counter draws,
+the frozen joint distribution and 15% loss input, no interim looks or peeking,
+no adaptive sampling or reallocation, no early, futility, or harm stopping,
+and no exceptions or result if the target is not met. The future script,
+manifests, derived N, and results remain absent and unexecuted.
+
+The two primary contrasts now have distinct frozen power methods: paired-binary
+CAOS uses its declared joint distribution, while scheduler outcome utility uses
+a bounded five-level paired utility distribution with its own relative-effect
+estimator, studentized paired permutation test, and paired bootstrap bound.
+The binary CAOS method is not reused for utility.
+
+The focused structure, alias, UTF-8, and power-policy regressions pass. This
+remains validator/documentation work only; no experiment, manifest, result,
+private data, product/runtime path, or Packet A acceptance claim is involved.
+
+### 2026-08-30 — Historical Packet A fourth semantic-remediation checkpoint
+
+The Packet A validator now enforces an independently authored field-level
+contract for the full root and Packet A vocabulary, rather than relying on the
+candidate's self-digest. Public JSON, narrative, and provenance reads are
+bounded before parsing or hashing with 2,000,000-byte, 64-level, 50,000-node,
+100,000-character, and 128-digit ceilings plus duplicate-key, non-finite,
+malformed-input, and read-identity rejection. The test-only digest bypass
+disables only the byte-level golden check; schema and semantic validation
+remain active.
+
+The machine-readable M1 contract now freezes the exact six-state lifecycle,
+Core/deterministic-harness-only issuers, closed witness classes, complete
+transaction/outcome requirements, explicit-user same-device witness grants,
+ordinary tentative evidence, Relay/provider non-relabeling, S0–S3 sensitivity,
+narrowest-ACL filtering, and task/source/reserve/last-valid/outcome receipt
+topology with mandatory episode bindings. Secret refusal includes non-reflection
+and scans across SQLite, WAL, freelist, FTS, diagnostics, export, and restore
+surfaces. The estimator contract uses dimensionless relative contrasts for
+Scheduler and Continuity Debt, manifest repetitions are derived from final N,
+and all five S_h statuses have an exact mutually exclusive numerator,
+denominator, exclusion, and disposition mapping.
+
+Focused Packet A validation is clean at this working head, including bounded
+ingestion regressions, forged issuer/witness/receipt mutations, and the
+rebound-digest semantic-leaf probe. This remains documentation/validator work
+only: no fixture/task manifest, experiment, product, client, updater,
+workflow, integration, promotion, or Packet A evidence claim was created.
+
+### 2026-08-30 — Historical Packet A third semantic-remediation checkpoint
+
+The Packet A contract now separates its 96 base cells (six task families × four
+fixture repositories × four client/model-build strata) from the provisional
+minimum of 384 paired episodes. Final allocation is deferred to the independent
+power receipt: `N_final = 96 * ceil(max(N_power, 384) / 96)`, with repetitions
+`N_final / 96`. The specification does not freeze a final N or execute a run.
+
+Every estimand is now bound to exact arm/cell vocabulary IDs, typed contrast
+operands, numerator/denominator units, response statuses, and explicit missing,
+infrastructure-failure, and attrition contributions. `E_w` is a complete
+one-status partition; `MISSING` remains in `E_w` and lowers coverage, while a
+separate `E_eff` excludes only independently diagnosed, unexposed infrastructure
+failures. The `S_h` schema covers `EXPOSED`, `NOT_APPLICABLE`, `MISSING`,
+`INDETERMINATE`, and `UNEXERCISED`, and zero-failure claims require complete
+rule/arm dispositions. Task/source identity, reserve replacement, last-valid
+state, and exact Packet A/root CAOS component bindings are explicit and
+fail-closed. This remains documentation/validator work only; no product,
+client, updater, workflow, benchmark, or integration path changed.
+
+### 2026-08-30 — Historical Packet A semantic-freeze remediation checkpoint
+
+The first Packet A freeze validator was rejected because a candidate could
+change semantic fields and recompute the document self-digest. The remediation
+now uses a code-owned digest of the complete canonical JSON document, strict
+duplicate-key/non-finite JSON loading, exact type-aware comparisons, exact
+narrative-byte semantic binding, validator version/source binding, and
+exhaustive leaf-mutation tests. The self-digest is never authority.
+
+The freeze also makes the hard-safety rule-by-arm universe explicit:
+`NOT_APPLICABLE` never contributes exposure, while every applicable rule/arm
+needs a preregistered real `EXPOSED` opportunity and outcome report. The
+opportunity contract uses a complete response-status partition and the exact
+formula `count(SUPPORTED response statuses) / E_w`. The proposal erratum
+`PACKET-A-ERRATUM-2026-08-30` corrects its earlier subtraction formula and
+removes any requirement that the provisional planning value 384 be reproduced;
+future final N remains simulation-derived and non-authoritative until the later
+manifest gate.
+
+### 2026-08-30 — Historical Packet A initial specification-freeze checkpoint
+
+Packet A is frozen as a single machine-readable research contract in
+[`bench/memory_reliability_spec.json`](../bench/memory_reliability_spec.json),
+with the narrative binding in
+[`ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md`](research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md)
+and the independently authored validator in
+[`bench/validate_memory_reliability_spec.py`](../bench/validate_memory_reliability_spec.py).
+The lane is L0 and non-displacing: the active product frontier and product DAG
+remain blocking, and Packet A does not advance the frontier, become a product
+prerequisite, authorize production data collection, change production/schema
+behavior, grant external access, or authorize promotion.
+
+The contract now requires a mechanism-independent pre-execution hard-safety
+exposure denominator with nonzero coverage, exact response-status accounting,
+immutable future fixture/source-state bindings, operational estimands, and
+structured named cells. The provisional 384 is non-authoritative; a later
+manifest must bind to the independently emitted derived N, and the frozen 15%
+nonrecoverable infrastructure-loss allowance remains a power input.
+
+No Packet A fixture/task manifest, benchmark execution, model/provider run,
+confirmatory result, production data collection, frontier advancement, or L2/L3
+Packet A claim exists. Rejection by the validator is a specification-integrity
+failure, not benchmark evidence.
+
 ### 2026-08-29 — protected-main integration and next proof frontier
 
 PR #95 merged the Core capture route and least-privilege authority, narrow
@@ -96,6 +265,25 @@ close exact packaged/live Claude Code or Codex acceptance. Broad synthetic
 client harnesses and caller-authored evidence manifests were deliberately not
 integrated: ADR-060 requires the next client proof to execute the shipped
 candidate and produce candidate-owned, content-free evidence.
+
+### 2026-08-29 — public beta.6 and private beta.7 replacement-slot reconciliation
+
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release, and its Windows Defender incident remains unresolved. Source metadata
+uses `0.1.0-beta.7` only for a private replacement-source/candidate slot. No
+beta.7 candidate has been built, executed, scanned, submitted, approved,
+published, tagged, uploaded, or released. The private replacement workflow is
+artifact-only, exact-allowlist, and approval-gated; it is not publication,
+execution, or AV evidence. Future beta.7+ acceptance requires exact
+candidate-bound Microsoft closed no-malware reassessment evidence, and none
+exists.
+
+Codex pre-generation retrieval uses a separate `context:read` principal. Its
+generated `mcp_tool` input uses the exact `${prompt}` template; optional read,
+capture, and explicit server entries use `required=false`. Returned
+`additionalContext` is framed as untrusted reference data, and a Core outage
+returns empty context without blocking. The current stdio test proves transport
+only; native Codex trust and exact packaged/live host acceptance remain open.
 
 ### 2026-08-29 — unresolved Windows Defender beta.6 incident
 

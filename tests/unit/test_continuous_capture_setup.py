@@ -26,6 +26,7 @@ from allthecontext.client_config import (
     CODEX_CAPTURE_USER_PROMPT_TOOL,
     CODEX_EXPLICIT_PROFILE,
     CODEX_EXPLICIT_SERVER_KEY,
+    CODEX_READ_HOOK_TOOL,
     CODEX_READ_PROFILE,
     CODEX_READ_SERVER_KEY,
     configure_codex_integration,
@@ -67,6 +68,7 @@ def test_generated_codex_profiles_exist_with_closed_runtime_tools(monkeypatch) -
     monkeypatch.setenv("ATC_MCP_PROFILE", CODEX_READ_PROFILE)
     assert _runtime_tool_names() == {
         "bootstrap_context",
+        CODEX_READ_HOOK_TOOL,
         "search_context",
         "get_context_item",
         "context_status",
@@ -101,7 +103,7 @@ def test_codex_default_is_read_only_and_preserves_unrelated_toml(tmp_path: Path)
     handlers = _hook_handlers(parsed, "UserPromptSubmit")
     assert len(handlers) == 1
     assert handlers[0]["server"] == CODEX_READ_SERVER_KEY
-    assert handlers[0]["tool"] == "bootstrap_context"
+    assert handlers[0]["tool"] == CODEX_READ_HOOK_TOOL
     assert "Stop" not in parsed["hooks"]
     raw = config_path.read_text(encoding="utf-8")
     assert all(field not in raw for field in ("cwd", "caller", "provenance", "sensitivity"))

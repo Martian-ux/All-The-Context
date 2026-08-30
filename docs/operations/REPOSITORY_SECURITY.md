@@ -82,6 +82,15 @@ python scripts/exact_source_gate.py hosted-matrix --repository OWNER/REPOSITORY 
 python scripts/exact_source_gate.py local-quality
 ```
 
+The replacement-candidate workflow is a private, approval-gated artifact
+handoff with an exact allowlist. It does not publish or execute a candidate and
+does not provide antivirus evidence. The immutable `0.1.0-beta.6` remains the
+current downloadable public prerelease with its Defender incident unresolved;
+`0.1.0-beta.7` is only the private replacement-source/candidate slot. No beta.7
+candidate or exact candidate-bound Microsoft closed no-malware reassessment
+evidence exists. Future acceptance must bind that evidence to the exact
+candidate before any release recommendation.
+
 ## Acceptance receipts (B-002 scaffolding)
 
 Schemas and templates live under `release/`:

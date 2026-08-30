@@ -1,5 +1,213 @@
 # Architecture decisions
 
+## ADR-169: Keep the private replacement workflow contract closed to semantic bypasses
+
+**Status:** accepted locally on 2026-08-30 after the replacement-workflow
+contract re-review. This does not build or accept a beta.7 candidate, change
+the immutable beta.6 release, or close the Windows Defender incident.
+
+The workflow contract is owned by the reviewed test code's
+`EXPECTED_WORKFLOW_SHA256`, which covers the complete workflow as UTF-8 bytes.
+The reader preserves bytes and Unicode rather than applying YAML parsing,
+`splitlines()` reconstruction, comment removal, scalar folding, or a mutable
+workflow self-attestation. Any changed tracked workflow therefore fails closed,
+including quoted GitHub control keys, comments, duplicate keys or steps,
+anchors, aliases, merge keys, bare or tagged scalars, alternate inputs or
+handoff paths, extra post-verifier statements, scalar-style changes, and
+Unicode line separators such as U+2028.
+
+Readable assertions over that exact file separately record the approved
+semantics: manual Windows-only dispatch, source SHA binding before checkout,
+least permissions, pinned actions, no publication, an exact independent
+`pwsh` verifier with native exit propagation, exact producer/verifier/consumer
+ordering, and exact handoff/upload paths. The 35-test focused suite includes
+these adversarial mutations. This remains source-level contract evidence only;
+it is not candidate, artifact, security-scan, Microsoft, client, or release
+acceptance.
+
+## ADR-168: Keep beta.6 public while beta.7 remains a private replacement slot
+
+**Status:** accepted on 2026-08-29 as a documentation reconciliation. This
+does not alter the immutable `0.1.0-beta.6` release or close its unresolved
+Windows Defender incident.
+
+The immutable `0.1.0-beta.6` prerelease remains the current public downloadable
+release. Source metadata uses `0.1.0-beta.7` only for a private
+replacement-source/candidate slot. No beta.7 candidate has been built,
+executed, scanned, submitted, approved, published, tagged, uploaded, or
+released. The private replacement workflow is artifact-only, exact-allowlist,
+and approval-gated; it is not publication, execution, or AV evidence. Future
+beta.7+ acceptance requires exact candidate-bound Microsoft closed no-malware
+reassessment evidence, and none exists.
+
+Codex pre-generation retrieval uses a separate `context:read` principal, exact
+`${prompt}` `mcp_tool` templating, optional `required=false` read/capture/
+explicit server entries, untrusted `additionalContext` framing, and fail-empty
+Core outage behavior. The current stdio test is transport-only; native Codex
+trust and exact packaged/live host acceptance remain open. Historical beta.6
+receipt and template claims are preserved.
+
+## ADR-175: Packet A binds an executable power reference and closes source reads
+
+**Status:** accepted on 2026-08-30 in the final Packet A chain through exact
+clean commit `605330ce5564346a666dfa08418e6d87badad5c3`, after two fresh reviewers
+independently approved that exact commit and parent. This remains an L0,
+non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+The contract source no longer carries its own source-digest literal. The
+validator owns the immutable normalized-source anchor, and the measured
+contract source is normalized only for its three derived specification,
+structure, and narrative literals. `bench/packet_a_power_reference.py` is a
+separately SHA-256-bound executable reference (`packet-a-power-reference-v1`)
+with golden counter vectors, fixed 96-cell mapping, explicit utility matrix
+axes, exact paired-binary and studentized utility methods, fixed 10,000
+bootstrap/permutation counts, fixed 100,000-replicate estimation, and a
+deterministic no-result selection rule. It has no filesystem, product,
+provider, fixture, manifest, or result side effects.
+
+Infrastructure loss is modeled as unavailable efficacy data: the pair remains
+in the eligible-opportunity ledger and is reported separately through `E_eff`,
+but is excluded from efficacy estimators, tests, and bootstrap resampling
+instead of being fabricated as a zero pair. The bound reference gate passes at
+`(1.0, 1.0)` and cannot turn false when either per-contrast power estimate
+increases.
+
+The validator's bounded reader accepts only exact concrete pathlib paths,
+requires root containment for bound sources, rejects link/reparse, special,
+and multiply-linked files, and compares path-chain and descriptor identity
+before and after reading. The exact integer byte limit is positive and no
+greater than the compiled ceiling. Public wrappers discard raw buffers,
+candidate objects, duplicate pairs, supplied paths, and exception graphs
+before raising bounded messages. No experiment, manifest, private data, or
+product/runtime change is part of this decision.
+
+## ADR-174: Packet A independently binds authority source and rejects virtual paths
+
+**Status:** recorded on 2026-08-30 as a continuation from exact clean commit
+`f37398e421c039e61c57b3c9021c5cf85629aff8`; independent fresh-reviewer
+acceptance remains pending. This remains an L0, non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+The machine-readable contract and narrative bind the normalized source digest
+of `bench/packet_a_contract.py` in addition to the validator source digest.
+The validator also includes that source in canonical provenance and rejects
+contract-source drift unless the source and all dependent bindings are
+reviewed and rebound together. Public file/path entrypoints accept only the
+exact concrete pathlib type for the running platform; subclasses, strings,
+custom `__fspath__` objects, and virtual path behavior are rejected before any
+filesystem method dispatch. File, JSON, encoding, and path failures are raised
+outside active exception handlers so their cause/context graphs remain
+content-free. No experiment, manifest, private data, or product/runtime change
+is part of this decision.
+
+## ADR-173: Packet A closes recursive structure and freezes power reproducibility policy
+
+**Status:** recorded in committed follow-up
+`ec57058e36a111f41ef24e73c6827d59f324e436`, from exact clean commit
+`850ef9d50cce157f3639f45c1b9b5335da6cd369`; independent fresh-reviewer
+acceptance remains pending. This remains an L0,
+non-displacing research change and does not authorize execution, production or
+client changes, external access, promotion, or frontier advancement.
+
+The Packet A validator first checks a code-owned recursive structure digest.
+Object key order is normalized, but every frozen object key set, list shape,
+length, order, and scalar identity is exact. Shared in-memory containers are
+rejected as aliases, separate from cycle rejection. This preflight runs before
+semantic field access so unknown, missing, wrong-type, appended, reordered, or
+identity-mutated candidates fail with deterministic content-free validation
+errors rather than raw exceptions. Public parsing and narrative digest
+boundaries also suppress unsafe exception causes and require strict UTF-8.
+
+Because the future power script is not part of this L0 freeze, the machine
+readable contract now explicitly freezes its reproducible computation method:
+SHA-256 counter-stream draws, fixed 100,000 replicates, fixed balanced candidate
+N values from 384 through 9,600, the declared paired distribution and loss
+input, and a smallest-N-at-or-above-0.90 selection rule. It also freezes no
+interim looks or peeking, no adaptive sampling or reallocation, no early,
+futility, or harm stopping, no exceptions, and no derived-N receipt when the
+target is not met. No simulation, manifest, or result is created or claimed by
+this decision.
+
+The two primary contrasts have distinct frozen methods. The checkpoint/CAOS
+contrast uses paired binary outcomes and the declared CAOS joint distribution.
+The scheduler outcome-utility contrast uses a bounded five-level paired utility
+distribution, a relative-utility estimator, a studentized paired permutation
+test, and a paired percentile-bootstrap bound with fixed counter-stream
+resampling; the binary method is not reused for utility.
+
+## ADR-172: Packet A uses one bounded, content-free JSON parser
+
+**Status:** recorded in the committed Packet A follow-up chain through
+`ec57058e36a111f41ef24e73c6827d59f324e436`, from exact clean commit
+`16697b849751a6dd1e739aaca44492ce6fe1d338`; independent fresh-reviewer
+acceptance remains pending. This remains an L0, non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+Top-level Packet A JSON and the fenced JSON binding in the freeze narrative
+share one bounded byte parser with duplicate-key, non-finite-number,
+malformed-input, depth, node, string, and numeric limits. Exact expected-key
+checks remain active, while duplicate/unknown-key, parse, and non-finite
+diagnostics are fixed content-free messages that do not echo attacker names,
+values, or paths. In-memory validation uses an iterative limit walk, so deeply
+nested discarded values cannot escape through a recursive finite-value check.
+The focused regression set covers these attacks and rebound narrative/code
+digests; no experiment or manifest was run.
+
+## ADR-171: Packet A freezes M1 evidence, ACL, secret, and receipt topology
+
+**Status:** accepted on 2026-08-30 as a fourth semantic remediation of the
+Packet A freeze. This remains an L0, non-displacing research decision and does
+not authorize execution, production or client changes, external access,
+promotion, or frontier advancement.
+
+The machine-readable `packet_a.m1_contract` is the exact authority for the
+assigned → supplied → acknowledged → observed_use → action → outcome
+measurement spine. It closes issuers and witnesses, requires exact transaction
+and outcome fields, requires configured same-device witness grants for
+explicit-user evidence, keeps ordinary evidence tentative, and prevents
+Relay/provider/client/model/tool/connector/imported-text paths from relabeling
+or widening authority. It also freezes S0–S3 sensitivity meanings and
+narrowest-ACL filtering before exposure.
+
+M1 receipts are episode-bound through task, immutable source-state, reserve,
+last-valid-state, action, and outcome schemas. Invalidation is terminal and
+unresolved projects remain observation-only and non-linkable. Secret refusal
+has a non-reflection rule and requires bounded scans of SQLite, WAL, freelist,
+FTS, diagnostics, export, and restore surfaces before acceptance and after
+terminal purge. The validator enforces these structures independently and
+rejects forged issuer, witness, receipt, ACL, sensitivity, or scan states.
+No experiment, manifest, private data, or product/runtime change is part of
+this decision.
+
+## ADR-170: Packet A semantic remediation binds final allocation and estimands
+
+**Status:** accepted on 2026-08-30 as a third semantic remediation of the
+Packet A freeze. This remains an L0, non-displacing research decision and does
+not authorize execution, production or client changes, external access,
+promotion, or frontier advancement.
+
+Packet A freezes 96 balanced base cells (six task families, four sanitized
+fixture repositories, and four client/model-build strata) and a provisional
+minimum of 384 paired episodes, but not a final repetition count. The later
+power receipt determines `N_power`; the final balanced allocation is
+`N_final = 96 * ceil(max(N_power, 384) / 96)`, with repetitions `N_final / 96`.
+The final N and task manifest remain future-gated.
+
+Each estimand has exact arm/cell IDs, typed contrast operands, numerator and
+denominator units, complete response-status handling, and explicit missing,
+infrastructure-failure, and attrition dispositions. `MISSING` remains in the
+complete `E_w` partition and lowers coverage. A separately reported `E_eff`
+excludes only independently diagnosed infrastructure failures with no
+mechanism-specific result exposure; attrition retains its last-valid-state
+receipt. The hard-safety `S_h` schema has five complete statuses and prevents a
+zero-failure claim without complete rule/arm dispositions. Packet CAOS is bound
+component-for-component to the root CAOS endpoint, including action/currentness,
+purge, prerequisites/exceptions, budget, and stale-state semantics.
+
 ## ADR-167: Candidate-owned evidence precedes Windows reassessment and live-client credit
 
 **Status:** accepted on 2026-08-29 for the replacement-candidate preparation
