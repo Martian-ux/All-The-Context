@@ -94,10 +94,14 @@ The blocking product work is:
    between research contracts and live lifecycle support.
 5. Phase 2, the continuous end-to-end vertical slice.
 
-Packet A is the sole intentional parallel lane. It may freeze fixtures,
-oracles, controls, and the benchmark contract while the frontier proceeds, but
-it is non-displacing: it cannot change the frontier, grant product acceptance,
-authorize a schema, or make a later workstream live.
+Packet A is the sole research work lane permitted to run in parallel with the
+active product frontier. Once inside the research program, shadow M1, shadow
+M3, and other explicitly declared research-DAG branches may run in their
+stated parallel order; those branches remain non-displacing and cannot change
+product sequencing. Packet A may freeze fixtures, oracles, controls, and the
+benchmark contract while the frontier proceeds, but it cannot change the
+frontier, grant product acceptance, authorize a schema, or make a later
+workstream live.
 
 ### 2.1 Product DAG
 
@@ -563,25 +567,40 @@ failure after the fact.
 
 ### 6.5 Opportunity, abstention, and witness contract
 
-Before any mechanism result is scored, a frozen mechanism-independent
-opportunity oracle must identify eligible positive and negative opportunities.
-It uses the same logical episode and source state for every arm, may abstain
-when the fixture cannot decide, and is not allowed to read a mechanism's
-prediction before assigning the opportunity. The minimum eligibility floors are:
+Before execution, a frozen mechanism-independent opportunity manifest and
+oracle must identify eligible positive and negative opportunities. It uses the
+same logical episode and source state for every arm and cannot inspect a
+mechanism result before assigning eligibility. The eligible-opportunity
+denominator `E_w` is frozen before execution for each workstream and arm:
+every eligible opportunity enters `E_w` whether the mechanism acts, abstains,
+errors, or returns unsupported. A missing run or missing status remains in
+`E_w` and lowers coverage; it cannot be removed after seeing the mechanism
+result. If the fixture cannot decide eligibility before execution, the oracle
+records `INDETERMINATE_PRE_ELIGIBILITY` outside `E_w`; it may not use that
+status to exclude an eligible opportunity after the fact.
 
-| Workstream | Positive opportunities | Negative opportunities | Opportunity coverage | Non-abstention |
-|---|---:|---:|---:|---:|
-| Prospective memory | 50 due/cue opportunities | 50 non-due/negative-control opportunities | At least 90% of eligible cue events | At least 90% of scored cue events |
-| Adaptive routing | 50 beneficial-route opportunities | 50 no-benefit or wrong-route opportunities | At least 90% of eligible route opportunities | At least 90% of scored route opportunities |
-| Continuity Debt | 100 independently adjudicated avoidable-debt opportunities | 100 independently adjudicated non-debt opportunities | At least 90% of eligible episode opportunities | At least 90% of scored episode opportunities |
+Packet A preregisters directional tests against this same denominator:
+`coverage = recorded eligible-opportunity statuses / E_w`, and
+`non_abstention = (E_w - abstentions - errors - unsupported) / E_w`. Each
+requires its preregistered directional confidence bound or test to clear the
+declared floor. The minimum eligibility floors are:
+
+| Workstream | Minimum positive opportunities | Minimum negative opportunities | Coverage test against frozen `E_w` | Non-abstention test against frozen `E_w` |
+|---|---:|---:|---|---|
+| Prospective memory | 50 due/cue opportunities | 50 non-due/negative-control opportunities | Preregistered directional bound/test clears 90% | Preregistered directional bound/test clears 90% |
+| Adaptive routing | 50 beneficial-route opportunities | 50 no-benefit or wrong-route opportunities | Preregistered directional bound/test clears 90% | Preregistered directional bound/test clears 90% |
+| Continuity Debt | 100 independently adjudicated avoidable-debt opportunities | 100 independently adjudicated non-debt opportunities | Preregistered directional bound/test clears 90% | Preregistered directional bound/test clears 90% |
 
 These are minimum evidence floors, not outcome credit. If a floor is missed,
-the stage is insufficiently exercised and cannot promote. Abstentions,
+the stage is insufficiently exercised and cannot promote. Abstentions, errors,
 unsupported cells, not-exercised cells, and missing witnesses receive no
 promotion credit and remain visible in the report. Usefulness and outcome
 utility are witnessed only by Core, the deterministic harness, or an
 independent oracle; a model, client, tool, provider, or participant assertion
-cannot close them.
+cannot close them. Prospective-memory and adaptive-routing promotion gates
+must reference this exact frozen-`E_w` coverage/non-abstention rule, including
+its positive/negative minimums; they may not substitute a mechanism-defined
+scored-event denominator.
 
 For every numerical gate, Packet A freezes the estimand, denominator,
 direction, confidence method or test, and missingness treatment before the
@@ -934,8 +953,8 @@ dependency closure, or action ceiling.
    bound for relative improvement on the preregistered outcome-utility
    endpoint is at least 5%; and
 7. the result is not explained only by larger prompt exposure, latency, or
-   context, and the fixed minimum opportunity coverage and non-abstention
-   floors in Section 6.5 are met.
+   context, and the fixed positive/negative minimums plus the frozen-`E_w`
+   directional coverage/non-abstention floors in Section 6.5 are met.
 
 **Next stage.** A separately accepted notification-only path may create a
 user-visible notification receipt for an exact recipient and target. Later
@@ -1119,10 +1138,10 @@ router must beat the current lexical and capsule baseline on the preregistered
 CAOS estimand with a one-sided 95% lower confidence bound for improvement
 greater than zero. The one-sided 95% upper confidence bounds for disclosure,
 latency, and maintenance-cost differences must remain at or below their
-predeclared noninferiority margins. The minimum positive/negative opportunity,
-coverage, and non-abstention floors in Section 6.5 must be met; abstentions
-and unsupported cells receive no credit. There must be no hard lifecycle
-failures.
+predeclared noninferiority margins. The minimum positive/negative opportunity
+counts and the directional coverage/non-abstention tests against the frozen
+`E_w` denominator in Section 6.5 must be met; abstentions, errors, and
+unsupported cells receive no credit. There must be no hard lifecycle failures.
 
 **Next stage.** A separate graph, embedding, or learned-router cell may run
 only with an independent prior-art review, frozen task target, and exact
