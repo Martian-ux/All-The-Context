@@ -689,6 +689,183 @@ def test_packet_a_public_digest_helpers_preflight_cycles_types_and_limits() -> N
         compute_narrative_semantic_digest(b"", specification_digest=StringSubclass("0" * 64))
 
 
+def test_packet_a_recursive_structure_contract_rejects_container_drift() -> None:
+    spec = _load(SPEC_PATH)
+
+    def assert_rejected(candidate: dict[str, Any]) -> None:
+        with pytest.raises(SpecificationValidationError) as caught:
+            validate_spec(
+                with_recomputed_digest(candidate),
+                require_golden_digest=False,
+                validate_narrative=False,
+            )
+        assert str(caught.value) == "document structure contract differs from the frozen value"
+
+    unknown_key_cases = [
+        ("packet_a", "episode_contract"),
+        ("packet_a", "budget_contract", "local_reference"),
+        ("packet_a", "opportunity_contract", "workstreams", 0),
+        ("packet_a", "power_simulation", "computation_method"),
+    ]
+    for path in unknown_key_cases:
+        candidate = deepcopy(spec)
+        target: Any = candidate
+        for part in path:
+            target = target[part]
+        target["unexpected_nested_key"] = "untrusted"
+        assert_rejected(candidate)
+
+    missing_key_cases = [
+        (("packet_a", "calibration_pilot"), "task_family_count"),
+        (("packet_a", "episode_contract"), "minimum_sessions"),
+        (("packet_a", "budget_contract"), "local_reference"),
+        (("packet_a", "power_simulation", "interim_and_stopping_policy"), "early_stopping"),
+    ]
+    for path, key in missing_key_cases:
+        candidate = deepcopy(spec)
+        target: Any = candidate
+        for part in path:
+            target = target[part]
+        target.pop(key)
+        assert_rejected(candidate)
+
+    wrong_shape_cases = [
+        (("packet_a", "episode_contract"), []),
+        (("packet_a", "power_simulation", "computation_method"), "wrong-shape"),
+        (("experiments", 0), {"id": "E01"}),
+        (("promotion_gates", 0), "wrong-shape"),
+    ]
+    for path, replacement in wrong_shape_cases:
+        candidate = deepcopy(spec)
+        _replace_path(candidate, path, replacement)
+        assert_rejected(candidate)
+
+    for list_path in (
+        ("experiments",),
+        ("promotion_gates",),
+        ("packet_a", "task_families"),
+        ("packet_a", "estimands"),
+    ):
+        candidate = deepcopy(spec)
+        target: Any = candidate
+        for part in list_path:
+            target = target[part]
+        target.append(deepcopy(target[-1]))
+        assert_rejected(candidate)
+
+    for list_path in (
+        ("experiments",),
+        ("promotion_gates",),
+        ("packet_a", "task_families"),
+        ("packet_a", "estimands"),
+    ):
+        candidate = deepcopy(spec)
+        target: Any = candidate
+        for part in list_path:
+            target = target[part]
+        target.reverse()
+        assert_rejected(candidate)
+
+    identity_drift = deepcopy(spec)
+    identity_drift["experiments"][0]["id"] = "E02"
+    assert_rejected(identity_drift)
+
+
+def test_packet_a_public_boundaries_reject_aliases_and_invalid_utf8_content_free() -> None:
+    shared: dict[str, Any] = {"value": "bounded"}
+    aliased = {"left": shared, "right": shared}
+    for helper in (
+        validator_module.canonical_json_bytes,
+        validator_module.compute_specification_digest,
+        validator_module.with_recomputed_digest,
+    ):
+        with pytest.raises(SpecificationValidationError) as caught:
+            helper(aliased)
+        assert str(caught.value) == "document contains a shared container reference"
+        assert caught.value.__cause__ is None
+
+    candidate = _load(SPEC_PATH)
+    shared_packet_object = candidate["packet_a"]["episode_contract"]
+    candidate["packet_a"]["budget_contract"]["local_reference"] = shared_packet_object
+    with pytest.raises(SpecificationValidationError) as caught:
+        validate_spec(candidate, require_golden_digest=False, validate_narrative=False)
+    assert str(caught.value) == "document contains a shared container reference"
+    assert caught.value.__cause__ is None
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        compute_narrative_semantic_digest(b"\xff", specification_digest="0" * 64)
+    assert str(caught.value) == "narrative is not valid UTF-8"
+    assert caught.value.__cause__ is None
+
+
+def test_packet_a_narrative_binding_parser_is_unique_and_linear() -> None:
+    document = FREEZE_PATH.read_text(encoding="utf-8")
+    extracted = validator_module._extract_narrative_json_binding(document)
+    parsed = json.loads(extracted)
+    assert (
+        parsed["specification_digest"]
+        == _load(SPEC_PATH)["packet_a"]["content_binding"]["specification_digest"]
+    )
+
+    repeated = "\n".join("### Machine-readable binding\n```json\n{}\n```" for _ in range(400))
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module._extract_narrative_json_binding(repeated)
+    assert str(caught.value) == "narrative machine-readable binding heading is not unique"
+    assert caught.value.__cause__ is None
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module._parse_bounded_json_bytes(b'{"secret_sentinel":')
+    assert str(caught.value) == "invalid JSON document"
+    assert caught.value.__cause__ is None
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module.canonical_json_bytes("\ud800")
+    assert str(caught.value) == "document is not finite canonical JSON"
+    assert caught.value.__cause__ is None
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module.load_json_document(Path("missing_secret_sentinel.json"))
+    assert str(caught.value) == "input read failed"
+    assert caught.value.__cause__ is None
+
+
+def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
+    spec = _load(SPEC_PATH)
+    power = spec["packet_a"]["power_simulation"]
+    assert power["computation_method"]["algorithm"] == (
+        "deterministic_paired_bernoulli_monte_carlo"
+    )
+    assert power["computation_method"]["candidate_n_grid"] == (
+        "complete_balanced_multiples_of_96_from_384_through_9600_inclusive"
+    )
+    assert power["interim_and_stopping_policy"] == {
+        "interim_looks": "none",
+        "interim_peeking": "prohibited",
+        "replicate_count_fixed_before_run": 100000,
+        "candidate_grid_fixed_before_run": True,
+        "early_stopping": "forbidden",
+        "futility_stopping": "forbidden",
+        "harm_stopping": "forbidden",
+        "optional_stopping": "forbidden",
+        "stopping_exceptions": "none",
+        "adaptive_sampling": False,
+        "peeking_or_reallocation": "forbidden",
+        "stop_only_after": "all_candidate_n_values_and_all_100000_replicates_are_evaluated",
+        "result_status": "specification_only_no_power_result_claim",
+    }
+
+    candidate = deepcopy(spec)
+    candidate["packet_a"]["power_simulation"]["interim_and_stopping_policy"]["early_stopping"] = (
+        "allowed"
+    )
+    with pytest.raises(SpecificationValidationError):
+        validate_spec(
+            with_recomputed_digest(candidate),
+            require_golden_digest=False,
+            validate_narrative=False,
+        )
+
+
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:
     spec = _load(SPEC_PATH)
     spec["packet_a"]["freeze_date"] = "2099-01-01"

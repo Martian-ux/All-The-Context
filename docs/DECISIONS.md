@@ -46,6 +46,33 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-173: Packet A closes recursive structure and freezes power reproducibility policy
+
+**Status:** prepared on 2026-08-30 from exact clean commit
+`850ef9d50cce157f3639f45c1b9b5335da6cd369`; follow-up commit intentionally
+held pending both new reviewers’ final reports. This remains an L0,
+non-displacing research change and does not authorize execution, production or
+client changes, external access, promotion, or frontier advancement.
+
+The Packet A validator first checks a code-owned recursive structure digest.
+Object key order is normalized, but every frozen object key set, list shape,
+length, order, and scalar identity is exact. Shared in-memory containers are
+rejected as aliases, separate from cycle rejection. This preflight runs before
+semantic field access so unknown, missing, wrong-type, appended, reordered, or
+identity-mutated candidates fail with deterministic content-free validation
+errors rather than raw exceptions. Public parsing and narrative digest
+boundaries also suppress unsafe exception causes and require strict UTF-8.
+
+Because the future power script is not part of this L0 freeze, the machine
+readable contract now explicitly freezes its reproducible computation method:
+SHA-256 counter-stream draws, fixed 100,000 replicates, fixed balanced candidate
+N values from 384 through 9,600, the declared paired distribution and loss
+input, and a smallest-N-at-or-above-0.90 selection rule. It also freezes no
+interim looks or peeking, no adaptive sampling or reallocation, no early,
+futility, or harm stopping, no exceptions, and no derived-N receipt when the
+target is not met. No simulation, manifest, or result is created or claimed by
+this decision.
+
 ## ADR-172: Packet A uses one bounded, content-free JSON parser
 
 **Status:** prepared on 2026-08-30 from exact clean commit

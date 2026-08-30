@@ -28,6 +28,7 @@ try:
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
         EXPECTED_ROOT_CAOS_COMPONENTS,
         EXPECTED_S_H_STATUS_IDS,
+        EXPECTED_STRUCTURE_DIGEST,
         EXPECTED_VALIDATOR_VERSION,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
@@ -41,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
         EXPECTED_ROOT_CAOS_COMPONENTS,
         EXPECTED_S_H_STATUS_IDS,
+        EXPECTED_STRUCTURE_DIGEST,
         EXPECTED_VALIDATOR_VERSION,
     )
 
@@ -875,8 +877,8 @@ def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> b
         return data
     except SpecificationValidationError:
         raise
-    except (OSError, ValueError) as exc:
-        raise SpecificationValidationError("input read failed") from exc
+    except (OSError, ValueError):
+        raise SpecificationValidationError("input read failed") from None
 
 
 def _validate_json_limits(value: Any) -> None:
@@ -886,6 +888,7 @@ def _validate_json_limits(value: Any) -> None:
     members = 0
     string_chars = 0
     active_containers: set[int] = set()
+    seen_containers: set[int] = set()
     pending: list[tuple[Any, int, bool]] = [(value, 0, False)]
     while pending:
         current, depth, exiting = pending.pop()
@@ -906,6 +909,11 @@ def _validate_json_limits(value: Any) -> None:
         elif current_type is dict:
             container_id = id(current)
             _require(container_id not in active_containers, "document contains a cycle")
+            _require(
+                container_id not in seen_containers,
+                "document contains a shared container reference",
+            )
+            seen_containers.add(container_id)
             active_containers.add(container_id)
             members += len(current)
             _require(members <= MAX_JSON_MEMBERS, "document exceeds member limit")
@@ -922,6 +930,11 @@ def _validate_json_limits(value: Any) -> None:
         elif current_type is list:
             container_id = id(current)
             _require(container_id not in active_containers, "document contains a cycle")
+            _require(
+                container_id not in seen_containers,
+                "document contains a shared container reference",
+            )
+            seen_containers.add(container_id)
             active_containers.add(container_id)
             pending.append((current, depth, True))
             for child in current:
@@ -929,8 +942,8 @@ def _validate_json_limits(value: Any) -> None:
         elif current_type is int:
             try:
                 digits = len(str(abs(current)))
-            except ValueError as exc:
-                raise SpecificationValidationError("document exceeds number digit limit") from exc
+            except ValueError:
+                raise SpecificationValidationError("document exceeds number digit limit") from None
             _require(digits <= MAX_JSON_NUMBER_DIGITS, "document exceeds number digit limit")
         elif current_type is float:
             _require(math.isfinite(current), "document contains a non-finite number")
@@ -940,11 +953,73 @@ def _validate_json_limits(value: Any) -> None:
             raise SpecificationValidationError("document contains an unsupported JSON value")
 
 
+def _structural_projection(value: Any, path: tuple[str | int, ...] = ()) -> Any:
+    """Build the code-owned structure projection used before field access.
+
+    Objects are sorted by key so harmless JSON object reordering remains valid.
+    Arrays retain order, and scalar values are retained with explicit type tags;
+    this makes list identity/order and every frozen container boundary exact while
+    the specification digest remains the separate self-binding authority.
+    """
+
+    value_type = type(value)
+    if value_type is dict:
+        children = []
+        for key in sorted(value):
+            if path == ("packet_a", "content_binding") and key == "specification_digest":
+                continue
+            children.append([key, _structural_projection(value[key], (*path, key))])
+        return ["object", children]
+    if value_type is list:
+        return [
+            "array",
+            [_structural_projection(child, (*path, index)) for index, child in enumerate(value)],
+        ]
+    if value_type is str:
+        return ["string", value]
+    if value_type is bool:
+        return ["boolean", value]
+    if value_type is int:
+        return ["integer", value]
+    if value_type is float:
+        return ["number", value]
+    if value is None:
+        return ["null"]
+    raise SpecificationValidationError("document structure contains an unsupported value")
+
+
+def _compute_structure_digest(value: Any) -> str:
+    """Hash the frozen schema/container contract without exposing candidate data."""
+
+    try:
+        projection = _structural_projection(value)
+        encoded = json.dumps(
+            projection,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError):
+        raise SpecificationValidationError("document structure digest failed") from None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_document_structure(spec: dict[str, Any]) -> None:
+    """Reject any nested schema, container, order, or identity drift first."""
+
+    _require_value(
+        _compute_structure_digest(spec),
+        EXPECTED_STRUCTURE_DIGEST,
+        "document structure contract",
+    )
+
+
 def _bounded_deepcopy(value: Any) -> Any:
     try:
         return deepcopy(value)
-    except (MemoryError, RecursionError, TypeError, ValueError) as exc:
-        raise SpecificationValidationError("document copy failed") from exc
+    except (MemoryError, RecursionError, TypeError, ValueError):
+        raise SpecificationValidationError("document copy failed") from None
 
 
 def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
@@ -998,8 +1073,8 @@ def _parse_bounded_json_bytes(document: bytes) -> Any:
         )
     except SpecificationValidationError:
         raise
-    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise SpecificationValidationError("invalid JSON document") from exc
+    except (UnicodeError, json.JSONDecodeError, RecursionError):
+        raise SpecificationValidationError("invalid JSON document") from None
     _validate_json_limits(value)
     return value
 
@@ -2628,6 +2703,51 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
         "output_manifest_sha256": "unset_until_later_manifest_gate",
         "simulation_seed": 20260829,
         "simulation_repetitions": 100000,
+        "computation_method": {
+            "algorithm": "deterministic_paired_bernoulli_monte_carlo",
+            "randomness": "sha256_counter_stream_v1",
+            "counter_inputs": [
+                "simulation_seed",
+                "replicate_index",
+                "candidate_n",
+                "episode_index",
+                "draw_kind",
+            ],
+            "uniform_mapping": "first_53_bits_of_sha256_divided_by_2^53",
+            "joint_draw": (
+                "one_uniform_draw_and_left_closed_cumulative_joint_distribution_in_declared_"
+                "key_order"
+            ),
+            "infrastructure_loss_draw": (
+                "independent_uniform_draw_per_paired_episode_loss_if_draw_is_less_than_"
+                "allowance_and_episode_remains_in_denominator"
+            ),
+            "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
+            "power_estimator": (
+                "count_replicates_passing_two_primary_contrasts_after_holm_divided_by_100000"
+            ),
+            "selection_rule": (
+                "smallest_candidate_n_with_estimated_primary_caos_power_at_least_0.90"
+            ),
+            "no_result_fallback": (
+                "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
+            ),
+        },
+        "interim_and_stopping_policy": {
+            "interim_looks": "none",
+            "interim_peeking": "prohibited",
+            "replicate_count_fixed_before_run": 100000,
+            "candidate_grid_fixed_before_run": True,
+            "early_stopping": "forbidden",
+            "futility_stopping": "forbidden",
+            "harm_stopping": "forbidden",
+            "optional_stopping": "forbidden",
+            "stopping_exceptions": "none",
+            "adaptive_sampling": False,
+            "peeking_or_reallocation": "forbidden",
+            "stop_only_after": "all_candidate_n_values_and_all_100000_replicates_are_evaluated",
+            "result_status": "specification_only_no_power_result_claim",
+        },
         "baseline_control_caos": 0.75,
         "alternative_caos": 0.85,
         "target_paired_effect": 0.1,
@@ -2719,8 +2839,8 @@ def canonical_json_bytes(value: Any) -> bytes:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-    except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError) as exc:
-        raise SpecificationValidationError("document is not finite canonical JSON") from exc
+    except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError):
+        raise SpecificationValidationError("document is not finite canonical JSON") from None
 
 
 def compute_specification_digest(spec: dict[str, Any]) -> str:
@@ -3412,6 +3532,39 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
 
 _NARRATIVE_DIGEST_ROW = re.compile(rb"(\| Specification digest \| `)[0-9a-f]{64}(` \|)")
 _NARRATIVE_DIGEST_JSON = re.compile(rb"(\"specification_digest\"\s*:\s*\")[0-9a-f]{64}(\")")
+_NARRATIVE_BINDING_HEADING = "### Machine-readable binding"
+_NARRATIVE_JSON_FENCE = "```json"
+_NARRATIVE_FENCE = "```"
+
+
+def _extract_narrative_json_binding(document: str) -> str:
+    """Extract the unique JSON fence with one bounded linear pass over lines."""
+
+    heading_count = 0
+    json_fence_count = 0
+    capturing = False
+    closed = False
+    payload: list[str] = []
+    for line in document.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped == _NARRATIVE_BINDING_HEADING:
+            heading_count += 1
+        if stripped == _NARRATIVE_JSON_FENCE:
+            json_fence_count += 1
+            if heading_count == 1 and not capturing and not closed:
+                capturing = True
+            continue
+        if capturing and stripped == _NARRATIVE_FENCE:
+            capturing = False
+            closed = True
+            continue
+        if capturing:
+            payload.append(line)
+
+    _require(heading_count == 1, "narrative machine-readable binding heading is not unique")
+    _require(json_fence_count == 1, "narrative machine-readable JSON fence is not unique")
+    _require(closed and not capturing, "narrative machine-readable binding block is incomplete")
+    return "".join(payload).strip()
 
 
 def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
@@ -3424,6 +3577,10 @@ def compute_narrative_semantic_digest(document: bytes, *, specification_digest: 
         "narrative specification digest is invalid",
     )
     _require(len(document) <= MAX_INPUT_BYTES, "narrative exceeds byte limit")
+    try:
+        document.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SpecificationValidationError("narrative is not valid UTF-8") from None
     expected = specification_digest.encode("ascii")
     normalized, row_count = _NARRATIVE_DIGEST_ROW.subn(rb"\1<SPECIFICATION_DIGEST>\2", document)
     normalized, json_count = _NARRATIVE_DIGEST_JSON.subn(rb"\1<SPECIFICATION_DIGEST>\2", normalized)
@@ -3447,18 +3604,16 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     document_bytes = _read_bounded_file(path)
     try:
         document = document_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SpecificationValidationError("narrative is not valid UTF-8") from exc
+    except UnicodeDecodeError:
+        raise SpecificationValidationError("narrative is not valid UTF-8") from None
     expected_digest = packet["content_binding"]["specification_digest"]
     _require(
         f"| Specification digest | `{expected_digest}` |" in document,
         "narrative digest is not bound",
     )
-    match = re.search(
-        r"### Machine-readable binding\s+.*?```json\s*(\{.*?\})\s*```", document, flags=re.DOTALL
+    narrative_binding = _parse_bounded_json_bytes(
+        _extract_narrative_json_binding(document).encode("utf-8")
     )
-    _require(match is not None, "narrative machine-readable binding block is missing")
-    narrative_binding = _parse_bounded_json_bytes(match.group(1).encode("utf-8"))
     _require_keys(
         narrative_binding,
         {"specification_digest", "evidence_level", "execution_boundary"},
@@ -3498,6 +3653,7 @@ def validate_spec(
 
     _require(isinstance(spec, dict), "document must be an object")
     _validate_json_limits(spec)
+    _validate_document_structure(spec)
     _require_keys(spec, EXPECTED_ROOT_KEYS, "document")
     _require_value(spec.get("schema_version"), 1, "schema_version")
     _require_value(
@@ -3764,6 +3920,8 @@ def validate_spec(
             "output_manifest_sha256",
             "simulation_seed",
             "simulation_repetitions",
+            "computation_method",
+            "interim_and_stopping_policy",
             "baseline_control_caos",
             "alternative_caos",
             "target_paired_effect",

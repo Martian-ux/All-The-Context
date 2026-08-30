@@ -5,7 +5,7 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a` |
+| Specification digest | `1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -209,8 +209,24 @@ provisional minimum of 384 paired episodes, and final allocation
 `96 × ceil(max(N_power, 384) / 96)` with final repetitions `N_final / 96`,
 familywise alpha 0.05 with Holm across two primary contrasts, one-sided 95%
 directional bounds, 90% power, a -0.02 noninferiority margin, and a frozen 15%
-nonrecoverable infrastructure-loss allowance as a power input. The script,
-inputs, outputs, and digests are not present or executed in this freeze.
+nonrecoverable infrastructure-loss allowance as a power input. The future
+script, inputs, outputs, and digests are not present or executed in this
+freeze. Its reproducible computation method is nevertheless frozen in
+`packet_a.power_simulation.computation_method`: SHA-256 counter-stream draws
+with counter inputs of seed, replicate index, candidate N, episode index, and
+draw kind; one draw maps to the declared left-closed cumulative paired
+distribution; infrastructure loss uses an independent draw and remains in the
+denominator; candidate N values are balanced multiples of 96 from 384 through
+9,600 inclusive; and the smallest N whose 100,000-replicate estimated power is
+at least 0.90 is selected. If no candidate meets the target, derived N remains
+unset and no receipt is emitted.
+
+The closed interim and stopping policy is also frozen: interim peeking,
+optional stopping, adaptive sampling, reallocation, early stopping, futility
+stopping, and harm stopping are all prohibited, with no exceptions. All
+candidate N values and all 100,000 replicates must be evaluated before a
+simulation result can be emitted. This is still a specification-only policy;
+no power computation or result is claimed here.
 
 The provisional planning value 384 is non-authoritative. The later manifest
 must bind to the independently emitted derived N from the reproducible power
@@ -266,7 +282,7 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a",
+  "specification_digest": "1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

@@ -68,6 +68,30 @@ for the fresh reviewer’s additional final findings before a follow-up commit;
 no experiment, manifest, result, private data, product/runtime path, or Packet
 A acceptance claim is involved.
 
+### 2026-08-30 — Packet A recursive structure and power-policy remediation remains uncommitted and L0-only
+
+Starting from exact clean commit `850ef9d50cce157f3639f45c1b9b5335da6cd369`,
+the validator now performs a code-owned recursive structure check before any
+semantic field access. It rejects unknown or missing nested keys, wrong object
+and list shapes, list append/reorder/identity drift, shared in-memory container
+aliases, invalid UTF-8 narrative bytes, and malformed-input causes with fixed
+content-free errors. Object key ordering remains harmless; array order and all
+frozen scalar/container identity remains exact.
+
+The power section now freezes a reproducible counter-stream computation method
+and a closed interim/stopping policy: 100,000 fixed replicates, a fixed balanced
+candidate-N grid from 384 through 9,600, deterministic SHA-256 counter draws,
+the frozen joint distribution and 15% loss input, no interim looks or peeking,
+no adaptive sampling or reallocation, no early, futility, or harm stopping,
+and no exceptions or result if the target is not met. The future script,
+manifests, derived N, and results remain absent and unexecuted.
+
+The focused structure, alias, UTF-8, and power-policy regressions pass. This
+remains validator/documentation work only and is intentionally held until both
+new reviewers’ final reports are incorporated; no experiment, manifest,
+result, private data, product/runtime path, or Packet A acceptance claim is
+involved.
+
 ### 2026-08-30 — Packet A fourth semantic remediation remains L0 and non-displacing
 
 The Packet A validator now enforces an independently authored field-level

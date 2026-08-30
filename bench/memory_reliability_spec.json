@@ -3004,6 +3004,39 @@
       "output_manifest_sha256": "unset_until_later_manifest_gate",
       "simulation_seed": 20260829,
       "simulation_repetitions": 100000,
+      "computation_method": {
+        "algorithm": "deterministic_paired_bernoulli_monte_carlo",
+        "randomness": "sha256_counter_stream_v1",
+        "counter_inputs": [
+          "simulation_seed",
+          "replicate_index",
+          "candidate_n",
+          "episode_index",
+          "draw_kind"
+        ],
+        "uniform_mapping": "first_53_bits_of_sha256_divided_by_2^53",
+        "joint_draw": "one_uniform_draw_and_left_closed_cumulative_joint_distribution_in_declared_key_order",
+        "infrastructure_loss_draw": "independent_uniform_draw_per_paired_episode_loss_if_draw_is_less_than_allowance_and_episode_remains_in_denominator",
+        "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
+        "power_estimator": "count_replicates_passing_two_primary_contrasts_after_holm_divided_by_100000",
+        "selection_rule": "smallest_candidate_n_with_estimated_primary_caos_power_at_least_0.90",
+        "no_result_fallback": "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
+      },
+      "interim_and_stopping_policy": {
+        "interim_looks": "none",
+        "interim_peeking": "prohibited",
+        "replicate_count_fixed_before_run": 100000,
+        "candidate_grid_fixed_before_run": true,
+        "early_stopping": "forbidden",
+        "futility_stopping": "forbidden",
+        "harm_stopping": "forbidden",
+        "optional_stopping": "forbidden",
+        "stopping_exceptions": "none",
+        "adaptive_sampling": false,
+        "peeking_or_reallocation": "forbidden",
+        "stop_only_after": "all_candidate_n_values_and_all_100000_replicates_are_evaluated",
+        "result_status": "specification_only_no_power_result_claim"
+      },
       "baseline_control_caos": 0.75,
       "alternative_caos": 0.85,
       "target_paired_effect": 0.1,
@@ -3224,13 +3257,13 @@
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
       "validator_version": "packet-a-validator-v4",
-      "validator_source_sha256": "04a12e01977a30ab3f4d87b1ceec46891810c2b780e5a93aa76b18c67657b22d",
+      "validator_source_sha256": "4cba790d8ddaac1aed7f76d19b1fdd7a135b2f0eb176386eaa80acadf7462ae0",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
         "validator_version": "packet-a-validator-v4",
-        "semantic_sha256": "875b27da67ad0c1b69cf8a6680e42cd7282a380ed52a0bd6718876a8f7187277",
+        "semantic_sha256": "e6720c0479659cbe86a6720b2577b5d6567a2ac97ae8a32675da90c8d8779fda",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
@@ -3243,7 +3276,7 @@
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "6d2bc5b09785458a24d5d35f82c4014e14e728fd528076409241ef4f992af68a"
+      "specification_digest": "1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75"
     }
   }
 }
