@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 
 from bench.validate_memory_reliability_spec import (
+    EXPECTED_PROVENANCE,
     SpecificationValidationError,
+    compute_narrative_semantic_digest,
+    load_and_validate,
     validate_spec,
     with_recomputed_digest,
 )
@@ -18,12 +21,20 @@ ROOT = Path(__file__).parents[2]
 SPEC_PATH = ROOT / "bench" / "memory_reliability_spec.json"
 FIXTURE_PATH = ROOT / "bench" / "memory_reliability_fixtures.json"
 PROGRAM_PATH = ROOT / "docs" / "research" / "ATC_MEMORY_EVALUATION_PROGRAM.md"
+PROPOSAL_PATH = (
+    ROOT / "docs" / "research" / "POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md"
+)
+FREEZE_PATH = ROOT / "docs" / "research" / "ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md"
 
 
 def _load(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(value, dict)
     return value
+
+
+def _load_raw(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def _walk_keys(value: object) -> set[str]:
@@ -40,6 +51,43 @@ def _walk_keys(value: object) -> set[str]:
 
 def _ids(values: list[dict[str, Any]]) -> list[str]:
     return [str(value["id"]) for value in values]
+
+
+def _scalar_paths(
+    value: object, path: tuple[object, ...] = ()
+) -> list[tuple[tuple[object, ...], object]]:
+    if isinstance(value, dict):
+        return [
+            item for key, child in value.items() for item in _scalar_paths(child, (*path, key))
+        ]
+    if isinstance(value, list):
+        return [
+            item
+            for index, child in enumerate(value)
+            for item in _scalar_paths(child, (*path, index))
+        ]
+    return [(path, value)]
+
+
+def _replace_path(value: dict[str, Any], path: tuple[object, ...], replacement: object) -> None:
+    current: object = value
+    for part in path[:-1]:
+        current = current[part]  # type: ignore[index]
+    current[path[-1]] = replacement  # type: ignore[index]
+
+
+def _mutated_scalar(value: object) -> object:
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value + 1
+    if isinstance(value, float):
+        return value + 0.125
+    if isinstance(value, str):
+        return value + "\u2063"
+    if value is None:
+        return "not-null"
+    raise AssertionError(f"unsupported JSON scalar in exhaustive mutation test: {value!r}")
 
 
 def _scenario(fixture: dict[str, Any], scenario_id: str) -> dict[str, Any]:
@@ -69,11 +117,42 @@ def test_packet_a_contract_exposes_safety_denominator_and_structured_cells() -> 
     )
     assert packet["hard_safety_exposure_contract"]["exposure_denominator"] == "S_h"
     assert packet["hard_safety_exposure_contract"]["required_nonzero_coverage"] is True
+    assert (
+        packet["hard_safety_exposure_contract"]["not_applicable_contributes_to_exposure"] is False
+    )
+    assert packet["hard_safety_exposure_contract"]["per_rule_arm_floor"] == (
+        "each_applicable_rule_arm_has_at_least_one_EXPOSED_opportunity"
+    )
+    assert packet["trust_contract"]["canonical_authority"] == "CORE_ONLY"
+    assert packet["trust_contract"]["relay_cannot_create_canonical_records"] is True
+    assert packet["lifecycle_parity_contract"]["same_lifecycle_contract_across_arms"] is True
     assert packet["power_simulation"]["nonrecoverable_infrastructure_loss_allowance"] == 0.15
     assert packet["power_simulation"]["provisional_confirmatory_n_is_non_authoritative"] is True
     assert all(isinstance(item, dict) for item in packet["required_ablations"])
     assert all(isinstance(item, dict) for item in packet["mutation_cells"])
     assert all(isinstance(item, dict) for item in packet["matched_hybrid_cells"])
+
+
+def test_packet_a_code_owned_digest_rejects_every_semantic_leaf_after_rebound() -> None:
+    spec = _load(SPEC_PATH)
+    scalar_paths = _scalar_paths(spec)
+    assert len(scalar_paths) > 300
+
+    for path, original in scalar_paths:
+        if path == ("packet_a", "content_binding", "specification_digest"):
+            continue
+        candidate = deepcopy(spec)
+        _replace_path(candidate, path, _mutated_scalar(original))
+        candidate = with_recomputed_digest(candidate)
+        with pytest.raises(SpecificationValidationError):
+            validate_spec(candidate, require_golden_digest=False, validate_narrative=False)
+
+
+def test_packet_a_self_digest_is_not_authority_but_is_repaired_for_nonsemantic_reencoding() -> None:
+    spec = _load(SPEC_PATH)
+    spec["packet_a"]["content_binding"]["specification_digest"] = "0" * 64
+    repaired = with_recomputed_digest(spec)
+    validate_spec(repaired, require_golden_digest=False, validate_narrative=False)
 
 
 def test_packet_a_validation_fails_closed_on_semantic_mutations_even_with_rebound_digest() -> None:
@@ -157,6 +236,32 @@ def test_packet_a_validation_fails_closed_on_semantic_mutations_even_with_reboun
     execution_claim["packet_a"]["execution_boundary"]["confirmatory_results_exist"] = True
     mutations.append(("execution claim", execution_claim))
 
+    unsafe_mechanism = deepcopy(spec)
+    unsafe_mechanism["packet_a"]["mutation_cells"][0]["included_mechanism"] = "rm -rf fixture"
+    mutations.append(("unsafe mechanism text", unsafe_mechanism))
+
+    unsafe_witness = deepcopy(spec)
+    unsafe_witness["packet_a"]["trust_contract"]["witness_classes"][0] = "model asserted success"
+    mutations.append(("unsafe witness provenance", unsafe_witness))
+
+    na_exposure = deepcopy(spec)
+    na_exposure["packet_a"]["hard_safety_exposure_contract"][
+        "not_applicable_contributes_to_exposure"
+    ] = True
+    mutations.append(("NOT_APPLICABLE exposure credit", na_exposure))
+
+    nested_unknown = deepcopy(spec)
+    nested_unknown["packet_a"]["caos_contract"]["unreviewed_field"] = "unexpected"
+    mutations.append(("nested unknown field", nested_unknown))
+
+    nested_missing = deepcopy(spec)
+    del nested_missing["packet_a"]["caos_contract"]["missing_outcome"]
+    mutations.append(("nested missing field", nested_missing))
+
+    path_trick = deepcopy(spec)
+    path_trick["packet_a"]["content_binding"]["narrative_binding"]["path"] = "../outside.md"
+    mutations.append(("narrative path escape", path_trick))
+
     for _label, candidate in mutations:
         candidate = with_recomputed_digest(candidate)
         with pytest.raises(SpecificationValidationError):
@@ -173,6 +278,66 @@ def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation()
     spec["packet_a"]["freeze_date"] = "2099-01-01"
     with pytest.raises(SpecificationValidationError):
         validate_spec(spec)
+
+
+def test_packet_a_json_loader_rejects_duplicate_keys_and_nonfinite_numbers(tmp_path: Path) -> None:
+    duplicate_path = tmp_path / "duplicate.json"
+    duplicate_path.write_text(
+        _load_raw(SPEC_PATH).replace(
+            '"schema_version": 1,', '"schema_version": 1,\n  "schema_version": 1,', 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="duplicate"):
+        load_and_validate(duplicate_path)
+
+    nonfinite_path = tmp_path / "nonfinite.json"
+    nonfinite_path.write_text(
+        _load_raw(SPEC_PATH).replace(
+            '"provisional_confirmatory_n": 384', '"provisional_confirmatory_n": NaN', 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="non-finite"):
+        load_and_validate(nonfinite_path)
+
+
+def test_packet_a_rejects_numeric_coercion_and_allows_only_key_reordering() -> None:
+    spec = _load(SPEC_PATH)
+    numeric_coercion = deepcopy(spec)
+    numeric_coercion["packet_a"]["power_simulation"]["simulation_seed"] = True
+    with pytest.raises(SpecificationValidationError):
+        validate_spec(
+            with_recomputed_digest(numeric_coercion),
+            require_golden_digest=False,
+            validate_narrative=False,
+        )
+
+    reordered = json.loads(json.dumps(spec, ensure_ascii=False, sort_keys=False))
+    validate_spec(reordered, require_golden_digest=False, validate_narrative=False)
+
+
+def test_packet_a_narrative_and_proposal_correction_are_content_bound() -> None:
+    spec = _load(SPEC_PATH)
+    digest = spec["packet_a"]["content_binding"]["specification_digest"]
+    narrative = FREEZE_PATH.read_bytes()
+    assert compute_narrative_semantic_digest(narrative, specification_digest=digest) == spec[
+        "packet_a"
+    ]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    assert compute_narrative_semantic_digest(
+        narrative.replace(b"non-displacing", b"non-displacing ", 1),
+        specification_digest=digest,
+    ) != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    assert compute_narrative_semantic_digest(
+        narrative.replace(b"\n", b"\r\n"), specification_digest=digest
+    ) != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+
+    proposal = PROPOSAL_PATH.read_text(encoding="utf-8")
+    assert "`non_abstention = count(SUPPORTED response statuses) / E_w`" in proposal
+    assert "must reproduce 384" not in proposal.lower()
+    assert spec["packet_a"]["content_binding"]["proposal_correction"]["source_sha256"] == (
+        EXPECTED_PROVENANCE[0][2]
+    )
 
 
 def test_spec_is_explicitly_non_executable_and_fixes_first_five_order() -> None:

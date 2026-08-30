@@ -52,6 +52,25 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
+### 2026-08-30 — Packet A semantic freeze remediation remains L0 and non-displacing
+
+The first Packet A freeze validator was rejected because a candidate could
+change semantic fields and recompute the document self-digest. The remediation
+now uses a code-owned digest of the complete canonical JSON document, strict
+duplicate-key/non-finite JSON loading, exact type-aware comparisons, exact
+narrative-byte semantic binding, validator version/source binding, and
+exhaustive leaf-mutation tests. The self-digest is never authority.
+
+The freeze also makes the hard-safety rule-by-arm universe explicit:
+`NOT_APPLICABLE` never contributes exposure, while every applicable rule/arm
+needs a preregistered real `EXPOSED` opportunity and outcome report. The
+opportunity contract uses a complete response-status partition and the exact
+formula `count(SUPPORTED response statuses) / E_w`. The proposal erratum
+`PACKET-A-ERRATUM-2026-08-30` corrects its earlier subtraction formula and
+removes any requirement that the provisional planning value 384 be reproduced;
+future final N remains simulation-derived and non-authoritative until the later
+manifest gate.
+
 ### 2026-08-30 — Packet A specification freeze remains L0 and non-displacing
 
 Packet A is frozen as a single machine-readable research contract in

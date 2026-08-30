@@ -581,9 +581,17 @@ status to exclude an eligible opportunity after the fact.
 
 Packet A preregisters directional tests against this same denominator:
 `coverage = recorded eligible-opportunity statuses / E_w`, and
-`non_abstention = (E_w - abstentions - errors - unsupported) / E_w`. Each
+`non_abstention = count(SUPPORTED response statuses) / E_w`. Each
 requires its preregistered directional confidence bound or test to clear the
 declared floor. The minimum eligibility floors are:
+
+**Packet A erratum (PACKET-A-ERRATUM-2026-08-30).** This corrected formula
+supersedes the earlier subtraction-based wording: every eligible opportunity
+has exactly one response status in the complete frozen response-status
+partition. `UNSUPPORTED`, `BLOCKED`, `SKIPPED`, `NOT_EXERCISED`, `MISSING`,
+`UNKNOWN`, `ABSTENTION`, `ERROR`, `INFRASTRUCTURE_FAILURE`, and `ATTRITION`
+remain visible and receive no non-abstention credit; none can be removed or
+relabelled after the outcome is observed.
 
 | Workstream | Minimum positive opportunities | Minimum negative opportunities | Coverage test against frozen `E_w` | Non-abstention test against frozen `E_w` |
 |---|---:|---:|---|---|
@@ -664,10 +672,10 @@ execution. Those require the later reproducibility and fixture gates.
 
 ### 6.8 Power-derived N and later manifest freeze
 
-The provisional planning value is N=384 paired episodes. It becomes the final
-confirmatory N only if the exact reproducibility record below is independently
-run and reproduces 384. The specification must not claim that N=384 is frozen
-before that run.
+The provisional planning value is N=384 paired episodes. It remains a planning
+value only. The later manifest must bind to the independently emitted derived N
+from the exact reproducibility record below, whatever that N is; the
+specification must not claim that N=384 is frozen or required before that run.
 
 ~~~text
 power_simulation_script_path: bench/memory_reliability_power_simulation.py
@@ -719,7 +727,8 @@ The later benchmark-manifest freeze is permitted only when:
 2. every arm, baseline/control, primary contrast, oracle, budget, permission
    set, mutation, and required ablation is versioned and content-digested;
 3. the exact script path, version, script digest, input-manifest digest, and
-   output-manifest digest reproduce N=384 under the Section 6.8 inputs;
+   output-manifest digest bind the independently derived N under the Section 6.8
+   inputs; the derived N is not required to equal the provisional planning value;
 4. calibration, fixture determinism, receipt completeness, oracle behavior,
    secret refusal, project isolation, lifecycle cleanup, and budget gates pass;
 5. CAOS, hard-safety gates, raw numerators/denominators, confidence methods,

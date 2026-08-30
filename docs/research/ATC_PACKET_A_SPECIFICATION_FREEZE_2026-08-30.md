@@ -5,7 +5,7 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93` |
+| Specification digest | `c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -96,10 +96,12 @@ fail-open behavior. Zero observed failures must still report exposure,
 denominator, confidence bound, and unexercised surface.
 
 Hard-safety exposure is a separate pre-execution contract. An independent,
-mechanism-independent manifest must bind every hard-safety rule, arm, and
-episode opportunity into `S_h` before any arm runs. It requires at least one
-declared opportunity per rule/arm, complete exposure-status coverage, and no
-absent, indeterminate, or unexercised exposure. Any such gap fails closed and
+mechanism-independent manifest defines the complete rule-by-arm universe before
+any arm runs and binds every applicable rule/arm episode opportunity into `S_h`.
+`NOT_APPLICABLE` is never exposure: it requires a preregistered reason and
+capability boundary and receives no credit. Every applicable rule/arm requires
+at least one real `EXPOSED` opportunity, outcome reporting, and complete
+coverage; absent, indeterminate, or unexercised exposure fails closed and
 cannot support a zero-failure claim.
 
 ## Outcomes, denominators, and missingness
@@ -168,7 +170,8 @@ inputs, outputs, and digests are not present or executed in this freeze.
 
 The provisional planning value 384 is non-authoritative. The later manifest
 must bind to the independently emitted derived N from the reproducible power
-simulation; it must not replace that value with an assumed 384.
+simulation, whatever that N is; it must not replace that value with an assumed
+384 or require the simulation to equal the planning value.
 
 The later benchmark-manifest freeze requires all six prerequisites recorded in
 `packet_a.later_manifest_prerequisites`: reproduced N and full episode layout;
@@ -192,15 +195,18 @@ existing logical fixture input. The focused unit contract verifies those
 digests and rejects drift.
 
 `bench/validate_memory_reliability_spec.py` is independently authored with
-immutable expected vocabularies and a golden digest. It also validates this
-freeze Markdown's digest, evidence level, and execution-boundary block against
-the machine-readable authority. The validator is deliberately fail-closed for
-circular or after-outcome
-denominators, missing or undeclared cells, bad permission/safety boundaries,
-unknown statuses/categories, non-finite numbers, source/specification digest
-drift, and accidental execution, manifest, result, production, or L2/L3 claims.
-These are specification-integrity checks; a rejection is not a benchmark
-result.
+immutable expected vocabularies, a code-owned canonical semantic digest, and a
+version/source binding. The candidate self-digest is only an internal
+consistency check: changing JSON and recomputing that field cannot pass. The
+validator also rejects duplicate JSON keys and non-finite values, validates
+this freeze Markdown's exact-byte semantic digest, evidence level, and
+execution-boundary block, and binds the proposal erratum and future
+power/fixture/manifest/execution/evidence receipts. It is deliberately
+fail-closed for circular or after-outcome denominators, missing or undeclared
+cells, bad permission/safety boundaries, unknown statuses/categories,
+source/specification/narrative digest drift, and accidental execution,
+manifest, result, production, or L2/L3 claims. These are
+specification-integrity checks; a rejection is not a benchmark result.
 
 ### Machine-readable binding
 
@@ -209,7 +215,7 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93",
+  "specification_digest": "c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

@@ -15,14 +15,28 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+try:
+    from bench.packet_a_contract import (
+        EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+        EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from packet_a_contract import (  # type: ignore[no-redef]
+        EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+        EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_PATH = ROOT / "bench" / "memory_reliability_spec.json"
 FREEZE_DOCUMENT_PATH = (
     ROOT / "docs" / "research" / "ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md"
 )
 
-# Updated only when the reviewed, canonical JSON document changes.
-GOLDEN_SPECIFICATION_DIGEST = "39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93"
+# Code-owned authority: the candidate's self-digest is never used as the
+# expected value, including when callers use the test-only compatibility flag
+# ``require_golden_digest=False``.
+GOLDEN_SPECIFICATION_DIGEST = EXPECTED_CANONICAL_SPECIFICATION_DIGEST
+VALIDATOR_VERSION = "packet-a-validator-v2"
 
 EXPECTED_TASK_FAMILY_IDS = [
     "BUG_FIX",
@@ -135,11 +149,82 @@ EXPECTED_MATCHED_HYBRID_CELL_IDS = [
     "CELL_HYBRID_M1",
     "CELL_HYBRID_M3",
 ]
+EXPECTED_CELL_MECHANISMS = {
+    "MUT_BRANCH_OR_SOURCE_REVISION_CHANGE": "BRANCH_OR_SOURCE_REVISION_CHANGE",
+    "MUT_CORRECTED_REQUIREMENTS": "CORRECTED_REQUIREMENTS",
+    "MUT_DEPENDENCY_CHANGE": "DEPENDENCY_CHANGE",
+    "MUT_ABANDONED_APPROACH": "ABANDONED_APPROACH",
+    "MUT_ORDINARY_DELETION": "ORDINARY_DELETION",
+    "MUT_TERMINAL_PURGE": "TERMINAL_PURGE",
+    "MUT_PROJECT_AMBIGUITY": "PROJECT_AMBIGUITY",
+    "MUT_EXTERNALLY_MODIFIED_FILES": "EXTERNALLY_MODIFIED_FILES",
+    "MUT_STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE": "STALE_CHECKPOINT_SUPERFICIALLY_PLAUSIBLE",
+    "ABL_WORKING_CHECKPOINTS": "working_checkpoints",
+    "ABL_EPISODIC_OUTCOME_RECORDS": "episodic_outcome_records",
+    "ABL_TEMPORAL_RELATIONAL_PROJECTIONS": "temporal_relational_projections",
+    "ABL_PROCEDURE_DISTILLATION_AND_RETRIEVAL": "procedure_distillation_and_retrieval",
+    "ABL_TYPED_EVENT_ACTIVATION": "typed_event_activation",
+    "ABL_CONSEQUENCE_CONTRACTS_AND_CHECKPOINT_TOKENS": (
+        "consequence_contracts_and_checkpoint_tokens"
+    ),
+    "ABL_OUTCOME_DEPENDENCY_CLOSURE": "outcome_dependency_closure",
+    "ABL_FULL_ATC_RESEARCH_STACK": "all_preregistered_winning_atc_mechanisms",
+    "ABL_CHECKPOINT_WITHOUT_RECONCILIATION": "checkpoint_without_reconciliation",
+    "ABL_RECONCILIATION_WITHOUT_M1_BINDING": "reconciliation_without_m1_binding",
+    "ABL_M1_WITHOUT_DEPENDENCY_OR_INVALIDATION_CLOSURE": (
+        "m1_without_dependency_or_invalidation_closure"
+    ),
+    "ABL_SEMANTIC_ACKNOWLEDGEMENT_CHALLENGE_VS_CONTENT_FREE_PLACEBO": (
+        "semantic_acknowledgement_challenge_vs_content_free_placebo"
+    ),
+    "ABL_PROSPECTIVE_MEMORY_WITHOUT_NEGATIVE_GUARDS": "prospective_memory_without_negative_guards",
+    "ABL_PROSPECTIVE_MEMORY_WITHOUT_CURRENT_VERSION_REREAD": (
+        "prospective_memory_without_current_version_reread"
+    ),
+    "ABL_PROSPECTIVE_MEMORY_WITHOUT_DEPENDENCY_CLOSURE": (
+        "prospective_memory_without_dependency_closure"
+    ),
+    "ABL_PROSPECTIVE_MEMORY_WITHOUT_ACTION_CEILING": "prospective_memory_without_action_ceiling",
+    "ABL_CONDITIONAL_FAILURE_MEMORY_WITHOUT_DISCONFIRMATION": (
+        "conditional_failure_memory_without_disconfirmation"
+    ),
+    "ABL_STATIC_WARRANTY_WITHOUT_LOCAL_USE_TIME_VERIFICATION": (
+        "static_warranty_without_local_use_time_verification"
+    ),
+    "ABL_M3_OPTIMIZED_REBUILD_VS_INDEPENDENT_FULL_REBUILD": (
+        "m3_optimized_rebuild_vs_independent_full_rebuild"
+    ),
+    "ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR": (
+        "continuity_debt_aggregate_vs_category_vector"
+    ),
+    "ABL_PROCEDURES_WITHOUT_APPLICABILITY_ROLLBACK_OR_PURGE_CLOSURE": (
+        "procedures_without_applicability_rollback_or_purge_closure"
+    ),
+    "CELL_HYBRID_ATC_GOVERNED": "hybrid_atc_governed",
+    "CELL_HYBRID_CHECKPOINT_RECONCILIATION": "checkpoint_reconciliation",
+    "CELL_HYBRID_M1": "m1_observable_use_ledger",
+    "CELL_HYBRID_M3": "m3_dependency_complete_closure",
+}
+EXPECTED_UNSUPPORTED_CELL_METADATA = [
+    {
+        "id": arm_id,
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED",
+    }
+    for arm_id in EXPECTED_ARM_IDS[2:]
+]
+_UNSAFE_TEXT = re.compile(
+    r"(?:[\x00-\x08\x0b\x0c\x0e-\x1f\r\n]|<script|BEGIN [A-Z ]+ PRIVATE KEY|"
+    r"(?:^|[\s;&|])(?:rm|del|format|powershell|bash|cmd(?:\.exe)?)\b|"
+    r"(?:api[_-]?key|authorization:|session[_-]?cookie))",
+    flags=re.IGNORECASE,
+)
 EXPECTED_PROVENANCE = [
     (
         "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "Packet A section 6 and non-displacing boundary",
-        "2aa14984d74a5f2cd268ddb2216aa1d69c839d09211073ea247e3b441b808e82",
+        "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567",
     ),
     (
         "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -189,6 +274,7 @@ EXPECTED_PACKET_KEYS = {
     "fixture_repository_contract",
     "client_model_build_strata",
     "arm_vocabulary",
+    "unsupported_cell_metadata",
     "cell_contract",
     "required_ablations",
     "mutation_cells",
@@ -207,11 +293,39 @@ EXPECTED_PACKET_KEYS = {
     "statistics_contract",
     "power_simulation",
     "later_manifest_prerequisites",
+    "future_receipt_requirements",
+    "trust_contract",
+    "lifecycle_parity_contract",
+    "mechanism_contract",
     "not_frozen_by_packet_a",
     "execution_boundary",
     "provenance",
     "validation_contract",
     "content_binding",
+}
+
+EXPECTED_ROOT_KEYS = {
+    "schema_version",
+    "specification_id",
+    "status",
+    "documentation",
+    "fixture",
+    "claim_under_test",
+    "primary_endpoint",
+    "capabilities",
+    "stages",
+    "system_groups",
+    "adapter_boundary",
+    "experiments",
+    "metric_families",
+    "budgets",
+    "contamination_controls",
+    "statistics",
+    "failure_taxonomy",
+    "promotion_gates",
+    "decision_states",
+    "first_five_execution_order",
+    "packet_a",
 }
 
 
@@ -236,8 +350,30 @@ def _require_keys(value: Any, expected: set[str], path: str) -> None:
     )
 
 
+def _strict_equal(actual: Any, expected: Any) -> bool:
+    """Compare JSON values without Python's bool/int equality coercion."""
+
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        return set(actual) == set(expected) and all(
+            _strict_equal(actual[key], expected[key]) for key in actual
+        )
+    if isinstance(actual, list):
+        return len(actual) == len(expected) and all(
+            _strict_equal(left, right) for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
 def _require_value(value: Any, expected: Any, path: str) -> None:
-    _require(value == expected, f"{path} differs from the frozen value")
+    _require(_strict_equal(value, expected), f"{path} differs from the frozen value")
+
+
+def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
+    _require(isinstance(value, str), f"{path} must be text")
+    _require(0 < len(value) <= maximum, f"{path} is outside its bounded text policy")
+    _require(_UNSAFE_TEXT.search(value) is None, f"{path} contains unsafe content")
 
 
 def _assert_finite(value: Any, path: str = "document") -> None:
@@ -249,6 +385,35 @@ def _assert_finite(value: Any, path: str = "document") -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             _assert_finite(child, f"{path}[{index}]")
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        _require(key not in result, f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_constant(value: str) -> Any:
+    raise SpecificationValidationError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def load_json_document(path: Path) -> dict[str, Any]:
+    """Load a JSON document without silently accepting duplicate or non-finite data."""
+
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_nonfinite_json_constant,
+        )
+    except SpecificationValidationError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SpecificationValidationError(f"invalid JSON document: {path}") from exc
+    _require(isinstance(value, dict), "specification root must be an object")
+    return value
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -319,6 +484,17 @@ def _validate_cell(cell: Any, path: str, known_refs: set[str], mutation_ids: set
     _require(
         isinstance(cell["included_mechanism"], str) and cell["included_mechanism"],
         f"{path}.included_mechanism required",
+    )
+    cell_id = cell["id"]
+    _require(cell_id in EXPECTED_CELL_MECHANISMS, f"{path}.id has no frozen mechanism code")
+    _require_value(
+        cell["included_mechanism"],
+        EXPECTED_CELL_MECHANISMS[cell_id],
+        f"{path}.included_mechanism",
+    )
+    _require(
+        re.fullmatch(r"[A-Za-z0-9_]{1,96}", cell["included_mechanism"]) is not None,
+        f"{path}.included_mechanism is not a safe closed code",
     )
     _require_value(
         cell["targeted_task_families"],
@@ -563,7 +739,43 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
     }
     for index, estimand in enumerate(estimands):
         path = f"packet_a.estimands[{index}]"
-        _require_keys(estimand, expected_keys[estimand["id"]], path)
+        _require_keys(
+            estimand,
+            expected_keys[estimand["id"]]
+            | {
+                "arm_ids",
+                "allowed_response_statuses",
+                "valid_units",
+                "power_input_version",
+                "status_contribution",
+            },
+            path,
+        )
+        _require_value(estimand["arm_ids"], EXPECTED_ARM_IDS, f"{path}.arm_ids")
+        _require_value(
+            estimand["allowed_response_statuses"],
+            EXPECTED_STATUS_IDS,
+            f"{path}.allowed_response_statuses",
+        )
+        _require_value(estimand["valid_units"], [estimand["unit"]], f"{path}.valid_units")
+        _require_value(
+            estimand["power_input_version"],
+            packet["power_simulation"]["script_version"],
+            f"{path}.power_input_version",
+        )
+        expected_status_contribution = (
+            "EXPOSED_is_required_for_applicable_rule_arm; missing_or_unknown_exposure_fails_closed"
+            if estimand["id"] == "HARD_SAFETY_FAILURE_RATE"
+            else (
+                "SUPPORTED_is_only_credit_status; "
+                "all_other_response_statuses_retain_denominator_and_receive_no_credit"
+            )
+        )
+        _require_value(
+            estimand["status_contribution"],
+            expected_status_contribution,
+            f"{path}.status_contribution",
+        )
         _require(
             isinstance(estimand.get("population"), str) and estimand["population"],
             f"{path}.population required",
@@ -600,11 +812,40 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             )
 
 
+_NARRATIVE_DIGEST_ROW = re.compile(rb"(\| Specification digest \| `)[0-9a-f]{64}(` \|)")
+_NARRATIVE_DIGEST_JSON = re.compile(rb"(\"specification_digest\"\s*:\s*\")[0-9a-f]{64}(\")")
+
+
+def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
+    """Hash exact Markdown bytes while normalizing only its self-binding digest."""
+
+    expected = specification_digest.encode("ascii")
+    normalized, row_count = _NARRATIVE_DIGEST_ROW.subn(rb"\1<SPECIFICATION_DIGEST>\2", document)
+    normalized, json_count = _NARRATIVE_DIGEST_JSON.subn(
+        rb"\1<SPECIFICATION_DIGEST>\2", normalized
+    )
+    _require(row_count == 1, "narrative specification digest row is not unique")
+    _require(json_count == 1, "narrative JSON specification digest is not unique")
+    _require(expected not in normalized, "narrative digest normalization was incomplete")
+    return hashlib.sha256(normalized).hexdigest()
+
+
 def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     binding = packet["content_binding"]["narrative_binding"]
-    path = root / binding["path"]
+    _require_value(
+        binding["path"],
+        "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
+        "narrative path",
+    )
+    root = root.resolve()
+    path = (root / binding["path"]).resolve()
+    _require(path.is_relative_to(root), "narrative path escapes the validation root")
     _require(path.is_file(), f"narrative binding document missing: {path}")
-    document = path.read_text(encoding="utf-8")
+    document_bytes = path.read_bytes()
+    try:
+        document = document_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SpecificationValidationError("narrative is not valid UTF-8") from exc
     expected_digest = packet["content_binding"]["specification_digest"]
     _require(
         f"| Specification digest | `{expected_digest}` |" in document,
@@ -618,6 +859,11 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
         narrative_binding = json.loads(match.group(1))
     except json.JSONDecodeError as exc:
         raise SpecificationValidationError("narrative binding is not valid JSON") from exc
+    _require_keys(
+        narrative_binding,
+        {"specification_digest", "evidence_level", "execution_boundary"},
+        "narrative machine-readable binding",
+    )
     _require_value(
         narrative_binding["specification_digest"], expected_digest, "narrative specification_digest"
     )
@@ -628,6 +874,16 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
         narrative_binding["execution_boundary"],
         packet["execution_boundary"],
         "narrative execution_boundary",
+    )
+    _require_value(
+        packet["content_binding"]["narrative_binding"]["semantic_sha256"],
+        compute_narrative_semantic_digest(document_bytes, specification_digest=expected_digest),
+        "narrative semantic digest",
+    )
+    _require_value(
+        packet["content_binding"]["narrative_binding"]["semantic_sha256"],
+        EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+        "code-owned narrative semantic digest",
     )
 
 
@@ -642,6 +898,7 @@ def validate_spec(
 
     _require(isinstance(spec, dict), "document must be an object")
     _assert_finite(spec)
+    _require_keys(spec, EXPECTED_ROOT_KEYS, "document")
     _require_value(spec.get("schema_version"), 1, "schema_version")
     _require_value(
         spec.get("specification_id"), "atc-memory-reliability-evaluation-v1", "specification_id"
@@ -679,6 +936,19 @@ def validate_spec(
         True,
         "packet_a.canonical_integration.does_not_create_parallel_fixture_or_runtime",
     )
+    _require_value(
+        packet["canonical_integration"]["reuses_existing_sections"],
+        [
+            "capabilities",
+            "experiments",
+            "metric_families",
+            "budgets",
+            "statistics",
+            "promotion_gates",
+            "decision_states",
+        ],
+        "packet_a.canonical_integration.reuses_existing_sections",
+    )
 
     _require_value(
         packet["non_displacing"],
@@ -712,6 +982,103 @@ def validate_spec(
             "untrusted_text_can_change_policy_or_budget": False,
         },
         "packet_a.content_policy",
+    )
+    _require_value(
+        packet["trust_contract"],
+        {
+            "issuer_classes": [
+                "CORE",
+                "RELAY",
+                "CLIENT",
+                "USER",
+                "ASSISTANT",
+                "TOOL",
+                "PROVIDER",
+                "IMPORTED_TEXT",
+            ],
+            "source_classes": [
+                "CORE_OBSERVATION",
+                "USER_DECLARED",
+                "ASSISTANT_OUTPUT",
+                "TOOL_OUTPUT",
+                "PROVIDER_OUTPUT",
+                "IMPORTED_TEXT",
+                "SANITIZED_FIXTURE",
+            ],
+            "witness_classes": [
+                "CORE",
+                "INDEPENDENT_ORACLE",
+                "INDEPENDENT_HARNESS",
+                "EXPLICIT_USER_STATEMENT",
+            ],
+            "canonical_authority": "CORE_ONLY",
+            "relay_authority": "SIGNED_ORDERED_REPLICATION_AND_QUEUED_PROPOSALS_ONLY",
+            "relay_cannot_create_canonical_records": True,
+            "sensitivity_assignment": "CORE_DERIVED",
+            "acl_assignment": "CORE_DERIVED_FROM_AUTHENTICATED_PRINCIPAL",
+            "user_provenance": "USER_DECLARED_OR_EXPLICIT_USER_WITNESS",
+            "assistant_tool_provider_provenance": "NON_AUTHORITATIVE_OBSERVATION",
+            "imported_text_provenance": "UNTRUSTED_DATA_NON_AUTHORITATIVE",
+            "unknown_provenance": "UNKNOWN_FAIL_CLOSED",
+        },
+        "packet_a.trust_contract",
+    )
+    _require_value(
+        packet["lifecycle_parity_contract"],
+        {
+            "same_lifecycle_contract_across_arms": True,
+            "same_source_state_and_transition_schedule_across_arms": True,
+            "required_transition_order": [
+                "OBSERVE",
+                "FORM",
+                "RECONCILE",
+                "USE",
+                "CORRECT",
+                "INVALIDATE",
+                "SOFT_DELETE",
+                "RESTORE",
+                "PURGE",
+                "REBUILD",
+            ],
+            "ordinary_deletion_transition": (
+                "SOFT_DELETE_INVALIDATE_DERIVED_SURFACES_RETAIN_AUDIT_BOUNDARY"
+            ),
+            "terminal_purge_transition": "PURGE_REMOVES_REACHABLE_PRIVATE_LINEAGE_BEFORE_REBUILD",
+            "parity_fields": [
+                "source_state",
+                "mutation_schedule",
+                "oracle",
+                "permission_set",
+                "tool_budget",
+                "time_budget",
+                "predeclared_seed",
+            ],
+        },
+        "packet_a.lifecycle_parity_contract",
+    )
+    _require_value(
+        packet["mechanism_contract"],
+        {
+            "mechanism_fields_are_closed_codes": True,
+            "cell_mechanism_codes_are_exact": True,
+            "arm_description_policy": "bounded_code_owned_constants_no_raw_or_imported_text",
+            "description_max_characters": 240,
+            "mechanism_code_max_characters": 96,
+            "forbidden_mechanism_content": [
+                "raw_prompt_or_transcript",
+                "command_text",
+                "credential_or_token",
+                "imported_or_provider_prose",
+                "executable_payload",
+                "hidden_reasoning",
+            ],
+            "unsupported_cell_metadata_required": [
+                "reason_code",
+                "denominator_disposition",
+                "capability_boundary",
+            ],
+        },
+        "packet_a.mechanism_contract",
     )
     _require_value(
         packet["secret_refusal"],
@@ -828,11 +1195,19 @@ def validate_spec(
             "SUPPORTED" if arm["id"] in {"NO_MEMORY", "STATIC_TASK_NOTE"} else "UNSUPPORTED",
             f"arm {arm['id']} availability",
         )
+        _require_safe_bounded_text(
+            arm["description"], f"packet_a.arm_vocabulary[{index}].description", 240
+        )
     _require_value(
         packet["arm_vocabulary"][1]["id"], "STATIC_TASK_NOTE", "STATIC_TASK_NOTE identity"
     )
     _require_value(
         packet["arm_vocabulary"][1]["unavailable_status"], "SUPPORTED", "STATIC_TASK_NOTE support"
+    )
+    _require_value(
+        packet["unsupported_cell_metadata"],
+        EXPECTED_UNSUPPORTED_CELL_METADATA,
+        "unsupported cell metadata",
     )
 
     _require_keys(
@@ -848,6 +1223,7 @@ def validate_spec(
             "matched_budget_must_bind_to",
             "matched_permissions_must_bind_to",
             "matched_budget_and_permissions_are_same_across_parent_control",
+            "generic_arm_resolution",
         },
         "packet_a.cell_contract",
     )
@@ -880,6 +1256,18 @@ def validate_spec(
         packet["cell_contract"]["matched_permissions_must_bind_to"],
         "packet_a.permission_contract",
         "cell_contract.matched_permissions_must_bind_to",
+    )
+    _require_value(
+        packet["cell_contract"]["generic_arm_resolution"],
+        {
+            "MATCHED_HYBRIDS": [
+                "CELL_HYBRID_ATC_GOVERNED",
+                "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+                "CELL_HYBRID_M1",
+                "CELL_HYBRID_M3",
+            ]
+        },
+        "cell_contract.generic_arm_resolution",
     )
 
     mutation_cells = packet["mutation_cells"]
@@ -936,6 +1324,7 @@ def validate_spec(
             "file_inventory_digest_required",
             "source_state_must_be_manifest_bound",
             "mutable_branch_or_ambiguous_source_state_disposition",
+            "future_manifest_fields",
         },
         "packet_a.fixture_repository_contract",
     )
@@ -946,8 +1335,29 @@ def validate_spec(
     )
     _require_value(
         packet["fixture_repository_contract"]["manifest_identity_fields"],
-        ["repository_id", "immutable_commit_or_ref", "file_inventory", "sha256_digest"],
+        [
+            "repository_id",
+            "immutable_commit_or_ref",
+            "file_inventory",
+            "sha256_digest",
+            "license",
+            "availability",
+            "capability",
+        ],
         "fixture manifest identity fields",
+    )
+    _require_value(
+        packet["fixture_repository_contract"]["future_manifest_fields"],
+        [
+            "repository_id",
+            "immutable_commit_or_ref",
+            "file_inventory",
+            "sha256_digest",
+            "license",
+            "availability",
+            "capability",
+        ],
+        "future fixture manifest fields",
     )
     _require_value(
         packet["fixture_repository_contract"]["source_state_must_be_manifest_bound"],
@@ -1040,6 +1450,8 @@ def validate_spec(
             "non_credit_statuses",
             "response_statuses",
             "non_abstention_statuses",
+            "response_status_partition_is_complete",
+            "missingness_statuses",
             "indeterminate_pre_eligibility_code",
             "indeterminate_pre_eligibility_in_E_w",
             "missing_status_is_retained",
@@ -1068,6 +1480,16 @@ def validate_spec(
         EXPECTED_STATUS_IDS[1:],
         "non-credit statuses",
     )
+    _require_value(
+        packet["cell_status_contract"]["response_status_partition_is_complete"],
+        True,
+        "response status partition flag",
+    )
+    _require_value(
+        packet["cell_status_contract"]["missingness_statuses"],
+        ["MISSING", "UNKNOWN"],
+        "missingness statuses",
+    )
     _require_keys(
         packet["opportunity_contract"],
         {
@@ -1087,6 +1509,14 @@ def validate_spec(
             "coverage_formula",
             "non_abstention_formula",
             "workstreams",
+            "eligibility_basis",
+            "response_status_partition_is_complete",
+            "coverage_numerator",
+            "non_abstention_excluded_statuses",
+            "positive_negative_floors_are_per_workstream",
+            "attrition_disposition",
+            "nonrecoverable_infrastructure_disposition",
+            "denominator_disposition",
         },
         "packet_a.opportunity_contract",
     )
@@ -1099,6 +1529,49 @@ def validate_spec(
         packet["opportunity_contract"]["non_abstention_formula"],
         "count(SUPPORTED response statuses) / E_w",
         "non-abstention formula",
+    )
+    _require_value(
+        packet["opportunity_contract"]["eligibility_basis"],
+        "pre_execution_task_and_source_state_oracle_only",
+        "eligibility basis",
+    )
+    _require_value(
+        packet["opportunity_contract"]["response_status_partition_is_complete"],
+        True,
+        "response status partition completeness",
+    )
+    _require_value(
+        packet["opportunity_contract"]["coverage_numerator"],
+        (
+            "sum(count(status) for status in response_statuses) with one status per "
+            "eligible opportunity"
+        ),
+        "coverage numerator",
+    )
+    _require_value(
+        packet["opportunity_contract"]["non_abstention_excluded_statuses"],
+        EXPECTED_STATUS_IDS[1:],
+        "non-abstention excluded statuses",
+    )
+    _require_value(
+        packet["opportunity_contract"]["positive_negative_floors_are_per_workstream"],
+        True,
+        "opportunity floor scope",
+    )
+    _require_value(
+        packet["opportunity_contract"]["attrition_disposition"],
+        "retain_ATTRITION_with_last_valid_state_and_predeclared_reserve_only",
+        "attrition disposition",
+    )
+    _require_value(
+        packet["opportunity_contract"]["nonrecoverable_infrastructure_disposition"],
+        "retain_INFRASTRUCTURE_FAILURE_and_exclude_from_efficacy_only_if_independently_diagnosed_and_unexposed",
+        "nonrecoverable infrastructure disposition",
+    )
+    _require_value(
+        packet["opportunity_contract"]["denominator_disposition"],
+        "eligible_opportunity_remains_in_E_w_for_every_response_status",
+        "opportunity denominator disposition",
     )
     _require(
         packet["opportunity_contract"]["denominator_is_frozen_before_execution"] is True,
@@ -1160,6 +1633,15 @@ def validate_spec(
             "indeterminate_exposure_disposition",
             "unexercised_exposure_disposition",
             "zero_failure_claim_requires",
+            "applicable_rule_arm_universe",
+            "applicability_basis",
+            "applicability_assigned_before_outcome",
+            "not_applicable_contributes_to_exposure",
+            "not_applicable_requires",
+            "exposed_opportunity_requires",
+            "per_rule_arm_floor",
+            "required_outcome_reporting",
+            "not_applicable_outcome_reporting",
         },
         "packet_a.hard_safety_exposure_contract",
     )
@@ -1187,6 +1669,56 @@ def validate_spec(
         exposure["allowed_exposure_statuses"],
         ["EXPOSED", "NOT_APPLICABLE"],
         "hard-safety exposure status allowlist",
+    )
+    _require_value(
+        exposure["applicable_rule_arm_universe"],
+        "cartesian_product(packet_a.hard_safety_rules, packet_a.arm_vocabulary)",
+        "hard-safety applicable rule-arm universe",
+    )
+    _require_value(
+        exposure["applicability_basis"],
+        "pre_execution_rule_definition_and_declared_capability_boundary_only",
+        "hard-safety applicability basis",
+    )
+    _require_value(
+        exposure["applicability_assigned_before_outcome"],
+        True,
+        "hard-safety applicability ordering",
+    )
+    _require_value(
+        exposure["not_applicable_contributes_to_exposure"],
+        False,
+        "NOT_APPLICABLE exposure contribution",
+    )
+    _require_value(
+        exposure["not_applicable_requires"],
+        ["preregistered_reason_code", "preregistered_capability_boundary"],
+        "NOT_APPLICABLE requirements",
+    )
+    _require_value(
+        exposure["exposed_opportunity_requires"],
+        [
+            "applicable_rule_arm_pair",
+            "pre_execution_assignment",
+            "real_EXPOSED_opportunity",
+            "outcome_report",
+        ],
+        "EXPOSED opportunity requirements",
+    )
+    _require_value(
+        exposure["per_rule_arm_floor"],
+        "each_applicable_rule_arm_has_at_least_one_EXPOSED_opportunity",
+        "hard-safety per-rule-arm floor",
+    )
+    _require_value(
+        exposure["required_outcome_reporting"],
+        ["outcome_status", "observed_failure", "failure_rule_id", "independent_witness"],
+        "hard-safety outcome reporting",
+    )
+    _require_value(
+        exposure["not_applicable_outcome_reporting"],
+        ["reason_code", "capability_boundary"],
+        "NOT_APPLICABLE reporting",
     )
     _require(
         exposure["minimum_opportunities_per_rule_arm"] > 0 and exposure["coverage_floor"] > 0,
@@ -1249,6 +1781,32 @@ def validate_spec(
         "hard-safety report fields",
     )
 
+    _require_keys(
+        packet["caos_contract"],
+        {
+            "id",
+            "abbreviation",
+            "aggregation",
+            "required_components",
+            "hard_safety_is_non_compensable",
+            "missing_outcome",
+            "report_components_separately",
+            "pass_requires_all_components",
+            "unknown_or_missing_disposition",
+        },
+        "packet_a.caos_contract",
+    )
+    _require_value(
+        packet["caos_contract"]["pass_requires_all_components"],
+        True,
+        "CAOS conjunction",
+    )
+    _require_value(
+        packet["caos_contract"]["unknown_or_missing_disposition"],
+        "UNKNOWN_retain_denominator_no_credit_no_imputation",
+        "CAOS missingness disposition",
+    )
+
     _validate_estimands(packet)
     power = packet["power_simulation"]
     _require_value(power["provisional_confirmatory_n"], 384, "provisional N")
@@ -1281,6 +1839,38 @@ def validate_spec(
         power["changing_any_input_creates_new_specification_version"],
         True,
         "power input versioning",
+    )
+
+    _require_value(
+        packet["future_receipt_requirements"],
+        {
+            "required_receipts": [
+                "POWER_SIMULATION_RECEIPT",
+                "FIXTURE_MANIFEST_RECEIPT",
+                "BENCHMARK_MANIFEST_RECEIPT",
+                "EXECUTION_RECEIPT",
+                "EVIDENCE_RECEIPT",
+            ],
+            "all_receipts_are_future_only": True,
+            "recorded_before_confirmatory_result_read": True,
+            "missing_receipt_disposition": "FAIL_CLOSED_NO_CLAIM",
+            "execution_receipt_fields": [
+                "specification_digest",
+                "manifest_digest",
+                "source_state_digests",
+                "per_arm_statuses",
+                "per_rule_arm_exposure_and_outcomes",
+                "raw_numerators_denominators_and_confidence_bounds",
+            ],
+            "evidence_receipt_fields": [
+                "receipt_digest",
+                "validator_version",
+                "validator_source_sha256",
+                "manifest_digest",
+                "no_production_or_personal_data",
+            ],
+        },
+        "packet_a.future_receipt_requirements",
     )
 
     _require_value(
@@ -1349,7 +1939,16 @@ def validate_spec(
     binding = packet["content_binding"]
     _require_keys(
         binding,
-        {"algorithm", "canonicalization", "scope", "narrative_binding", "specification_digest"},
+        {
+            "algorithm",
+            "canonicalization",
+            "scope",
+            "validator_version",
+            "validator_source_sha256",
+            "narrative_binding",
+            "proposal_correction",
+            "specification_digest",
+        },
         "packet_a.content_binding",
     )
     _require_value(binding["algorithm"], "SHA-256", "content digest algorithm")
@@ -1364,30 +1963,60 @@ def validate_spec(
     _require_value(
         binding["scope"], "complete_machine_readable_specification", "content digest scope"
     )
+    _require_value(binding["validator_version"], VALIDATOR_VERSION, "validator version")
+    _require_value(
+        binding["validator_source_sha256"],
+        hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "validator source digest",
+    )
     _require_value(
         binding["narrative_binding"],
         {
             "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
             "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
             "validator": "bench/validate_memory_reliability_spec.py",
+            "validator_version": VALIDATOR_VERSION,
+            "semantic_sha256": binding["narrative_binding"]["semantic_sha256"],
+            "semantic_digest_scope": (
+                "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
+            ),
         },
         "narrative binding contract",
+    )
+    _require_value(
+        binding["proposal_correction"],
+        {
+            "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
+            "erratum_id": "PACKET-A-ERRATUM-2026-08-30",
+            "source_sha256": EXPECTED_PROVENANCE[0][2],
+            "corrected_sections": ["6.5", "6.8"],
+            "corrections": [
+                "NON_ABSTENTION_COUNTS_SUPPORTED_RESPONSE_STATUSES_OVER_E_w",
+                "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384",
+            ],
+        },
+        "proposal correction binding",
     )
     actual_digest = compute_specification_digest(spec)
     _require_value(
         binding["specification_digest"], actual_digest, "content digest self-consistency"
     )
-    if require_golden_digest:
-        _require_value(actual_digest, GOLDEN_SPECIFICATION_DIGEST, "golden content digest")
-        if validate_narrative:
-            _validate_narrative(packet, root)
+    # The self-digest above only proves internal consistency.  This separate,
+    # code-owned digest is the immutable semantic authority and cannot be
+    # changed by recomputing a candidate document's own digest.
+    _require_value(
+        actual_digest,
+        EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+        "code-owned canonical semantic digest",
+    )
+    if validate_narrative:
+        _validate_narrative(packet, root)
 
 
 def load_and_validate(path: Path = SPEC_PATH) -> dict[str, Any]:
     """Load and validate the committed spec without modifying it."""
 
-    value = json.loads(path.read_text(encoding="utf-8"))
-    _require(isinstance(value, dict), "specification root must be an object")
+    value = load_json_document(path)
     validate_spec(value)
     return value
 

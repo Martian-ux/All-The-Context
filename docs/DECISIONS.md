@@ -46,6 +46,34 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-169: Packet A semantic freeze is code-owned and fail-closed
+
+**Status:** accepted on 2026-08-30 as a remediation of the rejected first
+freeze attempt. This remains an L0, non-displacing research decision and does
+not authorize execution, production data, schema/runtime changes, external
+access, promotion, or frontier advancement.
+
+The Packet A validator now requires a code-owned canonical semantic digest for
+the complete JSON document. The candidate self-digest is checked only for
+internal consistency, so changing any semantic leaf and recomputing that field
+cannot pass. Strict JSON loading rejects duplicate keys and non-finite values;
+closed root/packet structures, strict type-aware equality, exact validator
+version/source binding, exact-byte narrative binding, proposal correction
+binding, and future receipt requirements are all part of the freeze.
+
+The hard-safety contract defines the pre-execution rule-by-arm universe
+independently of outcomes. `NOT_APPLICABLE` is never exposure and requires a
+preregistered reason/capability boundary; every applicable rule/arm has a
+minimum real `EXPOSED` opportunity and outcome report. `E_w` uses a complete
+one-status-per-eligible-opportunity partition, with non-abstention exactly
+`count(SUPPORTED response statuses) / E_w`.
+
+**Erratum PACKET-A-ERRATUM-2026-08-30:** the proposal's earlier subtraction
+formula is superseded by that exact `SUPPORTED`-status formula. The provisional
+planning value 384 is non-authoritative; final N is independently derived by
+the future power simulation and is not required to equal 384. The correction is
+bound to the proposal source digest in the machine-readable freeze.
+
 ## ADR-168: Packet A freezes an L0 specification without advancing the frontier
 
 **Status:** accepted on 2026-08-30 as a non-displacing research decision. It

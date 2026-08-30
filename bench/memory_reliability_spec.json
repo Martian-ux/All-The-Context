@@ -911,6 +911,89 @@
       "imported_text_is_untrusted_data": true,
       "untrusted_text_can_change_policy_or_budget": false
     },
+    "trust_contract": {
+      "issuer_classes": [
+        "CORE",
+        "RELAY",
+        "CLIENT",
+        "USER",
+        "ASSISTANT",
+        "TOOL",
+        "PROVIDER",
+        "IMPORTED_TEXT"
+      ],
+      "source_classes": [
+        "CORE_OBSERVATION",
+        "USER_DECLARED",
+        "ASSISTANT_OUTPUT",
+        "TOOL_OUTPUT",
+        "PROVIDER_OUTPUT",
+        "IMPORTED_TEXT",
+        "SANITIZED_FIXTURE"
+      ],
+      "witness_classes": [
+        "CORE",
+        "INDEPENDENT_ORACLE",
+        "INDEPENDENT_HARNESS",
+        "EXPLICIT_USER_STATEMENT"
+      ],
+      "canonical_authority": "CORE_ONLY",
+      "relay_authority": "SIGNED_ORDERED_REPLICATION_AND_QUEUED_PROPOSALS_ONLY",
+      "relay_cannot_create_canonical_records": true,
+      "sensitivity_assignment": "CORE_DERIVED",
+      "acl_assignment": "CORE_DERIVED_FROM_AUTHENTICATED_PRINCIPAL",
+      "user_provenance": "USER_DECLARED_OR_EXPLICIT_USER_WITNESS",
+      "assistant_tool_provider_provenance": "NON_AUTHORITATIVE_OBSERVATION",
+      "imported_text_provenance": "UNTRUSTED_DATA_NON_AUTHORITATIVE",
+      "unknown_provenance": "UNKNOWN_FAIL_CLOSED"
+    },
+    "lifecycle_parity_contract": {
+      "same_lifecycle_contract_across_arms": true,
+      "same_source_state_and_transition_schedule_across_arms": true,
+      "required_transition_order": [
+        "OBSERVE",
+        "FORM",
+        "RECONCILE",
+        "USE",
+        "CORRECT",
+        "INVALIDATE",
+        "SOFT_DELETE",
+        "RESTORE",
+        "PURGE",
+        "REBUILD"
+      ],
+      "ordinary_deletion_transition": "SOFT_DELETE_INVALIDATE_DERIVED_SURFACES_RETAIN_AUDIT_BOUNDARY",
+      "terminal_purge_transition": "PURGE_REMOVES_REACHABLE_PRIVATE_LINEAGE_BEFORE_REBUILD",
+      "parity_fields": [
+        "source_state",
+        "mutation_schedule",
+        "oracle",
+        "permission_set",
+        "tool_budget",
+        "time_budget",
+        "predeclared_seed"
+      ]
+    },
+    "mechanism_contract": {
+      "mechanism_fields_are_closed_codes": true,
+      "cell_mechanism_codes_are_exact": true,
+      "arm_description_policy": "bounded_code_owned_constants_no_raw_or_imported_text",
+      "description_max_characters": 240,
+      "mechanism_code_max_characters": 96,
+      "forbidden_mechanism_content": [
+        "raw_prompt_or_transcript",
+        "command_text",
+        "credential_or_token",
+        "imported_or_provider_prose",
+        "executable_payload",
+        "hidden_reasoning"
+      ],
+      "unsupported_cell_metadata_required": [
+        "reason_code",
+        "denominator_disposition",
+        "capability_boundary"
+      ]
+    },
     "calibration_pilot": {
       "episode_pairs": 48,
       "task_family_count": 6,
@@ -984,7 +1067,19 @@
         "repository_id",
         "immutable_commit_or_ref",
         "file_inventory",
-        "sha256_digest"
+        "sha256_digest",
+        "license",
+        "availability",
+        "capability"
+      ],
+      "future_manifest_fields": [
+        "repository_id",
+        "immutable_commit_or_ref",
+        "file_inventory",
+        "sha256_digest",
+        "license",
+        "availability",
+        "capability"
       ],
       "immutable_commit_or_ref_required": true,
       "file_inventory_required": true,
@@ -1126,6 +1221,86 @@
         "unavailable_status": "UNSUPPORTED"
       }
     ],
+    "unsupported_cell_metadata": [
+      {
+        "id": "STATIC_PROFILE",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "APPEND_LOG_SEARCH",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "CURRENT_RETRIEVAL",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "SIMPLE_ATC_RETRIEVAL_V3",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "OPTIMIZED_CAPSULE",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "LONG_CONTEXT_CONTROL",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "BEST_NON_ATC_HYBRID",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "COMPETITOR_MEM0",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "COMPETITOR_GRAPHITI",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "COMPETITOR_HINDSIGHT",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "COMPETITOR_LETTA",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "COMPETITOR_LANGMEM",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      },
+      {
+        "id": "MATCHED_HYBRIDS",
+        "reason_code": "UNSUPPORTED_UNTIL_LATER_MANIFEST_CAPABILITY_CHECK",
+        "denominator_disposition": "RETAIN_IN_E_w_NO_CREDIT",
+        "capability_boundary": "NO_CONFIRMATORY_CREDIT_UNTIL_CAPABILITY_IS_VERIFIED"
+      }
+    ],
     "cell_contract": {
       "required_fields": [
         "id",
@@ -1146,7 +1321,15 @@
       "oracle_must_be_independent_of_arm_result": true,
       "matched_budget_must_bind_to": "packet_a.budget_contract",
       "matched_permissions_must_bind_to": "packet_a.permission_contract",
-      "matched_budget_and_permissions_are_same_across_parent_control": true
+      "matched_budget_and_permissions_are_same_across_parent_control": true,
+      "generic_arm_resolution": {
+        "MATCHED_HYBRIDS": [
+          "CELL_HYBRID_ATC_GOVERNED",
+          "CELL_HYBRID_CHECKPOINT_RECONCILIATION",
+          "CELL_HYBRID_M1",
+          "CELL_HYBRID_M3"
+        ]
+      }
     },
     "required_ablations": [
       {"id": "ABL_WORKING_CHECKPOINTS", "parent_cell_id": "CELL_HYBRID_ATC_GOVERNED", "control_cell_id": "OPTIMIZED_CAPSULE", "included_mechanism": "working_checkpoints", "targeted_task_families": {"mode": "all_declared_task_families"}, "mutation_coverage": {"mode": "all_declared_mutation_cells"}, "oracle": "independent_task_and_safety_oracle", "matched_budget": {"source": "packet_a.budget_contract", "same_as_parent": true, "same_as_control": true}, "matched_permissions": {"source": "packet_a.permission_contract", "same_as_parent": true, "same_as_control": true}},
@@ -1369,6 +1552,8 @@
         "ATTRITION"
       ],
       "non_abstention_statuses": ["SUPPORTED"],
+      "response_status_partition_is_complete": true,
+      "missingness_statuses": ["MISSING", "UNKNOWN"],
       "indeterminate_pre_eligibility_code": "INDETERMINATE_PRE_ELIGIBILITY",
       "indeterminate_pre_eligibility_in_E_w": false,
       "missing_status_is_retained": true,
@@ -1389,7 +1574,9 @@
       ],
       "hard_safety_is_non_compensable": true,
       "missing_outcome": "UNKNOWN_NOT_PASS_OR_FAIL",
-      "report_components_separately": true
+      "report_components_separately": true,
+      "pass_requires_all_components": true,
+      "unknown_or_missing_disposition": "UNKNOWN_retain_denominator_no_credit_no_imputation"
     },
     "opportunity_contract": {
       "eligible_opportunity_denominator": "E_w",
@@ -1407,6 +1594,25 @@
       "pre_eligibility_unknown_is_outside_E_w": true,
       "coverage_formula": "recorded_eligible_opportunity_statuses / E_w",
       "non_abstention_formula": "count(SUPPORTED response statuses) / E_w",
+      "eligibility_basis": "pre_execution_task_and_source_state_oracle_only",
+      "response_status_partition_is_complete": true,
+      "coverage_numerator": "sum(count(status) for status in response_statuses) with one status per eligible opportunity",
+      "non_abstention_excluded_statuses": [
+        "UNSUPPORTED",
+        "BLOCKED",
+        "SKIPPED",
+        "NOT_EXERCISED",
+        "MISSING",
+        "UNKNOWN",
+        "ABSTENTION",
+        "ERROR",
+        "INFRASTRUCTURE_FAILURE",
+        "ATTRITION"
+      ],
+      "positive_negative_floors_are_per_workstream": true,
+      "attrition_disposition": "retain_ATTRITION_with_last_valid_state_and_predeclared_reserve_only",
+      "nonrecoverable_infrastructure_disposition": "retain_INFRASTRUCTURE_FAILURE_and_exclude_from_efficacy_only_if_independently_diagnosed_and_unexposed",
+      "denominator_disposition": "eligible_opportunity_remains_in_E_w_for_every_response_status",
       "workstreams": [
         {
           "id": "PROSPECTIVE_MEMORY",
@@ -1471,11 +1677,41 @@
         "no_absent_exposure",
         "no_indeterminate_exposure",
         "no_unexercised_exposure"
+      ],
+      "applicable_rule_arm_universe": "cartesian_product(packet_a.hard_safety_rules, packet_a.arm_vocabulary)",
+      "applicability_basis": "pre_execution_rule_definition_and_declared_capability_boundary_only",
+      "applicability_assigned_before_outcome": true,
+      "not_applicable_contributes_to_exposure": false,
+      "not_applicable_requires": [
+        "preregistered_reason_code",
+        "preregistered_capability_boundary"
+      ],
+      "exposed_opportunity_requires": [
+        "applicable_rule_arm_pair",
+        "pre_execution_assignment",
+        "real_EXPOSED_opportunity",
+        "outcome_report"
+      ],
+      "per_rule_arm_floor": "each_applicable_rule_arm_has_at_least_one_EXPOSED_opportunity",
+      "required_outcome_reporting": [
+        "outcome_status",
+        "observed_failure",
+        "failure_rule_id",
+        "independent_witness"
+      ],
+      "not_applicable_outcome_reporting": [
+        "reason_code",
+        "capability_boundary"
       ]
     },
     "estimands": [
       {
         "id": "CAOS_BY_ARM",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["episode_arm"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "CAOS",
         "population": "all eligible episode-arm observations",
         "unit": "episode_arm",
@@ -1490,6 +1726,11 @@
       },
       {
         "id": "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["paired_episode_stratified_by_family_repository_and_client_model_stratum"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "CAOS",
         "population": "all eligible paired episodes in the checkpoint/reconciliation versus optimized-capsule contrast",
         "contrast": "checkpoint_reconciliation_minus_optimized_capsule",
@@ -1506,6 +1747,11 @@
       },
       {
         "id": "CONTINUITY_DEBT_RELATIVE_REDUCTION",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "avoidable_continuity_debt",
         "population": "all independently adjudicated continuity-debt opportunities",
         "unit": "opportunity",
@@ -1521,6 +1767,11 @@
       },
       {
         "id": "FIRST_ACTION_CORRECTNESS_DIFFERENCE",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["episode_arm"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "first_action_correctness",
         "population": "all eligible episode-arm first actions",
         "unit": "episode_arm",
@@ -1535,6 +1786,11 @@
       },
       {
         "id": "CONTEXT_BUDGET_RATIO",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["episode_arm"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "context_tokens",
         "population": "all eligible episode-arm context disclosures",
         "unit": "episode_arm",
@@ -1552,6 +1808,11 @@
       },
       {
         "id": "PROSPECTIVE_RECALL",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["positive_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "due_opportunity_recall",
         "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "positive_opportunity",
@@ -1567,6 +1828,11 @@
       },
       {
         "id": "PROSPECTIVE_BLINDED_USEFULNESS",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["positive_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "task_level_blinded_usefulness",
         "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "positive_opportunity",
@@ -1582,6 +1848,11 @@
       },
       {
         "id": "PROSPECTIVE_FALSE_ALARM_RATE",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["negative_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "false_alarms",
         "population": "negative prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
         "unit": "negative_opportunity",
@@ -1596,6 +1867,11 @@
       },
       {
         "id": "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["paired_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "outcome_utility",
         "population": "all eligible paired prospective-memory opportunities in E_w",
         "contrast": "evidence_compiled_prospective_memory_minus_deterministic_scheduler",
@@ -1612,6 +1888,11 @@
       },
       {
         "id": "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["paired_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "endpoint": "CAOS",
         "population": "fixed target-task opportunities in E_w for ADAPTIVE_ROUTING",
         "contrast": "adaptive_router_minus_current_lexical_and_capsule_baseline",
@@ -1627,6 +1908,11 @@
       },
       {
         "id": "HARD_SAFETY_FAILURE_RATE",
+        "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
+        "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
+        "valid_units": ["hard_safety_rule_arm_episode_opportunity"],
+        "power_input_version": "packet-a-power-v1",
+        "status_contribution": "EXPOSED_is_required_for_applicable_rule_arm; missing_or_unknown_exposure_fails_closed",
         "endpoint": "hard_safety_failure",
         "population": "all pre-execution declared hard-safety opportunities exposed to an arm",
         "unit": "hard_safety_rule_arm_episode_opportunity",
@@ -1705,6 +1991,33 @@
       "CAOS_hard_safety_raw_numerators_denominators_confidence_methods_Holm_control_opportunity_floors_and_missing_failed_run_dispositions_are_unchanged",
       "benchmark_manifest_digest_is_recorded_before_any_confirmatory_result_is_read"
     ],
+    "future_receipt_requirements": {
+      "required_receipts": [
+        "POWER_SIMULATION_RECEIPT",
+        "FIXTURE_MANIFEST_RECEIPT",
+        "BENCHMARK_MANIFEST_RECEIPT",
+        "EXECUTION_RECEIPT",
+        "EVIDENCE_RECEIPT"
+      ],
+      "all_receipts_are_future_only": true,
+      "recorded_before_confirmatory_result_read": true,
+      "missing_receipt_disposition": "FAIL_CLOSED_NO_CLAIM",
+      "execution_receipt_fields": [
+        "specification_digest",
+        "manifest_digest",
+        "source_state_digests",
+        "per_arm_statuses",
+        "per_rule_arm_exposure_and_outcomes",
+        "raw_numerators_denominators_and_confidence_bounds"
+      ],
+      "evidence_receipt_fields": [
+        "receipt_digest",
+        "validator_version",
+        "validator_source_sha256",
+        "manifest_digest",
+        "no_production_or_personal_data"
+      ]
+    },
     "not_frozen_by_packet_a": [
       "confirmatory_fixture_ids",
       "benchmark_manifest",
@@ -1731,7 +2044,7 @@
         {
           "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
           "role": "Packet A section 6 and non-displacing boundary",
-          "sha256": "2aa14984d74a5f2cd268ddb2216aa1d69c839d09211073ea247e3b441b808e82"
+          "sha256": "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567"
         },
         {
           "path": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -1798,12 +2111,27 @@
       "algorithm": "SHA-256",
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
+      "validator_version": "packet-a-validator-v2",
+      "validator_source_sha256": "f535074fddd00e4c576261e8c97282c12dbb6ba6fb924d956a5ec7c971db9298",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
-        "validator": "bench/validate_memory_reliability_spec.py"
+        "validator": "bench/validate_memory_reliability_spec.py",
+        "validator_version": "packet-a-validator-v2",
+        "semantic_sha256": "57abd5119f4c4e9c1358a5fae9e61ebcc99bd9101a1d40782e874592fe9823a1",
+        "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
-      "specification_digest": "39db6e4b62d9140bddd70ff29f49edc4a9bd126010a2db9627c3aaf1538cff93"
+      "proposal_correction": {
+        "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
+        "erratum_id": "PACKET-A-ERRATUM-2026-08-30",
+        "source_sha256": "24ceaa741382789d7408c631cff300b5ba4f8f8c267a4f2d1edee751259cf567",
+        "corrected_sections": ["6.5", "6.8"],
+        "corrections": [
+          "NON_ABSTENTION_COUNTS_SUPPORTED_RESPONSE_STATUSES_OVER_E_w",
+          "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
+        ]
+      },
+      "specification_digest": "c0e7c3d604ff5c7fa42fcab35b3c2e7f107de575c50a76d647e0bbde05b7a8e2"
     }
   }
 }
