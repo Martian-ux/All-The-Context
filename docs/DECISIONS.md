@@ -46,11 +46,32 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-174: Packet A independently binds authority source and rejects virtual paths
+
+**Status:** recorded on 2026-08-30 as a continuation from exact clean commit
+`ec57058e36a111f41ef24e73c6827d59f324e436`; independent fresh-reviewer
+acceptance remains pending. This remains an L0, non-displacing research change
+and does not authorize execution, production or client changes, external
+access, promotion, or frontier advancement.
+
+The machine-readable contract and narrative bind the normalized source digest
+of `bench/packet_a_contract.py` in addition to the validator source digest.
+The validator also includes that source in canonical provenance and rejects
+contract-source drift unless the source and all dependent bindings are
+reviewed and rebound together. Public file/path entrypoints accept only the
+exact concrete pathlib type for the running platform; subclasses, strings,
+custom `__fspath__` objects, and virtual path behavior are rejected before any
+filesystem method dispatch. File, JSON, encoding, and path failures are raised
+outside active exception handlers so their cause/context graphs remain
+content-free. No experiment, manifest, private data, or product/runtime change
+is part of this decision.
+
 ## ADR-173: Packet A closes recursive structure and freezes power reproducibility policy
 
-**Status:** prepared on 2026-08-30 from exact clean commit
-`850ef9d50cce157f3639f45c1b9b5335da6cd369`; follow-up commit intentionally
-held pending both new reviewers’ final reports. This remains an L0,
+**Status:** recorded in committed follow-up
+`ec57058e36a111f41ef24e73c6827d59f324e436`, from exact clean commit
+`850ef9d50cce157f3639f45c1b9b5335da6cd369`; independent fresh-reviewer
+acceptance remains pending. This remains an L0,
 non-displacing research change and does not authorize execution, production or
 client changes, external access, promotion, or frontier advancement.
 
@@ -73,11 +94,19 @@ futility, or harm stopping, no exceptions, and no derived-N receipt when the
 target is not met. No simulation, manifest, or result is created or claimed by
 this decision.
 
+The two primary contrasts have distinct frozen methods. The checkpoint/CAOS
+contrast uses paired binary outcomes and the declared CAOS joint distribution.
+The scheduler outcome-utility contrast uses a bounded five-level paired utility
+distribution, a relative-utility estimator, a studentized paired permutation
+test, and a paired percentile-bootstrap bound with fixed counter-stream
+resampling; the binary method is not reused for utility.
+
 ## ADR-172: Packet A uses one bounded, content-free JSON parser
 
-**Status:** prepared on 2026-08-30 from exact clean commit
-`16697b849751a6dd1e739aaca44492ce6fe1d338`; follow-up commit intentionally
-held pending final review. This remains an L0, non-displacing research change
+**Status:** recorded in the committed Packet A follow-up chain through
+`ec57058e36a111f41ef24e73c6827d59f324e436`, from exact clean commit
+`16697b849751a6dd1e739aaca44492ce6fe1d338`; independent fresh-reviewer
+acceptance remains pending. This remains an L0, non-displacing research change
 and does not authorize execution, production or client changes, external
 access, promotion, or frontier advancement.
 

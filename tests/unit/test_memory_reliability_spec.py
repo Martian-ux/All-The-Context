@@ -829,6 +829,93 @@ def test_packet_a_narrative_binding_parser_is_unique_and_linear() -> None:
     assert caught.value.__cause__ is None
 
 
+def test_packet_a_contract_source_digest_is_independent_and_bound() -> None:
+    spec = _load(SPEC_PATH)
+    expected = validator_module.EXPECTED_CONTRACT_SOURCE_SHA256
+    assert validator_module._read_contract_source_digest() == expected
+    assert spec["packet_a"]["content_binding"]["contract_source_sha256"] == expected
+    assert any(
+        source["path"] == "bench/packet_a_contract.py" and source["sha256"] == expected
+        for source in spec["packet_a"]["provenance"]["canonical_inputs"]
+    )
+
+    contract_source = (ROOT / "bench" / "packet_a_contract.py").read_bytes()
+    tampered_source = contract_source.replace(
+        b"EXPECTED_BASE_CELL_COUNT", b"EXPECTED_BASE_CELL_COUNX", 1
+    )
+    assert validator_module._compute_contract_source_digest(tampered_source) != expected
+
+
+def test_packet_a_file_entrypoints_reject_virtual_and_subclassed_paths() -> None:
+    concrete_path_type = type(Path())
+
+    class HostilePathSubclass(concrete_path_type):
+        def __fspath__(self) -> str:
+            raise AssertionError("HOSTILE_FSPATH_SENTINEL")
+
+        def stat(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("HOSTILE_STAT_SENTINEL")
+
+    class HostilePathLike:
+        def __fspath__(self) -> str:
+            raise AssertionError("HOSTILE_FSPATH_SENTINEL")
+
+    hostile_inputs: list[Any] = [
+        HostilePathSubclass(str(SPEC_PATH)),
+        HostilePathLike(),
+        str(SPEC_PATH),
+    ]
+    spec = _load(SPEC_PATH)
+    entrypoints = (
+        validator_module._read_bounded_file,
+        validator_module.load_json_document,
+        validator_module.load_and_validate,
+    )
+    for hostile in hostile_inputs:
+        for entrypoint in entrypoints:
+            with pytest.raises(SpecificationValidationError) as caught:
+                entrypoint(hostile)
+            assert str(caught.value) == "input path must be a concrete pathlib path"
+            assert caught.value.__cause__ is None
+            assert caught.value.__context__ is None
+            assert "HOSTILE" not in str(caught.value)
+
+        with pytest.raises(SpecificationValidationError) as caught:
+            validate_spec(spec, root=hostile, validate_narrative=False)
+        assert str(caught.value) == "validation root must be a concrete pathlib path"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+
+        with pytest.raises(SpecificationValidationError) as caught:
+            validator_module._validate_narrative(spec["packet_a"], hostile)
+        assert str(caught.value) == "validation root must be a concrete pathlib path"
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+
+
+def test_packet_a_file_and_encoding_failures_have_no_exception_graph_leak() -> None:
+    malformed = b'{"JSON_DOC_SENTINEL":'
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module._parse_bounded_json_bytes(malformed)
+    assert str(caught.value) == "invalid JSON document"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "JSON_DOC_SENTINEL" not in str(caught.value)
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module.canonical_json_bytes("\ud800")
+    assert str(caught.value) == "document is not finite canonical JSON"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+    with pytest.raises(SpecificationValidationError) as caught:
+        validator_module.load_json_document(Path("missing_FILE_NOT_FOUND_SENTINEL.json"))
+    assert str(caught.value) == "input read failed"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "FILE_NOT_FOUND_SENTINEL" not in str(caught.value)
+
+
 def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
     spec = _load(SPEC_PATH)
     power = spec["packet_a"]["power_simulation"]
@@ -838,6 +925,16 @@ def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
     assert power["computation_method"]["candidate_n_grid"] == (
         "complete_balanced_multiples_of_96_from_384_through_9600_inclusive"
     )
+    methods = power["computation_method"]["primary_contrast_methods"]
+    caos_method = methods["PRIMARY_CONTINUITY_CAOS_DIFFERENCE"]
+    utility_method = methods["PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"]
+    assert caos_method["outcome_type"] == "paired_binary"
+    assert utility_method["outcome_type"] == "paired_bounded_five_level_utility"
+    assert utility_method["test"] != caos_method["test"]
+    assert sum(sum(row) for row in utility_method["joint_distribution"]) == 1.0
+    assert utility_method["control_mean"] == 0.83
+    assert utility_method["alternative_mean"] == 0.895
+    assert utility_method["target_relative_effect"] == 0.05
     assert power["interim_and_stopping_policy"] == {
         "interim_looks": "none",
         "interim_peeking": "prohibited",
@@ -864,6 +961,29 @@ def test_packet_a_power_method_and_closed_stopping_policy_are_frozen() -> None:
             require_golden_digest=False,
             validate_narrative=False,
         )
+
+    for contrast_id, field, replacement in (
+        (
+            "PRIMARY_CONTINUITY_CAOS_DIFFERENCE",
+            "test",
+            "studentized_paired_permutation_test_with_10000_counter_stream_sign_flips",
+        ),
+        (
+            "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
+            "outcome_type",
+            "paired_binary",
+        ),
+    ):
+        candidate = deepcopy(spec)
+        candidate["packet_a"]["power_simulation"]["computation_method"]["primary_contrast_methods"][
+            contrast_id
+        ][field] = replacement
+        with pytest.raises(SpecificationValidationError):
+            validate_spec(
+                with_recomputed_digest(candidate),
+                require_golden_digest=False,
+                validate_narrative=False,
+            )
 
 
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:

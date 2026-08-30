@@ -3018,8 +3018,47 @@
         "joint_draw": "one_uniform_draw_and_left_closed_cumulative_joint_distribution_in_declared_key_order",
         "infrastructure_loss_draw": "independent_uniform_draw_per_paired_episode_loss_if_draw_is_less_than_allowance_and_episode_remains_in_denominator",
         "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
-        "power_estimator": "count_replicates_passing_two_primary_contrasts_after_holm_divided_by_100000",
-        "selection_rule": "smallest_candidate_n_with_estimated_primary_caos_power_at_least_0.90",
+        "primary_contrast_methods": {
+          "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+            "outcome_type": "paired_binary",
+            "sampling_input": "paired_joint_distribution",
+            "estimator": "mean_alternative_minus_control_CAOS_difference",
+            "test": "stratified_paired_difference_with_exact_randomization_reference",
+            "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+            "target_effect": 0.1,
+            "power_event": "Holm_adjusted_primary_CAOS_contrast_clears_noninferiority_margin_and_target_effect"
+          },
+          "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+            "outcome_type": "paired_bounded_five_level_utility",
+            "utility_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+            "joint_distribution": [
+              [0.008, 0.002, 0.0, 0.0, 0.0],
+              [0.002, 0.018, 0.02, 0.0, 0.0],
+              [0.0, 0.005, 0.04, 0.075, 0.0],
+              [0.0, 0.0, 0.005, 0.1, 0.175],
+              [0.0, 0.0, 0.0, 0.0, 0.55]
+            ],
+            "joint_distribution_sum_required": 1.0,
+            "sampling_input": "one_counter_stream_draw_per_episode_using_left_closed_cumulative_row_major_25_cell_matrix",
+            "control_mean": 0.83,
+            "alternative_mean": 0.895,
+            "target_relative_effect": 0.05,
+            "estimator": "mean_paired_utility_difference_divided_by_control_utility_mean",
+            "test": "studentized_paired_permutation_test_with_10000_counter_stream_sign_flips",
+            "interval": "one_sided_95_percent_paired_percentile_bootstrap_with_10000_counter_stream_resamples",
+            "resampling_counter_inputs": [
+              "simulation_seed",
+              "replicate_index",
+              "candidate_n",
+              "resample_index",
+              "episode_index",
+              "draw_kind"
+            ],
+            "power_event": "Holm_adjusted_scheduler_utility_relative_lower_bound_clears_0.05"
+          }
+        },
+        "power_estimator": "per_contrast_rejection_rate_under_its_frozen_method_and_joint_Holm_pass_rate_for_both_primary_contrasts",
+        "selection_rule": "smallest_candidate_n_for_which_each_declared_primary_contrast_has_estimated_power_at_least_0.90_and_joint_Holm_pass_rate_is_reported",
         "no_result_fallback": "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
       },
       "interim_and_stopping_policy": {
@@ -3186,7 +3225,7 @@
         {
           "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
           "role": "Packet A section 6 and non-displacing boundary",
-          "sha256": "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f"
+          "sha256": "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245"
         },
         {
           "path": "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -3217,6 +3256,11 @@
           "path": "bench/memory_reliability_fixtures.json",
           "role": "existing logical symbolic fixture input; not a Packet A confirmatory manifest",
           "sha256": "34dc0b6cf365ecd062d779628a57916ca1b3794263fd47911c4290692cf693ac"
+        },
+        {
+          "path": "bench/packet_a_contract.py",
+          "role": "code-owned Packet A authority constants and structure contract",
+          "sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca"
         }
       ],
       "historical_evidence_boundary": {
@@ -3257,26 +3301,28 @@
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
       "validator_version": "packet-a-validator-v4",
-      "validator_source_sha256": "4cba790d8ddaac1aed7f76d19b1fdd7a135b2f0eb176386eaa80acadf7462ae0",
+      "validator_source_sha256": "d5dfa02030b4d606f1b67c7173c4d4413db4386eba9dde719742ba3932285cb0",
+      "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
-        "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
+        "required_fields": ["specification_digest", "contract_source_sha256", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
         "validator_version": "packet-a-validator-v4",
-        "semantic_sha256": "e6720c0479659cbe86a6720b2577b5d6567a2ac97ae8a32675da90c8d8779fda",
+        "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
+        "semantic_sha256": "21d1baa3a20d80472e3870eeb48f9e273db24923ebe7e0e8093ddd9233c3c850",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
         "path": "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "erratum_id": "PACKET-A-ERRATUM-2026-08-30",
-        "source_sha256": "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f",
+        "source_sha256": "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245",
         "corrected_sections": ["6.5", "6.8"],
         "corrections": [
           "NON_ABSTENTION_COUNTS_SUPPORTED_RESPONSE_STATUSES_OVER_E_w",
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75"
+      "specification_digest": "e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc"
     }
   }
 }

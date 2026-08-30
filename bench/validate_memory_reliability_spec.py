@@ -23,6 +23,7 @@ try:
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
         EXPECTED_COMPARISON_ARM_IDS,
         EXPECTED_COMPARISON_CELL_IDS,
+        EXPECTED_CONTRACT_SOURCE_SHA256,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
         EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
@@ -37,6 +38,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
         EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
         EXPECTED_COMPARISON_ARM_IDS,
         EXPECTED_COMPARISON_CELL_IDS,
+        EXPECTED_CONTRACT_SOURCE_SHA256,
         EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
         EXPECTED_PROVISIONAL_MINIMUM_PAIRED_EPISODE_COUNT,
         EXPECTED_PROVISIONAL_REPETITIONS_PER_BASE_CELL,
@@ -50,6 +52,32 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC_PATH = ROOT / "bench" / "memory_reliability_spec.json"
 FREEZE_DOCUMENT_PATH = (
     ROOT / "docs" / "research" / "ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md"
+)
+CONTRACT_SOURCE_PATH = ROOT / "bench" / "packet_a_contract.py"
+CONCRETE_PATH_TYPE = type(Path())
+_CONTRACT_SOURCE_DIGEST_PATTERNS = (
+    (
+        re.compile(
+            rb"(?m)^EXPECTED_CANONICAL_SPECIFICATION_DIGEST = \(\r?\n"
+            rb'    "[0-9a-f]{64}"\r?\n\)'
+        ),
+        b'EXPECTED_CANONICAL_SPECIFICATION_DIGEST = ("<DERIVED_DIGEST>")',
+    ),
+    (
+        re.compile(rb'(?m)^EXPECTED_STRUCTURE_DIGEST = "[0-9a-f]{64}"\r?$'),
+        b'EXPECTED_STRUCTURE_DIGEST = "<DERIVED_DIGEST>"',
+    ),
+    (
+        re.compile(
+            rb"(?m)^EXPECTED_NARRATIVE_SEMANTIC_DIGEST = \(\r?\n"
+            rb'    "[0-9a-f]{64}"\r?\n\)'
+        ),
+        b'EXPECTED_NARRATIVE_SEMANTIC_DIGEST = ("<DERIVED_DIGEST>")',
+    ),
+    (
+        re.compile(rb'(?m)^EXPECTED_CONTRACT_SOURCE_SHA256 = "[0-9a-f]{64}"\r?$'),
+        b'EXPECTED_CONTRACT_SOURCE_SHA256 = "<CONTRACT_SOURCE_SHA256>"',
+    ),
 )
 
 # Public validator inputs are bounded before parsing, decoding, or hashing.
@@ -493,7 +521,7 @@ EXPECTED_PROVENANCE = [
     (
         "docs/research/POST_BETA_CONTINUITY_AND_MEMORY_PROPOSAL_2026-08-29.md",
         "Packet A section 6 and non-displacing boundary",
-        "af6bf39d93aa5b4221fbadec47d933fcc725bf8cc8d1acba52e4a16439ee1a7f",
+        "f4f18ef1ed814f7d08c5e10d73a743c305889c627b495d972b0b03caec9ee245",
     ),
     (
         "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
@@ -524,6 +552,11 @@ EXPECTED_PROVENANCE = [
         "bench/memory_reliability_fixtures.json",
         "existing logical symbolic fixture input; not a Packet A confirmatory manifest",
         "34dc0b6cf365ecd062d779628a57916ca1b3794263fd47911c4290692cf693ac",
+    ),
+    (
+        "bench/packet_a_contract.py",
+        "code-owned Packet A authority constants and structure contract",
+        EXPECTED_CONTRACT_SOURCE_SHA256,
     ),
 ]
 
@@ -848,13 +881,36 @@ def _require_value(value: Any, expected: Any, path: str) -> None:
     _require(_strict_equal(value, expected), f"{path} differs from the frozen value")
 
 
+def _require_safe_concrete_path(value: Any, label: str) -> None:
+    """Reject virtual, path-like, and pathlib-subclass inputs before dispatch."""
+
+    _require(type(value) is CONCRETE_PATH_TYPE, f"{label} must be a concrete pathlib path")
+
+
 def _file_identity(metadata: os.stat_result) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
+
+
+def _compute_contract_source_digest(document: bytes) -> str:
+    """Hash contract source after removing its derived digest literals."""
+
+    _require(type(document) is bytes, "contract source must be bytes")
+    _require(len(document) <= MAX_INPUT_BYTES, "contract source exceeds byte limit")
+    normalized = document
+    for pattern, replacement in _CONTRACT_SOURCE_DIGEST_PATTERNS:
+        normalized, count = pattern.subn(replacement, normalized)
+        _require(count == 1, "contract source digest marker is not unique")
+    return hashlib.sha256(normalized).hexdigest()
+
+
+def _read_contract_source_digest() -> str:
+    return _compute_contract_source_digest(_read_bounded_file(CONTRACT_SOURCE_PATH))
 
 
 def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> bytes:
     """Read a regular file with bounded, identity-checked, content-free failure."""
 
+    _require_safe_concrete_path(path, "input path")
     try:
         before = path.stat()
         _require(stat.S_ISREG(before.st_mode), "input is not a regular file")
@@ -878,7 +934,8 @@ def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> b
     except SpecificationValidationError:
         raise
     except (OSError, ValueError):
-        raise SpecificationValidationError("input read failed") from None
+        pass
+    raise SpecificationValidationError("input read failed")
 
 
 def _validate_json_limits(value: Any) -> None:
@@ -943,7 +1000,11 @@ def _validate_json_limits(value: Any) -> None:
             try:
                 digits = len(str(abs(current)))
             except ValueError:
-                raise SpecificationValidationError("document exceeds number digit limit") from None
+                number_conversion_failed = True
+            else:
+                number_conversion_failed = False
+            if number_conversion_failed:
+                raise SpecificationValidationError("document exceeds number digit limit")
             _require(digits <= MAX_JSON_NUMBER_DIGITS, "document exceeds number digit limit")
         elif current_type is float:
             _require(math.isfinite(current), "document contains a non-finite number")
@@ -1001,7 +1062,11 @@ def _compute_structure_digest(value: Any) -> str:
             allow_nan=False,
         ).encode("utf-8")
     except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError):
-        raise SpecificationValidationError("document structure digest failed") from None
+        serialization_failed = True
+    else:
+        serialization_failed = False
+    if serialization_failed:
+        raise SpecificationValidationError("document structure digest failed")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -1017,9 +1082,14 @@ def _validate_document_structure(spec: dict[str, Any]) -> None:
 
 def _bounded_deepcopy(value: Any) -> Any:
     try:
-        return deepcopy(value)
+        copied = deepcopy(value)
     except (MemoryError, RecursionError, TypeError, ValueError):
-        raise SpecificationValidationError("document copy failed") from None
+        copy_failed = True
+    else:
+        copy_failed = False
+    if copy_failed:
+        raise SpecificationValidationError("document copy failed")
+    return copied
 
 
 def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
@@ -1074,7 +1144,11 @@ def _parse_bounded_json_bytes(document: bytes) -> Any:
     except SpecificationValidationError:
         raise
     except (UnicodeError, json.JSONDecodeError, RecursionError):
-        raise SpecificationValidationError("invalid JSON document") from None
+        parse_failed = True
+    else:
+        parse_failed = False
+    if parse_failed:
+        raise SpecificationValidationError("invalid JSON document")
     _validate_json_limits(value)
     return value
 
@@ -1082,6 +1156,7 @@ def _parse_bounded_json_bytes(document: bytes) -> Any:
 def load_json_document(path: Path) -> dict[str, Any]:
     """Load a JSON document without silently accepting duplicate or non-finite data."""
 
+    _require_safe_concrete_path(path, "input path")
     value = _parse_bounded_json_bytes(_read_bounded_file(path))
     _require(isinstance(value, dict), "specification root must be an object")
     return value
@@ -2723,11 +2798,65 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
                 "allowance_and_episode_remains_in_denominator"
             ),
             "candidate_n_grid": "complete_balanced_multiples_of_96_from_384_through_9600_inclusive",
+            "primary_contrast_methods": {
+                "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+                    "outcome_type": "paired_binary",
+                    "sampling_input": "paired_joint_distribution",
+                    "estimator": "mean_alternative_minus_control_CAOS_difference",
+                    "test": "stratified_paired_difference_with_exact_randomization_reference",
+                    "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+                    "target_effect": 0.1,
+                    "power_event": (
+                        "Holm_adjusted_primary_CAOS_contrast_clears_noninferiority_margin_and_"
+                        "target_effect"
+                    ),
+                },
+                "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+                    "outcome_type": "paired_bounded_five_level_utility",
+                    "utility_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+                    "joint_distribution": [
+                        [0.008, 0.002, 0.0, 0.0, 0.0],
+                        [0.002, 0.018, 0.02, 0.0, 0.0],
+                        [0.0, 0.005, 0.04, 0.075, 0.0],
+                        [0.0, 0.0, 0.005, 0.1, 0.175],
+                        [0.0, 0.0, 0.0, 0.0, 0.55],
+                    ],
+                    "joint_distribution_sum_required": 1.0,
+                    "sampling_input": (
+                        "one_counter_stream_draw_per_episode_using_left_closed_cumulative_"
+                        "row_major_25_cell_matrix"
+                    ),
+                    "control_mean": 0.83,
+                    "alternative_mean": 0.895,
+                    "target_relative_effect": 0.05,
+                    "estimator": "mean_paired_utility_difference_divided_by_control_utility_mean",
+                    "test": (
+                        "studentized_paired_permutation_test_with_10000_counter_stream_sign_flips"
+                    ),
+                    "interval": (
+                        "one_sided_95_percent_paired_percentile_bootstrap_with_10000_"
+                        "counter_stream_resamples"
+                    ),
+                    "resampling_counter_inputs": [
+                        "simulation_seed",
+                        "replicate_index",
+                        "candidate_n",
+                        "resample_index",
+                        "episode_index",
+                        "draw_kind",
+                    ],
+                    "power_event": (
+                        "Holm_adjusted_scheduler_utility_relative_lower_bound_clears_0.05"
+                    ),
+                },
+            },
             "power_estimator": (
-                "count_replicates_passing_two_primary_contrasts_after_holm_divided_by_100000"
+                "per_contrast_rejection_rate_under_its_frozen_method_and_joint_Holm_pass_rate_"
+                "for_both_primary_contrasts"
             ),
             "selection_rule": (
-                "smallest_candidate_n_with_estimated_primary_caos_power_at_least_0.90"
+                "smallest_candidate_n_for_which_each_declared_primary_contrast_has_estimated_"
+                "power_at_least_0.90_and_joint_Holm_pass_rate_is_reported"
             ),
             "no_result_fallback": (
                 "if_no_candidate_meets_target_derived_n_remains_unset_and_no_receipt_is_emitted"
@@ -2832,7 +2961,7 @@ def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
 def canonical_json_bytes(value: Any) -> bytes:
     _validate_json_limits(value)
     try:
-        return json.dumps(
+        encoded = json.dumps(
             value,
             ensure_ascii=False,
             sort_keys=True,
@@ -2840,7 +2969,12 @@ def canonical_json_bytes(value: Any) -> bytes:
             allow_nan=False,
         ).encode("utf-8")
     except (MemoryError, RecursionError, TypeError, UnicodeError, ValueError):
-        raise SpecificationValidationError("document is not finite canonical JSON") from None
+        serialization_failed = True
+    else:
+        serialization_failed = False
+    if serialization_failed:
+        raise SpecificationValidationError("document is not finite canonical JSON")
+    return encoded
 
 
 def compute_specification_digest(spec: dict[str, Any]) -> str:
@@ -3580,7 +3714,11 @@ def compute_narrative_semantic_digest(document: bytes, *, specification_digest: 
     try:
         document.decode("utf-8")
     except UnicodeDecodeError:
-        raise SpecificationValidationError("narrative is not valid UTF-8") from None
+        invalid_utf8 = True
+    else:
+        invalid_utf8 = False
+    if invalid_utf8:
+        raise SpecificationValidationError("narrative is not valid UTF-8")
     expected = specification_digest.encode("ascii")
     normalized, row_count = _NARRATIVE_DIGEST_ROW.subn(rb"\1<SPECIFICATION_DIGEST>\2", document)
     normalized, json_count = _NARRATIVE_DIGEST_JSON.subn(rb"\1<SPECIFICATION_DIGEST>\2", normalized)
@@ -3591,6 +3729,7 @@ def compute_narrative_semantic_digest(document: bytes, *, specification_digest: 
 
 
 def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
+    _require_safe_concrete_path(root, "validation root")
     binding = packet["content_binding"]["narrative_binding"]
     _require_value(
         binding["path"],
@@ -3605,7 +3744,11 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     try:
         document = document_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        raise SpecificationValidationError("narrative is not valid UTF-8") from None
+        invalid_utf8 = True
+    else:
+        invalid_utf8 = False
+    if invalid_utf8:
+        raise SpecificationValidationError("narrative is not valid UTF-8")
     expected_digest = packet["content_binding"]["specification_digest"]
     _require(
         f"| Specification digest | `{expected_digest}` |" in document,
@@ -3616,11 +3759,16 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     )
     _require_keys(
         narrative_binding,
-        {"specification_digest", "evidence_level", "execution_boundary"},
+        {"specification_digest", "contract_source_sha256", "evidence_level", "execution_boundary"},
         "narrative machine-readable binding",
     )
     _require_value(
         narrative_binding["specification_digest"], expected_digest, "narrative specification_digest"
+    )
+    _require_value(
+        narrative_binding["contract_source_sha256"],
+        packet["content_binding"]["contract_source_sha256"],
+        "narrative contract_source_sha256",
     )
     _require_value(
         narrative_binding["evidence_level"], packet["evidence_level"], "narrative evidence_level"
@@ -3651,6 +3799,7 @@ def validate_spec(
 ) -> None:
     """Validate a candidate Packet A document, raising on any drift."""
 
+    _require_safe_concrete_path(root, "validation root")
     _require(isinstance(spec, dict), "document must be an object")
     _validate_json_limits(spec)
     _validate_document_structure(spec)
@@ -5338,8 +5487,14 @@ def validate_spec(
     for source in packet["provenance"]["canonical_inputs"]:
         source_path = root / source["path"]
         _require(source_path.is_file(), f"provenance source missing: {source_path}")
+        source_bytes = _read_bounded_file(source_path)
+        actual_source_digest = (
+            _compute_contract_source_digest(source_bytes)
+            if source["path"] == "bench/packet_a_contract.py"
+            else hashlib.sha256(source_bytes).hexdigest()
+        )
         _require(
-            hashlib.sha256(_read_bounded_file(source_path)).hexdigest() == source["sha256"],
+            actual_source_digest == source["sha256"],
             f"provenance digest drift: {source['path']}",
         )
     _require(
@@ -5360,6 +5515,7 @@ def validate_spec(
             "scope",
             "validator_version",
             "validator_source_sha256",
+            "contract_source_sha256",
             "narrative_binding",
             "proposal_correction",
             "specification_digest",
@@ -5385,12 +5541,28 @@ def validate_spec(
         "validator source digest",
     )
     _require_value(
+        binding["contract_source_sha256"],
+        EXPECTED_CONTRACT_SOURCE_SHA256,
+        "contract source digest",
+    )
+    _require_value(
+        binding["contract_source_sha256"],
+        _read_contract_source_digest(),
+        "contract source file digest",
+    )
+    _require_value(
         binding["narrative_binding"],
         {
             "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
-            "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
+            "required_fields": [
+                "specification_digest",
+                "contract_source_sha256",
+                "evidence_level",
+                "execution_boundary",
+            ],
             "validator": "bench/validate_memory_reliability_spec.py",
             "validator_version": VALIDATOR_VERSION,
+            "contract_source_sha256": binding["contract_source_sha256"],
             "semantic_sha256": binding["narrative_binding"]["semantic_sha256"],
             "semantic_digest_scope": (
                 "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
@@ -5434,6 +5606,7 @@ def validate_spec(
 def load_and_validate(path: Path = SPEC_PATH) -> dict[str, Any]:
     """Load and validate the committed spec without modifying it."""
 
+    _require_safe_concrete_path(path, "input path")
     value = load_json_document(path)
     validate_spec(value)
     return value

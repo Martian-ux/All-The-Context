@@ -5,7 +5,8 @@
 | Freeze date | August 30, 2026 |
 | Status | Frozen L0 research specification only |
 | Machine-readable authority | [`bench/memory_reliability_spec.json`](../../bench/memory_reliability_spec.json), `packet_a` |
-| Specification digest | `1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75` |
+| Specification digest | `e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc` |
+| Contract source digest | `a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca` |
 | Execution | Not executed; no benchmark manifest or confirmatory result exists |
 | Product authority | None; the active product frontier and product DAG remain binding |
 
@@ -217,9 +218,15 @@ with counter inputs of seed, replicate index, candidate N, episode index, and
 draw kind; one draw maps to the declared left-closed cumulative paired
 distribution; infrastructure loss uses an independent draw and remains in the
 denominator; candidate N values are balanced multiples of 96 from 384 through
-9,600 inclusive; and the smallest N whose 100,000-replicate estimated power is
-at least 0.90 is selected. If no candidate meets the target, derived N remains
-unset and no receipt is emitted.
+9,600 inclusive; and the smallest N for which each declared primary contrast
+has estimated power at least 0.90 with the joint Holm pass rate reported is
+selected. The primary checkpoint/CAOS contrast uses the paired-binary method
+and frozen CAOS joint distribution. The scheduler outcome-utility contrast is
+separate: it uses a paired bounded five-level utility distribution, a
+relative-utility estimator, a studentized paired permutation test, and a
+paired percentile-bootstrap bound with fixed counter-stream resampling. It is
+not powered by the binary CAOS formula. If no candidate meets the target,
+derived N remains unset and no receipt is emitted.
 
 The closed interim and stopping policy is also frozen: interim peeking,
 optional stopping, adaptive sampling, reallocation, early stopping, futility
@@ -250,13 +257,17 @@ benchmark manifest remain unset until those gates pass.
 The machine-readable spec uses SHA-256 over the complete JSON document,
 canonicalized as UTF-8 with sorted keys and compact separators while omitting
 only the digest field itself. It also records SHA-256 provenance for the
-proposal, evaluation program, governance, Wave 4 result/review/oracle, and
-existing logical fixture input. The focused unit contract verifies those
-digests and rejects drift.
+proposal, evaluation program, governance, Wave 4 result/review/oracle, the
+existing logical fixture input, and the independently authored
+`bench/packet_a_contract.py` authority source. The focused unit contract
+verifies those digests and rejects drift. Its source digest replaces the four
+derived digest literals with fixed placeholders before hashing, so coordinated
+digest rebinding does not alter the authority-source identity.
 
 `bench/validate_memory_reliability_spec.py` is independently authored with
 immutable expected vocabularies, field-level semantic contracts, a code-owned
-canonical semantic digest, and a version/source binding. The candidate
+canonical semantic digest, and independent validator/contract source bindings.
+The candidate
 self-digest is only an internal consistency check: changing JSON and
 recomputing that field cannot pass. Public JSON, narrative, and provenance
 reads are bounded before parsing or hashing, with byte, depth, node, string,
@@ -282,7 +293,8 @@ validator requires it to match `packet_a` exactly:
 
 ```json
 {
-  "specification_digest": "1efaa7bed03db3a551a2764af3f5cd7384ade9cba14d99fb9783bde838069e75",
+  "specification_digest": "e1df3122b147c3ff8956cfc1157899ca7146c55fbc7db51b2ff509dd5fe1d9fc",
+  "contract_source_sha256": "a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca",
   "evidence_level": "L0",
   "execution_boundary": {
     "packet_a_executed": false,

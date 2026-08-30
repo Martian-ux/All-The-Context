@@ -53,24 +53,31 @@ source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
 ### 2026-08-30 — Packet A embedded-JSON parser remediation is prepared, uncommitted, and L0-only
+### 2026-08-30 — Packet A authority-source, parser, structure, and power-policy continuation is L0-only
 
 Starting from exact clean commit `16697b849751a6dd1e739aaca44492ce6fe1d338`,
-the follow-up hardening routes the fenced narrative JSON binding through the
-same bounded parser as the top-level document. It rejects duplicate keys,
-non-finite values, malformed/deep discarded values, oversized fragments, and
-unknown keys without reflecting attacker-controlled names, values, or paths in
-exceptions. The recursive in-memory finite walk was removed because the
-iterative JSON-limit walk already enforces depth, node, string, numeric, and
-finite-value policy.
+and continuing from exact clean commit `ec57058e36a111f41ef24e73c6827d59f324e436`, the hardening routes the fenced
+narrative JSON binding through the same bounded parser as the top-level
+document. It rejects duplicate keys, non-finite values, malformed/deep
+discarded values, oversized fragments, and unknown keys without reflecting
+attacker-controlled names, values, or paths in exceptions. The recursive
+in-memory finite walk was removed because the iterative JSON-limit walk already
+enforces depth, node, string, numeric, and finite-value policy.
 
-Targeted follow-up validation passes 28 tests. This work is intentionally held
-for the fresh reviewer’s additional final findings before a follow-up commit;
-no experiment, manifest, result, private data, product/runtime path, or Packet
-A acceptance claim is involved.
+The chain also adds a code-owned recursive structure contract, shared-alias
+rejection, strict UTF-8 narrative validation, a linear fence extractor, and
+explicit fixed-replicate/no-peeking/no-early/futility/harm-stopping rules. The
+current continuation additionally binds `bench/packet_a_contract.py` by an
+independent normalized source digest and rejects virtual, path-like, or
+path-subclass inputs before filesystem dispatch. Independent reviewer
+acceptance remains pending; no experiment, manifest, result, private data,
+product/runtime path, or Packet A acceptance claim is involved.
 
-### 2026-08-30 — Packet A recursive structure and power-policy remediation remains uncommitted and L0-only
+### 2026-08-30 — Packet A recursive structure and power-policy foundation remains L0-only
 
-Starting from exact clean commit `850ef9d50cce157f3639f45c1b9b5335da6cd369`,
+Starting from exact clean commit `850ef9d50cce157f3639f45c1b9b5335da6cd369` and
+recorded in the prior committed follow-up through
+`ec57058e36a111f41ef24e73c6827d59f324e436`,
 the validator now performs a code-owned recursive structure check before any
 semantic field access. It rejects unknown or missing nested keys, wrong object
 and list shapes, list append/reorder/identity drift, shared in-memory container
@@ -86,11 +93,15 @@ no adaptive sampling or reallocation, no early, futility, or harm stopping,
 and no exceptions or result if the target is not met. The future script,
 manifests, derived N, and results remain absent and unexecuted.
 
+The two primary contrasts now have distinct frozen power methods: paired-binary
+CAOS uses its declared joint distribution, while scheduler outcome utility uses
+a bounded five-level paired utility distribution with its own relative-effect
+estimator, studentized paired permutation test, and paired bootstrap bound.
+The binary CAOS method is not reused for utility.
+
 The focused structure, alias, UTF-8, and power-policy regressions pass. This
-remains validator/documentation work only and is intentionally held until both
-new reviewers’ final reports are incorporated; no experiment, manifest,
-result, private data, product/runtime path, or Packet A acceptance claim is
-involved.
+remains validator/documentation work only; no experiment, manifest, result,
+private data, product/runtime path, or Packet A acceptance claim is involved.
 
 ### 2026-08-30 — Packet A fourth semantic remediation remains L0 and non-displacing
 

@@ -681,7 +681,13 @@ and not an execution N. The specification is frozen if and only if:
    manifest digests, seed, repetitions, joint distribution, allocation,
    estimator, test, alpha, power, and multiplicity; and
 6. the specification digest is recorded without representing provisional N as
-   an executable or fixture-frozen sample.
+   an executable or fixture-frozen sample; and
+7. the independently authored validator source and code-owned contract source
+   are each bound by SHA-256, so changing either source fails validation until
+   the source and all dependent specification bindings are reviewed together;
+   the contract-source digest replaces its four derived digest literals with
+   fixed placeholders before hashing so coordinated rebinding does not change
+   the authority-source identity.
 
 Packet A specification freeze is permitted now as a non-displacing research
 decision. It does not freeze fixture IDs, a benchmark manifest, a final N, or
@@ -698,6 +704,10 @@ specification must not claim that N=384 is frozen or required before that run.
 power_simulation_script_path: bench/memory_reliability_power_simulation.py
 power_simulation_script_version: packet-a-power-v1
 power_simulation_script_digest: required SHA-256 at manifest freeze
+validator_source_path: bench/validate_memory_reliability_spec.py
+validator_source_digest: bound in the machine-readable specification
+contract_source_path: bench/packet_a_contract.py
+contract_source_digest: a57514b4102abe954516e530cf6a8507465afb4406e78399d10bb0b0670953ca
 input_manifest_paths:
   - bench/memory_reliability_spec.json
   - bench/memory_reliability_fixtures.json
@@ -734,10 +744,16 @@ final_repetitions_per_base_cell: final_N / 96
 The script path is a required future reproducibility artifact; this proposal
 does not claim that the script has already been added or executed. The
 simulation must independently emit the paired joint-distribution check,
-stratum allocation, derived N, and output manifest digest. Any change to the
-script, version, input manifest, joint distribution, allocation, estimator,
-test, alpha, power, missingness rule, or seed creates a new specification
-version and leaves N provisional.
+stratum allocation, derived N, and output manifest digest. The frozen power
+method is contrast-specific: the checkpoint/CAOS contrast uses paired binary
+outcomes and the declared CAOS joint distribution, while the scheduler
+outcome-utility contrast uses a paired bounded five-level utility distribution,
+a relative-utility estimator, a studentized paired permutation test, and a
+paired percentile-bootstrap bound with fixed counter-stream resampling. The
+binary CAOS method is not reused for utility. Any change to the script,
+version, input manifest, joint distribution, allocation, estimator, test,
+alpha, power, missingness rule, or seed creates a new specification version and
+leaves N provisional.
 
 The later benchmark-manifest freeze is permitted only when:
 
