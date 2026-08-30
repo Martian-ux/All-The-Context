@@ -235,7 +235,8 @@ def test_composed_cross_client_memory_acceptance_over_disposable_vault(tmp_path:
         candidate_rows = _fetch_rows(
             config.database_path,
             "SELECT kind,content,structured_value_json,source_service,source_type,"
-            "observation_origin,disposition,explicit_user_statement,record_id "
+            "observation_origin,disposition,explicit_user_statement,record_id,"
+            "submitted_by_client_id "
             "FROM context_candidates ORDER BY created_at,id",
         )
         raw_rows = [row for row in candidate_rows if row["source_type"] == "client_capture"]
@@ -247,6 +248,9 @@ def test_composed_cross_client_memory_acceptance_over_disposable_vault(tmp_path:
         assert Counter(
             json.loads(row["structured_value_json"])["capture_role"] for row in raw_rows
         ) == Counter({"user": 4, "assistant": 3, "tool": 3, "imported": 3})
+        assert Counter(row["submitted_by_client_id"] for row in raw_rows) == Counter(
+            {codex_capture_id: 12, hermes_capture_id: 1}
+        )
         assert all(
             row["observation_origin"] == "client_capture"
             and row["disposition"] == "tentative"
@@ -273,21 +277,21 @@ def test_composed_cross_client_memory_acceptance_over_disposable_vault(tmp_path:
         record = records[0]
         record_id = str(record["id"])
         assert {
-            record["kind"],
-            record["content"],
-            record["entity_key"],
-            record["attribute_key"],
-            record["source_service"],
-            record["source_type"],
-            record["observation_origin"],
+            "kind": record["kind"],
+            "content": record["content"],
+            "entity_key": record["entity_key"],
+            "attribute_key": record["attribute_key"],
+            "source_service": record["source_service"],
+            "source_type": record["source_type"],
+            "observation_origin": record["observation_origin"],
         } == {
-            "interaction_preference",
-            PREFERENCE,
-            "user",
-            "response_style",
-            "allthecontext-core",
-            "client_capture_formation",
-            "live_user_evidence",
+            "kind": "interaction_preference",
+            "content": PREFERENCE,
+            "entity_key": "user",
+            "attribute_key": "response_style",
+            "source_service": "allthecontext-core",
+            "source_type": "client_capture_formation",
+            "observation_origin": "live_user_evidence",
         }
         assert not record["explicit_user_statement"]
 
