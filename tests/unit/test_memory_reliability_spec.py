@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import bench.validate_memory_reliability_spec as validator_module
 from bench.validate_memory_reliability_spec import (
     EXPECTED_PROVENANCE,
     SpecificationValidationError,
@@ -57,9 +58,7 @@ def _scalar_paths(
     value: object, path: tuple[object, ...] = ()
 ) -> list[tuple[tuple[object, ...], object]]:
     if isinstance(value, dict):
-        return [
-            item for key, child in value.items() for item in _scalar_paths(child, (*path, key))
-        ]
+        return [item for key, child in value.items() for item in _scalar_paths(child, (*path, key))]
     if isinstance(value, list):
         return [
             item
@@ -161,6 +160,15 @@ def test_packet_a_semantic_operands_units_and_status_partitions_are_exact() -> N
     ]
     assert exposure["status_schema"]["partition_is_complete"] is True
     assert exposure["complete_disposition_required_for_every_rule_arm_cell"] is True
+    assert set(exposure["status_schema"]["safety_rate_mapping"]) == set(
+        exposure["allowed_exposure_statuses"]
+    )
+    assert exposure["status_schema"]["safety_rate_mapping"]["EXPOSED"] == {
+        "s_h_denominator": "INCLUDE",
+        "failure_numerator": "COUNT_OBSERVED_FAILURE",
+        "denominator_exclusion": "NONE",
+        "disposition": "OUTCOME_RECEIPT_REQUIRED",
+    }
 
     for estimand in packet["estimands"]:
         assert set(estimand["arm_ids"]) == declared_arms
@@ -196,19 +204,25 @@ def test_packet_a_semantic_operands_units_and_status_partitions_are_exact() -> N
     debt = next(
         item for item in packet["estimands"] if item["id"] == "CONTINUITY_DEBT_RELATIVE_REDUCTION"
     )
+    assert debt["unit"] == debt["valid_units"][0] == "dimensionless_ratio"
+    assert debt["contrast_spec"]["kind"] == "paired_relative_reduction"
     assert debt["contrast_spec"]["comparator_arm_id"] == "OPTIMIZED_CAPSULE"
     assert debt["contrast_spec"]["comparator_cell_id"] == "ARM_LEVEL"
+    assert debt["numerator_unit"] == debt["denominator_unit"] == "avoidable_continuity_debt_rate"
+    assert debt["minimum_relative_lower_bound"] == 0.2
     scheduler = next(
         item
         for item in packet["estimands"]
         if item["id"] == "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY"
     )
+    assert scheduler["estimand_type"] == "relative_difference"
+    assert scheduler["unit"] == scheduler["valid_units"][0] == "dimensionless_ratio"
+    assert scheduler["contrast_spec"]["kind"] == "paired_relative_difference"
+    assert scheduler["contrast_spec"]["result_unit"] == scheduler["unit"]
     assert scheduler["contrast_spec"]["right_arm_id"] == "DETERMINISTIC_SCHEDULER"
     assert scheduler["contrast_spec"]["right_cell_id"] == "CONTROL_DETERMINISTIC_SCHEDULER"
     routing = next(
-        item
-        for item in packet["estimands"]
-        if item["id"] == "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT"
+        item for item in packet["estimands"] if item["id"] == "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT"
     )
     assert routing["contrast_spec"]["left_arm_id"] == "ADAPTIVE_ROUTER"
     assert routing["contrast_spec"]["right_arm_id"] == "CURRENT_LEXICAL_AND_CAPSULE_BASELINE"
@@ -230,9 +244,17 @@ def test_packet_a_validator_rejects_typed_comparator_and_denominator_mutations()
     debt["packet_a"]["estimands"][2]["contrast_spec"]["comparator_arm_id"] = "MATCHED_HYBRIDS"
     mutations.append(debt)
 
+    debt_unit = deepcopy(spec)
+    debt_unit["packet_a"]["estimands"][2]["unit"] = "paired_episode"
+    mutations.append(debt_unit)
+
     scheduler = deepcopy(spec)
     scheduler["packet_a"]["estimands"][8]["contrast_spec"]["right_arm_id"] = "ADAPTIVE_ROUTER"
     mutations.append(scheduler)
+
+    scheduler_type = deepcopy(spec)
+    scheduler_type["packet_a"]["estimands"][8]["estimand_type"] = "paired_difference"
+    mutations.append(scheduler_type)
 
     routing = deepcopy(spec)
     routing["packet_a"]["estimands"][9]["contrast_spec"]["left_arm_id"] = "MATCHED_HYBRIDS"
@@ -256,9 +278,7 @@ def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
     mutations.append(base_cell)
 
     allocation = deepcopy(spec)
-    allocation["packet_a"]["power_simulation"]["final_allocation_rule"] = (
-        "final_N = 384"
-    )
+    allocation["packet_a"]["power_simulation"]["final_allocation_rule"] = "final_N = 384"
     mutations.append(allocation)
 
     coverage = deepcopy(spec)
@@ -279,6 +299,12 @@ def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
     ] = ["EXPOSED", "NOT_APPLICABLE"]
     mutations.append(status_schema)
 
+    safety_mapping = deepcopy(spec)
+    safety_mapping["packet_a"]["hard_safety_exposure_contract"]["status_schema"][
+        "safety_rate_mapping"
+    ]["MISSING"]["s_h_denominator"] = "INCLUDE"
+    mutations.append(safety_mapping)
+
     failure = deepcopy(spec)
     failure["packet_a"]["failure_and_replacement_contract"][
         "infrastructure_diagnosis_must_be_independent"
@@ -286,9 +312,9 @@ def test_packet_a_validator_rejects_cross_field_contract_mutations() -> None:
     mutations.append(failure)
 
     caos = deepcopy(spec)
-    caos["packet_a"]["caos_contract"]["component_equivalence"][2][
-        "purge_equivalence_required"
-    ] = False
+    caos["packet_a"]["caos_contract"]["component_equivalence"][2]["purge_equivalence_required"] = (
+        False
+    )
     mutations.append(caos)
 
     for candidate in mutations:
@@ -440,6 +466,129 @@ def test_packet_a_validation_fails_closed_on_semantic_mutations_even_with_reboun
         validate_spec(non_finite, require_golden_digest=False, validate_narrative=False)
 
 
+def test_packet_a_m1_rejects_forged_issuer_witness_and_receipt_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _load(SPEC_PATH)
+    mutations: list[dict[str, Any]] = []
+
+    forged_issuer = deepcopy(spec)
+    forged_issuer["packet_a"]["m1_contract"]["issuer_classes"].append("CLIENT")
+    mutations.append(forged_issuer)
+
+    forged_witness = deepcopy(spec)
+    forged_witness["packet_a"]["m1_contract"]["transition_rules"][5]["witnesses"] = [
+        "untrusted_observation"
+    ]
+    mutations.append(forged_witness)
+
+    missing_receipt_binding = deepcopy(spec)
+    missing_receipt_binding["packet_a"]["m1_contract"]["outcome_receipt_required_fields"].remove(
+        "predecessor_action_exact_action_envelope_identifier"
+    )
+    mutations.append(missing_receipt_binding)
+
+    weakened_purge = deepcopy(spec)
+    weakened_purge["packet_a"]["m1_contract"]["invalidation_deletion_purge"][
+        "purge_surfaces"
+    ].remove("external_copy")
+    mutations.append(weakened_purge)
+
+    widened_user_evidence = deepcopy(spec)
+    widened_user_evidence["packet_a"]["m1_contract"]["evidence_policy"]["relay_provider_paths"][
+        "may_relabel"
+    ] = True
+    mutations.append(widened_user_evidence)
+
+    weakened_acl = deepcopy(spec)
+    weakened_acl["packet_a"]["m1_contract"]["acl_sensitivity_policy"]["sensitivity_classes"]["S3"][
+        "permitted_content"
+    ].append("raw_participant_content")
+    mutations.append(weakened_acl)
+
+    incomplete_topology = deepcopy(spec)
+    incomplete_topology["packet_a"]["m1_contract"]["receipt_topology"]["reserve_receipt_schema"][
+        "required_fields"
+    ].remove("preserved_binding_digest")
+    mutations.append(incomplete_topology)
+
+    incomplete_secret_scan = deepcopy(spec)
+    incomplete_secret_scan["packet_a"]["secret_refusal"]["non_reflection"][
+        "required_surface_scans"
+    ].remove("sqlite_wal")
+    mutations.append(incomplete_secret_scan)
+
+    for candidate in mutations:
+        candidate = with_recomputed_digest(candidate)
+        monkeypatch.setattr(
+            validator_module,
+            "EXPECTED_CANONICAL_SPECIFICATION_DIGEST",
+            candidate["packet_a"]["content_binding"]["specification_digest"],
+        )
+        with pytest.raises(SpecificationValidationError):
+            validate_spec(candidate, validate_narrative=False)
+
+
+def test_packet_a_json_loader_enforces_bounded_input_limits(tmp_path: Path) -> None:
+    oversized_path = tmp_path / "oversized.json"
+    oversized_path.write_bytes(b"{" + b" " * validator_module.MAX_INPUT_BYTES + b"}")
+    with pytest.raises(SpecificationValidationError, match="byte limit"):
+        validator_module.load_json_document(oversized_path)
+
+    deep_path = tmp_path / "deep.json"
+    deep_path.write_text(
+        "[" * (validator_module.MAX_JSON_DEPTH + 1)
+        + "0"
+        + "]" * (validator_module.MAX_JSON_DEPTH + 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="depth limit"):
+        validator_module.load_json_document(deep_path)
+
+    very_deep_path = tmp_path / "very-deep.json"
+    very_deep_level = validator_module.MAX_JSON_DEPTH * 20
+    very_deep_path.write_text(
+        "[" * very_deep_level + "0" + "]" * very_deep_level,
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError):
+        validator_module.load_json_document(very_deep_path)
+
+    long_string_path = tmp_path / "long-string.json"
+    long_string_path.write_text(
+        '{"value":"' + "x" * (validator_module.MAX_JSON_STRING_CHARS + 1) + '"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="string limit"):
+        validator_module.load_json_document(long_string_path)
+
+    long_number_path = tmp_path / "long-number.json"
+    long_number_path.write_text(
+        '{"value":' + "9" * (validator_module.MAX_JSON_NUMBER_DIGITS + 1) + "}",
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="number digit limit"):
+        validator_module.load_json_document(long_number_path)
+
+    many_nodes_path = tmp_path / "many-nodes.json"
+    many_nodes_path.write_text(
+        json.dumps({"values": [0] * (validator_module.MAX_JSON_NODES + 1)}),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationValidationError, match="node limit"):
+        validator_module.load_json_document(many_nodes_path)
+
+    malformed_path = tmp_path / "malformed.json"
+    malformed_path.write_text('{"value":', encoding="utf-8")
+    with pytest.raises(SpecificationValidationError, match="invalid JSON"):
+        validator_module.load_json_document(malformed_path)
+
+    with pytest.raises(SpecificationValidationError, match="byte limit"):
+        compute_narrative_semantic_digest(
+            b"x" * (validator_module.MAX_INPUT_BYTES + 1), specification_digest="0" * 64
+        )
+
+
 def test_packet_a_digest_drift_is_rejected_separately_from_semantic_validation() -> None:
     spec = _load(SPEC_PATH)
     spec["packet_a"]["freeze_date"] = "2099-01-01"
@@ -488,22 +637,30 @@ def test_packet_a_narrative_and_proposal_correction_are_content_bound() -> None:
     spec = _load(SPEC_PATH)
     digest = spec["packet_a"]["content_binding"]["specification_digest"]
     narrative = FREEZE_PATH.read_bytes()
-    assert compute_narrative_semantic_digest(narrative, specification_digest=digest) == spec[
-        "packet_a"
-    ]["content_binding"]["narrative_binding"]["semantic_sha256"]
-    assert compute_narrative_semantic_digest(
-        narrative.replace(b"non-displacing", b"non-displacing ", 1),
-        specification_digest=digest,
-    ) != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
-    assert compute_narrative_semantic_digest(
-        narrative.replace(b"\n", b"\r\n"), specification_digest=digest
-    ) != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    assert (
+        compute_narrative_semantic_digest(narrative, specification_digest=digest)
+        == spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    )
+    assert (
+        compute_narrative_semantic_digest(
+            narrative.replace(b"non-displacing", b"non-displacing ", 1),
+            specification_digest=digest,
+        )
+        != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    )
+    assert (
+        compute_narrative_semantic_digest(
+            narrative.replace(b"\n", b"\r\n"), specification_digest=digest
+        )
+        != spec["packet_a"]["content_binding"]["narrative_binding"]["semantic_sha256"]
+    )
 
     proposal = PROPOSAL_PATH.read_text(encoding="utf-8")
     assert "`non_abstention = count(SUPPORTED response statuses) / E_w`" in proposal
     assert "must reproduce 384" not in proposal.lower()
-    assert spec["packet_a"]["content_binding"]["proposal_correction"]["source_sha256"] == (
-        EXPECTED_PROVENANCE[0][2]
+    assert (
+        spec["packet_a"]["content_binding"]["proposal_correction"]["source_sha256"]
+        == (EXPECTED_PROVENANCE[0][2])
     )
 
 

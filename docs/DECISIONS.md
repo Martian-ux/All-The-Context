@@ -46,6 +46,32 @@ explicit server entries, untrusted `additionalContext` framing, and fail-empty
 Core outage behavior. The current stdio test is transport-only; native Codex
 trust and exact packaged/live host acceptance remain open. Historical beta.6
 receipt and template claims are preserved.
+## ADR-171: Packet A freezes M1 evidence, ACL, secret, and receipt topology
+
+**Status:** accepted on 2026-08-30 as a fourth semantic remediation of the
+Packet A freeze. This remains an L0, non-displacing research decision and does
+not authorize execution, production or client changes, external access,
+promotion, or frontier advancement.
+
+The machine-readable `packet_a.m1_contract` is the exact authority for the
+assigned → supplied → acknowledged → observed_use → action → outcome
+measurement spine. It closes issuers and witnesses, requires exact transaction
+and outcome fields, requires configured same-device witness grants for
+explicit-user evidence, keeps ordinary evidence tentative, and prevents
+Relay/provider/client/model/tool/connector/imported-text paths from relabeling
+or widening authority. It also freezes S0–S3 sensitivity meanings and
+narrowest-ACL filtering before exposure.
+
+M1 receipts are episode-bound through task, immutable source-state, reserve,
+last-valid-state, action, and outcome schemas. Invalidation is terminal and
+unresolved projects remain observation-only and non-linkable. Secret refusal
+has a non-reflection rule and requires bounded scans of SQLite, WAL, freelist,
+FTS, diagnostics, export, and restore surfaces before acceptance and after
+terminal purge. The validator enforces these structures independently and
+rejects forged issuer, witness, receipt, ACL, sensitivity, or scan states.
+No experiment, manifest, private data, or product/runtime change is part of
+this decision.
+
 ## ADR-170: Packet A semantic remediation binds final allocation and estimands
 
 **Status:** accepted on 2026-08-30 as a third semantic remediation of the

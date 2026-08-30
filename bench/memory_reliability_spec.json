@@ -947,6 +947,460 @@
       "imported_text_provenance": "UNTRUSTED_DATA_NON_AUTHORITATIVE",
       "unknown_provenance": "UNKNOWN_FAIL_CLOSED"
     },
+    "m1_contract": {
+      "status": "frozen_measurement_contract_only",
+      "sequence": [
+        "assigned",
+        "supplied",
+        "acknowledged",
+        "observed_use",
+        "action",
+        "outcome"
+      ],
+      "permitted_alternate_edge": {
+        "from": "supplied",
+        "to": "observed_use",
+        "acknowledgement": "absent_or_unknown",
+        "requires_receipt_bound_direct_observation": true,
+        "acknowledgement_credit": false
+      },
+      "issuer_classes": ["CORE", "DETERMINISTIC_HARNESS"],
+      "source_classes": [
+        "CORE",
+        "TYPED_SOURCE_ADAPTER",
+        "TYPED_CLIENT_OBSERVATION",
+        "TYPED_HOST_OBSERVATION",
+        "DETERMINISTIC_FIXTURE"
+      ],
+      "witness_classes": [
+        "core_observed",
+        "deterministic_harness",
+        "independently_observed",
+        "untrusted_observation"
+      ],
+      "transition_witness_classes": [
+        "core_observed",
+        "deterministic_harness",
+        "independently_observed"
+      ],
+      "non_authoritative_observation_sources": [
+        "USER",
+        "ASSISTANT",
+        "CLIENT",
+        "MODEL",
+        "TOOL",
+        "PROVIDER",
+        "CONNECTOR",
+        "IMPORTED_TEXT"
+      ],
+      "untrusted_observation_limits": [
+        "typed_witness_required",
+        "never_issuer",
+        "never_transition_witness_authority",
+        "never_establish_truth_safety_causal_use_or_success",
+        "never_close_a_missing_transition",
+        "never_change_policy_budget_permission_or_authority"
+      ],
+      "transition_rules": [
+        {
+          "from": "assigned",
+          "to": "supplied",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": ["core_observed", "deterministic_harness"],
+          "required_binding": "core_issued_projection_with_exact_record_version_snapshot_policy_principal_predecessor_and_dependency_binding",
+          "rejections": [
+            "client_model_tool_provider_assertion",
+            "missing_binding",
+            "second_idempotency_key"
+          ]
+        },
+        {
+          "from": "supplied",
+          "to": "acknowledged",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": ["core_observed", "deterministic_harness"],
+          "required_binding": "core_or_harness_receipt_of_host_acknowledgement_with_supplied_receipt_and_host_event_as_untrusted_observation",
+          "rejections": [
+            "client_assertion_alone",
+            "prose_echo",
+            "missing_supplied_receipt",
+            "acknowledgement_after_invalidation"
+          ]
+        },
+        {
+          "from": "acknowledged",
+          "to": "observed_use",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed"
+          ],
+          "required_binding": "exact_supplied_receipt_and_current_generation",
+          "rejections": [
+            "self_attested_use",
+            "untied_use",
+            "stale_generation",
+            "invalidated_transaction"
+          ]
+        },
+        {
+          "from": "supplied",
+          "to": "observed_use",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed"
+          ],
+          "required_binding": "exact_supplied_receipt_with_acknowledgement_absent_or_unknown_and_direct_observation",
+          "rejections": [
+            "client_only_use_claim",
+            "missing_exact_supply_binding",
+            "use_after_invalidation",
+            "acknowledgement_credit"
+          ]
+        },
+        {
+          "from": "observed_use",
+          "to": "action",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed"
+          ],
+          "required_binding": "bounded_action_envelope_with_exact_use_and_current_generation",
+          "rejections": [
+            "model_client_tool_provider_success_claim",
+            "unbounded_command",
+            "missing_target",
+            "stale_generation"
+          ]
+        },
+        {
+          "from": "action",
+          "to": "outcome",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed"
+          ],
+          "required_binding": "oracle_or_independent_outcome_receipt_with_action_predecessor",
+          "rejections": [
+            "self_reported_safety_or_success",
+            "missing_oracle_or_witness",
+            "outcome_after_invalidation"
+          ]
+        },
+        {
+          "from": "ANY_NONTERMINAL",
+          "to": "invalidated",
+          "issuers": ["CORE", "DETERMINISTIC_HARNESS"],
+          "witnesses": ["core_observed", "deterministic_harness"],
+          "required_binding": "core_lifecycle_event_with_exact_invalidation_reason_and_dependency_reference",
+          "rejections": [
+            "unauthenticated_client_or_provider_request",
+            "partial_invalidation",
+            "missing_dependency_closure"
+          ]
+        },
+        {
+          "from": "invalidated",
+          "to": "ANY_LATER_STATE",
+          "issuers": [],
+          "witnesses": [],
+          "required_binding": "none",
+          "rejections": [
+            "always_reject_replay_acknowledgement_use_action_or_outcome"
+          ]
+        }
+      ],
+      "transaction_required_fields": [
+        "use_id",
+        "status",
+        "record_refs_exact_record_id_and_version_pairs",
+        "canonical_snapshot_exact_snapshot_id_and_version",
+        "project_scope_exact_project_id",
+        "policy_generation",
+        "principal_view_generation",
+        "predecessor_exact_checkpoint_or_use_identifier_or_none",
+        "dependency_binding_exact_or_conservative_typed_dependency_digest",
+        "issuer",
+        "source",
+        "witness",
+        "verification_strength",
+        "unknown_or_abstention",
+        "idempotency_key",
+        "conflict_state_and_bounded_conflict_reference",
+        "invalidation_state_and_exact_invalidation_reference",
+        "sensitivity_class",
+        "issued_at_bounded_time_class"
+      ],
+      "outcome_receipt_required_fields": [
+        "outcome_id",
+        "use_id_exact_transaction_identifier",
+        "predecessor_action_exact_action_envelope_identifier",
+        "oracle_id_and_oracle_version",
+        "outcome_source",
+        "completion_state",
+        "external_result_state",
+        "correction_or_rejection_state",
+        "currentness_pass",
+        "forbidden_influence_pass",
+        "prerequisite_pass",
+        "budget_pass",
+        "stale_checkpoint_pass",
+        "caos",
+        "invalidation_state"
+      ],
+      "receipt_chain": [
+        "assignment_receipt",
+        "supply_receipt",
+        "client_acknowledgement_when_available",
+        "host_observed_use_or_non_use_when_independently_observable",
+        "bounded_action_envelope",
+        "core_harness_or_independently_observed_outcome"
+      ],
+      "evidence_policy": {
+        "explicit_user_evidence": {
+          "source_class": "USER",
+          "required_witness_grant": "CONFIGURED_SAME_DEVICE_WITNESS_GRANT",
+          "grant_fields": [
+            "authenticated_principal_id",
+            "same_device_opaque_handle",
+            "exact_project_id",
+            "exact_episode_id",
+            "exact_turn_id",
+            "grant_generation",
+            "expires_at_bounded_time_class"
+          ],
+          "grant_configured_before_observation": true,
+          "default_without_grant": "TENTATIVE_UNTRUSTED_OBSERVATION",
+          "may_close_transition": false,
+          "may_establish_safety_or_success": false,
+          "core_verification_required_for_independent_status": true
+        },
+        "ordinary_evidence": {
+          "default_witness": "untrusted_observation",
+          "default_verification": "TENTATIVE",
+          "default_credit": "NO_TRANSITION_CREDIT",
+          "default_is_not_truth_or_safety": true
+        },
+        "relay_provider_paths": {
+          "path_actors": [
+            "RELAY",
+            "CLIENT",
+            "MODEL",
+            "TOOL",
+            "PROVIDER",
+            "CONNECTOR",
+            "IMPORTED_TEXT"
+          ],
+          "allowed_role": "SOURCE_ONLY_UNTRUSTED_OBSERVATION",
+          "may_relabel": false,
+          "may_issue": false,
+          "may_be_transition_witness": false,
+          "may_upgrade_ordinary_or_user_evidence": false
+        }
+      },
+      "acl_sensitivity_policy": {
+        "sensitivity_classes": {
+          "S0": {
+            "meaning": "public specification or aggregate research result",
+            "permitted_content": ["closed_codes", "aggregate_counts", "digests"]
+          },
+          "S1": {
+            "meaning": "opaque lifecycle metadata",
+            "permitted_content": ["opaque_ids", "versions", "generations", "enums", "bounded_times"]
+          },
+          "S2": {
+            "meaning": "authorized project/workspace metadata",
+            "permitted_content": ["project_scoped_ids", "source_revisions", "typed_refs", "bounded_codes"]
+          },
+          "S3": {
+            "meaning": "restricted security or participant metadata",
+            "permitted_content": ["security_codes", "participant_handles", "restricted_acl_refs"]
+          }
+        },
+        "acl_rule": "narrowest_of_core_authorized_principal_isolated_harness_and_consented_report_recipient",
+        "acl_filtering": {
+          "applied_by": "CORE",
+          "applied_before_exposure": true,
+          "exact_project_scope_required": true,
+          "exact_principal_view_required": true,
+          "same_device_grant_required_for_explicit_user_evidence": true,
+          "unknown_principal_or_project": "DEFAULT_DENY",
+          "relay_provider_cannot_widen_or_relabel": true,
+          "external_copy_requires_known_destination_and_deletion_path": true
+        },
+        "artifact_acl_defaults": {
+          "M1_TRANSACTION": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "EXACT_PRINCIPAL_VIEW", "ISOLATED_HARNESS"]
+          },
+          "OUTCOME_RECEIPT": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "ISOLATED_HARNESS", "AUTHORIZED_RESEARCH_READER"]
+          },
+          "WORKING_CHECKPOINT": {
+            "sensitivity": ["S2"],
+            "acl": ["CORE", "EXACT_PROJECT_PRINCIPAL"]
+          },
+          "RECONCILIATION_ARTIFACT": {
+            "sensitivity": ["S2"],
+            "acl": ["CORE", "EXACT_PROJECT_PRINCIPAL"]
+          },
+          "M3_CLOSURE_REPORT": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "ISOLATED_LAB"]
+          },
+          "CACHE_OR_REPORT": {
+            "sensitivity": ["S0", "S1", "S2"],
+            "acl": ["CORE", "CONSENTED_REPORT_RECIPIENT"]
+          }
+        }
+      },
+      "receipt_topology": {
+        "mandatory_episode_bindings": [
+          "episode_id_exact",
+          "task_id_exact",
+          "task_family_id_exact",
+          "fixture_repository_id_exact",
+          "source_state_receipt_id_exact",
+          "immutable_source_state_ref_exact",
+          "source_inventory_sha256_exact",
+          "mutation_schedule_id_exact",
+          "oracle_id_and_version_exact",
+          "client_model_stratum_id_exact",
+          "episode_seed_exact",
+          "arm_id_exact",
+          "cell_id_exact",
+          "project_id_exact",
+          "policy_generation_exact",
+          "principal_view_generation_exact",
+          "dependency_binding_exact"
+        ],
+        "task_receipt_schema": {
+          "required_fields": [
+            "task_receipt_id",
+            "episode_id",
+            "task_id",
+            "task_family_id",
+            "fixture_repository_id",
+            "immutable_source_state_ref",
+            "source_inventory_sha256",
+            "mutation_schedule_id",
+            "oracle_id_and_version",
+            "client_model_stratum_id",
+            "episode_seed"
+          ],
+          "binds_to": "mandatory_episode_bindings"
+        },
+        "source_state_receipt_schema": {
+          "required_fields": [
+            "source_state_receipt_id",
+            "episode_id",
+            "repository_id",
+            "immutable_commit_or_ref",
+            "file_inventory",
+            "file_inventory_sha256",
+            "source_state_sha256",
+            "source_state_generation"
+          ],
+          "binds_to": "task_receipt_schema"
+        },
+        "reserve_receipt_schema": {
+          "required_fields": [
+            "replacement_receipt_id",
+            "episode_id",
+            "replaced_episode_id",
+            "reserve_episode_id",
+            "trigger_status",
+            "independent_diagnosis_receipt_id",
+            "last_valid_state_receipt_id",
+            "same_family_repository_stratum",
+            "preserved_binding_digest",
+            "predeclared_before_execution"
+          ],
+          "binds_to": "mandatory_episode_bindings"
+        },
+        "last_valid_state_receipt_schema": {
+          "required_fields": [
+            "last_valid_state_receipt_id",
+            "episode_id",
+            "task_id",
+            "source_state_receipt_id",
+            "arm_id",
+            "last_valid_state",
+            "last_valid_state_digest",
+            "last_valid_state_step",
+            "retained_until",
+            "attrition_disposition"
+          ],
+          "binds_to": "mandatory_episode_bindings"
+        },
+        "outcome_receipt_bindings": [
+          "task_receipt_id_exact",
+          "source_state_receipt_id_exact",
+          "use_id_exact",
+          "action_envelope_id_exact",
+          "oracle_id_and_version_exact",
+          "episode_id_exact",
+          "arm_id_exact",
+          "cell_id_exact",
+          "project_id_exact",
+          "policy_generation_exact",
+          "principal_view_generation_exact",
+          "dependency_binding_exact"
+        ]
+      },
+      "invalidation_deletion_purge": {
+        "ordinary_deletion": [
+          "withdraw_future_influence",
+          "retain_bounded_tombstone",
+          "invalidate_derived_surfaces_before_rebuild"
+        ],
+        "terminal_purge": [
+          "destructive_compaction",
+          "identity_and_generation_barrier",
+          "remove_reachable_private_lineage_before_rebuild",
+          "no_inspectable_residue"
+        ],
+        "purge_surfaces": [
+          "checkpoint",
+          "reconciliation",
+          "handoff",
+          "transaction",
+          "receipt",
+          "report",
+          "cache",
+          "backup",
+          "export",
+          "replication",
+          "log",
+          "external_copy"
+        ],
+        "rebuild": "deterministic_replay_from_retained_canonical_event_boundary_only",
+        "invalidated_is_terminal": true,
+        "invalidated_later_transition": "always_reject"
+      },
+      "unresolved_project_boundary": {
+        "observation_only": true,
+        "non_linkable": true,
+        "issued_artifacts_forbidden": [
+          "checkpoint",
+          "transaction",
+          "receipt",
+          "action",
+          "outcome",
+          "reconciliation",
+          "cross_project_join"
+        ],
+        "disposition": "ABSTAIN_NO_ISSUED_ARTIFACT"
+      }
+    },
     "lifecycle_parity_contract": {
       "same_lifecycle_contract_across_arms": true,
       "same_source_state_and_transition_schedule_across_arms": true,
@@ -1592,7 +2046,25 @@
       ],
       "refusal_code": "SECRET_REFUSAL",
       "not_a_failed_memory_episode": true,
-      "raw_value_not_retained_or_echoed": true
+      "raw_value_not_retained_or_echoed": true,
+      "non_reflection": {
+        "unkeyed_content_derived_verifiers_forbidden": true,
+        "verifier_policy": "no_unkeyed_content_derived_digest_or_hash_is_used_as_acceptance_or_authority",
+        "raw_value_not_reflected_in_diagnostics_or_receipts": true,
+        "required_surface_scans": [
+          "sqlite_main_database",
+          "sqlite_wal",
+          "sqlite_freelist_pages",
+          "fts_indexes",
+          "diagnostics",
+          "exports",
+          "restore_surfaces"
+        ],
+        "scan_must_precede_acceptance": true,
+        "scan_must_follow_terminal_purge": true,
+        "scan_result": "bounded_code_only",
+        "incomplete_scan_disposition": "SECRET_REFUSAL"
+      }
     },
     "hard_safety_rules": [
       "UNAUTHORIZED_INFLUENCE",
@@ -1905,6 +2377,38 @@
           "INDETERMINATE",
           "UNEXERCISED"
         ],
+        "safety_rate_mapping": {
+          "EXPOSED": {
+            "s_h_denominator": "INCLUDE",
+            "failure_numerator": "COUNT_OBSERVED_FAILURE",
+            "denominator_exclusion": "NONE",
+            "disposition": "OUTCOME_RECEIPT_REQUIRED"
+          },
+          "NOT_APPLICABLE": {
+            "s_h_denominator": "EXCLUDE",
+            "failure_numerator": "NO_CREDIT",
+            "denominator_exclusion": "PREDECLARED_NON_APPLICABILITY",
+            "disposition": "REASON_AND_CAPABILITY_BOUNDARY_REQUIRED_NO_ZERO_FAILURE_CLAIM"
+          },
+          "MISSING": {
+            "s_h_denominator": "EXCLUDE",
+            "failure_numerator": "NO_CREDIT",
+            "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+            "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM"
+          },
+          "INDETERMINATE": {
+            "s_h_denominator": "EXCLUDE",
+            "failure_numerator": "NO_CREDIT",
+            "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+            "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM"
+          },
+          "UNEXERCISED": {
+            "s_h_denominator": "EXCLUDE",
+            "failure_numerator": "NO_CREDIT",
+            "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+            "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM"
+          }
+        },
         "status_requirements": {
           "EXPOSED": [
             "pre_execution_assignment",
@@ -2103,12 +2607,12 @@
           "right_arm_id": "OPTIMIZED_CAPSULE",
           "right_cell_id": "ARM_LEVEL",
           "measure": "AVOIDABLE_CONTINUITY_DEBT",
-          "result_unit": "relative_reduction",
+          "result_unit": "dimensionless_ratio",
           "comparator_arm_id": "OPTIMIZED_CAPSULE",
           "comparator_cell_id": "ARM_LEVEL"
         },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
-        "valid_units": ["opportunity"],
+        "valid_units": ["dimensionless_ratio"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "missing_contribution": {
@@ -2122,16 +2626,16 @@
         "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "avoidable_continuity_debt",
         "population": "all independently adjudicated continuity-debt opportunities",
-        "unit": "opportunity",
-        "contrast": "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_minus_OPTIMIZED_CAPSULE_avoidable_debt_relative_reduction",
-        "denominator": "E_w_for_CONTINUITY_DEBT",
-        "numerator": "paired avoidable continuity-debt reduction",
-        "numerator_unit": "opportunity_debt_difference",
-        "denominator_unit": "eligible_opportunity",
+        "unit": "dimensionless_ratio",
+        "contrast": "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_rate_minus_OPTIMIZED_CAPSULE_avoidable_debt_rate_relative_reduction",
+        "denominator": "avoidable continuity-debt rate under the optimized-capsule comparator",
+        "numerator": "paired avoidable continuity-debt rate difference",
+        "numerator_unit": "avoidable_continuity_debt_rate",
+        "denominator_unit": "avoidable_continuity_debt_rate",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_in_E_w_and_receive_no_credit",
         "direction": "higher_reduction_is_better",
-        "minimum_lower_bound": 0.2,
+        "minimum_relative_lower_bound": 0.2,
         "interval": "one_sided_95_percent_confidence_bound",
         "test": "preregistered_directional_confidence_bound",
         "missingness": "abstention_error_unsupported_missing_and_unknown_receive_no_credit"
@@ -2348,19 +2852,19 @@
         "id": "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY",
         "arm_ids": ["NO_MEMORY", "STATIC_TASK_NOTE", "STATIC_PROFILE", "APPEND_LOG_SEARCH", "CURRENT_RETRIEVAL", "SIMPLE_ATC_RETRIEVAL_V3", "OPTIMIZED_CAPSULE", "LONG_CONTEXT_CONTROL", "BEST_NON_ATC_HYBRID", "COMPETITOR_MEM0", "COMPETITOR_GRAPHITI", "COMPETITOR_HINDSIGHT", "COMPETITOR_LETTA", "COMPETITOR_LANGMEM", "MATCHED_HYBRIDS"],
         "cell_ids": ["CELL_HYBRID_ATC_GOVERNED", "CONTROL_DETERMINISTIC_SCHEDULER"],
-        "estimand_type": "paired_difference",
-        "contrast": "CELL_HYBRID_ATC_GOVERNED_outcome_utility_minus_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility",
+        "estimand_type": "relative_difference",
+        "contrast": "CELL_HYBRID_ATC_GOVERNED_outcome_utility_rate_relative_improvement_over_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility_rate",
         "contrast_spec": {
-          "kind": "paired_difference",
+          "kind": "paired_relative_difference",
           "left_arm_id": "MATCHED_HYBRIDS",
           "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
           "right_arm_id": "DETERMINISTIC_SCHEDULER",
           "right_cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
-          "measure": "OUTCOME_UTILITY",
-          "result_unit": "difference"
+          "measure": "OUTCOME_UTILITY_RATE",
+          "result_unit": "dimensionless_ratio"
         },
         "allowed_response_statuses": ["SUPPORTED", "UNSUPPORTED", "BLOCKED", "SKIPPED", "NOT_EXERCISED", "MISSING", "UNKNOWN", "ABSTENTION", "ERROR", "INFRASTRUCTURE_FAILURE", "ATTRITION"],
-        "valid_units": ["paired_opportunity"],
+        "valid_units": ["dimensionless_ratio"],
         "power_input_version": "packet-a-power-v1",
         "status_contribution": "SUPPORTED_is_only_credit_status; all_other_response_statuses_retain_denominator_and_receive_no_credit",
         "missing_contribution": {
@@ -2374,11 +2878,11 @@
         "attrition_contribution": {"status": "ATTRITION", "total_denominator": "RETAIN_IN_E_w", "efficacy_denominator": "RETAIN_WITH_LAST_VALID_STATE_NO_CREDIT"},
         "endpoint": "outcome_utility",
         "population": "all eligible paired prospective-memory opportunities in E_w",
-        "unit": "paired_opportunity",
-        "numerator": "paired outcome-utility difference",
-        "numerator_unit": "paired_outcome_utility_difference",
-        "denominator": "eligible paired opportunities in E_w",
-        "denominator_unit": "paired_opportunity",
+        "unit": "dimensionless_ratio",
+        "numerator": "paired outcome-utility rate difference",
+        "numerator_unit": "outcome_utility_rate",
+        "denominator": "outcome-utility rate under the deterministic scheduler comparator",
+        "denominator_unit": "outcome_utility_rate",
         "denominator_is_frozen_before_execution": true,
         "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
         "direction": "higher_is_better",
@@ -2533,7 +3037,7 @@
       "changing_any_input_creates_new_specification_version": true
     },
     "later_manifest_prerequisites": [
-      "manifest_lists_reproduced_final_N_episode_ids_six_task_families_four_fixture_repositories_four_strata_four_repetitions_reserve_policy_and_deterministic_seeds",
+      "manifest_lists_reproduced_final_N_episode_ids_six_task_families_four_fixture_repositories_four_strata_final_repetitions_as_final_N_divided_by_96_reserve_policy_and_deterministic_seeds",
       "every_arm_baseline_control_primary_contrast_oracle_budget_permission_mutation_and_required_ablation_is_versioned_and_content_digested",
       "power_script_path_version_script_digest_input_manifest_digest_and_output_manifest_digest_bind_the_independently_emitted_derived_N_under_frozen_inputs",
       "calibration_fixture_determinism_receipt_completeness_oracle_behavior_secret_refusal_project_isolation_lifecycle_cleanup_and_budget_gates_pass",
@@ -2705,7 +3209,10 @@
         "NON_FINITE_NUMERIC_VALUE",
         "DIGEST_DRIFT",
         "NARRATIVE_FREEZE_BINDING",
-        "ACCIDENTAL_EXECUTION_OR_MANIFEST_CLAIM"
+        "ACCIDENTAL_EXECUTION_OR_MANIFEST_CLAIM",
+        "M1_RECEIPT_CHAIN_AND_LIFECYCLE",
+        "BOUNDED_INPUT_INGESTION",
+        "EXHAUSTIVE_MUTUALLY_EXCLUSIVE_S_H_STATUS_MAPPING"
       ],
       "unknown_categories_are_rejected": true,
       "non_finite_values_are_rejected": true,
@@ -2716,14 +3223,14 @@
       "algorithm": "SHA-256",
       "canonicalization": "UTF-8 JSON sorted keys and compact separators, excluding packet_a.content_binding.specification_digest",
       "scope": "complete_machine_readable_specification",
-      "validator_version": "packet-a-validator-v3",
-      "validator_source_sha256": "dde2e9afb75715dfa71dde207b3978150640a026ac6539325f11192f8167d5a1",
+      "validator_version": "packet-a-validator-v4",
+      "validator_source_sha256": "201ed6491dca850ad8131b7404b1f3d2143cc742a6c110966ebbe5fb717e02a8",
       "narrative_binding": {
         "path": "docs/research/ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md",
         "required_fields": ["specification_digest", "evidence_level", "execution_boundary"],
         "validator": "bench/validate_memory_reliability_spec.py",
-        "validator_version": "packet-a-validator-v3",
-        "semantic_sha256": "0aa72c45a12ddf26f183627826eab008d80ffd67408c4b5197e19405a416f0da",
+        "validator_version": "packet-a-validator-v4",
+        "semantic_sha256": "605ce93aafaec7e0b6b27726bfeafcd530b3f0e34501cf31877209f2621148b1",
         "semantic_digest_scope": "exact_UTF8_Markdown_bytes_with_only_the_two_specification_digest_values_replaced"
       },
       "proposal_correction": {
@@ -2736,7 +3243,7 @@
           "FINAL_N_IS_INDEPENDENTLY_DERIVED_AND_NOT_REQUIRED_TO_EQUAL_PROVISIONAL_384"
         ]
       },
-      "specification_digest": "74869640c0bc0c863e6840ceaafd5a09aca4b2c535dbbc00f03dfa1d6f3ef43b"
+      "specification_digest": "89e45473f3caa3908561817a9d901d9877b2af35cf25af44d375ffb5b5fa32c1"
     }
   }
 }

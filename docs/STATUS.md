@@ -52,6 +52,35 @@ scalar tricks, here-strings, exit-code overwrites, and U+2028 mutation. This is
 source and contract-test hardening only: no beta.7 candidate has been built,
 executed, scanned, submitted, approved, published, tagged, uploaded, or
 released, and no Defender or release-acceptance claim is made.
+### 2026-08-30 — Packet A fourth semantic remediation remains L0 and non-displacing
+
+The Packet A validator now enforces an independently authored field-level
+contract for the full root and Packet A vocabulary, rather than relying on the
+candidate's self-digest. Public JSON, narrative, and provenance reads are
+bounded before parsing or hashing with 2,000,000-byte, 64-level, 50,000-node,
+100,000-character, and 128-digit ceilings plus duplicate-key, non-finite,
+malformed-input, and read-identity rejection. The test-only digest bypass
+disables only the byte-level golden check; schema and semantic validation
+remain active.
+
+The machine-readable M1 contract now freezes the exact six-state lifecycle,
+Core/deterministic-harness-only issuers, closed witness classes, complete
+transaction/outcome requirements, explicit-user same-device witness grants,
+ordinary tentative evidence, Relay/provider non-relabeling, S0–S3 sensitivity,
+narrowest-ACL filtering, and task/source/reserve/last-valid/outcome receipt
+topology with mandatory episode bindings. Secret refusal includes non-reflection
+and scans across SQLite, WAL, freelist, FTS, diagnostics, export, and restore
+surfaces. The estimator contract uses dimensionless relative contrasts for
+Scheduler and Continuity Debt, manifest repetitions are derived from final N,
+and all five S_h statuses have an exact mutually exclusive numerator,
+denominator, exclusion, and disposition mapping.
+
+Focused Packet A validation is clean at this working head, including bounded
+ingestion regressions, forged issuer/witness/receipt mutations, and the
+rebound-digest semantic-leaf probe. This remains documentation/validator work
+only: no fixture/task manifest, experiment, product, client, updater,
+workflow, integration, promotion, or Packet A evidence claim was created.
+
 ### 2026-08-30 — Packet A third semantic remediation remains L0 and non-displacing
 
 The Packet A contract now separates its 96 base cells (six task families × four

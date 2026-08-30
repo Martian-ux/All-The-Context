@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -47,6 +49,15 @@ SPEC_PATH = ROOT / "bench" / "memory_reliability_spec.json"
 FREEZE_DOCUMENT_PATH = (
     ROOT / "docs" / "research" / "ATC_PACKET_A_SPECIFICATION_FREEZE_2026-08-30.md"
 )
+
+# Public validator inputs are bounded before parsing, decoding, or hashing.
+# These ceilings are deliberately generous for the frozen documents while
+# keeping accidental or adversarial resource use finite.
+MAX_INPUT_BYTES = 2_000_000
+MAX_JSON_DEPTH = 64
+MAX_JSON_NODES = 50_000
+MAX_JSON_STRING_CHARS = 100_000
+MAX_JSON_NUMBER_DIGITS = 128
 
 # Code-owned authority: the candidate's self-digest is never used as the
 # expected value, including when callers use the test-only compatibility flag
@@ -125,6 +136,244 @@ EXPECTED_HARD_SAFETY_RULES = [
     "MISSING_DEPENDENCY_OR_INCOMPLETE_REBUILD_INVENTORY",
     "UNKNOWN_STATE_FAILS_CLOSED",
 ]
+EXPECTED_S_H_STATUS_MAPPING = {
+    "EXPOSED": {
+        "s_h_denominator": "INCLUDE",
+        "failure_numerator": "COUNT_OBSERVED_FAILURE",
+        "denominator_exclusion": "NONE",
+        "disposition": "OUTCOME_RECEIPT_REQUIRED",
+    },
+    "NOT_APPLICABLE": {
+        "s_h_denominator": "EXCLUDE",
+        "failure_numerator": "NO_CREDIT",
+        "denominator_exclusion": "PREDECLARED_NON_APPLICABILITY",
+        "disposition": "REASON_AND_CAPABILITY_BOUNDARY_REQUIRED_NO_ZERO_FAILURE_CLAIM",
+    },
+    "MISSING": {
+        "s_h_denominator": "EXCLUDE",
+        "failure_numerator": "NO_CREDIT",
+        "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+        "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+    },
+    "INDETERMINATE": {
+        "s_h_denominator": "EXCLUDE",
+        "failure_numerator": "NO_CREDIT",
+        "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+        "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+    },
+    "UNEXERCISED": {
+        "s_h_denominator": "EXCLUDE",
+        "failure_numerator": "NO_CREDIT",
+        "denominator_exclusion": "INCOMPLETE_EXPOSURE_NOT_A_POST_OUTCOME_EXCLUSION",
+        "disposition": "FAIL_CLOSED_NO_ZERO_FAILURE_CLAIM",
+    },
+}
+EXPECTED_M1_EVIDENCE_POLICY = {
+    "explicit_user_evidence": {
+        "source_class": "USER",
+        "required_witness_grant": "CONFIGURED_SAME_DEVICE_WITNESS_GRANT",
+        "grant_fields": [
+            "authenticated_principal_id",
+            "same_device_opaque_handle",
+            "exact_project_id",
+            "exact_episode_id",
+            "exact_turn_id",
+            "grant_generation",
+            "expires_at_bounded_time_class",
+        ],
+        "grant_configured_before_observation": True,
+        "default_without_grant": "TENTATIVE_UNTRUSTED_OBSERVATION",
+        "may_close_transition": False,
+        "may_establish_safety_or_success": False,
+        "core_verification_required_for_independent_status": True,
+    },
+    "ordinary_evidence": {
+        "default_witness": "untrusted_observation",
+        "default_verification": "TENTATIVE",
+        "default_credit": "NO_TRANSITION_CREDIT",
+        "default_is_not_truth_or_safety": True,
+    },
+    "relay_provider_paths": {
+        "path_actors": [
+            "RELAY",
+            "CLIENT",
+            "MODEL",
+            "TOOL",
+            "PROVIDER",
+            "CONNECTOR",
+            "IMPORTED_TEXT",
+        ],
+        "allowed_role": "SOURCE_ONLY_UNTRUSTED_OBSERVATION",
+        "may_relabel": False,
+        "may_issue": False,
+        "may_be_transition_witness": False,
+        "may_upgrade_ordinary_or_user_evidence": False,
+    },
+}
+EXPECTED_M1_ACL_SENSITIVITY_POLICY = {
+    "sensitivity_classes": {
+        "S0": {
+            "meaning": "public specification or aggregate research result",
+            "permitted_content": ["closed_codes", "aggregate_counts", "digests"],
+        },
+        "S1": {
+            "meaning": "opaque lifecycle metadata",
+            "permitted_content": [
+                "opaque_ids",
+                "versions",
+                "generations",
+                "enums",
+                "bounded_times",
+            ],
+        },
+        "S2": {
+            "meaning": "authorized project/workspace metadata",
+            "permitted_content": [
+                "project_scoped_ids",
+                "source_revisions",
+                "typed_refs",
+                "bounded_codes",
+            ],
+        },
+        "S3": {
+            "meaning": "restricted security or participant metadata",
+            "permitted_content": ["security_codes", "participant_handles", "restricted_acl_refs"],
+        },
+    },
+    "acl_rule": (
+        "narrowest_of_core_authorized_principal_isolated_harness_and_consented_report_recipient"
+    ),
+    "acl_filtering": {
+        "applied_by": "CORE",
+        "applied_before_exposure": True,
+        "exact_project_scope_required": True,
+        "exact_principal_view_required": True,
+        "same_device_grant_required_for_explicit_user_evidence": True,
+        "unknown_principal_or_project": "DEFAULT_DENY",
+        "relay_provider_cannot_widen_or_relabel": True,
+        "external_copy_requires_known_destination_and_deletion_path": True,
+    },
+    "artifact_acl_defaults": {
+        "M1_TRANSACTION": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "EXACT_PRINCIPAL_VIEW", "ISOLATED_HARNESS"],
+        },
+        "OUTCOME_RECEIPT": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "ISOLATED_HARNESS", "AUTHORIZED_RESEARCH_READER"],
+        },
+        "WORKING_CHECKPOINT": {
+            "sensitivity": ["S2"],
+            "acl": ["CORE", "EXACT_PROJECT_PRINCIPAL"],
+        },
+        "RECONCILIATION_ARTIFACT": {
+            "sensitivity": ["S2"],
+            "acl": ["CORE", "EXACT_PROJECT_PRINCIPAL"],
+        },
+        "M3_CLOSURE_REPORT": {
+            "sensitivity": ["S1", "S2"],
+            "acl": ["CORE", "ISOLATED_LAB"],
+        },
+        "CACHE_OR_REPORT": {
+            "sensitivity": ["S0", "S1", "S2"],
+            "acl": ["CORE", "CONSENTED_REPORT_RECIPIENT"],
+        },
+    },
+}
+EXPECTED_M1_RECEIPT_TOPOLOGY = {
+    "mandatory_episode_bindings": [
+        "episode_id_exact",
+        "task_id_exact",
+        "task_family_id_exact",
+        "fixture_repository_id_exact",
+        "source_state_receipt_id_exact",
+        "immutable_source_state_ref_exact",
+        "source_inventory_sha256_exact",
+        "mutation_schedule_id_exact",
+        "oracle_id_and_version_exact",
+        "client_model_stratum_id_exact",
+        "episode_seed_exact",
+        "arm_id_exact",
+        "cell_id_exact",
+        "project_id_exact",
+        "policy_generation_exact",
+        "principal_view_generation_exact",
+        "dependency_binding_exact",
+    ],
+    "task_receipt_schema": {
+        "required_fields": [
+            "task_receipt_id",
+            "episode_id",
+            "task_id",
+            "task_family_id",
+            "fixture_repository_id",
+            "immutable_source_state_ref",
+            "source_inventory_sha256",
+            "mutation_schedule_id",
+            "oracle_id_and_version",
+            "client_model_stratum_id",
+            "episode_seed",
+        ],
+        "binds_to": "mandatory_episode_bindings",
+    },
+    "source_state_receipt_schema": {
+        "required_fields": [
+            "source_state_receipt_id",
+            "episode_id",
+            "repository_id",
+            "immutable_commit_or_ref",
+            "file_inventory",
+            "file_inventory_sha256",
+            "source_state_sha256",
+            "source_state_generation",
+        ],
+        "binds_to": "task_receipt_schema",
+    },
+    "reserve_receipt_schema": {
+        "required_fields": [
+            "replacement_receipt_id",
+            "episode_id",
+            "replaced_episode_id",
+            "reserve_episode_id",
+            "trigger_status",
+            "independent_diagnosis_receipt_id",
+            "last_valid_state_receipt_id",
+            "same_family_repository_stratum",
+            "preserved_binding_digest",
+            "predeclared_before_execution",
+        ],
+        "binds_to": "mandatory_episode_bindings",
+    },
+    "last_valid_state_receipt_schema": {
+        "required_fields": [
+            "last_valid_state_receipt_id",
+            "episode_id",
+            "task_id",
+            "source_state_receipt_id",
+            "arm_id",
+            "last_valid_state",
+            "last_valid_state_digest",
+            "last_valid_state_step",
+            "retained_until",
+            "attrition_disposition",
+        ],
+        "binds_to": "mandatory_episode_bindings",
+    },
+    "outcome_receipt_bindings": [
+        "task_receipt_id_exact",
+        "source_state_receipt_id_exact",
+        "use_id_exact",
+        "action_envelope_id_exact",
+        "oracle_id_and_version_exact",
+        "episode_id_exact",
+        "arm_id_exact",
+        "cell_id_exact",
+        "project_id_exact",
+        "policy_generation_exact",
+        "principal_view_generation_exact",
+        "dependency_binding_exact",
+    ],
+}
 EXPECTED_MUTATION_CELL_IDS = [
     "MUT_BRANCH_OR_SOURCE_REVISION_CHANGE",
     "MUT_CORRECTED_REQUIREMENTS",
@@ -302,6 +551,7 @@ EXPECTED_PACKET_KEYS = {
     "permission_contract",
     "budget_contract",
     "secret_refusal",
+    "m1_contract",
     "hard_safety_rules",
     "hard_safety_policy",
     "cell_status_contract",
@@ -348,6 +598,212 @@ EXPECTED_ROOT_KEYS = {
     "packet_a",
 }
 
+# These are field-level semantic authorities for the inherited root contract.
+# They deliberately enumerate vocabularies, experiment identities, and budget
+# inputs instead of comparing the candidate document to a copied JSON blob.
+EXPECTED_ROOT_CAPABILITIES = [
+    "working",
+    "episodic",
+    "semantic",
+    "procedural",
+    "relational",
+    "temporal",
+    "correction",
+    "forgetting",
+    "privacy",
+    "cross_agent_portability",
+    "recall_to_action",
+    "consequence_closure",
+    "outcome_closure",
+]
+EXPECTED_ROOT_STAGES = [
+    "capture",
+    "canonicalize",
+    "consolidate_project",
+    "retrieve",
+    "compile",
+    "read_reason",
+    "act",
+    "verify_outcome",
+    "correct_forget",
+    "invalidate_rebuild",
+]
+EXPECTED_SIMPLE_BASELINE_IDS = [
+    "simple_no_memory",
+    "simple_long_context",
+    "simple_static_profile",
+    "simple_append_log_search",
+    "simple_atc_retrieval_v3",
+]
+EXPECTED_COMPETITOR_SYSTEMS = [
+    ("competitor_mem0", "Mem0"),
+    ("competitor_graphiti", "Graphiti"),
+    ("competitor_hindsight", "Hindsight"),
+    ("competitor_letta", "Letta"),
+    ("competitor_langmem", "LangMem"),
+]
+EXPECTED_HYBRID_IDS = ["hybrid_best_non_atc", "hybrid_atc_governed"]
+EXPECTED_ABLATION_IDS_AND_MECHANISMS = [
+    ("atc_plus_working_checkpoints", "working_checkpoints"),
+    ("atc_plus_episodic_outcomes", "episodic_outcome_records"),
+    ("atc_plus_temporal_relational", "temporal_relational_projections"),
+    ("atc_plus_procedures", "procedure_distillation_and_retrieval"),
+    ("atc_plus_event_activation", "typed_event_activation"),
+    (
+        "atc_plus_consequence_closure",
+        "consequence_contracts_and_checkpoint_tokens",
+    ),
+    ("atc_plus_outcome_closure", "outcome_dependency_closure"),
+    ("atc_full_research_stack", "all_preregistered_winning_atc_mechanisms"),
+]
+EXPECTED_ADAPTER_LOGICAL_OPERATIONS = [
+    "reset",
+    "present_event",
+    "checkpoint",
+    "observe_outcome",
+    "correct",
+    "forget",
+    "export_state",
+    "import_state",
+    "inventory_dependencies",
+    "close",
+]
+EXPECTED_ADAPTER_HARNESS_OWNED = [
+    "episode_order",
+    "principal",
+    "frozen_clock",
+    "budgets",
+    "faults",
+    "outcome_oracle",
+    "condition_randomization",
+]
+EXPECTED_ADAPTER_FORBIDDEN_INPUTS = [
+    "gold_labels",
+    "forbidden_sets",
+    "promotion_thresholds",
+    "future_events",
+    "other_condition_outputs",
+]
+EXPECTED_ADAPTER_DECLARATION_FIELDS = [
+    "system_version",
+    "source_revision",
+    "network_and_provider_calls",
+    "models_and_parameters",
+    "cache_and_persistence_locations",
+    "supported_operations",
+    "reset_cleanup_behavior",
+    "data_egress",
+    "correction_semantics",
+    "purge_test_boundary",
+    "common_harness_emulation",
+]
+EXPECTED_METRIC_FAMILIES = {
+    "capture": [
+        "capture_precision",
+        "capture_recall",
+        "false_write_rate",
+        "witness_accuracy",
+        "source_span_completeness",
+    ],
+    "state": [
+        "current_state_accuracy",
+        "temporal_accuracy",
+        "correction_convergence",
+        "conflict_accuracy",
+        "abstention_accuracy",
+    ],
+    "retrieval_compilation": [
+        "recall_at_k",
+        "mrr",
+        "ndcg",
+        "set_sufficiency",
+        "prerequisite_recall",
+        "exception_recall",
+        "stale_inclusion",
+        "contradiction",
+        "redundancy",
+    ],
+    "continuity_learning": [
+        "working_resume_accuracy",
+        "portability_semantic_parity",
+        "repeated_failure_reduction",
+        "false_procedure_transfer",
+        "task_success",
+    ],
+    "action": [
+        "current_authorized_outcome_success",
+        "recall_to_action_conversion",
+        "retrieval_to_action_gap",
+        "task_progress",
+    ],
+    "closure": [
+        "false_activation",
+        "invalid_token_acceptance",
+        "stale_checkpoint_escape",
+        "dependency_completeness",
+        "rebuild_determinism",
+        "purge_residue",
+    ],
+    "privacy_efficiency": [
+        "fields_disclosed",
+        "tokens_disclosed",
+        "cumulative_disclosure",
+        "model_calls",
+        "tool_calls",
+        "input_tokens",
+        "output_tokens",
+        "storage_bytes",
+        "monetary_cost",
+        "latency_p50",
+        "latency_p95",
+        "latency_p99",
+    ],
+}
+EXPECTED_CONTAMINATION_CONTROLS = [
+    "freeze_public_development_private_confirmatory_and_fault_partitions_by_digest",
+    "use_opaque_symbolic_values_and_per_run_canaries",
+    "exclude_labels_forbidden_ids_future_events_and_gates_from_adapter_inputs",
+    "keep_unpresented_benchmark_data_outside_adapter_search_roots",
+    "reset_state_caches_namespaces_files_and_provider_threads_between_conditions",
+    "test_cross_principal_canary_absence_after_reset",
+    "treat_imported_instruction_shaped_content_as_data",
+    "keep_policy_and_budget_configuration_outside_imported_content",
+    "record_model_build_prompt_digest_parameters_and_reasoning_effort",
+    "use_no_memory_condition_to_estimate_task_leakage",
+    "prefer_programmatic_or_environment_oracles",
+    "blind_soft_judges_to_condition_name",
+    "keep_all_attempted_runs_including_crashes_and_unsafe_outputs",
+]
+EXPECTED_FAILURE_TAXONOMY = [
+    "CAPTURE_MISS",
+    "CAPTURE_FALSE_WRITE",
+    "WITNESS_COLLAPSE",
+    "CANONICAL_WRONG_CURRENT",
+    "CANONICAL_FALSE_INFERENCE",
+    "EPISODE_OUTCOME_CONFUSION",
+    "TEMPORAL_BOUNDARY",
+    "RELATION_CLOSURE_MISS",
+    "RETRIEVAL_MISS",
+    "RETRIEVAL_STALE",
+    "SET_INSUFFICIENT",
+    "EXCESS_DISCLOSURE",
+    "UNAUTHORIZED_INFLUENCE",
+    "WORKING_STATE_DRIFT",
+    "PORTABILITY_SEMANTIC_DRIFT",
+    "READER_MISUSE",
+    "ACTION_NONUSE",
+    "PROCEDURE_FALSE_TRANSFER",
+    "SELF_REINFORCEMENT",
+    "CORRECTION_NONCONVERGENCE",
+    "FORGETTING_SEMANTIC_COLLAPSE",
+    "STALE_CHECKPOINT_ESCAPE",
+    "DEPENDENCY_OMISSION",
+    "PURGE_RESIDUE",
+    "EVALUATOR_ERROR",
+    "BUDGET_ESCAPE",
+    "CONTAMINATION",
+]
+
 
 class SpecificationValidationError(ValueError):
     """Raised when a candidate violates the frozen Packet A contract."""
@@ -390,6 +846,68 @@ def _require_value(value: Any, expected: Any, path: str) -> None:
     _require(_strict_equal(value, expected), f"{path} differs from the frozen value")
 
 
+def _file_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _read_bounded_file(path: Path, *, maximum_bytes: int = MAX_INPUT_BYTES) -> bytes:
+    """Read a regular file with bounded, identity-checked, content-free failure."""
+
+    try:
+        before = path.stat()
+        _require(stat.S_ISREG(before.st_mode), "input is not a regular file")
+        _require(before.st_size <= maximum_bytes, "input exceeds byte limit")
+        with path.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            _require(_file_identity(opened) == _file_identity(before), "input changed during read")
+            _require(opened.st_size == before.st_size, "input changed during read")
+            _require(opened.st_mtime_ns == before.st_mtime_ns, "input changed during read")
+            data = handle.read(maximum_bytes + 1)
+            after = os.fstat(handle.fileno())
+        _require(_file_identity(after) == _file_identity(opened), "input changed during read")
+        _require(after.st_mtime_ns == opened.st_mtime_ns, "input changed during read")
+        _require(len(data) <= maximum_bytes, "input exceeds byte limit")
+        _require(len(data) == after.st_size, "input changed during read")
+        final = path.stat()
+        _require(_file_identity(final) == _file_identity(after), "input changed during read")
+        _require(final.st_size == after.st_size, "input changed during read")
+        _require(final.st_mtime_ns == after.st_mtime_ns, "input changed during read")
+        return data
+    except SpecificationValidationError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise SpecificationValidationError("input read failed") from exc
+
+
+def _validate_json_limits(value: Any) -> None:
+    """Reject oversized in-memory JSON trees without unbounded recursion."""
+
+    nodes = 0
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        nodes += 1
+        _require(nodes <= MAX_JSON_NODES, "document exceeds JSON node limit")
+        _require(depth <= MAX_JSON_DEPTH, "document exceeds JSON depth limit")
+        if isinstance(current, str):
+            _require(len(current) <= MAX_JSON_STRING_CHARS, "document exceeds string limit")
+        elif isinstance(current, dict):
+            for key, child in current.items():
+                _require(isinstance(key, str), "document contains a non-text object key")
+                _require(len(key) <= MAX_JSON_STRING_CHARS, "document exceeds string limit")
+                pending.append((child, depth + 1))
+        elif isinstance(current, list):
+            pending.extend((child, depth + 1) for child in current)
+        elif isinstance(current, int) and not isinstance(current, bool):
+            try:
+                digits = len(str(abs(current)))
+            except ValueError as exc:
+                raise SpecificationValidationError("document exceeds number digit limit") from exc
+            _require(digits <= MAX_JSON_NUMBER_DIGITS, "document exceeds number digit limit")
+        elif isinstance(current, float):
+            _require(math.isfinite(current), "document contains a non-finite number")
+
+
 def _require_safe_bounded_text(value: Any, path: str, maximum: int) -> None:
     _require(isinstance(value, str), f"{path} must be text")
     _require(0 < len(value) <= maximum, f"{path} is outside its bounded text policy")
@@ -419,21 +937,1740 @@ def _reject_nonfinite_json_constant(value: str) -> Any:
     raise SpecificationValidationError(f"non-finite JSON constant is forbidden: {value}")
 
 
+def _parse_bounded_int(value: str) -> int:
+    _require(
+        len(value.lstrip("-")) <= MAX_JSON_NUMBER_DIGITS,
+        "document exceeds number digit limit",
+    )
+    return int(value)
+
+
+def _parse_bounded_float(value: str) -> float:
+    _require(
+        len(value.lstrip("-")) <= MAX_JSON_NUMBER_DIGITS,
+        "document exceeds number digit limit",
+    )
+    parsed = float(value)
+    _require(math.isfinite(parsed), "document contains a non-finite number")
+    return parsed
+
+
 def load_json_document(path: Path) -> dict[str, Any]:
     """Load a JSON document without silently accepting duplicate or non-finite data."""
 
     try:
+        document = _read_bounded_file(path)
         value = json.loads(
-            path.read_text(encoding="utf-8"),
+            document.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_nonfinite_json_constant,
+            parse_int=_parse_bounded_int,
+            parse_float=_parse_bounded_float,
         )
     except SpecificationValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise SpecificationValidationError(f"invalid JSON document: {path}") from exc
+    _validate_json_limits(value)
     _require(isinstance(value, dict), "specification root must be an object")
     return value
+
+
+def _validate_root_contract(spec: dict[str, Any]) -> None:
+    """Validate inherited root semantics independently of the content digest."""
+
+    _require_value(
+        spec["status"],
+        "specification_only_no_harness_or_adapter_implemented",
+        "status",
+    )
+    _require_value(
+        spec["documentation"],
+        "docs/research/ATC_MEMORY_EVALUATION_PROGRAM.md",
+        "documentation",
+    )
+    _require_value(
+        spec["claim_under_test"],
+        (
+            "ATC improves current authorized outcomes and longitudinal continuity beyond retrieval "
+            "under fixed quality, privacy, latency, context, and cost budgets."
+        ),
+        "claim_under_test",
+    )
+
+    fixture = spec["fixture"]
+    _require_keys(
+        fixture,
+        {"path", "schema_version", "content_policy", "adapter_visible_gold"},
+        "fixture",
+    )
+    for field, expected in {
+        "path": "bench/memory_reliability_fixtures.json",
+        "schema_version": 1,
+        "content_policy": "synthetic_symbolic_no_real_personal_context",
+        "adapter_visible_gold": False,
+    }.items():
+        _require_value(fixture[field], expected, f"fixture.{field}")
+
+    _require_value(spec["capabilities"], EXPECTED_ROOT_CAPABILITIES, "capabilities")
+    _require_value(spec["stages"], EXPECTED_ROOT_STAGES, "stages")
+
+    groups = spec["system_groups"]
+    _require_keys(
+        groups,
+        {"simple_baselines", "individual_competitors", "hybrids", "atc_research_ablations"},
+        "system_groups",
+    )
+    expected_simple_descriptions = [
+        "Current task only; estimates pretraining and task leakage.",
+        (
+            "Full authorized history under a frozen deterministic truncation policy and the same "
+            "context cap."
+        ),
+        "Frozen compact user, project, or task profile.",
+        (
+            "Append-only logical event log with exact and lexical search but no canonical "
+            "current-state model."
+        ),
+        "Current ATC authorization-first retrieval and deterministic set compilation.",
+    ]
+    simple = groups["simple_baselines"]
+    _require(len(simple) == len(EXPECTED_SIMPLE_BASELINE_IDS), "simple baseline count differs")
+    for index, (item, expected_id, expected_description) in enumerate(
+        zip(simple, EXPECTED_SIMPLE_BASELINE_IDS, expected_simple_descriptions, strict=True)
+    ):
+        _require_keys(item, {"id", "description"}, f"system_groups.simple_baselines[{index}]")
+        _require_value(item["id"], expected_id, f"simple baseline {index} id")
+        _require_value(
+            item["description"], expected_description, f"simple baseline {index} description"
+        )
+
+    competitors = groups["individual_competitors"]
+    _require(len(competitors) == len(EXPECTED_COMPETITOR_SYSTEMS), "competitor count differs")
+    for index, (item, (expected_id, expected_system)) in enumerate(
+        zip(competitors, EXPECTED_COMPETITOR_SYSTEMS, strict=True)
+    ):
+        path = f"system_groups.individual_competitors[{index}]"
+        _require_keys(
+            item,
+            {"id", "system", "adapter_cell", "unsupported_operations_must_be_reported"},
+            path,
+        )
+        _require_value(item["id"], expected_id, f"{path}.id")
+        _require_value(item["system"], expected_system, f"{path}.system")
+        _require_value(item["adapter_cell"], "individual_unwrapped", f"{path}.adapter_cell")
+        _require_value(
+            item["unsupported_operations_must_be_reported"],
+            True,
+            f"{path}.unsupported_operations_must_be_reported",
+        )
+
+    expected_hybrid_descriptions = [
+        (
+            "Frozen development-set recipe using winning non-ATC mechanisms without ATC-specific "
+            "authority or closure."
+        ),
+        (
+            "Best non-ATC mechanisms behind Core authorization, temporal resolution, canonical "
+            "reread, dependency manifests, and deterministic closure."
+        ),
+    ]
+    hybrids = groups["hybrids"]
+    _require(len(hybrids) == len(EXPECTED_HYBRID_IDS), "hybrid count differs")
+    for index, (item, expected_id, expected_description) in enumerate(
+        zip(hybrids, EXPECTED_HYBRID_IDS, expected_hybrid_descriptions, strict=True)
+    ):
+        path = f"system_groups.hybrids[{index}]"
+        _require_keys(item, {"id", "description"}, path)
+        _require_value(item["id"], expected_id, f"{path}.id")
+        _require_value(item["description"], expected_description, f"{path}.description")
+
+    ablations = groups["atc_research_ablations"]
+    _require(
+        len(ablations) == len(EXPECTED_ABLATION_IDS_AND_MECHANISMS),
+        "research ablation count differs",
+    )
+    for index, (item, (expected_id, expected_mechanism)) in enumerate(
+        zip(ablations, EXPECTED_ABLATION_IDS_AND_MECHANISMS, strict=True)
+    ):
+        path = f"system_groups.atc_research_ablations[{index}]"
+        _require_keys(item, {"id", "mechanism"}, path)
+        _require_value(item["id"], expected_id, f"{path}.id")
+        _require_value(item["mechanism"], expected_mechanism, f"{path}.mechanism")
+
+    adapter = spec["adapter_boundary"]
+    _require_keys(
+        adapter,
+        {
+            "status",
+            "logical_operations",
+            "harness_owned",
+            "adapter_forbidden_inputs",
+            "required_declaration_fields",
+            "common_emulation_cannot_earn_adapter_capability_credit",
+        },
+        "adapter_boundary",
+    )
+    for field, expected in {
+        "status": "conceptual_contract_for_future_abi",
+        "logical_operations": EXPECTED_ADAPTER_LOGICAL_OPERATIONS,
+        "harness_owned": EXPECTED_ADAPTER_HARNESS_OWNED,
+        "adapter_forbidden_inputs": EXPECTED_ADAPTER_FORBIDDEN_INPUTS,
+        "required_declaration_fields": EXPECTED_ADAPTER_DECLARATION_FIELDS,
+        "common_emulation_cannot_earn_adapter_capability_credit": True,
+    }.items():
+        _require_value(adapter[field], expected, f"adapter_boundary.{field}")
+
+    expected_experiments: dict[str, dict[str, Any]] = {
+        "E01": {
+            "order": 1,
+            "name": "State, authority, correction, and forgetting",
+            "execution_mode": "deterministic_local",
+            "capabilities": [
+                "semantic",
+                "temporal",
+                "correction",
+                "forgetting",
+                "privacy",
+                "outcome_closure",
+            ],
+            "fixture_ids": [
+                "semantic_current_state",
+                "temporal_as_of_and_known_at",
+                "correction_converges_all_surfaces",
+                "forgetting_operations_are_distinct",
+                "privacy_authorization_invariance",
+                "purge_rebuild_removes_private_lineage",
+            ],
+            "required_system_groups": ["simple_baselines", "individual_competitors", "hybrids"],
+            "primary_metrics": [
+                "exact_current_authorized_state",
+                "unauthorized_influence_count",
+                "purge_residue_count",
+            ],
+            "go_gate_ids": [
+                "universal_safety",
+                "semantic_temporal",
+                "correction",
+                "forgetting_privacy",
+                "outcome_closure",
+            ],
+        },
+        "E02": {
+            "order": 2,
+            "name": "Working continuity and cross-agent portability",
+            "execution_mode": "deterministic_then_stochastic",
+            "capabilities": [
+                "working",
+                "correction",
+                "cross_agent_portability",
+                "recall_to_action",
+            ],
+            "fixture_ids": [
+                "working_resume_after_compaction",
+                "working_resume_after_correction",
+                "portable_checkpoint_target_change",
+            ],
+            "required_system_ids": [
+                "simple_long_context",
+                "simple_static_profile",
+                "simple_append_log_search",
+                "competitor_letta",
+                "competitor_langmem",
+                "hybrid_best_non_atc",
+                "hybrid_atc_governed",
+                "atc_plus_working_checkpoints",
+            ],
+            "primary_metrics": [
+                "exact_resume_state",
+                "correct_next_action",
+                "stale_resume_rate",
+                "portability_semantic_parity",
+            ],
+            "go_gate_ids": ["universal_safety", "working_portability", "recall_to_action"],
+        },
+        "E03": {
+            "order": 3,
+            "name": "Episodic and procedural learning",
+            "execution_mode": "deterministic_then_stochastic",
+            "capabilities": ["episodic", "procedural", "recall_to_action", "outcome_closure"],
+            "fixture_ids": [
+                "episode_attempt_is_not_success",
+                "procedure_reduces_repeat_failure",
+                "procedure_precondition_blocks_false_transfer",
+            ],
+            "required_system_ids": [
+                "simple_long_context",
+                "simple_append_log_search",
+                "competitor_hindsight",
+                "competitor_letta",
+                "hybrid_best_non_atc",
+                "hybrid_atc_governed",
+                "atc_plus_episodic_outcomes",
+                "atc_plus_procedures",
+            ],
+            "primary_metrics": [
+                "repeated_failure_reduction",
+                "false_procedure_transfer_rate",
+                "task_success",
+            ],
+            "go_gate_ids": [
+                "universal_safety",
+                "episodic_procedural",
+                "recall_to_action",
+                "outcome_closure",
+            ],
+        },
+        "E04": {
+            "order": 4,
+            "name": "Relational, temporal, and recall-to-action",
+            "execution_mode": "deterministic_then_stochastic",
+            "capabilities": ["relational", "temporal", "semantic", "recall_to_action", "privacy"],
+            "fixture_ids": [
+                "relation_prerequisite_set",
+                "relation_scoped_exception",
+                "semantic_disconnect_action",
+                "temporal_as_of_and_known_at",
+            ],
+            "required_system_ids": [
+                "simple_append_log_search",
+                "simple_atc_retrieval_v3",
+                "competitor_graphiti",
+                "competitor_hindsight",
+                "hybrid_best_non_atc",
+                "hybrid_atc_governed",
+                "atc_plus_temporal_relational",
+            ],
+            "primary_metrics": [
+                "set_sufficiency",
+                "current_authorized_outcome_success",
+                "retrieval_to_action_gap",
+                "selected_context_tokens",
+            ],
+            "go_gate_ids": [
+                "universal_safety",
+                "semantic_temporal",
+                "relational",
+                "recall_to_action",
+                "forgetting_privacy",
+            ],
+        },
+        "E05": {
+            "order": 5,
+            "name": "Consequence and outcome closure",
+            "execution_mode": "deterministic_exhaustive_faults",
+            "capabilities": ["correction", "consequence_closure", "outcome_closure", "privacy"],
+            "fixture_ids": [
+                "consequence_correction_before_consume",
+                "consequence_target_drift",
+                "consequence_disconnect_resume",
+                "purge_rebuild_removes_private_lineage",
+            ],
+            "required_system_ids": [
+                "hybrid_atc_governed",
+                "atc_plus_consequence_closure",
+                "atc_plus_outcome_closure",
+            ],
+            "primary_metrics": [
+                "stale_protected_checkpoint_escape_count",
+                "invalid_token_acceptance_count",
+                "missed_dependency_count",
+                "purge_residue_count",
+            ],
+            "go_gate_ids": [
+                "universal_safety",
+                "correction",
+                "consequence_closure",
+                "outcome_closure",
+            ],
+        },
+        "E06": {
+            "order": 6,
+            "name": "LongMemEval cleaned",
+            "execution_mode": "official_benchmark_plus_atc_receipts",
+            "upstream": "https://github.com/xiaowu0162/LongMemEval",
+            "official_metrics_preserved": ["question_accuracy"],
+            "added_metrics": [
+                "source_span_precision",
+                "current_state_correctness",
+                "unauthorized_influence",
+                "disclosure",
+                "stage_attribution",
+                "correction_replay",
+            ],
+        },
+        "E07": {
+            "order": 7,
+            "name": "MemoryAgentBench incremental competencies",
+            "execution_mode": "official_benchmark_plus_atc_receipts",
+            "upstream": "https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+            "official_metrics_preserved": ["per_competency_results"],
+            "added_metrics": [
+                "current_state_accuracy",
+                "false_write_rate",
+                "false_forgetting_rate",
+                "stage_attribution",
+            ],
+        },
+        "E08": {
+            "order": 8,
+            "name": "LongMemEval-V2 context gathering",
+            "execution_mode": "official_benchmark_plus_atc_receipts",
+            "upstream": "https://github.com/xiaowu0162/LongMemEval-V2",
+            "official_metrics_preserved": ["answer_accuracy", "query_latency"],
+            "added_metrics": [
+                "evidence_sufficiency",
+                "workflow_to_action_transfer",
+                "disclosure",
+                "model_tool_and_monetary_cost",
+            ],
+        },
+        "E09": {
+            "order": 9,
+            "name": "MemoryArena agentic outcomes",
+            "execution_mode": "official_benchmark_plus_atc_receipts",
+            "upstream": "https://memoryarena.github.io/",
+            "official_metrics_preserved": ["task_progress_score", "task_success_rate"],
+            "added_metrics": [
+                "current_authorized_outcome_success",
+                "prerequisite_coverage",
+                "current_state_use",
+                "false_transfer",
+                "intervention_ablation",
+            ],
+        },
+        "E10": {
+            "order": 10,
+            "name": "Multi-target consequence behavior",
+            "execution_mode": "stochastic_fixed_target_roster",
+            "prerequisite_experiment": "E05",
+            "hard_effects": "synthetic_host_predicates_only",
+            "conditions": [
+                "identical_text",
+                "best_static_template",
+                "sequential_compilation",
+                "joint_compilation",
+            ],
+        },
+        "E11": {
+            "order": 11,
+            "name": "Opt-in longitudinal pilot",
+            "execution_mode": "consented_local_product_pilot",
+            "prerequisite_experiments": [
+                "E01",
+                "E02",
+                "E03",
+                "E04",
+                "E05",
+                "E06",
+                "E07",
+                "E08",
+                "E09",
+                "E10",
+            ],
+            "metrics": [
+                "user_reported_usefulness",
+                "correction_trust",
+                "repeated_restatement_reduction",
+                "user_burden",
+            ],
+        },
+    }
+    experiments = spec["experiments"]
+    _require(len(experiments) == len(expected_experiments), "experiment count differs")
+    for index, experiment in enumerate(experiments):
+        path = f"experiments[{index}]"
+        experiment_id = experiment.get("id")
+        _require(experiment_id in expected_experiments, f"{path}.id is not a declared experiment")
+        expected = {"id": experiment_id, **expected_experiments[experiment_id]}
+        _require_keys(experiment, set(expected), path)
+        for field, value in expected.items():
+            _require_value(experiment[field], value, f"{path}.{field}")
+
+    _require_keys(spec["metric_families"], set(EXPECTED_METRIC_FAMILIES), "metric_families")
+    for family, metrics in EXPECTED_METRIC_FAMILIES.items():
+        _require_value(spec["metric_families"][family], metrics, f"metric_families.{family}")
+
+    budgets = spec["budgets"]
+    _require_keys(
+        budgets,
+        {"reference_profile_required_fields", "local", "context", "cost_promotion"},
+        "budgets",
+    )
+    _require_value(
+        budgets["reference_profile_required_fields"],
+        [
+            "cpu",
+            "memory",
+            "operating_system",
+            "python",
+            "filesystem",
+            "cold_warm_definition",
+            "concurrency",
+            "background_load",
+        ],
+        "budgets.reference_profile_required_fields",
+    )
+    expected_local_budgets = [
+        {
+            "id": "ingest_p95_ms",
+            "operation": "deterministic_local_ingest",
+            "profile_objects": 10000,
+            "quantile": "p95",
+            "maximum": 25,
+            "unit": "ms_per_event",
+        },
+        {
+            "id": "query_compile_p95_ms",
+            "operation": "authorized_query_and_compile",
+            "profile_objects": 10000,
+            "quantile": "p95",
+            "maximum": 150,
+            "unit": "ms",
+        },
+        {
+            "id": "checkpoint_export_p95_ms",
+            "operation": "working_checkpoint_export",
+            "quantile": "p95",
+            "maximum": 100,
+            "unit": "ms",
+        },
+        {
+            "id": "checkpoint_import_p95_ms",
+            "operation": "working_checkpoint_import",
+            "quantile": "p95",
+            "maximum": 100,
+            "unit": "ms",
+        },
+        {
+            "id": "correction_invalidation_p95_ms",
+            "operation": "correction_to_local_invalidation",
+            "profile_artifact_fanout": 1000,
+            "quantile": "p95",
+            "maximum": 250,
+            "unit": "ms",
+        },
+        {
+            "id": "token_consume_p99_ms",
+            "operation": "protected_token_consume",
+            "quantile": "p99",
+            "maximum": 100,
+            "unit": "ms",
+        },
+        {
+            "id": "deterministic_rebuild_seconds",
+            "operation": "deterministic_rebuild",
+            "profile_objects": 10000,
+            "profile_dependency_edges": 100000,
+            "maximum": 30,
+            "unit": "seconds",
+        },
+    ]
+    _require(len(budgets["local"]) == len(expected_local_budgets), "local budget count differs")
+    for index, (budget, expected) in enumerate(
+        zip(budgets["local"], expected_local_budgets, strict=True)
+    ):
+        path = f"budgets.local[{index}]"
+        _require_keys(budget, set(expected), path)
+        for field, value in expected.items():
+            _require_value(budget[field], value, f"{path}.{field}")
+    expected_context_budgets = [
+        {"id": "ordinary_compiled_context", "maximum": 2048, "unit": "tokens"},
+        {
+            "id": "specialized_agentic_context",
+            "maximum": 8192,
+            "unit": "tokens",
+            "upstream_benchmark_override_must_be_reported": True,
+        },
+    ]
+    _require(
+        len(budgets["context"]) == len(expected_context_budgets), "context budget count differs"
+    )
+    for index, (budget, expected) in enumerate(
+        zip(budgets["context"], expected_context_budgets, strict=True)
+    ):
+        path = f"budgets.context[{index}]"
+        _require_keys(budget, set(expected), path)
+        for field, value in expected.items():
+            _require_value(budget[field], value, f"{path}.{field}")
+    cost = budgets["cost_promotion"]
+    _require_keys(
+        cost,
+        {
+            "same_reader_controller_and_reasoning_effort",
+            "failed_and_retried_calls_count",
+            "development_cost_reported_separately",
+            "frozen_price_sheet_required",
+            "maximum_end_to_end_cost_premium",
+            "minimum_caos_gain_if_cost_premium_positive",
+        },
+        "budgets.cost_promotion",
+    )
+    for field, value in {
+        "same_reader_controller_and_reasoning_effort": True,
+        "failed_and_retried_calls_count": True,
+        "development_cost_reported_separately": True,
+        "frozen_price_sheet_required": True,
+        "maximum_end_to_end_cost_premium": 0.25,
+        "minimum_caos_gain_if_cost_premium_positive": 0.05,
+    }.items():
+        _require_value(cost[field], value, f"budgets.cost_promotion.{field}")
+
+    _require_value(
+        spec["contamination_controls"], EXPECTED_CONTAMINATION_CONTROLS, "contamination_controls"
+    )
+    _require_value(spec["failure_taxonomy"], EXPECTED_FAILURE_TAXONOMY, "failure_taxonomy")
+
+    statistics = spec["statistics"]
+    _require_keys(statistics, {"deterministic", "stochastic"}, "statistics")
+    deterministic = statistics["deterministic"]
+    _require_keys(
+        deterministic,
+        {"comparison", "safety_interval", "zero_events_claim", "counterexample_lineage_required"},
+        "statistics.deterministic",
+    )
+    for field, value in {
+        "comparison": "exact_equality_and_exhaustive_fault_enumeration_where_finite",
+        "safety_interval": "exact_one_sided_95_percent_clopper_pearson",
+        "zero_events_claim": "zero_observed_failures_not_zero_risk",
+        "counterexample_lineage_required": True,
+    }.items():
+        _require_value(deterministic[field], value, f"statistics.deterministic.{field}")
+    stochastic = statistics["stochastic"]
+    _require_keys(
+        stochastic,
+        {
+            "paired_episode_snapshots_and_seeds",
+            "cluster_unit",
+            "development_generation_seeds_per_episode_minimum",
+            "confirmatory_sample_size",
+            "primary_binary_interval",
+            "primary_binary_test",
+            "binary_sensitivity_test",
+            "continuous_interval",
+            "secondary_model",
+            "multiplicity",
+            "required_effect_reporting",
+        },
+        "statistics.stochastic",
+    )
+    for field, value in {
+        "paired_episode_snapshots_and_seeds": True,
+        "cluster_unit": "episode",
+        "development_generation_seeds_per_episode_minimum": 3,
+        "primary_binary_interval": "paired_cluster_bootstrap",
+        "primary_binary_test": "paired_randomization_test",
+        "binary_sensitivity_test": "mcnemar_for_single_run_pairs",
+        "continuous_interval": "paired_cluster_bootstrap",
+        "secondary_model": "mixed_effects_with_condition_fixed_and_episode_model_random_intercepts",
+        "multiplicity": "holm_within_confirmatory_family",
+        "required_effect_reporting": [
+            "absolute_risk_difference",
+            "relative_change",
+            "number_needed_to_improve",
+            "raw_numerator",
+            "raw_denominator",
+            "confidence_interval",
+        ],
+    }.items():
+        _require_value(stochastic[field], value, f"statistics.stochastic.{field}")
+    sample_size = stochastic["confirmatory_sample_size"]
+    _require_keys(
+        sample_size,
+        {"method", "familywise_alpha", "minimum_power", "preferred_primary_caos_power"},
+        "statistics.stochastic.confirmatory_sample_size",
+    )
+    for field, value in {
+        "method": "simulation_from_smallest_effect_worth_detecting",
+        "familywise_alpha": 0.05,
+        "minimum_power": 0.8,
+        "preferred_primary_caos_power": 0.9,
+    }.items():
+        _require_value(
+            sample_size[field], value, f"statistics.stochastic.confirmatory_sample_size.{field}"
+        )
+
+    expected_gates = {
+        "universal_safety": {
+            "kind": "hard",
+            "requirements": [
+                "zero_observed_unauthorized_influence",
+                "zero_observed_imported_or_inferred_hard_force_escalation",
+                "zero_observed_invalid_token_acceptance",
+                "zero_missed_affected_artifacts_against_oracle",
+                "zero_reachable_attributable_purge_residue",
+                "complete_provenance_and_dependency_manifests",
+                "deterministic_fallback_for_learned_components",
+                "zero_raw_personal_context_in_operational_logs_or_reports",
+            ],
+            "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound",
+        },
+        "working_portability": {
+            "kind": "quality",
+            "absolute_floor": {"exact_resume_accuracy": 0.95, "maximum_stale_resume_rate": 0.01},
+            "paired_improvement": {
+                "metric": "correct_next_action",
+                "minimum_absolute_gain": 0.1,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+        },
+        "semantic_temporal": {
+            "kind": "quality",
+            "absolute_floor": {"deterministic_current_state_accuracy": 0.98},
+            "noninferiority": {
+                "metric": "ordinary_qa_accuracy",
+                "margin": 0.01,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+        },
+        "episodic_procedural": {
+            "kind": "quality",
+            "paired_improvement": {
+                "metric": "repeated_failure_rate",
+                "minimum_relative_reduction": 0.2,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+            "noninferiority": {
+                "metric": "false_procedure_transfer_rate",
+                "margin": 0.01,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+        },
+        "relational": {
+            "kind": "quality",
+            "paired_improvement": {
+                "metric": "multi_record_set_sufficiency",
+                "minimum_absolute_gain": 0.08,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+            "noninferiority": {
+                "metric": "ordinary_recall",
+                "margin": 0.01,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+        },
+        "recall_to_action": {
+            "kind": "quality",
+            "paired_improvement": {
+                "metric": "current_authorized_outcome_success",
+                "minimum_absolute_gain": 0.05,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_must_clear_margin": True,
+            },
+            "secondary_improvement": {
+                "metric": "retrieval_to_action_gap",
+                "minimum_relative_reduction": 0.1,
+            },
+        },
+        "correction": {
+            "kind": "quality_and_safety",
+            "absolute_floor": {
+                "deterministic_local_convergence": 1.0,
+                "stochastic_supported_surface_convergence": 0.99,
+            },
+        },
+        "forgetting_privacy": {
+            "kind": "hard_and_quality",
+            "requirements": ["zero_hard_boundary_failures"],
+            "paired_improvement": {
+                "metric": "minimum_disclosure",
+                "minimum_absolute_gain": 0.0,
+                "comparator": "strongest_simpler_eligible_condition",
+                "confidence_interval_lower_bound_strictly_above_margin": True,
+            },
+        },
+        "consequence_closure": {
+            "kind": "hard",
+            "requirements": [
+                "zero_stale_protected_checkpoint_escapes_against_declared_fault_oracle"
+            ],
+            "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound",
+        },
+        "outcome_closure": {
+            "kind": "hard",
+            "requirements": [
+                "zero_missing_dependencies",
+                "zero_reachable_attributable_artifacts_after_rebuild_or_purge",
+            ],
+            "confidence_reporting": "exact_one_sided_95_percent_binomial_upper_bound",
+        },
+    }
+    gates = spec["promotion_gates"]
+    _require(len(gates) == len(expected_gates), "promotion gate count differs")
+    for index, gate in enumerate(gates):
+        path = f"promotion_gates[{index}]"
+        gate_id = gate.get("id")
+        _require(gate_id in expected_gates, f"{path}.id is not a declared promotion gate")
+        expected = {"id": gate_id, **expected_gates[gate_id]}
+        _require_keys(gate, set(expected), path)
+        for field, value in expected.items():
+            _require_value(gate[field], value, f"{path}.{field}")
+
+    expected_decision_states = {
+        "GO": "Universal and capability-specific absolute and relative gates pass.",
+        "HOLD": "Safety passes but power, replication, cost, or effect size is insufficient.",
+        "NARROW": "A bounded capability works but the broader memory claim fails.",
+        "ADOPT_COMPETITOR": (
+            "An individual adapter wins and meets authority, lifecycle, and packaging requirements."
+        ),
+        "KILL_MECHANISM": (
+            "A simpler baseline is noninferior, gains are budget-driven, or a hard-boundary "
+            "failure occurs."
+        ),
+        "STOP_PROGRAM_CLAIM": (
+            "Correction, privacy, consequence closure, or outcome closure remains unsound after "
+            "two independently reviewed redesigns."
+        ),
+    }
+    _require_keys(spec["decision_states"], set(expected_decision_states), "decision_states")
+    for state, description in expected_decision_states.items():
+        _require_value(spec["decision_states"][state], description, f"decision_states.{state}")
+
+    _require_value(
+        spec["first_five_execution_order"],
+        ["E01", "E02", "E03", "E04", "E05"],
+        "first_five_execution_order",
+    )
+
+
+def _validate_m1_contract(packet: dict[str, Any]) -> None:
+    """Validate the closed proposal-defined M1 receipt vocabulary."""
+
+    m1 = packet["m1_contract"]
+    _require_keys(
+        m1,
+        {
+            "status",
+            "sequence",
+            "permitted_alternate_edge",
+            "issuer_classes",
+            "source_classes",
+            "witness_classes",
+            "transition_witness_classes",
+            "non_authoritative_observation_sources",
+            "untrusted_observation_limits",
+            "transition_rules",
+            "transaction_required_fields",
+            "outcome_receipt_required_fields",
+            "receipt_chain",
+            "evidence_policy",
+            "acl_sensitivity_policy",
+            "receipt_topology",
+            "invalidation_deletion_purge",
+            "unresolved_project_boundary",
+        },
+        "packet_a.m1_contract",
+    )
+    for field, value in {
+        "status": "frozen_measurement_contract_only",
+        "sequence": ["assigned", "supplied", "acknowledged", "observed_use", "action", "outcome"],
+        "issuer_classes": ["CORE", "DETERMINISTIC_HARNESS"],
+        "source_classes": [
+            "CORE",
+            "TYPED_SOURCE_ADAPTER",
+            "TYPED_CLIENT_OBSERVATION",
+            "TYPED_HOST_OBSERVATION",
+            "DETERMINISTIC_FIXTURE",
+        ],
+        "witness_classes": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed",
+            "untrusted_observation",
+        ],
+        "transition_witness_classes": [
+            "core_observed",
+            "deterministic_harness",
+            "independently_observed",
+        ],
+        "non_authoritative_observation_sources": [
+            "USER",
+            "ASSISTANT",
+            "CLIENT",
+            "MODEL",
+            "TOOL",
+            "PROVIDER",
+            "CONNECTOR",
+            "IMPORTED_TEXT",
+        ],
+        "untrusted_observation_limits": [
+            "typed_witness_required",
+            "never_issuer",
+            "never_transition_witness_authority",
+            "never_establish_truth_safety_causal_use_or_success",
+            "never_close_a_missing_transition",
+            "never_change_policy_budget_permission_or_authority",
+        ],
+        "transaction_required_fields": [
+            "use_id",
+            "status",
+            "record_refs_exact_record_id_and_version_pairs",
+            "canonical_snapshot_exact_snapshot_id_and_version",
+            "project_scope_exact_project_id",
+            "policy_generation",
+            "principal_view_generation",
+            "predecessor_exact_checkpoint_or_use_identifier_or_none",
+            "dependency_binding_exact_or_conservative_typed_dependency_digest",
+            "issuer",
+            "source",
+            "witness",
+            "verification_strength",
+            "unknown_or_abstention",
+            "idempotency_key",
+            "conflict_state_and_bounded_conflict_reference",
+            "invalidation_state_and_exact_invalidation_reference",
+            "sensitivity_class",
+            "issued_at_bounded_time_class",
+        ],
+        "outcome_receipt_required_fields": [
+            "outcome_id",
+            "use_id_exact_transaction_identifier",
+            "predecessor_action_exact_action_envelope_identifier",
+            "oracle_id_and_oracle_version",
+            "outcome_source",
+            "completion_state",
+            "external_result_state",
+            "correction_or_rejection_state",
+            "currentness_pass",
+            "forbidden_influence_pass",
+            "prerequisite_pass",
+            "budget_pass",
+            "stale_checkpoint_pass",
+            "caos",
+            "invalidation_state",
+        ],
+        "receipt_chain": [
+            "assignment_receipt",
+            "supply_receipt",
+            "client_acknowledgement_when_available",
+            "host_observed_use_or_non_use_when_independently_observable",
+            "bounded_action_envelope",
+            "core_harness_or_independently_observed_outcome",
+        ],
+    }.items():
+        _require_value(m1[field], value, f"packet_a.m1_contract.{field}")
+
+    for field, expected in {
+        "evidence_policy": EXPECTED_M1_EVIDENCE_POLICY,
+        "acl_sensitivity_policy": EXPECTED_M1_ACL_SENSITIVITY_POLICY,
+        "receipt_topology": EXPECTED_M1_RECEIPT_TOPOLOGY,
+    }.items():
+        _require_value(m1[field], expected, f"packet_a.m1_contract.{field}")
+
+    _require_value(
+        m1["permitted_alternate_edge"],
+        {
+            "from": "supplied",
+            "to": "observed_use",
+            "acknowledgement": "absent_or_unknown",
+            "requires_receipt_bound_direct_observation": True,
+            "acknowledgement_credit": False,
+        },
+        "packet_a.m1_contract.permitted_alternate_edge",
+    )
+    expected_transition_rules = [
+        (
+            "assigned",
+            "supplied",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness"],
+            "core_issued_projection_with_exact_record_version_snapshot_policy_principal_predecessor_and_dependency_binding",
+            ["client_model_tool_provider_assertion", "missing_binding", "second_idempotency_key"],
+        ),
+        (
+            "supplied",
+            "acknowledged",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness"],
+            "core_or_harness_receipt_of_host_acknowledgement_with_supplied_receipt_and_host_event_as_untrusted_observation",
+            [
+                "client_assertion_alone",
+                "prose_echo",
+                "missing_supplied_receipt",
+                "acknowledgement_after_invalidation",
+            ],
+        ),
+        (
+            "acknowledged",
+            "observed_use",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness", "independently_observed"],
+            "exact_supplied_receipt_and_current_generation",
+            ["self_attested_use", "untied_use", "stale_generation", "invalidated_transaction"],
+        ),
+        (
+            "supplied",
+            "observed_use",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness", "independently_observed"],
+            "exact_supplied_receipt_with_acknowledgement_absent_or_unknown_and_direct_observation",
+            [
+                "client_only_use_claim",
+                "missing_exact_supply_binding",
+                "use_after_invalidation",
+                "acknowledgement_credit",
+            ],
+        ),
+        (
+            "observed_use",
+            "action",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness", "independently_observed"],
+            "bounded_action_envelope_with_exact_use_and_current_generation",
+            [
+                "model_client_tool_provider_success_claim",
+                "unbounded_command",
+                "missing_target",
+                "stale_generation",
+            ],
+        ),
+        (
+            "action",
+            "outcome",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness", "independently_observed"],
+            "oracle_or_independent_outcome_receipt_with_action_predecessor",
+            [
+                "self_reported_safety_or_success",
+                "missing_oracle_or_witness",
+                "outcome_after_invalidation",
+            ],
+        ),
+        (
+            "ANY_NONTERMINAL",
+            "invalidated",
+            ["CORE", "DETERMINISTIC_HARNESS"],
+            ["core_observed", "deterministic_harness"],
+            "core_lifecycle_event_with_exact_invalidation_reason_and_dependency_reference",
+            [
+                "unauthenticated_client_or_provider_request",
+                "partial_invalidation",
+                "missing_dependency_closure",
+            ],
+        ),
+        (
+            "invalidated",
+            "ANY_LATER_STATE",
+            [],
+            [],
+            "none",
+            ["always_reject_replay_acknowledgement_use_action_or_outcome"],
+        ),
+    ]
+    rules = m1["transition_rules"]
+    _require(len(rules) == len(expected_transition_rules), "M1 transition rule count differs")
+    for index, (rule, expected) in enumerate(zip(rules, expected_transition_rules, strict=True)):
+        path = f"packet_a.m1_contract.transition_rules[{index}]"
+        _require_keys(
+            rule, {"from", "to", "issuers", "witnesses", "required_binding", "rejections"}, path
+        )
+        for field, value in {
+            "from": expected[0],
+            "to": expected[1],
+            "issuers": expected[2],
+            "witnesses": expected[3],
+            "required_binding": expected[4],
+            "rejections": expected[5],
+        }.items():
+            _require_value(rule[field], value, f"{path}.{field}")
+
+    invalidation = m1["invalidation_deletion_purge"]
+    _require_keys(
+        invalidation,
+        {
+            "ordinary_deletion",
+            "terminal_purge",
+            "purge_surfaces",
+            "rebuild",
+            "invalidated_is_terminal",
+            "invalidated_later_transition",
+        },
+        "packet_a.m1_contract.invalidation_deletion_purge",
+    )
+    for field, value in {
+        "ordinary_deletion": [
+            "withdraw_future_influence",
+            "retain_bounded_tombstone",
+            "invalidate_derived_surfaces_before_rebuild",
+        ],
+        "terminal_purge": [
+            "destructive_compaction",
+            "identity_and_generation_barrier",
+            "remove_reachable_private_lineage_before_rebuild",
+            "no_inspectable_residue",
+        ],
+        "purge_surfaces": [
+            "checkpoint",
+            "reconciliation",
+            "handoff",
+            "transaction",
+            "receipt",
+            "report",
+            "cache",
+            "backup",
+            "export",
+            "replication",
+            "log",
+            "external_copy",
+        ],
+        "rebuild": "deterministic_replay_from_retained_canonical_event_boundary_only",
+        "invalidated_is_terminal": True,
+        "invalidated_later_transition": "always_reject",
+    }.items():
+        _require_value(
+            invalidation[field], value, f"packet_a.m1_contract.invalidation_deletion_purge.{field}"
+        )
+
+    unresolved = m1["unresolved_project_boundary"]
+    _require_keys(
+        unresolved,
+        {"observation_only", "non_linkable", "issued_artifacts_forbidden", "disposition"},
+        "packet_a.m1_contract.unresolved_project_boundary",
+    )
+    for field, value in {
+        "observation_only": True,
+        "non_linkable": True,
+        "issued_artifacts_forbidden": [
+            "checkpoint",
+            "transaction",
+            "receipt",
+            "action",
+            "outcome",
+            "reconciliation",
+            "cross_project_join",
+        ],
+        "disposition": "ABSTAIN_NO_ISSUED_ARTIFACT",
+    }.items():
+        _require_value(
+            unresolved[field], value, f"packet_a.m1_contract.unresolved_project_boundary.{field}"
+        )
+
+
+def _validate_packet_a_remaining_semantics(packet: dict[str, Any]) -> None:
+    """Validate Packet A leaves not covered by the structural checks below."""
+
+    calibration = packet["calibration_pilot"]
+    _require_keys(
+        calibration,
+        {
+            "episode_pairs",
+            "task_family_count",
+            "sanitized_fixture_repository_count",
+            "client_model_build_strata_count",
+            "repetitions_per_family_repository_stratum_cell",
+            "purpose",
+            "calibration_only",
+            "may_tune_mechanism",
+            "may_change_estimand",
+            "may_change_primary_contrast",
+            "may_change_control_set",
+            "may_set_confirmatory_threshold",
+            "may_open_holdout",
+        },
+        "packet_a.calibration_pilot",
+    )
+    for field, value in {
+        "episode_pairs": 48,
+        "task_family_count": 6,
+        "sanitized_fixture_repository_count": 2,
+        "client_model_build_strata_count": 2,
+        "repetitions_per_family_repository_stratum_cell": 2,
+        "purpose": [
+            "fixture_determinism",
+            "receipt_completeness",
+            "oracle_behavior",
+            "secret_refusal",
+            "project_isolation",
+            "lifecycle_cleanup",
+            "budget_accounting",
+        ],
+        "calibration_only": True,
+        "may_tune_mechanism": False,
+        "may_change_estimand": False,
+        "may_change_primary_contrast": False,
+        "may_change_control_set": False,
+        "may_set_confirmatory_threshold": False,
+        "may_open_holdout": False,
+    }.items():
+        _require_value(calibration[field], value, f"packet_a.calibration_pilot.{field}")
+
+    confirmatory = packet["confirmatory_design"]
+    for field, value in {
+        "episode_unit": "paired_episode",
+        "sanitized_fixture_repository_count": 4,
+        "client_model_build_strata_count": 4,
+        "same_logical_episode_across_arms": True,
+        "matched_fields": [
+            "task",
+            "source_state",
+            "mutation_schedule",
+            "oracle",
+            "tools",
+            "permission_set",
+            "time_budget",
+            "predeclared_seed",
+            "client_build",
+            "model_build",
+            "reasoning_effort",
+            "context_budget",
+            "total_token_budget",
+            "latency_budget",
+            "cost_budget",
+        ],
+        "episode_ids": "unset_until_later_manifest_gate",
+        "reserve_policy": "unset_until_later_manifest_gate",
+        "deterministic_episode_seeds": "unset_until_later_manifest_gate",
+    }.items():
+        _require_value(confirmatory[field], value, f"packet_a.confirmatory_design.{field}")
+
+    fixture_contract = packet["fixture_repository_contract"]
+    for field, value in {
+        "repository_ids": "unset_until_later_manifest_gate",
+        "required_shapes": ["python", "typescript", "mixed_project"],
+        "content_policy": "sanitized_symbolic_fixture_only",
+        "fixture_ids_frozen_now": False,
+        "existing_logical_fixture_catalog_is_specification_input": True,
+    }.items():
+        _require_value(
+            fixture_contract[field], value, f"packet_a.fixture_repository_contract.{field}"
+        )
+
+    strata = packet["client_model_build_strata"]
+    _require_keys(
+        strata,
+        {
+            "strata_ids",
+            "count",
+            "fixed_before_confirmatory_execution",
+            "client_and_model_build_are_recorded",
+            "reasoning_effort_is_recorded",
+        },
+        "packet_a.client_model_build_strata",
+    )
+    for field, value in {
+        "strata_ids": "unset_until_later_manifest_gate",
+        "count": 4,
+        "fixed_before_confirmatory_execution": True,
+        "client_and_model_build_are_recorded": True,
+        "reasoning_effort_is_recorded": True,
+    }.items():
+        _require_value(strata[field], value, f"packet_a.client_model_build_strata.{field}")
+
+    expected_arm_semantics = [
+        ("simple_baseline", "No ATC memory or retained prior context.", "required_floor"),
+        ("simple_baseline", "Fixed task note with no adaptive memory.", "required_simple_control"),
+        (
+            "simple_baseline",
+            "Frozen compact user, project, or task profile with no adaptive updates.",
+            "canonical_simple_baseline",
+        ),
+        (
+            "simple_baseline",
+            (
+                "Append-only event log with exact or lexical search and no canonical "
+                "current-state model."
+            ),
+            "required_retrieval_control",
+        ),
+        (
+            "simple_baseline",
+            "Current authorized-record retrieval with lifecycle filtering.",
+            "required_current_control",
+        ),
+        (
+            "simple_baseline",
+            "Current ATC authorized retrieval and deterministic set compilation.",
+            "canonical_existing_deterministic_baseline",
+        ),
+        (
+            "simple_baseline",
+            "Best feasible Project Context Capsule under the frozen disclosure and token budget.",
+            "primary_continuity_baseline",
+        ),
+        (
+            "simple_baseline",
+            (
+                "Full feasible authorized prior transcript under matched model, context, latency, "
+                "and cost budgets."
+            ),
+            "required_when_supported",
+        ),
+        (
+            "hybrid",
+            "Best non-ATC combination of eligible simple controls under the same budget.",
+            "strongest_non_atc_baseline",
+        ),
+        (
+            "individual_competitor",
+            "Pinned Mem0 adapter using only genuinely supported operations.",
+            "individual_external_comparator",
+        ),
+        (
+            "individual_competitor",
+            "Pinned Graphiti adapter using only genuinely supported operations.",
+            "individual_external_comparator",
+        ),
+        (
+            "individual_competitor",
+            "Pinned Hindsight adapter using only genuinely supported operations.",
+            "individual_external_comparator",
+        ),
+        (
+            "individual_competitor",
+            "Pinned Letta adapter using only genuinely supported operations.",
+            "individual_external_comparator",
+        ),
+        (
+            "individual_competitor",
+            "Pinned LangMem adapter using only genuinely supported operations.",
+            "individual_external_comparator",
+        ),
+        (
+            "hybrid",
+            (
+                "Capsule plus a preregistered checkpoint, reconciliation, M1, M3, or "
+                "mechanism-specific cell with matched total tokens, latency, tools, and "
+                "permissions."
+            ),
+            "mechanism_comparison",
+        ),
+    ]
+    for index, (arm, expected) in enumerate(
+        zip(packet["arm_vocabulary"], expected_arm_semantics, strict=True)
+    ):
+        path = f"packet_a.arm_vocabulary[{index}]"
+        _require_value(arm["group"], expected[0], f"{path}.group")
+        _require_value(arm["description"], expected[1], f"{path}.description")
+        _require_value(arm["promotion_role"], expected[2], f"{path}.promotion_role")
+        if arm["id"].startswith("COMPETITOR_"):
+            _require_value(
+                arm["pinned_revision_required_at_manifest_freeze"],
+                True,
+                f"{path}.pinned_revision_required_at_manifest_freeze",
+            )
+
+    cell_contract = packet["cell_contract"]
+    for field, value in {
+        "cell_id_namespace": "Packet_A_named_cells",
+        "parent_and_control_must_be_explicit_and_distinct": True,
+        "targeted_task_families_must_resolve_to_declared_families": True,
+        "mutation_coverage_must_resolve_to_declared_mutation_cells": True,
+        "oracle_must_be_independent_of_arm_result": True,
+        "matched_budget_and_permissions_are_same_across_parent_control": True,
+    }.items():
+        _require_value(cell_contract[field], value, f"packet_a.cell_contract.{field}")
+
+    episode = packet["episode_contract"]
+    for field, value in {
+        "minimum_sessions": 2,
+        "supported_client_switch_subset": True,
+        "between_session_mutations_are_predeclared": True,
+        "same_oracle_for_all_arms": True,
+        "same_permission_set_for_all_arms": True,
+        "same_tool_budget_for_all_arms": True,
+        "same_time_budget_for_all_arms": True,
+        "same_predeclared_seed_for_all_arms": True,
+    }.items():
+        _require_value(episode[field], value, f"packet_a.episode_contract.{field}")
+
+    _require_value(
+        packet["permission_contract"]["permission_change_requires_new_specification_version"],
+        True,
+        "packet_a.permission_contract.permission_change_requires_new_specification_version",
+    )
+
+    budget = packet["budget_contract"]
+    _require_value(
+        budget["fair_comparison_dimensions"],
+        [
+            "client_build",
+            "model_build",
+            "reasoning_effort",
+            "task_and_source_state",
+            "context_tokens",
+            "total_tokens",
+            "tool_calls",
+            "time",
+            "retry_budget",
+            "disclosure",
+            "latency",
+            "storage",
+            "monetary_cost",
+            "temperature",
+            "deterministic_seed",
+        ],
+        "packet_a.budget_contract.fair_comparison_dimensions",
+    )
+    local_reference = budget["local_reference"]
+    for field, value in {
+        "deterministic_local_ingest_p95_ms_per_event_at_10000_objects": 25,
+        "authorized_query_compile_p95_ms_at_10000_objects": 150,
+        "working_checkpoint_export_p95_ms": 100,
+        "working_checkpoint_import_p95_ms": 100,
+        "correction_to_invalidation_p95_ms_at_1000_artifacts": 250,
+        "protected_token_consume_p99_ms": 100,
+        "deterministic_rebuild_seconds_at_10000_objects_and_100000_edges": 30,
+        "ordinary_compiled_context_tokens_maximum": 2048,
+        "specialized_agentic_context_tokens_maximum": 8192,
+        "specialized_upstream_override_must_be_reported": True,
+    }.items():
+        _require_value(
+            local_reference[field], value, f"packet_a.budget_contract.local_reference.{field}"
+        )
+    cost = budget["cost_promotion"]
+    for field, value in {
+        "frozen_price_sheet_required": True,
+        "failed_and_retried_calls_count": True,
+        "development_cost_reported_separately": True,
+        "maximum_end_to_end_cost_premium": 0.25,
+        "minimum_caos_gain_if_cost_premium_positive": 0.05,
+    }.items():
+        _require_value(cost[field], value, f"packet_a.budget_contract.cost_promotion.{field}")
+    _require_value(
+        budget["environment_profile_required"],
+        [
+            "cpu",
+            "memory",
+            "operating_system",
+            "python",
+            "filesystem",
+            "cold_warm_definition",
+            "concurrency",
+            "background_load",
+        ],
+        "packet_a.budget_contract.environment_profile_required",
+    )
+
+    statuses = packet["cell_status_contract"]
+    for field, value in {
+        "unsupported_status_requires": ["reason", "denominator_disposition", "capability_boundary"],
+        "indeterminate_pre_eligibility_code": "INDETERMINATE_PRE_ELIGIBILITY",
+        "indeterminate_pre_eligibility_in_E_w": False,
+        "missing_status_is_retained": True,
+        "after_outcome_cell_removal": False,
+        "after_outcome_status_relabeling": False,
+    }.items():
+        _require_value(statuses[field], value, f"packet_a.cell_status_contract.{field}")
+
+    opportunity = packet["opportunity_contract"]
+    for field, value in {
+        "eligibility_assigned_before_mechanism_result": True,
+        "same_episode_and_source_state_for_all_arms": True,
+        "every_eligible_opportunity_enters_E_w": True,
+        "abstention_error_unsupported_and_missing_remain_in_E_w": True,
+        "pre_eligibility_unknown_code": "INDETERMINATE_PRE_ELIGIBILITY",
+        "pre_eligibility_unknown_is_outside_E_w": True,
+        "coverage_formula": "count(non_MISSING_response_statuses) / E_w",
+    }.items():
+        _require_value(opportunity[field], value, f"packet_a.opportunity_contract.{field}")
+    expected_workstreams = [
+        (
+            "PROSPECTIVE_MEMORY",
+            50,
+            50,
+            "due_or_cue_opportunity",
+            "non_due_or_negative_control_opportunity",
+        ),
+        (
+            "ADAPTIVE_ROUTING",
+            50,
+            50,
+            "beneficial_route_opportunity",
+            "no_benefit_or_wrong_route_opportunity",
+        ),
+        (
+            "CONTINUITY_DEBT",
+            100,
+            100,
+            "independently_adjudicated_avoidable_debt_opportunity",
+            "independently_adjudicated_non_debt_opportunity",
+        ),
+    ]
+    for index, (workstream, expected) in enumerate(
+        zip(opportunity["workstreams"], expected_workstreams, strict=True)
+    ):
+        path = f"packet_a.opportunity_contract.workstreams[{index}]"
+        for field, value in {
+            "id": expected[0],
+            "positive_opportunity_minimum": expected[1],
+            "negative_opportunity_minimum": expected[2],
+            "positive_definition": expected[3],
+            "negative_definition": expected[4],
+            "coverage_floor": 0.9,
+            "non_abstention_floor": 0.9,
+            "directional_method": "preregistered_one_sided_confidence_bound_or_test",
+        }.items():
+            _require_value(workstream[field], value, f"{path}.{field}")
+
+    expected_estimand_fields = {
+        "CAOS_BY_ARM": {
+            "endpoint": "CAOS",
+            "population": "all eligible episode-arm observations",
+            "numerator": "count of eligible episodes with CAOS=PASS",
+            "denominator": "eligible_episode_arm",
+            "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
+            "direction": "higher_is_better",
+            "missingness": "missing_is_not_pass_and_denominator_is_retained",
+            "interval": "Wilson_95_percent",
+            "test": "none_individual_proportion",
+        },
+        "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": {
+            "endpoint": "CAOS",
+            "population": (
+                "all eligible paired episodes in the checkpoint/reconciliation versus "
+                "optimized-capsule contrast"
+            ),
+            "numerator": "paired CAOS difference",
+            "denominator": "all eligible paired episodes in the declared contrast",
+            "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
+            "direction": "higher_is_better",
+            "noninferiority_margin": -0.02,
+            "interval": "one_sided_95_percent_exact_paired_or_stratified_bootstrap",
+            "test": "stratified_paired_difference_with_exact_randomization_reference",
+            "multiplicity_family": "two_primary_contrasts_holm",
+        },
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": {
+            "endpoint": "avoidable_continuity_debt",
+            "population": "all independently adjudicated continuity-debt opportunities",
+            "numerator": "paired avoidable continuity-debt rate difference",
+            "denominator": "avoidable continuity-debt rate under the optimized-capsule comparator",
+            "unknown_or_missing_pair_contribution": "retain_in_E_w_and_receive_no_credit",
+            "direction": "higher_reduction_is_better",
+            "minimum_relative_lower_bound": 0.2,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "preregistered_directional_confidence_bound",
+            "missingness": "abstention_error_unsupported_missing_and_unknown_receive_no_credit",
+        },
+        "FIRST_ACTION_CORRECTNESS_DIFFERENCE": {
+            "endpoint": "first_action_correctness",
+            "population": "all eligible episode-arm first actions",
+            "numerator": (
+                "paired first-action correctness difference (checkpoint/reconciliation minus "
+                "optimized capsule)"
+            ),
+            "denominator": "eligible paired episodes in the declared first-action contrast",
+            "unknown_or_missing_pair_contribution": "retain_in_denominator_and_do_not_impute",
+            "direction": "higher_is_better",
+            "minimum_lower_bound": 0.0,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "paired_or_stratified_difference_test",
+        },
+        "CONTEXT_BUDGET_RATIO": {
+            "endpoint": "context_tokens",
+            "population": "all eligible episode-arm context disclosures",
+            "numerator": "context tokens disclosed by the arm",
+            "denominator": "matched context-token budget for the same eligible episode-arm",
+            "unknown_or_missing_pair_contribution": (
+                "retain_in_denominator_and_report_missing_context"
+            ),
+            "direction": "lower_is_better_subject_to_CAOS",
+            "constraints": [
+                "upper_bound_below_full_transcript_control",
+                "no_more_than_25_percent_above_optimized_capsule",
+            ],
+            "interval": "paired_bootstrap",
+            "test": "paired_budget_constraint_test",
+        },
+        "PROSPECTIVE_RECALL": {
+            "endpoint": "due_opportunity_recall",
+            "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+            "numerator": "count of positive opportunities with a correct due/cue recall",
+            "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+            "unknown_or_missing_pair_contribution": (
+                "retain_in_positive_denominator_and_do_not_impute"
+            ),
+            "direction": "higher_is_better",
+            "minimum_point_value": 0.8,
+            "minimum_lower_bound": 0.8,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "preregistered_directional_confidence_bound",
+        },
+        "PROSPECTIVE_BLINDED_USEFULNESS": {
+            "endpoint": "task_level_blinded_usefulness",
+            "population": "positive prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+            "numerator": "count of positive opportunities judged useful by the blinded oracle",
+            "denominator": "positive_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+            "unknown_or_missing_pair_contribution": (
+                "retain_in_positive_denominator_and_do_not_impute"
+            ),
+            "direction": "higher_is_better",
+            "minimum_point_value": 0.7,
+            "minimum_lower_bound": 0.7,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "preregistered_directional_confidence_bound",
+        },
+        "PROSPECTIVE_FALSE_ALARM_RATE": {
+            "endpoint": "false_alarms",
+            "population": "negative prospective-memory opportunities in E_w for PROSPECTIVE_MEMORY",
+            "numerator": "count of negative opportunities with a false alarm",
+            "denominator": "negative_opportunities_in_E_w_for_PROSPECTIVE_MEMORY",
+            "unknown_or_missing_pair_contribution": (
+                "retain_in_negative_denominator_and_do_not_impute"
+            ),
+            "direction": "lower_is_better",
+            "maximum_upper_bound": 0.05,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "preregistered_directional_confidence_bound",
+        },
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
+            "endpoint": "outcome_utility",
+            "population": "all eligible paired prospective-memory opportunities in E_w",
+            "numerator": "paired outcome-utility rate difference",
+            "denominator": "outcome-utility rate under the deterministic scheduler comparator",
+            "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
+            "direction": "higher_is_better",
+            "minimum_relative_lower_bound": 0.05,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "paired_difference_with_holm_control",
+            "multiplicity_family": "two_primary_contrasts_holm",
+        },
+        "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": {
+            "endpoint": "CAOS",
+            "population": "fixed target-task opportunities in E_w for ADAPTIVE_ROUTING",
+            "numerator": "paired CAOS difference",
+            "denominator": "fixed_target_task_opportunities_in_E_w",
+            "unknown_or_missing_pair_contribution": "retain_pair_in_denominator_and_do_not_impute",
+            "direction": "higher_is_better",
+            "minimum_lower_bound": 0.0,
+            "interval": "one_sided_95_percent_confidence_bound",
+            "test": "paired_difference_with_preregistered_directional_bound",
+        },
+        "HARD_SAFETY_FAILURE_RATE": {
+            "endpoint": "hard_safety_failure",
+            "population": "all pre-execution declared hard-safety opportunities exposed to an arm",
+            "numerator": "observed hard-safety failures",
+            "denominator": "S_h",
+            "unknown_or_missing_pair_contribution": (
+                "missing_or_unknown_exposure_fails_closed_and_cannot_support_zero_failure_claim"
+            ),
+            "direction": "lower_is_better",
+            "maximum_point_value": 0.0,
+            "interval": "exact_one_sided_95_percent_binomial_upper_bound",
+            "test": "exact_one_sided_95_percent_clopper_pearson_upper_bound",
+        },
+    }
+    for index, estimand in enumerate(packet["estimands"]):
+        path = f"packet_a.estimands[{index}]"
+        for field, value in expected_estimand_fields[estimand["id"]].items():
+            _require_value(estimand[field], value, f"{path}.{field}")
+
+    statistics = packet["statistics_contract"]
+    for field, value in {
+        "individual_proportions": "Wilson_bounds",
+        "paired_differences": "exact_paired_or_stratified_bootstrap_bounds",
+        "deterministic_safety": "exact_one_sided_95_percent_Clopper_Pearson_upper_bound",
+        "primary_binary_test": "stratified_paired_difference_with_exact_or_randomization_reference",
+        "primary_binary_interval": "paired_or_stratified_bootstrap",
+        "multiplicity": "Holm_control_across_two_primary_contrasts",
+        "secondary_measures": "exploratory_labeled",
+        "raw_numerator_and_denominator_required": True,
+        "no_post_outcome_exclusions": True,
+        "no_imputation_of_missing_or_unknown": True,
+        "zero_observed_failures_reporting": (
+            "count_denominator_confidence_bound_exposure_unexercised_surface"
+        ),
+    }.items():
+        _require_value(statistics[field], value, f"packet_a.statistics_contract.{field}")
+
+    power = packet["power_simulation"]
+    for field, value in {
+        "status": "required_future_reproducibility_artifact_not_added_or_executed",
+        "script_path": "bench/memory_reliability_power_simulation.py",
+        "script_sha256": "unset_until_later_manifest_gate",
+        "input_manifest_paths": [
+            "bench/memory_reliability_spec.json",
+            "bench/memory_reliability_fixtures.json",
+            "Packet A fixture/task manifest",
+        ],
+        "input_manifest_sha256": "unset_until_later_manifest_gate",
+        "output_manifest_sha256": "unset_until_later_manifest_gate",
+        "simulation_seed": 20260829,
+        "simulation_repetitions": 100000,
+        "baseline_control_caos": 0.75,
+        "alternative_caos": 0.85,
+        "target_paired_effect": 0.1,
+        "paired_joint_distribution": {
+            "control_0_alternative_0": 0.1,
+            "control_0_alternative_1": 0.15,
+            "control_1_alternative_0": 0.05,
+            "control_1_alternative_1": 0.7,
+        },
+        "paired_correlation": 0.404226,
+        "stratum_weights": (
+            "equal across six families, four repositories, and four client/model strata"
+        ),
+        "estimand": "stratified paired CAOS difference, alternative minus control",
+        "test_statistic": "stratified paired difference with exact_or_randomization_reference",
+        "alpha": "familywise 0.05 with Holm control over two primary contrasts",
+        "directional_bound": "one_sided_95_percent_confidence_bound_for_each_promotion_gate",
+        "power_target": 0.9,
+        "noninferiority_margin": -0.02,
+        "missing_and_failure_policy": "packet_a.cell_status_contract_and_statistics_contract",
+        "joint_distribution_sum_required": 1.0,
+    }.items():
+        _require_value(power[field], value, f"packet_a.power_simulation.{field}")
+
+    _require_value(
+        packet["later_manifest_prerequisites"],
+        [
+            "manifest_lists_reproduced_final_N_episode_ids_six_task_families_four_fixture_repositories_four_strata_final_repetitions_as_final_N_divided_by_96_reserve_policy_and_deterministic_seeds",
+            "every_arm_baseline_control_primary_contrast_oracle_budget_permission_mutation_and_required_ablation_is_versioned_and_content_digested",
+            "power_script_path_version_script_digest_input_manifest_digest_and_output_manifest_digest_bind_the_independently_emitted_derived_N_under_frozen_inputs",
+            "calibration_fixture_determinism_receipt_completeness_oracle_behavior_secret_refusal_project_isolation_lifecycle_cleanup_and_budget_gates_pass",
+            "CAOS_hard_safety_raw_numerators_denominators_confidence_methods_Holm_control_opportunity_floors_and_missing_failed_run_dispositions_are_unchanged",
+            "benchmark_manifest_digest_is_recorded_before_any_confirmatory_result_is_read",
+        ],
+        "packet_a.later_manifest_prerequisites",
+    )
+
+    historical = packet["provenance"]["historical_evidence_boundary"]
+    for field, value in {
+        "wave4_m3": "L2_coordinator_reproduced_deterministic_symbolic_retained_contract_only",
+        "wave4_m1": "L2_coordinator_reproduced_deterministic_symbolic_retained_contract_only",
+        "wave4_e02": "five_UNSUPPORTED_and_one_NOT_EXERCISED_production_semantics",
+        "packet_a_claim": "L0_specification_only_no_execution_or_promotion",
+    }.items():
+        _require_value(
+            historical[field], value, f"packet_a.provenance.historical_evidence_boundary.{field}"
+        )
+
+    validation = packet["validation_contract"]
+    for field, value in {
+        "mode": "fail_closed",
+        "rejection_is_not_a_result": True,
+        "checks": [
+            "CIRCULAR_OR_AFTER_OUTCOME_DENOMINATOR",
+            "HARD_SAFETY_EXPOSURE_DENOMINATOR",
+            "RESPONSE_STATUS_ALLOWLIST",
+            "MISSING_CELL_OR_UNDECLARED_ARM",
+            "IMMUTABLE_FIXTURE_AND_SOURCE_BINDING",
+            "BAD_PERMISSION_OR_SAFETY_BOUNDARY",
+            "UNKNOWN_STATUS_OR_CATEGORY",
+            "NON_FINITE_NUMERIC_VALUE",
+            "DIGEST_DRIFT",
+            "NARRATIVE_FREEZE_BINDING",
+            "ACCIDENTAL_EXECUTION_OR_MANIFEST_CLAIM",
+            "M1_RECEIPT_CHAIN_AND_LIFECYCLE",
+            "BOUNDED_INPUT_INGESTION",
+            "EXHAUSTIVE_MUTUALLY_EXCLUSIVE_S_H_STATUS_MAPPING",
+        ],
+        "unknown_categories_are_rejected": True,
+        "non_finite_values_are_rejected": True,
+        "digest_mismatch_is_rejected": True,
+        "execution_or_manifest_claim_is_rejected": True,
+    }.items():
+        _require_value(validation[field], value, f"packet_a.validation_contract.{field}")
+    _require_value(
+        packet["content_binding"]["narrative_binding"]["semantic_sha256"],
+        EXPECTED_NARRATIVE_SEMANTIC_DIGEST,
+        "packet_a.content_binding.narrative_binding.semantic_sha256",
+    )
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -596,9 +2833,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
     expected_cell_ids = {
         "CAOS_BY_ARM": ["CELL_HYBRID_ATC_GOVERNED"],
         "PRIMARY_CONTINUITY_CAOS_DIFFERENCE": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
-        "CONTINUITY_DEBT_RELATIVE_REDUCTION": [
-            "ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR"
-        ],
+        "CONTINUITY_DEBT_RELATIVE_REDUCTION": ["ABL_CONTINUITY_DEBT_AGGREGATE_VS_CATEGORY_VECTOR"],
         "FIRST_ACTION_CORRECTNESS_DIFFERENCE": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
         "CONTEXT_BUDGET_RATIO": ["CELL_HYBRID_CHECKPOINT_RECONCILIATION"],
         "PROSPECTIVE_RECALL": ["CELL_HYBRID_ATC_GOVERNED"],
@@ -623,7 +2858,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
         "PROSPECTIVE_RECALL": "arm_rate",
         "PROSPECTIVE_BLINDED_USEFULNESS": "arm_rate",
         "PROSPECTIVE_FALSE_ALARM_RATE": "arm_rate",
-        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": "paired_difference",
+        "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": "relative_difference",
         "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": "paired_difference",
         "HARD_SAFETY_FAILURE_RATE": "arm_rate",
     }
@@ -633,7 +2868,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "CELL_HYBRID_CHECKPOINT_RECONCILIATION_CAOS_minus_OPTIMIZED_CAPSULE_CAOS"
         ),
         "CONTINUITY_DEBT_RELATIVE_REDUCTION": (
-            "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_minus_OPTIMIZED_CAPSULE_avoidable_debt_relative_reduction"
+            "CELL_HYBRID_ATC_GOVERNED_avoidable_debt_rate_minus_OPTIMIZED_CAPSULE_avoidable_debt_rate_relative_reduction"
         ),
         "FIRST_ACTION_CORRECTNESS_DIFFERENCE": (
             "CELL_HYBRID_CHECKPOINT_RECONCILIATION_first_action_correctness_minus_OPTIMIZED_CAPSULE_first_action_correctness"
@@ -651,7 +2886,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "each_declared_arm_false_alarm_rate_no_between_arm_contrast"
         ),
         "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": (
-            "CELL_HYBRID_ATC_GOVERNED_outcome_utility_minus_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility"
+            "CELL_HYBRID_ATC_GOVERNED_outcome_utility_rate_relative_improvement_over_CONTROL_DETERMINISTIC_SCHEDULER_outcome_utility_rate"
         ),
         "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": (
             "ADAPTIVE_ROUTER_CAOS_minus_CURRENT_LEXICAL_AND_CAPSULE_BASELINE_CAOS"
@@ -684,7 +2919,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "right_arm_id": "OPTIMIZED_CAPSULE",
             "right_cell_id": "ARM_LEVEL",
             "measure": "AVOIDABLE_CONTINUITY_DEBT",
-            "result_unit": "relative_reduction",
+            "result_unit": "dimensionless_ratio",
             "comparator_arm_id": "OPTIMIZED_CAPSULE",
             "comparator_cell_id": "ARM_LEVEL",
         },
@@ -727,13 +2962,13 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "result_unit": "proportion",
         },
         "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": {
-            "kind": "paired_difference",
+            "kind": "paired_relative_difference",
             "left_arm_id": "MATCHED_HYBRIDS",
             "left_cell_id": "CELL_HYBRID_ATC_GOVERNED",
             "right_arm_id": "DETERMINISTIC_SCHEDULER",
             "right_cell_id": "CONTROL_DETERMINISTIC_SCHEDULER",
-            "measure": "OUTCOME_UTILITY",
-            "result_unit": "difference",
+            "measure": "OUTCOME_UTILITY_RATE",
+            "result_unit": "dimensionless_ratio",
         },
         "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": {
             "kind": "paired_difference",
@@ -760,9 +2995,9 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "paired_episode",
         ),
         "CONTINUITY_DEBT_RELATIVE_REDUCTION": (
-            "opportunity",
-            "opportunity_debt_difference",
-            "eligible_opportunity",
+            "dimensionless_ratio",
+            "avoidable_continuity_debt_rate",
+            "avoidable_continuity_debt_rate",
         ),
         "FIRST_ACTION_CORRECTNESS_DIFFERENCE": (
             "paired_episode",
@@ -786,9 +3021,9 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "negative_opportunity",
         ),
         "PROSPECTIVE_SCHEDULER_OUTCOME_UTILITY": (
-            "paired_opportunity",
-            "paired_outcome_utility_difference",
-            "paired_opportunity",
+            "dimensionless_ratio",
+            "outcome_utility_rate",
+            "outcome_utility_rate",
         ),
         "ADAPTIVE_ROUTING_CAOS_IMPROVEMENT": (
             "paired_opportunity",
@@ -879,7 +3114,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             "denominator_is_frozen_before_execution",
             "unknown_or_missing_pair_contribution",
             "direction",
-            "minimum_lower_bound",
+            "minimum_relative_lower_bound",
             "interval",
             "test",
             "missingness",
@@ -1018,9 +3253,7 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
             path,
         )
         estimand_id = estimand["id"]
-        _require_value(
-            estimand["cell_ids"], expected_cell_ids[estimand_id], f"{path}.cell_ids"
-        )
+        _require_value(estimand["cell_ids"], expected_cell_ids[estimand_id], f"{path}.cell_ids")
         _require_value(
             estimand["estimand_type"], expected_types[estimand_id], f"{path}.estimand_type"
         )
@@ -1122,7 +3355,13 @@ def _validate_estimands(packet: dict[str, Any]) -> None:
         )
         _require(isinstance(estimand["test"], str) and estimand["test"], f"{path}.test required")
         denominator = str(estimand["denominator"]).lower()
-        for forbidden in ("after", "outcome", "mechanism_result", "scored_event"):
+        for forbidden in (
+            "after",
+            "outcome_dependent",
+            "post_outcome",
+            "mechanism_result",
+            "scored_event",
+        ):
             _require(
                 forbidden not in denominator, f"{path}.denominator is circular or after outcome"
             )
@@ -1135,11 +3374,11 @@ _NARRATIVE_DIGEST_JSON = re.compile(rb"(\"specification_digest\"\s*:\s*\")[0-9a-
 def compute_narrative_semantic_digest(document: bytes, *, specification_digest: str) -> str:
     """Hash exact Markdown bytes while normalizing only its self-binding digest."""
 
+    _require(isinstance(document, bytes), "narrative must be bytes")
+    _require(len(document) <= MAX_INPUT_BYTES, "narrative exceeds byte limit")
     expected = specification_digest.encode("ascii")
     normalized, row_count = _NARRATIVE_DIGEST_ROW.subn(rb"\1<SPECIFICATION_DIGEST>\2", document)
-    normalized, json_count = _NARRATIVE_DIGEST_JSON.subn(
-        rb"\1<SPECIFICATION_DIGEST>\2", normalized
-    )
+    normalized, json_count = _NARRATIVE_DIGEST_JSON.subn(rb"\1<SPECIFICATION_DIGEST>\2", normalized)
     _require(row_count == 1, "narrative specification digest row is not unique")
     _require(json_count == 1, "narrative JSON specification digest is not unique")
     _require(expected not in normalized, "narrative digest normalization was incomplete")
@@ -1157,7 +3396,7 @@ def _validate_narrative(packet: dict[str, Any], root: Path) -> None:
     path = (root / binding["path"]).resolve()
     _require(path.is_relative_to(root), "narrative path escapes the validation root")
     _require(path.is_file(), f"narrative binding document missing: {path}")
-    document_bytes = path.read_bytes()
+    document_bytes = _read_bounded_file(path)
     try:
         document = document_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -1213,6 +3452,7 @@ def validate_spec(
     """Validate a candidate Packet A document, raising on any drift."""
 
     _require(isinstance(spec, dict), "document must be an object")
+    _validate_json_limits(spec)
     _assert_finite(spec)
     _require_keys(spec, EXPECTED_ROOT_KEYS, "document")
     _require_value(spec.get("schema_version"), 1, "schema_version")
@@ -1232,6 +3472,7 @@ def validate_spec(
     _require_value(packet["status"], "frozen_specification_only", "packet_a.status")
     _require_value(packet["evidence_level"], "L0", "packet_a.evidence_level")
     _require_value(packet["authority"], "research_contract_only", "packet_a.authority")
+    _validate_m1_contract(packet)
 
     root_endpoint = spec["primary_endpoint"]
     _require_keys(
@@ -1256,6 +3497,7 @@ def validate_spec(
     _require_value(
         root_endpoint["report_components_separately"], True, "root CAOS component reporting"
     )
+    _validate_root_contract(spec)
 
     _require_keys(
         packet["canonical_integration"],
@@ -1440,6 +3682,26 @@ def validate_spec(
             "refusal_code": "SECRET_REFUSAL",
             "not_a_failed_memory_episode": True,
             "raw_value_not_retained_or_echoed": True,
+            "non_reflection": {
+                "unkeyed_content_derived_verifiers_forbidden": True,
+                "verifier_policy": (
+                    "no_unkeyed_content_derived_digest_or_hash_is_used_as_acceptance_or_authority"
+                ),
+                "raw_value_not_reflected_in_diagnostics_or_receipts": True,
+                "required_surface_scans": [
+                    "sqlite_main_database",
+                    "sqlite_wal",
+                    "sqlite_freelist_pages",
+                    "fts_indexes",
+                    "diagnostics",
+                    "exports",
+                    "restore_surfaces",
+                ],
+                "scan_must_precede_acceptance": True,
+                "scan_must_follow_terminal_purge": True,
+                "scan_result": "bounded_code_only",
+                "incomplete_scan_disposition": "SECRET_REFUSAL",
+            },
         },
         "packet_a.secret_refusal",
     )
@@ -2409,6 +4671,7 @@ def validate_spec(
             "exposure_denominator_statuses": ["EXPOSED"],
             "not_applicable_statuses": ["NOT_APPLICABLE"],
             "fail_closed_disposition_statuses": ["MISSING", "INDETERMINATE", "UNEXERCISED"],
+            "safety_rate_mapping": EXPECTED_S_H_STATUS_MAPPING,
             "status_requirements": {
                 "EXPOSED": [
                     "pre_execution_assignment",
@@ -2697,6 +4960,7 @@ def validate_spec(
     )
 
     _validate_estimands(packet)
+    _validate_packet_a_remaining_semantics(packet)
     power = packet["power_simulation"]
     _require_value(power["provisional_confirmatory_n"], 384, "provisional N")
     _require_value(
@@ -2873,7 +5137,7 @@ def validate_spec(
         source_path = root / source["path"]
         _require(source_path.is_file(), f"provenance source missing: {source_path}")
         _require(
-            hashlib.sha256(source_path.read_bytes()).hexdigest() == source["sha256"],
+            hashlib.sha256(_read_bounded_file(source_path)).hexdigest() == source["sha256"],
             f"provenance digest drift: {source['path']}",
         )
     _require(
@@ -2915,7 +5179,7 @@ def validate_spec(
     _require_value(binding["validator_version"], VALIDATOR_VERSION, "validator version")
     _require_value(
         binding["validator_source_sha256"],
-        hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        hashlib.sha256(_read_bounded_file(Path(__file__))).hexdigest(),
         "validator source digest",
     )
     _require_value(
@@ -2952,12 +5216,15 @@ def validate_spec(
     )
     # The self-digest above only proves internal consistency.  This separate,
     # code-owned digest is the immutable semantic authority and cannot be
-    # changed by recomputing a candidate document's own digest.
-    _require_value(
-        actual_digest,
-        EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
-        "code-owned canonical semantic digest",
-    )
+    # changed by recomputing a candidate document's own digest.  The explicit
+    # false value is test-only: it disables this byte-level authority check but
+    # never disables schema or semantic validation.
+    if require_golden_digest:
+        _require_value(
+            actual_digest,
+            EXPECTED_CANONICAL_SPECIFICATION_DIGEST,
+            "code-owned canonical semantic digest",
+        )
     if validate_narrative:
         _validate_narrative(packet, root)
 
